@@ -162,6 +162,7 @@ export const ModelCallRecord = z.object({
   purpose: z.string(),
   provider: ProviderKind,
   model: z.string(),
+  modelRole: z.string().nullable(),
   attempt: z.number().int(),
   status: z.enum(['STARTED', 'COMPLETED', 'FAILED']),
   parameters: z.record(z.unknown()),
