@@ -4,6 +4,7 @@ import { nowIso } from '@xbam/shared';
 import { accounts as accountsRepo, jobs as jobsRepo, pingDatabase, providers as providersRepo, users as usersRepo } from '@xbam/database';
 import { getAdapter } from '@xbam/models';
 import { browserEnabled, activeSessionCount } from '@xbam/browser';
+import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import { handler } from '../http';
 
 /**
@@ -46,9 +47,17 @@ async function collect(): Promise<HealthReport> {
         if (!credential.enabled) continue;
         const adapter = getAdapter(credential.provider);
         const usable = !adapter.requiresApiKey || credential.hasKey;
+        // A provider that was tested and failed is offline, not unknown.
+        const status = !usable
+          ? 'degraded'
+          : credential.lastStatus === 'healthy'
+            ? 'healthy'
+            : credential.lastStatus
+              ? 'offline'
+              : 'unknown';
         components.push({
           name: `${credential.label} (${credential.provider})`,
-          status: usable ? (credential.lastStatus === 'healthy' ? 'healthy' : 'unknown') : 'degraded',
+          status,
           detail: usable ? (credential.lastStatus ?? 'Not tested yet') : 'No API key stored',
           optional: true,
           checkedAt,
@@ -56,11 +65,19 @@ async function collect(): Promise<HealthReport> {
       }
       for (const account of await accountsRepo.listAccounts(owner.id)) {
         if (!account.enabled) continue;
+        // Channels without a browser session have nothing to connect; an enabled
+        // mock account is ready by definition and should not read as degraded.
+        const sessionless = isChannelImplemented(account.channel) && !getChannelAdapter(account.channel).requiresBrowser;
         components.push({
           name: `${account.channel} @${account.handle}`,
-          status:
-            account.status === 'CONNECTED' ? 'healthy' : account.status === 'ERROR' ? 'offline' : 'degraded',
-          detail: account.lastHealthStatus ?? account.status,
+          status: sessionless
+            ? 'healthy'
+            : account.status === 'CONNECTED'
+              ? 'healthy'
+              : account.status === 'ERROR'
+                ? 'offline'
+                : 'degraded',
+          detail: sessionless ? 'No session required' : (account.lastHealthStatus ?? account.status),
           optional: true,
           checkedAt,
         });

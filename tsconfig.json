@@ -3,17 +3,39 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@xbam/shared": ["packages/shared/src/index.ts"],
-      "@xbam/shared/contracts": ["packages/shared/src/contracts/index.ts"],
-      "@xbam/database": ["packages/database/src/index.ts"],
-      "@xbam/jobs": ["packages/jobs/src/index.ts"],
-      "@xbam/models": ["packages/models/src/index.ts"],
-      "@xbam/memory": ["packages/memory/src/index.ts"],
-      "@xbam/prompts": ["packages/prompts/src/index.ts"],
-      "@xbam/channels": ["packages/channels/src/index.ts"],
-      "@xbam/browser": ["packages/browser/src/index.ts"],
-      "@xbam/tools": ["packages/tools/src/index.ts"],
-      "@xbam/runtime": ["packages/runtime/src/index.ts"]
+      "@xbam/shared": [
+        "packages/shared/src/index.ts"
+      ],
+      "@xbam/shared/contracts": [
+        "packages/shared/src/contracts/index.ts"
+      ],
+      "@xbam/database": [
+        "packages/database/src/index.ts"
+      ],
+      "@xbam/jobs": [
+        "packages/jobs/src/index.ts"
+      ],
+      "@xbam/models": [
+        "packages/models/src/index.ts"
+      ],
+      "@xbam/memory": [
+        "packages/memory/src/index.ts"
+      ],
+      "@xbam/prompts": [
+        "packages/prompts/src/index.ts"
+      ],
+      "@xbam/channels": [
+        "packages/channels/src/index.ts"
+      ],
+      "@xbam/browser": [
+        "packages/browser/src/index.ts"
+      ],
+      "@xbam/tools": [
+        "packages/tools/src/index.ts"
+      ],
+      "@xbam/runtime": [
+        "packages/runtime/src/index.ts"
+      ]
     }
   },
   "include": [
@@ -23,5 +45,10 @@
     "tools/*/src/**/*.ts",
     "tests/**/*.ts"
   ],
-  "exclude": ["node_modules", "**/dist", "apps/web"]
+  "exclude": [
+    "node_modules",
+    "**/dist",
+    "apps/web",
+    "tests/e2e"
+  ]
 }

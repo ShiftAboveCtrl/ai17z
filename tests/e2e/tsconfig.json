@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Playwright specs run browser code inside page.evaluate, so they need DOM
+    // types. Server-side code must not, which is why they are checked separately.
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}
