@@ -22,6 +22,18 @@ export interface PromptTemplateVersionRow {
   createdAt: string;
 }
 
+/** Stable serialisation: sorted keys, so field order cannot fake a change. */
+function canonical(layers: PromptLayerTemplate[]): string {
+  return JSON.stringify(
+    layers.map((layer) => ({
+      key: layer.key,
+      role: layer.role,
+      template: layer.template,
+      title: layer.title,
+    })),
+  );
+}
+
 export async function upsertTemplate(input: {
   key: string;
   name: string;
@@ -40,7 +52,9 @@ export async function upsertTemplate(input: {
     [templateId],
   );
   // Only cut a new version when the layer definition actually changed.
-  if (existingActive && JSON.stringify(existingActive.layers) === JSON.stringify(input.layers)) {
+  // Postgres does not preserve key order in jsonb, so the comparison has to be
+  // canonical; a naive stringify re-versions the template on every boot.
+  if (existingActive && canonical(existingActive.layers) === canonical(input.layers)) {
     return (await getTemplateVersion(existingActive.id)) as PromptTemplateVersionRow;
   }
   const next = await queryOne<{ next: number }>(
