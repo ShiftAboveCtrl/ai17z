@@ -8,14 +8,24 @@ export const OWNER_PASSWORD = process.env.XBAM_E2E_PASSWORD ?? 'xbam-local-dev-2
  * subsequent navigations in the same context stay authenticated.
  */
 export async function signIn(page: Page): Promise<void> {
-  await page.goto('/');
-  const emailField = page.locator('#email');
-  if (await emailField.isVisible().catch(() => false)) {
-    await emailField.fill(OWNER_EMAIL);
-    await page.locator('#password').fill(OWNER_PASSWORD);
-    await page.getByRole('button', { name: /sign in|create account/i }).click();
+  // These run against a real stack, so the first request after an idle or
+  // just-restarted API can be slow. One reload beats a flaky suite.
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    const emailField = page.locator('#email');
+    if (await emailField.isVisible({ timeout: 10_000 }).catch(() => false)) {
+      await emailField.fill(OWNER_EMAIL);
+      await page.locator('#password').fill(OWNER_PASSWORD);
+      await page.getByRole('button', { name: /sign in|create account/i }).click();
+    }
+    const landed = await page
+      .getByRole('heading', { name: 'Your agents' })
+      .waitFor({ timeout: 20_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (landed) return;
   }
-  await page.getByRole('heading', { name: 'Your agents' }).waitFor({ timeout: 20_000 });
+  throw new Error('Never reached the agents page after signing in.');
 }
 
 /** A name unique to this run, so repeated runs never collide. */
