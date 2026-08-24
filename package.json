@@ -1,0 +1,48 @@
+{
+  "name": "xbam",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "XBAM — a local-first universal autonomous-agent platform.",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/api",
+    "apps/worker",
+    "apps/web",
+    "tools/*"
+  ],
+  "scripts": {
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose stop postgres",
+    "migrate": "tsx packages/database/src/cli/migrate.ts",
+    "migrate:status": "tsx packages/database/src/cli/migrate.ts status",
+    "seed": "tsx packages/database/src/cli/seed.ts",
+    "bootstrap": "npm run migrate && npm run seed",
+    "dev": "concurrently -n api,worker,web -c cyan,magenta,green \"npm:dev:api\" \"npm:dev:worker\" \"npm:dev:web\"",
+    "dev:api": "tsx watch apps/api/src/main.ts",
+    "dev:worker": "tsx watch apps/worker/src/main.ts",
+    "dev:web": "npm --workspace @xbam/web run dev",
+    "start:api": "tsx apps/api/src/main.ts",
+    "start:worker": "tsx apps/worker/src/main.ts",
+    "build:web": "npm --workspace @xbam/web run build",
+    "typecheck": "tsc -b tsconfig.json --pretty",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "import:ai4cz": "tsx tools/import-ai4cz/src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "@playwright/test": "^1.49.1"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  }
+}
