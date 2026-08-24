@@ -300,7 +300,7 @@ export async function countRecentActions(agentId: string, sinceMinutes: number):
   const row = await queryOne<{ count: number }>(
     `SELECT count(*)::int AS count FROM actions
       WHERE agent_id = $1 AND dry_run = false AND status = 'EXECUTED'
-        AND executed_at > now() - make_interval(mins => $2::double precision)`,
+        AND executed_at > now() - ($2::int * interval '1 minute')`,
     [agentId, sinceMinutes],
   );
   return row?.count ?? 0;
