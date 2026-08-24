@@ -1,0 +1,8 @@
+{
+  "name": "@xbam/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@xbam/shared": "*", "@xbam/database": "*", "@xbam/jobs": "*", "@xbam/models": "*", "@xbam/memory": "*", "@xbam/prompts": "*", "@xbam/channels": "*", "@xbam/tools": "*" }
+}

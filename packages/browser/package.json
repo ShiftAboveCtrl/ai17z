@@ -1,0 +1,8 @@
+{
+  "name": "@xbam/browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@xbam/shared": "*", "@xbam/database": "*", "playwright": "^1.49.1" }
+}

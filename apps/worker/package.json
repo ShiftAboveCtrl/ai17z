@@ -1,0 +1,14 @@
+{
+  "name": "@xbam/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@xbam/shared": "*",
+    "@xbam/database": "*",
+    "@xbam/jobs": "*",
+    "@xbam/runtime": "*",
+    "@xbam/channels": "*",
+    "@xbam/browser": "*"
+  }
+}

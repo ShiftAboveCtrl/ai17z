@@ -1,0 +1,89 @@
+name: xbam
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-xbam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-xbam}
+      POSTGRES_DB: ${POSTGRES_DB:-xbam}
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - xbam_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-xbam} -d ${POSTGRES_DB:-xbam}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+    restart: unless-stopped
+    command: ["npm", "run", "start:api"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-xbam}:${POSTGRES_PASSWORD:-xbam}@postgres:5432/${POSTGRES_DB:-xbam}
+      XBAM_MASTER_KEY: ${XBAM_MASTER_KEY}
+      XBAM_API_PORT: "8787"
+      XBAM_API_HOST: 0.0.0.0
+      XBAM_CORS_ORIGINS: ${XBAM_CORS_ORIGINS:-http://localhost:8080}
+      XBAM_STORAGE_DIR: /data/storage
+      XBAM_RUN_MIGRATIONS: "1"
+    ports:
+      - "8787:8787"
+    volumes:
+      - xbam_storage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    restart: unless-stopped
+    command: ["npm", "run", "start:worker"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-xbam}:${POSTGRES_PASSWORD:-xbam}@postgres:5432/${POSTGRES_DB:-xbam}
+      XBAM_MASTER_KEY: ${XBAM_MASTER_KEY}
+      XBAM_STORAGE_DIR: /data/storage
+      XBAM_BROWSER_PROFILE_DIR: /data/browser-profiles
+      XBAM_BROWSER_ENABLED: ${XBAM_BROWSER_ENABLED:-1}
+      XBAM_BROWSER_HEADLESS: "1"
+      XBAM_WORKER_CONCURRENCY: ${XBAM_WORKER_CONCURRENCY:-2}
+    volumes:
+      - xbam_storage:/data/storage
+      - xbam_browser:/data/browser-profiles
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        VITE_XBAM_API_URL: ""
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  xbam_pgdata:
+  xbam_storage:
+  xbam_browser:
