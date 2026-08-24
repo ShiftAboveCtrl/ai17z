@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  body {
+    @apply bg-ink text-bone font-sans antialiased;
+    /* The page itself never scrolls sideways, whatever a panel inside it does. */
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background: #bbccd7;
+    color: #0c0c0c;
+  }
+
+  /* Focus is never removed, only restyled, so keyboard users always see it. */
+  :focus-visible {
+    outline: 2px solid #bbccd7;
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0c0c0c;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #262626;
+    border-radius: 99px;
+    border: 3px solid #0c0c0c;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3a3a3a;
+  }
+}
+
+@layer components {
+  /* The monumental heading treatment: cool gradient, very tight tracking. */
+  .monument {
+    @apply font-sans font-semibold leading-[0.86] tracking-monument;
+    background: linear-gradient(180deg, #646973 0%, #bbccd7 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .rule {
+    @apply border-t border-ink-line;
+  }
+
+  .eyebrow {
+    @apply font-mono text-[11px] uppercase tracking-[0.22em] text-bone-faint;
+  }
+
+  .panel {
+    @apply rounded-xl border border-ink-line bg-ink-raised;
+  }
+
+  .field {
+    @apply w-full rounded-lg border border-ink-line bg-ink-panel px-3.5 py-2.5 text-[15px] text-bone
+           placeholder:text-bone-faint transition-colors duration-200
+           focus:border-signal-calm/60 focus:outline-none;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium
+           transition-all duration-200 ease-stage disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply btn bg-bone text-ink hover:bg-white;
+  }
+  .btn-ghost {
+    @apply btn border border-ink-line text-bone hover:border-bone-faint hover:bg-white/[0.03];
+  }
+  .btn-quiet {
+    @apply btn text-bone-dim hover:text-bone;
+  }
+  .btn-danger {
+    @apply btn border border-signal-fail/40 text-signal-fail hover:bg-signal-fail/10;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-ink-line px-2.5 py-1
+           font-mono text-[10px] uppercase tracking-[0.14em] text-bone-dim;
+  }
+
+  /* Wide content scrolls inside its own container, never the page. */
+  .scroll-x {
+    @apply overflow-x-auto;
+    scrollbar-width: thin;
+  }
+}
