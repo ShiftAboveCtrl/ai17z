@@ -16,6 +16,7 @@ export * as observability from './repositories/observability';
 export * as ops from './repositories/ops';
 export * as prompts from './repositories/prompts';
 export * as browserTasks from './repositories/browserTasks';
+export * as legacyLedger from './repositories/legacyLedger';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.
