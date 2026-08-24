@@ -43,9 +43,11 @@ function trimToLimit(text: string, limit: number): string {
   if (text.length <= limit) return text;
   const window = text.slice(0, limit);
   const sentenceEnd = Math.max(window.lastIndexOf('. '), window.lastIndexOf('! '), window.lastIndexOf('? '));
-  if (sentenceEnd > limit * 0.5) return window.slice(0, sentenceEnd + 1).trim();
+  // A complete sentence reads better than a longer fragment, so it wins even
+  // when it gives up some of the allowance.
+  if (sentenceEnd > limit * 0.4) return window.slice(0, sentenceEnd + 1).trim();
   const wordEnd = window.lastIndexOf(' ');
-  return (wordEnd > limit * 0.5 ? window.slice(0, wordEnd) : window).trim();
+  return (wordEnd > limit * 0.4 ? window.slice(0, wordEnd) : window).trim();
 }
 
 /**
