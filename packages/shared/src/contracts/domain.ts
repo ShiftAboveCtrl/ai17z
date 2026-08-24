@@ -150,6 +150,9 @@ export const ModelParameters = z.object({
   frequencyPenalty: z.number().min(-2).max(2).optional(),
   presencePenalty: z.number().min(-2).max(2).optional(),
   stop: z.array(z.string()).max(8).optional(),
+  /** Optional real prices, per 1k tokens. Cost is only estimated when set. */
+  costPer1kPromptUsd: z.number().min(0).max(1000).optional(),
+  costPer1kCompletionUsd: z.number().min(0).max(1000).optional(),
 });
 export type ModelParameters = z.infer<typeof ModelParameters>;
 
