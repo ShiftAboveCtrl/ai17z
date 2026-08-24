@@ -5,6 +5,7 @@ import {
   agents as agentsRepo,
   conversations as conversationsRepo,
   jobs as jobsRepo,
+  legacyLedger,
   memories as memoriesRepo,
   observability,
   ops,
@@ -341,6 +342,24 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   }
 
   const signature = targetRef ? contentSignature(targetRef, output) : null;
+
+  // A previous system may already have sent this exact text to this target.
+  if (!job.dryRun && targetRef) {
+    const legacy = legacyLedger.legacySignature(targetRef, output);
+    if (await legacyLedger.legacyActionExists(bundle.agent.id, legacy)) {
+      await jobsRepo.updateJob(job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
+      await observability.emitTrace({
+        jobId: job.id,
+        agentId: bundle.agent.id,
+        type: 'ACTION_SKIPPED_DUPLICATE',
+        level: 'warn',
+        message: 'A previous system already sent this exact text to this target. Nothing was posted.',
+        data: { legacySignature: legacy },
+      });
+      return;
+    }
+  }
+
   if (!job.dryRun && signature && (await actionsRepo.contentAlreadySent(bundle.agent.id, signature))) {
     await jobsRepo.updateJob(job.id, {
       status: 'EXECUTED',

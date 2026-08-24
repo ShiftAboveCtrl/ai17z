@@ -49,7 +49,7 @@ export function AgentPage() {
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
         if (visible[0]?.target.id) setActive(visible[0].target.id);
       },
-      { rootMargin: '-25% 0px -55% 0px', threshold: [0.1, 0.4] },
+      { rootMargin: '-18% 0px -72% 0px', threshold: [0, 0.25, 0.6] },
     );
     for (const [id] of SECTIONS) {
       const node = document.getElementById(id);
