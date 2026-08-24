@@ -56,7 +56,9 @@ export async function ingestNormalizedEvent(options: IngestOptions): Promise<Ing
 
   const template = await promptsRepo.getActiveTemplate(REPLY_TEMPLATE_KEY);
 
-  return withTransaction(async (tx) => {
+  const pendingTraces: Array<{ jobId: string; agentId: string; data: Record<string, unknown> }> = [];
+
+  const outcome = await withTransaction(async (tx) => {
     const { event: stored, created: eventCreated } = await eventsRepo.ingestEvent(tx, accountId, event);
     const outcome: IngestOutcome = { eventId: stored.id, eventCreated, jobs: [], skipped: [] };
 
@@ -127,11 +129,11 @@ export async function ingestNormalizedEvent(options: IngestOptions): Promise<Ing
       outcome.jobs.push({ job, created, agentId: agent.id });
 
       if (created) {
-        await observability.emitTrace({
+        // The trace row has a foreign key to jobs, and trace writes go through
+        // their own connection, so this cannot be emitted until we have committed.
+        pendingTraces.push({
           jobId: job.id,
           agentId: agent.id,
-          type: 'JOB_CREATED',
-          message: `${event.type} from @${event.remoteAuthorHandle ?? 'unknown'} on ${event.channel}`,
           data: {
             dryRun: job.dryRun,
             actionType: link.actionType,
@@ -151,4 +153,16 @@ export async function ingestNormalizedEvent(options: IngestOptions): Promise<Ing
     });
     return outcome;
   });
+
+  for (const trace of pendingTraces) {
+    await observability.emitTrace({
+      jobId: trace.jobId,
+      agentId: trace.agentId,
+      type: 'JOB_CREATED',
+      message: `${event.type} from @${event.remoteAuthorHandle ?? 'unknown'} on ${event.channel}`,
+      data: trace.data,
+    });
+  }
+
+  return outcome;
 }

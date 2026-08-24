@@ -115,7 +115,9 @@ function splitSentences(text: string): string[] {
 function tidyFact(text: string): string {
   return text
     .replace(/^["'`]+|["'`]+$/g, '')
-    .replace(/[,;:]\s*$/, '')
+    // Trailing sentence punctuation is noise on a stored fact, and it would make
+    // "my favorite number is 41" and "my favorite number is 41." two memories.
+    .replace(/[.,;:!]+\s*$/, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 300);
