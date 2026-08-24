@@ -16,3 +16,6 @@ test-results/
 .browser-profiles/
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+test-results/
+playwright-report/
+var/
