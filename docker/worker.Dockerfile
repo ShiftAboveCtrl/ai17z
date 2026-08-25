@@ -1,10 +1,15 @@
 # XBAM worker image.
 #
+# The tag below MUST match the exact `playwright` version in
+# packages/browser/package.json. The image ships the browser binaries for that
+# release and nothing else, so a mismatch fails at launch, not at build.
+# tests/unit/playwrightVersion.test.ts enforces it.
+#
 # Built on the Playwright base image because the worker is the only process that
 # drives a browser. It is a large image; if you never use a browser channel, set
 # XBAM_BROWSER_ENABLED=0 and the worker will refuse browser work cleanly instead
 # of failing halfway through a job.
-FROM mcr.microsoft.com/playwright:v1.49.1-jammy AS runtime
+FROM mcr.microsoft.com/playwright:v1.62.1-jammy AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false

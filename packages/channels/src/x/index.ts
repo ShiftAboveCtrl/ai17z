@@ -32,6 +32,7 @@ async function withSession<T>(ctx: ChannelContext, fn: (session: LeasedSession) 
     mode: ctx.session?.mode ?? 'MANAGED',
     profileDir: ctx.session?.profileDir ?? defaultProfileDir(ctx.account.id),
     cdpUrl: ctx.session?.cdpUrl ?? null,
+    channel: ctx.session?.channel ?? null,
     headless: envBool('XBAM_BROWSER_HEADLESS', false),
   });
   try {

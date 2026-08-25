@@ -1,8 +1,9 @@
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { BrowserContext, Page } from 'playwright';
 import { PipelineError, createLogger, envBool, errorMessage } from '@xbam/shared';
-import type { LeasedSession, SessionConfig } from './types';
+import type { BrowserChannel, LeasedSession, SessionConfig } from './types';
 
 const log = createLogger('browser');
 
@@ -50,12 +51,7 @@ async function openContext(config: SessionConfig): Promise<Entry> {
       const context = browser.contexts()[0] ?? (await browser.newContext());
       return { context, mode: 'CDP', createdAt: Date.now(), lastUsedAt: Date.now(), closing: false };
     } catch (error) {
-      throw PipelineError.retryable(
-        'cdp_connect_failed',
-        `Could not attach to Chrome at ${config.cdpUrl}. Is it running with --remote-debugging-port?`,
-        { cdpUrl: config.cdpUrl },
-        error,
-      );
+      throw explainCdpFailure(error, config.cdpUrl);
     }
   }
 
@@ -64,20 +60,129 @@ async function openContext(config: SessionConfig): Promise<Entry> {
   }
   await mkdir(config.profileDir, { recursive: true });
   try {
+    // Driving the real installed browser rather than the bundled Chromium is the
+    // point when an account has to act with a session a person signed into: the
+    // profile carries that session, and it persists across restarts.
+    const channel: BrowserChannel | undefined =
+      config.channel && config.channel !== 'chromium' ? config.channel : undefined;
+
     const context = await chromium.launchPersistentContext(config.profileDir, {
       headless: config.headless,
+      ...(channel ? { channel } : {}),
       viewport: { width: 1280, height: 900 },
-      args: ['--disable-blink-features=AutomationControlled', '--no-first-run', '--no-default-browser-check'],
+      args: ['--no-first-run', '--no-default-browser-check'],
     });
     return { context, mode: 'MANAGED', createdAt: Date.now(), lastUsedAt: Date.now(), closing: false };
   } catch (error) {
-    throw PipelineError.retryable(
-      'browser_launch_failed',
-      `Could not launch the managed browser: ${errorMessage(error)}`,
+    throw explainLaunchFailure(error, config);
+  }
+}
+
+/**
+ * Attaching from a container to a browser on the host is the common way this
+ * goes wrong, and the raw error does not say so. Chrome binds the debug port to
+ * loopback and rejects requests whose Host header is not localhost, so a
+ * container reaching host.docker.internal is refused even when the port is open.
+ */
+function explainCdpFailure(error: unknown, cdpUrl: string): PipelineError {
+  const message = errorMessage(error);
+  const inContainer = existsSync('/.dockerenv');
+  const loopback = (() => {
+    try {
+      const host = new URL(cdpUrl).hostname;
+      return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+    } catch {
+      return false;
+    }
+  })();
+
+  if (inContainer && loopback) {
+    return PipelineError.permanent(
+      'cdp_unreachable_from_container',
+      `This worker runs in a container, so ${cdpUrl} is the container itself, not your machine. Run the worker on the same machine as the browser (npm run dev:worker) and it will attach to this URL directly.`,
+      { cdpUrl },
+      error,
+    );
+  }
+
+  if (inContainer) {
+    return PipelineError.permanent(
+      'cdp_unreachable_from_container',
+      `The worker is containerised and could not attach to ${cdpUrl}. Chrome only accepts debug connections whose Host header is localhost, so reaching it from a container is refused even when the port is reachable. Run the worker on the machine where the browser is.`,
+      { cdpUrl },
+      error,
+    );
+  }
+
+  if (/ECONNREFUSED|connect ECONNREFUSED|fetch failed/i.test(message)) {
+    return PipelineError.retryable(
+      'cdp_connect_refused',
+      `Nothing is listening at ${cdpUrl}. Start the browser with --remote-debugging-port first (scripts/launch-chrome-cdp.ps1 does this), then try again.`,
+      { cdpUrl },
+      error,
+    );
+  }
+
+  return PipelineError.retryable(
+    'cdp_connect_failed',
+    `Could not attach to the browser at ${cdpUrl}: ${message}`,
+    { cdpUrl },
+    error,
+  );
+}
+
+/**
+ * Playwright reports a version mismatch and a missing browser as the same thing:
+ * a path that does not exist. Both are configuration problems with different
+ * fixes, so they are separated here rather than passed through raw.
+ */
+function explainLaunchFailure(error: unknown, config: SessionConfig): PipelineError {
+  const message = errorMessage(error);
+  const channel = config.channel ?? 'chromium';
+
+  if (/Please update docker image|was just updated to/i.test(message)) {
+    const required = message.split('required:')[1]?.trim().split(' ')[0]?.trim() || 'the matching tag';
+    return PipelineError.permanent(
+      'playwright_image_mismatch',
+      `The worker image ships different browser binaries than the installed Playwright. Rebuild the worker image against ${required}, or pin Playwright to the version the image carries. The two must match exactly.`,
+      { required },
+      error,
+    );
+  }
+
+  if (channel !== 'chromium' && /Executable doesn't exist|Chromium distribution.*is not found/i.test(message)) {
+    return PipelineError.permanent(
+      'browser_channel_missing',
+      `This account is set to drive real ${channel === 'msedge' ? 'Microsoft Edge' : 'Google Chrome'}, which is not installed where the worker runs. Install it on that machine, or switch the account to the bundled Chromium.`,
+      { channel },
+      error,
+    );
+  }
+
+  if (/Executable doesn't exist/i.test(message)) {
+    return PipelineError.permanent(
+      'browser_not_installed',
+      'The worker has no browser binaries. Run "npx playwright install chromium" where the worker runs.',
+      {},
+      error,
+    );
+  }
+
+  if (/ProcessSingleton|profile appears to be in use|Failed to create a ProcessSingleton/i.test(message)) {
+    return PipelineError.permanent(
+      'profile_in_use',
+      `Another browser is already using the profile at ${config.profileDir}. Close it, or give this account its own profile directory.`,
       { profileDir: config.profileDir },
       error,
     );
   }
+
+  return PipelineError.retryable(
+    'browser_launch_failed',
+    `Could not launch the browser: ${message}`,
+    { profileDir: config.profileDir, channel },
+    error,
+  );
 }
 
 /**
@@ -136,8 +241,15 @@ export async function closeSession(accountId: string): Promise<void> {
   contexts.delete(accountId);
   entry.closing = true;
   try {
-    if (entry.mode === 'MANAGED') await entry.context.close();
-    else await entry.context.browser()?.close();
+    if (entry.mode === 'MANAGED') {
+      // We launched it, so we close it.
+      await entry.context.close();
+    } else {
+      // CDP browsers belong to the person who started them. Playwright detaches
+      // here rather than terminating the process, and it must stay that way:
+      // XBAM closing someone's signed-in browser would be a genuine harm.
+      await entry.context.browser()?.close();
+    }
   } catch (error) {
     log.warn('failed to close browser context cleanly', { accountId, message: errorMessage(error) });
   }

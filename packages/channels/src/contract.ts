@@ -13,6 +13,8 @@ export interface ChannelContext {
   /** Session configuration for channels that drive a browser. */
   session: {
     mode: 'MANAGED' | 'CDP';
+    /** Real installed browser, or the bundled Chromium. */
+    channel: 'chrome' | 'msedge' | 'chromium';
     profileDir: string | null;
     cdpUrl: string | null;
   } | null;
