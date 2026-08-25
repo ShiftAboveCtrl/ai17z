@@ -118,6 +118,16 @@ Only the worker opens a browser. A Chromium profile can be held by one process
 at a time, so the API records intent in `browser_tasks` and the worker executes
 it. If you add a session action, add it there, not to the API.
 
+Playwright is pinned exactly, in three places that must move together:
+`packages/browser/package.json`, `docker/worker.Dockerfile`, and the root
+`@playwright/test`. The image ships binaries for one release only, so a caret
+range means the container fails on first launch with a missing-file error that
+never mentions versions. `tests/unit/playwrightVersion.test.ts` enforces it.
+
+A containerised worker cannot drive a browser on the host. For real sessions, run
+the worker on the machine that has the browser. See
+`docs/operations/BROWSER_SESSIONS.md`.
+
 ## Secrets
 
 Provider API keys are sealed with AES-256-GCM under `XBAM_MASTER_KEY` and are

@@ -63,6 +63,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         await accountsRepo.upsertBrowserSession({
           accountId: account.id,
           mode: input.browser?.mode ?? 'MANAGED',
+          channel: input.browser?.channel ?? 'chromium',
           profileDir: defaultProfileDir(account.id),
           cdpUrl: input.browser?.cdpUrl || null,
         });
@@ -82,7 +83,13 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
           displayName: z.string().max(200).optional(),
           enabled: z.boolean().optional(),
           settings: z.record(z.unknown()).optional(),
-          browser: z.object({ mode: z.enum(['MANAGED', 'CDP']), cdpUrl: z.string().max(500).default('') }).optional(),
+          browser: z
+            .object({
+              mode: z.enum(['MANAGED', 'CDP']),
+              channel: z.enum(['chrome', 'msedge', 'chromium']).default('chromium'),
+              cdpUrl: z.string().max(500).default(''),
+            })
+            .optional(),
         }),
         request,
       );
@@ -90,6 +97,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         await accountsRepo.upsertBrowserSession({
           accountId: account.id,
           mode: body.browser.mode,
+          channel: body.browser.channel,
           profileDir: defaultProfileDir(account.id),
           cdpUrl: body.browser.cdpUrl || null,
         });

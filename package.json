@@ -32,14 +32,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "import:ai4cz": "tsx tools/import-ai4cz/src/cli.ts"
+    "import:ai4cz": "tsx tools/import-ai4cz/src/cli.ts",
+    "browser:cdp": "powershell -ExecutionPolicy Bypass -File scripts/launch-chrome-cdp.ps1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "concurrently": "^9.1.2",
     "typescript": "^5.7.2",
     "vitest": "^3.0.5",
-    "@playwright/test": "^1.49.1",
+    "@playwright/test": "1.62.1",
     "vite": "^6.0.7"
   },
   "dependencies": {

@@ -64,13 +64,19 @@ mid-job, and the mock channel continues to work normally.
 
 ## Browser sign-in in Docker
 
-The worker container is headless and has no display, so "Open sign-in" cannot
-show you a window there. Two options:
+The worker container is headless, has no display, and has its own fresh Chromium
+with none of your cookies. It cannot use a browser on your machine either: Chrome
+refuses debug connections whose Host header is not localhost.
 
-1. Run the worker on the host (`npm run dev:worker`) while the rest of the stack
-   runs in Docker. It shares the same database.
-2. Sign in to Chrome yourself on the host with
-   `--remote-debugging-port=9222`, then set the account to CDP mode with that URL.
+So if an agent has to act with a session you signed into, run the worker on your
+machine and leave the rest in Docker:
+
+```bash
+docker compose up -d --scale worker=0
+npm run dev:worker
+```
+
+[Driving a real browser](BROWSER_SESSIONS.md) covers both arrangements.
 
 ## Restart behaviour
 

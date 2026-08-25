@@ -21,6 +21,7 @@ export async function buildChannelContext(account: Account, jobId: string | null
     session: session
       ? {
           mode: session.mode,
+          channel: session.channel ?? 'chromium',
           profileDir: session.profileDir ?? defaultProfileDir(account.id),
           cdpUrl: session.cdpUrl,
         }

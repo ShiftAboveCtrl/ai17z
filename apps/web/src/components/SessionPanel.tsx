@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Camera, LogIn, Power, RefreshCw, Trash2 } from 'lucide-react';
-import { ApiError, artifactObjectUrl, get, post } from '@app/lib/api';
+import { ApiError, artifactObjectUrl, get, patch, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AccountRow, BrowserTask, DiagnosticRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
-import { ErrorPanel, Spinner, StatusDot } from './ui';
+import { ErrorPanel, Field, SavedTick, Spinner, StatusDot } from './ui';
 
 interface SessionData {
   account: AccountRow;
-  session: { mode: 'MANAGED' | 'CDP'; status: string; cdpUrl: string | null; lastCheckedAt: string | null; lastError: string | null } | null;
+  session: {
+    mode: 'MANAGED' | 'CDP';
+    channel: 'chrome' | 'msedge' | 'chromium';
+    status: string;
+    cdpUrl: string | null;
+    lastCheckedAt: string | null;
+    lastError: string | null;
+  } | null;
   recentTasks: BrowserTask[];
   diagnostics: DiagnosticRow[];
 }
@@ -102,18 +109,7 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
         )}
       </div>
 
-      {browserBacked && data.session && (
-        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-ink-line bg-ink-line text-sm">
-          <div className="bg-ink px-3.5 py-3">
-            <dt className="font-mono text-[9px] uppercase tracking-[0.18em] text-bone-faint">Mode</dt>
-            <dd className="mt-1 text-bone">{data.session.mode === 'CDP' ? 'Attached over CDP' : 'Managed profile'}</dd>
-          </div>
-          <div className="bg-ink px-3.5 py-3">
-            <dt className="font-mono text-[9px] uppercase tracking-[0.18em] text-bone-faint">Browser</dt>
-            <dd className="mt-1 text-bone">{data.session.status}</dd>
-          </div>
-        </dl>
-      )}
+      {browserBacked && <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />}
 
       {browserBacked ? (
         <div className="flex flex-wrap gap-2">
@@ -168,6 +164,121 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+const CHANNELS = [
+  { value: 'chrome', label: 'Real Chrome', hint: 'Drives the Chrome installed on the machine running the worker.' },
+  { value: 'msedge', label: 'Real Edge', hint: 'Drives the installed Microsoft Edge.' },
+  { value: 'chromium', label: 'Bundled Chromium', hint: 'The build Playwright ships. This is what the container has.' },
+] as const;
+
+/**
+ * Browser configuration for an account.
+ *
+ * Managed mode owns a persistent profile: you sign in once through Open sign-in
+ * and the session lives in that profile. CDP mode attaches to a browser you
+ * started yourself, which is the route when the session must be one you already
+ * have open.
+ */
+function BrowserConfig({
+  accountId,
+  session,
+  onSaved,
+}: {
+  accountId: string;
+  session: SessionData['session'];
+  onSaved: () => void;
+}) {
+  const [mode, setMode] = useState<'MANAGED' | 'CDP'>(session?.mode ?? 'MANAGED');
+  const [channel, setChannel] = useState<string>(session?.channel ?? 'chromium');
+  const [cdpUrl, setCdpUrl] = useState(session?.cdpUrl ?? '');
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMode(session?.mode ?? 'MANAGED');
+    setChannel(session?.channel ?? 'chromium');
+    setCdpUrl(session?.cdpUrl ?? '');
+  }, [session?.mode, session?.channel, session?.cdpUrl]);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await patch(`/api/accounts/${accountId}`, { browser: { mode, channel, cdpUrl } });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2400);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'That configuration could not be saved.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 rounded-lg border border-ink-line bg-ink-panel/60 p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="eyebrow">Browser</p>
+        <span className="font-mono text-[10px] text-bone-faint">{session?.status ?? 'unknown'}</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {(['MANAGED', 'CDP'] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => setMode(option)}
+            className={`rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
+              mode === option ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone' : 'border-ink-line text-bone-dim hover:border-bone-faint'
+            }`}
+          >
+            <span className="block">{option === 'MANAGED' ? 'Managed profile' : 'Attach over CDP'}</span>
+            <span className="mt-0.5 block text-[11px] leading-snug text-bone-faint">
+              {option === 'MANAGED' ? 'XBAM launches and owns the browser' : 'XBAM attaches to one you started'}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {mode === 'MANAGED' ? (
+        <Field label="Browser build" htmlFor="bchannel" hint={CHANNELS.find((c) => c.value === channel)?.hint}>
+          <select id="bchannel" className="field" value={channel} onChange={(e) => setChannel(e.target.value)}>
+            {CHANNELS.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : (
+        <Field
+          label="CDP URL"
+          htmlFor="bcdp"
+          hint="Start the browser yourself with --remote-debugging-port, then point XBAM at it. It must be reachable from wherever the worker runs."
+        >
+          <input
+            id="bcdp"
+            className="field font-mono text-[13px]"
+            value={cdpUrl}
+            onChange={(e) => setCdpUrl(e.target.value)}
+            placeholder="http://127.0.0.1:9222"
+          />
+        </Field>
+      )}
+
+      {error && <p className="text-sm text-signal-fail">{error}</p>}
+
+      <div className="flex items-center gap-3">
+        <button type="button" className="btn-ghost" onClick={() => void save()} disabled={busy}>
+          {busy && <Spinner className="h-3.5 w-3.5" />}
+          Save browser settings
+        </button>
+        <SavedTick visible={saved} />
+      </div>
     </div>
   );
 }
