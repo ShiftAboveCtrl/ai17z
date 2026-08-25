@@ -12,6 +12,11 @@ import {
   ProviderKind,
 } from './enums';
 
+/** Which browser build an account drives. Real Chrome carries a real session. */
+export const BROWSER_CHANNELS = ['chrome', 'msedge', 'chromium'] as const;
+export const BrowserChannel = z.enum(BROWSER_CHANNELS);
+export type BrowserChannel = (typeof BROWSER_CHANNELS)[number];
+
 export const Agent = z.object({
   id: z.string().uuid(),
   ownerId: z.string().uuid(),
@@ -81,6 +86,7 @@ export const CreateAccountInput = z.object({
   browser: z
     .object({
       mode: BrowserMode.default('MANAGED'),
+      channel: BrowserChannel.default('chromium'),
       cdpUrl: z.string().max(500).default(''),
     })
     .optional(),
@@ -194,6 +200,7 @@ export const BrowserSession = z.object({
   id: z.string().uuid(),
   accountId: z.string().uuid(),
   mode: BrowserMode,
+  channel: BrowserChannel,
   profileDir: z.string().nullable(),
   cdpUrl: z.string().nullable(),
   status: z.string(),

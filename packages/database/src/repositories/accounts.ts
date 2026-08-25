@@ -185,16 +185,18 @@ export async function getBrowserSession(accountId: string): Promise<BrowserSessi
 export async function upsertBrowserSession(input: {
   accountId: string;
   mode: 'MANAGED' | 'CDP';
+  channel?: 'chrome' | 'msedge' | 'chromium' | null;
   profileDir?: string | null;
   cdpUrl?: string | null;
   status?: string;
   lastError?: string | null;
 }): Promise<BrowserSession> {
   const row = await queryOne(
-    `INSERT INTO browser_sessions (account_id, mode, profile_dir, cdp_url, status, last_error, last_checked_at)
-     VALUES ($1,$2,$3,$4,coalesce($5,'UNKNOWN'),$6, CASE WHEN $5 IS NULL THEN NULL ELSE now() END)
+    `INSERT INTO browser_sessions (account_id, mode, channel, profile_dir, cdp_url, status, last_error, last_checked_at)
+     VALUES ($1,$2,coalesce($3,'chromium'),$4,$5,coalesce($6,'UNKNOWN'),$7, CASE WHEN $6 IS NULL THEN NULL ELSE now() END)
      ON CONFLICT (account_id) DO UPDATE
        SET mode = excluded.mode,
+           channel = coalesce($3, browser_sessions.channel),
            profile_dir = coalesce(excluded.profile_dir, browser_sessions.profile_dir),
            cdp_url = excluded.cdp_url,
            status = coalesce(excluded.status, browser_sessions.status),
@@ -205,6 +207,7 @@ export async function upsertBrowserSession(input: {
     [
       input.accountId,
       input.mode,
+      input.channel ?? null,
       input.profileDir ?? null,
       input.cdpUrl ?? null,
       input.status ?? null,

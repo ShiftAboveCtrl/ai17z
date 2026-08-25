@@ -66,6 +66,7 @@ export class BrowserTaskRunner {
     const ctx = await buildChannelContext(account, null);
     const profileDir = ctx.session?.profileDir ?? defaultProfileDir(account.id);
     const mode = ctx.session?.mode ?? 'MANAGED';
+    const channel = ctx.session?.channel ?? null;
 
     switch (task.kind) {
       case 'CONNECT': {
@@ -80,6 +81,7 @@ export class BrowserTaskRunner {
         await accountsRepo.upsertBrowserSession({
           accountId: account.id,
           mode,
+          channel,
           profileDir,
           cdpUrl: ctx.session?.cdpUrl ?? null,
           status: result.status,
@@ -99,6 +101,7 @@ export class BrowserTaskRunner {
         await accountsRepo.upsertBrowserSession({
           accountId: account.id,
           mode,
+          channel,
           profileDir,
           cdpUrl: ctx.session?.cdpUrl ?? null,
           status: health.status,
@@ -110,7 +113,7 @@ export class BrowserTaskRunner {
       case 'OPEN_AUTH': {
         // Opens a real window on the account profile and leaves it open so the
         // person signs in themselves. XBAM never handles their credentials.
-        const session = await leaseSession({ accountId: account.id, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, headless: false });
+        const session = await leaseSession({ accountId: account.id, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: false });
         try {
           await session.page.goto('https://x.com/login', { waitUntil: 'domcontentloaded', timeout: 45_000 });
         } finally {
@@ -125,7 +128,7 @@ export class BrowserTaskRunner {
       }
 
       case 'SCREENSHOT': {
-        const session = await leaseSession({ accountId: account.id, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, headless: true });
+        const session = await leaseSession({ accountId: account.id, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: true });
         try {
           const shot = await captureScreenshot(session.page, storageDir(), 'manual_capture');
           if (!shot) return { detail: 'Could not capture a screenshot from the current page.' };
