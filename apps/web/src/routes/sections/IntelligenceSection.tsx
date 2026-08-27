@@ -30,6 +30,8 @@ export function IntelligenceSection({
   const [model, setModel] = useState('');
   const [temperature, setTemperature] = useState('');
   const [maxTokens, setMaxTokens] = useState('');
+  const [maxRetries, setMaxRetries] = useState('');
+  const [reasoning, setReasoning] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +41,8 @@ export function IntelligenceSection({
     setModel(existing?.model ?? '');
     setTemperature(existing?.parameters.temperature != null ? String(existing.parameters.temperature) : '');
     setMaxTokens(existing?.parameters.maxTokens != null ? String(existing.parameters.maxTokens) : '');
+    setMaxRetries(existing?.parameters.maxRetries != null ? String(existing.parameters.maxRetries) : '');
+    setReasoning(typeof existing?.parameters.reasoningEffort === 'string' ? existing.parameters.reasoningEffort : '');
     setError(null);
     setEditing(role);
   };
@@ -48,9 +52,11 @@ export function IntelligenceSection({
     setBusy(true);
     setError(null);
     try {
-      const parameters: Record<string, number> = {};
+      const parameters: Record<string, number | string> = {};
       if (temperature.trim()) parameters.temperature = Number(temperature);
       if (maxTokens.trim()) parameters.maxTokens = Number(maxTokens);
+      if (maxRetries.trim()) parameters.maxRetries = Number(maxRetries);
+      if (reasoning) parameters.reasoningEffort = reasoning;
       await put(`/api/agents/${agentId}/models`, { role: editing, providerCredentialId: providerId, model: model.trim(), parameters });
       setEditing(null);
       onChanged();
@@ -131,6 +137,19 @@ export function IntelligenceSection({
             </Field>
             <Field label="Max tokens" htmlFor="mmax">
               <input id="mmax" className="field" inputMode="numeric" value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder="300" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Attempts" htmlFor="mretry" hint="Tries against this provider before the fallback takes over.">
+              <input id="mretry" className="field" inputMode="numeric" value={maxRetries} onChange={(e) => setMaxRetries(e.target.value)} placeholder="2" />
+            </Field>
+            <Field label="Reasoning effort" htmlFor="mreason" hint="Reasoning models only. Ignored elsewhere.">
+              <select id="mreason" className="field" value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
+                <option value="">Not set</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
             </Field>
           </div>
           {error && <p className="text-sm text-signal-fail">{error}</p>}
