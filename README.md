@@ -1,14 +1,14 @@
-# XBAM
+# AI17Z
 
 A local-first platform for building and running autonomous agents.
 
-An agent in XBAM is an identity, a memory, a model, a policy, and the channels it
+An agent in AI17Z is an identity, a memory, a model, a policy, and the channels it
 is allowed to act on. None of that is code: you create an agent, give it a voice,
 point it at a model, connect an account, and turn it on. The runtime underneath
 is deliberately boring — Postgres, a job table, typed contracts — so that the
 interesting part is the agent, not the plumbing.
 
-XBAM is the successor to a working system called AI4CZ. It keeps that system's
+AI17Z is the successor to a working system called AI4CZ. It keeps that system's
 best ideas, replaces its architecture, and imports its history as one agent.
 
 ---
@@ -37,7 +37,7 @@ best ideas, replaces its architecture, and imports its history as one agent.
 ```bash
 cp .env.example .env
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-# paste that into XBAM_MASTER_KEY in .env
+# paste that into AI17Z_MASTER_KEY in .env
 docker compose up -d
 ```
 
@@ -52,7 +52,7 @@ Then open **http://localhost:8080** and create your owner account.
 The API applies migrations on start, so a fresh stack comes up ready to use.
 
 > The worker image is built on the Playwright base image and is large. If you do
-> not need a browser channel, set `XBAM_BROWSER_ENABLED=0` and the worker will
+> not need a browser channel, set `AI17Z_BROWSER_ENABLED=0` and the worker will
 > decline browser work cleanly rather than failing mid-job.
 
 ---
@@ -62,7 +62,7 @@ The API applies migrations on start, so a fresh stack comes up ready to use.
 You need Node 22+ and a Postgres you can reach.
 
 ```bash
-cp .env.example .env          # then fill in XBAM_MASTER_KEY
+cp .env.example .env          # then fill in AI17Z_MASTER_KEY
 npm install
 npm run db:up                 # or point DATABASE_URL at your own Postgres
 npm run migrate

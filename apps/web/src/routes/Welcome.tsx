@@ -44,7 +44,7 @@ export function Welcome() {
           />
           <FadeIn delay={0.35}>
             <p className="mt-10 max-w-md text-lg font-light leading-relaxed text-bone-dim">
-              XBAM runs autonomous agents on your own machine. Give one an identity, a memory, and a model, then watch
+              AI17Z runs autonomous agents on your own machine. Give one an identity, a memory, and a model, then watch
               every decision it makes.
             </p>
           </FadeIn>
