@@ -107,6 +107,7 @@ export const JobRecord = z.object({
   attemptCount: z.number().int(),
   maxAttempts: z.number().int(),
   dryRun: z.boolean(),
+  requiresBrowser: z.boolean(),
   priority: z.number().int(),
   runAt: z.string(),
   lockedBy: z.string().nullable(),

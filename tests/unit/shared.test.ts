@@ -15,7 +15,10 @@ import {
 } from '@xbam/shared';
 
 beforeAll(() => {
-  process.env.XBAM_MASTER_KEY = randomBytes(32).toString('base64');
+  // Both names resolve to the master key, with AI17Z_ taking precedence. Tests
+  // that rotate the key must clear the other, or the old key silently wins.
+  delete process.env.XBAM_MASTER_KEY;
+  process.env.AI17Z_MASTER_KEY = randomBytes(32).toString('base64');
   resetMasterKeyCache();
 });
 
@@ -34,7 +37,7 @@ describe('secret sealing', () => {
 
   it('refuses to decrypt under a different master key', () => {
     const sealed = sealSecret('secret-value');
-    process.env.XBAM_MASTER_KEY = randomBytes(32).toString('base64');
+    process.env.AI17Z_MASTER_KEY = randomBytes(32).toString('base64');
     resetMasterKeyCache();
     expect(() => openSecret(sealed)).toThrow(/could not be decrypted/i);
   });

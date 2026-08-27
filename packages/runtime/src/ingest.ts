@@ -12,6 +12,7 @@ import {
   withTransaction,
 } from '@xbam/database';
 import { REPLY_TEMPLATE_KEY } from '@xbam/prompts';
+import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 
 const log = createLogger('ingest');
 
@@ -55,6 +56,11 @@ export async function ingestNormalizedEvent(options: IngestOptions): Promise<Ing
       : [];
 
   const template = await promptsRepo.getActiveTemplate(REPLY_TEMPLATE_KEY);
+
+  // Decided once, at ingest, so routing does not depend on which worker asks.
+  const requiresBrowser = isChannelImplemented(event.channel)
+    ? getChannelAdapter(event.channel).requiresBrowser
+    : false;
 
   const pendingTraces: Array<{ jobId: string; agentId: string; data: Record<string, unknown> }> = [];
 
@@ -125,6 +131,7 @@ export async function ingestNormalizedEvent(options: IngestOptions): Promise<Ing
         pipelineVersionId: agent.pipelineVersionId,
         promptTemplateVersionId: template.id,
         conversationId: conversation.id,
+        requiresBrowser,
       });
       outcome.jobs.push({ job, created, agentId: agent.id });
 

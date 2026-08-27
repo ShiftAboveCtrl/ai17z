@@ -9,11 +9,12 @@ export type BrowserTaskKind =
   | 'SCREENSHOT'
   | 'CLEAR'
   | 'DISCONNECT'
-  | 'INGEST';
+  | 'INGEST'
+  | 'PREFLIGHT';
 
 export interface BrowserTaskRow {
   id: string;
-  accountId: string;
+  accountId: string | null;
   kind: BrowserTaskKind;
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
   requestedBy: string | null;
@@ -26,7 +27,8 @@ export interface BrowserTaskRow {
 }
 
 export async function enqueueBrowserTask(input: {
-  accountId: string;
+  /** Null for system-level tasks such as preflight, which belong to no account. */
+  accountId: string | null;
   kind: BrowserTaskKind;
   requestedBy: string | null;
   params?: Record<string, unknown>;
@@ -41,12 +43,16 @@ export async function enqueueBrowserTask(input: {
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
     const active = await queryOne(
-      `SELECT * FROM browser_tasks WHERE account_id = $1 AND status IN ('PENDING','RUNNING')`,
-      [input.accountId],
+      input.accountId === null
+        ? `SELECT * FROM browser_tasks WHERE account_id IS NULL AND kind = $1 AND status IN ('PENDING','RUNNING')`
+        : `SELECT * FROM browser_tasks WHERE account_id = $1 AND status IN ('PENDING','RUNNING')`,
+      [input.accountId === null ? input.kind : input.accountId],
     );
     const existing = mapRow<BrowserTaskRow>(active);
     throw new ConflictError(
-      `A ${existing?.kind ?? 'browser'} task is already running for this account. Wait for it to finish.`,
+      input.accountId === null
+        ? `A ${input.kind} is already running. Wait for it to finish.`
+        : `A ${existing?.kind ?? 'browser'} task is already running for this account. Wait for it to finish.`,
       { taskId: existing?.id ?? null },
     );
   }
