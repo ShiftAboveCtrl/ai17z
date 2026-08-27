@@ -20,7 +20,7 @@ export function App() {
   if (loading) {
     return (
       <main className="flex min-h-dvh items-center justify-center">
-        <Loading label="Starting XBAM" />
+        <Loading label="Starting AI17Z" />
       </main>
     );
   }
@@ -29,7 +29,7 @@ export function App() {
     return (
       <main className="mx-auto flex min-h-dvh max-w-xl items-center px-6">
         <ErrorPanel
-          title="XBAM cannot reach its API."
+          title="AI17Z cannot reach its API."
           detail={`${error}\n\nStart the stack with "docker compose up -d", or run "npm run dev" if you are working locally.`}
           actions={
             <button type="button" className="btn-ghost" onClick={() => window.location.reload()}>

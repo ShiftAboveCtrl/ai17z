@@ -11,20 +11,22 @@ let cachedKey: Buffer | null = null;
  */
 export function getMasterKey(): Buffer {
   if (cachedKey) return cachedKey;
-  const raw = process.env.XBAM_MASTER_KEY?.trim();
+  // AI17Z_MASTER_KEY is preferred; XBAM_MASTER_KEY is honoured unchanged so that
+  // secrets sealed before the rename stay readable. Same bytes either way.
+  const raw = (process.env.AI17Z_MASTER_KEY ?? process.env.XBAM_MASTER_KEY)?.trim();
   if (!raw) {
     throw new UnsafeConfigurationError(
-      'XBAM_MASTER_KEY is not set. Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
+      'AI17Z_MASTER_KEY is not set. Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
     );
   }
   let key: Buffer;
   try {
     key = Buffer.from(raw, 'base64');
   } catch {
-    throw new UnsafeConfigurationError('XBAM_MASTER_KEY must be base64-encoded.');
+    throw new UnsafeConfigurationError('The master key must be base64-encoded.');
   }
   if (key.length !== 32) {
-    throw new UnsafeConfigurationError(`XBAM_MASTER_KEY must decode to exactly 32 bytes (got ${key.length}).`);
+    throw new UnsafeConfigurationError(`The master key must decode to exactly 32 bytes (got ${key.length}).`);
   }
   cachedKey = key;
   return key;

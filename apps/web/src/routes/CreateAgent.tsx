@@ -164,7 +164,7 @@ export function CreateAgent() {
       <div className="min-h-[22rem] space-y-6">
         {step === 0 && (
           <>
-            <Field label="Name" htmlFor="name" hint="Shown everywhere in XBAM and used as the agent display name.">
+            <Field label="Name" htmlFor="name" hint="Shown everywhere in AI17Z and used as the agent display name.">
               <input id="name" className="field" autoFocus value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder="Nova" />
             </Field>
             <Field label="Description" htmlFor="description" hint="For you, not for the model.">

@@ -42,7 +42,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
       setError(null);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not reach the XBAM API.');
+      setError(e instanceof ApiError ? e.message : 'Could not reach the AI17Z API.');
     } finally {
       setLoading(false);
     }

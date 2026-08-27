@@ -30,7 +30,7 @@ const ACTIONS = [
 
 /**
  * Session control. Cookies and tokens are never displayed: the panel shows what
- * XBAM knows about the session, not the session itself.
+ * AI17Z knows about the session, not the session itself.
  */
 export function SessionPanel({ accountId, onChanged }: { accountId: string; onChanged: () => void }) {
   const { data, error, loading, reload } = useResource<SessionData>(`/api/accounts/${accountId}/session`);
@@ -238,7 +238,7 @@ function BrowserConfig({
           >
             <span className="block">{option === 'MANAGED' ? 'Managed profile' : 'Attach over CDP'}</span>
             <span className="mt-0.5 block text-[11px] leading-snug text-bone-faint">
-              {option === 'MANAGED' ? 'XBAM launches and owns the browser' : 'XBAM attaches to one you started'}
+              {option === 'MANAGED' ? 'AI17Z launches and owns the browser' : 'AI17Z attaches to one you started'}
             </span>
           </button>
         ))}
@@ -258,7 +258,7 @@ function BrowserConfig({
         <Field
           label="CDP URL"
           htmlFor="bcdp"
-          hint="Start the browser yourself with --remote-debugging-port, then point XBAM at it. It must be reachable from wherever the worker runs."
+          hint="Start the browser yourself with --remote-debugging-port, then point AI17Z at it. It must be reachable from wherever the worker runs."
         >
           <input
             id="bcdp"
