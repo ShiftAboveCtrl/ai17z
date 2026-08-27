@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ModelRole, PersonaDraft, PipelineDraft, PolicyConfig, SetModelConfigInput } from '@xbam/shared/contracts';
-import { ForbiddenError, NotFoundError } from '@xbam/shared';
+import { ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -10,6 +10,7 @@ import {
   providers as providersRepo,
   type UserRow,
 } from '@xbam/database';
+import { validateGraph } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAgent(agentId: string, user: UserRow) {
@@ -129,12 +130,31 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /** Checks a graph without saving it, so the editor can warn before you commit. */
+  app.post(
+    '/api/agents/:id/pipeline/validate',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      await ownedAgent(params(request).id!, user);
+      return validateGraph(parseBody(PipelineDraft, request));
+    }),
+  );
+
   app.put(
     '/api/agents/:id/pipeline',
     handler(async (request) => {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
       const draft = parseBody(PipelineDraft, request);
+
+      // A graph that cannot run must never become the active version: it would
+      // fail at the moment a real event arrives, not now.
+      const validation = validateGraph(draft);
+      if (!validation.ok) {
+        throw new ConflictError('This pipeline cannot run as drawn.', {
+          problems: validation.problems.filter((p) => p.severity === 'error'),
+        });
+      }
       return pipelinesRepo.savePipelineVersion(agent.id, draft, user.id);
     }),
   );

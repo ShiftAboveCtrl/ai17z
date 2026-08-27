@@ -2,6 +2,8 @@ export * from './validator';
 export * from './policyGate';
 export * from './ingest';
 export * from './pipeline';
+export * from './graph';
+export * from './nodes';
 export * from './steps';
 export * from './loadJob';
 export * from './channelContext';

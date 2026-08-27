@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   AccountStatus,
+  PipelineBranch,
   ActionType,
   AgentState,
   AvatarMode,
@@ -187,7 +188,9 @@ export type PipelineNode = z.infer<typeof PipelineNode>;
 export const PipelineEdge = z.object({
   from: z.string().max(60),
   to: z.string().max(60),
-  /** Reserved for branching. Null means unconditional. */
+  /** Which outcome of the source node this edge follows. */
+  branch: PipelineBranch.default('next'),
+  /** Human-readable note shown on the edge. Never evaluated. */
   condition: z.string().max(200).nullable().default(null),
 });
 export type PipelineEdge = z.infer<typeof PipelineEdge>;

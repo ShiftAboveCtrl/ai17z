@@ -187,17 +187,27 @@ export type ModelRole = (typeof MODEL_ROLES)[number];
 
 export const PIPELINE_NODE_KINDS = [
   'TRIGGER',
+  'FILTER',
   'RESOLVE_CONTEXT',
   'RETRIEVE_MEMORY',
   'ASSEMBLE_PERSONA',
   'GENERATE',
   'VALIDATE',
+  'CONDITION',
   'APPROVAL_GATE',
+  'DELAY',
   'EXECUTE_ACTION',
+  'MEMORY_WRITE',
   'PERSIST',
+  'END',
 ] as const;
 export const PipelineNodeKind = enumOf(PIPELINE_NODE_KINDS).schema;
 export type PipelineNodeKind = (typeof PIPELINE_NODE_KINDS)[number];
+
+/** Which outcome of a node an edge represents. */
+export const PIPELINE_BRANCHES = ['next', 'true', 'false', 'approved', 'rejected'] as const;
+export const PipelineBranch = enumOf(PIPELINE_BRANCHES).schema;
+export type PipelineBranch = (typeof PIPELINE_BRANCHES)[number];
 
 export const PROMPT_LAYER_KEYS = [
   'SYSTEM_RULES',

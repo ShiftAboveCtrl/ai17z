@@ -276,7 +276,7 @@ async function captureFailureDiagnostics(bundle: JobBundle, actionId: string | n
   }
 }
 
-async function persistTurnAndMemory(bundle: JobBundle, outgoing: string, remoteMessageId: string | null): Promise<void> {
+export async function persistTurnAndMemory(bundle: JobBundle, outgoing: string, remoteMessageId: string | null): Promise<void> {
   if (bundle.job.conversationId) {
     await withTransaction(async (tx) => {
       await conversationsRepo.recordMessage(tx, {
@@ -318,21 +318,6 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
 
   const context = job.resolvedContext;
   const targetRef = context?.targetRef ?? null;
-
-  // Human approval applies to real actions only: a dry run changes nothing, so
-  // asking a person to approve it would be noise.
-  if (!job.dryRun && policy.automation.mode === 'REVIEW_BEFORE_ACTION' && !job.approvedAt) {
-    await actionsRepo.createApproval(job.id, output);
-    await jobsRepo.updateJob(job.id, { status: 'WAITING_FOR_APPROVAL', releaseLock: true });
-    await observability.emitTrace({
-      jobId: job.id,
-      agentId: bundle.agent.id,
-      type: 'APPROVAL_REQUESTED',
-      message: 'Waiting for a human decision before acting.',
-      data: { preview: truncate(output, 200) },
-    });
-    return;
-  }
 
   if (!job.dryRun) {
     const rate = await checkActionRate(bundle.agent.id, policy);
@@ -458,9 +443,6 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
         message: 'Target verified. Stopped before performing the remote action.',
         data: { preview: truncate(output, 280) },
       });
-      // Dry runs still record what was said so replaying and memory behaviour
-      // can be evaluated without touching the remote account.
-      await persistTurnAndMemory(bundle, output, null);
       return;
     }
 
@@ -471,7 +453,6 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       lastError: null,
       errorClass: null,
     });
-    await persistTurnAndMemory(bundle, output, result.remoteActionId);
     if (bundle.account) {
       await agentsRepo
         .updateAgent(bundle.agent.id, { lastError: null })

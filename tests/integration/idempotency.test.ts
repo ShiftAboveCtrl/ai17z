@@ -52,8 +52,8 @@ describe('idempotency', () => {
     const before = await actions.listJobActions(jobId);
     expect(before).toHaveLength(1);
 
-    // Force the job back to the execute step, as a botched recovery would.
-    await jobsRepo.updateJob(jobId, { status: 'VALIDATED', releaseLock: true });
+    // Put the job back on the execute node, as a recovery from a crash would.
+    await jobsRepo.updateJob(jobId, { status: 'VALIDATED', currentNodeKey: 'execute', releaseLock: true });
     await drainJobs();
 
     const after = await actions.listJobActions(jobId);
