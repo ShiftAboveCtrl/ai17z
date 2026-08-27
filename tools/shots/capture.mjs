@@ -34,7 +34,7 @@ for (const viewport of VIEWPORTS) {
     reducedMotion: process.env.SHOT_REDUCED === '1' ? 'reduce' : 'no-preference',
   });
   await context.addInitScript((token) => {
-    if (token) window.localStorage.setItem('xbam.session', token);
+    if (token) window.localStorage.setItem('ai17z.session', token);
   }, TOKEN);
 
   for (const [name, path] of PAGES) {

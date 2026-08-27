@@ -4,7 +4,7 @@ import { ApiError, put } from '@app/lib/api';
 import { Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
 import { Section } from './Section';
 
-const MODES = ['REVIEW_BEFORE_ACTION', 'AUTONOMOUS', 'MANUAL_ONLY'] as const;
+const MODES = ['OFF', 'MONITOR_ONLY', 'MANUAL_ONLY', 'REVIEW_BEFORE_ACTION', 'AUTONOMOUS'] as const;
 const DISCLOSURE = ['ON_REQUEST', 'ALWAYS', 'NONE'] as const;
 
 /** Policies sit between persona and action. This is the only place they change. */
