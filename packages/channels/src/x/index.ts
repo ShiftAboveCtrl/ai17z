@@ -1,4 +1,4 @@
-import type { NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
+import type { NormalizedEvent, RadarPollResult, ResolvedContext } from '@xbam/shared/contracts';
 import { PipelineError, envBool, errorMessage, sleep } from '@xbam/shared';
 import { captureScreenshot, defaultProfileDir, leaseSession, safeUrl, type LeasedSession, type Page } from '@xbam/browser';
 import type {
@@ -6,6 +6,7 @@ import type {
   ActionResult,
   AuthObservation,
   ChannelAdapter,
+  RadarPollRequest,
   ChannelContext,
   ConnectionResult,
   DiagnosticCapture,
@@ -15,6 +16,7 @@ import type {
 } from '../contract';
 import { SEL, X_URLS, articleForStatus } from './selectors';
 import { observeAuthPage } from './auth';
+import { X_MONITORS } from './monitors';
 import { buildStatusUrl, extractStatusId, handleFromUrl, looksUnavailable, normalizeHandle, normalizeTargetId } from './targets';
 
 /**
@@ -171,6 +173,41 @@ export const xAdapter: ChannelAdapter = {
    * polls this while a person signs in; every X-specific notion of what a
    * challenge looks like stays behind this call.
    */
+  radarSourceKinds: [
+    'notifications',
+    'mention_search',
+    'reply_search',
+    'own_threads',
+    'tracked_account',
+    'tracked_keyword',
+  ] as const,
+
+  /**
+   * Polls one radar source. Each is an independent, imperfect view; the
+   * reconciler upstream merges them on the status id.
+   */
+  async pollRadarSource(ctx: ChannelContext, request: RadarPollRequest): Promise<RadarPollResult> {
+    const monitor = X_MONITORS[request.kind];
+    if (!monitor) {
+      return { candidates: [], cursor: null, error: `X has no ${request.kind} monitor.` };
+    }
+    try {
+      return await withSession(ctx, async ({ page }) =>
+        monitor({
+          page,
+          selfHandles: selfHandles(ctx),
+          limit: request.limit,
+          cursor: request.cursor,
+          target: request.target,
+        }),
+      );
+    } catch (error) {
+      // A session that will not open is a source failure, not a job failure:
+      // the radar records it and the other sources keep working.
+      return { candidates: [], cursor: null, error: errorMessage(error) };
+    }
+  },
+
   async observeAuth(ctx: ChannelContext): Promise<AuthObservation> {
     try {
       return await withSession(ctx, async ({ page }) => observeAuthPage(page));
