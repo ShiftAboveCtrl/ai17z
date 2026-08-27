@@ -1,5 +1,6 @@
 export * from './validator';
 export * from './policyGate';
+export * from './cadence';
 export * from './ingest';
 export * from './pipeline';
 export * from './graph';

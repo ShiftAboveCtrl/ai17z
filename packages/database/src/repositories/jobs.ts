@@ -336,6 +336,30 @@ export async function countRecentActions(agentId: string, sinceMinutes: number):
   return row?.count ?? 0;
 }
 
+/**
+ * Actions taken through this account by any agent.
+ *
+ * Account ceilings are shared: two agents posting through one handle are one
+ * handle to the remote service, so the count has to be account-wide.
+ */
+export async function countRecentAccountActions(accountId: string, sinceMinutes: number): Promise<number> {
+  const row = await queryOne<{ count: number }>(
+    `SELECT count(*)::int AS count FROM actions
+      WHERE account_id = $1 AND dry_run = false AND status = 'EXECUTED'
+        AND executed_at > now() - ($2::int * interval '1 minute')`,
+    [accountId, sinceMinutes],
+  );
+  return row?.count ?? 0;
+}
+
+export async function lastAccountActionAt(accountId: string): Promise<string | null> {
+  const row = await queryOne<{ at: Date | null }>(
+    `SELECT max(executed_at) AS at FROM actions WHERE account_id = $1 AND dry_run = false AND status = 'EXECUTED'`,
+    [accountId],
+  );
+  return row?.at ? new Date(row.at).toISOString() : null;
+}
+
 export async function lastExecutedActionAt(agentId: string): Promise<string | null> {
   const row = await queryOne<{ at: Date | null }>(
     `SELECT max(executed_at) AS at FROM actions WHERE agent_id = $1 AND dry_run = false AND status = 'EXECUTED'`,

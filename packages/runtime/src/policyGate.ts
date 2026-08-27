@@ -1,5 +1,6 @@
 import type { PolicyConfig, ResolvedContext } from '@xbam/shared/contracts';
 import { jobs as jobsRepo, observability } from '@xbam/database';
+import { checkAccountCadenceById } from './cadence';
 
 export type GateDecision =
   | { allow: true }
@@ -63,9 +64,31 @@ function withinWorkingHours(policy: PolicyConfig, now: Date): boolean {
 /**
  * Rate limits and working hours, checked immediately before a real remote action.
  * Exceeding a limit is retryable: the job waits rather than being thrown away.
+ *
+ * Two sets of limits apply: the agent policy below, and the cadence configured
+ * on the account, which is shared by every agent using that handle. The account
+ * is checked first because it is the one a remote service actually sees.
  */
-export async function checkActionRate(agentId: string, policy: PolicyConfig): Promise<GateDecision> {
+export async function checkActionRate(
+  agentId: string,
+  policy: PolicyConfig,
+  accountId?: string | null,
+): Promise<GateDecision> {
   const now = new Date();
+
+  if (accountId) {
+    const account = await checkAccountCadenceById(accountId);
+    if (!account.allow) {
+      return {
+        allow: false,
+        kind: 'RETRYABLE',
+        reason: account.reason,
+        message: account.message,
+        retryAfterMs: account.retryAfterMs,
+      };
+    }
+  }
+
   if (!withinWorkingHours(policy, now)) {
     return {
       allow: false,
