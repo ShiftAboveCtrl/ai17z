@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { PersonaVersion } from '@xbam/shared/contracts';
 import { ApiError, put } from '@app/lib/api';
 import { Field, SavedTick, Spinner } from '@app/components/ui';
+import { PersonaSources } from '@app/components/PersonaSources';
 import { Section } from './Section';
 
 const IDENTITY_KINDS = ['DISCLOSED_AI', 'FICTIONAL', 'INSPIRED_BY', 'BRAND', 'REAL_PERSON_AUTHORIZED'] as const;
@@ -126,6 +127,10 @@ export function IdentitySection({
             <textarea id="prohibited" rows={3} className="field resize-y" value={draft.prohibitedBehaviors.join('\n')} onChange={(e) => set('prohibitedBehaviors', lines(e.target.value))} />
           </Field>
         </div>
+      </div>
+
+      <div className="mt-10">
+        <PersonaSources agentId={agentId} onApplied={onSaved} />
       </div>
 
       <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-ink-line pt-6">
