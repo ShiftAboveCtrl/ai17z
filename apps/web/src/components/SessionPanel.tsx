@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Camera, LogIn, Power, RefreshCw, Trash2 } from 'lucide-react';
-import { ApiError, artifactObjectUrl, get, patch, post } from '@app/lib/api';
+import { ApiError, artifactObjectUrl, del, get, patch, post } from '@app/lib/api';
 import { useElapsed, useResource } from '@app/lib/hooks';
 import type { AccountRow, BrowserTask, DiagnosticRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
@@ -36,6 +36,7 @@ const ACTIONS = [
  */
 export function SessionPanel({ accountId, onChanged }: { accountId: string; onChanged: () => void }) {
   const { data, error, loading, reload } = useResource<SessionData>(`/api/accounts/${accountId}/session`);
+  const workers = useResource<{ browserWorkerPresent: boolean }>('/api/browser-workers');
   const [pending, setPending] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<{ kind: string; message: string } | null>(null);
@@ -84,6 +85,22 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
   }, [taskId, reload, onChanged]);
 
   const elapsed = useElapsed(Boolean(pending));
+
+  // Closing the browser window tells AI17Z nothing, so a stranded action needs
+  // an explicit way out from here.
+  const abandon = async () => {
+    setPending(null);
+    setTaskId(null);
+    setActionError(null);
+    try {
+      await del(`/api/accounts/${accountId}/session/tasks`);
+    } catch {
+      // Nothing to cancel is a fine outcome; the panel is already reset.
+    }
+    reload();
+    workers.reload();
+    onChanged();
+  };
 
   const signingIn = data
     ? ['STARTING_BROWSER', 'BROWSER_READY', 'AWAITING_LOGIN', 'AUTHENTICATING'].includes(data.account.status)
@@ -164,21 +181,39 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
         </p>
       )}
 
+      {browserBacked && workers.data && !workers.data.browserWorkerPresent && (
+        <div className="rounded-lg border border-signal-wait/40 bg-signal-wait/[0.06] px-3.5 py-3">
+          <p className="text-sm text-bone">No worker that can open a browser is running.</p>
+          <p className="mt-1 break-words text-xs leading-relaxed text-bone-dim">
+            The containerised worker has no browser and no display. Start one on this machine with{' '}
+            <span className="font-mono text-bone">start-ai17z.ps1</span>, then try again. Nothing below will work
+            until one is running.
+          </p>
+        </div>
+      )}
+
       {pending && pending !== 'CANCEL_AUTH' && (
         <Working
           label={LABELS[pending] ?? 'Working'}
           seconds={elapsed}
           slowAfter={15}
           slowHint={SLOW_HINTS[pending] ?? 'Still going. The worker is driving a real browser, which is not instant.'}
+          onCancel={() => void abandon()}
+          cancelLabel="Stop waiting"
         />
       )}
 
       {actionError && (
-        <RetryablePanel
-          title="That did not work."
-          detail={actionError.message}
-          onRetry={() => void run(actionError.kind)}
-        />
+        <>
+          <RetryablePanel
+            title="That did not work."
+            detail={actionError.message}
+            onRetry={() => void run(actionError.kind)}
+          />
+          <button type="button" className="btn-quiet px-0 text-xs" onClick={() => void abandon()}>
+            Clear anything stuck on this account
+          </button>
+        </>
       )}
 
       {data.diagnostics.length > 0 && (
