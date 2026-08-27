@@ -5,6 +5,11 @@ import { EmptyState, Modal } from '@app/components/ui';
 import { Section } from './Section';
 
 const KIND_COPY: Record<string, string> = {
+  FILTER: 'Drops events not worth a model call, before any model is called.',
+  CONDITION: 'Routes on a fact about the job: output length, thread depth, dry run.',
+  DELAY: 'Waits before continuing, without holding a worker.',
+  MEMORY_WRITE: 'Records the turn and runs the memory write policy.',
+  END: 'Ends the run. A run that ends without acting is cancelled, not failed.',
   TRIGGER: 'An inbound event becomes a durable job.',
   RESOLVE_CONTEXT: 'The channel adapter identifies the exact remote target and reads the surrounding conversation.',
   RETRIEVE_MEMORY: 'Each memory scope is queried under its own limit, and every selection records why it was chosen.',
@@ -49,24 +54,43 @@ export function PipelineSection({
       heading={triggerLabel}
       lede={`${pipeline.name} · version ${pipeline.version}. Each stage settles its own state before the next begins, so a restart resumes rather than restarts.`}
     >
-      <ol className="mx-auto max-w-md">
-        {pipeline.nodes.map((n, i) => (
-          <li key={n.key}>
-            <button
-              type="button"
-              onClick={() => setSelected(n.key)}
-              className="w-full rounded-xl border border-ink-line bg-ink-raised/40 px-5 py-4 text-left transition-colors hover:border-signal-calm/40 hover:bg-signal-calm/[0.04]"
-            >
-              <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-bone-faint">{n.kind.replace(/_/g, ' ')}</span>
-              <span className="mt-1 block text-lg font-light text-bone">{n.label}</span>
-            </button>
-            {i < pipeline.nodes.length - 1 && (
-              <div className="flex justify-center py-2" aria-hidden>
-                <ArrowDown className="h-4 w-4 text-bone-faint/50" />
-              </div>
-            )}
-          </li>
-        ))}
+      <ol className="mx-auto max-w-lg space-y-2">
+        {pipeline.nodes.map((n) => {
+          const out = pipeline.edges.filter((e) => e.from === n.key);
+          return (
+            <li key={n.key}>
+              <button
+                type="button"
+                onClick={() => setSelected(n.key)}
+                className="w-full rounded-xl border border-ink-line bg-ink-raised/40 px-5 py-4 text-left transition-colors hover:border-signal-calm/40 hover:bg-signal-calm/[0.04]"
+              >
+                <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-bone-faint">
+                  {n.kind.replace(/_/g, ' ')}
+                </span>
+                <span className="mt-1 block text-lg font-light text-bone">{n.label}</span>
+              </button>
+              {out.length > 0 && (
+                <ul className="mt-1 space-y-1 pl-6">
+                  {out.map((edge) => (
+                    <li key={`${edge.from}-${edge.branch}`} className="flex items-center gap-2">
+                      <ArrowDown className="h-3.5 w-3.5 shrink-0 text-bone-faint/50" aria-hidden />
+                      {edge.branch !== 'next' && (
+                        <span
+                          className={`chip ${edge.branch === 'false' || edge.branch === 'rejected' ? 'border-signal-wait/40 text-signal-wait' : 'border-signal-live/40 text-signal-live'}`}
+                        >
+                          {edge.branch}
+                        </span>
+                      )}
+                      <span className="font-mono text-[11px] text-bone-faint">
+                        {edge.condition ?? pipeline.nodes.find((x) => x.key === edge.to)?.label ?? edge.to}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          );
+        })}
       </ol>
 
       <Modal open={Boolean(node)} onClose={() => setSelected(null)} title={node?.label ?? 'Stage'}>
@@ -79,9 +103,20 @@ export function PipelineSection({
                 {JSON.stringify(node.config ?? {}, null, 2)}
               </pre>
             </div>
+            <div>
+              <p className="eyebrow mb-2">Where it goes next</p>
+              <ul className="space-y-1 text-sm text-bone-dim">
+                {pipeline.edges.filter((e) => e.from === node.key).map((edge) => (
+                  <li key={edge.branch} className="font-mono text-[12px]">
+                    {edge.branch} &rarr; {pipeline.nodes.find((x) => x.key === edge.to)?.label ?? edge.to}
+                  </li>
+                ))}
+                {pipeline.edges.every((e) => e.from !== node.key) && <li className="text-bone-faint">Nothing: this ends the run.</li>}
+              </ul>
+            </div>
             <p className="text-xs leading-relaxed text-bone-faint">
-              Stage configuration is stored per pipeline version. Editing the graph shape from this screen is not
-              implemented yet: changing agent behaviour today happens through its persona, policy and model settings.
+              This is the graph the runtime walks, not a drawing of it. Editing the shape from this screen is not
+              implemented yet; graphs are changed through the pipeline API, which rejects one that cannot run.
             </p>
           </div>
         )}
