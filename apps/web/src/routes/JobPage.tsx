@@ -134,6 +134,8 @@ export function JobPage() {
         </section>
       )}
 
+      <WhyPanel trace={trace} />
+
       <section className="mt-14">
         <p className="eyebrow mb-4">Lifecycle</p>
         <ol className="relative space-y-0 border-l border-ink-line pl-6">
@@ -342,6 +344,85 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
     <div className="min-w-0">
       <dt className="font-mono text-[9px] uppercase tracking-[0.18em] text-bone-faint">{label}</dt>
       <dd className={`mt-1 truncate text-bone-dim ${mono ? 'font-mono text-xs' : ''}`}>{value}</dd>
+    </div>
+  );
+}
+
+interface TraceEntry {
+  id: string;
+  type: string;
+  message: string;
+  level: string;
+  at: string;
+  data?: Record<string, unknown> | null;
+}
+
+/**
+ * Why this reply, or why no reply.
+ *
+ * The lifecycle below records everything that happened. This answers the two
+ * questions people actually arrive with, and it deliberately sits above the
+ * timeline rather than inside it: "reply value 18" buried in a list of twenty
+ * events is not an answer.
+ */
+function WhyPanel({ trace }: { trace: TraceEntry[] }) {
+  const find = (type: string) => trace.find((entry) => entry.type === type);
+
+  const engagement = find('ENGAGEMENT_DECIDED');
+  const intent = find('INTENT_SELECTED');
+  const relationship = find('RELATIONSHIP_LOADED');
+  const stance = find('STANCE_SELECTED');
+  const conflict = find('STANCE_CONFLICT');
+  const media = find('MEDIA_RESOLVED');
+
+  if (!engagement && !intent && !relationship) return null;
+
+  const decision = (engagement?.data as { decision?: string; value?: number; factors?: { label: string; delta: number }[] } | undefined) ?? {};
+  const ignored = decision.decision === 'IGNORE';
+
+  return (
+    <section className="mt-12 rounded-xl border border-ink-line bg-ink-panel/60 p-5">
+      <p className="eyebrow mb-4">{ignored ? 'Why no reply?' : 'Why this reply?'}</p>
+
+      <dl className="space-y-3.5">
+        {engagement && (
+          <WhyRow
+            term={ignored ? 'Stayed silent' : 'Decided to answer'}
+            detail={engagement.message}
+            tone={ignored ? 'text-signal-wait' : 'text-bone'}
+          />
+        )}
+        {intent && <WhyRow term="Kind of reply" detail={intent.message} />}
+        {relationship && <WhyRow term="Who they are" detail={relationship.message} />}
+        {stance && <WhyRow term="What it already thinks" detail={stance.message} />}
+        {conflict && <WhyRow term="Contradiction" detail={conflict.message} tone="text-signal-fail" />}
+        {media && <WhyRow term="What was attached" detail={media.message} />}
+      </dl>
+
+      {/* The factors are the actual argument. Showing only the total would be
+          the same mistake as showing only the score. */}
+      {(decision.factors?.length ?? 0) > 0 && (
+        <ul className="mt-4 flex flex-wrap gap-x-4 gap-y-1.5 border-t border-ink-line pt-3.5">
+          {decision.factors!.map((factor) => (
+            <li key={factor.label} className="font-mono text-[10px] text-bone-faint">
+              <span className={factor.delta >= 0 ? 'text-signal-live/80' : 'text-signal-fail/80'}>
+                {factor.delta >= 0 ? '+' : ''}
+                {factor.delta}
+              </span>{' '}
+              {factor.label}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function WhyRow({ term, detail, tone = 'text-bone-dim' }: { term: string; detail: string; tone?: string }) {
+  return (
+    <div className="grid gap-1 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
+      <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">{term}</dt>
+      <dd className={`text-sm leading-relaxed ${tone}`}>{detail}</dd>
     </div>
   );
 }

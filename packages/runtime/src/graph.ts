@@ -21,6 +21,9 @@ export const BRANCHING_KINDS: Record<string, readonly string[]> = {
   FILTER: ['true', 'false'],
   CONDITION: ['true', 'false'],
   APPROVAL_GATE: ['approved', 'rejected'],
+  // Silence has to be somewhere the graph actually goes, or it is not a real
+  // decision. All three outcomes must be wired up.
+  ENGAGEMENT_DECISION: ['engage', 'ignore', 'review'],
 };
 
 export interface Graph {

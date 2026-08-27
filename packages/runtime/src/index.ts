@@ -6,6 +6,7 @@ export * from './reconcile';
 export * from './mediaResolve';
 export * from './relationship';
 export * from './stance';
+export * from './engagement';
 export * from './pipeline';
 export * from './graph';
 export * from './nodes';

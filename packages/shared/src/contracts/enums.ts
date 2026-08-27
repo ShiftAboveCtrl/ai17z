@@ -285,6 +285,10 @@ export const PIPELINE_NODE_KINDS = [
   'RELATIONSHIP',
   /** Loads what the agent already believes about what is being discussed. */
   'STANCE',
+  /** Decides whether this is worth answering at all. */
+  'ENGAGEMENT_DECISION',
+  /** Picks what kind of reply this should be, before generating one. */
+  'INTENT',
   'RETRIEVE_MEMORY',
   'ASSEMBLE_PERSONA',
   'GENERATE',
@@ -303,7 +307,17 @@ export const PipelineNodeKind = enumOf(PIPELINE_NODE_KINDS).schema;
 export type PipelineNodeKind = (typeof PIPELINE_NODE_KINDS)[number];
 
 /** Which outcome of a node an edge represents. */
-export const PIPELINE_BRANCHES = ['next', 'true', 'false', 'approved', 'rejected'] as const;
+export const PIPELINE_BRANCHES = [
+  'next',
+  'true',
+  'false',
+  'approved',
+  'rejected',
+  /** From ENGAGEMENT_DECISION: answer, stay silent, or ask a person. */
+  'engage',
+  'ignore',
+  'review',
+] as const;
 export const PipelineBranch = enumOf(PIPELINE_BRANCHES).schema;
 export type PipelineBranch = (typeof PIPELINE_BRANCHES)[number];
 

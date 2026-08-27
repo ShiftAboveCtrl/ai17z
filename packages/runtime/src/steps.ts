@@ -1,5 +1,6 @@
 import type { Capability, JobRecord, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
-import { MediaInventory } from '@xbam/shared/contracts';
+import { MediaInventory, positionsConflict } from '@xbam/shared/contracts';
+import type { RelationshipContext, StanceContext } from '@xbam/shared/contracts';
 import { PipelineError, contentSignature, truncate } from '@xbam/shared';
 import {
   actions as actionsRepo,
@@ -25,7 +26,14 @@ import { describeTools } from '@xbam/tools';
 import { buildChannelContext, syntheticAccount } from './channelContext';
 import { resolveMedia } from './mediaResolve';
 import { loadRelationshipContext, recordExchange } from './relationship';
-import { checkStanceConsistency, detectClaims, learnStancesFromOwnPost, loadStanceContext } from './stance';
+import {
+  checkStanceConsistency,
+  detectClaims,
+  learnStancesFromOwnPost,
+  loadStanceContext,
+  readPosition,
+} from './stance';
+import { chooseIntent, decideEngagement, readTemperature, recentRepliesTo } from './engagement';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -806,5 +814,97 @@ export async function stepStanceCheck(bundle: JobBundle): Promise<void> {
       // Allowed through. The revision itself is recorded after the post goes
       // out, where there is a public statement to attach it to.
       break;
+  }
+}
+
+/**
+ * Decides whether this is worth answering.
+ *
+ * Returns a branch rather than throwing, because staying silent is a normal
+ * outcome and not a failure. The reasons are recorded either way, so "why did
+ * it ignore this?" has an answer.
+ */
+export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ignore' | 'review'> {
+  const { job, policy } = bundle;
+  const context = job.resolvedContext;
+  const text = context?.incomingText ?? bundle.event.text;
+  const relationship = (context?.meta as { relationship?: RelationshipContext } | undefined)?.relationship ?? null;
+
+  const handle = context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle;
+  const selfHandles = policy.content.selfHandles.map((h) => h.replace(/^@+/, '').toLowerCase());
+  const directlyAddressed = selfHandles.some((self) => text.toLowerCase().includes(`@${self}`));
+
+  const verdict = decideEngagement({
+    text,
+    directlyAddressed,
+    relationship,
+    threadDepth: context?.thread.length ?? 0,
+    recentRepliesToPerson: await recentRepliesTo(bundle.agent.id, handle),
+    alreadyRepliedInThread: (context?.thread ?? []).some((m) => m.role === 'OUTBOUND'),
+    policy: policy.engagement,
+  });
+
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    type: 'ENGAGEMENT_DECIDED',
+    level: verdict.decision === 'IGNORE' ? 'warn' : 'info',
+    message: `${verdict.decision.toLowerCase()} (${verdict.value}/100): ${verdict.reason}`,
+    data: { decision: verdict.decision, value: verdict.value, factors: verdict.factors, strategy: policy.engagement.strategy },
+  });
+
+  if (context) {
+    await jobsRepo.updateJob(job.id, {
+      resolvedContext: { ...context, meta: { ...context.meta, engagement: verdict } },
+    });
+  }
+
+  if (verdict.decision === 'IGNORE') return 'ignore';
+  if (verdict.decision === 'REVIEW') return 'review';
+  return 'engage';
+}
+
+/**
+ * Picks what kind of reply this should be, before anything is generated.
+ *
+ * Answering a joke with an explanation, or a challenge with a definition, is
+ * the sort of thing that makes an agent read as a machine. Choosing the social
+ * act first is what prevents it.
+ */
+export async function stepIntent(bundle: JobBundle): Promise<void> {
+  const { job } = bundle;
+  const context = job.resolvedContext;
+  const text = context?.incomingText ?? bundle.event.text;
+  const meta = (context?.meta ?? {}) as {
+    relationship?: RelationshipContext;
+    stance?: StanceContext;
+  };
+
+  const temperature = readTemperature(text);
+  const contradicts = (meta.stance?.relevant ?? []).some((s) => {
+    const read = readPosition(text);
+    return positionsConflict(s.position, read.position);
+  });
+
+  const decision = chooseIntent({
+    text,
+    temperature,
+    relationship: meta.relationship ?? null,
+    contradictsStance: contradicts,
+    hasCallback: Boolean(meta.relationship?.callback),
+  });
+
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    type: 'INTENT_SELECTED',
+    message: `${decision.intent}: ${decision.reason}`,
+    data: { intent: decision.intent, temperature: decision.temperature, reason: decision.reason },
+  });
+
+  if (context) {
+    await jobsRepo.updateJob(job.id, {
+      resolvedContext: { ...context, meta: { ...context.meta, intent: decision } },
+    });
   }
 }
