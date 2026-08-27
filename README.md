@@ -32,6 +32,19 @@ best ideas, replaces its architecture, and imports its history as one agent.
 
 ---
 
+## Quick start on Windows
+
+```powershell
+.\start-ai17z.ps1
+```
+
+That brings up the stack, applies migrations, waits for the API to actually
+answer, and starts a second worker natively so that "Real Chrome" means the
+Chrome on your machine. `.\stop-ai17z.ps1` stops both. Neither script deletes
+anything; `-Volumes` does, and asks first.
+
+---
+
 ## Quick start with Docker
 
 ```bash
@@ -40,6 +53,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 # paste that into AI17Z_MASTER_KEY in .env
 docker compose up -d
 ```
+
+A containerised worker has no browser and no display, so it takes jobs and
+leaves browser-backed accounts alone. Run a native worker alongside it for
+those — the Windows script above does this for you, and
+[Driving a real browser](docs/operations/BROWSER_SESSIONS.md) covers the rest.
 
 Then open **http://localhost:8080** and create your owner account.
 
@@ -137,6 +155,10 @@ npm run typecheck
 - [Channels](docs/architecture/CHANNELS.md)
 - [Models](docs/architecture/MODELS.md)
 - [Pipelines](docs/architecture/PIPELINES.md)
+- [Cadence: when an account is read and may act](docs/architecture/CADENCE.md)
+- [Capabilities: what an agent may do](docs/architecture/CAPABILITIES.md)
+- [Connecting an account and security challenges](docs/architecture/SIGN_IN.md)
+- [Persona sources: learning a voice](docs/architecture/PERSONA_SOURCES.md)
 - [Security](docs/architecture/SECURITY.md)
 - [Local setup](docs/operations/LOCAL_SETUP.md)
 - [Docker](docs/operations/DOCKER.md)
