@@ -25,6 +25,7 @@ export * as workers from './repositories/workers';
 export * as radar from './repositories/radar';
 export * as media from './repositories/media';
 export * as relationships from './repositories/relationships';
+export * as stances from './repositories/stances';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.
@@ -47,3 +48,4 @@ export type { WorkerRow } from './repositories/workers';
 export type { RadarSourceRow, DiscoveryRow } from './repositories/radar';
 export type { EventMediaRow, EventQuoteRow, EventLinkRow } from './repositories/media';
 export type { RelationshipRow, CallbackRow } from './repositories/relationships';
+export type { StanceRow, EvidenceRow } from './repositories/stances';

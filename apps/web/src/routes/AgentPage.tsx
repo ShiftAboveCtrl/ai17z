@@ -13,6 +13,7 @@ import { AccountsSection } from './sections/AccountsSection';
 import { IntelligenceSection } from './sections/IntelligenceSection';
 import { MemorySection } from './sections/MemorySection';
 import { RelationshipsSection } from './sections/RelationshipsSection';
+import { BeliefsSection } from './sections/BeliefsSection';
 import { PipelineSection } from './sections/PipelineSection';
 import { ToolsSection } from './sections/ToolsSection';
 import { PoliciesSection } from './sections/PoliciesSection';
@@ -26,6 +27,7 @@ const SECTIONS = [
   ['accounts', 'Accounts'],
   ['intelligence', 'Intelligence'],
   ['relationships', 'Relationships'],
+  ['beliefs', 'Beliefs'],
   ['memory', 'Memory'],
   ['pipeline', 'Pipeline'],
   ['tools', 'Tools'],
@@ -210,27 +212,28 @@ export function AgentPage() {
         <AccountsSection index={2} agentId={agent.id} accounts={accounts} onChanged={reload} />
         <IntelligenceSection index={3} agentId={agent.id} models={models} onChanged={reload} />
         <RelationshipsSection index={4} agentId={agent.id} />
-        <MemorySection index={5} agentId={agent.id} counts={memoryCounts} />
+        <BeliefsSection index={5} agentId={agent.id} />
+        <MemorySection index={6} agentId={agent.id} counts={memoryCounts} />
         <PipelineSection
-          index={6}
+          index={7}
           pipeline={pipeline}
           triggerLabel={channel ? `When someone mentions ${agent.name}.` : `When ${agent.name} receives an event.`}
         />
         <ToolsSection
-          index={7}
+          index={8}
           agentId={agent.id}
           tools={tools}
           allowedKeys={policy?.config.tools.allowed ?? []}
           onChanged={reload}
         />
         <PoliciesSection
-          index={8}
+          index={9}
           agentId={agent.id}
           policy={policy?.config ?? null}
           version={policy?.version ?? 1}
           onSaved={reload}
         />
-        <ActivitySection index={9} agentId={agent.id} />
+        <ActivitySection index={10} agentId={agent.id} />
       </div>
 
       <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title={`Delete ${agent.name}?`}>

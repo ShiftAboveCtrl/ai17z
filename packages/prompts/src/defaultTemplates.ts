@@ -107,6 +107,23 @@ Only if it fits naturally. Forcing it reads worse than not using it.
 {{/callbackBlock}}`,
   },
   {
+    key: 'BELIEFS',
+    title: 'What you already think',
+    role: 'user',
+    template: `{{#stanceBlock}}POSITIONS YOU HAVE TAKEN PUBLICLY
+{{stanceBlock}}
+
+Do not contradict these without saying that you have changed your mind.
+
+{{/stanceBlock}}{{#revisedBlock}}POSITIONS YOU HAVE ALREADY CHANGED
+{{revisedBlock}}
+
+{{/revisedBlock}}{{#commitmentBlock}}YOU SAID YOU WOULD
+{{commitmentBlock}}
+
+{{/commitmentBlock}}`,
+  },
+  {
     key: 'MEDIA_CONTEXT',
     title: 'What is attached',
     role: 'user',

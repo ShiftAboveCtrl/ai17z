@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { AutomationMode, DisclosureMode } from './enums';
 import { MediaPolicy } from './multimodal';
 import { RelationshipVoice } from './relationship';
+import { StancePolicy } from './stance';
 
 export const IdentityPolicy = z.object({
   disclosure: DisclosureMode.default('ON_REQUEST'),
@@ -136,6 +137,8 @@ export const PolicyConfig = z.object({
   media: MediaPolicy.default({}),
   /** How knowing somebody changes the way the agent talks to them. */
   relationships: RelationshipVoice.default({}),
+  /** Keeping the agent consistent with what it has already said. */
+  stance: StancePolicy.default({}),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 

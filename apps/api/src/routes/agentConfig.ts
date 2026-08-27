@@ -5,6 +5,7 @@ import {
   Capability,
   Disposition,
   Familiarity,
+  StancePosition,
   ModelRole,
   PersonaDraft,
   PipelineDraft,
@@ -17,6 +18,7 @@ import {
   agents as agentsRepo,
   capabilities as capabilitiesRepo,
   relationships as relationshipsRepo,
+  stances as stancesRepo,
   ops,
   pipelines as pipelinesRepo,
   providers as providersRepo,
@@ -322,6 +324,117 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       // Retired rather than deleted: the exchange it came from still happened.
       await relationshipsRepo.retireCallback(params(request).callbackId!);
       return { retired: true };
+    }),
+  );
+
+  // ── Beliefs ───────────────────────────────────────────────────────────────
+  //
+  // What the agent thinks and what that rests on. A position with no evidence
+  // is an assertion, so evidence is always one click away.
+  app.get(
+    '/api/agents/:id/stances',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      return {
+        items: await stancesRepo.listActive(agent.id),
+        predictions: await stancesRepo.listPredictions(agent.id, 'OPEN', 20),
+        commitments: await stancesRepo.listCommitments(agent.id, 'OPEN', 20),
+      };
+    }),
+  );
+
+  app.get(
+    '/api/agents/:id/stances/:stanceId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const stance = await stancesRepo.get(params(request).stanceId!);
+      if (!stance || stance.agentId !== agent.id) throw new NotFoundError('Stance');
+      return {
+        stance,
+        evidence: await stancesRepo.listEvidence(stance.id),
+        history: await stancesRepo.history(agent.id, stance.subject),
+      };
+    }),
+  );
+
+  app.post(
+    '/api/agents/:id/stances',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(
+        z.object({
+          subject: z.string().trim().min(1).max(200),
+          position: StancePosition,
+          summary: z.string().trim().min(1).max(2_000),
+          confidence: z.number().min(0).max(1).default(0.8),
+        }),
+        request,
+      );
+      // Written by a person, so pinned: nothing the agent says revises it.
+      const stance = await stancesRepo.assert({
+        agentId: agent.id,
+        ...body,
+        pinned: true,
+        evidence: { kind: 'told_by_owner', excerpt: body.summary },
+      });
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'stance.set',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { subject: body.subject, position: body.position },
+      });
+      return stance;
+    }),
+  );
+
+  app.patch(
+    '/api/agents/:id/stances/:stanceId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const stance = await stancesRepo.get(params(request).stanceId!);
+      if (!stance || stance.agentId !== agent.id) throw new NotFoundError('Stance');
+      const body = parseBody(
+        z.object({
+          summary: z.string().max(2_000).optional(),
+          position: StancePosition.optional(),
+          confidence: z.number().min(0).max(1).optional(),
+          pinned: z.boolean().optional(),
+          status: z.enum(['ACTIVE', 'RETIRED']).optional(),
+        }),
+        request,
+      );
+      return stancesRepo.update(stance.id, body);
+    }),
+  );
+
+  // Judging a prediction is a person's call; nothing decides one automatically.
+  app.post(
+    '/api/agents/:id/predictions/:predictionId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      await ownedAgent(params(request).id!, user);
+      const body = parseBody(
+        z.object({ outcome: z.enum(['CORRECT', 'WRONG', 'UNRESOLVABLE']), note: z.string().max(1_000).default('') }),
+        request,
+      );
+      await stancesRepo.resolvePrediction(params(request).predictionId!, body.outcome, body.note);
+      return { resolved: true };
+    }),
+  );
+
+  app.post(
+    '/api/agents/:id/commitments/:commitmentId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      await ownedAgent(params(request).id!, user);
+      const body = parseBody(z.object({ status: z.enum(['DONE', 'DROPPED']) }), request);
+      await stancesRepo.resolveCommitment(params(request).commitmentId!, body.status);
+      return { resolved: true };
     }),
   );
 

@@ -14,6 +14,7 @@ import {
   prompts as promptsRepo,
   radar as radarRepo,
   relationships as relationshipsRepo,
+  stances as stancesRepo,
   withTransaction,
 } from '@xbam/database';
 import { retrieveMemories, applyWritePolicy } from '@xbam/memory';
@@ -24,6 +25,7 @@ import { describeTools } from '@xbam/tools';
 import { buildChannelContext, syntheticAccount } from './channelContext';
 import { resolveMedia } from './mediaResolve';
 import { loadRelationshipContext, recordExchange } from './relationship';
+import { checkStanceConsistency, detectClaims, learnStancesFromOwnPost, loadStanceContext } from './stance';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -466,6 +468,46 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       if (callbackId) await relationshipsRepo.markCallbackUsed(callbackId).catch(() => undefined);
     }
 
+    // Positions, predictions and promises are recorded from what actually went
+    // out. A draft is not something the agent has said, and a dry run is
+    // explicitly not a public position.
+    if (result.status !== 'DRY_RUN' && policy.stance.enabled) {
+      await learnStancesFromOwnPost({
+        agentId: bundle.agent.id,
+        text: output,
+        policy: policy.stance,
+        jobId: job.id,
+        remoteUrl: result.remoteActionUrl,
+      }).catch(() => undefined);
+
+      const claims = detectClaims(output);
+      if (claims.prediction && policy.stance.trackPredictions) {
+        await stancesRepo
+          .recordPrediction({
+            agentId: bundle.agent.id,
+            claim: claims.prediction.claim,
+            confidence: claims.prediction.confidence,
+            // Far enough out to be worth asking about, near enough to matter.
+            reviewAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+            jobId: job.id,
+            remoteUrl: result.remoteActionUrl,
+          })
+          .catch(() => undefined);
+      }
+      if (claims.commitment && policy.stance.trackCommitments) {
+        await stancesRepo
+          .recordCommitment({
+            agentId: bundle.agent.id,
+            promise: claims.commitment.promise,
+            confidence: claims.commitment.confidence,
+            recipientHandle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+            jobId: job.id,
+            remoteUrl: result.remoteActionUrl,
+          })
+          .catch(() => undefined);
+      }
+    }
+
     // Remember what we posted, so replies underneath it can be found by reading
     // the thread rather than by hoping a notification arrives. A dry run posts
     // nothing, so there is nothing to come back to.
@@ -677,5 +719,92 @@ export async function stepRelationship(bundle: JobBundle): Promise<void> {
         meta: { ...context.meta, relationship: loaded.context, callbackId: loaded.callbackId },
       },
     });
+  }
+}
+
+/**
+ * Loads the positions the agent already holds on whatever is being discussed.
+ *
+ * Runs before generation so the model is told what it has said before, rather
+ * than being corrected afterwards by a gate it cannot see.
+ */
+export async function stepStance(bundle: JobBundle): Promise<void> {
+  const { job, policy } = bundle;
+  if (!policy.stance.enabled) return;
+
+  const context = job.resolvedContext;
+  const text = [context?.incomingText, context?.parentText].filter(Boolean).join('\n');
+  const stanceContext = await loadStanceContext(bundle.agent.id, text);
+
+  // Promises made to this person and not yet closed. Forgetting one is worse
+  // than never having made it.
+  const handle = context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle;
+  const open = handle ? await stancesRepo.openCommitmentsTo(bundle.agent.id, handle, 2) : [];
+
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    type: 'STANCE_SELECTED',
+    message:
+      stanceContext.relevant.length > 0
+        ? `Holds a position on ${stanceContext.relevant.map((s) => s.subject).join(', ')}.`
+        : 'No existing position touches this.',
+    data: { relevant: stanceContext.relevant, revised: stanceContext.revised, openCommitments: open.length },
+  });
+
+  if (context) {
+    await jobsRepo.updateJob(job.id, {
+      resolvedContext: {
+        ...context,
+        meta: { ...context.meta, stance: stanceContext, openCommitments: open },
+      },
+    });
+  }
+}
+
+/**
+ * Checks a validated draft against what the agent has already said publicly.
+ *
+ * Runs after validation and before the approval gate, so a contradiction is
+ * caught while there is still somewhere sensible to send it.
+ */
+export async function stepStanceCheck(bundle: JobBundle): Promise<void> {
+  const { job, policy } = bundle;
+  const output = job.validatedOutput ?? job.generatedOutput;
+  if (!policy.stance.enabled || !output) return;
+
+  const check = await checkStanceConsistency({ agentId: bundle.agent.id, text: output, policy: policy.stance });
+  if (check.ok) return;
+
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    type: 'STANCE_CONFLICT',
+    level: 'warn',
+    message: check.message ?? 'This contradicts a position the agent already holds.',
+    data: {
+      subject: check.conflictsWith?.subject,
+      heldPosition: check.conflictsWith?.position,
+      candidatePosition: check.candidatePosition,
+      confidence: check.conflictsWith?.confidence,
+    },
+  });
+
+  switch (policy.stance.onConflict) {
+    case 'REVIEW':
+      throw PipelineError.review('stance_conflict', check.message ?? 'This contradicts an existing position.');
+    case 'REWRITE':
+      // Retryable so the generation stage runs again, now with the conflict in
+      // front of it rather than only in the trace.
+      throw PipelineError.retryable(
+        'stance_conflict',
+        `${check.message} Say it in a way that does not simply reverse that, or acknowledge the change.`,
+      );
+    case 'ALLOW_AND_REVISE':
+    case 'IGNORE':
+    default:
+      // Allowed through. The revision itself is recorded after the post goes
+      // out, where there is a public statement to attach it to.
+      break;
   }
 }
