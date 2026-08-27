@@ -6,7 +6,7 @@ import { mapRow, mapRows } from '../mapper';
 const ACCOUNT_COLUMNS = `
   id, owner_id, channel, remote_account_id, handle, display_name, status, enabled,
   capabilities, settings, last_health_check_at, last_health_status, last_activity_at,
-  last_error, created_at, updated_at`;
+  last_error, auth_started_at, auth_deadline_at, challenge_kind, created_at, updated_at`;
 
 export async function listAccounts(ownerId: string): Promise<Account[]> {
   return mapRows<Account>(
@@ -22,6 +22,23 @@ export async function requireAccount(id: string): Promise<Account> {
   const account = await getAccount(id);
   if (!account) throw new NotFoundError('Account');
   return account;
+}
+
+/**
+ * Accounts with a sign-in in progress.
+ *
+ * A challenge is deliberately not in this list: once a person is being asked for
+ * a code, the watcher has nothing left to contribute and must not keep polling
+ * the page they are typing into.
+ */
+export async function accountsAwaitingSignIn(): Promise<Account[]> {
+  return mapRows<Account>(
+    await query(
+      `SELECT ${ACCOUNT_COLUMNS} FROM accounts
+        WHERE status IN ('STARTING_BROWSER', 'BROWSER_READY', 'AWAITING_LOGIN', 'AUTHENTICATING')
+        ORDER BY auth_started_at NULLS LAST`,
+    ),
+  );
 }
 
 export async function findAccountByHandle(
@@ -87,6 +104,10 @@ export async function updateAccount(
     lastError: string | null;
     touchHealthCheck: boolean;
     touchActivity: boolean;
+    /** Sign-in progress. Null clears a wait that is over, however it ended. */
+    authStartedAt: string | null;
+    authDeadlineAt: string | null;
+    challengeKind: string | null;
   }>,
 ): Promise<Account> {
   const sets: string[] = [];
@@ -103,6 +124,9 @@ export async function updateAccount(
   if (patch.settings !== undefined) push('settings = $?::jsonb', JSON.stringify(patch.settings));
   if (patch.lastHealthStatus !== undefined) push('last_health_status = $?', patch.lastHealthStatus);
   if (patch.lastError !== undefined) push('last_error = $?', patch.lastError);
+  if (patch.authStartedAt !== undefined) push('auth_started_at = $?', patch.authStartedAt);
+  if (patch.authDeadlineAt !== undefined) push('auth_deadline_at = $?', patch.authDeadlineAt);
+  if (patch.challengeKind !== undefined) push('challenge_kind = $?', patch.challengeKind);
   if (patch.touchHealthCheck) sets.push('last_health_check_at = now()');
   if (patch.touchActivity) sets.push('last_activity_at = now()');
   if (sets.length === 0) return requireAccount(id);

@@ -39,6 +39,23 @@ export interface HealthResult {
   authenticated: boolean;
 }
 
+/**
+ * What an open sign-in window currently shows.
+ *
+ * Normalised on purpose: the worker drives the waiting loop and must never learn
+ * what a particular service's challenge looks like. `CHALLENGE` is terminal for
+ * the loop — the window is handed back to the person and nothing further is
+ * clicked, typed, or dismissed on their behalf.
+ */
+export interface AuthObservation {
+  state: 'SIGNED_IN' | 'AWAITING_LOGIN' | 'AUTHENTICATING' | 'CHALLENGE' | 'UNREACHABLE';
+  /** A sentence for the person watching. Never contains challenge content. */
+  detail: string;
+  /** Which kind of challenge, when state is CHALLENGE. */
+  challengeKind?: string | null;
+  handle?: string | null;
+}
+
 export interface IngestOptions {
   /** Remote event ids already recorded; the adapter should skip them. */
   since?: string | null;
@@ -101,6 +118,11 @@ export interface ChannelAdapter {
   connect(ctx: ChannelContext): Promise<ConnectionResult>;
   disconnect(ctx: ChannelContext): Promise<void>;
   healthCheck(ctx: ChannelContext): Promise<HealthResult>;
+  /**
+   * Looks at an already-open sign-in window and reports what it shows. Optional:
+   * a channel that needs no browser sign-in simply does not implement it.
+   */
+  observeAuth?(ctx: ChannelContext): Promise<AuthObservation>;
   ingestEvents(ctx: ChannelContext, options: IngestOptions): Promise<NormalizedEvent[]>;
   resolveContext(ctx: ChannelContext, event: NormalizedEvent): Promise<ResolvedContext>;
   verifyAction(ctx: ChannelContext, request: ActionRequest): Promise<VerificationResult>;
