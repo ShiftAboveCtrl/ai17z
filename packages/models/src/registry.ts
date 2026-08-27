@@ -11,6 +11,7 @@ const ADAPTERS: Record<ProviderKind, ProviderAdapter> = {
   openrouter: createOpenAiCompatibleAdapter('openrouter', 'https://openrouter.ai/api/v1', 'OpenRouter', {
     'x-title': 'XBAM',
   }),
+  deepseek: createOpenAiCompatibleAdapter('deepseek', 'https://api.deepseek.com/v1', 'DeepSeek'),
   openai_compatible: createOpenAiCompatibleAdapter('openai_compatible', '', 'OpenAI-compatible endpoint'),
   anthropic: anthropicAdapter,
   ollama: ollamaAdapter,

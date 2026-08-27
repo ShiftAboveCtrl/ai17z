@@ -99,9 +99,11 @@ export async function generate(request: GenerateRequest): Promise<GenerateResult
   let lastError: PipelineError | null = null;
 
   for (const target of targets) {
-    // Two attempts per provider: one immediate retry absorbs a transient blip
-    // without waiting for the job-level backoff.
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
+    // Attempts against this provider before moving to the next role. One retry
+    // absorbs a transient blip without waiting for the job-level backoff; the
+    // owner can raise it for a flaky endpoint.
+    const maxRetries = target.parameters.maxRetries ?? 2;
+    for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
       if (calls >= request.maxCalls) {
         throw (
           lastError ??
@@ -218,6 +220,10 @@ export interface ConnectionTestResult {
   ok: boolean;
   detail: string;
   models: string[];
+  /** Round-trip to the provider, so a slow endpoint is visible before it matters. */
+  latencyMs: number;
+  provider: string;
+  defaultModel: string | null;
 }
 
 /** Used by the Test Connection button. Never returns or logs the key itself. */
@@ -226,17 +232,33 @@ export async function testProviderConnection(providerCredentialId: string): Prom
   const adapter = getAdapter(credential.provider);
   const apiKey = await providersRepo.getDecryptedApiKey(providerCredentialId);
   if (adapter.requiresApiKey && !apiKey) {
-    return { ok: false, detail: 'No API key stored for this provider.', models: [] };
+    return {
+      ok: false,
+      detail: 'No API key stored for this provider. Add one and test again.',
+      models: [],
+      latencyMs: 0,
+      provider: credential.provider,
+      defaultModel: credential.defaultModel,
+    };
   }
+  const startedAt = Date.now();
   const health = await adapter.health({
     baseUrl: credential.baseUrl,
     apiKey,
     timeoutMs: credential.timeoutMs,
   });
+  const latencyMs = Date.now() - startedAt;
   await providersRepo.updateProvider(providerCredentialId, {
     lastStatus: health.ok ? 'healthy' : `error: ${health.detail}`.slice(0, 400),
     touchChecked: true,
     ...(health.ok && health.models?.length ? { availableModels: health.models.slice(0, 500) } : {}),
   });
-  return { ok: health.ok, detail: health.detail, models: health.models ?? [] };
+  return {
+    ok: health.ok,
+    detail: health.detail,
+    models: health.models ?? [],
+    latencyMs,
+    provider: credential.provider,
+    defaultModel: credential.defaultModel,
+  };
 }
