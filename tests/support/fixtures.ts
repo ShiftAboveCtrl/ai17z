@@ -41,6 +41,11 @@ export async function createFixture(overrides: {
     ...DEFAULT_POLICY,
     automation: { mode: 'AUTONOMOUS', dryRunDefault: false },
     rate: { ...DEFAULT_POLICY.rate, minSecondsBetweenActions: 0, maxActionsPerHour: 0, maxActionsPerDay: 0 },
+    // Tests about the queue, the graph and the policy gates use short fixture
+    // text that the engagement heuristic would rightly decline to answer.
+    // Those tests are not about whether a mention is worth a reply, so the
+    // fixture agent answers everything and engagement has its own tests.
+    engagement: { ...DEFAULT_POLICY.engagement, strategy: 'ALWAYS_REPLY' as const },
     ...overrides.policy,
   });
 

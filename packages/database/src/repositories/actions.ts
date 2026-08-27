@@ -174,3 +174,26 @@ export async function decideApproval(input: {
 export async function getApproval(jobId: string): Promise<Approval | null> {
   return mapRow<Approval>(await queryOne('SELECT * FROM approvals WHERE job_id = $1', [jobId]));
 }
+
+/**
+ * How many times this agent has replied to somebody recently.
+ *
+ * Counts by the target's handle rather than by conversation, because six
+ * replies to one person across six threads is the same behaviour as six in one.
+ */
+export async function countRecentRepliesToHandle(
+  agentId: string,
+  handle: string,
+  sinceMinutes: number,
+): Promise<number> {
+  const row = await queryOne<{ count: number }>(
+    `SELECT count(*)::int AS count FROM actions a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN events e ON e.id = j.event_id
+      WHERE a.agent_id = $1 AND a.dry_run = false AND a.status = 'EXECUTED'
+        AND lower(e.remote_author_handle) = lower($2)
+        AND a.executed_at > now() - ($3::int * interval '1 minute')`,
+    [agentId, handle, sinceMinutes],
+  );
+  return row?.count ?? 0;
+}
