@@ -5,7 +5,7 @@
 ```bash
 cp .env.example .env
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-# paste into XBAM_MASTER_KEY in .env
+# paste into AI17Z_MASTER_KEY in .env
 
 docker compose up -d
 ```
@@ -40,7 +40,7 @@ them every agent, memory, and job.
 
 ## Migrations
 
-The API runs them at startup because `XBAM_RUN_MIGRATIONS=1` is set for that
+The API runs them at startup because `AI17Z_RUN_MIGRATIONS=1` is set for that
 service, so a fresh stack comes up ready to use. To run them by hand:
 
 ```bash
@@ -56,7 +56,7 @@ the only process that drives a browser. If you do not need a browser channel:
 ```yaml
 worker:
   environment:
-    XBAM_BROWSER_ENABLED: "0"
+    AI17Z_BROWSER_ENABLED: "0"
 ```
 
 The worker then declines browser tasks with a clear message rather than failing

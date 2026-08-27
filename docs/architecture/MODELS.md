@@ -79,7 +79,7 @@ effect where rates are configured.
 
 ## Secrets
 
-Keys are sealed with AES-256-GCM under `XBAM_MASTER_KEY` and readable only
+Keys are sealed with AES-256-GCM under `AI17Z_MASTER_KEY` and readable only
 through `providers.getDecryptedApiKey`, which is called by the gateway and the
 connection tester. The public column list in the providers repository does not
 include `sealed_api_key`, so a key cannot reach an API response by accident.

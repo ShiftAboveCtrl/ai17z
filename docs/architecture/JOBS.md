@@ -4,7 +4,7 @@
 
 The legacy system passed work between processes as mutable JSON files in the
 project root. It worked, but nothing could be recovered, retried, inspected, or
-run twice safely. XBAM makes work a row.
+run twice safely. AI17Z makes work a row.
 
 A job is durable, has an explicit lifecycle, records every attempt, and is safe
 to process more than once.

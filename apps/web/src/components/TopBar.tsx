@@ -31,8 +31,8 @@ export function TopBar() {
       }`}
     >
       <nav className="mx-auto flex max-w-page items-center gap-4 px-5 py-4 sm:gap-8 sm:px-8">
-        <Link to="/" className="font-semibold tracking-monument text-bone" aria-label="XBAM home">
-          XBAM
+        <Link to="/" className="font-semibold tracking-monument text-bone" aria-label="AI17Z home">
+          AI17Z
         </Link>
 
         <div className="hidden items-center gap-6 sm:flex">

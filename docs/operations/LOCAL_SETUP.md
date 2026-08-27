@@ -1,6 +1,6 @@
 # Local setup
 
-For working on XBAM without Docker for the application itself.
+For working on AI17Z without Docker for the application itself.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ For working on XBAM without Docker for the application itself.
 ```bash
 cp .env.example .env
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-# paste into XBAM_MASTER_KEY in .env
+# paste into AI17Z_MASTER_KEY in .env
 
 npm install
 npm run db:up
@@ -42,11 +42,11 @@ Playwright is only needed for browser channels and the visual validation harness
 npx playwright install chromium
 ```
 
-Set `XBAM_BROWSER_ENABLED=0` to switch browser work off entirely. The worker then
+Set `AI17Z_BROWSER_ENABLED=0` to switch browser work off entirely. The worker then
 declines browser tasks with a clear message instead of failing part-way through
 a job.
 
-`XBAM_BROWSER_HEADLESS=0` (the default in development) is what makes "Open
+`AI17Z_BROWSER_HEADLESS=0` (the default in development) is what makes "Open
 sign-in" able to show you a real window.
 
 ## Everyday commands

@@ -1,4 +1,4 @@
-# AI17Z audit of the XBAM baseline
+# AI17Z audit of the AI17Z baseline
 
 Assessed against the AI17Z specification at commit `1152cf0`
 (`release-candidate` = `aea27d5`, plus the Playwright runtime fix).

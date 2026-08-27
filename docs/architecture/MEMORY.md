@@ -8,7 +8,7 @@ Someone could tell the agent a fact and it would not know it an hour later in a
 different thread. The operator knew, and had written a test that proved it, but
 the fix was never deployed.
 
-XBAM has six scopes, and the one that matters most is `USER`.
+AI17Z has six scopes, and the one that matters most is `USER`.
 
 ## Scopes
 

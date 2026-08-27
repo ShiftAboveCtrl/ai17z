@@ -1,4 +1,4 @@
-# Migrating AI4CZ into XBAM
+# Migrating AI4CZ into AI17Z
 
 ## The rule
 
@@ -101,7 +101,7 @@ job is created and no reply is sent. This is exact, not heuristic.
 
 ## Not re-posting 182 replies
 
-`posted_index.json` holds `targetKey|sha1(text)` signatures. XBAM signs content
+`posted_index.json` holds `targetKey|sha1(text)` signatures. AI17Z signs content
 with sha256, so those entries cannot be matched by the modern signature.
 
 Rather than pretend otherwise, migration `0010` stores them verbatim in

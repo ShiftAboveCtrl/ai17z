@@ -2,7 +2,7 @@
 
 ## The contract
 
-A channel adapter is the only part of XBAM that knows what a specific platform
+A channel adapter is the only part of AI17Z that knows what a specific platform
 looks like:
 
 ```ts
@@ -74,7 +74,7 @@ markup, that is the file to edit.
 
 The legacy project contained roughly 900 lines of humanisation: randomised typing
 cadence, mouse drift, simulated video watching, adaptive hibernation, night-time
-sleep. XBAM keeps short randomised settle delays, because the X timeline is
+sleep. AI17Z keeps short randomised settle delays, because the X timeline is
 virtualised and acting on a stale frame is the single largest source of flaky
 automation. It does not reimplement the rest. Evading platform protections is
 not a product feature here.
@@ -98,12 +98,12 @@ else in the system needs to change.
 
 Channels that drive a browser get a session, in one of two modes:
 
-- **Managed** — XBAM launches Chromium against a persistent profile directory it
+- **Managed** — AI17Z launches Chromium against a persistent profile directory it
   owns, one per account.
-- **CDP** — XBAM attaches to a Chrome you started yourself with
+- **CDP** — AI17Z attaches to a Chrome you started yourself with
   `--remote-debugging-port`.
 
-The adapter does not care which. In both cases XBAM never handles the account
+The adapter does not care which. In both cases AI17Z never handles the account
 password: "Open sign-in" opens a real window on the login page and the person
 signs in themselves.
 

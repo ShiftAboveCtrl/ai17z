@@ -1,14 +1,16 @@
 # Security
 
-XBAM is a local-first application. It assumes one trusted operator on their own
+AI17Z is a local-first application. It assumes one trusted operator on their own
 machine, and it is built so that a mistake by that operator is recoverable and a
 compromise of the database is not immediately a compromise of every account.
 
 ## Secrets
 
-Provider API keys are the only secrets XBAM stores.
+Provider API keys are the only secrets AI17Z stores.
 
-- Sealed with AES-256-GCM under `XBAM_MASTER_KEY`, a 32-byte key held in the
+- Read from `AI17Z_MASTER_KEY`, falling back to `XBAM_MASTER_KEY` so that
+  secrets sealed before the rename stay readable without any migration.
+- Sealed with AES-256-GCM under that key, a 32-byte value held in the
   environment and never persisted.
 - Stored as `v1.<iv>.<tag>.<ciphertext>`; each seal uses a fresh IV, so two
   identical keys are not linkable in the database.
@@ -18,7 +20,7 @@ Provider API keys are the only secrets XBAM stores.
 - Surfaced in the UI only as an 8-character sha256 fingerprint.
 - `redact()` blanks anything key-shaped before it reaches a log line or a trace.
 
-Losing `XBAM_MASTER_KEY` makes stored keys unrecoverable. That is the intended
+Losing `AI17Z_MASTER_KEY` makes stored keys unrecoverable. That is the intended
 failure mode: re-enter them.
 
 ## Passwords
@@ -33,12 +35,12 @@ passwords.
 
 ## Browser sessions
 
-XBAM never handles an account password. "Open sign-in" launches a real browser
+AI17Z never handles an account password. "Open sign-in" launches a real browser
 window on the platform's own login page and the person signs in themselves; the
-resulting session lives in a Chromium profile directory XBAM owns.
+resulting session lives in a Chromium profile directory AI17Z owns.
 
 Cookies, tokens, and storage state are never read into the application, never
-displayed, and never written to the database. The session panel shows what XBAM
+displayed, and never written to the database. The session panel shows what AI17Z
 knows *about* the session (mode, status, when it was last checked), not the
 session itself.
 
@@ -93,7 +95,7 @@ resolved path is re-checked against the storage root before the file is served.
 - No multi-user access control. The ownership boundary exists in every query
   (`ownerId` is checked on every agent, account, and provider route), so adding
   roles later does not mean revisiting them, but there is one owner today.
-- No transport encryption. XBAM binds to localhost and expects to stay there.
+- No transport encryption. AI17Z binds to localhost and expects to stay there.
   Exposing it to a network means putting it behind TLS.
 - No rate limiting on the API itself.
 - No CSRF protection, because authentication is a bearer token in `localStorage`

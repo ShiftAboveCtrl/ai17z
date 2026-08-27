@@ -16,12 +16,15 @@ export function loadEnv(startDir = process.cwd()): void {
     const candidate = resolve(dir, '.env');
     if (existsSync(candidate)) {
       applyEnvFile(readFileSync(candidate, 'utf8'));
+      applyBrandCompatibility();
       return;
     }
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
+  // No .env found: the environment may still carry either prefix.
+  applyBrandCompatibility();
 }
 
 export function applyEnvFile(contents: string): void {
@@ -65,4 +68,29 @@ export function requireEnv(key: string): string {
   const v = process.env[key];
   if (!v) throw new Error(`Missing required environment variable: ${key}`);
   return v;
+}
+
+const LEGACY_PREFIX = 'XBAM_';
+const BRAND_PREFIX = 'AI17Z_';
+
+/**
+ * Bridges the XBAM to AI17Z rename for environment variables.
+ *
+ * Every setting is readable under either prefix, in both directions, and an
+ * explicitly set value always wins over the alias. This matters most for
+ * `XBAM_MASTER_KEY`: provider secrets are sealed under that exact key material,
+ * so an install that predates the rename must keep decrypting without the owner
+ * touching anything. Renaming a variable is never worth losing a credential.
+ */
+export function applyBrandCompatibility(env: NodeJS.ProcessEnv = process.env): void {
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) continue;
+    if (key.startsWith(LEGACY_PREFIX)) {
+      const branded = BRAND_PREFIX + key.slice(LEGACY_PREFIX.length);
+      if (env[branded] === undefined) env[branded] = value;
+    } else if (key.startsWith(BRAND_PREFIX)) {
+      const legacy = LEGACY_PREFIX + key.slice(BRAND_PREFIX.length);
+      if (env[legacy] === undefined) env[legacy] = value;
+    }
+  }
 }

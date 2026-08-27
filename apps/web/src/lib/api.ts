@@ -1,11 +1,21 @@
 import type { ApiResponse } from '@xbam/shared/contracts';
 
 const BASE = (import.meta.env.VITE_XBAM_API_URL ?? '').replace(/\/+$/, '');
-const TOKEN_KEY = 'xbam.session';
+const TOKEN_KEY = 'ai17z.session';
+// Read once from the pre-rename key so the rename does not sign anyone out.
+const LEGACY_TOKEN_KEY = 'xbam.session';
 
 export function getToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    const current = localStorage.getItem(TOKEN_KEY);
+    if (current) return current;
+    const legacy = localStorage.getItem(LEGACY_TOKEN_KEY);
+    if (legacy) {
+      localStorage.setItem(TOKEN_KEY, legacy);
+      localStorage.removeItem(LEGACY_TOKEN_KEY);
+      return legacy;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -14,7 +24,10 @@ export function getToken(): string | null {
 export function setToken(token: string | null): void {
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    else {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(LEGACY_TOKEN_KEY);
+    }
   } catch {
     // Private-mode browsers block storage; the session simply will not persist.
   }
@@ -58,7 +71,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     if ((error as Error).name === 'AbortError') throw error;
     throw new ApiError(
       'NETWORK',
-      'Could not reach the XBAM API. Check that the api service is running.',
+      'Could not reach the AI17Z API. Check that the api service is running.',
       0,
     );
   }

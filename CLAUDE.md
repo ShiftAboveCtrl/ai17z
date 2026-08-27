@@ -2,14 +2,32 @@
 
 Guidance for Claude Code working in this repository.
 
-## What XBAM is
+## The rename: XBAM became AI17Z
+
+Product name, UI, and documentation say AI17Z. These deliberately still say XBAM,
+because they carry data or wiring and renaming them would break a working install:
+
+| Kept | Why |
+| --- | --- |
+| `@xbam/*` package names | Internal only; renaming touches every import for no user benefit |
+| Postgres database `xbam`, volumes `xbam_*`, compose project | Renaming means migrating or losing data |
+| `XBAM_*` environment variables | Still read, in both directions, see below |
+| `VITE_XBAM_API_URL` | Build-time wiring |
+
+`applyBrandCompatibility()` in `packages/shared/src/env.ts` mirrors every
+`XBAM_*` variable to `AI17Z_*` and back, explicit values always winning. The
+master key resolves `AI17Z_MASTER_KEY` first and falls back to
+`XBAM_MASTER_KEY`, so secrets sealed before the rename stay readable.
+`tests/unit/brandCompat.test.ts` proves it. Never break that fallback.
+
+## What AI17Z is
 
 A local-first platform for running autonomous agents. An agent is an identity, a
 memory, a model, a policy, and a set of channels it can act on. The runtime is
 generic: X, OpenRouter, a persona, and a reply are all configuration.
 
-XBAM descends from a working system called AI4CZ, which lives at
-`C:\Users\ta0as\OneDrive\Desktop\ai4cz`. XBAM kept its ideas and replaced its
+AI17Z descends from a working system called AI4CZ, which lives at
+`C:\Users\ta0as\OneDrive\Desktop\ai4cz`. AI17Z kept its ideas and replaced its
 architecture.
 
 ## Hard boundary: the legacy directory
@@ -130,7 +148,7 @@ the worker on the machine that has the browser. See
 
 ## Secrets
 
-Provider API keys are sealed with AES-256-GCM under `XBAM_MASTER_KEY` and are
+Provider API keys are sealed with AES-256-GCM under `AI17Z_MASTER_KEY` and are
 readable only through `providers.getDecryptedApiKey`. They must never appear in
 an API response, a log line, an audit row, or a trace. `redact()` in
 `packages/shared/src/logger.ts` blanks anything key-shaped.
@@ -138,7 +156,7 @@ an API response, a log line, an audit row, or a trace. `redact()` in
 ## Identity policy
 
 The platform default is that an agent may not claim to be human. AI4CZ hard-coded
-the opposite into its prompt; XBAM makes it an explicit, versioned policy field
+the opposite into its prompt; AI17Z makes it an explicit, versioned policy field
 (`identity.mayDenyBeingAI`, default false) that the validator enforces. Do not
 add a code path that bypasses it.
 
