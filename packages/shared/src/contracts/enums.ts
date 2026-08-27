@@ -257,7 +257,21 @@ export const PROVIDER_KINDS = [
 export const ProviderKind = enumOf(PROVIDER_KINDS).schema;
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 
-export const MODEL_ROLES = ['primary', 'fallback_1', 'fallback_2', 'classifier'] as const;
+export const MODEL_ROLES = [
+  'primary',
+  'fallback_1',
+  'fallback_2',
+  /** Cheap, fast, structured output. Intent, temperature, memory extraction. */
+  'classifier',
+  /** Reads images. Not every provider can, and the primary often cannot. */
+  'vision',
+  /** Turns audio into text, for video posts. */
+  'transcription',
+  /** Judges a candidate response. Deliberately allowed to be a cheaper model. */
+  'critic',
+  /** Rewrites a draft into the agent's voice. */
+  'voice_rewrite',
+] as const;
 export const ModelRole = enumOf(MODEL_ROLES).schema;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 
@@ -265,6 +279,8 @@ export const PIPELINE_NODE_KINDS = [
   'TRIGGER',
   'FILTER',
   'RESOLVE_CONTEXT',
+  /** Understands images, quoted posts and links attached to the event. */
+  'MEDIA_RESOLVE',
   'RETRIEVE_MEMORY',
   'ASSEMBLE_PERSONA',
   'GENERATE',
@@ -292,6 +308,8 @@ export const PROMPT_LAYER_KEYS = [
   'STYLE',
   'SAFETY_DISCLOSURE',
   'RETRIEVED_MEMORY',
+  /** What was attached to the post: images, the quoted post, links. */
+  'MEDIA_CONTEXT',
   'IMMEDIATE_CONTEXT',
   'TOOLS',
   'TASK',
@@ -326,6 +344,18 @@ export const TRACE_EVENT_TYPES = [
   'JOB_RECOVERED',
   'JOB_CANCELLED',
   'DIAGNOSTIC_CAPTURED',
+  // Social intelligence stages. Each one is a decision worth being able to
+  // inspect afterwards, which is why they are traced rather than only logged.
+  'MEDIA_RESOLVED',
+  'RELATIONSHIP_LOADED',
+  'STANCE_SELECTED',
+  'STANCE_CONFLICT',
+  'STANCE_REVISED',
+  'ENGAGEMENT_DECIDED',
+  'INTENT_SELECTED',
+  'VOICE_COMPILED',
+  'QUALITY_SCORED',
+  'REPETITION_DETECTED',
 ] as const;
 export const TraceEventType = enumOf(TRACE_EVENT_TYPES).schema;
 export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];

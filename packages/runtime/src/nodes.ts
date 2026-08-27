@@ -7,6 +7,7 @@ import {
   stepExecute,
   stepGenerate,
   stepResolveContext,
+  stepResolveMedia,
   stepRetrieveMemory,
   stepValidate,
 } from './steps';
@@ -171,6 +172,10 @@ export const NODE_HANDLERS: Record<string, NodeHandler> = {
   FILTER: filterNode,
   RESOLVE_CONTEXT: async (bundle) => {
     await stepResolveContext(bundle);
+    return { branch: 'next' };
+  },
+  MEDIA_RESOLVE: async (bundle) => {
+    await stepResolveMedia(bundle);
     return { branch: 'next' };
   },
   RETRIEVE_MEMORY: async (bundle) => {

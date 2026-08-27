@@ -17,6 +17,7 @@ import type {
 import { SEL, X_URLS, articleForStatus } from './selectors';
 import { observeAuthPage } from './auth';
 import { X_MONITORS } from './monitors';
+import { readMediaInventory } from './media';
 import { buildStatusUrl, extractStatusId, handleFromUrl, looksUnavailable, normalizeHandle, normalizeTargetId } from './targets';
 
 /**
@@ -332,6 +333,14 @@ export const xAdapter: ChannelAdapter = {
         });
       }
 
+      // What is attached to the post. Read here rather than at ingest, because
+      // the status page is where the media actually renders, and this is the one
+      // place the page is already open.
+      const inventory = await readMediaInventory(page, anchor, target.text || event.text).catch((error) => {
+        ctx.logger.warn('media inventory failed', { message: errorMessage(error) });
+        return { media: [], quoted: null, links: [] };
+      });
+
       return {
         targetRef,
         targetUrl: url,
@@ -340,7 +349,14 @@ export const xAdapter: ChannelAdapter = {
         incomingText: target.text || event.text,
         parentText,
         thread,
-        meta: { statusId, threadDepth: thread.length, resolvedAt: new Date().toISOString() },
+        meta: {
+          statusId,
+          threadDepth: thread.length,
+          resolvedAt: new Date().toISOString(),
+          // Carried in meta so nothing downstream of the adapter has to know
+          // what an X media container looks like.
+          inventory,
+        },
       };
     });
   },

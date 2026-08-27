@@ -4,6 +4,7 @@ export { mockAdapter } from './mock/index';
 export { xAdapter } from './x/index';
 export { observeAuthPage } from './x/auth';
 export { CHALLENGE_SIGNALS } from './x/selectors';
+export { linksInText, upgradeImageUrl, readMediaInventory } from './x/media';
 export {
   normalizeTargetId,
   extractStatusId,

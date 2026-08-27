@@ -92,6 +92,28 @@ here and you do not know it, say you do not have it rather than inventing it.
 {{/memoryBlock}}`,
   },
   {
+    key: 'MEDIA_CONTEXT',
+    title: 'What is attached',
+    role: 'user',
+    // Rendered separately from the message text so the model is told which
+    // image the question is about, rather than being handed one flat blob.
+    template: `{{#mediaBlock}}ATTACHED TO THIS POST
+{{mediaBlock}}
+
+{{/mediaBlock}}{{#quotedBlock}}THE POST BEING QUOTED
+{{quotedBlock}}
+
+{{/quotedBlock}}{{#linkBlock}}LINKS
+{{linkBlock}}
+
+{{/linkBlock}}{{#mediaGap}}NOT UNDERSTOOD
+{{mediaGap}}
+
+Say plainly that you cannot see it rather than guessing what it shows.
+
+{{/mediaGap}}`,
+  },
+  {
     key: 'IMMEDIATE_CONTEXT',
     title: 'Immediate context',
     role: 'user',

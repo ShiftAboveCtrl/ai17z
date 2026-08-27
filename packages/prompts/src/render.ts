@@ -1,3 +1,4 @@
+import type { SocialMediaContext } from '@xbam/shared/contracts';
 export type TemplateValues = Record<string, string | number | boolean | null | undefined>;
 
 /**
@@ -58,5 +59,54 @@ export function numberedList(items: readonly string[]): string {
     .map((item) => item.trim())
     .filter(Boolean)
     .map((item, index) => `${index + 1}. ${item}`)
+    .join('\n');
+}
+
+/**
+ * Describes what was attached to a post.
+ *
+ * Each item is numbered and named by kind, because "the second image" is a
+ * thing people say and a thing a model needs to be able to resolve. An item
+ * that could not be read says so rather than being omitted: silence would let
+ * the model assume there was nothing there.
+ */
+export function renderMedia(items: SocialMediaContext['items']): string {
+  if (items.length === 0) return '';
+  const lines: string[] = [];
+
+  for (const item of items) {
+    const label = `${item.kind === 'gif' ? 'GIF' : item.kind}${items.length > 1 ? ` ${item.position + 1}` : ''}`;
+    if (item.status === 'analyzed' && item.description) {
+      lines.push(`- ${label}: ${item.description}`);
+      // Text read out of a picture is the least reliable part of this, so it is
+      // labelled as read rather than presented as fact.
+      if (item.extractedText) lines.push(`  Text visible in it: "${item.extractedText}"`);
+    } else if (item.altText) {
+      lines.push(`- ${label}: described by its author as "${item.altText}" (not otherwise examined)`);
+    } else {
+      lines.push(`- ${label}: present but not examined.`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/** The post being quoted, which often carries the substance of the reply. */
+export function renderQuoted(quoted: SocialMediaContext['quoted']): string {
+  if (!quoted) return '';
+  const who = quoted.authorHandle ? `@${quoted.authorHandle}` : 'someone';
+  const media = quoted.mediaSummary ? `\n(${quoted.mediaSummary})` : '';
+  return `${who} wrote:\n${quoted.text}${media}`;
+}
+
+export function renderLinks(links: SocialMediaContext['links']): string {
+  if (links.length === 0) return '';
+  return links
+    .map((link) => {
+      if (link.resolution === 'fetched' && link.summary) return `- ${link.url}\n  ${link.summary}`;
+      if (link.title) return `- ${link.url} — ${link.title}`;
+      // A link nobody opened is still worth mentioning, so the model does not
+      // pretend to know what is behind it.
+      return `- ${link.url} (not opened)`;
+    })
     .join('\n');
 }
