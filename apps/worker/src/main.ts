@@ -6,6 +6,7 @@ import { bootstrapRuntime, runJob } from '@xbam/runtime';
 import { closeAllSessions } from '@xbam/browser';
 import { ChannelPoller } from './poller';
 import { SignInWatcher } from './signIn';
+import { SocialRadar } from './radar';
 import { BrowserTaskRunner } from './browserTasks';
 
 loadEnv();
@@ -72,11 +73,13 @@ async function main(): Promise<void> {
   const poller = new ChannelPoller();
   const browserTaskRunner = new BrowserTaskRunner(workerId);
   const signIns = new SignInWatcher();
+  const socialRadar = new SocialRadar();
   await worker.start();
   if (capabilities.browserCapable) {
     poller.start();
     browserTaskRunner.start();
     signIns.start();
+    socialRadar.start();
   }
   log.info('worker ready', { workerId, role, ...capabilities });
 
@@ -93,6 +96,7 @@ async function main(): Promise<void> {
     poller.stop();
     browserTaskRunner.stop();
     signIns.stop();
+    socialRadar.stop();
     await worker.stop();
     await closeAllSessions().catch((e) => log.warn('browser cleanup failed', { message: errorMessage(e) }));
     await closePool().catch(() => undefined);
