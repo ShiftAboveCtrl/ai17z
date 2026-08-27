@@ -73,6 +73,11 @@ export const Account = z.object({
   lastHealthStatus: z.string().nullable(),
   lastActivityAt: z.string().nullable(),
   lastError: z.string().nullable(),
+  /** When a sign-in was started and when it gives up. Null when none is running. */
+  authStartedAt: z.string().nullable().default(null),
+  authDeadlineAt: z.string().nullable().default(null),
+  /** Which kind of challenge is waiting on the owner. Never its content. */
+  challengeKind: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
