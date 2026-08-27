@@ -320,7 +320,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   const targetRef = context?.targetRef ?? null;
 
   if (!job.dryRun) {
-    const rate = await checkActionRate(bundle.agent.id, policy);
+    const rate = await checkActionRate(bundle.agent.id, policy, bundle.job.accountId);
     if (!rate.allow) {
       throw PipelineError.retryable(rate.reason, rate.message, { retryAfterMs: rate.retryAfterMs });
     }

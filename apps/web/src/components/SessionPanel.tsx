@@ -4,6 +4,7 @@ import { ApiError, artifactObjectUrl, get, patch, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AccountRow, BrowserTask, DiagnosticRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
+import { CadencePanel } from './CadencePanel';
 import { ErrorPanel, Field, SavedTick, Spinner, StatusDot } from './ui';
 
 interface SessionData {
@@ -110,6 +111,8 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
       </div>
 
       {browserBacked && <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />}
+
+      {browserBacked && <CadencePanel accountId={accountId} />}
 
       {browserBacked ? (
         <div className="flex flex-wrap gap-2">

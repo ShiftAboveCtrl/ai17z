@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { CreateAccountInput } from '@xbam/shared/contracts';
+import { CadenceConfig, CreateAccountInput } from '@xbam/shared/contracts';
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
-import { accounts as accountsRepo, ops, type UserRow } from '@xbam/database';
+import { accounts as accountsRepo, cadences as cadencesRepo, ops, type UserRow } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@xbam/channels';
 import { closeSession, defaultProfileDir } from '@xbam/browser';
 import { handler, params, parseBody, requireUser } from '../http';
@@ -70,6 +70,49 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       }
       await ops.audit({ actorUserId: user.id, action: 'account.created', entityType: 'account', entityId: account.id });
       return account;
+    }),
+  );
+
+  // Cadence: when this account is read from and allowed to act. Versioned, so a
+  // change that quietens an agent can be traced to who made it and when.
+  app.get(
+    '/api/accounts/:id/cadence',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const account = await ownedAccount(params(request).id!, user);
+      const [config, versions, state] = await Promise.all([
+        cadencesRepo.activeCadence(account.id),
+        cadencesRepo.listVersions(account.id),
+        cadencesRepo.pollState(account.id),
+      ]);
+      return {
+        config,
+        // No versions means nothing has been edited and the defaults are in force.
+        customised: versions.length > 0,
+        versions,
+        state,
+      };
+    }),
+  );
+
+  app.put(
+    '/api/accounts/:id/cadence',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const account = await ownedAccount(params(request).id!, user);
+      const body = parseBody(
+        z.object({ config: CadenceConfig, changeNote: z.string().max(500).default('') }),
+        request,
+      );
+      const version = await cadencesRepo.saveVersion(account.id, body.config, body.changeNote, user.id);
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'account.cadence.saved',
+        entityType: 'account',
+        entityId: account.id,
+        data: { version: version.version },
+      });
+      return version;
     }),
   );
 
