@@ -5,6 +5,7 @@ import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import { bootstrapRuntime, runJob } from '@xbam/runtime';
 import { closeAllSessions } from '@xbam/browser';
 import { ChannelPoller } from './poller';
+import { SignInWatcher } from './signIn';
 import { BrowserTaskRunner } from './browserTasks';
 
 loadEnv();
@@ -41,10 +42,12 @@ async function main(): Promise<void> {
   // whichever worker can actually open one.
   const poller = new ChannelPoller();
   const browserTaskRunner = new BrowserTaskRunner(workerId);
+  const signIns = new SignInWatcher();
   await worker.start();
   if (capabilities.browserCapable) {
     poller.start();
     browserTaskRunner.start();
+    signIns.start();
   }
   log.info('worker ready', { workerId, role, ...capabilities });
 
@@ -55,6 +58,7 @@ async function main(): Promise<void> {
     log.info('shutting down', { signal });
     poller.stop();
     browserTaskRunner.stop();
+    signIns.stop();
     await worker.stop();
     await closeAllSessions().catch((e) => log.warn('browser cleanup failed', { message: errorMessage(e) }));
     await closePool().catch(() => undefined);

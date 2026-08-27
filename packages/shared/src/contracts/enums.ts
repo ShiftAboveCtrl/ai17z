@@ -51,9 +51,55 @@ export const CHANNELS = ['mock', 'x', 'discord', 'telegram', 'slack', 'email', '
 export const ChannelId = enumOf(CHANNELS).schema;
 export type ChannelId = (typeof CHANNELS)[number];
 
-export const ACCOUNT_STATUSES = ['DISCONNECTED', 'CONNECTING', 'CONNECTED', 'NEEDS_AUTH', 'ERROR'] as const;
+/**
+ * Connecting an account is a conversation with a remote service that can stall
+ * in several different places, and "CONNECTING" covered all of them. Each state
+ * below is one a person can be told about and act on.
+ */
+export const ACCOUNT_STATUSES = [
+  /** Nothing has been attempted, or the session was deliberately closed. */
+  'DISCONNECTED',
+  /** A browser is launching. Slow the first time; a profile has to be created. */
+  'STARTING_BROWSER',
+  /** The browser is up and the page has loaded, before anything is known. */
+  'BROWSER_READY',
+  /** A sign-in window is open and we are waiting for the person to finish. */
+  'AWAITING_LOGIN',
+  /** Credentials were accepted and the service is completing the sign-in. */
+  'AUTHENTICATING',
+  /**
+   * The service is asking for something only the account owner can provide: a
+   * CAPTCHA, a second factor, an emailed code, a hardware key, a lock review.
+   * AI17Z stops here every time. It never answers one of these.
+   */
+  'CHALLENGE_REQUIRES_USER',
+  'CONNECTED',
+  /** Was connected, and the stored session has since stopped being accepted. */
+  'SESSION_EXPIRED',
+  /** No usable session, and no sign-in in progress. */
+  'NEEDS_AUTH',
+  /** A sign-in was started and nobody finished it in time. */
+  'TIMEOUT',
+  'ERROR',
+] as const;
 export const AccountStatus = enumOf(ACCOUNT_STATUSES).schema;
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
+
+/** States that mean a person has to do something before anything else happens. */
+export const ACCOUNT_STATUSES_NEEDING_PERSON: readonly AccountStatus[] = [
+  'CHALLENGE_REQUIRES_USER',
+  'NEEDS_AUTH',
+  'SESSION_EXPIRED',
+  'TIMEOUT',
+];
+
+/** States that are a step in a sign-in already under way. */
+export const ACCOUNT_STATUSES_IN_PROGRESS: readonly AccountStatus[] = [
+  'STARTING_BROWSER',
+  'BROWSER_READY',
+  'AWAITING_LOGIN',
+  'AUTHENTICATING',
+];
 
 export const BROWSER_MODES = ['MANAGED', 'CDP'] as const;
 export const BrowserMode = enumOf(BROWSER_MODES).schema;

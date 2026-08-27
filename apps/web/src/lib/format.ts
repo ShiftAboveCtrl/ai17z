@@ -34,6 +34,13 @@ const STATUS_TONE: Record<string, 'live' | 'wait' | 'fail' | 'idle'> = {
   RETRYABLE_FAILURE: 'wait',
   NEEDS_AUTH: 'wait',
   PAUSED: 'wait',
+  STARTING_BROWSER: 'wait',
+  BROWSER_READY: 'wait',
+  AWAITING_LOGIN: 'wait',
+  AUTHENTICATING: 'wait',
+  CHALLENGE_REQUIRES_USER: 'wait',
+  SESSION_EXPIRED: 'wait',
+  TIMEOUT: 'fail',
   PERMANENT_FAILURE: 'fail',
   ERROR: 'fail',
   CANCELLED: 'idle',
@@ -45,10 +52,28 @@ export function toneFor(status: string): 'live' | 'wait' | 'fail' | 'idle' {
   return STATUS_TONE[status] ?? 'idle';
 }
 
+/**
+ * Names for states whose mechanical spelling would not tell anyone what to do.
+ * Everything else is derived from the constant itself.
+ */
+const STATUS_WORDS: Record<string, string> = {
+  STARTING_BROWSER: 'Starting a browser',
+  BROWSER_READY: 'Browser ready',
+  AWAITING_LOGIN: 'Waiting for you to sign in',
+  AUTHENTICATING: 'Signing in',
+  CHALLENGE_REQUIRES_USER: 'Needs you',
+  SESSION_EXPIRED: 'Session expired',
+  NEEDS_AUTH: 'Not signed in',
+  TIMEOUT: 'Sign-in timed out',
+};
+
 /** Turns RUNNING_STATES into readable text without losing precision. */
 export function humanStatus(status: string): string {
-  return status
-    .toLowerCase()
-    .replace(/_/g, ' ')
-    .replace(/^\w/, (c) => c.toUpperCase());
+  return (
+    STATUS_WORDS[status] ??
+    status
+      .toLowerCase()
+      .replace(/_/g, ' ')
+      .replace(/^\w/, (c) => c.toUpperCase())
+  );
 }

@@ -4,6 +4,7 @@ import { captureScreenshot, defaultProfileDir, leaseSession, safeUrl, type Lease
 import type {
   ActionRequest,
   ActionResult,
+  AuthObservation,
   ChannelAdapter,
   ChannelContext,
   ConnectionResult,
@@ -13,6 +14,7 @@ import type {
   VerificationResult,
 } from '../contract';
 import { SEL, X_URLS, articleForStatus } from './selectors';
+import { observeAuthPage } from './auth';
 import { buildStatusUrl, extractStatusId, handleFromUrl, looksUnavailable, normalizeHandle, normalizeTargetId } from './targets';
 
 /**
@@ -161,6 +163,19 @@ export const xAdapter: ChannelAdapter = {
       });
     } catch (error) {
       return { status: 'offline', detail: errorMessage(error), authenticated: false };
+    }
+  },
+
+  /**
+   * Reports what the open sign-in window shows, without touching it. The worker
+   * polls this while a person signs in; every X-specific notion of what a
+   * challenge looks like stays behind this call.
+   */
+  async observeAuth(ctx: ChannelContext): Promise<AuthObservation> {
+    try {
+      return await withSession(ctx, async ({ page }) => observeAuthPage(page));
+    } catch (error) {
+      return { state: 'UNREACHABLE', detail: errorMessage(error) };
     }
   },
 

@@ -12,7 +12,16 @@ async function ownedAccount(accountId: string, user: UserRow) {
   return account;
 }
 
-const TASK_KINDS = ['CONNECT', 'HEALTH_CHECK', 'OPEN_AUTH', 'SCREENSHOT', 'CLEAR', 'DISCONNECT', 'INGEST'] as const;
+const TASK_KINDS = [
+  'CONNECT',
+  'HEALTH_CHECK',
+  'OPEN_AUTH',
+  'SCREENSHOT',
+  'CLEAR',
+  'DISCONNECT',
+  'INGEST',
+  'CANCEL_AUTH',
+] as const;
 
 /**
  * Session management is expressed as intents, not direct browser calls.

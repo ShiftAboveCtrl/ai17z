@@ -35,3 +35,57 @@ export const SEL = {
 export function articleForStatus(statusId: string): string {
   return `article[data-testid="tweet"]:has(a[href*="/status/${statusId}"])`;
 }
+
+/**
+ * Signals that X is asking for something only the account owner can supply.
+ *
+ * These exist so AI17Z can recognise a challenge and stop. They are not here to
+ * be answered, worked around, or automated: the agent hands the open window back
+ * to the person and waits. Matching is deliberately generous, because a
+ * challenge that goes unrecognised is one an automated flow might blunder into.
+ */
+export const CHALLENGE_SIGNALS: { kind: string; describe: string; selector?: string; text?: RegExp }[] = [
+  {
+    kind: 'two_factor',
+    describe: 'X is asking for a two-factor code.',
+    selector: 'input[data-testid="ocfEnterTextTextInput"][name="text"]',
+    text: /two-factor|2-factor|authentication code|verification code/i,
+  },
+  {
+    kind: 'email_verification',
+    describe: 'X is asking for a code it emailed to the account.',
+    text: /we sent you a code|check your email|confirm your email/i,
+  },
+  {
+    kind: 'phone_verification',
+    describe: 'X is asking for a phone number or a code sent by text.',
+    text: /phone number|sent you a text|confirm your phone/i,
+  },
+  {
+    kind: 'captcha',
+    describe: 'X is showing a CAPTCHA.',
+    selector: 'iframe[src*="recaptcha"], iframe[src*="arkoselabs"], iframe[title*="challenge" i]',
+    text: /solve this puzzle|prove you.re human|are you a robot/i,
+  },
+  {
+    kind: 'suspicious_login',
+    describe: 'X flagged the sign-in as unusual and wants the owner to confirm it.',
+    text: /unusual (login|activity)|suspicious (login|activity)|verify it.s you|help us keep your account safe/i,
+  },
+  {
+    kind: 'account_locked',
+    describe: 'The account is locked or suspended. Only the owner can resolve this with X.',
+    text: /your account (has been )?(locked|suspended)|account is temporarily/i,
+  },
+  {
+    kind: 'hardware_key',
+    describe: 'X is asking for a hardware security key.',
+    text: /security key|use your passkey|insert your key/i,
+  },
+];
+
+/** The sign-in form is showing, so nobody has entered anything yet. */
+export const SEL_AUTH = {
+  usernameField: 'input[autocomplete="username"]',
+  passwordField: 'input[name="password"], input[autocomplete="current-password"]',
+} as const;

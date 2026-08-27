@@ -8,6 +8,12 @@ import { buildChannelContext, ingestNormalizedEvent, storageDir } from '@xbam/ru
 const log = createLogger('browser-tasks');
 
 /**
+ * How long an open sign-in window is watched before it is called abandoned.
+ * Generous: a person may have to find a password manager, a phone, or a key.
+ */
+const SIGN_IN_WINDOW_MS = envInt('AI17Z_SIGNIN_WINDOW_MS', 15 * 60_000);
+
+/**
  * Executes the browser intents recorded by the API.
  *
  * The worker is the only process that opens a browser, which is what makes
@@ -122,8 +128,12 @@ export class BrowserTaskRunner {
 
       case 'HEALTH_CHECK': {
         const health = await adapter.healthCheck(ctx);
+        // Distinguishing these two matters: an expired session means the profile
+        // is fine and someone needs to sign in again, while NEEDS_AUTH means
+        // there was never a session to begin with.
+        const signedOut = account.status === 'CONNECTED' ? 'SESSION_EXPIRED' : 'NEEDS_AUTH';
         await accountsRepo.updateAccount(account.id, {
-          status: health.authenticated ? 'CONNECTED' : health.status === 'offline' ? 'ERROR' : 'NEEDS_AUTH',
+          status: health.authenticated ? 'CONNECTED' : health.status === 'offline' ? 'ERROR' : signedOut,
           lastHealthStatus: health.detail.slice(0, 200),
           lastError: health.status === 'healthy' ? null : health.detail.slice(0, 500),
           touchHealthCheck: true,
@@ -142,19 +152,52 @@ export class BrowserTaskRunner {
 
       case 'OPEN_AUTH': {
         // Opens a real window on the account profile and leaves it open so the
-        // person signs in themselves. XBAM never handles their credentials.
+        // person signs in themselves. AI17Z never handles their credentials.
+        //
+        // Launching a browser on a cold profile is slow enough to look broken,
+        // so the state is written before the launch rather than after it.
+        await accountsRepo.updateAccount(account.id, {
+          status: 'STARTING_BROWSER',
+          lastHealthStatus: 'Starting a browser.',
+          lastError: null,
+          challengeKind: null,
+          touchHealthCheck: true,
+        });
+
         const session = await leaseSession({ accountId: account.id, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: false });
         try {
           await session.page.goto('https://x.com/login', { waitUntil: 'domcontentloaded', timeout: 45_000 });
         } finally {
           await session.release();
         }
+
+        const deadline = new Date(Date.now() + SIGN_IN_WINDOW_MS);
         await accountsRepo.updateAccount(account.id, {
-          status: 'NEEDS_AUTH',
-          lastHealthStatus: 'Sign-in window opened',
+          status: 'AWAITING_LOGIN',
+          lastHealthStatus: 'Waiting for you to sign in.',
+          authStartedAt: new Date().toISOString(),
+          authDeadlineAt: deadline.toISOString(),
           touchHealthCheck: true,
         });
-        return { detail: 'A browser window is open on the sign-in page. Sign in there, then run Test session.' };
+        return {
+          detail: 'A browser window is open on the sign-in page. Sign in there; this page follows along on its own.',
+          deadline: deadline.toISOString(),
+        };
+      }
+
+      case 'CANCEL_AUTH': {
+        // Closes the window and puts the account back where it was, rather than
+        // leaving it in a step that is no longer happening.
+        await closeSession(account.id).catch(() => undefined);
+        await accountsRepo.updateAccount(account.id, {
+          status: 'NEEDS_AUTH',
+          lastHealthStatus: 'Sign-in cancelled.',
+          authStartedAt: null,
+          authDeadlineAt: null,
+          challengeKind: null,
+          touchHealthCheck: true,
+        });
+        return { detail: 'Sign-in cancelled and the window closed.' };
       }
 
       case 'SCREENSHOT': {

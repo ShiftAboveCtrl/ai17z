@@ -5,6 +5,7 @@ import { useResource } from '@app/lib/hooks';
 import type { AccountRow, BrowserTask, DiagnosticRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { CadencePanel } from './CadencePanel';
+import { SignInProgress } from './SignInProgress';
 import { ErrorPanel, Field, SavedTick, Spinner, StatusDot } from './ui';
 
 interface SessionData {
@@ -80,6 +81,19 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
     };
   }, [taskId, reload, onChanged]);
 
+  const signingIn = data
+    ? ['STARTING_BROWSER', 'BROWSER_READY', 'AWAITING_LOGIN', 'AUTHENTICATING'].includes(data.account.status)
+    : false;
+
+  // A sign-in advances in the worker, so the panel polls while one is running.
+  // It stops the moment the account settles, including on a challenge: at that
+  // point nothing changes until a person does something.
+  useEffect(() => {
+    if (!signingIn) return;
+    const timer = setInterval(() => reload(), 2_000);
+    return () => clearInterval(timer);
+  }, [signingIn, reload]);
+
   const openShot = useCallback(async (artifactId: string) => {
     try {
       setShot(await artifactObjectUrl(artifactId));
@@ -109,6 +123,17 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
           <p className="mt-3 text-sm leading-relaxed text-bone-dim">{data.account.lastHealthStatus}</p>
         )}
       </div>
+
+      {browserBacked &&
+        ['STARTING_BROWSER', 'BROWSER_READY', 'AWAITING_LOGIN', 'AUTHENTICATING', 'CHALLENGE_REQUIRES_USER', 'TIMEOUT', 'SESSION_EXPIRED'].includes(
+          data.account.status,
+        ) && (
+          <SignInProgress
+            account={data.account}
+            cancelling={pending === 'CANCEL_AUTH'}
+            onCancel={() => void run('CANCEL_AUTH')}
+          />
+        )}
 
       {browserBacked && <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />}
 

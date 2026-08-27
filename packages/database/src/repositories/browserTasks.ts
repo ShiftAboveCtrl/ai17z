@@ -10,7 +10,8 @@ export type BrowserTaskKind =
   | 'CLEAR'
   | 'DISCONNECT'
   | 'INGEST'
-  | 'PREFLIGHT';
+  | 'PREFLIGHT'
+  | 'CANCEL_AUTH';
 
 export interface BrowserTaskRow {
   id: string;
