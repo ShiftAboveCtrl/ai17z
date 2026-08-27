@@ -1,6 +1,6 @@
 import { hostname } from 'node:os';
 import { createLogger, envInt, envString, errorMessage, loadEnv } from '@xbam/shared';
-import { closePool, pingDatabase } from '@xbam/database';
+import { browserTasks, closePool, pingDatabase, workers as workersRepo } from '@xbam/database';
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import { bootstrapRuntime, runJob } from '@xbam/runtime';
 import { closeAllSessions } from '@xbam/browser';
@@ -40,6 +40,35 @@ async function main(): Promise<void> {
 
   // Channel polling and browser tasks both drive a browser, so they belong to
   // whichever worker can actually open one.
+  // Announce what this worker can do before it starts, so the API can tell
+  // somebody "nothing here can open a browser" instead of queueing a task that
+  // waits for a worker which does not exist.
+  const announce = () =>
+    workersRepo
+      .heartbeat({ id: workerId, role, ...capabilities, hostname: hostname() })
+      .catch((e) => log.warn('heartbeat failed', { message: errorMessage(e) }));
+  await announce();
+  const heartbeat = setInterval(() => void announce(), 20_000);
+
+  /**
+   * Frees browser tasks nothing is going to finish.
+   *
+   * Runs on every worker, not only browser-capable ones, because the failure
+   * that strands an account is a task queued while no browser worker exists —
+   * and a sweep that only runs on a browser worker never runs then. Freeing a
+   * stuck row needs a database, not a browser.
+   */
+  const sweep = async () => {
+    try {
+      const freed = await browserTasks.recoverStaleBrowserTasks();
+      if (freed.abandoned > 0 || freed.unclaimed > 0) log.info('freed stuck browser tasks', freed);
+    } catch (error) {
+      log.warn('browser task sweep failed', { message: errorMessage(error) });
+    }
+  };
+  await sweep();
+  const sweeper = setInterval(() => void sweep(), 60_000);
+
   const poller = new ChannelPoller();
   const browserTaskRunner = new BrowserTaskRunner(workerId);
   const signIns = new SignInWatcher();
@@ -56,6 +85,11 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('shutting down', { signal });
+    clearInterval(heartbeat);
+    clearInterval(sweeper);
+    // Withdraw immediately rather than waiting for the heartbeat to lapse: a
+    // clean shutdown knows it is leaving.
+    await workersRepo.goodbye(workerId).catch(() => undefined);
     poller.stop();
     browserTaskRunner.stop();
     signIns.stop();

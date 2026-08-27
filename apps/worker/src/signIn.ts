@@ -122,14 +122,18 @@ export class SignInWatcher {
         return;
 
       case 'UNREACHABLE':
+        // Almost always somebody closing the window rather than a fault. Saying
+        // ERROR implies something broke and needs fixing; nothing did, and the
+        // way forward is simply to open sign-in again.
         await accountsRepo.updateAccount(accountId, {
-          status: 'ERROR',
-          lastError: seen.detail.slice(0, 500),
-          lastHealthStatus: 'The sign-in window could not be read.',
+          status: 'NEEDS_AUTH',
+          lastError: null,
+          lastHealthStatus: 'The sign-in window was closed before it finished.',
           authStartedAt: null,
           authDeadlineAt: null,
           touchHealthCheck: true,
         });
+        log.info('sign-in window went away', { handle: account.handle });
         return;
     }
   }

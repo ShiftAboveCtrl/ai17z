@@ -13,10 +13,49 @@ interface Entry {
   createdAt: number;
   lastUsedAt: number;
   closing: boolean;
+  /**
+   * Set when the browser goes away underneath us — usually because a person
+   * closed the window we opened for them to sign in.
+   *
+   * This has to be tracked explicitly. A closed persistent context does not
+   * throw from `pages()`; it returns an empty array, so the cache looks healthy
+   * right up until `newPage()` fails and every later attempt fails the same way.
+   */
+  dead: boolean;
 }
 
 /** Recycle a context after this long without a successful operation. */
 const STALE_MS = 15 * 60_000;
+
+/**
+ * Marks the entry dead the moment the browser goes, so the next lease reopens
+ * instead of handing out a handle to something that is no longer there.
+ */
+function watchForClose(accountId: string, entry: Entry): void {
+  entry.context.on('close', () => {
+    entry.dead = true;
+    log.info('browser closed outside AI17Z', { accountId });
+  });
+}
+
+/** True while the context still has a live browser behind it. */
+function isUsable(context: BrowserContext): boolean {
+  try {
+    const browser = context.browser();
+    // A persistent context reports no browser; falling back to pages() is the
+    // only signal available, and it throws only once the context is disposed.
+    if (browser) return browser.isConnected();
+    context.pages();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function acquirePage(context: BrowserContext): Promise<Page> {
+  const existing = context.pages();
+  return existing.length > 0 ? existing[0]! : await context.newPage();
+}
 
 const contexts = new Map<string, Entry>();
 
@@ -49,7 +88,7 @@ async function openContext(config: SessionConfig): Promise<Entry> {
     try {
       const browser = await chromium.connectOverCDP(config.cdpUrl, { timeout: 15_000 });
       const context = browser.contexts()[0] ?? (await browser.newContext());
-      return { context, mode: 'CDP', createdAt: Date.now(), lastUsedAt: Date.now(), closing: false };
+      return { context, mode: 'CDP', createdAt: Date.now(), lastUsedAt: Date.now(), closing: false, dead: false };
     } catch (error) {
       throw explainCdpFailure(error, config.cdpUrl);
     }
@@ -72,7 +111,7 @@ async function openContext(config: SessionConfig): Promise<Entry> {
       viewport: { width: 1280, height: 900 },
       args: ['--no-first-run', '--no-default-browser-check'],
     });
-    return { context, mode: 'MANAGED', createdAt: Date.now(), lastUsedAt: Date.now(), closing: false };
+    return { context, mode: 'MANAGED', createdAt: Date.now(), lastUsedAt: Date.now(), closing: false, dead: false };
   } catch (error) {
     throw explainLaunchFailure(error, config);
   }
@@ -199,28 +238,42 @@ export async function leaseSession(config: SessionConfig): Promise<LeasedSession
   }
 
   let entry = contexts.get(config.accountId);
-  if (entry && (entry.closing || Date.now() - entry.lastUsedAt > STALE_MS)) {
+  if (entry && (entry.closing || entry.dead || Date.now() - entry.lastUsedAt > STALE_MS)) {
     await closeSession(config.accountId);
     entry = undefined;
   }
-  if (entry) {
-    // A context whose browser died still looks alive in the map until touched.
-    try {
-      entry.context.pages();
-    } catch {
-      await closeSession(config.accountId);
-      entry = undefined;
-    }
+  if (entry && !isUsable(entry.context)) {
+    await closeSession(config.accountId);
+    entry = undefined;
   }
   if (!entry) {
     entry = await openContext(config);
+    watchForClose(config.accountId, entry);
     contexts.set(config.accountId, entry);
     log.info('browser context opened', { accountId: config.accountId, mode: entry.mode });
   }
 
+  let page: Page;
+  try {
+    page = await acquirePage(entry.context);
+  } catch (error) {
+    // The context died between the check above and here, which is exactly what
+    // happens when somebody closes the window at the wrong moment. Reopen once
+    // rather than making the account unusable until the process restarts.
+    log.info('reopening a browser context that had gone away', { accountId: config.accountId });
+    await closeSession(config.accountId);
+    entry = await openContext(config);
+    watchForClose(config.accountId, entry);
+    contexts.set(config.accountId, entry);
+    try {
+      page = await acquirePage(entry.context);
+    } catch (secondError) {
+      throw explainLaunchFailure(secondError, config);
+    }
+    void error;
+  }
+
   const context = entry.context;
-  const existing = context.pages();
-  const page: Page = existing.length > 0 ? existing[0]! : await context.newPage();
   page.setDefaultTimeout(30_000);
   page.setDefaultNavigationTimeout(45_000);
 
