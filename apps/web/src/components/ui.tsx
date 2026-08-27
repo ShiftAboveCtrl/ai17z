@@ -55,7 +55,7 @@ export function ErrorPanel({
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-signal-fail" aria-hidden />
         <div className="min-w-0 flex-1">
           <p className="text-[15px] font-medium text-bone">{title}</p>
-          {detail && <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-bone-dim">{detail}</p>}
+          {detail && <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-bone-dim">{detail}</p>}
           {actions && <div className="mt-4 flex flex-wrap gap-2">{actions}</div>}
         </div>
       </div>
@@ -101,7 +101,7 @@ export function Field({
       </label>
       {children}
       {hint && !error && <p className="text-xs leading-relaxed text-bone-faint">{hint}</p>}
-      {error && <p className="text-xs text-signal-fail">{error}</p>}
+      {error && <p className="break-words text-xs text-signal-fail">{error}</p>}
     </div>
   );
 }
@@ -207,5 +207,87 @@ export function SavedTick({ visible }: { visible: boolean }) {
     <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-live">
       <Check className="h-3 w-3" aria-hidden /> saved
     </span>
+  );
+}
+
+/**
+ * A long operation, in words.
+ *
+ * Every asynchronous action in AI17Z can outlast a person's patience: a browser
+ * cold-starts, a model is slow, a remote service is thinking. A spinner alone
+ * says only "something", so this says what, for how long, that it is still
+ * going, and how to stop.
+ */
+export function Working({
+  label,
+  seconds,
+  slowAfter = 12,
+  slowHint,
+  onCancel,
+  cancelLabel = 'Cancel',
+}: {
+  label: string;
+  seconds: number;
+  /** After this long, say so rather than letting the silence speak. */
+  slowAfter?: number;
+  slowHint?: string;
+  onCancel?: () => void;
+  cancelLabel?: string;
+}) {
+  return (
+    <div
+      className="space-y-2 rounded-lg border border-ink-line bg-ink-panel px-3.5 py-3"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex items-center gap-2.5 text-sm text-bone">
+          <Spinner className="h-3.5 w-3.5" />
+          {label}
+        </span>
+        <span className="font-mono text-[10px] tabular-nums text-bone-faint">{seconds}s</span>
+      </div>
+      {seconds >= slowAfter && (
+        <p className="text-xs leading-relaxed text-bone-faint">
+          {slowHint ?? 'Still going. Nothing has failed; it is just slow.'}
+        </p>
+      )}
+      {onCancel && (
+        <button type="button" className="btn-quiet px-0 text-xs" onClick={onCancel}>
+          {cancelLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A failure with a way out of it.
+ *
+ * An error that cannot be retried without reloading the page is one people
+ * reload the page for, which loses whatever else they had in progress.
+ */
+export function RetryablePanel({
+  title,
+  detail,
+  onRetry,
+  retryLabel = 'Try again',
+}: {
+  title: string;
+  detail: string;
+  onRetry: () => void;
+  retryLabel?: string;
+}) {
+  return (
+    <div className="space-y-2.5 rounded-lg border border-signal-fail/40 bg-signal-fail/[0.06] px-3.5 py-3">
+      <p className="flex items-start gap-2 text-sm text-bone">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-signal-fail" aria-hidden />
+        {title}
+      </p>
+      <p className="break-words text-xs leading-relaxed text-bone-dim">{detail}</p>
+      <button type="button" className="btn-quiet px-0 text-xs" onClick={onRetry}>
+        {retryLabel}
+      </button>
+    </div>
   );
 }

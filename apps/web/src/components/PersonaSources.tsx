@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { ApiError, del, post } from '@app/lib/api';
 import { usePolling, useResource } from '@app/lib/hooks';
@@ -27,6 +27,31 @@ export function PersonaSources({ agentId, onApplied }: { agentId: string; onAppl
 
   const syncing = (data.data?.items ?? []).some((s) => s.status === 'SYNCING');
   usePolling(() => data.reload(), 2000, syncing);
+
+  // When each source was first seen syncing, so the row can show how long it
+  // has been going. A sync can pull thousands of posts, and "syncing..." on its
+  // own is indistinguishable from a sync that died.
+  const startedAt = useRef(new Map<string, number>());
+  const [, tick] = useState(0);
+  useEffect(() => {
+    for (const source of data.data?.items ?? []) {
+      if (source.status === 'SYNCING') {
+        if (!startedAt.current.has(source.id)) startedAt.current.set(source.id, Date.now());
+      } else {
+        startedAt.current.delete(source.id);
+      }
+    }
+  }, [data.data]);
+  useEffect(() => {
+    if (!syncing) return;
+    const timer = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, [syncing]);
+
+  const elapsedFor = (id: string) => {
+    const began = startedAt.current.get(id);
+    return began ? Math.round((Date.now() - began) / 1000) : 0;
+  };
 
   const createAndSync = async (input: { kind: 'x_public' | 'manual'; handle: string; text: string; depth: number }) => {
     setBusy(true);
@@ -109,7 +134,7 @@ export function PersonaSources({ agentId, onApplied }: { agentId: string; onAppl
               <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">{source.kind}</span>
               <span className="ml-auto font-mono text-[11px] text-bone-faint">
                 {source.status === 'SYNCING'
-                  ? 'syncing...'
+                  ? `reading... ${elapsedFor(source.id)}s`
                   : `${source.stats.useful} useful, ${source.stats.excluded} excluded, ${timeAgo(source.lastSyncedAt)}`}
               </span>
               <button type="button" className="btn-quiet text-xs" onClick={() => setReviewing(source)}>
@@ -126,7 +151,19 @@ export function PersonaSources({ agentId, onApplied }: { agentId: string; onAppl
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden />
               </button>
-              {source.lastError && <p className="w-full text-xs leading-relaxed text-signal-fail">{source.lastError}</p>}
+              {source.status === 'SYNCING' && elapsedFor(source.id) >= 20 && (
+                <p className="w-full text-xs leading-relaxed text-bone-faint">
+                  Still reading. Large accounts take a few minutes; nothing is written until it finishes.
+                </p>
+              )}
+              {source.lastError && (
+                <div className="w-full">
+                  <p className="text-xs leading-relaxed text-signal-fail">{source.lastError}</p>
+                  <button type="button" className="btn-quiet px-0 text-xs" onClick={() => void resync(source)}>
+                    Try again
+                  </button>
+                </div>
+              )}
             </li>
           ))}
         </ul>

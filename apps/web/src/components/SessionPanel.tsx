@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Camera, LogIn, Power, RefreshCw, Trash2 } from 'lucide-react';
 import { ApiError, artifactObjectUrl, get, patch, post } from '@app/lib/api';
-import { useResource } from '@app/lib/hooks';
+import { useElapsed, useResource } from '@app/lib/hooks';
 import type { AccountRow, BrowserTask, DiagnosticRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { CadencePanel } from './CadencePanel';
 import { SignInProgress } from './SignInProgress';
-import { ErrorPanel, Field, SavedTick, Spinner, StatusDot } from './ui';
+import { ErrorPanel, Field, RetryablePanel, SavedTick, Spinner, StatusDot, Working } from './ui';
 
 interface SessionData {
   account: AccountRow;
@@ -38,7 +38,7 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
   const { data, error, loading, reload } = useResource<SessionData>(`/api/accounts/${accountId}/session`);
   const [pending, setPending] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<{ kind: string; message: string } | null>(null);
   const [shot, setShot] = useState<string | null>(null);
 
   const run = async (kind: string) => {
@@ -48,7 +48,7 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
       const task = await post<BrowserTask>(`/api/accounts/${accountId}/session/tasks`, { kind });
       setTaskId(task.id);
     } catch (e) {
-      setActionError(e instanceof ApiError ? e.message : 'That action could not be started.');
+      setActionError({ kind, message: e instanceof ApiError ? e.message : 'That action could not be started.' });
       setPending(null);
     }
   };
@@ -64,7 +64,9 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
         if (current.status === 'COMPLETED' || current.status === 'FAILED') {
           setPending(null);
           setTaskId(null);
-          if (current.status === 'FAILED') setActionError(current.error ?? 'The browser task failed.');
+          if (current.status === 'FAILED') {
+            setActionError({ kind: current.kind, message: current.error ?? 'The browser task failed.' });
+          }
           reload();
           onChanged();
           return;
@@ -80,6 +82,8 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
       clearTimeout(timer);
     };
   }, [taskId, reload, onChanged]);
+
+  const elapsed = useElapsed(Boolean(pending));
 
   const signingIn = data
     ? ['STARTING_BROWSER', 'BROWSER_READY', 'AWAITING_LOGIN', 'AUTHENTICATING'].includes(data.account.status)
@@ -98,7 +102,7 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
     try {
       setShot(await artifactObjectUrl(artifactId));
     } catch {
-      setActionError('That screenshot is no longer on disk.');
+      setActionError({ kind: 'SCREENSHOT', message: 'That screenshot is no longer on disk. Capture a new one.' });
     }
   }, []);
 
@@ -120,7 +124,7 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
           </span>
         </div>
         {data.account.lastHealthStatus && (
-          <p className="mt-3 text-sm leading-relaxed text-bone-dim">{data.account.lastHealthStatus}</p>
+          <p className="mt-3 break-words text-sm leading-relaxed text-bone-dim">{data.account.lastHealthStatus}</p>
         )}
       </div>
 
@@ -160,7 +164,22 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
         </p>
       )}
 
-      {actionError && <ErrorPanel title="That did not work." detail={actionError} />}
+      {pending && pending !== 'CANCEL_AUTH' && (
+        <Working
+          label={LABELS[pending] ?? 'Working'}
+          seconds={elapsed}
+          slowAfter={15}
+          slowHint={SLOW_HINTS[pending] ?? 'Still going. The worker is driving a real browser, which is not instant.'}
+        />
+      )}
+
+      {actionError && (
+        <RetryablePanel
+          title="That did not work."
+          detail={actionError.message}
+          onRetry={() => void run(actionError.kind)}
+        />
+      )}
 
       {data.diagnostics.length > 0 && (
         <div>
@@ -172,7 +191,7 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
                   <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">{diagnostic.kind}</span>
                   <span className="font-mono text-[10px] text-bone-faint">{timeAgo(diagnostic.createdAt)}</span>
                 </div>
-                <p className="mt-1.5 text-bone-dim">{diagnostic.message}</p>
+                <p className="mt-1.5 break-words text-bone-dim">{diagnostic.message}</p>
                 {diagnostic.artifactId && (
                   <button type="button" className="btn-quiet mt-2 px-0 text-xs" onClick={() => void openShot(diagnostic.artifactId!)}>
                     View screenshot
@@ -195,6 +214,22 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
     </div>
   );
 }
+
+/** What each action is doing, for the person waiting on it. */
+const LABELS: Record<string, string> = {
+  CONNECT: 'Connecting the account',
+  HEALTH_CHECK: 'Testing the session',
+  OPEN_AUTH: 'Opening a sign-in window',
+  SCREENSHOT: 'Capturing the page',
+  CLEAR: 'Clearing the stored session',
+  DISCONNECT: 'Closing the browser session',
+};
+
+const SLOW_HINTS: Record<string, string> = {
+  CONNECT: 'A cold browser profile takes a while to start the first time.',
+  OPEN_AUTH: 'Launching a real browser window. It may already be open behind this one.',
+  HEALTH_CHECK: 'Loading a page in a real browser to see whether the session still works.',
+};
 
 const CHANNELS = [
   { value: 'chrome', label: 'Real Chrome', hint: 'Drives the Chrome installed on the machine running the worker.' },

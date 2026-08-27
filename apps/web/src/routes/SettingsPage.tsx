@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plug, Plus, Trash2 } from 'lucide-react';
 import { ApiError, del, get, post } from '@app/lib/api';
-import { useResource } from '@app/lib/hooks';
+import { useElapsed, useResource } from '@app/lib/hooks';
 import { useSession } from '@app/lib/session';
 import type { AccountRow, HealthReportView, ProviderCredential, ProviderKindInfo } from '@app/lib/types';
 import { timeAgo } from '@app/lib/format';
@@ -29,6 +29,8 @@ export function SettingsPage() {
   const [testing, setTesting] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, { ok: boolean; detail: string; latencyMs: number; models: number }>>({});
   const [openAccount, setOpenAccount] = useState<string | null>(null);
+
+  const testElapsed = useElapsed(Boolean(testing));
 
   const selectedKind = kinds.data?.items.find((k) => k.kind === kind);
 
@@ -150,7 +152,7 @@ export function SettingsPage() {
                 </div>
                 <button type="button" className="btn-quiet" onClick={() => void test(provider.id)} disabled={testing === provider.id}>
                   {testing === provider.id ? <Spinner className="h-3.5 w-3.5" /> : <Plug className="h-3.5 w-3.5" aria-hidden />}
-                  Test
+                  {testing === provider.id ? `Testing ${testElapsed}s` : 'Test'}
                 </button>
                 <button
                   type="button"
