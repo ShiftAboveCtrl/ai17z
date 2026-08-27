@@ -13,6 +13,7 @@ COPY packages/database/package.json ./packages/database/
 COPY packages/jobs/package.json ./packages/jobs/
 COPY packages/models/package.json ./packages/models/
 COPY packages/memory/package.json ./packages/memory/
+COPY packages/persona/package.json ./packages/persona/
 COPY packages/prompts/package.json ./packages/prompts/
 COPY packages/channels/package.json ./packages/channels/
 COPY packages/browser/package.json ./packages/browser/
