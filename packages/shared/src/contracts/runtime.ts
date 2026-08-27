@@ -90,9 +90,24 @@ export const PromptLayer = z.object({
 });
 export type PromptLayer = z.infer<typeof PromptLayer>;
 
+/** An image sent alongside a message, for models that can read one. */
+export const ChatImage = z.object({
+  /** Publicly reachable URL, or a data: URI when the bytes were retained. */
+  url: z.string().max(2_000_000),
+  /** Shown to the model so it knows which image is being referred to. */
+  label: z.string().max(200).nullable().default(null),
+});
+export type ChatImage = z.infer<typeof ChatImage>;
+
 export const ChatMessage = z.object({
   role: z.enum(['system', 'user', 'assistant']),
   content: z.string(),
+  /**
+   * Images attached to this turn. Providers that cannot read them ignore the
+   * field; the gateway refuses to route a request carrying images to a model
+   * not configured for vision, rather than silently dropping them.
+   */
+  images: z.array(ChatImage).max(8).optional(),
 });
 export type ChatMessage = z.infer<typeof ChatMessage>;
 

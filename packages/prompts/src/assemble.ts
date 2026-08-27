@@ -1,3 +1,4 @@
+import type { SocialMediaContext } from '@xbam/shared/contracts';
 import type {
   ChatMessage,
   ContextMessage,
@@ -9,7 +10,7 @@ import type {
 } from '@xbam/shared/contracts';
 import type { PromptLayerTemplate } from '@xbam/database';
 import { truncateTail } from '@xbam/shared';
-import { bulletList, renderTemplate, tidy } from './render';
+import { bulletList, renderLinks, renderMedia, renderQuoted, renderTemplate, tidy } from './render';
 import { describeDisclosure, describeIdentity } from './identity';
 
 export interface AssembleInput {
@@ -81,6 +82,8 @@ function sourceFor(key: string, input: AssembleInput): string {
       return `${input.memories.length} retrieved memories`;
     case 'IMMEDIATE_CONTEXT':
       return 'channel adapter context';
+    case 'MEDIA_CONTEXT':
+      return 'attached media, quoted posts and links';
     case 'OUTPUT_CONTRACT':
       return 'policy output rules';
     default:
@@ -95,6 +98,9 @@ function sourceFor(key: string, input: AssembleInput): string {
  */
 export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const { persona, policy, context } = input;
+  // Attached by the media stage. Absent for a text-only post, or for an agent
+  // whose pipeline has no media node.
+  const mediaContext = (context.meta as { mediaContext?: SocialMediaContext } | undefined)?.mediaContext;
 
   const values = {
     channelName: input.channelName,
@@ -112,6 +118,10 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     blockedTopics: bulletList(policy.content.blockedTopics),
     customInstructions: persona.customInstructions,
     memoryBlock: renderMemories(input.memories, input.memoryCharBudget),
+    mediaBlock: renderMedia(mediaContext?.items ?? []),
+    quotedBlock: renderQuoted(mediaContext?.quoted ?? null),
+    linkBlock: renderLinks(mediaContext?.links ?? []),
+    mediaGap: mediaContext?.hasUnderstandingGap ? mediaContext.gapDetail ?? '' : '',
     threadTranscript: renderTranscript(context.thread, persona.displayName),
     parentText: context.parentText ?? '',
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',

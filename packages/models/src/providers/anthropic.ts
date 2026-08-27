@@ -26,7 +26,23 @@ export const anthropicAdapter: ProviderAdapter = {
       .join('\n\n');
     const messages = request.messages
       .filter((m) => m.role !== 'system')
-      .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+      .map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        // Content blocks are only needed when there are images; a plain string
+        // is the simpler and equally valid form otherwise.
+        content:
+          m.images && m.images.length > 0
+            ? [
+                { type: 'text', text: m.content },
+                ...m.images.map((image) => ({
+                  type: 'image',
+                  // A remote URL is the only form available here: AI17Z does not
+                  // download social media assets unless retention says to.
+                  source: { type: 'url', url: image.url },
+                })),
+              ]
+            : m.content,
+      }));
 
     const { data, headers } = await postJson<AnthropicResponse>({
       url: `${base}/messages`,
