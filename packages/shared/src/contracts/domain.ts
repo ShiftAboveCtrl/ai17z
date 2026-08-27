@@ -156,6 +156,10 @@ export const ModelParameters = z.object({
   frequencyPenalty: z.number().min(-2).max(2).optional(),
   presencePenalty: z.number().min(-2).max(2).optional(),
   stop: z.array(z.string()).max(8).optional(),
+  /** Attempts against this one provider before the chain moves on. */
+  maxRetries: z.number().int().min(1).max(5).optional(),
+  /** Reasoning models only. Ignored by providers that do not accept it. */
+  reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
   /** Optional real prices, per 1k tokens. Cost is only estimated when set. */
   costPer1kPromptUsd: z.number().min(0).max(1000).optional(),
   costPer1kCompletionUsd: z.number().min(0).max(1000).optional(),

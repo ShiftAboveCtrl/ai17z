@@ -51,6 +51,8 @@ export function createOpenAiCompatibleAdapter(
           frequency_penalty: request.parameters.frequencyPenalty,
           presence_penalty: request.parameters.presencePenalty,
           stop: request.parameters.stop,
+          // Reasoning models read this; the rest ignore an unknown field.
+          ...(request.parameters.reasoningEffort ? { reasoning_effort: request.parameters.reasoningEffort } : {}),
         },
       });
 

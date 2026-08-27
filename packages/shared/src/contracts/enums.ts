@@ -154,7 +154,15 @@ export const MEMORY_TYPES = [
 export const MemoryType = enumOf(MEMORY_TYPES).schema;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 
-export const PROVIDER_KINDS = ['openai', 'anthropic', 'openrouter', 'ollama', 'openai_compatible', 'mock'] as const;
+export const PROVIDER_KINDS = [
+  'openai',
+  'anthropic',
+  'openrouter',
+  'deepseek',
+  'ollama',
+  'openai_compatible',
+  'mock',
+] as const;
 export const ProviderKind = enumOf(PROVIDER_KINDS).schema;
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 

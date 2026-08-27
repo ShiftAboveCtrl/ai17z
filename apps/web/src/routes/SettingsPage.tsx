@@ -27,6 +27,7 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, { ok: boolean; detail: string; latencyMs: number; models: number }>>({});
   const [openAccount, setOpenAccount] = useState<string | null>(null);
 
   const selectedKind = kinds.data?.items.find((k) => k.kind === kind);
@@ -57,9 +58,20 @@ export function SettingsPage() {
   const test = async (id: string) => {
     setTesting(id);
     try {
-      await post(`/api/providers/${id}/test`, {});
-    } catch {
-      // The stored status is updated either way; the row below shows the result.
+      const result = await post<{ ok: boolean; detail: string; latencyMs: number; models: string[] }>(
+        `/api/providers/${id}/test`,
+        {},
+      );
+      setResults((r) => ({
+        ...r,
+        [id]: { ok: result.ok, detail: result.detail, latencyMs: result.latencyMs, models: result.models.length },
+      }));
+    } catch (e) {
+      // A failed test is a result, not an absence of one.
+      setResults((r) => ({
+        ...r,
+        [id]: { ok: false, detail: e instanceof ApiError ? e.message : 'The test failed.', latencyMs: 0, models: 0 },
+      }));
     } finally {
       setTesting(null);
       providers.reload();
@@ -146,6 +158,15 @@ export function SettingsPage() {
                 >
                   <Trash2 className="h-3.5 w-3.5" aria-hidden />
                 </button>
+                {results[provider.id] && (
+                  <p
+                    className={`w-full font-mono text-[11px] ${results[provider.id]!.ok ? 'text-signal-live' : 'text-signal-fail'}`}
+                  >
+                    {results[provider.id]!.ok
+                      ? `connected · ${results[provider.id]!.latencyMs}ms · ${results[provider.id]!.models} models`
+                      : results[provider.id]!.detail}
+                  </p>
+                )}
               </li>
             ))}
           </ul>
