@@ -1,4 +1,5 @@
 import type { Capability, JobRecord, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
+import { MediaInventory } from '@xbam/shared/contracts';
 import { PipelineError, contentSignature, truncate } from '@xbam/shared';
 import {
   actions as actionsRepo,
@@ -20,6 +21,7 @@ import { generate } from '@xbam/models';
 import { getChannelAdapter } from '@xbam/channels';
 import { describeTools } from '@xbam/tools';
 import { buildChannelContext, syntheticAccount } from './channelContext';
+import { resolveMedia } from './mediaResolve';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -523,5 +525,85 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     });
     if (adapter.requiresBrowser) await captureFailureDiagnostics(bundle, action.id, pipelineError.message);
     throw pipelineError;
+  }
+}
+
+/**
+ * Understands what is attached to the post.
+ *
+ * Runs after context resolution, because the adapter records the media
+ * inventory while the page is open and this is where it is turned into
+ * something the model can be told.
+ */
+export async function stepResolveMedia(bundle: JobBundle): Promise<void> {
+  const { job, policy } = bundle;
+  const context = job.resolvedContext;
+  const inventory = MediaInventory.safeParse((context?.meta as { inventory?: unknown })?.inventory);
+
+  if (!inventory.success || (inventory.data.media.length === 0 && !inventory.data.quoted && inventory.data.links.length === 0)) {
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'MEDIA_RESOLVED',
+      message: 'Nothing attached to this post.',
+      data: { items: 0 },
+    });
+    return;
+  }
+
+  const resolved = await resolveMedia({
+    eventId: job.eventId,
+    agentId: bundle.agent.id,
+    jobId: job.id,
+    text: context?.incomingText ?? '',
+    inventory: inventory.data,
+    policy: policy.media,
+    maxCalls: policy.budget.maxModelCallsPerJob,
+  });
+
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    type: 'MEDIA_RESOLVED',
+    level: resolved.hasUnderstandingGap ? 'warn' : 'info',
+    message: resolved.hasUnderstandingGap
+      ? `Something that mattered was not read: ${resolved.gapDetail}`
+      : `Understood ${resolved.items.filter((i) => i.status === 'analyzed').length} of ${resolved.items.length} attached items.`,
+    data: {
+      items: resolved.items.map((i) => ({ kind: i.kind, status: i.status, description: i.description })),
+      quoted: resolved.quoted ? { authorHandle: resolved.quoted.authorHandle } : null,
+      links: resolved.links.map((l) => ({ url: l.url, resolution: l.resolution })),
+      hasUnderstandingGap: resolved.hasUnderstandingGap,
+    },
+  });
+
+  // A gap in something the post depended on is a decision point, not a detail.
+  // Answering "what do you think?" without having seen the chart is the exact
+  // failure this stage exists to prevent.
+  if (resolved.hasUnderstandingGap) {
+    switch (policy.media.onVisionFailure) {
+      case 'RETRY':
+        throw PipelineError.retryable('media_unreadable', resolved.gapDetail ?? 'Attached media could not be read.');
+      case 'REVIEW':
+        throw PipelineError.review('media_unreadable', resolved.gapDetail ?? 'Attached media could not be read.');
+      case 'IGNORE':
+        throw PipelineError.permanent(
+          'media_unreadable',
+          `${resolved.gapDetail} This agent is set to skip posts it cannot fully read.`,
+        );
+      case 'RESPOND_TEXT_ONLY_IF_SAFE':
+      default:
+        // Carries on, and the prompt is told plainly that something is missing
+        // so the response can acknowledge it rather than bluff.
+        break;
+    }
+  }
+
+  // Only rewrite the context when there is one; a job with none has nothing to
+  // attach the media understanding to.
+  if (context) {
+    await jobsRepo.updateJob(job.id, {
+      resolvedContext: { ...context, meta: { ...context.meta, mediaContext: resolved } },
+    });
   }
 }

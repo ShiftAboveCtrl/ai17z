@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AutomationMode, DisclosureMode } from './enums';
+import { MediaPolicy } from './multimodal';
 
 export const IdentityPolicy = z.object({
   disclosure: DisclosureMode.default('ON_REQUEST'),
@@ -130,6 +131,8 @@ export const PolicyConfig = z.object({
   budget: BudgetPolicy.default({}),
   memory: MemoryPolicy.default({}),
   tools: ToolPolicy.default({}),
+  /** What the agent looks at besides the text: images, quotes, links. */
+  media: MediaPolicy.default({}),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 

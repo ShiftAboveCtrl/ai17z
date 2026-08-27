@@ -2,6 +2,7 @@ import { PipelineError } from '@xbam/shared';
 import type { ProviderKind } from '@xbam/shared/contracts';
 import { postJson } from '../http';
 import type { ProviderAdapter, ProviderHealth, ProviderRequest, ProviderResponse } from '../types';
+import type { ChatMessage } from '@xbam/shared/contracts';
 
 interface ChatCompletionResponse {
   id?: string;
@@ -29,6 +30,24 @@ export function createOpenAiCompatibleAdapter(
     ...extraHeaders,
   });
 
+  /**
+   * The OpenAI chat format carries images as content parts rather than as a
+   * plain string. A message with no images keeps the string form, because some
+   * compatible endpoints only accept that.
+   */
+  function toWireMessage(message: ChatMessage): Record<string, unknown> {
+    if (!message.images || message.images.length === 0) {
+      return { role: message.role, content: message.content };
+    }
+    return {
+      role: message.role,
+      content: [
+        { type: 'text', text: message.content },
+        ...message.images.map((image) => ({ type: 'image_url', image_url: { url: image.url } })),
+      ],
+    };
+  }
+
   return {
     kind,
     defaultBaseUrl,
@@ -44,7 +63,7 @@ export function createOpenAiCompatibleAdapter(
         signal: request.signal,
         body: {
           model: request.model,
-          messages: request.messages,
+          messages: request.messages.map(toWireMessage),
           temperature: request.parameters.temperature,
           top_p: request.parameters.topP,
           max_tokens: request.parameters.maxTokens,
