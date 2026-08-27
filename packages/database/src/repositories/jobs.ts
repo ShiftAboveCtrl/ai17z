@@ -178,6 +178,15 @@ export interface JobPatch {
   lastError?: string | null;
   attemptCount?: number;
   runAt?: string;
+  /**
+   * Makes the job due immediately, by the database clock.
+   *
+   * `runAt` takes an application timestamp, and the claim compares against
+   * `now()` in Postgres. When those two clocks disagree by a few milliseconds —
+   * routine with a containerised database — a job meant to run at once is not
+   * yet due and waits for the next poll instead.
+   */
+  runNow?: boolean;
   releaseLock?: boolean;
   touch?: Array<'contextResolvedAt' | 'memoryResolvedAt' | 'generatedAt' | 'validatedAt' | 'approvedAt' | 'executedAt'>;
 }
@@ -207,7 +216,8 @@ export async function updateJob(id: string, patch: JobPatch, executor?: Tx): Pro
   if (patch.errorClass !== undefined) push('error_class = $?', patch.errorClass);
   if (patch.lastError !== undefined) push('last_error = $?', patch.lastError);
   if (patch.attemptCount !== undefined) push('attempt_count = $?', patch.attemptCount);
-  if (patch.runAt !== undefined) push('run_at = $?', patch.runAt);
+  if (patch.runNow) sets.push('run_at = now()');
+  else if (patch.runAt !== undefined) push('run_at = $?', patch.runAt);
   if (patch.releaseLock) sets.push('locked_by = NULL, lock_expires_at = NULL');
   for (const key of patch.touch ?? []) {
     const column = TOUCH_COLUMNS[key];
