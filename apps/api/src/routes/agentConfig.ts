@@ -1,10 +1,19 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { ModelRole, PersonaDraft, PipelineDraft, PolicyConfig, SetModelConfigInput } from '@xbam/shared/contracts';
+import {
+  CAPABILITIES,
+  Capability,
+  ModelRole,
+  PersonaDraft,
+  PipelineDraft,
+  PolicyConfig,
+  SetModelConfigInput,
+} from '@xbam/shared/contracts';
 import { ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
+  capabilities as capabilitiesRepo,
   ops,
   pipelines as pipelinesRepo,
   providers as providersRepo,
@@ -171,13 +180,58 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
           triggerEventTypes: z.array(z.string()).min(1).default(['MENTION']),
           actionType: z.string().default('REPLY'),
           enabled: z.boolean().default(true),
+          capabilities: z.array(Capability).optional(),
         }),
         request,
       );
       const account = await accountsRepo.getAccount(body.accountId);
       if (!account || account.ownerId !== user.id) throw new NotFoundError('Account');
       await accountsRepo.linkAgentAccount({ agentId: agent.id, ...body });
-      return { items: await accountsRepo.listAgentAccounts(agent.id) };
+      // Linking grants the defaults on its own; an explicit set overrides them.
+      if (body.capabilities) {
+        await capabilitiesRepo.setGrants(agent.id, body.accountId, body.capabilities, user.id);
+      }
+      return {
+        items: await accountsRepo.listAgentAccounts(agent.id),
+        capabilities: Object.fromEntries(await capabilitiesRepo.grantsForAgent(agent.id)),
+      };
+    }),
+  );
+
+  // What this agent may do through each linked account. Separate from the link
+  // itself because it answers a different question: not what the agent does in
+  // response to an event, but what it is allowed to do at all.
+  app.get(
+    '/api/agents/:id/capabilities',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      return {
+        vocabulary: CAPABILITIES,
+        grants: Object.fromEntries(await capabilitiesRepo.grantsForAgent(agent.id)),
+      };
+    }),
+  );
+
+  app.put(
+    '/api/agents/:id/accounts/:accountId/capabilities',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const accountId = params(request).accountId!;
+      const account = await accountsRepo.getAccount(accountId);
+      if (!account || account.ownerId !== user.id) throw new NotFoundError('Account');
+      const body = parseBody(z.object({ capabilities: z.array(Capability) }), request);
+
+      const granted = await capabilitiesRepo.setGrants(agent.id, accountId, body.capabilities, user.id);
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'agent.capabilities.set',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { accountId, capabilities: granted },
+      });
+      return { accountId, capabilities: granted };
     }),
   );
 

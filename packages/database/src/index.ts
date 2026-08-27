@@ -20,6 +20,7 @@ export * as legacyLedger from './repositories/legacyLedger';
 export * as accountLease from './repositories/accountLease';
 export * as personaSources from './repositories/personaSources';
 export * as cadences from './repositories/cadences';
+export * as capabilities from './repositories/capabilities';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.

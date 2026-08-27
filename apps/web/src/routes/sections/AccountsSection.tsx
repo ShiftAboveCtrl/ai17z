@@ -6,6 +6,7 @@ import type { AccountRow, AgentAccountRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { EmptyState, Field, Modal, Spinner, StatusDot } from '@app/components/ui';
 import { SessionPanel } from '@app/components/SessionPanel';
+import { CapabilitiesPanel } from '@app/components/CapabilitiesPanel';
 import { IndexedRow, Section } from './Section';
 
 export function AccountsSection({
@@ -27,6 +28,7 @@ export function AccountsSection({
   const [adding, setAdding] = useState(false);
 
   const all = useResource<{ items: AccountRow[] }>('/api/accounts');
+  const open_ = accounts.find((a) => a.accountId === openAccountId) ?? null;
 
   const attach = async () => {
     setConnecting(true);
@@ -124,7 +126,17 @@ export function AccountsSection({
       </Modal>
 
       <Modal open={Boolean(openAccountId)} onClose={() => setOpenAccountId(null)} title="Session" wide>
-        {openAccountId && <SessionPanel accountId={openAccountId} onChanged={onChanged} />}
+        {open_ && (
+          <div className="space-y-7">
+            <SessionPanel accountId={open_.accountId} onChanged={onChanged} />
+            <CapabilitiesPanel
+              agentId={agentId}
+              accountId={open_.accountId}
+              handle={open_.handle}
+              actionType={open_.actionType}
+            />
+          </div>
+        )}
       </Modal>
     </Section>
   );
