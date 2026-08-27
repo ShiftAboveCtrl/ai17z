@@ -19,6 +19,7 @@ export * as browserTasks from './repositories/browserTasks';
 export * as legacyLedger from './repositories/legacyLedger';
 export * as accountLease from './repositories/accountLease';
 export * as personaSources from './repositories/personaSources';
+export * as cadences from './repositories/cadences';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.
@@ -36,3 +37,4 @@ export type { PromptLayerTemplate, PromptTemplateVersionRow } from './repositori
 export type { BrowserTaskRow, BrowserTaskKind } from './repositories/browserTasks';
 export type { AccountLease } from './repositories/accountLease';
 export type { PersonaSourceRow, PersonaSourceItemRow, PersonaTraitRow, TraitWithEvidence } from './repositories/personaSources';
+export type { CadenceVersionRow, DueAccount } from './repositories/cadences';
