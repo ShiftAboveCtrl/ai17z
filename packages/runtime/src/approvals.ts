@@ -66,7 +66,8 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
     validatedOutput: validation.output,
     errorClass: null,
     lastError: null,
-    runAt: new Date().toISOString(),
+    // An approved job is due now by the clock the claim actually uses.
+    runNow: true,
     releaseLock: true,
     touch: ['approvedAt', 'validatedAt'],
   });
@@ -121,7 +122,7 @@ export async function retryJob(jobId: string): Promise<void> {
     attemptCount: 0,
     errorClass: null,
     lastError: null,
-    runAt: new Date().toISOString(),
+    runNow: true,
     releaseLock: true,
   });
   await observability.emitTrace({
