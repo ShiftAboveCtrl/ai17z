@@ -1,8 +1,9 @@
-import type { JobRecord, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
+import type { Capability, JobRecord, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
 import { PipelineError, contentSignature, truncate } from '@xbam/shared';
 import {
   actions as actionsRepo,
   agents as agentsRepo,
+  capabilities as capabilitiesRepo,
   conversations as conversationsRepo,
   jobs as jobsRepo,
   legacyLedger,
@@ -320,6 +321,19 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   const targetRef = context?.targetRef ?? null;
 
   if (!job.dryRun) {
+    // The final say on whether this action is permitted. Ingest checked the same
+    // grant, but a permission revoked in between must stop the job here, and a
+    // revoked permission is not something a retry can fix.
+    if (job.accountId) {
+      const granted = await capabilitiesRepo.grantsFor(bundle.agent.id, job.accountId);
+      if (!granted.has(job.actionType as Capability)) {
+        throw PipelineError.permanent(
+          'capability_not_granted',
+          `This agent is not permitted to ${job.actionType} through @${bundle.account?.handle ?? 'this account'}. Grant it on the account, then run the job again.`,
+        );
+      }
+    }
+
     const rate = await checkActionRate(bundle.agent.id, policy, bundle.job.accountId);
     if (!rate.allow) {
       throw PipelineError.retryable(rate.reason, rate.message, { retryAfterMs: rate.retryAfterMs });

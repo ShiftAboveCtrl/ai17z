@@ -1,9 +1,10 @@
-import type { ActionType, JobRecord, NormalizedEvent } from '@xbam/shared/contracts';
+import type { ActionType, Capability, JobRecord, NormalizedEvent } from '@xbam/shared/contracts';
 import { PolicyConfig } from '@xbam/shared/contracts';
 import { actionIdempotencyKey, createLogger } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
+  capabilities as capabilitiesRepo,
   conversations as conversationsRepo,
   events as eventsRepo,
   jobs as jobsRepo,
@@ -55,6 +56,16 @@ export async function ingestNormalizedEvent(options: IngestOptions): Promise<Ing
         }))
       : [];
 
+  // Capabilities are read once here and checked again at execution. Checking
+  // twice is deliberate: this stops the work being queued at all, and the second
+  // check is what actually prevents the action if a grant is revoked meanwhile.
+  const grants = new Map<string, Set<Capability>>();
+  if (accountId) {
+    for (const link of links) {
+      grants.set(link.agentId, await capabilitiesRepo.grantsFor(link.agentId, accountId));
+    }
+  }
+
   const template = await promptsRepo.getActiveTemplate(REPLY_TEMPLATE_KEY);
 
   // Decided once, at ingest, so routing does not depend on which worker asks.
@@ -81,6 +92,22 @@ export async function ingestNormalizedEvent(options: IngestOptions): Promise<Ing
       if (!link.triggerEventTypes.includes(event.type)) {
         outcome.skipped.push({ agentId: agent.id, reason: `not triggered by ${event.type}` });
         continue;
+      }
+
+      // A manual trigger carries no account link and so has nothing to check.
+      const granted = grants.get(agent.id);
+      if (granted) {
+        if (!granted.has('READ')) {
+          outcome.skipped.push({ agentId: agent.id, reason: 'not permitted to read this account' });
+          continue;
+        }
+        if (!granted.has(link.actionType as Capability)) {
+          outcome.skipped.push({
+            agentId: agent.id,
+            reason: `not permitted to ${link.actionType} through this account`,
+          });
+          continue;
+        }
       }
 
       const policyRow = await agentsRepo.getActivePolicy(agent.id);
