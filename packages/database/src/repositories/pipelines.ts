@@ -22,7 +22,7 @@ async function loadGraph(pipelineVersionId: string): Promise<{ nodes: PipelineNo
     [pipelineVersionId],
   );
   const edgeRows = await query(
-    `SELECT from_key AS "from", to_key AS "to", condition FROM pipeline_edges WHERE pipeline_version_id = $1`,
+    `SELECT from_key AS "from", to_key AS "to", branch, condition FROM pipeline_edges WHERE pipeline_version_id = $1`,
     [pipelineVersionId],
   );
   return { nodes: mapRows<PipelineNode>(nodeRows), edges: edgeRows as unknown as PipelineEdge[] };
@@ -107,8 +107,8 @@ export async function savePipelineVersion(
         throw new NotFoundError(`Pipeline edge endpoint ${edge.from} -> ${edge.to}`);
       }
       await tx.query(
-        'INSERT INTO pipeline_edges (pipeline_version_id, from_key, to_key, condition) VALUES ($1,$2,$3,$4)',
-        [versionId, edge.from, edge.to, edge.condition ?? null],
+        'INSERT INTO pipeline_edges (pipeline_version_id, from_key, to_key, branch, condition) VALUES ($1,$2,$3,$4,$5)',
+        [versionId, edge.from, edge.to, edge.branch ?? 'next', edge.condition ?? null],
       );
     }
     await tx.query('UPDATE agents SET pipeline_version_id = $2, updated_at = now() WHERE id = $1', [

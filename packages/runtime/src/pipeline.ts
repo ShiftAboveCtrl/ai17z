@@ -1,77 +1,56 @@
-import type { JobRecord, JobStatus } from '@xbam/shared/contracts';
+import type { JobRecord, PipelineNode } from '@xbam/shared/contracts';
 import { PipelineError, createLogger, errorMessage } from '@xbam/shared';
-import { accountLease, jobs as jobsRepo, observability } from '@xbam/database';
+import { accountLease, jobs as jobsRepo, observability, pipelines as pipelinesRepo } from '@xbam/database';
 import { failPermanently, scheduleRetry, sendToReview } from '@xbam/jobs';
-import { loadJobBundle } from './loadJob';
-import { stepGenerate, stepResolveContext, stepRetrieveMemory, stepValidate, stepExecute } from './steps';
+import { loadJobBundle, type JobBundle } from './loadJob';
+import { NODE_HANDLERS } from './nodes';
+import { buildGraph, nextNode, type Graph } from './graph';
+import { defaultPipelineDraft } from './defaultPipeline';
 
 const log = createLogger('pipeline');
 
-interface StepSpec {
-  name: string;
-  inFlight: JobStatus;
-  run: (bundle: Awaited<ReturnType<typeof loadJobBundle>>) => Promise<void>;
-}
+/** Guard against a graph that somehow loops despite validation. */
+const MAX_NODES_PER_CLAIM = 24;
 
-/** The default pipeline, expressed as the transition each settled state takes. */
-const STEPS: Partial<Record<JobStatus, StepSpec>> = {
-  RECEIVED: { name: 'resolve_context', inFlight: 'CONTEXT_RESOLVING', run: stepResolveContext },
-  CONTEXT_RESOLVED: { name: 'retrieve_memory', inFlight: 'MEMORY_RETRIEVING', run: stepRetrieveMemory },
-  MEMORY_RESOLVED: { name: 'generate', inFlight: 'GENERATING', run: stepGenerate },
-  GENERATED: { name: 'validate', inFlight: 'VALIDATING', run: stepValidate },
-  VALIDATED: { name: 'execute', inFlight: 'EXECUTING', run: stepExecute },
+/** Progress recorded against the job as each kind of node completes. */
+const NODE_STATUS: Record<string, JobRecord['status']> = {
+  RESOLVE_CONTEXT: 'CONTEXT_RESOLVED',
+  RETRIEVE_MEMORY: 'MEMORY_RESOLVED',
+  GENERATE: 'GENERATED',
+  VALIDATE: 'VALIDATED',
 };
 
-/**
- * A job that somehow settled on RETRYABLE_FAILURE is resumed from the furthest
- * point its own data proves it reached, rather than from the beginning.
- */
-function deriveResumeStatus(job: JobRecord): JobStatus {
-  if (job.validatedOutput) return 'VALIDATED';
-  if (job.generatedOutput) return 'GENERATED';
-  if (job.memoryResolvedAt) return 'MEMORY_RESOLVED';
-  if (job.resolvedContext) return 'CONTEXT_RESOLVED';
-  return 'RECEIVED';
+async function graphForJob(job: JobRecord): Promise<Graph> {
+  const version = job.pipelineVersionId
+    ? await pipelinesRepo.getPipelineVersion(job.pipelineVersionId)
+    : await pipelinesRepo.getActivePipeline(job.agentId);
+
+  const graph = version ? buildGraph(version.nodes, version.edges) : null;
+  if (graph) return graph;
+
+  // An agent created before pipelines existed, or one whose version was removed,
+  // still has to run. The default graph is the documented behaviour anyway.
+  log.warn('job has no usable pipeline graph; using the default', { jobId: job.id });
+  const fallback = defaultPipelineDraft();
+  const built = buildGraph(fallback.nodes, fallback.edges);
+  if (!built) throw PipelineError.permanent('pipeline_invalid', 'The default pipeline graph is not runnable.');
+  return built;
 }
 
-function stepFor(job: JobRecord): { status: JobStatus; spec: StepSpec } | null {
-  const status = job.status === 'RETRYABLE_FAILURE' ? deriveResumeStatus(job) : job.status;
-  const spec = STEPS[status];
-  return spec ? { status, spec } : null;
-}
-
-/** Steps beyond which no further work happens without an external decision. */
-const HALTS: readonly JobStatus[] = [
-  'WAITING_FOR_APPROVAL',
-  'REVIEW_REQUIRED',
-  'EXECUTED',
-  'DRY_RUN_COMPLETED',
-  'PERMANENT_FAILURE',
-  'CANCELLED',
-];
-
-const MAX_STEPS_PER_CLAIM = 8;
-
 /**
- * Advances a claimed job as far as it will go.
+ * Advances a claimed job by walking the stored graph.
  *
- * Every step commits its own settled state before the next one starts, so a
- * crash anywhere resumes from the last completed step rather than restarting the
- * job or losing it. This is the property the AI4CZ JSON queues could not offer.
+ * The edges in the database are the edges followed here: what the pipeline view
+ * draws is what ran. Each node commits its position before the next one starts,
+ * so a crash resumes at the node it was on rather than restarting the job.
  */
 export async function runJob(job: JobRecord, workerId: string): Promise<void> {
-  // A browser-backed job drives one account profile, and a profile cannot be
-  // driven by two things at once. Hold the account for the whole run rather than
-  // per step, so context resolution and execution cannot interleave with another
-  // job on the same account.
   if (job.requiresBrowser && job.accountId) {
     const outcome = await accountLease.withAccountLease(
       { accountId: job.accountId, workerId, reason: `job ${job.id}`, ttlMs: 5 * 60_000 },
-      () => advanceJob(job, workerId),
+      () => walk(job, workerId),
     );
     if (!outcome.held) {
-      // Another worker has the account. Come back shortly rather than queueing
-      // behind it and holding this worker slot open.
       await jobsRepo.updateJob(job.id, {
         runAt: new Date(Date.now() + 15_000).toISOString(),
         releaseLock: true,
@@ -81,90 +60,105 @@ export async function runJob(job: JobRecord, workerId: string): Promise<void> {
     }
     return;
   }
-  await advanceJob(job, workerId);
+  await walk(job, workerId);
 }
 
-async function advanceJob(job: JobRecord, workerId: string): Promise<void> {
+async function walk(job: JobRecord, workerId: string): Promise<void> {
   let current = job;
+  const graph = await graphForJob(current);
+
   await observability.emitTrace({
     jobId: current.id,
     agentId: current.agentId,
     type: 'JOB_CLAIMED',
     level: 'debug',
-    message: `Claimed at ${current.status}`,
-    data: { workerId, attempt: current.attemptCount },
+    message: `Claimed at ${current.currentNodeKey ?? graph.startKey}`,
+    data: { workerId, attempt: current.attemptCount, node: current.currentNodeKey ?? graph.startKey },
   });
 
-  for (let iteration = 0; iteration < MAX_STEPS_PER_CLAIM; iteration += 1) {
-    if (HALTS.includes(current.status)) return;
-    const next = stepFor(current);
-    if (!next) {
-      log.warn('job has no step for its status', { jobId: current.id, status: current.status });
-      await jobsRepo.releaseLease(current.id);
+  let nodeKey = current.currentNodeKey ?? graph.startKey;
+
+  for (let step = 0; step < MAX_NODES_PER_CLAIM; step += 1) {
+    const node = graph.nodes.get(nodeKey);
+    if (!node) {
+      await sendToReview(
+        current,
+        'node_missing',
+        `The pipeline has no node "${nodeKey}". The graph changed while this job was running.`,
+      );
       return;
+    }
+
+    const handler = NODE_HANDLERS[node.kind];
+    if (!handler) {
+      await failPermanently(current, 'node_kind_unknown', `No handler for pipeline node kind "${node.kind}".`);
+      return;
+    }
+
+    // Position is committed before the work, so a crash re-runs this node rather
+    // than skipping it. Every node that touches the outside world is idempotent.
+    if (current.currentNodeKey !== nodeKey) {
+      current = await jobsRepo.updateJob(current.id, { currentNodeKey: nodeKey });
     }
 
     const attempt = current.attemptCount + 1;
-    let bundle: Awaited<ReturnType<typeof loadJobBundle>>;
+    let bundle: JobBundle;
     try {
       bundle = await loadJobBundle(current);
     } catch (error) {
-      await handleFailure(current, next.spec.name, attempt, error, next.status);
+      await handleFailure(current, node, attempt, error);
       return;
     }
 
-    await jobsRepo.updateJob(current.id, { status: next.spec.inFlight });
-
+    let outcome;
     try {
-      await next.spec.run({ ...bundle, job: { ...current, status: next.spec.inFlight } });
+      outcome = await handler({ ...bundle, job: current }, node);
       await jobsRepo.recordAttempt({
         jobId: current.id,
         attempt,
-        step: next.spec.name,
+        step: `${node.key}:${node.kind.toLowerCase()}`,
         workerId,
         outcome: 'OK',
       });
     } catch (error) {
-      await handleFailure(current, next.spec.name, attempt, error, next.status);
+      await handleFailure(current, node, attempt, error);
       return;
     }
 
-    const refreshed = await jobsRepo.getJob(current.id);
-    if (!refreshed) return;
-    if (refreshed.status === next.spec.inFlight) {
-      // The step returned without settling the job, which would spin the loop.
-      log.error('step did not settle the job status', { jobId: current.id, step: next.spec.name });
-      await jobsRepo.updateJob(current.id, {
-        status: 'REVIEW_REQUIRED',
-        errorClass: 'REVIEW_REQUIRED',
-        lastError: `Internal: step ${next.spec.name} finished without changing job status.`,
-        releaseLock: true,
-      });
+    const status = outcome.status ?? NODE_STATUS[node.kind];
+    current = status
+      ? await jobsRepo.updateJob(current.id, { status })
+      : ((await jobsRepo.getJob(current.id)) ?? current);
+
+    const following = nextNode(graph, node.key, outcome.branch);
+
+    if (outcome.halt) {
+      // Park on the node we would run next, so resuming continues rather than
+      // repeating whatever we were waiting for.
+      await jobsRepo.updateJob(current.id, { currentNodeKey: following?.key ?? node.key, releaseLock: true });
       return;
     }
-    current = refreshed;
+
+    if (!following) {
+      log.warn('branch leads nowhere; ending the run', { jobId: current.id, node: node.key, branch: outcome.branch });
+      await jobsRepo.updateJob(current.id, { releaseLock: true });
+      return;
+    }
+    nodeKey = following.key;
   }
 
-  // Ran out of iterations. Release the lease so the next poll continues cleanly.
-  await jobsRepo.releaseLease(current.id);
+  // Out of steps for this claim. Release and continue on the next poll.
+  await jobsRepo.updateJob(current.id, { currentNodeKey: nodeKey, releaseLock: true });
 }
 
-async function handleFailure(
-  job: JobRecord,
-  step: string,
-  attempt: number,
-  error: unknown,
-  resumeStatus: JobStatus,
-): Promise<void> {
+async function handleFailure(job: JobRecord, node: PipelineNode, attempt: number, error: unknown): Promise<void> {
   const pipelineError =
-    error instanceof PipelineError
-      ? error
-      : PipelineError.retryable('unclassified', errorMessage(error), {}, error);
+    error instanceof PipelineError ? error : PipelineError.retryable('unclassified', errorMessage(error), {}, error);
 
   await jobsRepo.recordAttempt({
     jobId: job.id,
     attempt,
-    step,
+    step: `${node.key}:${node.kind.toLowerCase()}`,
     workerId: job.lockedBy,
     outcome: pipelineError.errorClass === 'RETRYABLE' ? 'RETRYABLE' : pipelineError.errorClass,
     errorClass: pipelineError.reason,
@@ -180,7 +174,6 @@ async function handleFailure(
     return;
   }
   if (attempt >= job.maxAttempts) {
-    // Retries are exhausted. A person decides, rather than the job vanishing.
     await sendToReview(
       { ...job, attemptCount: attempt },
       pipelineError.reason,
@@ -188,5 +181,6 @@ async function handleFailure(
     );
     return;
   }
-  await scheduleRetry({ ...job, attemptCount: attempt - 1 }, resumeStatus, pipelineError.message);
+  // A retry resumes at the same node, which is why position is committed first.
+  await scheduleRetry({ ...job, attemptCount: attempt - 1 }, job.status, pipelineError.message);
 }

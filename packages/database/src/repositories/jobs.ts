@@ -8,7 +8,7 @@ const COLUMNS = `
   id, event_id, agent_id, account_id, conversation_id, channel, action_type, status, requires_browser,
   attempt_count, max_attempts, priority, dry_run, run_at, locked_by, lock_expires_at,
   persona_version_id, policy_version_id, pipeline_version_id, prompt_template_version_id,
-  resolved_context, generated_output, validated_output, error_class, last_error,
+  current_node_key, resolved_context, generated_output, validated_output, error_class, last_error,
   idempotency_key, created_at, updated_at, context_resolved_at, memory_resolved_at,
   generated_at, validated_at, approved_at, executed_at`;
 
@@ -169,6 +169,7 @@ export async function recoverExpiredLeases(): Promise<JobRecord[]> {
 
 export interface JobPatch {
   status?: JobStatus;
+  currentNodeKey?: string | null;
   resolvedContext?: ResolvedContext | null;
   generatedOutput?: string | null;
   validatedOutput?: string | null;
@@ -198,6 +199,7 @@ export async function updateJob(id: string, patch: JobPatch, executor?: Tx): Pro
     sets.push(fragment.replace('$?', `$${params.length}`));
   };
   if (patch.status !== undefined) push('status = $?', patch.status);
+  if (patch.currentNodeKey !== undefined) push('current_node_key = $?', patch.currentNodeKey);
   if (patch.resolvedContext !== undefined) push('resolved_context = $?::jsonb', JSON.stringify(patch.resolvedContext));
   if (patch.generatedOutput !== undefined) push('generated_output = $?', patch.generatedOutput);
   if (patch.validatedOutput !== undefined) push('validated_output = $?', patch.validatedOutput);

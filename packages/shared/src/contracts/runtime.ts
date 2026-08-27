@@ -118,6 +118,7 @@ export const JobRecord = z.object({
   policyVersionId: z.string().uuid().nullable(),
   pipelineVersionId: z.string().uuid().nullable(),
   promptTemplateVersionId: z.string().uuid().nullable(),
+  currentNodeKey: z.string().nullable(),
   resolvedContext: ResolvedContext.nullable(),
   generatedOutput: z.string().nullable(),
   validatedOutput: z.string().nullable(),

@@ -94,13 +94,22 @@ describe('the durable queue', () => {
     const jobId = await newJob(fixture.agentId);
     await drainJobs();
 
+    // Steps are named after the graph node that ran, so the history reads as
+    // the path the job actually took through the pipeline.
     const attempts = await jobsRepo.listJobAttempts(jobId);
-    expect(attempts.map((a) => a.step)).toEqual([
-      'resolve_context',
-      'retrieve_memory',
+    const path = attempts.map((a) => a.step.split(':')[0]);
+    expect(path).toEqual([
+      'trigger',
+      'filter',
+      'context',
+      'memory',
+      'persona',
       'generate',
       'validate',
+      'approval',
       'execute',
+      'remember',
+      'done',
     ]);
     expect(attempts.every((a) => a.outcome === 'OK')).toBe(true);
   });
