@@ -108,10 +108,11 @@ export function CapabilitiesPanel({
               >
                 <span
                   className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] transition-colors ${
-                    on ? 'border-signal-calm/60 bg-signal-calm/25 text-signal-calm' : 'border-ink-line text-transparent'
+                    on ? 'border-signal-calm/60 bg-signal-calm/25 text-signal-calm' : 'border-ink-line'
                   }`}
+                  aria-hidden
                 >
-                  ✓
+                  {on ? '✓' : ''}
                 </span>
                 <span className="min-w-0">
                   <span className="block font-mono text-[11px] uppercase tracking-[0.14em] text-bone">

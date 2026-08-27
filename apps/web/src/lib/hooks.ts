@@ -70,3 +70,25 @@ export function usePolling(callback: () => void, intervalMs: number, active: boo
     return () => clearInterval(id);
   }, [intervalMs, active]);
 }
+
+/**
+ * Seconds since `active` last became true, or 0 while it is false.
+ *
+ * The point of showing this is not precision. An operation that has been going
+ * for forty seconds and one that has hung look identical behind a spinner, and
+ * the number is what lets somebody tell them apart without guessing.
+ */
+export function useElapsed(active: boolean): number {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setSeconds(0);
+    const timer = setInterval(() => setSeconds(Math.round((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return seconds;
+}
