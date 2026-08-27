@@ -12,6 +12,7 @@ import { IdentitySection } from './sections/IdentitySection';
 import { AccountsSection } from './sections/AccountsSection';
 import { IntelligenceSection } from './sections/IntelligenceSection';
 import { MemorySection } from './sections/MemorySection';
+import { RelationshipsSection } from './sections/RelationshipsSection';
 import { PipelineSection } from './sections/PipelineSection';
 import { ToolsSection } from './sections/ToolsSection';
 import { PoliciesSection } from './sections/PoliciesSection';
@@ -24,6 +25,7 @@ const SECTIONS = [
   ['identity', 'Identity'],
   ['accounts', 'Accounts'],
   ['intelligence', 'Intelligence'],
+  ['relationships', 'Relationships'],
   ['memory', 'Memory'],
   ['pipeline', 'Pipeline'],
   ['tools', 'Tools'],
@@ -207,27 +209,28 @@ export function AgentPage() {
         <IdentitySection index={1} agentId={agent.id} agentName={agent.name} persona={persona} onSaved={reload} />
         <AccountsSection index={2} agentId={agent.id} accounts={accounts} onChanged={reload} />
         <IntelligenceSection index={3} agentId={agent.id} models={models} onChanged={reload} />
-        <MemorySection index={4} agentId={agent.id} counts={memoryCounts} />
+        <RelationshipsSection index={4} agentId={agent.id} />
+        <MemorySection index={5} agentId={agent.id} counts={memoryCounts} />
         <PipelineSection
-          index={5}
+          index={6}
           pipeline={pipeline}
           triggerLabel={channel ? `When someone mentions ${agent.name}.` : `When ${agent.name} receives an event.`}
         />
         <ToolsSection
-          index={6}
+          index={7}
           agentId={agent.id}
           tools={tools}
           allowedKeys={policy?.config.tools.allowed ?? []}
           onChanged={reload}
         />
         <PoliciesSection
-          index={7}
+          index={8}
           agentId={agent.id}
           policy={policy?.config ?? null}
           version={policy?.version ?? 1}
           onSaved={reload}
         />
-        <ActivitySection index={8} agentId={agent.id} />
+        <ActivitySection index={9} agentId={agent.id} />
       </div>
 
       <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title={`Delete ${agent.name}?`}>

@@ -92,6 +92,21 @@ here and you do not know it, say you do not have it rather than inventing it.
 {{/memoryBlock}}`,
   },
   {
+    key: 'RELATIONSHIP',
+    title: 'Who you are talking to',
+    role: 'user',
+    // Written as sentences rather than fields. A model handed a table of
+    // interaction counts writes replies that sound like a CRM.
+    template: `{{#relationshipBlock}}{{relationshipBlock}}
+
+{{/relationshipBlock}}{{#callbackBlock}}SHARED REFERENCE YOU MAY USE
+{{callbackBlock}}
+
+Only if it fits naturally. Forcing it reads worse than not using it.
+
+{{/callbackBlock}}`,
+  },
+  {
     key: 'MEDIA_CONTEXT',
     title: 'What is attached',
     role: 'user',

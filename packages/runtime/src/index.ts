@@ -4,6 +4,7 @@ export * from './cadence';
 export * from './ingest';
 export * from './reconcile';
 export * from './mediaResolve';
+export * from './relationship';
 export * from './pipeline';
 export * from './graph';
 export * from './nodes';

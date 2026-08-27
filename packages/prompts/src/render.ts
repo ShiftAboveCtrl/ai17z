@@ -1,4 +1,4 @@
-import type { SocialMediaContext } from '@xbam/shared/contracts';
+import type { RelationshipContext, SocialMediaContext } from '@xbam/shared/contracts';
 export type TemplateValues = Record<string, string | number | boolean | null | undefined>;
 
 /**
@@ -109,4 +109,46 @@ export function renderLinks(links: SocialMediaContext['links']): string {
       return `- ${link.url} (not opened)`;
     })
     .join('\n');
+}
+
+/**
+ * Describes the relationship in plain sentences.
+ *
+ * The point is continuity, not analysis. Everything here is something the two
+ * of them actually did together — nothing is inferred about the person beyond
+ * the conversations they chose to have.
+ */
+export function renderRelationship(relationship: RelationshipContext | null | undefined): string {
+  if (!relationship) return '';
+  const lines: string[] = [];
+
+  if (!relationship.known) {
+    lines.push(`@${relationship.handle} has not spoken to you before.`);
+  } else {
+    const level = {
+      NEW: 'You barely know them',
+      KNOWN: 'You have spoken before',
+      FAMILIAR: 'You know them',
+      REGULAR: 'They are a regular',
+    }[relationship.familiarity];
+    lines.push(`@${relationship.handle}. ${level}. ${relationship.historyLine}`);
+    if (relationship.topics.length > 0) lines.push(`You have discussed: ${relationship.topics.join(', ')}.`);
+    if (relationship.summary) lines.push(relationship.summary);
+    // The owner's own words outrank anything derived, so they go last and are
+    // labelled as instruction rather than observation.
+    if (relationship.ownerNote) lines.push(`Note from your owner: ${relationship.ownerNote}`);
+  }
+
+  if (relationship.disposition === 'CAUTIOUS') {
+    lines.push('Be careful with this one. Stay measured whatever they say.');
+  } else if (relationship.disposition === 'FRIENDLY') {
+    lines.push('You get on well with them.');
+  }
+
+  return lines.join('\n');
+}
+
+export function renderCallback(relationship: RelationshipContext | null | undefined): string {
+  if (!relationship?.callback) return '';
+  return `${relationship.callback.label}: ${relationship.callback.detail}`;
 }

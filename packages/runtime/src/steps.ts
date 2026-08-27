@@ -13,6 +13,7 @@ import {
   ops,
   prompts as promptsRepo,
   radar as radarRepo,
+  relationships as relationshipsRepo,
   withTransaction,
 } from '@xbam/database';
 import { retrieveMemories, applyWritePolicy } from '@xbam/memory';
@@ -22,6 +23,7 @@ import { getChannelAdapter } from '@xbam/channels';
 import { describeTools } from '@xbam/tools';
 import { buildChannelContext, syntheticAccount } from './channelContext';
 import { resolveMedia } from './mediaResolve';
+import { loadRelationshipContext, recordExchange } from './relationship';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -446,6 +448,24 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       contentSignature: result.status === 'DRY_RUN' ? null : signature,
     });
 
+    // The exchange is recorded here, after the reply actually went out. An
+    // inbound message nobody answered is not a conversation, and counting it as
+    // one is how somebody who repeatedly mentions an agent becomes a 'regular'.
+    if (result.status !== 'DRY_RUN') {
+      await recordExchange({
+        agentId: bundle.agent.id,
+        channel: job.channel,
+        handle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+        remoteUserId: bundle.event.remoteAuthorId,
+        displayName: bundle.event.remoteAuthorDisplay,
+      }).catch(() => undefined);
+
+      // A callback that was offered and used is marked, so it rests before it
+      // can be offered again.
+      const callbackId = (context?.meta as { callbackId?: string } | undefined)?.callbackId;
+      if (callbackId) await relationshipsRepo.markCallbackUsed(callbackId).catch(() => undefined);
+    }
+
     // Remember what we posted, so replies underneath it can be found by reading
     // the thread rather than by hoping a notification arrives. A dry run posts
     // nothing, so there is nothing to come back to.
@@ -604,6 +624,58 @@ export async function stepResolveMedia(bundle: JobBundle): Promise<void> {
   if (context) {
     await jobsRepo.updateJob(job.id, {
       resolvedContext: { ...context, meta: { ...context.meta, mediaContext: resolved } },
+    });
+  }
+}
+
+/**
+ * Loads what the agent knows about the person it is replying to.
+ *
+ * Runs before memory retrieval, because who somebody is changes what is worth
+ * remembering about them.
+ */
+export async function stepRelationship(bundle: JobBundle): Promise<void> {
+  const { job, policy } = bundle;
+  const context = job.resolvedContext;
+
+  const loaded = await loadRelationshipContext({
+    agentId: bundle.agent.id,
+    channel: job.channel,
+    handle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+    remoteUserId: bundle.event.remoteAuthorId,
+    voice: policy.relationships,
+  });
+
+  // A person the owner has blocked is not somebody to reply to, whatever the
+  // rest of the pipeline would have decided.
+  if (loaded.context.disposition === 'BLOCKED') {
+    throw PipelineError.permanent(
+      'relationship_blocked',
+      `@${loaded.context.handle} is blocked for this agent.`,
+    );
+  }
+
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    type: 'RELATIONSHIP_LOADED',
+    message: loaded.context.known
+      ? `@${loaded.context.handle} is ${loaded.context.familiarity.toLowerCase()}. ${loaded.context.historyLine}`
+      : `@${loaded.context.handle} is new.`,
+    data: {
+      familiarity: loaded.context.familiarity,
+      topics: loaded.context.topics,
+      callback: loaded.context.callback?.label ?? null,
+      disposition: loaded.context.disposition,
+    },
+  });
+
+  if (context) {
+    await jobsRepo.updateJob(job.id, {
+      resolvedContext: {
+        ...context,
+        meta: { ...context.meta, relationship: loaded.context, callbackId: loaded.callbackId },
+      },
     });
   }
 }

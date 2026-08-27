@@ -24,6 +24,7 @@ export * as capabilities from './repositories/capabilities';
 export * as workers from './repositories/workers';
 export * as radar from './repositories/radar';
 export * as media from './repositories/media';
+export * as relationships from './repositories/relationships';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.
@@ -45,3 +46,4 @@ export type { CadenceVersionRow, DueAccount } from './repositories/cadences';
 export type { WorkerRow } from './repositories/workers';
 export type { RadarSourceRow, DiscoveryRow } from './repositories/radar';
 export type { EventMediaRow, EventQuoteRow, EventLinkRow } from './repositories/media';
+export type { RelationshipRow, CallbackRow } from './repositories/relationships';

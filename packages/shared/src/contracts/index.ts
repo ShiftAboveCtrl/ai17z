@@ -8,6 +8,7 @@ export * from './policy';
 export * from './cadence';
 export * from './radar';
 export * from './multimodal';
+export * from './relationship';
 export * from './domain';
 export * from './runtime';
 export * from './api';
