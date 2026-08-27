@@ -11,6 +11,8 @@ import {
   stepRelationship,
   stepStance,
   stepStanceCheck,
+  stepEngagement,
+  stepIntent,
   stepRetrieveMemory,
   stepValidate,
 } from './steps';
@@ -191,6 +193,20 @@ export const NODE_HANDLERS: Record<string, NodeHandler> = {
   },
   STANCE_CHECK: async (bundle) => {
     await stepStanceCheck(bundle);
+    return { branch: 'next' };
+  },
+  ENGAGEMENT_DECISION: async (bundle) => {
+    const branch = await stepEngagement(bundle);
+    // Ignoring is a settled outcome, not a failure: the job ends having
+    // decided something, and the trace says what and why.
+    return branch === 'ignore'
+      ? { branch, halt: true, status: 'CANCELLED' }
+      : branch === 'review'
+        ? { branch, halt: true, status: 'REVIEW_REQUIRED' }
+        : { branch };
+  },
+  INTENT: async (bundle) => {
+    await stepIntent(bundle);
     return { branch: 'next' };
   },
   RETRIEVE_MEMORY: async (bundle) => {

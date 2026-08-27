@@ -3,6 +3,7 @@ import { AutomationMode, DisclosureMode } from './enums';
 import { MediaPolicy } from './multimodal';
 import { RelationshipVoice } from './relationship';
 import { StancePolicy } from './stance';
+import { EngagementPolicy, ToneMirroring } from './engagement';
 
 export const IdentityPolicy = z.object({
   disclosure: DisclosureMode.default('ON_REQUEST'),
@@ -139,6 +140,9 @@ export const PolicyConfig = z.object({
   relationships: RelationshipVoice.default({}),
   /** Keeping the agent consistent with what it has already said. */
   stance: StancePolicy.default({}),
+  /** Whether to answer at all, and how much of the incoming tone to take on. */
+  engagement: EngagementPolicy.default({}),
+  tone: ToneMirroring.default({}),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 
