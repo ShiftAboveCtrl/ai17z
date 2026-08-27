@@ -1,4 +1,7 @@
-import type { RelationshipContext, SocialMediaContext } from '@xbam/shared/contracts';
+import type { RelationshipContext, SocialMediaContext, StanceContext } from '@xbam/shared/contracts';
+/** Named so a literal newline never has to survive a code generator again. */
+const NL = '\n';
+
 export type TemplateValues = Record<string, string | number | boolean | null | undefined>;
 
 /**
@@ -151,4 +154,34 @@ export function renderRelationship(relationship: RelationshipContext | null | un
 export function renderCallback(relationship: RelationshipContext | null | undefined): string {
   if (!relationship?.callback) return '';
   return `${relationship.callback.label}: ${relationship.callback.detail}`;
+}
+
+/**
+ * Positions the agent has already taken on what is being discussed.
+ *
+ * Confidence is rendered as a word rather than a number, because "0.74" invites
+ * a model to reason about the number instead of the position.
+ */
+export function renderStances(stance: StanceContext | null | undefined): string {
+  if (!stance || stance.relevant.length === 0) return '';
+  return stance.relevant
+    .map((entry) => {
+      const firmness = entry.confidence >= 0.75 ? 'firmly' : entry.confidence >= 0.5 ? '' : 'tentatively';
+      const held = `${firmness} ${entry.position.toLowerCase()}`.trim();
+      return `- ${entry.subject}: you are ${held}. ${entry.summary}`;
+    })
+    .join(NL);
+}
+
+export function renderRevisions(stance: StanceContext | null | undefined): string {
+  if (!stance || stance.revised.length === 0) return '';
+  return stance.revised
+    .map((entry) => `- ${entry.subject}: you moved from ${entry.from.toLowerCase()} to ${entry.to.toLowerCase()}.`)
+    .join(NL);
+}
+
+/** Open promises to this person, so a reply can pick one up. */
+export function renderCommitments(commitments: { promise: string }[] | undefined): string {
+  if (!commitments || commitments.length === 0) return '';
+  return commitments.map((c) => `- ${c.promise}`).join(NL);
 }

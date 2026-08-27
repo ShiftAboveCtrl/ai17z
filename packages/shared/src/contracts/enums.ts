@@ -283,10 +283,14 @@ export const PIPELINE_NODE_KINDS = [
   'MEDIA_RESOLVE',
   /** Loads what the agent knows about the person it is replying to. */
   'RELATIONSHIP',
+  /** Loads what the agent already believes about what is being discussed. */
+  'STANCE',
   'RETRIEVE_MEMORY',
   'ASSEMBLE_PERSONA',
   'GENERATE',
   'VALIDATE',
+  /** Checks a draft against positions the agent has already taken publicly. */
+  'STANCE_CHECK',
   'CONDITION',
   'APPROVAL_GATE',
   'DELAY',
@@ -312,6 +316,8 @@ export const PROMPT_LAYER_KEYS = [
   'RETRIEVED_MEMORY',
   /** Who this person is to the agent, and what they have discussed. */
   'RELATIONSHIP',
+  /** Positions already held, so the agent does not contradict itself. */
+  'BELIEFS',
   /** What was attached to the post: images, the quoted post, links. */
   'MEDIA_CONTEXT',
   'IMMEDIATE_CONTEXT',
