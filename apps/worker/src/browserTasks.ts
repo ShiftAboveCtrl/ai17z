@@ -30,7 +30,6 @@ export class BrowserTaskRunner {
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => void this.tick(), this.intervalMs);
-    void browserTasks.recoverStaleBrowserTasks().catch(() => undefined);
   }
 
   stop(): void {

@@ -21,6 +21,7 @@ export * as accountLease from './repositories/accountLease';
 export * as personaSources from './repositories/personaSources';
 export * as cadences from './repositories/cadences';
 export * as capabilities from './repositories/capabilities';
+export * as workers from './repositories/workers';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.
@@ -39,3 +40,4 @@ export type { BrowserTaskRow, BrowserTaskKind } from './repositories/browserTask
 export type { AccountLease } from './repositories/accountLease';
 export type { PersonaSourceRow, PersonaSourceItemRow, PersonaTraitRow, TraitWithEvidence } from './repositories/personaSources';
 export type { CadenceVersionRow, DueAccount } from './repositories/cadences';
+export type { WorkerRow } from './repositories/workers';
