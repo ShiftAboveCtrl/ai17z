@@ -2,6 +2,7 @@ export * from './validator';
 export * from './policyGate';
 export * from './cadence';
 export * from './ingest';
+export * from './reconcile';
 export * from './pipeline';
 export * from './graph';
 export * from './nodes';

@@ -6,6 +6,7 @@ import type { AccountRow, BrowserTask, DiagnosticRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { CadencePanel } from './CadencePanel';
 import { SignInProgress } from './SignInProgress';
+import { RadarPanel } from './RadarPanel';
 import { ErrorPanel, Field, RetryablePanel, SavedTick, Spinner, StatusDot, Working } from './ui';
 
 interface SessionData {
@@ -157,6 +158,8 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
         )}
 
       {browserBacked && <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />}
+
+      {browserBacked && <RadarPanel accountId={accountId} />}
 
       {browserBacked && <CadencePanel accountId={accountId} />}
 

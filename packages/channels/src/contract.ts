@@ -3,6 +3,8 @@ import type {
   ActionType,
   ChannelId,
   NormalizedEvent,
+  RadarPollResult,
+  RadarSourceKind,
   ResolvedContext,
 } from '@xbam/shared/contracts';
 import type { Logger } from '@xbam/shared';
@@ -54,6 +56,15 @@ export interface AuthObservation {
   /** Which kind of challenge, when state is CHALLENGE. */
   challengeKind?: string | null;
   handle?: string | null;
+}
+
+export interface RadarPollRequest {
+  kind: RadarSourceKind;
+  /** Handle, keyword, query, or own status id, depending on the kind. */
+  target: string | null;
+  limit: number;
+  /** Where the previous poll stopped, when this source keeps a mark. */
+  cursor: string | null;
 }
 
 export interface IngestOptions {
@@ -123,6 +134,16 @@ export interface ChannelAdapter {
    * a channel that needs no browser sign-in simply does not implement it.
    */
   observeAuth?(ctx: ChannelContext): Promise<AuthObservation>;
+  /**
+   * Polls one radar source and reports what it saw.
+   *
+   * Optional. A channel with a single reliable delivery surface has no use for
+   * several monitors and simply does not implement this; the account poller
+   * still calls ingestEvents.
+   */
+  pollRadarSource?(ctx: ChannelContext, request: RadarPollRequest): Promise<RadarPollResult>;
+  /** Which radar sources this channel can actually run. */
+  readonly radarSourceKinds?: readonly RadarSourceKind[];
   ingestEvents(ctx: ChannelContext, options: IngestOptions): Promise<NormalizedEvent[]>;
   resolveContext(ctx: ChannelContext, event: NormalizedEvent): Promise<ResolvedContext>;
   verifyAction(ctx: ChannelContext, request: ActionRequest): Promise<VerificationResult>;

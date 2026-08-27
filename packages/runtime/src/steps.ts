@@ -11,6 +11,7 @@ import {
   observability,
   ops,
   prompts as promptsRepo,
+  radar as radarRepo,
   withTransaction,
 } from '@xbam/database';
 import { retrieveMemories, applyWritePolicy } from '@xbam/memory';
@@ -442,6 +443,22 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       verification: result.verification as unknown as Record<string, unknown>,
       contentSignature: result.status === 'DRY_RUN' ? null : signature,
     });
+
+    // Remember what we posted, so replies underneath it can be found by reading
+    // the thread rather than by hoping a notification arrives. A dry run posts
+    // nothing, so there is nothing to come back to.
+    if (result.status !== 'DRY_RUN' && result.remoteActionId && job.accountId) {
+      await radarRepo
+        .recordOwnPost({
+          accountId: job.accountId,
+          agentId: bundle.agent.id,
+          remoteId: result.remoteActionId,
+          remoteUrl: result.remoteActionUrl,
+          text: output,
+          postedAt: new Date().toISOString(),
+        })
+        .catch(() => undefined);
+    }
     await actionsRepo.recordActionAttempt({
       actionId: action.id,
       attempt: job.attemptCount + 1,
