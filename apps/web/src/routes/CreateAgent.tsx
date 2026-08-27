@@ -26,7 +26,7 @@ interface Draft {
   handle: string;
   rememberUserFacts: boolean;
   threadMemory: boolean;
-  automation: 'AUTONOMOUS' | 'REVIEW_BEFORE_ACTION' | 'MANUAL_ONLY';
+  automation: 'OFF' | 'MONITOR_ONLY' | 'MANUAL_ONLY' | 'REVIEW_BEFORE_ACTION' | 'AUTONOMOUS';
   dryRunDefault: boolean;
   maxCharacters: number;
 }

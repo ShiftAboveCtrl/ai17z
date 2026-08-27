@@ -85,7 +85,17 @@ export async function ingestNormalizedEvent(options: IngestOptions): Promise<Ing
 
       const policyRow = await agentsRepo.getActivePolicy(agent.id);
       const policy = PolicyConfig.parse(policyRow?.config ?? {});
-      if (policy.automation.mode === 'MANUAL_ONLY' && !options.onlyAgentId) {
+      const mode = policy.automation.mode;
+
+      // OFF does no work at all, not even for a manual trigger.
+      if (mode === 'OFF') {
+        outcome.skipped.push({ agentId: agent.id, reason: 'automation mode is OFF' });
+        continue;
+      }
+      // MONITOR_ONLY still records the event and the conversation below, so the
+      // owner can see what arrived, but creates no job and generates nothing.
+      // A manual trigger is an explicit human act and overrides MANUAL_ONLY.
+      if (mode === 'MANUAL_ONLY' && !options.onlyAgentId) {
         outcome.skipped.push({ agentId: agent.id, reason: 'automation mode is MANUAL_ONLY' });
         continue;
       }
@@ -108,6 +118,11 @@ export async function ingestNormalizedEvent(options: IngestOptions): Promise<Ing
         authorHandle: event.remoteAuthorHandle,
         body: event.text,
       });
+
+      if (mode === 'MONITOR_ONLY' && !options.onlyAgentId) {
+        outcome.skipped.push({ agentId: agent.id, reason: 'automation mode is MONITOR_ONLY: recorded, not acted on' });
+        continue;
+      }
 
       const idempotencyKey = actionIdempotencyKey({
         channel: event.channel,

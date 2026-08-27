@@ -28,7 +28,22 @@ export const DISCLOSURE_MODES = ['NONE', 'ON_REQUEST', 'ALWAYS'] as const;
 export const DisclosureMode = enumOf(DISCLOSURE_MODES).schema;
 export type DisclosureMode = (typeof DISCLOSURE_MODES)[number];
 
-export const AUTOMATION_MODES = ['AUTONOMOUS', 'REVIEW_BEFORE_ACTION', 'MANUAL_ONLY'] as const;
+/**
+ * What an agent is permitted to do on its own.
+ *
+ * OFF          nothing: no polling, no ingest, no work
+ * MONITOR_ONLY events are recorded, but no job is created and nothing generates
+ * MANUAL_ONLY  work happens only when a person triggers it
+ * REVIEW_BEFORE_ACTION generates, then waits for a person before acting
+ * AUTONOMOUS   acts within the policy limits
+ */
+export const AUTOMATION_MODES = [
+  'OFF',
+  'MONITOR_ONLY',
+  'MANUAL_ONLY',
+  'REVIEW_BEFORE_ACTION',
+  'AUTONOMOUS',
+] as const;
 export const AutomationMode = enumOf(AUTOMATION_MODES).schema;
 export type AutomationMode = (typeof AUTOMATION_MODES)[number];
 

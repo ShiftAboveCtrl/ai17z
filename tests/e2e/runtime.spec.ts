@@ -10,7 +10,7 @@ const PROVIDER_LABEL = uniqueName('E2E Mock');
 let agentId = '';
 
 async function token(page: Page): Promise<string> {
-  const value = await page.evaluate(() => window.localStorage.getItem('xbam.session'));
+  const value = await page.evaluate(() => window.localStorage.getItem('ai17z.session'));
   if (!value) throw new Error('No session token in localStorage after signing in.');
   return value;
 }
