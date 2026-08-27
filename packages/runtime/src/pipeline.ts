@@ -1,6 +1,6 @@
 import type { JobRecord, JobStatus } from '@xbam/shared/contracts';
 import { PipelineError, createLogger, errorMessage } from '@xbam/shared';
-import { jobs as jobsRepo, observability } from '@xbam/database';
+import { accountLease, jobs as jobsRepo, observability } from '@xbam/database';
 import { failPermanently, scheduleRetry, sendToReview } from '@xbam/jobs';
 import { loadJobBundle } from './loadJob';
 import { stepGenerate, stepResolveContext, stepRetrieveMemory, stepValidate, stepExecute } from './steps';
@@ -60,6 +60,31 @@ const MAX_STEPS_PER_CLAIM = 8;
  * job or losing it. This is the property the AI4CZ JSON queues could not offer.
  */
 export async function runJob(job: JobRecord, workerId: string): Promise<void> {
+  // A browser-backed job drives one account profile, and a profile cannot be
+  // driven by two things at once. Hold the account for the whole run rather than
+  // per step, so context resolution and execution cannot interleave with another
+  // job on the same account.
+  if (job.requiresBrowser && job.accountId) {
+    const outcome = await accountLease.withAccountLease(
+      { accountId: job.accountId, workerId, reason: `job ${job.id}`, ttlMs: 5 * 60_000 },
+      () => advanceJob(job, workerId),
+    );
+    if (!outcome.held) {
+      // Another worker has the account. Come back shortly rather than queueing
+      // behind it and holding this worker slot open.
+      await jobsRepo.updateJob(job.id, {
+        runAt: new Date(Date.now() + 15_000).toISOString(),
+        releaseLock: true,
+        lastError: `Account busy: ${outcome.heldBy?.reason ?? 'another operation'}`,
+      });
+      log.info('account busy, deferring job', { jobId: job.id, accountId: job.accountId });
+    }
+    return;
+  }
+  await advanceJob(job, workerId);
+}
+
+async function advanceJob(job: JobRecord, workerId: string): Promise<void> {
   let current = job;
   await observability.emitTrace({
     jobId: current.id,

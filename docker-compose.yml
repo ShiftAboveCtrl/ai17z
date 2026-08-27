@@ -61,7 +61,10 @@ services:
       XBAM_BROWSER_PROFILE_DIR: /data/browser-profiles
       XBAM_BROWSER_ENABLED: ${XBAM_BROWSER_ENABLED:-1}
       XBAM_BROWSER_HEADLESS: "1"
-      XBAM_WORKER_CONCURRENCY: ${XBAM_WORKER_CONCURRENCY:-2}
+      AI17Z_WORKER_CONCURRENCY: ${AI17Z_WORKER_CONCURRENCY:-2}
+      # The container has no browser and no display. Browser-backed channels are
+      # served by a worker running natively; see docs/operations/BROWSER_SESSIONS.md.
+      AI17Z_WORKER_ROLE: ${AI17Z_WORKER_ROLE:-jobs}
     volumes:
       - xbam_storage:/data/storage
       - xbam_browser:/data/browser-profiles

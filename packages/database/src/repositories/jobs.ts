@@ -5,7 +5,7 @@ import { query, queryOne, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
 const COLUMNS = `
-  id, event_id, agent_id, account_id, conversation_id, channel, action_type, status,
+  id, event_id, agent_id, account_id, conversation_id, channel, action_type, status, requires_browser,
   attempt_count, max_attempts, priority, dry_run, run_at, locked_by, lock_expires_at,
   persona_version_id, policy_version_id, pipeline_version_id, prompt_template_version_id,
   resolved_context, generated_output, validated_output, error_class, last_error,
@@ -27,6 +27,8 @@ export interface CreateJobInput {
   pipelineVersionId: string | null;
   promptTemplateVersionId: string | null;
   conversationId?: string | null;
+  /** True when advancing this job needs a browser, so only a browser-capable worker claims it. */
+  requiresBrowser: boolean;
 }
 
 export interface CreateJobResult {
@@ -55,12 +57,13 @@ export async function createJob(tx: Tx, input: CreateJobInput): Promise<CreateJo
     input.pipelineVersionId,
     input.promptTemplateVersionId,
     input.conversationId ?? null,
+    input.requiresBrowser,
   ];
   const inserted = await tx.one(
     `INSERT INTO jobs (event_id, agent_id, account_id, channel, action_type, idempotency_key,
        dry_run, max_attempts, priority, persona_version_id, policy_version_id,
-       pipeline_version_id, prompt_template_version_id, conversation_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       pipeline_version_id, prompt_template_version_id, conversation_id, requires_browser)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT (idempotency_key) DO NOTHING
      RETURNING ${COLUMNS}`,
     params,
@@ -84,7 +87,31 @@ export async function requireJob(id: string): Promise<JobRecord> {
  * Atomically leases up to `limit` due jobs. `FOR UPDATE SKIP LOCKED` is what lets
  * several workers run concurrently without ever handing the same job to two of them.
  */
-export async function claimJobs(workerId: string, limit: number, leaseMs: number): Promise<JobRecord[]> {
+export interface ClaimOptions {
+  /**
+   * What this worker can serve. A containerised worker has no browser, so it
+   * must never claim a job whose next step needs one: it would fail work that
+   * another worker could have completed.
+   */
+  browserCapable: boolean;
+  /** When false, this worker claims only browser work. */
+  jobsCapable: boolean;
+}
+
+export async function claimJobs(
+  workerId: string,
+  limit: number,
+  leaseMs: number,
+  options: ClaimOptions = { browserCapable: true, jobsCapable: true },
+): Promise<JobRecord[]> {
+  if (!options.browserCapable && !options.jobsCapable) return [];
+
+  const capability = options.browserCapable && options.jobsCapable
+    ? 'TRUE'
+    : options.browserCapable
+      ? 'requires_browser'
+      : 'NOT requires_browser';
+
   const rows = await query(
     `UPDATE jobs SET locked_by = $1,
                      lock_expires_at = now() + make_interval(secs => $2::double precision),
@@ -93,6 +120,7 @@ export async function claimJobs(workerId: string, limit: number, leaseMs: number
         SELECT id FROM jobs
          WHERE status = ANY($3::text[])
            AND run_at <= now()
+           AND ${capability}
            AND (locked_by IS NULL OR lock_expires_at < now())
          ORDER BY priority ASC, run_at ASC
          FOR UPDATE SKIP LOCKED

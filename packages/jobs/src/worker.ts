@@ -1,7 +1,7 @@
 import type { JobRecord } from '@xbam/shared/contracts';
 import { createLogger, errorMessage, sleep } from '@xbam/shared';
 import { jobs as jobsRepo } from '@xbam/database';
-import { runRecoverySweep, type QueueOptions } from './queue';
+import { capabilitiesFor, runRecoverySweep, type QueueOptions } from './queue';
 
 const log = createLogger('worker-loop');
 
@@ -29,7 +29,11 @@ export class JobWorker {
     if (this.running) return;
     this.running = true;
     this.stopping = false;
-    log.info('worker starting', { workerId: this.options.workerId, concurrency: this.options.concurrency });
+    log.info('worker starting', {
+      workerId: this.options.workerId,
+      concurrency: this.options.concurrency,
+      role: this.options.role,
+    });
 
     await runRecoverySweep();
     this.recoveryTimer = setInterval(() => {
@@ -62,7 +66,12 @@ export class JobWorker {
           await sleep(this.options.pollIntervalMs);
           continue;
         }
-        const claimed = await jobsRepo.claimJobs(this.options.workerId, capacity, this.options.leaseMs);
+        const claimed = await jobsRepo.claimJobs(
+          this.options.workerId,
+          capacity,
+          this.options.leaseMs,
+          capabilitiesFor(this.options.role),
+        );
         if (claimed.length === 0) {
           await sleep(this.options.pollIntervalMs);
           continue;

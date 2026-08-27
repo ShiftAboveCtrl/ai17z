@@ -4,11 +4,28 @@ import { jobs as jobsRepo, observability } from '@xbam/database';
 
 const log = createLogger('queue');
 
+/**
+ * What a worker is able to do.
+ *
+ * `jobs` runs the pipeline for channels that need no browser and is safe in a
+ * container. `browser` runs browser-backed channels and browser tasks, and must
+ * run where a browser actually exists. `all` is the single-process default.
+ */
+export type WorkerRole = 'jobs' | 'browser' | 'all';
+
 export interface QueueOptions {
   workerId: string;
   concurrency: number;
   pollIntervalMs: number;
   leaseMs: number;
+  role: WorkerRole;
+}
+
+export function capabilitiesFor(role: WorkerRole): { browserCapable: boolean; jobsCapable: boolean } {
+  return {
+    browserCapable: role === 'browser' || role === 'all',
+    jobsCapable: role === 'jobs' || role === 'all',
+  };
 }
 
 /** Schedules a retry with jittered exponential backoff and records why. */

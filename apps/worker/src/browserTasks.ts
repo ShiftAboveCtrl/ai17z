@@ -1,8 +1,8 @@
 import { rm } from 'node:fs/promises';
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { accounts as accountsRepo, browserTasks, ops, type BrowserTaskRow } from '@xbam/database';
+import { accountLease, accounts as accountsRepo, browserTasks, ops, type BrowserTaskRow } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
-import { captureScreenshot, closeSession, defaultProfileDir, leaseSession, safeUrl } from '@xbam/browser';
+import { captureScreenshot, closeSession, defaultProfileDir, leaseSession, runBrowserPreflight, safeUrl } from '@xbam/browser';
 import { buildChannelContext, ingestNormalizedEvent, storageDir } from '@xbam/runtime';
 
 const log = createLogger('browser-tasks');
@@ -19,7 +19,7 @@ export class BrowserTaskRunner {
   private running = false;
   private readonly intervalMs = envInt('XBAM_BROWSER_TASK_POLL_MS', 2_000);
 
-  constructor(private readonly workerId: string) {}
+  constructor(readonly workerId: string) {}
 
   start(): void {
     if (this.timer) return;
@@ -40,12 +40,33 @@ export class BrowserTaskRunner {
       if (!task) return;
       log.info('running browser task', { kind: task.kind, accountId: task.accountId });
       try {
-        const result = await this.execute(task);
-        await browserTasks.finishBrowserTask(task.id, 'COMPLETED', result);
+        // Preflight belongs to the machine, not an account, so it takes no lease.
+        if (task.accountId === null) {
+          await browserTasks.finishBrowserTask(task.id, 'COMPLETED', await this.executeSystem(task));
+          return;
+        }
+
+        // Same profile, same rule: one operation at a time.
+        const accountId = task.accountId;
+        const outcome = await accountLease.withAccountLease(
+          { accountId, workerId: this.workerId, reason: `browser task ${task.kind}`, ttlMs: 11 * 60_000 },
+          () => this.execute(task),
+        );
+        if (!outcome.held) {
+          await browserTasks.finishBrowserTask(
+            task.id,
+            'FAILED',
+            null,
+            `The account is busy with ${outcome.heldBy?.reason ?? 'another operation'}. Try again once it finishes.`,
+          );
+          return;
+        }
+        await browserTasks.finishBrowserTask(task.id, 'COMPLETED', outcome.value);
       } catch (error) {
         const message = errorMessage(error);
         log.warn('browser task failed', { kind: task.kind, message });
         await browserTasks.finishBrowserTask(task.id, 'FAILED', null, message);
+        if (task.accountId === null) return;
         await accountsRepo
           .updateAccount(task.accountId, {
             status: 'ERROR',
@@ -60,8 +81,17 @@ export class BrowserTaskRunner {
     }
   }
 
+  /** Machine-level checks that belong to no account. */
+  private async executeSystem(task: BrowserTaskRow): Promise<Record<string, unknown>> {
+    if (task.kind === 'PREFLIGHT') {
+      const report = await runBrowserPreflight();
+      return report as unknown as Record<string, unknown>;
+    }
+    return { detail: `${task.kind} needs an account.` };
+  }
+
   private async execute(task: BrowserTaskRow): Promise<Record<string, unknown>> {
-    const account = await accountsRepo.requireAccount(task.accountId);
+    const account = await accountsRepo.requireAccount(task.accountId!);
     const adapter = getChannelAdapter(account.channel);
     const ctx = await buildChannelContext(account, null);
     const profileDir = ctx.session?.profileDir ?? defaultProfileDir(account.id);
