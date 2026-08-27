@@ -1,4 +1,4 @@
-import type { RelationshipContext, SocialMediaContext } from '@xbam/shared/contracts';
+import type { RelationshipContext, SocialMediaContext, StanceContext } from '@xbam/shared/contracts';
 import type {
   ChatMessage,
   ContextMessage,
@@ -16,7 +16,10 @@ import {
   renderLinks,
   renderMedia,
   renderQuoted,
+  renderCommitments,
   renderRelationship,
+  renderRevisions,
+  renderStances,
   renderTemplate,
   tidy,
 } from './render';
@@ -95,6 +98,8 @@ function sourceFor(key: string, input: AssembleInput): string {
       return 'attached media, quoted posts and links';
     case 'RELATIONSHIP':
       return 'relationship memory';
+    case 'BELIEFS':
+      return 'stance ledger';
     case 'OUTPUT_CONTRACT':
       return 'policy output rules';
     default:
@@ -113,6 +118,8 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   // whose pipeline has no media node.
   const mediaContext = (context.meta as { mediaContext?: SocialMediaContext } | undefined)?.mediaContext;
   const relationship = (context.meta as { relationship?: RelationshipContext } | undefined)?.relationship;
+  const stance = (context.meta as { stance?: StanceContext } | undefined)?.stance;
+  const openCommitments = (context.meta as { openCommitments?: { promise: string }[] } | undefined)?.openCommitments;
 
   const values = {
     channelName: input.channelName,
@@ -131,6 +138,9 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     customInstructions: persona.customInstructions,
     memoryBlock: renderMemories(input.memories, input.memoryCharBudget),
     relationshipBlock: renderRelationship(relationship),
+    stanceBlock: renderStances(stance),
+    revisedBlock: renderRevisions(stance),
+    commitmentBlock: renderCommitments(openCommitments),
     callbackBlock: renderCallback(relationship),
     mediaBlock: renderMedia(mediaContext?.items ?? []),
     quotedBlock: renderQuoted(mediaContext?.quoted ?? null),

@@ -9,6 +9,8 @@ import {
   stepResolveContext,
   stepResolveMedia,
   stepRelationship,
+  stepStance,
+  stepStanceCheck,
   stepRetrieveMemory,
   stepValidate,
 } from './steps';
@@ -181,6 +183,14 @@ export const NODE_HANDLERS: Record<string, NodeHandler> = {
   },
   RELATIONSHIP: async (bundle) => {
     await stepRelationship(bundle);
+    return { branch: 'next' };
+  },
+  STANCE: async (bundle) => {
+    await stepStance(bundle);
+    return { branch: 'next' };
+  },
+  STANCE_CHECK: async (bundle) => {
+    await stepStanceCheck(bundle);
     return { branch: 'next' };
   },
   RETRIEVE_MEMORY: async (bundle) => {
