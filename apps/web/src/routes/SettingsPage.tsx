@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plug, Plus, Trash2 } from 'lucide-react';
-import { ApiError, del, post } from '@app/lib/api';
+import { ApiError, del, get, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { useSession } from '@app/lib/session';
 import type { AccountRow, HealthReportView, ProviderCredential, ProviderKindInfo } from '@app/lib/types';
 import { timeAgo } from '@app/lib/format';
 import { AnimatedText, FadeIn } from '@app/components/motion';
-import { EmptyState, Field, Modal, Spinner, StatusDot } from '@app/components/ui';
+import { EmptyState, ErrorPanel, Field, Modal, Spinner, StatusDot } from '@app/components/ui';
 import { SessionPanel } from '@app/components/SessionPanel';
 
 const HEALTH_TONE = { healthy: 'live', degraded: 'wait', offline: 'fail', unknown: 'idle' } as const;
@@ -118,6 +118,8 @@ export function SettingsPage() {
           </p>
         )}
       </section>
+
+      <BrowserDiagnostics />
 
       <section id="providers" className="border-t border-ink-line py-12">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -233,5 +235,115 @@ export function SettingsPage() {
         {openAccount && <SessionPanel accountId={openAccount} onChanged={() => accounts.reload()} />}
       </Modal>
     </main>
+  );
+}
+
+interface PreflightCheck {
+  name: string;
+  status: 'ok' | 'warn' | 'fail';
+  detail: string;
+}
+
+interface PreflightReport {
+  ok: boolean;
+  platform: string;
+  playwrightVersion: string | null;
+  checks: PreflightCheck[];
+  availableChannels: string[];
+}
+
+const CHECK_TONE = { ok: 'live', warn: 'wait', fail: 'fail' } as const;
+
+/**
+ * Answers "can this installation drive a browser" before an owner finds out
+ * halfway through connecting an account. The work runs in a browser-capable
+ * worker, so this follows the task rather than blocking the request.
+ */
+function BrowserDiagnostics() {
+  const [report, setReport] = useState<PreflightReport | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!busy) return;
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 500);
+    return () => clearInterval(timer);
+  }, [busy]);
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    setReport(null);
+    setElapsed(0);
+    try {
+      const task = await post<{ id: string }>('/api/browser/preflight', {});
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const current = await get<{ status: string; result: PreflightReport | null; error: string | null }>(
+          `/api/browser-tasks/${task.id}`,
+        );
+        if (current.status === 'COMPLETED') {
+          setReport(current.result);
+          return;
+        }
+        if (current.status === 'FAILED') {
+          setError(current.error ?? 'The preflight failed.');
+          return;
+        }
+      }
+      setError('The preflight did not finish within two minutes. Is a browser-capable worker running?');
+    } catch (e) {
+      setError(
+        e instanceof ApiError
+          ? e.message
+          : 'The preflight could not be started. A worker with AI17Z_WORKER_ROLE=browser or all must be running.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section id="browser" className="border-t border-ink-line py-12">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <p className="eyebrow">Browser runtime</p>
+        <button type="button" className="btn-ghost" onClick={() => void run()} disabled={busy}>
+          {busy && <Spinner className="h-3.5 w-3.5" />}
+          {busy ? `Checking… ${elapsed}s` : 'Run browser preflight'}
+        </button>
+      </div>
+
+      {error && <ErrorPanel title="The preflight could not run." detail={error} />}
+
+      {report && (
+        <>
+          <ul className="divide-y divide-ink-line border-y border-ink-line">
+            {report.checks.map((check) => (
+              <li key={check.name} className="flex flex-wrap items-center gap-x-5 gap-y-1 py-3.5">
+                <StatusDot state={CHECK_TONE[check.status]} />
+                <span className="text-sm text-bone">{check.name}</span>
+                <span className="ml-auto max-w-[34rem] break-all text-right font-mono text-[11px] text-bone-faint">
+                  {check.detail}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 font-mono text-[11px] text-bone-faint">
+            {report.platform} · playwright {report.playwrightVersion ?? 'unknown'} · usable browsers:{' '}
+            {report.availableChannels.join(', ') || 'none'}
+          </p>
+        </>
+      )}
+
+      {!report && !error && !busy && (
+        <p className="text-sm leading-relaxed text-bone-dim">
+          Checks Playwright, the bundled Chromium, real Chrome and Edge, the profile directory, and whether a browser
+          actually opens. Run it before connecting an account.
+        </p>
+      )}
+    </section>
   );
 }

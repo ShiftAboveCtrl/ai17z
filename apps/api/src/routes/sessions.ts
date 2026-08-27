@@ -63,13 +63,26 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * Machine-level browser diagnostic. Answers whether this installation can
+   * drive a browser at all, before an owner discovers it cannot mid-connection.
+   */
+  app.post(
+    '/api/browser/preflight',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      return browserTasks.enqueueBrowserTask({ accountId: null, kind: 'PREFLIGHT', requestedBy: user.id });
+    }),
+  );
+
   app.get(
     '/api/browser-tasks/:taskId',
     handler(async (request) => {
       const user = await requireUser(request);
       const task = await browserTasks.getBrowserTask(params(request).taskId!);
       if (!task) throw new NotFoundError('Browser task');
-      await ownedAccount(task.accountId, user);
+      // System tasks belong to the installation, not to an account.
+      if (task.accountId !== null) await ownedAccount(task.accountId, user);
       return task;
     }),
   );
