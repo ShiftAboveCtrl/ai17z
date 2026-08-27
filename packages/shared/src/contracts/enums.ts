@@ -281,6 +281,8 @@ export const PIPELINE_NODE_KINDS = [
   'RESOLVE_CONTEXT',
   /** Understands images, quoted posts and links attached to the event. */
   'MEDIA_RESOLVE',
+  /** Loads what the agent knows about the person it is replying to. */
+  'RELATIONSHIP',
   'RETRIEVE_MEMORY',
   'ASSEMBLE_PERSONA',
   'GENERATE',
@@ -308,6 +310,8 @@ export const PROMPT_LAYER_KEYS = [
   'STYLE',
   'SAFETY_DISCLOSURE',
   'RETRIEVED_MEMORY',
+  /** Who this person is to the agent, and what they have discussed. */
+  'RELATIONSHIP',
   /** What was attached to the post: images, the quoted post, links. */
   'MEDIA_CONTEXT',
   'IMMEDIATE_CONTEXT',

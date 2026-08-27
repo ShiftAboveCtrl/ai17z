@@ -103,6 +103,7 @@ describe('the durable queue', () => {
       'filter',
       'context',
       'media',
+      'relationship',
       'memory',
       'persona',
       'generate',

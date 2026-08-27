@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   CAPABILITIES,
   Capability,
+  Disposition,
+  Familiarity,
   ModelRole,
   PersonaDraft,
   PipelineDraft,
@@ -14,6 +16,7 @@ import {
   accounts as accountsRepo,
   agents as agentsRepo,
   capabilities as capabilitiesRepo,
+  relationships as relationshipsRepo,
   ops,
   pipelines as pipelinesRepo,
   providers as providersRepo,
@@ -242,6 +245,83 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const agent = await ownedAgent(params(request).id!, user);
       await accountsRepo.unlinkAgentAccount(agent.id, params(request).accountId!);
       return { items: await accountsRepo.listAgentAccounts(agent.id) };
+    }),
+  );
+
+  // ── Relationships ─────────────────────────────────────────────────────────
+  //
+  // What the agent knows about the people it talks to. Only what happened
+  // between them: nothing here is inferred about anybody beyond the
+  // conversations they chose to have.
+  app.get(
+    '/api/agents/:id/relationships',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const q = request.query as { familiarity?: string; search?: string; limit?: string };
+      return {
+        counts: await relationshipsRepo.counts(agent.id),
+        items: await relationshipsRepo.listForAgent(agent.id, {
+          familiarity: q.familiarity as never,
+          search: q.search,
+          limit: Math.min(Number(q.limit ?? 50) || 50, 200),
+        }),
+      };
+    }),
+  );
+
+  app.get(
+    '/api/agents/:id/relationships/:relationshipId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const relationship = await relationshipsRepo.get(params(request).relationshipId!);
+      if (!relationship || relationship.agentId !== agent.id) throw new NotFoundError('Relationship');
+      return { relationship, callbacks: await relationshipsRepo.listCallbacks(relationship.id) };
+    }),
+  );
+
+  app.patch(
+    '/api/agents/:id/relationships/:relationshipId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const relationship = await relationshipsRepo.get(params(request).relationshipId!);
+      if (!relationship || relationship.agentId !== agent.id) throw new NotFoundError('Relationship');
+
+      const body = parseBody(
+        z.object({
+          summary: z.string().max(2_000).optional(),
+          ownerNote: z.string().max(2_000).optional(),
+          topics: z.array(z.string().max(60)).max(12).optional(),
+          disposition: Disposition.optional(),
+          familiarity: Familiarity.optional(),
+          familiarityPinned: z.boolean().optional(),
+        }),
+        request,
+      );
+      const updated = await relationshipsRepo.update(relationship.id, body);
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'relationship.updated',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { handle: relationship.handle, ...body },
+      });
+      return updated;
+    }),
+  );
+
+  app.delete(
+    '/api/agents/:id/relationships/:relationshipId/callbacks/:callbackId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const relationship = await relationshipsRepo.get(params(request).relationshipId!);
+      if (!relationship || relationship.agentId !== agent.id) throw new NotFoundError('Relationship');
+      // Retired rather than deleted: the exchange it came from still happened.
+      await relationshipsRepo.retireCallback(params(request).callbackId!);
+      return { retired: true };
     }),
   );
 

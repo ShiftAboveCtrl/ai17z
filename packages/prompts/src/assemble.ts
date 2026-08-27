@@ -1,4 +1,4 @@
-import type { SocialMediaContext } from '@xbam/shared/contracts';
+import type { RelationshipContext, SocialMediaContext } from '@xbam/shared/contracts';
 import type {
   ChatMessage,
   ContextMessage,
@@ -10,7 +10,16 @@ import type {
 } from '@xbam/shared/contracts';
 import type { PromptLayerTemplate } from '@xbam/database';
 import { truncateTail } from '@xbam/shared';
-import { bulletList, renderLinks, renderMedia, renderQuoted, renderTemplate, tidy } from './render';
+import {
+  bulletList,
+  renderCallback,
+  renderLinks,
+  renderMedia,
+  renderQuoted,
+  renderRelationship,
+  renderTemplate,
+  tidy,
+} from './render';
 import { describeDisclosure, describeIdentity } from './identity';
 
 export interface AssembleInput {
@@ -84,6 +93,8 @@ function sourceFor(key: string, input: AssembleInput): string {
       return 'channel adapter context';
     case 'MEDIA_CONTEXT':
       return 'attached media, quoted posts and links';
+    case 'RELATIONSHIP':
+      return 'relationship memory';
     case 'OUTPUT_CONTRACT':
       return 'policy output rules';
     default:
@@ -101,6 +112,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   // Attached by the media stage. Absent for a text-only post, or for an agent
   // whose pipeline has no media node.
   const mediaContext = (context.meta as { mediaContext?: SocialMediaContext } | undefined)?.mediaContext;
+  const relationship = (context.meta as { relationship?: RelationshipContext } | undefined)?.relationship;
 
   const values = {
     channelName: input.channelName,
@@ -118,6 +130,8 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     blockedTopics: bulletList(policy.content.blockedTopics),
     customInstructions: persona.customInstructions,
     memoryBlock: renderMemories(input.memories, input.memoryCharBudget),
+    relationshipBlock: renderRelationship(relationship),
+    callbackBlock: renderCallback(relationship),
     mediaBlock: renderMedia(mediaContext?.items ?? []),
     quotedBlock: renderQuoted(mediaContext?.quoted ?? null),
     linkBlock: renderLinks(mediaContext?.links ?? []),
