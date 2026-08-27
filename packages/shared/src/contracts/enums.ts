@@ -86,6 +86,36 @@ export const ActionType = enumOf(ACTION_TYPES).schema;
 export type ActionType = (typeof ACTION_TYPES)[number];
 
 /**
+ * What an agent is permitted to do through one account.
+ *
+ * A link used to carry a single action type, which conflated intent with
+ * permission: the agent could only ever do the one thing, and nothing recorded
+ * whether it was allowed to. Capabilities are the permission half. The action
+ * capabilities share their names with ActionType deliberately, so there is no
+ * translation table between "what it will try" and "what it may do".
+ */
+export const CAPABILITIES = [
+  /** May ingest events from this account at all. */
+  'READ',
+  /** May run the model and produce a draft. Required even for a dry run. */
+  'GENERATE',
+  'REPLY',
+  'POST',
+  'DIRECT_MESSAGE',
+  'LIKE',
+  'REACT',
+  'CALL_TOOL',
+  'CALL_API',
+] as const;
+export const Capability = enumOf(CAPABILITIES).schema;
+export type Capability = (typeof CAPABILITIES)[number];
+
+/** Capabilities that authorise executing an action, keyed by the action type. */
+export const ACTION_CAPABILITIES = CAPABILITIES.filter(
+  (c): c is Exclude<Capability, 'READ' | 'GENERATE'> => c !== 'READ' && c !== 'GENERATE',
+);
+
+/**
  * Job lifecycle. `*_ING` states are held under a worker lease; the recovery sweep
  * returns expired leases to the settled state that precedes them.
  */

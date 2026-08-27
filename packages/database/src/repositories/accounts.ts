@@ -150,6 +150,15 @@ export async function listAccountAgents(accountId: string): Promise<AgentAccount
   return mapRows<AgentAccountRow>(rows);
 }
 
+/**
+ * Links an agent to an account.
+ *
+ * The default capabilities are granted here rather than by the caller, because a
+ * link with no grants is an agent that silently does nothing, and a caller that
+ * forgets is indistinguishable from one that meant to revoke everything. An
+ * existing link keeps whatever capabilities it already has: editing which events
+ * trigger an agent must not quietly widen or reset what it may do.
+ */
 export async function linkAgentAccount(input: {
   agentId: string;
   accountId: string;
@@ -157,21 +166,35 @@ export async function linkAgentAccount(input: {
   actionType?: string;
   enabled?: boolean;
 }): Promise<void> {
-  await query(
-    `INSERT INTO agent_accounts (agent_id, account_id, trigger_event_types, action_type, enabled)
-     VALUES ($1,$2,$3::jsonb,$4,$5)
-     ON CONFLICT (agent_id, account_id) DO UPDATE
-       SET trigger_event_types = excluded.trigger_event_types,
-           action_type = excluded.action_type,
-           enabled = excluded.enabled`,
-    [
-      input.agentId,
-      input.accountId,
-      JSON.stringify(input.triggerEventTypes ?? ['MENTION']),
-      input.actionType ?? 'REPLY',
-      input.enabled ?? true,
-    ],
-  );
+  const actionType = input.actionType ?? 'REPLY';
+  await withTransaction(async (tx) => {
+    await tx.query(
+      `INSERT INTO agent_accounts (agent_id, account_id, trigger_event_types, action_type, enabled)
+       VALUES ($1,$2,$3::jsonb,$4,$5)
+       ON CONFLICT (agent_id, account_id) DO UPDATE
+         SET trigger_event_types = excluded.trigger_event_types,
+             action_type = excluded.action_type,
+             enabled = excluded.enabled`,
+      [
+        input.agentId,
+        input.accountId,
+        JSON.stringify(input.triggerEventTypes ?? ['MENTION']),
+        actionType,
+        input.enabled ?? true,
+      ],
+    );
+
+    const defaults = ['READ', 'GENERATE', ...(actionType === 'NONE' ? [] : [actionType])];
+    await tx.query(
+      `INSERT INTO agent_account_capabilities (agent_id, account_id, capability)
+       SELECT $1, $2, unnest($3::text[])
+        WHERE NOT EXISTS (
+          SELECT 1 FROM agent_account_capabilities WHERE agent_id = $1 AND account_id = $2
+        )
+       ON CONFLICT DO NOTHING`,
+      [input.agentId, input.accountId, defaults],
+    );
+  });
 }
 
 export async function unlinkAgentAccount(agentId: string, accountId: string): Promise<void> {
