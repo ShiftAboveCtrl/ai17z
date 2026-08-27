@@ -35,6 +35,9 @@
       ],
       "@xbam/runtime": [
         "packages/runtime/src/index.ts"
+      ],
+      "@xbam/persona": [
+        "packages/persona/src/index.ts"
       ]
     }
   },

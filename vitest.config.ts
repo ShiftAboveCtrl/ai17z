@@ -21,6 +21,7 @@ export default defineConfig({
       '@xbam/jobs': r('./packages/jobs/src/index.ts'),
       '@xbam/models': r('./packages/models/src/index.ts'),
       '@xbam/memory': r('./packages/memory/src/index.ts'),
+      '@xbam/persona': r('./packages/persona/src/index.ts'),
       '@xbam/prompts': r('./packages/prompts/src/index.ts'),
       '@xbam/channels': r('./packages/channels/src/index.ts'),
       '@xbam/browser': r('./packages/browser/src/index.ts'),
