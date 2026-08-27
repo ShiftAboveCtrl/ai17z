@@ -72,6 +72,7 @@ packages/memory      Six memory scopes, retrieval, write policy.
 packages/prompts     Ten-layer prompt engine.
 packages/channels    ChannelAdapter contract, mock channel, X adapter.
 packages/browser     Playwright session manager, failure screenshots.
+packages/persona     Corpus normalising, scoring, and trait derivation.
 packages/tools       Tool contract and built-in tools.
 packages/runtime     Validator, policy gates, ingest, pipeline state machine.
 ```
@@ -152,6 +153,79 @@ Provider API keys are sealed with AES-256-GCM under `AI17Z_MASTER_KEY` and are
 readable only through `providers.getDecryptedApiKey`. They must never appear in
 an API response, a log line, an audit row, or a trace. `redact()` in
 `packages/shared/src/logger.ts` blanks anything key-shaped.
+
+## Cadence
+
+Timing is per account, versioned, and lives in the database. There is one engine
+(`packages/runtime/src/cadence.ts`) and every question about when something may
+happen goes through it. Do not add a second timer.
+
+The poller has no schedule: it asks which accounts are due, and the claim moves
+`next_poll_at` forward in the same statement, which is what stops two workers
+polling one account and stops a restart stampeding every account at once.
+
+Account ceilings and agent `policy.rate` limits both apply and the tighter wins.
+The verdict must name which one bound.
+
+Quiet hours cover reading as well as acting, and an unusable timezone fails
+open. An agent that visibly ignores a bad setting beats one that mysteriously
+stops. See `docs/architecture/CADENCE.md`.
+
+## Capabilities
+
+`agent_accounts.action_type` says what an agent *attempts*.
+`agent_account_capabilities` says what it *may do*. Keep those separate.
+
+Capabilities are checked twice: at ingest, so unpermitted work never queues, and
+again immediately before execution, because a grant revoked while a job is
+queued has to stop that job. The second check fails the job **permanently** —
+retrying cannot restore a revoked permission. Do not remove either check.
+
+`linkAgentAccount` grants the defaults itself. A link with no grants is an agent
+that silently does nothing. See `docs/architecture/CAPABILITIES.md`.
+
+## Sign-in and security challenges
+
+**AI17Z never types a password and never answers a security challenge.**
+
+When a service asks for a CAPTCHA, a second factor, an emailed or texted code, a
+hardware key, confirmation of an unusual login, or presents a locked account, the
+account enters `CHALLENGE_REQUIRES_USER`, the window is left open and untouched,
+and the watcher stops reading the page. There is no setting for this and no code
+path around it.
+
+`observeAuthPage` only looks — it has no branch that clicks, fills, or dismisses
+anything, and `tests/unit/authObservation.test.ts` fails if any of those are
+called. A challenge is checked before the login form, because several challenge
+screens also carry an input box.
+
+`CHALLENGE_REQUIRES_USER` must stay out of `ACCOUNT_STATUSES_IN_PROGRESS`, or the
+watcher will keep polling a page somebody is typing a code into.
+
+All platform-specific knowledge of what a challenge looks like stays in
+`packages/channels/src/x/selectors.ts`. See `docs/architecture/SIGN_IN.md`.
+
+## Persona sources
+
+Source material is evidence, not memory. Raw corpus items never enter a prompt;
+derived traits do, and every trait cites the items it came from. A trait without
+evidence is an assertion.
+
+Fingerprint before scoring, so duplicates collapse before they can weight
+anything. Never exclude on length alone — a two-word reply can be the strongest
+signal there is. Keep excluded items: exclusion decides what to learn from, not
+what to remember. See `docs/architecture/PERSONA_SOURCES.md`.
+
+## Long operations
+
+Anything that can outlast a person's patience shows what it is doing, how long
+it has been doing it, and how to stop. `Working` and `RetryablePanel` in
+`apps/web/src/components/ui.tsx` exist so that is one decision, not twenty. A
+bare spinner on a multi-second operation is a bug.
+
+Machine-generated text — file paths, stack frames, box-drawing rules — must wrap
+(`break-words`) wherever it is displayed, or it pushes the layout wider than a
+phone.
 
 ## Identity policy
 
