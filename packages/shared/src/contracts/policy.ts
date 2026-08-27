@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AutomationMode, DisclosureMode } from './enums';
 import { MediaPolicy } from './multimodal';
+import { RelationshipVoice } from './relationship';
 
 export const IdentityPolicy = z.object({
   disclosure: DisclosureMode.default('ON_REQUEST'),
@@ -133,6 +134,8 @@ export const PolicyConfig = z.object({
   tools: ToolPolicy.default({}),
   /** What the agent looks at besides the text: images, quotes, links. */
   media: MediaPolicy.default({}),
+  /** How knowing somebody changes the way the agent talks to them. */
+  relationships: RelationshipVoice.default({}),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 
