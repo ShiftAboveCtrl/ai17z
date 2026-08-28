@@ -115,50 +115,81 @@ and pace itself through the rate policy. Short randomised settle delays exist
 because the X timeline is virtualised and acting on a stale frame is the largest
 source of flaky automation, not to disguise anything.
 
-## Why a managed profile gets flagged
 
-Managed mode launches a browser with a profile AI17Z created. Even when the
-channel is Real Chrome, that profile has no cookies, no history and no
-extensions — a browser that has apparently never been used before, signing in to
-an account with years of history behind it.
+## Three ways to give AI17Z a browser
 
-X reads that as suspicious and answers with **"We've temporarily limited your
-login. Please try again later."** Nothing is wrong with the automation; the
-profile is the problem.
+### 1. AI17Z Chrome profile — recommended
 
-Managed mode is fine for a fresh account, or once a profile has built up some
-history of its own. For signing in to an established account, attach to a
-browser that already has your session.
+AI17Z launches **your installed Chrome** with a profile directory kept for that
+account:
 
-## Attaching to your real browser
-
-Chrome has refused `--remote-debugging-port` on the default profile directory
-since version 136, so AI17Z cannot attach to your everyday Chrome in place. The
-route that works is a dedicated debugging directory **seeded from your real
-profile**, so it carries your actual cookies and history.
-
-Once, with Chrome fully closed:
-
-```powershell
-.\scripts\launch-chrome-cdp.ps1 -SeedFromProfile Default
+```
+storage/browser-profiles/<account-id>
 ```
 
-That copies the profile — cookies, local storage, login data, history — into a
-dedicated directory and starts Chrome on it with debugging enabled. The window
-opens already signed in. Your original profile is copied, never moved or
-modified, and nothing leaves the machine.
+You sign in once, by hand, in the window it opens. The profile persists, so
+every later run reuses that session and no credential is ever needed again.
+AI17Z never sees your password: you type it into a real Chrome window.
 
-If you use more than one Chrome profile, `chrome://version` shows which is which
-under **Profile Path**; pass that folder name instead of `Default`.
+This is the default and the one to reach for.
 
-Then set the account to **Attach over CDP** with the URL the script prints, and
+**On a first sign-in a platform may say it has temporarily limited the login.**
+A profile AI17Z has just created has no cookies, no history and no extensions,
+which is unusual for an account with years behind it. Repeated attempts make it
+worse and are usually what triggered it in the first place. Wait, then sign in
+once and let the profile keep the session.
+
+### 2. Attach to a Chrome you already have open — not available yet
+
+Chrome 144 added a way for an agent to ask a *running* Chrome for a debugging
+session, which you approve at `chrome://inspect/#remote-debugging`. That is the
+right shape for this: your real browser, your real session, and an explicit
+permission each time.
+
+AI17Z does **not** implement it. The mechanism behind it is not documented in
+enough detail to build against without guessing, and public reports disagree
+about whether it uses the old `DevToolsActivePort` discovery or a new request
+API. It will be added when the mechanism is documented, not before.
+
+Note also what Chrome says about this mode: while a debugging session is active
+your agent inherits everything the browser is signed in to. That is a reason to
+be deliberate about it, not a reason to avoid it.
+
+### 3. Custom CDP endpoint — advanced
+
+Start a browser yourself and point AI17Z at it:
+
+```powershell
+.\scripts\launch-chrome-cdp.ps1
+```
+
+It uses a dedicated directory because **Chrome has refused
+`--remote-debugging-port` on the default profile directory since version 136**.
+Sign in once in that window; the profile persists there too.
+
+Set the account to **Custom CDP endpoint** with the URL the script prints, and
 leave the window open while AI17Z is working.
 
-### What this does and does not do
+## Profile seeding is experimental, and usually does not work on Windows
 
-- It uses **your** session, on **your** machine. Nothing is uploaded anywhere.
-- AI17Z never reads the cookie values; it hands the directory to Chrome.
-- It is not a way around a security challenge. If X asks for a code, AI17Z still
-  stops and waits for you.
-- The copy is a snapshot. Signing out in your everyday Chrome does not sign out
-  the debugging profile, and the reverse is also true.
+`launch-chrome-cdp.ps1 -SeedFromProfile Default` copies an existing Chrome
+profile into the debugging directory. It is kept as a fallback, and it is **not**
+part of normal onboarding.
+
+Since Chrome 127, App-Bound Encryption ties cookies to Chrome's own identity
+rather than to the Windows user, and Chrome discards cookies it finds in a
+directory they were not encrypted for. Copying `Local State` does not change
+that. History, bookmarks and preferences do come across; the login usually does
+not.
+
+Use it only if you have a reason to, expect the window to open signed out, and
+sign in by hand when it does.
+
+## Signing in is yours, always
+
+Whichever mode you use, AI17Z never types a password and never answers a
+security challenge. When X asks for a code, a CAPTCHA, a key, or confirmation
+that a sign-in was really you, the account moves to `CHALLENGE_REQUIRES_USER`,
+the window is left open and untouched, and the watcher **stops reading the
+page** so it is not looking while you type. See
+[docs/architecture/SIGN_IN.md](../architecture/SIGN_IN.md).

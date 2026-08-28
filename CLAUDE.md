@@ -184,6 +184,38 @@ retrying cannot restore a revoked permission. Do not remove either check.
 `linkAgentAccount` grants the defaults itself. A link with no grants is an agent
 that silently does nothing. See `docs/architecture/CAPABILITIES.md`.
 
+## Browser modes
+
+Three ways to give an agent a browser, and only two are built.
+
+**The dedicated profile is the default.** AI17Z launches the installed Chrome
+with a directory kept per account, the owner signs in once by hand, and the
+profile is reused for ever. No credential is handled and none is needed again.
+
+**Attaching to a running Chrome is not implemented.** Chrome 144 can hand a live
+session to an agent after an explicit permission at
+`chrome://inspect/#remote-debugging`, which is the right shape, but the
+mechanism is not documented well enough to build against. It is shown in the UI
+as unavailable rather than offered. Do not claim support for it until the
+mechanism is documented.
+
+**Chrome has refused `--remote-debugging-port` on the default profile directory
+since version 136.** Any CDP path needs a non-default `--user-data-dir`.
+
+**Profile seeding does not carry a login on Windows and must never be the
+onboarding path.** Chrome 127+ App-Bound Encryption ties cookies to Chrome's own
+identity, and Chrome discards cookies found in a directory they were not
+encrypted for. Copying `Local State` does not change that. The flag is kept as
+an experimental fallback and says so when it runs.
+
+**A first sign-in from a new profile may be rate-limited.** That is the profile
+having no history, and repeated attempts are usually what caused it. Say so
+rather than retrying.
+
+**PowerShell scripts must stay ASCII.** PowerShell 5.1 reads a `.ps1` with no
+BOM as ANSI, and an em dash decodes to a smart closing quote that terminates a
+string. This has already broken one script.
+
 ## Sign-in and security challenges
 
 **AI17Z never types a password and never answers a security challenge.**
