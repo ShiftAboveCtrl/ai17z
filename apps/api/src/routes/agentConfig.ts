@@ -19,12 +19,13 @@ import {
   capabilities as capabilitiesRepo,
   relationships as relationshipsRepo,
   stances as stancesRepo,
+  voice as voiceRepo,
   ops,
   pipelines as pipelinesRepo,
   providers as providersRepo,
   type UserRow,
 } from '@xbam/database';
-import { validateGraph } from '@xbam/runtime';
+import { compileForJob, fingerprintFor, refreshFingerprint, validateGraph } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAgent(agentId: string, user: UserRow) {
@@ -435,6 +436,81 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const body = parseBody(z.object({ status: z.enum(['DONE', 'DROPPED']) }), request);
       await stancesRepo.resolveCommitment(params(request).commitmentId!, body.status);
       return { resolved: true };
+    }),
+  );
+
+  // ── Voice ─────────────────────────────────────────────────────────────────
+  //
+  // The measured fingerprint, and what it was measured from. Numbers rather
+  // than adjectives, because a label is what the model reinterprets every time.
+  app.get(
+    '/api/agents/:id/voice',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const stored = await voiceRepo.getFingerprint(agent.id);
+      const recent = await voiceRepo.recentOutput(agent.id, 10, 21);
+      return {
+        fingerprint: stored?.fingerprint ?? (await fingerprintFor(agent.id)),
+        pinned: stored?.pinned ?? false,
+        derivedAt: stored?.derivedAt ?? null,
+        sources: stored?.sources ?? [],
+        recentOutput: recent,
+      };
+    }),
+  );
+
+  app.post(
+    '/api/agents/:id/voice/derive',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(z.object({ force: z.boolean().default(false) }), request);
+      const fingerprint = await refreshFingerprint(agent.id, body.force);
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'voice.derived',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { samples: fingerprint.sampleCount },
+      });
+      return { fingerprint };
+    }),
+  );
+
+  app.patch(
+    '/api/agents/:id/voice',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(z.object({ pinned: z.boolean() }), request);
+      await voiceRepo.setPinned(agent.id, body.pinned);
+      return { pinned: body.pinned };
+    }),
+  );
+
+  // Scores a piece of text against the agent's voice without publishing it.
+  // Useful for seeing what the gate would do before trusting it with a reply.
+  app.post(
+    '/api/agents/:id/voice/score',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(z.object({ text: z.string().min(1).max(10_000) }), request);
+      const policy = await agentsRepo.getActivePolicy(agent.id);
+      const parsed = PolicyConfig.parse(policy?.config ?? {});
+
+      const compiled = await compileForJob({
+        agentId: agent.id,
+        jobId: null,
+        draft: body.text,
+        policy: parsed,
+        recipientHandle: null,
+        // Scoring is a preview, so it never spends a model call.
+        allowModelCall: false,
+        maxCalls: 1,
+      });
+      return { text: compiled.text, report: compiled.report, applied: compiled.applied };
     }),
   );
 
