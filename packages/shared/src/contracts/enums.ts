@@ -101,6 +101,16 @@ export const ACCOUNT_STATUSES_IN_PROGRESS: readonly AccountStatus[] = [
   'AUTHENTICATING',
 ];
 
+/**
+ * The subset the watcher polls.
+ *
+ * The first two are held by the OPEN_AUTH task while it is still launching and
+ * navigating. Reading the page then races the navigation, and Playwright throws
+ * rather than returning a half-loaded page — which the watcher took to mean the
+ * window had been closed.
+ */
+export const ACCOUNT_STATUSES_WATCHABLE: readonly AccountStatus[] = ['AWAITING_LOGIN', 'AUTHENTICATING'];
+
 export const BROWSER_MODES = ['MANAGED', 'CDP'] as const;
 export const BrowserMode = enumOf(BROWSER_MODES).schema;
 export type BrowserMode = (typeof BROWSER_MODES)[number];

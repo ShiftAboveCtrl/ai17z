@@ -25,17 +25,23 @@ export async function requireAccount(id: string): Promise<Account> {
 }
 
 /**
- * Accounts with a sign-in in progress.
+ * Accounts the sign-in watcher should look at.
  *
- * A challenge is deliberately not in this list: once a person is being asked for
- * a code, the watcher has nothing left to contribute and must not keep polling
+ * Deliberately only the states that mean the OPEN_AUTH task has finished and
+ * released the browser. STARTING_BROWSER and BROWSER_READY are held by the task
+ * itself while it is still launching and navigating; watching those raced the
+ * navigation and had the watcher declare a window gone half a second after
+ * opening it.
+ *
+ * A challenge is not in this list either: once a person is being asked for a
+ * code, the watcher has nothing left to contribute and must not keep polling
  * the page they are typing into.
  */
 export async function accountsAwaitingSignIn(): Promise<Account[]> {
   return mapRows<Account>(
     await query(
       `SELECT ${ACCOUNT_COLUMNS} FROM accounts
-        WHERE status IN ('STARTING_BROWSER', 'BROWSER_READY', 'AWAITING_LOGIN', 'AUTHENTICATING')
+        WHERE status IN ('AWAITING_LOGIN', 'AUTHENTICATING')
         ORDER BY auth_started_at NULLS LAST`,
     ),
   );
