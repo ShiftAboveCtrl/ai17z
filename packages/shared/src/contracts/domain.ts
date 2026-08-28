@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  BrowserEngine,
   AccountStatus,
   PipelineBranch,
   ActionType,
@@ -211,12 +212,22 @@ export type PipelineDraft = z.infer<typeof PipelineDraft>;
 export const BrowserSession = z.object({
   id: z.string().uuid(),
   accountId: z.string().uuid(),
+  /** Which browser binary. This is the field that decides what runs. */
+  engine: BrowserEngine.default('GOOGLE_CHROME'),
   mode: BrowserMode,
+  /** Superseded by `engine`; kept so old rows and old clients still read. */
   channel: BrowserChannel,
   profileDir: z.string().nullable(),
   cdpUrl: z.string().nullable(),
   status: z.string(),
   lastCheckedAt: z.string().nullable(),
   lastError: z.string().nullable(),
+  /** Evidence of what actually ran, recorded at launch. */
+  executablePath: z.string().nullable().default(null),
+  browserProduct: z.string().nullable().default(null),
+  browserVersion: z.string().nullable().default(null),
+  browserPid: z.number().int().nullable().default(null),
+  cdpProduct: z.string().nullable().default(null),
+  verifiedAt: z.string().nullable().default(null),
 });
 export type BrowserSession = z.infer<typeof BrowserSession>;

@@ -2,7 +2,15 @@ import { rm } from 'node:fs/promises';
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { accountLease, accounts as accountsRepo, browserTasks, ops, type BrowserTaskRow } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
-import { captureScreenshot, closeSession, defaultProfileDir, leaseSession, runBrowserPreflight, safeUrl } from '@xbam/browser';
+import {
+  captureScreenshot,
+  closeSession,
+  resolveProfileDir,
+  leaseSession,
+  runBrowserPreflight,
+  safeUrl,
+  sessionIdentity,
+} from '@xbam/browser';
 import { buildChannelContext, ingestNormalizedEvent, storageDir } from '@xbam/runtime';
 
 const log = createLogger('browser-tasks');
@@ -95,17 +103,42 @@ export class BrowserTaskRunner {
     return { detail: `${task.kind} needs an account.` };
   }
 
+  /**
+   * Copies the identity of the browser now serving an account into the session
+   * row, so diagnostics can show the executable, version and pid.
+   */
+  private async recordIdentityFor(accountId: string): Promise<void> {
+    const identity = sessionIdentity(accountId);
+    if (!identity) return;
+    await accountsRepo
+      .recordBrowserIdentity({
+        accountId,
+        executablePath: identity.executablePath,
+        browserProduct: identity.product,
+        browserVersion: identity.version,
+        browserPid: identity.pid,
+        cdpProduct: identity.cdpProduct,
+        cdpUrl: identity.cdpUrl,
+      })
+      .catch(() => undefined);
+  }
+
   private async execute(task: BrowserTaskRow): Promise<Record<string, unknown>> {
     const account = await accountsRepo.requireAccount(task.accountId!);
     const adapter = getChannelAdapter(account.channel);
     const ctx = await buildChannelContext(account, null);
-    const profileDir = ctx.session?.profileDir ?? defaultProfileDir(account.id);
+    // Never trust a path written by a worker on another filesystem.
+    const profileDir = resolveProfileDir(account.id, ctx.session?.profileDir);
     const mode = ctx.session?.mode ?? 'MANAGED';
     const channel = ctx.session?.channel ?? null;
+    const engine = ctx.session?.engine ?? 'GOOGLE_CHROME';
 
     switch (task.kind) {
       case 'CONNECT': {
         const result = await adapter.connect(ctx);
+        // Whatever the adapter just used, record what it actually was. A claim
+        // of "real Chrome" that nobody can check is a claim taken on trust.
+        await this.recordIdentityFor(account.id);
         await accountsRepo.updateAccount(account.id, {
           status: result.status,
           lastHealthStatus: result.detail.slice(0, 200),
@@ -163,12 +196,15 @@ export class BrowserTaskRunner {
           touchHealthCheck: true,
         });
 
-        const session = await leaseSession({ accountId: account.id, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: false });
+        const session = await leaseSession({ accountId: account.id, engine, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: false });
         try {
           await session.page.goto('https://x.com/login', { waitUntil: 'domcontentloaded', timeout: 45_000 });
         } finally {
           await session.release();
         }
+
+        // Record what actually launched, whichever task opened it.
+        await this.recordIdentityFor(account.id);
 
         const deadline = new Date(Date.now() + SIGN_IN_WINDOW_MS);
         await accountsRepo.updateAccount(account.id, {
@@ -200,7 +236,7 @@ export class BrowserTaskRunner {
       }
 
       case 'SCREENSHOT': {
-        const session = await leaseSession({ accountId: account.id, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: true });
+        const session = await leaseSession({ accountId: account.id, engine, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: true });
         try {
           const shot = await captureScreenshot(session.page, storageDir(), 'manual_capture');
           if (!shot) return { detail: 'Could not capture a screenshot from the current page.' };

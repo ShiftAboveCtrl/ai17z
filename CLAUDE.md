@@ -184,37 +184,73 @@ retrying cannot restore a revoked permission. Do not remove either check.
 `linkAgentAccount` grants the defaults itself. A link with no grants is an agent
 that silently does nothing. See `docs/architecture/CAPABILITIES.md`.
 
-## Browser modes
+## Browser engines
 
-Three ways to give an agent a browser, and only two are built.
+Modes are named after the **binary**, never after the arrangement. "Managed
+profile" said nothing about what was running, and its default meant Playwright's
+Chromium while the UI implied otherwise.
 
-**The dedicated profile is the default.** AI17Z launches the installed Chrome
-with a directory kept per account, the owner signs in once by hand, and the
-profile is reused for ever. No credential is handled and none is needed again.
+| Engine | Binary |
+| --- | --- |
+| `GOOGLE_CHROME` | the installed `chrome.exe`, spawned by AI17Z, attached over CDP |
+| `MICROSOFT_EDGE` | the installed Edge, same arrangement |
+| `PLAYWRIGHT_CHROMIUM` | Playwright's bundled Chromium, chosen deliberately |
+| `CUSTOM_CDP` | whatever is at a URL somebody supplies |
 
-**Attaching to a running Chrome is not implemented.** Chrome 144 can hand a live
-session to an agent after an explicit permission at
-`chrome://inspect/#remote-debugging`, which is the right shape, but the
-mechanism is not documented well enough to build against. It is shown in the UI
-as unavailable rather than offered. Do not claim support for it until the
-mechanism is documented.
+**There is no fallback between them.** Asking for Google Chrome and getting
+Chromium because Chrome was missing is a failure with instructions, never a
+substitution. `findBrowser` refuses a binary whose version resource does not say
+Google Chrome, even at a Chrome-shaped path.
 
-**Chrome has refused `--remote-debugging-port` on the default profile directory
-since version 136.** Any CDP path needs a non-default `--user-data-dir`.
+**Real Chrome is spawned, then attached — not launched by Playwright.** This is
+what AI4CZ and AI4YI did and it buys two things: Chrome outlives the worker, so
+restarting AI17Z does not close a window somebody is signing into; and AI17Z
+picks the executable itself, so it can report which binary is running rather
+than trusting a resolver. See `docs/legacy-real-chrome-analysis.md`.
+
+**Identity is proved by two independent signals**, both stored and shown: the
+executable AI17Z chose, and what the running browser reported over CDP. A claim
+resting on one of them is a claim taken on trust.
+
+**Chrome refuses `--remote-debugging-port` on the default profile directory
+since version 136.** Every CDP path needs its own `--user-data-dir`.
+
+**The debug port binds to loopback.** AI4YI's one refinement over AI4CZ, and the
+reason: a debug port reachable from the network is a signed-in browser anyone
+can drive.
+
+**A stored profile path is not trusted across machines.** The containerised
+worker writes `/app/...`, which on Windows becomes `C:pp\...` — a second,
+empty profile with none of the session in it. `resolveProfileDir` derives the
+path locally from the account id.
+
+**Launching is locked per account.** Two callers arriving together used to start
+two browsers. Across processes the account lease is the guard; in-process it is
+`openOnce`.
+
+**Chrome must be closed gracefully before it is killed.** Cookies and local
+storage are flushed on a clean shutdown, so force-killing a browser somebody
+just signed in with loses the session that was the point. And killing only the
+spawned pid leaves renderers holding the profile lock, after which the next
+launch hands off to the old instance and exits without opening a port.
 
 **Profile seeding does not carry a login on Windows and must never be the
 onboarding path.** Chrome 127+ App-Bound Encryption ties cookies to Chrome's own
-identity, and Chrome discards cookies found in a directory they were not
-encrypted for. Copying `Local State` does not change that. The flag is kept as
-an experimental fallback and says so when it runs.
+identity. Kept as an experimental fallback that says so when it runs.
 
-**A first sign-in from a new profile may be rate-limited.** That is the profile
-having no history, and repeated attempts are usually what caused it. Say so
-rather than retrying.
+**Attaching to a running Chrome is not implemented.** Chrome 144 can hand a live
+session to an agent after an explicit permission at
+`chrome://inspect/#remote-debugging`, but the mechanism is not documented well
+enough to build against. It is shown as unavailable rather than offered.
 
-**PowerShell scripts must stay ASCII.** PowerShell 5.1 reads a `.ps1` with no
-BOM as ANSI, and an em dash decodes to a smart closing quote that terminates a
-string. This has already broken one script.
+**Tests that use Playwright Chromium prove nothing about Chrome.** Only
+`tests/integration/realChrome.test.ts` may be cited as evidence, and it skips
+loudly rather than passing where Chrome is absent.
+
+**PowerShell scripts must stay ASCII**, and must kill process **trees**. A `.ps1`
+without a BOM is read as ANSI and an em dash becomes a smart quote that
+terminates a string; and `npm run dev:worker` starts tsx which starts the worker,
+so killing the recorded pid leaks the one that matters.
 
 ## Sign-in and security challenges
 
