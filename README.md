@@ -155,6 +155,7 @@ npm run typecheck
 - [Channels](docs/architecture/CHANNELS.md)
 - [Models](docs/architecture/MODELS.md)
 - [Pipelines](docs/architecture/PIPELINES.md)
+- [The social layer: identity, relationships, voice](docs/architecture/SOCIAL.md)
 - [Cadence: when an account is read and may act](docs/architecture/CADENCE.md)
 - [Capabilities: what an agent may do](docs/architecture/CAPABILITIES.md)
 - [Connecting an account and security challenges](docs/architecture/SIGN_IN.md)

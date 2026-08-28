@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { PersonaDraft } from '@xbam/shared/contracts';
 import { BadRequestError, ForbiddenError, NotFoundError, createLogger, errorMessage } from '@xbam/shared';
-import { agents as agentsRepo, personaSources, type UserRow } from '@xbam/database';
+import { agents as agentsRepo, personaSources,
+  workers as workersRepo, type UserRow } from '@xbam/database';
 import {
   getPersonaSourceAdapter,
   listPersonaSourceAdapters,
@@ -33,12 +34,38 @@ export async function personaRoutes(app: FastifyInstance): Promise<void> {
     '/api/persona-source-kinds',
     handler(async (request) => {
       await requireUser(request);
+
+      // Availability is what the workers report, not what this process can
+      // reach. The API runs in a container with no twscrape and no browser;
+      // answering from here said "not installed" about a tool that was.
+      const reported = await workersRepo.toolAvailability();
       const items = await Promise.all(
-        listPersonaSourceAdapters().map(async (adapter) => ({
-          kind: adapter.kind,
-          displayName: adapter.displayName,
-          ...(await adapter.availability()),
-        })),
+        listPersonaSourceAdapters().map(async (adapter) => {
+          const fromWorker = reported[`persona:${adapter.kind}`];
+          if (fromWorker) {
+            return {
+              kind: adapter.kind,
+              displayName: adapter.displayName,
+              available: fromWorker.available,
+              detail: fromWorker.detail,
+              requirement: fromWorker.available ? null : (await adapter.availability()).requirement,
+              reportedBy: fromWorker.worker,
+            };
+          }
+          // No worker has said anything yet — either none is running, or none
+          // has completed a heartbeat. Fall back to asking here and say so.
+          const local = await adapter.availability();
+          return {
+            kind: adapter.kind,
+            displayName: adapter.displayName,
+            ...local,
+            detail:
+              adapter.kind === 'manual'
+                ? local.detail
+                : `${local.detail} (no worker has reported yet; this is what the API process can see)`,
+            reportedBy: null,
+          };
+        }),
       );
       return { items };
     }),
@@ -109,14 +136,14 @@ export async function personaRoutes(app: FastifyInstance): Promise<void> {
         throw new BadRequestError('This source is already syncing. Wait for it to finish.');
       }
 
-      // Detached on purpose: the request returns, the status field carries the
-      // outcome, and a long scrape never holds an HTTP connection open.
-      void syncPersonaSource({
-        sourceId: source.id,
+      // Recorded as intent rather than run here. A source that reads a public
+      // account needs twscrape and its account database, which live on a
+      // machine — the API container has neither. Same reasoning as browsers.
+      await personaSources.requestSync(source.id, {
         text: body.text,
         limit: body.limit,
         incremental: body.incremental,
-      }).catch((error) => log.error('persona sync failed', { sourceId: source.id, message: errorMessage(error) }));
+      });
 
       return { started: true, sourceId: source.id };
     }),

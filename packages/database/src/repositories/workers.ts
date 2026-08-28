@@ -10,6 +10,7 @@ export interface WorkerRow {
   version: string | null;
   startedAt: string;
   lastSeenAt: string;
+  tools: Record<string, unknown>;
 }
 
 /**
@@ -28,18 +29,29 @@ export async function heartbeat(input: {
   jobsCapable: boolean;
   hostname?: string | null;
   version?: string | null;
+  /** What this worker can reach: persona source kinds, browsers, and so on. */
+  tools?: Record<string, unknown>;
 }): Promise<void> {
   await query(
-    `INSERT INTO workers (id, role, browser_capable, jobs_capable, hostname, version)
-     VALUES ($1,$2,$3,$4,$5,$6)
+    `INSERT INTO workers (id, role, browser_capable, jobs_capable, hostname, version, tools)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)
      ON CONFLICT (id) DO UPDATE
        SET role = excluded.role,
            browser_capable = excluded.browser_capable,
            jobs_capable = excluded.jobs_capable,
            hostname = excluded.hostname,
            version = excluded.version,
+           tools = excluded.tools,
            last_seen_at = now()`,
-    [input.id, input.role, input.browserCapable, input.jobsCapable, input.hostname ?? null, input.version ?? null],
+    [
+      input.id,
+      input.role,
+      input.browserCapable,
+      input.jobsCapable,
+      input.hostname ?? null,
+      input.version ?? null,
+      JSON.stringify(input.tools ?? {}),
+    ],
   );
 }
 
@@ -71,4 +83,33 @@ export async function browserWorkerPresent(): Promise<boolean> {
     [WORKER_PRESENT_SECONDS],
   );
   return (row?.n ?? 0) > 0;
+}
+
+/**
+ * What any live worker can reach.
+ *
+ * The union rather than any single worker's answer: if one worker on the fleet
+ * has twscrape, a sync can run. Which one is the queue's problem, not the
+ * caller's.
+ */
+export async function toolAvailability(): Promise<Record<string, { available: boolean; detail: string; worker: string }>> {
+  const rows = await present();
+  const merged: Record<string, { available: boolean; detail: string; worker: string }> = {};
+
+  for (const worker of rows) {
+    for (const [name, value] of Object.entries(worker.tools ?? {})) {
+      const entry = value as { available?: boolean; detail?: string };
+      const existing = merged[name];
+      // A worker that has the tool beats one that does not, whatever order they
+      // reported in.
+      if (!existing || (!existing.available && entry.available)) {
+        merged[name] = {
+          available: Boolean(entry.available),
+          detail: entry.detail ?? '',
+          worker: worker.id,
+        };
+      }
+    }
+  }
+  return merged;
 }
