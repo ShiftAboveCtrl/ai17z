@@ -269,6 +269,39 @@ const SLOW_HINTS: Record<string, string> = {
   HEALTH_CHECK: 'Loading a page in a real browser to see whether the session still works.',
 };
 
+/**
+ * How AI17Z gets a browser.
+ *
+ * A dedicated profile is the recommended path: sign in once by hand and the
+ * profile is reused for ever. Attaching to a Chrome that is already open is a
+ * real Chrome 144 feature and is deliberately listed as unavailable rather than
+ * offered, because the mechanism behind it is not documented well enough to
+ * implement without guessing.
+ */
+const MODES: { value: 'MANAGED' | 'CDP' | null; label: string; tag: string; detail: string }[] = [
+  {
+    value: 'MANAGED',
+    label: 'AI17Z Chrome profile',
+    tag: 'recommended',
+    detail:
+      'Opens your installed Chrome with a profile kept for this account. Sign in once, by hand, and it is reused on every run.',
+  },
+  {
+    value: null,
+    label: 'Attach to a Chrome you already have open',
+    tag: 'not available yet',
+    detail:
+      'Chrome 144 can hand a running session to an agent after you approve it at chrome://inspect. The mechanism behind that is not documented enough to implement without guessing, so it is not offered. Use a custom endpoint below if you want this today.',
+  },
+  {
+    value: 'CDP',
+    label: 'Custom CDP endpoint',
+    tag: 'advanced',
+    detail:
+      'Attaches to a browser you started yourself with --remote-debugging-port and a non-default profile directory.',
+  },
+];
+
 const CHANNELS = [
   { value: 'chrome', label: 'Real Chrome', hint: 'Drives the Chrome installed on the machine running the worker.' },
   { value: 'msedge', label: 'Real Edge', hint: 'Drives the installed Microsoft Edge.' },
@@ -327,39 +360,60 @@ function BrowserConfig({
         <span className="font-mono text-[10px] text-bone-faint">{session?.status ?? 'unknown'}</span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        {(['MANAGED', 'CDP'] as const).map((option) => (
-          <button
-            key={option}
-            type="button"
-            onClick={() => setMode(option)}
-            className={`rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
-              mode === option ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone' : 'border-ink-line text-bone-dim hover:border-bone-faint'
-            }`}
-          >
-            <span className="block">{option === 'MANAGED' ? 'Managed profile' : 'Attach over CDP'}</span>
-            <span className="mt-0.5 block text-[11px] leading-snug text-bone-faint">
-              {option === 'MANAGED' ? 'AI17Z launches and owns the browser' : 'AI17Z attaches to one you started'}
-            </span>
-          </button>
-        ))}
+      {/* Three ways to give AI17Z a browser, in the order most people should
+          try them. The middle one is not selectable because it is not built —
+          saying so is better than offering a mode that does nothing. */}
+      <div className="space-y-2">
+        {MODES.map((option) => {
+          const selected = mode === option.value;
+          const disabled = option.value === null;
+          return (
+            <button
+              key={option.label}
+              type="button"
+              disabled={disabled}
+              onClick={() => option.value && setMode(option.value)}
+              className={`w-full rounded-lg border px-3.5 py-3 text-left transition-colors ${
+                selected
+                  ? 'border-signal-calm/60 bg-signal-calm/[0.07]'
+                  : disabled
+                    ? 'cursor-default border-ink-line opacity-60'
+                    : 'border-ink-line hover:border-bone-faint'
+              }`}
+            >
+              <span className="flex flex-wrap items-baseline gap-x-2">
+                <span className={`text-sm ${selected ? 'text-bone' : 'text-bone-dim'}`}>{option.label}</span>
+                <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-bone-faint">{option.tag}</span>
+              </span>
+              <span className="mt-1 block text-[11px] leading-relaxed text-bone-faint">{option.detail}</span>
+            </button>
+          );
+        })}
       </div>
 
       {mode === 'MANAGED' ? (
-        <Field label="Browser build" htmlFor="bchannel" hint={CHANNELS.find((c) => c.value === channel)?.hint}>
-          <select id="bchannel" className="field" value={channel} onChange={(e) => setChannel(e.target.value)}>
-            {CHANNELS.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <>
+          <p className="rounded-lg border border-ink-line px-3.5 py-3 text-[11px] leading-relaxed text-bone-faint">
+            The profile lives at <span className="font-mono text-bone-dim">storage/browser-profiles/{accountId}</span>{' '}
+            on whichever machine runs the worker. It keeps your session between runs, so signing in is a one-off.
+            {' '}A brand-new profile has no history, and a platform may treat a first sign-in from one as unusual —
+            if that happens, wait rather than retrying, because repeated attempts are usually what caused it.
+          </p>
+          <Field label="Browser build" htmlFor="bchannel" hint={CHANNELS.find((c) => c.value === channel)?.hint}>
+            <select id="bchannel" className="field" value={channel} onChange={(e) => setChannel(e.target.value)}>
+              {CHANNELS.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </>
       ) : (
         <Field
           label="CDP URL"
           htmlFor="bcdp"
-          hint="Start the browser yourself with --remote-debugging-port, then point AI17Z at it. It must be reachable from wherever the worker runs."
+          hint="Start it with scripts/launch-chrome-cdp.ps1, or by hand with --remote-debugging-port and a --user-data-dir that is not your default. Chrome has refused remote debugging on the default profile directory since version 136. It must be reachable from wherever the worker runs."
         >
           <input
             id="bcdp"

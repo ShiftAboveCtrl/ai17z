@@ -56,7 +56,7 @@ Write-Host ''
 Write-Host 'AI17Z' -ForegroundColor White
 Write-Host ''
 
-# ── Prerequisites ───────────────────────────────────────────────────────────
+# -- Prerequisites -----------------------------------------------------------
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw 'Docker is not on PATH. Install Docker Desktop and start it, then run this again.'
 }
@@ -78,7 +78,7 @@ if (-not (Test-Path '.env')) {
   Write-Warn "A master key was written to .env. Back that file up: without it, stored API keys are unreadable."
 }
 
-# ── The stack ───────────────────────────────────────────────────────────────
+# -- The stack ---------------------------------------------------------------
 if ($Rebuild) {
   Write-Step 'Rebuilding images...'
   Invoke-Native docker @('compose', 'build', 'api', 'web', 'worker') 'The image build failed. The output above says why.' | Out-Null
@@ -109,7 +109,7 @@ if (-not $ready) {
   Write-Done 'API is up.'
 }
 
-# ── The native worker ───────────────────────────────────────────────────────
+# -- The native worker -------------------------------------------------------
 if ($NoBrowser) {
   Write-Warn 'Skipping the native worker. Browser-backed accounts will wait for one.'
 } else {

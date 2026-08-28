@@ -11,20 +11,24 @@
   directory starts empty, and a browser with no cookies and no history is
   exactly what a platform flags as suspicious on first sign-in.
 
-  -SeedFromProfile fixes that: it copies your existing Chrome profile into the
-  dedicated directory once, so the window opens already signed in and looking
-  like the browser you actually use. Chrome must be fully closed while it
-  copies, because the cookie database is locked while Chrome is running.
-
-  Your profile is copied, never moved or modified. AI17Z does not read what is
-  in it; it hands the directory to Chrome.
+  The recommended answer to an empty profile is not to copy one: it is to sign
+  in once in the dedicated window and let the profile persist. AI17Z reuses the
+  same directory on every run, so that sign-in is a one-off.
 
   Leave the window open while AI17Z is working. Set the account to CDP mode and
   give it the URL this prints.
 
 .PARAMETER SeedFromProfile
-  Copy an existing Chrome profile into the debugging directory: "Default",
-  "Profile 1", and so on. Chrome must be closed. Only needed once.
+  EXPERIMENTAL, and on Windows it usually does not work.
+
+  Copies an existing Chrome profile into the debugging directory. Since Chrome
+  127, App-Bound Encryption ties cookies to Chrome's own identity rather than to
+  the Windows user, and Chrome discards cookies it finds in a directory they
+  were not encrypted for. Copying Local State does not change that.
+
+  Kept for the cases where it does help - history, bookmarks, preferences, and
+  older or non-Windows builds - and because proving it fails on a given machine
+  is quicker than arguing about it. Do not rely on it to carry a login.
 
 .PARAMETER Reseed
   Copy again even though the debugging profile already has a session,
@@ -40,7 +44,7 @@
   chrome (default) or edge.
 
 .EXAMPLE
-  .\scripts\launch-chrome-cdp.ps1 -SeedFromProfile Default
+  .\scripts\launch-chrome-cdp.ps1
   .\scripts\launch-chrome-cdp.ps1 -Port 9223 -Browser edge
 #>
 [CmdletBinding()]
@@ -94,7 +98,7 @@ if (-not (Test-Path $Profile)) {
   New-Item -ItemType Directory -Path $Profile -Force | Out-Null
 }
 
-# ── Seeding from a real profile ─────────────────────────────────────────────
+# -- Seeding from a real profile ---------------------------------------------
 #
 # A dedicated debugging directory starts with no cookies and no history, which
 # is what a platform flags on a first sign-in. Copying an existing profile in
@@ -138,6 +142,12 @@ if ($SeedFromProfile) {
   if ($seeded -and -not $Reseed) {
     Write-Host 'The debugging profile already has a session. Pass -Reseed to replace it.' -ForegroundColor Yellow
   } else {
+      Write-Host ''
+    Write-Host 'EXPERIMENTAL: on Windows this usually will not carry your login.' -ForegroundColor Yellow
+    Write-Host 'Chrome 127+ App-Bound Encryption ties cookies to Chrome itself, and' -ForegroundColor Yellow
+    Write-Host 'Chrome discards cookies found in a directory they were not encrypted' -ForegroundColor Yellow
+    Write-Host 'for. History, bookmarks and preferences do come across.' -ForegroundColor Yellow
+    Write-Host ''
     Write-Host "Copying '$SeedFromProfile' into the debugging profile..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $target -Force | Out-Null
 
@@ -162,6 +172,8 @@ if ($SeedFromProfile) {
       }
     }
     Write-Host 'Copied. Your original profile is untouched.' -ForegroundColor Green
+    Write-Host 'If the window opens signed out, that is App-Bound Encryption doing' -ForegroundColor DarkGray
+    Write-Host 'its job. Sign in once in that window instead; the profile persists.' -ForegroundColor DarkGray
   }
 }
 
@@ -184,10 +196,10 @@ Write-Host "Next:"
 if ($SeedFromProfile) {
   Write-Host "  1. Check the window is already signed in to X. If it is, nothing to do here."
 } else {
-  Write-Host "  1. Sign in to X in the window that just opened."
-  Write-Host "     If X limits the login, close every Chrome window and run this again with:"
-  Write-Host "       -SeedFromProfile Default" -ForegroundColor Cyan
-  Write-Host "     which copies the browser session you already have."
+  Write-Host "  1. Sign in to X in the window that just opened. You only do this once:"
+  Write-Host "     the profile persists and AI17Z reuses it on every run."
+  Write-Host "     If X says it has temporarily limited the login, wait rather than"
+  Write-Host "     retrying - repeated attempts are usually what caused it."
 }
 Write-Host "  2. In AI17Z, open the account, set the browser mode to 'Attach over CDP',"
 Write-Host "     and set the CDP URL to:"
