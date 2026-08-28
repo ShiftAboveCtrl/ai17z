@@ -20,6 +20,10 @@ export async function buildChannelContext(account: Account, jobId: string | null
     account,
     session: session
       ? {
+          // The stored engine is the authority. An account written before the
+          // engine column existed was mapped from its old mode and channel by
+          // migration 0040, so there is always one.
+          engine: session.engine ?? 'GOOGLE_CHROME',
           mode: session.mode,
           channel: session.channel ?? 'chromium',
           profileDir: session.profileDir ?? defaultProfileDir(account.id),

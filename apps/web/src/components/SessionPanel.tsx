@@ -12,12 +12,19 @@ import { ErrorPanel, Field, RetryablePanel, SavedTick, Spinner, StatusDot, Worki
 interface SessionData {
   account: AccountRow;
   session: {
+    engine: Engine;
     mode: 'MANAGED' | 'CDP';
     channel: 'chrome' | 'msedge' | 'chromium';
     status: string;
     cdpUrl: string | null;
     lastCheckedAt: string | null;
     lastError: string | null;
+    executablePath: string | null;
+    browserProduct: string | null;
+    browserVersion: string | null;
+    browserPid: number | null;
+    cdpProduct: string | null;
+    verifiedAt: string | null;
   } | null;
   recentTasks: BrowserTask[];
   diagnostics: DiagnosticRow[];
@@ -159,6 +166,8 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
 
       {browserBacked && <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />}
 
+      {browserBacked && <BrowserIdentityPanel session={data.session} />}
+
       {browserBacked && <RadarPanel accountId={accountId} />}
 
       {browserBacked && <CadencePanel accountId={accountId} />}
@@ -269,36 +278,50 @@ const SLOW_HINTS: Record<string, string> = {
   HEALTH_CHECK: 'Loading a page in a real browser to see whether the session still works.',
 };
 
+type Engine = 'GOOGLE_CHROME' | 'MICROSOFT_EDGE' | 'PLAYWRIGHT_CHROMIUM' | 'CUSTOM_CDP';
+
 /**
- * How AI17Z gets a browser.
+ * Which browser binary drives this account.
  *
- * A dedicated profile is the recommended path: sign in once by hand and the
- * profile is reused for ever. Attaching to a Chrome that is already open is a
- * real Chrome 144 feature and is deliberately listed as unavailable rather than
- * offered, because the mechanism behind it is not documented well enough to
- * implement without guessing.
+ * Named after the browser, because that is the only thing anybody wants to
+ * know. "Managed profile" described how AI17Z related to the browser and said
+ * nothing about which executable was running — and the old default quietly
+ * meant Playwright's Chromium.
  */
-const MODES: { value: 'MANAGED' | 'CDP' | null; label: string; tag: string; detail: string }[] = [
+const ENGINES: { value: Engine | null; label: string; tag: string; detail: string }[] = [
   {
-    value: 'MANAGED',
-    label: 'AI17Z Chrome profile',
+    value: 'GOOGLE_CHROME',
+    label: 'Google Chrome',
     tag: 'recommended',
     detail:
-      'Opens your installed Chrome with a profile kept for this account. Sign in once, by hand, and it is reused on every run.',
+      'The Chrome installed on the machine running the worker. AI17Z starts it with a profile kept for this account and attaches over CDP. Sign in once, by hand; the profile is reused after that.',
+  },
+  {
+    value: 'MICROSOFT_EDGE',
+    label: 'Microsoft Edge',
+    tag: 'alternative',
+    detail: 'The installed Edge, same arrangement as Chrome.',
+  },
+  {
+    value: 'PLAYWRIGHT_CHROMIUM',
+    label: 'Playwright Chromium',
+    tag: 'testing',
+    detail:
+      'The Chromium that ships with Playwright. Useful for exercising the pipeline; it is not Chrome, and a platform can tell.',
   },
   {
     value: null,
     label: 'Attach to a Chrome you already have open',
     tag: 'not available yet',
     detail:
-      'Chrome 144 can hand a running session to an agent after you approve it at chrome://inspect. The mechanism behind that is not documented enough to implement without guessing, so it is not offered. Use a custom endpoint below if you want this today.',
+      'Chrome 144 can hand a running session to an agent after you approve it at chrome://inspect. The mechanism behind that is not documented enough to implement without guessing, so it is not offered. Use a custom endpoint for this today.',
   },
   {
-    value: 'CDP',
+    value: 'CUSTOM_CDP',
     label: 'Custom CDP endpoint',
     tag: 'advanced',
     detail:
-      'Attaches to a browser you started yourself with --remote-debugging-port and a non-default profile directory.',
+      'Attaches to a browser you started yourself. Chrome has refused remote debugging on the default profile directory since version 136, so it needs its own --user-data-dir.',
   },
 ];
 
@@ -325,7 +348,7 @@ function BrowserConfig({
   session: SessionData['session'];
   onSaved: () => void;
 }) {
-  const [mode, setMode] = useState<'MANAGED' | 'CDP'>(session?.mode ?? 'MANAGED');
+  const [engine, setEngine] = useState<Engine>(session?.engine ?? 'GOOGLE_CHROME');
   const [channel, setChannel] = useState<string>(session?.channel ?? 'chromium');
   const [cdpUrl, setCdpUrl] = useState(session?.cdpUrl ?? '');
   const [busy, setBusy] = useState(false);
@@ -333,16 +356,15 @@ function BrowserConfig({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setMode(session?.mode ?? 'MANAGED');
-    setChannel(session?.channel ?? 'chromium');
+    setEngine(session?.engine ?? 'GOOGLE_CHROME');
     setCdpUrl(session?.cdpUrl ?? '');
-  }, [session?.mode, session?.channel, session?.cdpUrl]);
+  }, [session?.engine, session?.cdpUrl]);
 
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      await patch(`/api/accounts/${accountId}`, { browser: { mode, channel, cdpUrl } });
+      await patch(`/api/accounts/${accountId}`, { browser: { engine, cdpUrl } });
       setSaved(true);
       setTimeout(() => setSaved(false), 2400);
       onSaved();
@@ -364,15 +386,15 @@ function BrowserConfig({
           try them. The middle one is not selectable because it is not built —
           saying so is better than offering a mode that does nothing. */}
       <div className="space-y-2">
-        {MODES.map((option) => {
-          const selected = mode === option.value;
+        {ENGINES.map((option) => {
+          const selected = engine === option.value;
           const disabled = option.value === null;
           return (
             <button
               key={option.label}
               type="button"
               disabled={disabled}
-              onClick={() => option.value && setMode(option.value)}
+              onClick={() => option.value && setEngine(option.value)}
               className={`w-full rounded-lg border px-3.5 py-3 text-left transition-colors ${
                 selected
                   ? 'border-signal-calm/60 bg-signal-calm/[0.07]'
@@ -391,29 +413,11 @@ function BrowserConfig({
         })}
       </div>
 
-      {mode === 'MANAGED' ? (
-        <>
-          <p className="rounded-lg border border-ink-line px-3.5 py-3 text-[11px] leading-relaxed text-bone-faint">
-            The profile lives at <span className="font-mono text-bone-dim">storage/browser-profiles/{accountId}</span>{' '}
-            on whichever machine runs the worker. It keeps your session between runs, so signing in is a one-off.
-            {' '}A brand-new profile has no history, and a platform may treat a first sign-in from one as unusual —
-            if that happens, wait rather than retrying, because repeated attempts are usually what caused it.
-          </p>
-          <Field label="Browser build" htmlFor="bchannel" hint={CHANNELS.find((c) => c.value === channel)?.hint}>
-            <select id="bchannel" className="field" value={channel} onChange={(e) => setChannel(e.target.value)}>
-              {CHANNELS.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </>
-      ) : (
+      {engine === 'CUSTOM_CDP' ? (
         <Field
           label="CDP URL"
           htmlFor="bcdp"
-          hint="Start it with scripts/launch-chrome-cdp.ps1, or by hand with --remote-debugging-port and a --user-data-dir that is not your default. Chrome has refused remote debugging on the default profile directory since version 136. It must be reachable from wherever the worker runs."
+          hint="Start it with scripts/launch-chrome-cdp.ps1, or by hand with --remote-debugging-port and a --user-data-dir that is not your default. It must be reachable from wherever the worker runs."
         >
           <input
             id="bcdp"
@@ -423,6 +427,14 @@ function BrowserConfig({
             placeholder="http://127.0.0.1:9222"
           />
         </Field>
+      ) : (
+        <p className="rounded-lg border border-ink-line px-3.5 py-3 text-[11px] leading-relaxed text-bone-faint">
+          The profile lives at <span className="font-mono text-bone-dim">storage/browser-profiles/{accountId}</span> on
+          whichever machine runs the worker, and keeps your session between runs.
+          {engine === 'PLAYWRIGHT_CHROMIUM'
+            ? ' This engine is Playwright Chromium, not Chrome. It is fine for exercising the pipeline and a platform can tell the difference.'
+            : ' A brand-new profile has no history, so a first sign-in may be treated as unusual. If that happens, wait rather than retrying — repeated attempts are usually what caused it.'}
+        </p>
       )}
 
       {error && <p className="text-sm text-signal-fail">{error}</p>}
@@ -434,6 +446,50 @@ function BrowserConfig({
         </button>
         <SavedTick visible={saved} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * What is actually running.
+ *
+ * Two independent signals: the executable AI17Z chose, and what the browser
+ * reported over CDP once it was up. Showing both is what removes the ambiguity
+ * for good — nobody has to take "real Chrome" on trust.
+ */
+function BrowserIdentityPanel({ session }: { session: SessionData['session'] }) {
+  if (!session?.verifiedAt) return null;
+
+  const realChrome = session.engine === 'GOOGLE_CHROME' && (session.cdpProduct ?? '').startsWith('Chrome/');
+
+  return (
+    <div className="space-y-2 rounded-lg border border-ink-line bg-ink-panel/60 p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="eyebrow">Browser identity</p>
+        <span className={`font-mono text-[10px] ${realChrome ? 'text-signal-live' : 'text-bone-faint'}`}>
+          {realChrome ? 'verified real chrome' : session.engine.toLowerCase().replace(/_/g, ' ')}
+        </span>
+      </div>
+      <dl className="space-y-1.5">
+        <IdRow term="Engine" value={session.engine.replace(/_/g, ' ').toLowerCase()} />
+        {session.executablePath && <IdRow term="Executable" value={session.executablePath} mono />}
+        {session.browserProduct && (
+          <IdRow term="Product" value={`${session.browserProduct}${session.browserVersion ? ` ${session.browserVersion}` : ''}`} />
+        )}
+        {session.cdpProduct && <IdRow term="Reported over CDP" value={session.cdpProduct} mono />}
+        {session.browserPid !== null && <IdRow term="Process" value={String(session.browserPid)} mono />}
+        {session.cdpUrl && <IdRow term="Connection" value={`CDP ${session.cdpUrl}`} mono />}
+        <IdRow term="Checked" value={timeAgo(session.verifiedAt)} />
+      </dl>
+    </div>
+  );
+}
+
+function IdRow({ term, value, mono }: { term: string; value: string; mono?: boolean }) {
+  return (
+    <div className="grid gap-0.5 sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-3">
+      <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">{term}</dt>
+      <dd className={`break-words text-xs text-bone-dim ${mono ? 'font-mono' : ''}`}>{value}</dd>
     </div>
   );
 }

@@ -3,13 +3,18 @@ import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { BrowserContext, Page } from 'playwright';
 import { PipelineError, createLogger, envBool, errorMessage } from '@xbam/shared';
-import type { BrowserChannel, LeasedSession, SessionConfig } from './types';
+import type { BrowserChannel, BrowserIdentity, LeasedSession, SessionConfig } from './types';
+import { cdpIdentity, cdpIsGoogleChrome, launchChrome, waitForCdp, type LaunchedChrome } from './chrome';
 
 const log = createLogger('browser');
 
 interface Entry {
   context: BrowserContext;
   mode: 'MANAGED' | 'CDP';
+  /** What is actually running, recorded at launch and shown in diagnostics. */
+  identity: BrowserIdentity;
+  /** Set when AI17Z started the browser itself and can report its pid. */
+  launched: LaunchedChrome | null;
   createdAt: number;
   lastUsedAt: number;
   closing: boolean;
@@ -59,6 +64,25 @@ async function acquirePage(context: BrowserContext): Promise<Page> {
 
 const contexts = new Map<string, Entry>();
 
+/**
+ * One launch at a time per account.
+ *
+ * Without this, two callers arriving together both find no cached context and
+ * both start a browser. That was survivable when a launch was a Playwright
+ * Chromium; now that it spawns real Chrome it means several windows opening on
+ * somebody's desktop and two of them holding a profile that only one can have.
+ */
+const opening = new Map<string, Promise<Entry>>();
+
+async function openOnce(config: SessionConfig): Promise<Entry> {
+  const inFlight = opening.get(config.accountId);
+  if (inFlight) return inFlight;
+
+  const started = openContext(config).finally(() => opening.delete(config.accountId));
+  opening.set(config.accountId, started);
+  return started;
+}
+
 export function browserEnabled(): boolean {
   return envBool('XBAM_BROWSER_ENABLED', true);
 }
@@ -78,42 +102,160 @@ async function loadPlaywright() {
   }
 }
 
+/**
+ * Opens a browser for an account, by engine.
+ *
+ * Each engine resolves to exactly one binary and there is no path between them.
+ * Asking for Google Chrome and getting Chromium because Chrome was missing is
+ * the failure this function exists to make impossible.
+ */
 async function openContext(config: SessionConfig): Promise<Entry> {
   const { chromium } = await loadPlaywright();
+  const now = Date.now();
 
-  if (config.mode === 'CDP') {
+  // ── Custom CDP: attach to something somebody else started ───────────────
+  if (config.engine === 'CUSTOM_CDP') {
     if (!config.cdpUrl) {
-      throw PipelineError.permanent('cdp_url_missing', 'This account is in CDP mode but has no CDP URL configured.');
+      throw PipelineError.permanent('cdp_url_missing', 'This account uses a custom CDP endpoint but has none configured.');
     }
     try {
+      const seen = await cdpIdentity(config.cdpUrl, 10_000);
       const browser = await chromium.connectOverCDP(config.cdpUrl, { timeout: 15_000 });
       const context = browser.contexts()[0] ?? (await browser.newContext());
-      return { context, mode: 'CDP', createdAt: Date.now(), lastUsedAt: Date.now(), closing: false, dead: false };
+      return {
+        context,
+        mode: 'CDP',
+        identity: {
+          engine: 'CUSTOM_CDP',
+          // AI17Z did not start it, so it cannot claim to know the path.
+          executablePath: null,
+          product: seen.product,
+          version: seen.product.split('/')[1] ?? null,
+          pid: null,
+          cdpProduct: seen.product,
+          cdpUrl: config.cdpUrl,
+          profileDir: null,
+          connection: 'CDP',
+          verifiedGoogleChrome: cdpIsGoogleChrome(seen),
+        },
+        launched: null,
+        createdAt: now,
+        lastUsedAt: now,
+        closing: false,
+        dead: false,
+      };
     } catch (error) {
       throw explainCdpFailure(error, config.cdpUrl);
     }
   }
 
-  if (!config.profileDir) {
-    throw PipelineError.permanent('profile_dir_missing', 'Managed browser mode requires a profile directory.');
+  // ── Playwright Chromium: the bundled build, chosen deliberately ─────────
+  if (config.engine === 'PLAYWRIGHT_CHROMIUM') {
+    if (!config.profileDir) {
+      throw PipelineError.permanent('profile_missing', 'This account has no profile directory configured.');
+    }
+    await mkdir(config.profileDir, { recursive: true });
+    try {
+      const context = await chromium.launchPersistentContext(config.profileDir, {
+        headless: config.headless,
+        viewport: { width: 1280, height: 900 },
+        args: ['--no-first-run', '--no-default-browser-check'],
+      });
+      return {
+        context,
+        mode: 'MANAGED',
+        identity: {
+          engine: 'PLAYWRIGHT_CHROMIUM',
+          executablePath: chromium.executablePath(),
+          product: 'Playwright Chromium',
+          version: null,
+          pid: null,
+          cdpProduct: null,
+          cdpUrl: null,
+          profileDir: config.profileDir,
+          connection: 'PLAYWRIGHT',
+          verifiedGoogleChrome: false,
+        },
+        launched: null,
+        createdAt: now,
+        lastUsedAt: now,
+        closing: false,
+        dead: false,
+      };
+    } catch (error) {
+      throw explainLaunchFailure(error, config);
+    }
   }
-  await mkdir(config.profileDir, { recursive: true });
-  try {
-    // Driving the real installed browser rather than the bundled Chromium is the
-    // point when an account has to act with a session a person signed into: the
-    // profile carries that session, and it persists across restarts.
-    const channel: BrowserChannel | undefined =
-      config.channel && config.channel !== 'chromium' ? config.channel : undefined;
 
-    const context = await chromium.launchPersistentContext(config.profileDir, {
-      headless: config.headless,
-      ...(channel ? { channel } : {}),
-      viewport: { width: 1280, height: 900 },
-      args: ['--no-first-run', '--no-default-browser-check'],
+  // ── Real Chrome or Edge: AI17Z starts the binary, then attaches ─────────
+  //
+  // The legacy system that worked on this account for months started Chrome
+  // externally and attached over CDP. Two properties follow from that and both
+  // matter: the browser outlives the worker, so restarting AI17Z does not close
+  // a window somebody is signing in to; and AI17Z picks the executable itself,
+  // so it can say which binary is running rather than trusting a resolver.
+  if (!config.profileDir) {
+    throw PipelineError.permanent('profile_missing', 'This account has no profile directory configured.');
+  }
+
+  const launched = await launchChrome({
+    engine: config.engine,
+    profileDir: config.profileDir,
+    startUrl: 'https://x.com/home',
+    headless: config.headless,
+  });
+
+  try {
+    const seen = await waitForCdp(launched.cdpUrl, 30_000);
+    const browser = await chromium.connectOverCDP(launched.cdpUrl, { timeout: 20_000 });
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+
+    const verified = config.engine === 'GOOGLE_CHROME' ? cdpIsGoogleChrome(seen) : true;
+    if (config.engine === 'GOOGLE_CHROME' && !verified) {
+      // The executable said Google Chrome and the running browser says
+      // something else. Refuse rather than proceed on a half-verified claim.
+      throw PipelineError.permanent(
+        'not_google_chrome',
+        `Started ${launched.installation.executable} but the running browser reports "${seen.product}". ` +
+          'AI17Z did not fall back to Chromium; it stopped instead.',
+      );
+    }
+
+    log.info('real browser attached', {
+      engine: config.engine,
+      executable: launched.installation.executable,
+      product: seen.product,
+      pid: launched.pid,
+      cdpUrl: launched.cdpUrl,
     });
-    return { context, mode: 'MANAGED', createdAt: Date.now(), lastUsedAt: Date.now(), closing: false, dead: false };
+
+    return {
+      context,
+      mode: 'CDP',
+      identity: {
+        engine: config.engine,
+        executablePath: launched.installation.executable,
+        product: launched.installation.product,
+        version: launched.installation.version,
+        pid: launched.pid,
+        cdpProduct: seen.product,
+        cdpUrl: launched.cdpUrl,
+        profileDir: config.profileDir,
+        connection: 'CDP',
+        verifiedGoogleChrome: config.engine === 'GOOGLE_CHROME' && verified,
+      },
+      launched,
+      createdAt: now,
+      lastUsedAt: now,
+      closing: false,
+      dead: false,
+    };
   } catch (error) {
-    throw explainLaunchFailure(error, config);
+    // A browser that started but could not be attached to is left running
+    // rather than killed: a person may already be typing in it, and a stray
+    // window is a smaller problem than a lost sign-in.
+    if (error instanceof PipelineError) throw error;
+    throw explainCdpFailure(error, launched.cdpUrl);
   }
 }
 
@@ -247,10 +389,17 @@ export async function leaseSession(config: SessionConfig): Promise<LeasedSession
     entry = undefined;
   }
   if (!entry) {
-    entry = await openContext(config);
-    watchForClose(config.accountId, entry);
-    contexts.set(config.accountId, entry);
-    log.info('browser context opened', { accountId: config.accountId, mode: entry.mode });
+    entry = await openOnce(config);
+    // A concurrent caller may have won the race and cached its own entry while
+    // this one was waiting; keeping the first avoids two live contexts.
+    const existing = contexts.get(config.accountId);
+    if (existing && existing !== entry && !existing.dead) {
+      entry = existing;
+    } else {
+      watchForClose(config.accountId, entry);
+      contexts.set(config.accountId, entry);
+      log.info('browser context opened', { accountId: config.accountId, mode: entry.mode });
+    }
   }
 
   let page: Page;
@@ -262,7 +411,7 @@ export async function leaseSession(config: SessionConfig): Promise<LeasedSession
     // rather than making the account unusable until the process restarts.
     log.info('reopening a browser context that had gone away', { accountId: config.accountId });
     await closeSession(config.accountId);
-    entry = await openContext(config);
+    entry = await openOnce(config);
     watchForClose(config.accountId, entry);
     contexts.set(config.accountId, entry);
     try {
@@ -281,6 +430,7 @@ export async function leaseSession(config: SessionConfig): Promise<LeasedSession
   return {
     context,
     page,
+    identity: current.identity,
     mode: current.mode,
     async release() {
       current.lastUsedAt = Date.now();
@@ -312,6 +462,32 @@ export async function closeAllSessions(): Promise<void> {
   await Promise.all([...contexts.keys()].map((id) => closeSession(id)));
 }
 
+/**
+ * Whether a stored profile path makes sense on this machine.
+ *
+ * The path is written by whichever worker last touched the account, and the
+ * containerised worker and the native one do not share a filesystem. A Linux
+ * path handed to Chrome on Windows produces C:\app\... — a second, empty
+ * profile, and a session that silently is not there.
+ */
+export function profilePathIsLocal(profileDir: string | null | undefined): boolean {
+  if (!profileDir) return false;
+  const looksPosixAbsolute = profileDir.startsWith('/');
+  const looksWindowsAbsolute = /^[A-Za-z]:[\\/]/.test(profileDir);
+  return process.platform === 'win32' ? !looksPosixAbsolute : !looksWindowsAbsolute || looksPosixAbsolute;
+}
+
+/**
+ * Where this account's profile lives on this machine.
+ *
+ * Derived from the account id rather than read from the row, because the id is
+ * the identity and the path is a local detail. The stored path is kept for
+ * diagnostics only.
+ */
+export function resolveProfileDir(accountId: string, stored: string | null | undefined): string {
+  return profilePathIsLocal(stored) ? (stored as string) : defaultProfileDir(accountId);
+}
+
 export function defaultProfileDir(accountId: string): string {
   const base = process.env.XBAM_BROWSER_PROFILE_DIR || './storage/browser-profiles';
   return resolve(base, accountId);
@@ -319,4 +495,14 @@ export function defaultProfileDir(accountId: string): string {
 
 export function activeSessionCount(): number {
   return contexts.size;
+}
+
+/**
+ * What is currently running for an account, if anything.
+ *
+ * Read from the live cache rather than re-launching, so asking "what browser is
+ * this?" never starts one.
+ */
+export function sessionIdentity(accountId: string): BrowserIdentity | null {
+  return contexts.get(accountId)?.identity ?? null;
 }
