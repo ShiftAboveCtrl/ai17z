@@ -21,6 +21,7 @@ import {
   stances as stancesRepo,
   voice as voiceRepo,
   content as contentRepo,
+  evaluation as evaluationRepo,
   ops,
   pipelines as pipelinesRepo,
   providers as providersRepo,
@@ -558,6 +559,21 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const body = parseBody(z.object({ status: z.enum(['unused', 'used', 'discarded']) }), request);
       await contentRepo.resolveIdea(params(request).ideaId!, body.status);
       return { status: body.status };
+    }),
+  );
+
+  // How the agent is actually behaving, counted from traces and actions rather
+  // than from counters that could drift.
+  app.get(
+    '/api/agents/:id/evaluation',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const days = Math.min(Math.max(Number((request.query as { days?: string }).days ?? 7) || 7, 1), 90);
+      return {
+        metrics: await evaluationRepo.socialMetrics(agent.id, days),
+        providers: await evaluationRepo.byProvider(agent.id, days),
+      };
     }),
   );
 
