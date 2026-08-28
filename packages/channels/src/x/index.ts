@@ -1,6 +1,6 @@
 import type { NormalizedEvent, RadarPollResult, ResolvedContext } from '@xbam/shared/contracts';
 import { PipelineError, envBool, errorMessage, sleep } from '@xbam/shared';
-import { captureScreenshot, defaultProfileDir, leaseSession, safeUrl, type LeasedSession, type Page } from '@xbam/browser';
+import { captureScreenshot, resolveProfileDir, leaseSession, safeUrl, type LeasedSession, type Page } from '@xbam/browser';
 import type {
   ActionRequest,
   ActionResult,
@@ -35,8 +35,9 @@ async function withSession<T>(ctx: ChannelContext, fn: (session: LeasedSession) 
   const session = await leaseSession({
     accountId: ctx.account.id,
     mode: ctx.session?.mode ?? 'MANAGED',
-    profileDir: ctx.session?.profileDir ?? defaultProfileDir(ctx.account.id),
+    profileDir: resolveProfileDir(ctx.account.id, ctx.session?.profileDir),
     cdpUrl: ctx.session?.cdpUrl ?? null,
+    engine: ctx.session?.engine ?? 'GOOGLE_CHROME',
     channel: ctx.session?.channel ?? null,
     headless: envBool('XBAM_BROWSER_HEADLESS', false),
   });

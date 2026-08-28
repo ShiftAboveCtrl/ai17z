@@ -1,4 +1,4 @@
-import type { Account, AgentAccountLink, BrowserSession, ChannelId } from '@xbam/shared/contracts';
+import type { Account, AgentAccountLink, BrowserEngine, BrowserSession, ChannelId } from '@xbam/shared/contracts';
 import { NotFoundError } from '@xbam/shared';
 import { query, queryOne, withTransaction } from '../pool';
 import { mapRow, mapRows } from '../mapper';
@@ -237,6 +237,7 @@ export async function getBrowserSession(accountId: string): Promise<BrowserSessi
 
 export async function upsertBrowserSession(input: {
   accountId: string;
+  engine?: BrowserEngine | null;
   mode: 'MANAGED' | 'CDP';
   channel?: 'chrome' | 'msedge' | 'chromium' | null;
   profileDir?: string | null;
@@ -245,10 +246,11 @@ export async function upsertBrowserSession(input: {
   lastError?: string | null;
 }): Promise<BrowserSession> {
   const row = await queryOne(
-    `INSERT INTO browser_sessions (account_id, mode, channel, profile_dir, cdp_url, status, last_error, last_checked_at)
-     VALUES ($1,$2,coalesce($3,'chromium'),$4,$5,coalesce($6,'UNKNOWN'),$7, CASE WHEN $6 IS NULL THEN NULL ELSE now() END)
+    `INSERT INTO browser_sessions (account_id, engine, mode, channel, profile_dir, cdp_url, status, last_error, last_checked_at)
+     VALUES ($1,coalesce($8,'GOOGLE_CHROME'),$2,coalesce($3,'chromium'),$4,$5,coalesce($6,'UNKNOWN'),$7, CASE WHEN $6 IS NULL THEN NULL ELSE now() END)
      ON CONFLICT (account_id) DO UPDATE
-       SET mode = excluded.mode,
+       SET engine = coalesce($8, browser_sessions.engine),
+           mode = excluded.mode,
            channel = coalesce($3, browser_sessions.channel),
            profile_dir = coalesce(excluded.profile_dir, browser_sessions.profile_dir),
            cdp_url = excluded.cdp_url,
@@ -265,9 +267,46 @@ export async function upsertBrowserSession(input: {
       input.cdpUrl ?? null,
       input.status ?? null,
       input.lastError ?? null,
+      input.engine ?? null,
     ],
   );
   return mapRow<BrowserSession>(row) as BrowserSession;
+}
+
+/**
+ * Records what actually launched.
+ *
+ * Written after the browser is up and has answered over CDP, so the diagnostics
+ * show two independent signals: the executable AI17Z chose, and what the
+ * running browser says it is. A claim of "real Chrome" that rests on only one
+ * of those is a claim somebody has to take on trust.
+ */
+export async function recordBrowserIdentity(input: {
+  accountId: string;
+  executablePath: string | null;
+  browserProduct: string | null;
+  browserVersion: string | null;
+  browserPid: number | null;
+  cdpProduct: string | null;
+  cdpUrl: string | null;
+}): Promise<void> {
+  await query(
+    `UPDATE browser_sessions
+        SET executable_path = $2, browser_product = $3, browser_version = $4,
+            browser_pid = $5, cdp_product = $6,
+            cdp_url = coalesce($7, cdp_url),
+            verified_at = now(), updated_at = now()
+      WHERE account_id = $1`,
+    [
+      input.accountId,
+      input.executablePath,
+      input.browserProduct,
+      input.browserVersion,
+      input.browserPid,
+      input.cdpProduct,
+      input.cdpUrl,
+    ],
+  );
 }
 
 /** Wipes the stored session pointer. The profile directory is removed separately. */

@@ -54,9 +54,11 @@ if (Test-Path $PidFile) {
   try {
     $process = Get-Process -Id ([int]$workerPid) -ErrorAction Stop
     Write-Step "Stopping the native worker (pid $workerPid)..."
-    # The worker traps this and closes its browsers before exiting; killing the
-    # tree outright can leave a Chromium profile locked by a dead process.
-    Stop-Process -Id $process.Id -ErrorAction Stop
+    # /T for the whole tree. npm run dev:worker starts tsx, which starts the
+    # actual worker; killing only the recorded pid leaves that grandchild
+    # running. Every start/stop cycle then leaked a worker, and each leaked one
+    # kept polling and launching its own browsers.
+    Invoke-Native taskkill @('/PID', "$workerPid", '/T', '/F') | Out-Null
     $process.WaitForExit(10000) | Out-Null
     Write-Done 'Native worker stopped.'
   } catch {
@@ -64,7 +66,23 @@ if (Test-Path $PidFile) {
   }
   Remove-Item $PidFile -ErrorAction SilentlyContinue
 } else {
-  Write-Warn 'No native worker to stop.'
+  Write-Warn 'No native worker recorded.'
+}
+
+# Belt and braces: a worker from an earlier cycle that outlived its pid file is
+# still a worker, and it will still poll and open browsers.
+$stray = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -and $_.CommandLine -like '*apps?worker*' }
+if ($stray) {
+  Write-Step "Stopping $($stray.Count) leftover worker process(es)..."
+  foreach ($proc in $stray) {
+    Invoke-Native taskkill @('/PID', "$($proc.ProcessId)", '/T', '/F') | Out-Null
+  }
+  # Killing a tree takes its children with it, so later entries in this list are
+  # often already gone. taskkill says so and returns non-zero; that is the
+  # expected outcome here, not a failure of the script.
+  $global:LASTEXITCODE = 0
+  Write-Done 'Leftovers stopped.'
 }
 
 # -- The stack ---------------------------------------------------------------

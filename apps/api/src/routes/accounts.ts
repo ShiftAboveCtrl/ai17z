@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { CadenceConfig, CreateAccountInput } from '@xbam/shared/contracts';
+import { BrowserEngine, CadenceConfig, CreateAccountInput } from '@xbam/shared/contracts';
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
 import { accounts as accountsRepo, cadences as cadencesRepo, ops, type UserRow } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@xbam/channels';
@@ -63,7 +63,8 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         await accountsRepo.upsertBrowserSession({
           accountId: account.id,
           mode: input.browser?.mode ?? 'MANAGED',
-          channel: input.browser?.channel ?? 'chromium',
+          channel: 'chrome',
+          engine: 'GOOGLE_CHROME',
           profileDir: defaultProfileDir(account.id),
           cdpUrl: input.browser?.cdpUrl || null,
         });
@@ -128,8 +129,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
           settings: z.record(z.unknown()).optional(),
           browser: z
             .object({
-              mode: z.enum(['MANAGED', 'CDP']),
-              channel: z.enum(['chrome', 'msedge', 'chromium']).default('chromium'),
+              engine: BrowserEngine,
               cdpUrl: z.string().max(500).default(''),
             })
             .optional(),
@@ -137,10 +137,15 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         request,
       );
       if (body.browser) {
+        // mode and channel are derived from the engine. They stay in the row so
+        // older readers keep working, but the engine is what decides anything.
+        const engine = body.browser.engine;
         await accountsRepo.upsertBrowserSession({
           accountId: account.id,
-          mode: body.browser.mode,
-          channel: body.browser.channel,
+          engine,
+          mode: engine === 'CUSTOM_CDP' ? 'CDP' : 'MANAGED',
+          channel:
+            engine === 'GOOGLE_CHROME' ? 'chrome' : engine === 'MICROSOFT_EDGE' ? 'msedge' : 'chromium',
           profileDir: defaultProfileDir(account.id),
           cdpUrl: body.browser.cdpUrl || null,
         });

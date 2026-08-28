@@ -111,6 +111,28 @@ export const ACCOUNT_STATUSES_IN_PROGRESS: readonly AccountStatus[] = [
  */
 export const ACCOUNT_STATUSES_WATCHABLE: readonly AccountStatus[] = ['AWAITING_LOGIN', 'AUTHENTICATING'];
 
+/**
+ * Which browser binary drives an account.
+ *
+ * Named after the browser rather than the arrangement. "Managed" and "real"
+ * described how AI17Z related to the browser and said nothing about which
+ * executable was running, which is the only thing anybody actually wants to
+ * know. There is no path between these: asking for Google Chrome and getting
+ * Chromium because Chrome was missing is a failure, not a fallback.
+ */
+export const BROWSER_ENGINES = [
+  /** The installed Google Chrome. AI17Z starts it and attaches over CDP. */
+  'GOOGLE_CHROME',
+  /** The installed Microsoft Edge, same arrangement. */
+  'MICROSOFT_EDGE',
+  /** The Chromium that ships with Playwright. Never a substitute for Chrome. */
+  'PLAYWRIGHT_CHROMIUM',
+  /** A browser somebody else started, reached at a URL they supply. */
+  'CUSTOM_CDP',
+] as const;
+export const BrowserEngine = enumOf(BROWSER_ENGINES).schema;
+export type BrowserEngine = (typeof BROWSER_ENGINES)[number];
+
 export const BROWSER_MODES = ['MANAGED', 'CDP'] as const;
 export const BrowserMode = enumOf(BROWSER_MODES).schema;
 export type BrowserMode = (typeof BROWSER_MODES)[number];

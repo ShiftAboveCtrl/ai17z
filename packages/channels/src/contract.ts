@@ -14,8 +14,10 @@ export interface ChannelContext {
   account: Account;
   /** Session configuration for channels that drive a browser. */
   session: {
+    /** Which binary. Named after the browser, not after the arrangement. */
+    engine: 'GOOGLE_CHROME' | 'MICROSOFT_EDGE' | 'PLAYWRIGHT_CHROMIUM' | 'CUSTOM_CDP';
     mode: 'MANAGED' | 'CDP';
-    /** Real installed browser, or the bundled Chromium. */
+    /** Legacy field, kept so existing rows read cleanly. Prefer `engine`. */
     channel: 'chrome' | 'msedge' | 'chromium';
     profileDir: string | null;
     cdpUrl: string | null;

@@ -119,6 +119,17 @@ if ($NoBrowser) {
     try { $alive = $null -ne (Get-Process -Id ([int]$existing) -ErrorAction Stop) } catch { $alive = $false }
   }
 
+  # A worker from an earlier cycle counts, whether or not the pid file knows
+  # about it. Two workers means two of everything, including browsers.
+  if (-not $alive) {
+    $running = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -and $_.CommandLine -like '*apps?worker*' }
+    if ($running) {
+      Write-Warn "A native worker is already running (pid $($running[0].ProcessId)). Not starting another."
+      $alive = $true
+    }
+  }
+
   if ($alive) {
     Write-Done "Native worker already running (pid $existing)."
   } else {
