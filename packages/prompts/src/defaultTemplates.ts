@@ -149,7 +149,10 @@ Say plainly that you cannot see it rather than guessing what it shows.
     key: 'IMMEDIATE_CONTEXT',
     title: 'Immediate context',
     role: 'user',
-    template: `{{#threadTranscript}}CONVERSATION SO FAR
+    template: `{{#threadState}}WHERE THIS CONVERSATION HAS GOT TO
+{{threadState}}
+
+{{/threadState}}{{#threadTranscript}}CONVERSATION SO FAR
 {{threadTranscript}}
 
 {{/threadTranscript}}{{#parentText}}THE MESSAGE BEING REPLIED TO
