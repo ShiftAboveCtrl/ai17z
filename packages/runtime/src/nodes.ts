@@ -13,6 +13,8 @@ import {
   stepStanceCheck,
   stepEngagement,
   stepIntent,
+  stepVoice,
+  stepQualityGate,
   stepRetrieveMemory,
   stepValidate,
 } from './steps';
@@ -189,6 +191,14 @@ export const NODE_HANDLERS: Record<string, NodeHandler> = {
   },
   STANCE: async (bundle) => {
     await stepStance(bundle);
+    return { branch: 'next' };
+  },
+  VOICE: async (bundle) => {
+    await stepVoice(bundle);
+    return { branch: 'next' };
+  },
+  QUALITY_GATE: async (bundle) => {
+    await stepQualityGate(bundle);
     return { branch: 'next' };
   },
   STANCE_CHECK: async (bundle) => {

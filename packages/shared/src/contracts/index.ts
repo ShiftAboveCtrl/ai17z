@@ -11,6 +11,7 @@ export * from './multimodal';
 export * from './relationship';
 export * from './stance';
 export * from './engagement';
+export * from './voice';
 export * from './domain';
 export * from './runtime';
 export * from './api';

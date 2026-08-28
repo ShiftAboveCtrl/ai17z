@@ -14,6 +14,7 @@ import { IntelligenceSection } from './sections/IntelligenceSection';
 import { MemorySection } from './sections/MemorySection';
 import { RelationshipsSection } from './sections/RelationshipsSection';
 import { BeliefsSection } from './sections/BeliefsSection';
+import { VoiceSection } from './sections/VoiceSection';
 import { PipelineSection } from './sections/PipelineSection';
 import { ToolsSection } from './sections/ToolsSection';
 import { PoliciesSection } from './sections/PoliciesSection';
@@ -24,6 +25,7 @@ const AgentPortrait = lazy(() => import('@app/components/AgentPortrait').then((m
 
 const SECTIONS = [
   ['identity', 'Identity'],
+  ['voice', 'Voice'],
   ['accounts', 'Accounts'],
   ['intelligence', 'Intelligence'],
   ['relationships', 'Relationships'],
@@ -209,31 +211,32 @@ export function AgentPage() {
 
       <div className="mx-auto max-w-page px-6 sm:px-10">
         <IdentitySection index={1} agentId={agent.id} agentName={agent.name} persona={persona} onSaved={reload} />
-        <AccountsSection index={2} agentId={agent.id} accounts={accounts} onChanged={reload} />
-        <IntelligenceSection index={3} agentId={agent.id} models={models} onChanged={reload} />
-        <RelationshipsSection index={4} agentId={agent.id} />
-        <BeliefsSection index={5} agentId={agent.id} />
-        <MemorySection index={6} agentId={agent.id} counts={memoryCounts} />
+        <VoiceSection index={2} agentId={agent.id} />
+        <AccountsSection index={3} agentId={agent.id} accounts={accounts} onChanged={reload} />
+        <IntelligenceSection index={4} agentId={agent.id} models={models} onChanged={reload} />
+        <RelationshipsSection index={5} agentId={agent.id} />
+        <BeliefsSection index={6} agentId={agent.id} />
+        <MemorySection index={7} agentId={agent.id} counts={memoryCounts} />
         <PipelineSection
-          index={7}
+          index={8}
           pipeline={pipeline}
           triggerLabel={channel ? `When someone mentions ${agent.name}.` : `When ${agent.name} receives an event.`}
         />
         <ToolsSection
-          index={8}
+          index={9}
           agentId={agent.id}
           tools={tools}
           allowedKeys={policy?.config.tools.allowed ?? []}
           onChanged={reload}
         />
         <PoliciesSection
-          index={9}
+          index={10}
           agentId={agent.id}
           policy={policy?.config ?? null}
           version={policy?.version ?? 1}
           onSaved={reload}
         />
-        <ActivitySection index={10} agentId={agent.id} />
+        <ActivitySection index={11} agentId={agent.id} />
       </div>
 
       <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title={`Delete ${agent.name}?`}>

@@ -293,6 +293,10 @@ export const PIPELINE_NODE_KINDS = [
   'ASSEMBLE_PERSONA',
   'GENERATE',
   'VALIDATE',
+  /** Makes the draft sound like this agent, whatever model wrote it. */
+  'VOICE',
+  /** Weighs voice, repetition and generic prose, and decides what to do. */
+  'QUALITY_GATE',
   /** Checks a draft against positions the agent has already taken publicly. */
   'STANCE_CHECK',
   'CONDITION',

@@ -111,6 +111,8 @@ describe('the durable queue', () => {
       'persona',
       'generate',
       'validate',
+      'voice',
+      'quality',
       'consistency',
       'approval',
       'execute',
