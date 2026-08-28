@@ -28,6 +28,7 @@ export * as relationships from './repositories/relationships';
 export * as stances from './repositories/stances';
 export * as voice from './repositories/voice';
 export * as arcs from './repositories/arcs';
+export * as content from './repositories/content';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.
@@ -53,3 +54,4 @@ export type { RelationshipRow, CallbackRow } from './repositories/relationships'
 export type { StanceRow, EvidenceRow } from './repositories/stances';
 export type { FingerprintRow, RecentOutputRow } from './repositories/voice';
 export type { ThreadStateRow, NarrativeRow, EntityRow } from './repositories/arcs';
+export type { IdeaRow } from './repositories/content';
