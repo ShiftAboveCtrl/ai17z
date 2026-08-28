@@ -48,7 +48,7 @@ function Write-Warn($Message) { Write-Host "  $Message" -ForegroundColor Yellow 
 
 Write-Host ''
 
-# ── The native worker ───────────────────────────────────────────────────────
+# -- The native worker -------------------------------------------------------
 if (Test-Path $PidFile) {
   $workerPid = Get-Content $PidFile | Select-Object -First 1
   try {
@@ -67,7 +67,7 @@ if (Test-Path $PidFile) {
   Write-Warn 'No native worker to stop.'
 }
 
-# ── The stack ───────────────────────────────────────────────────────────────
+# -- The stack ---------------------------------------------------------------
 if ($KeepStack) {
   Write-Warn 'Leaving the containers running.'
 } elseif ($Volumes) {
