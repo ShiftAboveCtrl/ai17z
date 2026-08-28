@@ -253,3 +253,58 @@ export async function listTraits(agentId: string): Promise<TraitWithEvidence[]> 
   }
   return traits.map((t) => ({ ...t, evidence: byTrait.get(t.id) ?? [] }));
 }
+
+export interface SyncRequest {
+  text?: string;
+  limit: number;
+  incremental: boolean;
+}
+
+/**
+ * Records that a sync was asked for.
+ *
+ * The work happens in a worker rather than in the API, because the tool a
+ * source needs — twscrape, with its own account database — lives on a machine,
+ * and the API runs in a container that has neither.
+ */
+export async function requestSync(sourceId: string, request: SyncRequest): Promise<void> {
+  await query(
+    `UPDATE persona_sources
+        SET pending_request = $2::jsonb, claimed_by = NULL, claimed_at = NULL,
+            status = 'SYNCING', last_error = NULL
+      WHERE id = $1`,
+    [sourceId, JSON.stringify(request)],
+  );
+}
+
+/**
+ * Claims one requested sync.
+ *
+ * A claim older than the lease is retried: a worker that died mid-scrape should
+ * not leave a source stuck in SYNCING for ever, which is the same failure the
+ * browser task queue had.
+ */
+export async function claimSync(
+  workerId: string,
+  leaseMinutes = 20,
+): Promise<{ id: string; request: SyncRequest } | null> {
+  const row = await queryOne<{ id: string; pending_request: SyncRequest }>(
+    `UPDATE persona_sources SET claimed_by = $1, claimed_at = now()
+      WHERE id = (
+        SELECT id FROM persona_sources
+         WHERE pending_request IS NOT NULL
+           AND (claimed_at IS NULL OR claimed_at < now() - ($2::int * interval '1 minute'))
+         ORDER BY claimed_at NULLS FIRST
+         LIMIT 1 FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, pending_request`,
+    [workerId, leaseMinutes],
+  );
+  return row ? { id: row.id, request: row.pending_request } : null;
+}
+
+export async function clearSyncRequest(sourceId: string): Promise<void> {
+  await query('UPDATE persona_sources SET pending_request = NULL, claimed_by = NULL, claimed_at = NULL WHERE id = $1', [
+    sourceId,
+  ]);
+}
