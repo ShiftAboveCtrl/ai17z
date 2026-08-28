@@ -1,6 +1,6 @@
 import type { Capability, JobRecord, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
 import { MediaInventory, positionsConflict } from '@xbam/shared/contracts';
-import type { RelationshipContext, StanceContext } from '@xbam/shared/contracts';
+import type { QualityReport, RelationshipContext, StanceContext } from '@xbam/shared/contracts';
 import { PipelineError, contentSignature, truncate } from '@xbam/shared';
 import {
   actions as actionsRepo,
@@ -16,6 +16,7 @@ import {
   radar as radarRepo,
   relationships as relationshipsRepo,
   stances as stancesRepo,
+  voice as voiceRepo,
   withTransaction,
 } from '@xbam/database';
 import { retrieveMemories, applyWritePolicy } from '@xbam/memory';
@@ -34,6 +35,7 @@ import {
   readPosition,
 } from './stance';
 import { chooseIntent, decideEngagement, readTemperature, recentRepliesTo } from './engagement';
+import { compileForJob } from './voice';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -476,6 +478,19 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       if (callbackId) await relationshipsRepo.markCallbackUsed(callbackId).catch(() => undefined);
     }
 
+    // Everything published goes into the recent-output ledger, which is what the
+    // repetition check reads. Only real posts: a dry run said nothing.
+    if (result.status !== 'DRY_RUN') {
+      await voiceRepo
+        .recordOutput({
+          agentId: bundle.agent.id,
+          actionId: action.id,
+          text: output,
+          recipientHandle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+        })
+        .catch(() => undefined);
+    }
+
     // Positions, predictions and promises are recorded from what actually went
     // out. A draft is not something the agent has said, and a dry run is
     // explicitly not a public position.
@@ -906,5 +921,104 @@ export async function stepIntent(bundle: JobBundle): Promise<void> {
     await jobsRepo.updateJob(job.id, {
       resolvedContext: { ...context, meta: { ...context.meta, intent: decision } },
     });
+  }
+}
+
+/**
+ * Makes the draft sound like this agent, and judges whether it does.
+ *
+ * Runs after validation, so the text has already been through the output policy
+ * and this is only changing how it reads. The result replaces the validated
+ * output: what gets published is what came out of here.
+ */
+export async function stepVoice(bundle: JobBundle): Promise<void> {
+  const { job, policy } = bundle;
+  const draft = job.validatedOutput ?? job.generatedOutput;
+  if (!policy.voice.enabled || !draft) return;
+
+  const context = job.resolvedContext;
+  const compiled = await compileForJob({
+    agentId: bundle.agent.id,
+    jobId: job.id,
+    draft,
+    policy,
+    recipientHandle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+    // A dry run is for seeing what would be said, so it is worth showing the
+    // real thing; but a rewrite costs money and a dry run is not going out.
+    allowModelCall: !job.dryRun,
+    maxCalls: policy.budget.maxModelCallsPerJob,
+  });
+
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    type: 'VOICE_COMPILED',
+    message:
+      compiled.applied.length > 0
+        ? `Voice ${compiled.report.voice.score}/100 after ${compiled.applied.join(', ')}.`
+        : `Voice ${compiled.report.voice.score}/100, left as written.`,
+    data: {
+      applied: compiled.applied,
+      voice: compiled.report.voice,
+      modelCallUsed: compiled.modelCallUsed,
+      before: draft === compiled.text ? null : draft,
+    },
+  });
+
+  if (compiled.text !== draft) {
+    await jobsRepo.updateJob(job.id, { validatedOutput: compiled.text });
+  }
+
+  await jobsRepo.updateJob(job.id, {
+    resolvedContext: context
+      ? { ...context, meta: { ...context.meta, quality: compiled.report } }
+      : undefined,
+  });
+}
+
+/**
+ * The social quality gate.
+ *
+ * Everything it weighs has already been measured; this decides what to do about
+ * it. Sending a borderline reply to a person is better than publishing it and
+ * better than silently discarding it, so REVIEW is the default outcome for
+ * anything that fails.
+ */
+export async function stepQualityGate(bundle: JobBundle): Promise<void> {
+  const { job, policy } = bundle;
+  if (!policy.voice.enabled) return;
+
+  const report = (job.resolvedContext?.meta as { quality?: QualityReport } | undefined)?.quality;
+  if (!report) return;
+
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    type: 'QUALITY_SCORED',
+    level: report.outcome === 'accept' ? 'info' : 'warn',
+    message: report.reason,
+    data: {
+      voice: report.voice.score,
+      generic: report.generic.score,
+      repetition: report.repetition.score,
+      outcome: report.outcome,
+      genericReasons: report.generic.reasons,
+      repetitionMatched: report.repetition.matched,
+    },
+  });
+
+  if (report.repetition.score > policy.voice.repetitionRewriteAbove) {
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'REPETITION_DETECTED',
+      level: 'warn',
+      message: report.repetition.reason ?? 'Too close to something already said.',
+      data: { matched: report.repetition.matched, matchedAt: report.repetition.matchedAt },
+    });
+  }
+
+  if (report.outcome !== 'accept') {
+    throw PipelineError.review('quality_gate', report.reason);
   }
 }
