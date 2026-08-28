@@ -20,6 +20,7 @@ import {
   relationships as relationshipsRepo,
   stances as stancesRepo,
   voice as voiceRepo,
+  content as contentRepo,
   ops,
   pipelines as pipelinesRepo,
   providers as providersRepo,
@@ -511,6 +512,52 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         maxCalls: 1,
       });
       return { text: compiled.text, report: compiled.report, applied: compiled.applied };
+    }),
+  );
+
+  // ── Content ───────────────────────────────────────────────────────────────
+  //
+  // Ideas come from things that happened. An agent with an empty backlog posts
+  // nothing, which is the correct outcome rather than a gap to be filled.
+  app.get(
+    '/api/agents/:id/ideas',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const q = request.query as { status?: string };
+      return {
+        counts: await contentRepo.counts(agent.id),
+        items: await contentRepo.listIdeas(agent.id, q.status, 60),
+      };
+    }),
+  );
+
+  app.post(
+    '/api/agents/:id/ideas',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(
+        z.object({
+          summary: z.string().trim().min(5).max(500),
+          detail: z.string().max(2_000).default(''),
+          kind: z.string().max(40).default('observation'),
+          score: z.number().int().min(0).max(100).default(70),
+        }),
+        request,
+      );
+      return contentRepo.addIdea({ agentId: agent.id, ...body, source: 'you' });
+    }),
+  );
+
+  app.patch(
+    '/api/agents/:id/ideas/:ideaId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      await ownedAgent(params(request).id!, user);
+      const body = parseBody(z.object({ status: z.enum(['unused', 'used', 'discarded']) }), request);
+      await contentRepo.resolveIdea(params(request).ideaId!, body.status);
+      return { status: body.status };
     }),
   );
 

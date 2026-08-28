@@ -37,6 +37,7 @@ import {
 import { chooseIntent, decideEngagement, readTemperature, recentRepliesTo } from './engagement';
 import { compileForJob } from './voice';
 import { loadThreadContext, observeEntities, recordNarratives } from './arcs';
+import { harvestIdeas } from './content';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -477,6 +478,20 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       // can be offered again.
       const callbackId = (context?.meta as { callbackId?: string } | undefined)?.callbackId;
       if (callbackId) await relationshipsRepo.markCallbackUsed(callbackId).catch(() => undefined);
+    }
+
+    // Whether this exchange left something worth saying on its own later.
+    // Conservative: most conversations produce no idea at all, and a backlog
+    // padded with everything the agent has discussed is as useless as an empty
+    // one.
+    if (result.status !== 'DRY_RUN') {
+      await harvestIdeas({
+        agentId: bundle.agent.id,
+        jobId: job.id,
+        incoming: context?.incomingText ?? bundle.event.text,
+        outgoing: output,
+        handle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+      }).catch(() => undefined);
     }
 
     // What the agent keeps arguing, and what keeps coming up. Both are recorded
