@@ -8,6 +8,7 @@ export * from './relationship';
 export * from './stance';
 export * from './engagement';
 export * from './voice';
+export * from './arcs';
 export * from './pipeline';
 export * from './graph';
 export * from './nodes';

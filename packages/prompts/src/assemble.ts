@@ -21,6 +21,7 @@ import {
   renderRevisions,
   renderStances,
   renderTemplate,
+  renderThreadState,
   tidy,
 } from './render';
 import { describeDisclosure, describeIdentity } from './identity';
@@ -119,6 +120,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const mediaContext = (context.meta as { mediaContext?: SocialMediaContext } | undefined)?.mediaContext;
   const relationship = (context.meta as { relationship?: RelationshipContext } | undefined)?.relationship;
   const stance = (context.meta as { stance?: StanceContext } | undefined)?.stance;
+  const threadState = (context.meta as { thread?: Parameters<typeof renderThreadState>[0] } | undefined)?.thread;
   const openCommitments = (context.meta as { openCommitments?: { promise: string }[] } | undefined)?.openCommitments;
 
   const values = {
@@ -146,6 +148,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     quotedBlock: renderQuoted(mediaContext?.quoted ?? null),
     linkBlock: renderLinks(mediaContext?.links ?? []),
     mediaGap: mediaContext?.hasUnderstandingGap ? mediaContext.gapDetail ?? '' : '',
+    threadState: renderThreadState(threadState),
     threadTranscript: renderTranscript(context.thread, persona.displayName),
     parentText: context.parentText ?? '',
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',

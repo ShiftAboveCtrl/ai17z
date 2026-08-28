@@ -12,4 +12,5 @@ export {
   renderStances,
   renderRevisions,
   renderCommitments,
+  renderThreadState,
 } from './render';

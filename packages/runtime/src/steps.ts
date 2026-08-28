@@ -36,6 +36,7 @@ import {
 } from './stance';
 import { chooseIntent, decideEngagement, readTemperature, recentRepliesTo } from './engagement';
 import { compileForJob } from './voice';
+import { loadThreadContext, observeEntities, recordNarratives } from './arcs';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -478,6 +479,13 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       if (callbackId) await relationshipsRepo.markCallbackUsed(callbackId).catch(() => undefined);
     }
 
+    // What the agent keeps arguing, and what keeps coming up. Both are recorded
+    // from published text only: a draft is not an argument the agent has made.
+    if (result.status !== 'DRY_RUN') {
+      await recordNarratives(bundle.agent.id, output).catch(() => undefined);
+      await observeEntities(bundle.agent.id, output).catch(() => undefined);
+    }
+
     // Everything published goes into the recent-output ledger, which is what the
     // repetition check reads. Only real posts: a dry run said nothing.
     if (result.status !== 'DRY_RUN') {
@@ -720,6 +728,19 @@ export async function stepRelationship(bundle: JobBundle): Promise<void> {
     );
   }
 
+  // Where this conversation has got to, which is a different question from who
+  // the person is. Loaded here so both arrive together.
+  const thread = await loadThreadContext({
+    agentId: bundle.agent.id,
+    remoteConversationId: context?.conversationRef ?? bundle.event.remoteConversationId,
+    conversationId: job.conversationId,
+    participant: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+    thread: context?.thread ?? [],
+    policy,
+    jobId: job.id,
+    allowModelCall: !job.dryRun,
+  }).catch(() => null);
+
   await observability.emitTrace({
     jobId: job.id,
     agentId: bundle.agent.id,
@@ -739,7 +760,7 @@ export async function stepRelationship(bundle: JobBundle): Promise<void> {
     await jobsRepo.updateJob(job.id, {
       resolvedContext: {
         ...context,
-        meta: { ...context.meta, relationship: loaded.context, callbackId: loaded.callbackId },
+        meta: { ...context.meta, relationship: loaded.context, callbackId: loaded.callbackId, thread },
       },
     });
   }
