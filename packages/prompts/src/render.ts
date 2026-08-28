@@ -185,3 +185,22 @@ export function renderCommitments(commitments: { promise: string }[] | undefined
   if (!commitments || commitments.length === 0) return '';
   return commitments.map((c) => `- ${c.promise}`).join(NL);
 }
+
+/**
+ * Where a conversation has got to.
+ *
+ * The unresolved question comes last because it is the part a reply has to
+ * engage with, and burying it above the settled points makes it something the
+ * model has to go looking for.
+ */
+export function renderThreadState(
+  thread: { summary: string | null; mainTopic: string | null; openQuestion: string | null; resolvedPoints: string[]; turnCount: number } | null | undefined,
+): string {
+  if (!thread?.summary) return '';
+  const lines = [thread.summary];
+  if (thread.resolvedPoints.length > 0) {
+    lines.push(`Already settled: ${thread.resolvedPoints.join('; ')}. Do not reargue these.`);
+  }
+  if (thread.openQuestion) lines.push(`Still unresolved: ${thread.openQuestion}`);
+  return lines.join(NL);
+}
