@@ -15,6 +15,7 @@ import { MemorySection } from './sections/MemorySection';
 import { RelationshipsSection } from './sections/RelationshipsSection';
 import { BeliefsSection } from './sections/BeliefsSection';
 import { VoiceSection } from './sections/VoiceSection';
+import { BehaviourSection } from './sections/BehaviourSection';
 import { PipelineSection } from './sections/PipelineSection';
 import { ToolsSection } from './sections/ToolsSection';
 import { PoliciesSection } from './sections/PoliciesSection';
@@ -34,6 +35,7 @@ const SECTIONS = [
   ['pipeline', 'Pipeline'],
   ['tools', 'Tools'],
   ['policies', 'Policies'],
+  ['behaviour', 'Behaviour'],
   ['activity', 'Activity'],
 ] as const;
 
@@ -236,7 +238,8 @@ export function AgentPage() {
           version={policy?.version ?? 1}
           onSaved={reload}
         />
-        <ActivitySection index={11} agentId={agent.id} />
+        <BehaviourSection index={11} agentId={agent.id} />
+        <ActivitySection index={12} agentId={agent.id} />
       </div>
 
       <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title={`Delete ${agent.name}?`}>

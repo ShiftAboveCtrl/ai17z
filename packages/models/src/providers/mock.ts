@@ -13,6 +13,8 @@ const LABEL = 'Mock';
  *   mock-fail-permanent  always fails permanently
  *   mock-empty         returns whitespace, exercising the empty-output path
  *   mock-long          returns text longer than a typical channel limit
+ *   mock-chatty        same substance in a breezy assistant register
+ *   mock-formal        same substance in a stiff corporate register
  */
 export const mockAdapter: ProviderAdapter = {
   kind: 'mock',
@@ -37,6 +39,20 @@ export const mockAdapter: ProviderAdapter = {
       text = '   ';
     } else if (model === 'mock-long') {
       text = 'This mock reply is deliberately long. '.repeat(20);
+    } else if (model === 'mock-chatty' || model === 'mock-formal') {
+      // Two deliberately opposite house styles, for proving that an agent still
+      // sounds like itself after the voice compiler regardless of which model
+      // wrote the draft. The substance is identical; only the register differs.
+      const question = extractIncoming(lastUser);
+      const subject = truncateWords(question, 10) || 'this';
+      text =
+        model === 'mock-chatty'
+          ? `Great question! I'd say the thing that really matters with ${subject} is that adoption compounds ` +
+            `over time, and the noise around it matters much less than people tend to think. ` +
+            `Hope that helps — let me know if you have any other questions!`
+          : `It is important to note that, with regard to ${subject}, adoption compounds over time. ` +
+            `In order to facilitate a clear understanding, one should leverage the distinction between signal ` +
+            `and noise. In conclusion, the former is what ultimately matters.`;
     } else {
       // Deterministic: derived only from the incoming message, never random.
       const question = extractIncoming(lastUser);
