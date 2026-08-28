@@ -9,6 +9,7 @@ export * from './stance';
 export * from './engagement';
 export * from './voice';
 export * from './arcs';
+export * from './content';
 export * from './pipeline';
 export * from './graph';
 export * from './nodes';
