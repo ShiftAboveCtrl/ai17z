@@ -216,6 +216,66 @@ anything. Never exclude on length alone — a two-word reply can be the stronges
 signal there is. Keep excluded items: exclusion decides what to learn from, not
 what to remember. See `docs/architecture/PERSONA_SOURCES.md`.
 
+## The social layer
+
+The provider supplies intelligence; AI17Z supplies identity. Everything below
+exists so the same agent reads as the same agent whichever model wrote the
+draft. `docs/architecture/SOCIAL.md` is the full account.
+
+**Silence is a branch, not an error.** `ENGAGEMENT_DECISION` has three wired
+outcomes. A decision not to reply ends the job as `CANCELLED` with its reasons
+recorded — never as a thrown failure.
+
+**The reasons matter more than the scores.** "Reply value 18" tells nobody
+anything. Every heuristic here carries the factors that produced it through to
+the UI, and a score without its reasons is not shippable.
+
+**Identity is the post, not where it was found.** Several radar monitors will
+see the same mention; the reconciler merges on the remote status id and the
+existing unique index is what makes that safe. Never add a second event store.
+
+**Media that could not be read is an explicit gap.** The prompt says so and the
+model is told to admit it. Never let an unread image pass silently.
+
+**Vision uses the `vision` role only.** Falling back to the primary model sends
+an image to something that cannot read it and gets a confident description of
+nothing.
+
+**Relationships and stances are learned from what was published.** Not from
+drafts, not from dry runs. A dry run is explicitly not a public position, and an
+unanswered mention is not a conversation.
+
+**A changed stance supersedes rather than overwrites.** The old row is what lets
+the agent say it changed its mind. Only a straight reversal of a firmly held
+position is a conflict — an agent that cannot move from certain to hedged is
+stuck, not consistent.
+
+**The voice fingerprint is measurements, not adjectives.** "Tone: dry" is a
+label each provider reads differently. The free deterministic pass runs whatever
+the voice score is, because the score cannot see a helpdesk sign-off on a
+correctly-sized reply. A rewrite that scores worse is discarded, and a failed
+rewrite never fails the job.
+
+**The generic-AI score is about register, never about origin.** It must never be
+presented as evidence that text was machine-written.
+
+**Hostility is met with DEFLECT, never CHALLENGE.** Escalating is how an agent
+ends up in a fight on its owner's behalf.
+
+**Nothing infers anything sensitive about anybody.** Relationship memory holds
+what happened between the agent and a person; the entity graph records that two
+things were named together and makes no other claim.
+
+## Enums with CHECK constraints
+
+Four enums have a database CHECK behind them: account statuses, trace types,
+pipeline node kinds, and model roles. Growing one without widening its
+constraint fails at the database and passes every unit test — it has cost a
+broken sign-in once already.
+
+`tests/integration/statusConstraints.test.ts` writes every value of every one of
+them. Add to it when you add an enum with a constraint.
+
 ## Long operations
 
 Anything that can outlast a person's patience shows what it is doing, how long

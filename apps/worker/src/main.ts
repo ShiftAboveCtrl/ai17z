@@ -7,6 +7,8 @@ import { closeAllSessions } from '@xbam/browser';
 import { ChannelPoller } from './poller';
 import { SignInWatcher } from './signIn';
 import { SocialRadar } from './radar';
+import { PersonaSyncRunner } from './personaSync';
+import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 
 loadEnv();
@@ -44,12 +46,22 @@ async function main(): Promise<void> {
   // Announce what this worker can do before it starts, so the API can tell
   // somebody "nothing here can open a browser" instead of queueing a task that
   // waits for a worker which does not exist.
-  const announce = () =>
-    workersRepo
-      .heartbeat({ id: workerId, role, ...capabilities, hostname: hostname() })
+  const announce = async () => {
+    // Availability is answered by the process that would do the work, not by
+    // whichever one happens to be asked. The API container has no twscrape and
+    // no browser; saying so from there was the wrong answer to the question.
+    const tools: Record<string, { available: boolean; detail: string }> = {};
+    for (const adapter of listPersonaSourceAdapters()) {
+      const state = await adapter.availability().catch(() => null);
+      if (state) tools[`persona:${adapter.kind}`] = { available: state.available, detail: state.detail };
+    }
+
+    await workersRepo
+      .heartbeat({ id: workerId, role, ...capabilities, hostname: hostname(), tools })
       .catch((e) => log.warn('heartbeat failed', { message: errorMessage(e) }));
+  };
   await announce();
-  const heartbeat = setInterval(() => void announce(), 20_000);
+  const heartbeat = setInterval(() => void announce(), 60_000);
 
   /**
    * Frees browser tasks nothing is going to finish.
@@ -74,6 +86,10 @@ async function main(): Promise<void> {
   const browserTaskRunner = new BrowserTaskRunner(workerId);
   const signIns = new SignInWatcher();
   const socialRadar = new SocialRadar();
+  // Persona syncs run on every worker, not only browser-capable ones: what they
+  // need is a command on PATH, which is a different capability from a display.
+  const personaSync = new PersonaSyncRunner(workerId);
+  personaSync.start();
   await worker.start();
   if (capabilities.browserCapable) {
     poller.start();
@@ -97,6 +113,7 @@ async function main(): Promise<void> {
     browserTaskRunner.stop();
     signIns.stop();
     socialRadar.stop();
+    personaSync.stop();
     await worker.stop();
     await closeAllSessions().catch((e) => log.warn('browser cleanup failed', { message: errorMessage(e) }));
     await closePool().catch(() => undefined);
