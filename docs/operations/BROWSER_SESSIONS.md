@@ -114,3 +114,51 @@ What AI17Z does instead is use a real browser with a real session you signed int
 and pace itself through the rate policy. Short randomised settle delays exist
 because the X timeline is virtualised and acting on a stale frame is the largest
 source of flaky automation, not to disguise anything.
+
+## Why a managed profile gets flagged
+
+Managed mode launches a browser with a profile AI17Z created. Even when the
+channel is Real Chrome, that profile has no cookies, no history and no
+extensions — a browser that has apparently never been used before, signing in to
+an account with years of history behind it.
+
+X reads that as suspicious and answers with **"We've temporarily limited your
+login. Please try again later."** Nothing is wrong with the automation; the
+profile is the problem.
+
+Managed mode is fine for a fresh account, or once a profile has built up some
+history of its own. For signing in to an established account, attach to a
+browser that already has your session.
+
+## Attaching to your real browser
+
+Chrome has refused `--remote-debugging-port` on the default profile directory
+since version 136, so AI17Z cannot attach to your everyday Chrome in place. The
+route that works is a dedicated debugging directory **seeded from your real
+profile**, so it carries your actual cookies and history.
+
+Once, with Chrome fully closed:
+
+```powershell
+.\scripts\launch-chrome-cdp.ps1 -SeedFromProfile Default
+```
+
+That copies the profile — cookies, local storage, login data, history — into a
+dedicated directory and starts Chrome on it with debugging enabled. The window
+opens already signed in. Your original profile is copied, never moved or
+modified, and nothing leaves the machine.
+
+If you use more than one Chrome profile, `chrome://version` shows which is which
+under **Profile Path**; pass that folder name instead of `Default`.
+
+Then set the account to **Attach over CDP** with the URL the script prints, and
+leave the window open while AI17Z is working.
+
+### What this does and does not do
+
+- It uses **your** session, on **your** machine. Nothing is uploaded anywhere.
+- AI17Z never reads the cookie values; it hands the directory to Chrome.
+- It is not a way around a security challenge. If X asks for a code, AI17Z still
+  stops and waits for you.
+- The copy is a snapshot. Signing out in your everyday Chrome does not sign out
+  the debugging profile, and the reverse is also true.
