@@ -54,13 +54,31 @@
 }
 
 @layer components {
-  /* The monumental heading treatment: cool gradient, very tight tracking. */
+  /*
+   * The monumental heading treatment: cool gradient, very tight tracking.
+   *
+   * The padding is not spacing. These headings have no colour of their own —
+   * every pixel comes from the gradient, and a gradient is only painted inside
+   * the element's background box. Line-height 0.84 makes that box shorter than
+   * the glyphs: measured on "Your agents" at 204.8px, the baseline sits 158px
+   * down a 172px box, leaving 14px beneath it for a "y" whose ink descends 36px.
+   * The missing 22px is why the heading looked cut off along the bottom.
+   *
+   * So the box is extended past the descenders and the extension is taken back
+   * out of the layout, which keeps the spacing exactly as designed. In em, so it
+   * holds at 13vw on a phone and 6.4vw on a monitor rather than at one width.
+   * 0.28em clears Kanit (0.18em) and the system fallback the page uses before
+   * the webfont arrives or when it never does (0.24em). Raising the line-height
+   * would also fix it, and would lose the tight setting the headings exist for.
+   */
   .monument {
     @apply font-sans font-semibold leading-[0.86] tracking-monument;
     background: linear-gradient(180deg, #646973 0%, #bbccd7 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
+    padding-block-end: 0.28em;
+    margin-block-end: -0.28em;
   }
 
   .rule {
