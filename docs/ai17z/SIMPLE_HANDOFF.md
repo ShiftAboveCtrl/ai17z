@@ -1,6 +1,6 @@
 # Easy Mode, three tabs, and nested mentions — handoff
 
-Seven commits, 517 tests passing, on `ai17z-overhaul`.
+Eight commits, 517 tests passing, on `ai17z-overhaul`.
 
 ```
 91a4a3a  legacy-context-regression: the whole branch, not just one post above
@@ -10,6 +10,7 @@ e8d7ed8  easy-mode-config-layer: one configuration, described twice
 61b98a7  easy-agent-setup: connect, describe, choose, start
 785939f  verified-only: a switch that does something
 60288c5  chrome: find the browser that outlived the worker
+5f7dd04  ai17z-simplified-ux-rc: docs and handoff
 ```
 
 ---
