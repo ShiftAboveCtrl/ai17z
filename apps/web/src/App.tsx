@@ -8,6 +8,8 @@ import { Welcome } from '@app/routes/Welcome';
 
 // Route-level splitting keeps the first paint light; the agent page pulls in Three.js.
 const Home = lazy(() => import('@app/routes/Home').then((m) => ({ default: m.Home })));
+const EasySetup = lazy(() => import('@app/routes/EasySetup').then((m) => ({ default: m.EasySetup })));
+// The original eight-screen flow, kept in full for people who want every field.
 const CreateAgent = lazy(() => import('@app/routes/CreateAgent').then((m) => ({ default: m.CreateAgent })));
 const AgentPage = lazy(() => import('@app/routes/AgentPage').then((m) => ({ default: m.AgentPage })));
 const ActivityPage = lazy(() => import('@app/routes/ActivityPage').then((m) => ({ default: m.ActivityPage })));
@@ -50,7 +52,8 @@ export function App() {
       <Suspense fallback={<Loading />}>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/agents/new" element={<CreateAgent />} />
+          <Route path="/agents/new" element={<EasySetup />} />
+          <Route path="/agents/new/advanced" element={<CreateAgent />} />
           <Route path="/agents/:agentId" element={<AgentPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/jobs/:jobId" element={<JobPage />} />
