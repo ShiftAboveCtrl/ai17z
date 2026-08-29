@@ -19,3 +19,5 @@ export * from './channelContext';
 export * from './approvals';
 export * from './defaultPipeline';
 export * from './bootstrap';
+export * from './easyMode';
+export * from './originate';

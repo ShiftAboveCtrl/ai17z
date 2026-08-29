@@ -499,6 +499,34 @@ export const xAdapter: ChannelAdapter = {
   },
 
   async verifyAction(ctx: ChannelContext, request: ActionRequest): Promise<VerificationResult> {
+    // A post of the agent's own has no target. There is nothing to anchor to and
+    // nothing to get wrong, so verification is about the session rather than a
+    // status: is this account signed in and is it the account we think it is.
+    if (request.type === 'POST') {
+      return withSession(ctx, 'ACTION', async ({ page }) => {
+        await goto(page, X_URLS.home);
+        if (!(await isAuthenticated(page))) {
+          return {
+            verified: false,
+            detail: 'The X session is signed out, so nothing can be posted.',
+            targetRef: null,
+            targetUrl: null,
+            targetAuthorHandle: null,
+            evidence: { authenticated: false },
+          };
+        }
+        const handle = selfHandles(ctx)[0] ?? null;
+        return {
+          verified: true,
+          detail: handle ? `Signed in as @${handle}. A post has no target to verify.` : 'Signed in.',
+          targetRef: null,
+          targetUrl: null,
+          targetAuthorHandle: handle,
+          evidence: { authenticated: true, actionType: 'POST' },
+        };
+      });
+    }
+
     const targetRef = normalizeTargetId(request.targetRef);
     const statusId = extractStatusId(targetRef);
     const empty = { targetRef, targetUrl: null, targetAuthorHandle: null, evidence: {} as Record<string, unknown> };
@@ -574,7 +602,7 @@ export const xAdapter: ChannelAdapter = {
   },
 
   async executeAction(ctx: ChannelContext, request: ActionRequest): Promise<ActionResult> {
-    if (request.type !== 'REPLY') {
+    if (request.type !== 'REPLY' && request.type !== 'POST') {
       throw PipelineError.permanent('unsupported_action', `The X adapter cannot perform ${request.type} yet.`);
     }
     const verification = await xAdapter.verifyAction(ctx, request);
@@ -586,6 +614,7 @@ export const xAdapter: ChannelAdapter = {
     if (request.dryRun) {
       return { status: 'DRY_RUN', remoteActionId: null, remoteActionUrl: null, verification };
     }
+    if (request.type === 'POST') return postOwn(ctx, request, verification);
 
     const statusId = extractStatusId(verification.targetRef)!;
     const anchor = articleForStatus(statusId);
@@ -700,4 +729,115 @@ async function findOwnReply(
     return { statusId: snapshot.statusId, url: snapshot.url };
   }
   return null;
+}
+
+/**
+ * Posting something the agent decided to say.
+ *
+ * Deliberately not a variation on the reply path. A reply is anchored to
+ * somebody else's post and most of its risk is landing in the wrong place; a
+ * post has no target and all of its risk is going out twice or going out empty.
+ * So the checks are different: the composer is proved to hold the text before
+ * submitting, and the post is found on the account's own timeline afterwards
+ * rather than assumed from a closed dialog.
+ */
+async function postOwn(
+  ctx: ChannelContext,
+  request: ActionRequest,
+  verification: VerificationResult,
+): Promise<ActionResult> {
+  const me = selfHandles(ctx);
+
+  return withSession(ctx, 'ACTION', async ({ page }) => {
+    // The compose route opens a dialog on its own. When X changes it, the
+    // timeline's inline composer is the fallback rather than a failure.
+    await goto(page, X_URLS.compose);
+    let scope = page.locator(SEL.dialog).first();
+    let composer = scope.locator(SEL.composer).first();
+    let submit = scope.locator(`${SEL.submitInline}, ${SEL.submitButton}`).first();
+
+    if (!(await composer.isVisible().catch(() => false))) {
+      await goto(page, X_URLS.home);
+      scope = page.locator('main').first();
+      composer = scope.locator(SEL.inlineComposer).first();
+      submit = scope.locator(SEL.inlineSubmit).first();
+      if (!(await composer.isVisible().catch(() => false))) {
+        throw PipelineError.retryable('composer_did_not_open', 'The post composer did not open.');
+      }
+    }
+
+    await composer.click();
+    // Typed rather than pasted: X only enables the submit button once its editor
+    // has processed real input events.
+    await composer.type(request.text, { delay: 12 });
+    await settle(500, 1_100);
+
+    const typed = (await composer.innerText().catch(() => '')).trim();
+    if (!typed) {
+      throw PipelineError.retryable('composer_empty', 'The composer was still empty after typing the post.');
+    }
+    // The composer holding something other than what was written means the text
+    // was mangled on the way in, and posting it would publish the mangling.
+    const wanted = request.text.replace(/\s+/g, ' ').trim().slice(0, 40).toLowerCase();
+    if (!typed.replace(/\s+/g, ' ').toLowerCase().includes(wanted)) {
+      throw PipelineError.retryable(
+        'composer_text_mismatch',
+        'The composer does not contain the text that was typed into it.',
+        { typed: typed.slice(0, 120) },
+      );
+    }
+
+    if (!(await submit.isEnabled().catch(() => false))) {
+      throw PipelineError.retryable('post_button_disabled', 'X did not enable the post button.');
+    }
+    await submit.click({ timeout: 10_000 });
+    await settle(2_000, 3_500);
+
+    // Read back from the account's own timeline. A dialog that closed is not
+    // evidence that anything was published, which is the mistake the legacy
+    // poster made and reported as success.
+    const handle = me[0];
+    if (!handle) {
+      return {
+        status: 'EXECUTED' as const,
+        remoteActionId: null,
+        remoteActionUrl: null,
+        verification: {
+          ...verification,
+          detail: 'Post submitted. This account has no handle recorded, so it could not be confirmed.',
+          evidence: { ...verification.evidence, readBackConfirmed: false },
+        },
+      };
+    }
+
+    await goto(page, X_URLS.profile(handle));
+    const readBack = await findOwnReply(page, request.text, me);
+    await returnToIdle(page);
+
+    if (!readBack) {
+      // Reported as executed but unconfirmed rather than retried: retrying a
+      // post that may already be live is how an account posts twice.
+      return {
+        status: 'EXECUTED' as const,
+        remoteActionId: null,
+        remoteActionUrl: null,
+        verification: {
+          ...verification,
+          detail: 'Post submitted, but it was not visible on the profile on read-back.',
+          evidence: { ...verification.evidence, readBackConfirmed: false },
+        },
+      };
+    }
+
+    return {
+      status: 'EXECUTED' as const,
+      remoteActionId: readBack.statusId,
+      remoteActionUrl: readBack.url,
+      verification: {
+        ...verification,
+        detail: `Post confirmed on the profile as ${readBack.statusId}.`,
+        evidence: { ...verification.evidence, readBackConfirmed: true, postStatusId: readBack.statusId },
+      },
+    };
+  });
 }
