@@ -38,6 +38,8 @@ export interface AssembleInput {
   toolDescriptions: string[];
   /** Max characters of rendered memory, from the memory policy. */
   memoryCharBudget: number;
+  /** What the job is going to do. A post is written differently from a reply. */
+  actionType?: 'REPLY' | 'POST' | string;
 }
 
 export interface AssembledPrompt {
@@ -181,6 +183,13 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     incomingText: context.incomingText,
     toolsBlock: bulletList(input.toolDescriptions),
     outputRules: renderOutputRules(persona, policy),
+    // The TASK layer reads this. A post has no incoming message to answer, and
+    // telling a model to "reply" to its own brief produces something that reads
+    // like half a conversation.
+    taskInstruction:
+      input.actionType === 'POST'
+        ? `Write one ${input.channelName} post, as ${persona.displayName}. Nobody asked you anything; this is something you wanted to say.`
+        : `Write one ${input.channelName} reply to the incoming message above, as ${persona.displayName}.`,
   };
 
   const layers: PromptLayer[] = [];
