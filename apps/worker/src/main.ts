@@ -1,9 +1,9 @@
 import { hostname } from 'node:os';
 import { createLogger, envInt, envString, errorMessage, loadEnv } from '@xbam/shared';
-import { browserTasks, closePool, pingDatabase, workers as workersRepo } from '@xbam/database';
+import { accounts as accountsRepo, browserTasks, closePool, pingDatabase, workers as workersRepo } from '@xbam/database';
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import { bootstrapRuntime, runJob } from '@xbam/runtime';
-import { closeAllSessions } from '@xbam/browser';
+import { activeSessionAccountIds, closeAllSessions, sessionTabs } from '@xbam/browser';
 import { ChannelPoller } from './poller';
 import { SignInWatcher } from './signIn';
 import { SocialRadar } from './radar';
@@ -82,6 +82,31 @@ async function main(): Promise<void> {
   await sweep();
   const sweeper = setInterval(() => void sweep(), 60_000);
 
+  /**
+   * Publishes what each account's three tabs are doing.
+   *
+   * The API owns no browsers, so this process is the only one that can answer
+   * it. Ten seconds is fast enough that a tab someone closed shows as missing
+   * before they have finished wondering why nothing arrived, and cheap enough
+   * to be a single UPDATE per open browser.
+   */
+  const published = new Set<string>();
+  const publishTabs = async () => {
+    const live = new Set(activeSessionAccountIds());
+    for (const accountId of live) {
+      await accountsRepo.recordBrowserTabs(accountId, sessionTabs(accountId)).catch(() => undefined);
+      published.add(accountId);
+    }
+    // An account whose browser has gone needs one last write, or the page keeps
+    // showing three healthy tabs for a browser that closed an hour ago.
+    for (const accountId of published) {
+      if (live.has(accountId)) continue;
+      await accountsRepo.recordBrowserTabs(accountId, sessionTabs(accountId)).catch(() => undefined);
+      published.delete(accountId);
+    }
+  };
+  const tabReporter = capabilities.browserCapable ? setInterval(() => void publishTabs(), 10_000) : null;
+
   const poller = new ChannelPoller();
   const browserTaskRunner = new BrowserTaskRunner(workerId);
   const signIns = new SignInWatcher();
@@ -106,9 +131,12 @@ async function main(): Promise<void> {
     log.info('shutting down', { signal });
     clearInterval(heartbeat);
     clearInterval(sweeper);
+    if (tabReporter) clearInterval(tabReporter);
     // Withdraw immediately rather than waiting for the heartbeat to lapse: a
     // clean shutdown knows it is leaving.
     await workersRepo.goodbye(workerId).catch(() => undefined);
+    // One last honest snapshot before the browsers go.
+    await publishTabs().catch(() => undefined);
     poller.stop();
     browserTaskRunner.stop();
     signIns.stop();

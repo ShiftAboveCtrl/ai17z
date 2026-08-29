@@ -1,6 +1,7 @@
 export type BrowserEngine = 'GOOGLE_CHROME' | 'MICROSOFT_EDGE' | 'PLAYWRIGHT_CHROMIUM' | 'CUSTOM_CDP';
 
 import type { BrowserContext, Page } from 'playwright';
+import type { TabRole } from './tabs';
 
 export type { BrowserContext, Page };
 
@@ -53,7 +54,16 @@ export interface LeasedSession {
   identity: BrowserIdentity;
   context: BrowserContext;
   page: Page;
+  /** Which of the account's three tabs this page is. */
+  role: TabRole;
   mode: 'MANAGED' | 'CDP';
-  /** Release the page back. Managed contexts stay warm; CDP stays attached. */
+  /** Release the tab back. Managed contexts stay warm; CDP stays attached. */
   release(): Promise<void>;
+  /**
+   * Release after a failure, recording it against this tab.
+   *
+   * Kept separate from `release` so a monitor that keeps failing shows as one
+   * unhealthy surface rather than as an unhealthy account.
+   */
+  releaseFailed(message: string): Promise<void>;
 }

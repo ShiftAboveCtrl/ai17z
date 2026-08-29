@@ -209,6 +209,17 @@ export const PipelineDraft = z.object({
 });
 export type PipelineDraft = z.infer<typeof PipelineDraft>;
 
+/** One of the three role-bound tabs an account's browser keeps open. */
+export const BrowserTabStatus = z.object({
+  role: z.enum(['ACTION', 'MENTIONS', 'NOTIFICATIONS']),
+  state: z.enum(['READY', 'BUSY', 'MISSING', 'FAILED']),
+  url: z.string().nullable().default(null),
+  openedAt: z.string().nullable().default(null),
+  lastUsedAt: z.string().nullable().default(null),
+  lastError: z.string().nullable().default(null),
+});
+export type BrowserTabStatus = z.infer<typeof BrowserTabStatus>;
+
 export const BrowserSession = z.object({
   id: z.string().uuid(),
   accountId: z.string().uuid(),
@@ -229,5 +240,12 @@ export const BrowserSession = z.object({
   browserPid: z.number().int().nullable().default(null),
   cdpProduct: z.string().nullable().default(null),
   verifiedAt: z.string().nullable().default(null),
+  /**
+   * What each tab is doing, written by the worker. The API owns no browsers, so
+   * this is the only way the account page can tell a dead monitor from a quiet
+   * one.
+   */
+  tabs: z.array(BrowserTabStatus).default([]),
+  tabsUpdatedAt: z.string().nullable().default(null),
 });
 export type BrowserSession = z.infer<typeof BrowserSession>;

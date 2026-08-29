@@ -5,6 +5,7 @@ import type { BrowserContext, Page } from 'playwright';
 import { PipelineError, createLogger, envBool, errorMessage } from '@xbam/shared';
 import type { BrowserChannel, BrowserIdentity, LeasedSession, SessionConfig } from './types';
 import { cdpIdentity, cdpIsGoogleChrome, launchChrome, waitForCdp, type LaunchedChrome } from './chrome';
+import { acquireTab, lockTab, retagIfLost, tabHealth, type TabHealth, type TabMap, type TabRole } from './tabs';
 
 const log = createLogger('browser');
 
@@ -18,6 +19,8 @@ interface Entry {
   createdAt: number;
   lastUsedAt: number;
   closing: boolean;
+  /** The three role-bound tabs. Populated on first use of each role. */
+  tabs: TabMap;
   /**
    * Set when the browser goes away underneath us — usually because a person
    * closed the window we opened for them to sign in.
@@ -57,10 +60,6 @@ function isUsable(context: BrowserContext): boolean {
   }
 }
 
-async function acquirePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages();
-  return existing.length > 0 ? existing[0]! : await context.newPage();
-}
 
 const contexts = new Map<string, Entry>();
 
@@ -143,6 +142,7 @@ async function openContext(config: SessionConfig): Promise<Entry> {
         lastUsedAt: now,
         closing: false,
         dead: false,
+        tabs: new Map(),
       };
     } catch (error) {
       throw explainCdpFailure(error, config.cdpUrl);
@@ -181,6 +181,7 @@ async function openContext(config: SessionConfig): Promise<Entry> {
         lastUsedAt: now,
         closing: false,
         dead: false,
+        tabs: new Map(),
       };
     } catch (error) {
       throw explainLaunchFailure(error, config);
@@ -249,6 +250,7 @@ async function openContext(config: SessionConfig): Promise<Entry> {
       lastUsedAt: now,
       closing: false,
       dead: false,
+      tabs: new Map(),
     };
   } catch (error) {
     // A browser that started but could not be attached to is left running
@@ -367,11 +369,19 @@ function explainLaunchFailure(error: unknown, config: SessionConfig): PipelineEr
 }
 
 /**
- * Leases a page for one operation. Contexts are kept warm per account and
- * recycled when stale, which is what the legacy system achieved with a manual
- * CDP-reconnect timer, except here it is owned by the application.
+ * Leases one role-bound tab for one operation.
+ *
+ * Contexts stay warm per account and are recycled when stale, which is what the
+ * legacy system achieved with a manual CDP-reconnect timer, except owned by the
+ * application. What is new is the role: the caller says whether it is acting,
+ * looking for mentions, or reading notifications, and gets the tab that belongs
+ * to that job. Operations on different roles run at the same time; operations
+ * on the same role queue behind each other.
+ *
+ * The default is ACTION because a caller that has not thought about roles is
+ * doing something to the account, and that is the tab it is safe to disturb.
  */
-export async function leaseSession(config: SessionConfig): Promise<LeasedSession> {
+export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTION'): Promise<LeasedSession> {
   if (!browserEnabled()) {
     throw PipelineError.permanent(
       'browser_disabled',
@@ -402,40 +412,77 @@ export async function leaseSession(config: SessionConfig): Promise<LeasedSession
     }
   }
 
-  let page: Page;
+  let tab;
   try {
-    page = await acquirePage(entry.context);
+    tab = await acquireTab(entry.context, entry.tabs, role);
   } catch (error) {
     // The context died between the check above and here, which is exactly what
     // happens when somebody closes the window at the wrong moment. Reopen once
     // rather than making the account unusable until the process restarts.
-    log.info('reopening a browser context that had gone away', { accountId: config.accountId });
+    log.info('reopening a browser context that had gone away', { accountId: config.accountId, role });
     await closeSession(config.accountId);
     entry = await openOnce(config);
     watchForClose(config.accountId, entry);
     contexts.set(config.accountId, entry);
     try {
-      page = await acquirePage(entry.context);
+      tab = await acquireTab(entry.context, entry.tabs, role);
     } catch (secondError) {
       throw explainLaunchFailure(secondError, config);
     }
     void error;
   }
 
+  // Held until release(). Different roles never wait on each other; this is the
+  // only thing stopping two operations sharing one tab and interleaving their
+  // navigations.
+  const unlock = await lockTab(tab);
+
+  // Re-assert the role tag now that nothing else is driving the page. A tab
+  // that navigated off x.com and back lost it, and an untagged tab is one a
+  // restarted worker would abandon and replace.
+  await retagIfLost(tab.page, role);
+
   const context = entry.context;
+  const page = tab.page;
   page.setDefaultTimeout(30_000);
   page.setDefaultNavigationTimeout(45_000);
 
   const current = entry;
+  let released = false;
   return {
     context,
     page,
+    role,
     identity: current.identity,
     mode: current.mode,
     async release() {
+      if (released) return;
+      released = true;
       current.lastUsedAt = Date.now();
+      tab.lastError = null;
+      unlock();
+    },
+    async releaseFailed(message: string) {
+      if (released) return;
+      released = true;
+      current.lastUsedAt = Date.now();
+      // Recorded on the tab rather than on the account, so a monitor that keeps
+      // failing shows up as one unhealthy surface instead of an unhealthy
+      // account with two working monitors.
+      tab.lastError = message.slice(0, 300);
+      unlock();
     },
   };
+}
+
+/**
+ * What each of an account's three tabs is doing.
+ *
+ * Reads the live cache and never opens anything, so asking is always safe.
+ */
+export function sessionTabs(accountId: string): TabHealth[] {
+  const entry = contexts.get(accountId);
+  return entry ? tabHealth(entry.tabs) : tabHealth(new Map());
 }
 
 export async function closeSession(accountId: string): Promise<void> {
@@ -495,6 +542,11 @@ export function defaultProfileDir(accountId: string): string {
 
 export function activeSessionCount(): number {
   return contexts.size;
+}
+
+/** Accounts with a browser open in this process, for the tab-health heartbeat. */
+export function activeSessionAccountIds(): string[] {
+  return [...contexts.keys()];
 }
 
 /**
