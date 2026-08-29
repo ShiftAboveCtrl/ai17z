@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronDown, Copy, Pause, Play, Trash2 } from 'lucide-react';
+import { ChevronDown, Copy, ExternalLink, Pause, Play, Settings2, Trash2 } from 'lucide-react';
 import { ApiError, del, patch, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AgentDetail } from '@app/lib/types';
@@ -20,6 +20,7 @@ import { PipelineSection } from './sections/PipelineSection';
 import { ToolsSection } from './sections/ToolsSection';
 import { PoliciesSection } from './sections/PoliciesSection';
 import { ActivitySection } from './sections/ActivitySection';
+import { EasyAgentView } from './EasyAgentView';
 
 // Three.js loads only once an agent page is actually open.
 const AgentPortrait = lazy(() => import('@app/components/AgentPortrait').then((m) => ({ default: m.AgentPortrait })));
@@ -39,17 +40,44 @@ const SECTIONS = [
   ['activity', 'Activity'],
 ] as const;
 
+/**
+ * Which of the two views somebody last used.
+ *
+ * Remembered across agents rather than per agent: a person is an Easy Mode
+ * person or an Advanced person, and being dropped into the other one because
+ * they clicked a different agent is disorienting.
+ */
+const MODE_KEY = 'ai17z.agentView';
+
+function readMode(): 'easy' | 'advanced' {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'advanced' ? 'advanced' : 'easy';
+  } catch {
+    // Private-mode browsers block storage. Easy is the right default anyway.
+    return 'easy';
+  }
+}
+
 export function AgentPage() {
   const { agentId = '' } = useParams();
   const { data, error, loading, reload } = useResource<AgentDetail>(agentId ? `/api/agents/${agentId}` : null);
   const [active, setActive] = useState<string>('identity');
+  const [mode, setMode] = useState<'easy' | 'advanced'>(readMode);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      // Not being able to remember the preference is not worth reporting.
+    }
+  }, [mode]);
+
   // Highlights whichever section currently owns the viewport.
   useEffect(() => {
-    if (!data) return;
+    if (!data || mode !== 'advanced') return;
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries
@@ -64,7 +92,7 @@ export function AgentPage() {
       if (node) observer.observe(node);
     }
     return () => observer.disconnect();
-  }, [data]);
+  }, [data, mode]);
 
   if (loading && !data) return <Loading label="Loading agent" />;
   if (error) {
@@ -165,14 +193,40 @@ export function AgentPage() {
               )}
               {paused ? 'Resume' : 'Pause'}
             </button>
-            <button type="button" className="btn-quiet" onClick={() => void duplicate()} disabled={busy}>
-              <Copy className="h-3.5 w-3.5" aria-hidden />
-              Duplicate
+            {channel?.channel === 'x' && channel.handle && (
+              <a
+                className="btn-quiet"
+                href={`https://x.com/${channel.handle}`}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                Open X
+              </a>
+            )}
+            <Link className="btn-quiet" to="/activity">
+              Activity
+            </Link>
+            <button
+              type="button"
+              className="btn-quiet"
+              onClick={() => setMode(mode === 'easy' ? 'advanced' : 'easy')}
+            >
+              <Settings2 className="h-3.5 w-3.5" aria-hidden />
+              {mode === 'easy' ? 'Advanced' : 'Simple view'}
             </button>
-            <button type="button" className="btn-quiet hover:text-signal-fail" onClick={() => setConfirmDelete(true)}>
-              <Trash2 className="h-3.5 w-3.5" aria-hidden />
-              Delete
-            </button>
+            {mode === 'advanced' && (
+              <>
+                <button type="button" className="btn-quiet" onClick={() => void duplicate()} disabled={busy}>
+                  <Copy className="h-3.5 w-3.5" aria-hidden />
+                  Duplicate
+                </button>
+                <button type="button" className="btn-quiet hover:text-signal-fail" onClick={() => setConfirmDelete(true)}>
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  Delete
+                </button>
+              </>
+            )}
           </div>
         </FadeIn>
 
@@ -188,9 +242,17 @@ export function AgentPage() {
           </p>
         )}
 
-        <ChevronDown className="mt-16 h-5 w-5 animate-bounce text-bone-faint/60" aria-hidden />
+        {mode === 'advanced' && <ChevronDown className="mt-16 h-5 w-5 animate-bounce text-bone-faint/60" aria-hidden />}
       </section>
 
+      {mode === 'easy' && (
+        <div className="mx-auto max-w-3xl px-6 pb-8 sm:px-10">
+          <EasyAgentView agent={data} />
+        </div>
+      )}
+
+      {mode === 'advanced' && (
+      <>
       <nav className="sticky top-[3.75rem] z-30 border-y border-ink-line bg-ink/90 backdrop-blur-md sm:top-[3.5rem]">
         <div className="scroll-x mx-auto max-w-page px-6 sm:px-10">
           <ul className="flex gap-6 py-3">
@@ -241,6 +303,8 @@ export function AgentPage() {
         <BehaviourSection index={11} agentId={agent.id} />
         <ActivitySection index={12} agentId={agent.id} />
       </div>
+      </>
+      )}
 
       <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title={`Delete ${agent.name}?`}>
         <div className="space-y-5">
