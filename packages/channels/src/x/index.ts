@@ -1,6 +1,14 @@
 import type { NormalizedEvent, RadarPollResult, ResolvedContext } from '@xbam/shared/contracts';
 import { PipelineError, envBool, errorMessage, sleep } from '@xbam/shared';
-import { captureScreenshot, resolveProfileDir, leaseSession, safeUrl, type LeasedSession, type Page } from '@xbam/browser';
+import {
+  captureScreenshot,
+  resolveProfileDir,
+  leaseSession,
+  safeUrl,
+  type LeasedSession,
+  type Page,
+  type TabRole,
+} from '@xbam/browser';
 import type {
   ActionRequest,
   ActionResult,
@@ -41,20 +49,38 @@ async function settle(minMs = 350, maxMs = 900): Promise<void> {
   await sleep(minMs + Math.random() * (maxMs - minMs));
 }
 
-async function withSession<T>(ctx: ChannelContext, fn: (session: LeasedSession) => Promise<T>): Promise<T> {
-  const session = await leaseSession({
-    accountId: ctx.account.id,
-    mode: ctx.session?.mode ?? 'MANAGED',
-    profileDir: resolveProfileDir(ctx.account.id, ctx.session?.profileDir),
-    cdpUrl: ctx.session?.cdpUrl ?? null,
-    engine: ctx.session?.engine ?? 'GOOGLE_CHROME',
-    channel: ctx.session?.channel ?? null,
-    headless: envBool('XBAM_BROWSER_HEADLESS', false),
-  });
+/**
+ * Runs one operation on the tab that belongs to it.
+ *
+ * ACTION for anything that changes something on X or verifies where a change
+ * will land; MENTIONS and NOTIFICATIONS for the two discovery surfaces. Reading
+ * on one tab can no longer discard a composer open on another, and a monitor
+ * that fails is recorded against its own tab rather than against the account.
+ */
+async function withSession<T>(
+  ctx: ChannelContext,
+  role: TabRole,
+  fn: (session: LeasedSession) => Promise<T>,
+): Promise<T> {
+  const session = await leaseSession(
+    {
+      accountId: ctx.account.id,
+      mode: ctx.session?.mode ?? 'MANAGED',
+      profileDir: resolveProfileDir(ctx.account.id, ctx.session?.profileDir),
+      cdpUrl: ctx.session?.cdpUrl ?? null,
+      engine: ctx.session?.engine ?? 'GOOGLE_CHROME',
+      channel: ctx.session?.channel ?? null,
+      headless: envBool('XBAM_BROWSER_HEADLESS', false),
+    },
+    role,
+  );
   try {
-    return await fn(session);
-  } finally {
+    const result = await fn(session);
     await session.release();
+    return result;
+  } catch (error) {
+    await session.releaseFailed(errorMessage(error));
+    throw error;
   }
 }
 
@@ -167,6 +193,18 @@ async function readArticle(page: Page, articleSelector: string, index = 0): Prom
   };
 }
 
+/**
+ * Which tab a radar source belongs on.
+ *
+ * Notifications and mention search are separate sources precisely because
+ * either can miss things the other catches; running them on one tab would make
+ * them take turns and reintroduce the single point of failure they exist to
+ * remove.
+ */
+function monitorRole(kind: string): TabRole {
+  return kind === 'notifications' ? 'NOTIFICATIONS' : 'MENTIONS';
+}
+
 export const xAdapter: ChannelAdapter = {
   id: 'x',
   displayName: 'X',
@@ -174,7 +212,7 @@ export const xAdapter: ChannelAdapter = {
   requiresBrowser: true,
 
   async connect(ctx: ChannelContext): Promise<ConnectionResult> {
-    return withSession(ctx, async ({ page }) => {
+    return withSession(ctx, 'ACTION', async ({ page }) => {
       await goto(page, X_URLS.home);
       if (!(await isAuthenticated(page))) {
         return {
@@ -204,7 +242,7 @@ export const xAdapter: ChannelAdapter = {
 
   async healthCheck(ctx: ChannelContext): Promise<HealthResult> {
     try {
-      return await withSession(ctx, async ({ page }) => {
+      return await withSession(ctx, 'ACTION', async ({ page }) => {
         await goto(page, X_URLS.home);
         const authed = await isAuthenticated(page);
         return authed
@@ -240,7 +278,7 @@ export const xAdapter: ChannelAdapter = {
       return { candidates: [], cursor: null, error: `X has no ${request.kind} monitor.` };
     }
     try {
-      return await withSession(ctx, async ({ page }) =>
+      return await withSession(ctx, monitorRole(request.kind), async ({ page }) =>
         monitor({
           page,
           selfHandles: selfHandles(ctx),
@@ -258,7 +296,7 @@ export const xAdapter: ChannelAdapter = {
 
   async observeAuth(ctx: ChannelContext): Promise<AuthObservation> {
     try {
-      return await withSession(ctx, async ({ page }) => observeAuthPage(page));
+      return await withSession(ctx, 'ACTION', async ({ page }) => observeAuthPage(page));
     } catch (error) {
       return { state: 'UNREACHABLE', detail: errorMessage(error) };
     }
@@ -266,7 +304,7 @@ export const xAdapter: ChannelAdapter = {
 
   async captureDiagnostics(ctx: ChannelContext, reason: string): Promise<DiagnosticCapture | null> {
     try {
-      return await withSession(ctx, async ({ page }) => {
+      return await withSession(ctx, 'ACTION', async ({ page }) => {
         const shot = await captureScreenshot(page, ctx.storageDir, reason);
         return {
           kind: 'x_browser_failure',
@@ -282,7 +320,7 @@ export const xAdapter: ChannelAdapter = {
     }
   },
   async ingestEvents(ctx: ChannelContext, options: IngestOptions): Promise<NormalizedEvent[]> {
-    return withSession(ctx, async ({ page }) => {
+    return withSession(ctx, 'MENTIONS', async ({ page }) => {
       await goto(page, X_URLS.mentions);
       if (!(await isAuthenticated(page))) {
         throw PipelineError.permanent(
@@ -337,7 +375,7 @@ export const xAdapter: ChannelAdapter = {
       );
     }
 
-    return withSession(ctx, async ({ page }) => {
+    return withSession(ctx, 'ACTION', async ({ page }) => {
       const url = buildStatusUrl(targetRef)!;
       await goto(page, url);
 
@@ -468,7 +506,7 @@ export const xAdapter: ChannelAdapter = {
       return { verified: false, detail: 'No canonical X status could be derived from the target.', ...empty };
     }
 
-    return withSession(ctx, async ({ page }) => {
+    return withSession(ctx, 'ACTION', async ({ page }) => {
       const url = buildStatusUrl(targetRef)!;
       await goto(page, url);
 
@@ -552,7 +590,7 @@ export const xAdapter: ChannelAdapter = {
     const statusId = extractStatusId(verification.targetRef)!;
     const anchor = articleForStatus(statusId);
 
-    return withSession(ctx, async ({ page }) => {
+    return withSession(ctx, 'ACTION', async ({ page }) => {
       const article = page.locator(anchor).first();
       const replyButton = article.locator(SEL.replyButton).first();
       if (!(await replyButton.isVisible().catch(() => false))) {
@@ -598,6 +636,10 @@ export const xAdapter: ChannelAdapter = {
       // Read back rather than treating a closed dialog as proof, which is where
       // the legacy poster reported success it had not actually confirmed.
       const readBack = await findOwnReply(page, request.text, selfHandles(ctx));
+      // Leave the action tab somewhere harmless. A tab parked on a stranger's
+      // status page is one keystroke from doing something nobody asked for, and
+      // the next action navigates from wherever it finds itself.
+      await returnToIdle(page);
       if (!readBack) {
         return {
           status: 'EXECUTED' as const,
@@ -623,6 +665,23 @@ export const xAdapter: ChannelAdapter = {
     });
   },
 };
+
+/**
+ * Puts the action tab back to a known state after acting.
+ *
+ * Best-effort by design: a failure here has nothing to do with whether the
+ * reply was sent, and reporting it as one would be wrong.
+ */
+async function returnToIdle(page: Page): Promise<void> {
+  try {
+    if (await page.locator(SEL.dialog).first().isVisible().catch(() => false)) {
+      await page.keyboard.press('Escape').catch(() => undefined);
+    }
+    await page.goto(X_URLS.home, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+  } catch {
+    // Nothing to do about it, and nothing depends on it.
+  }
+}
 
 /** Looks for the reply we just sent, matching on author and text prefix. */
 async function findOwnReply(
