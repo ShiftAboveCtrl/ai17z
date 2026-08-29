@@ -41,6 +41,28 @@ export function checkAudience(policy: PolicyConfig, context: ResolvedContext): G
       message: `@${author} is not on this agent allowlist.`,
     };
   }
+  if (policy.content.requireVerifiedAuthor) {
+    const verified = context.conversation?.incoming.authorVerified ?? null;
+    if (verified === false) {
+      return {
+        allow: false,
+        kind: 'PERMANENT',
+        reason: 'author_not_verified',
+        message: `@${author} is not verified, and this agent only answers verified accounts.`,
+      };
+    }
+    if (verified === null) {
+      // Fails closed. A restriction that passes whenever it cannot check is not
+      // a restriction, and saying which of the two happened is the difference
+      // between a rule working and a channel that cannot report verification.
+      return {
+        allow: false,
+        kind: 'PERMANENT',
+        reason: 'verification_unknown',
+        message: `This agent only answers verified accounts, and whether @${author} is verified could not be read.`,
+      };
+    }
+  }
   return { allow: true };
 }
 

@@ -59,6 +59,9 @@ export const mockAdapter: ChannelAdapter = {
       text: event.text,
       createdAt: event.occurredAt,
       isSelf: false,
+      // The mock channel has no notion of a verified account, and saying so is
+      // what makes "only answer verified accounts" refuse rather than pass.
+      authorVerified: null,
     };
     const parent: ContextPost | null = parentText
       ? {
@@ -69,6 +72,7 @@ export const mockAdapter: ChannelAdapter = {
           text: parentText,
           createdAt: null,
           isSelf: false,
+          authorVerified: null,
         }
       : null;
 

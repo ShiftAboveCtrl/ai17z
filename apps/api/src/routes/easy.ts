@@ -13,6 +13,7 @@ import {
   workers as workersRepo,
   type UserRow,
 } from '@xbam/database';
+import { getChannelAdapter } from '@xbam/channels';
 import { postIntervalSeconds, readEasyView, toPersona, toPolicy, toRadarSourceKinds } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
@@ -229,13 +230,23 @@ async function preflight(agentId: string): Promise<Blocker[]> {
     if (!account) continue;
     if (account.channel === 'x') needsBrowser = true;
 
-    if (account.status !== 'CONNECTED') {
+    // Only a channel that signs in through a browser can be signed out of. The
+    // mock channel has no session, and telling somebody to sign in to it is
+    // advice they cannot act on.
+    const signsIn = getChannelAdapter(account.channel).requiresBrowser;
+    if (signsIn && account.status !== 'CONNECTED') {
       blockers.push({
         what:
           account.status === 'NEEDS_AUTH' || account.status === 'SESSION_EXPIRED'
-            ? `The X session for @${account.handle} has expired.`
+            ? `The ${account.channel.toUpperCase()} session for @${account.handle} has expired.`
             : `@${account.handle} is not connected (${account.status.toLowerCase().replace(/_/g, ' ')}).`,
         fix: 'Sign in again.',
+        where: 'account',
+      });
+    } else if (!signsIn && account.status === 'ERROR') {
+      blockers.push({
+        what: `@${account.handle} is in an error state: ${account.lastError ?? 'no reason recorded'}.`,
+        fix: 'Clear it from the account panel, or connect a different account.',
         where: 'account',
       });
     }

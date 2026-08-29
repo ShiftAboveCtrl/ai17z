@@ -143,6 +143,7 @@ export function toPolicy(setup: EasySetup, base: PolicyConfig = DEFAULT_POLICY):
     content: {
       ...base.content,
       allowedRemoteHandles: audience === 'ALLOWLIST' ? allowlist : [],
+      requireVerifiedAuthor: audience === 'VERIFIED_ONLY' || filters.verifiedOnly,
     },
     engagement: {
       ...base.engagement,
@@ -195,6 +196,7 @@ export function toRadarSourceKinds(setup: EasySetup): RadarSourceKind[] {
 
 function audienceOf(policy: PolicyConfig): EasyAudience {
   if (policy.content.allowedRemoteHandles.length > 0) return 'ALLOWLIST';
+  if (policy.content.requireVerifiedAuthor) return 'VERIFIED_ONLY';
   if (policy.engagement.strategy === 'ALWAYS_REPLY' && policy.engagement.minimumReplyValue === 0) {
     return 'EVERYONE';
   }
@@ -276,7 +278,7 @@ export function readEasyView(input: EasyViewInput): EasyView {
     massTags: policy.engagement.ignoreMassTags,
     repetition: policy.engagement.maxRepliesPerPersonPerHour <= 10,
     blocked: policy.content.blockedRemoteHandles.length >= 0,
-    verifiedOnly: false,
+    verifiedOnly: policy.content.requireVerifiedAuthor,
     directMentionsOnly: !input.radarSourceKinds.includes('reply_search'),
     repliesToOwnPosts: input.radarSourceKinds.includes('own_threads'),
     repliesInConversations: policy.engagement.allowThreadFollowUps,

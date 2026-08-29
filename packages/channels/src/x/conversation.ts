@@ -36,6 +36,8 @@ export interface ArticleSnapshot {
   text: string;
   url: string | null;
   createdAt: string | null;
+  /** Whether X shows a verified badge. Null when it could not be read. */
+  authorVerified: boolean | null;
   /**
    * Handles from the "Replying to @a @b" line X renders above a reply. X
    * truncates this list, so its absence proves nothing; its presence is a
@@ -77,6 +79,7 @@ function toPost(article: ArticleSnapshot, selfHandles: string[]): ContextPost {
     text: article.text,
     createdAt: article.createdAt,
     isSelf: Boolean(article.authorHandle && selfHandles.includes(article.authorHandle)),
+    authorVerified: article.authorVerified,
   };
 }
 

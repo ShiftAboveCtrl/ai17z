@@ -26,7 +26,7 @@ let nextId = 100;
 function article(
   handle: string,
   text: string,
-  options: { replyingTo?: string[]; statusId?: string; name?: string } = {},
+  options: { replyingTo?: string[]; statusId?: string; name?: string; verified?: boolean | null } = {},
 ): ArticleSnapshot {
   const statusId = options.statusId ?? String((nextId += 1));
   return {
@@ -37,6 +37,7 @@ function article(
     text,
     url: `https://x.com/${handle}/status/${statusId}`,
     createdAt: null,
+    authorVerified: options.verified ?? null,
     replyingTo: options.replyingTo ?? [],
   };
 }
@@ -255,6 +256,7 @@ describe('case 9: articles that are not posts', () => {
       text: 'Discover more',
       url: null,
       createdAt: null,
+      authorVerified: null,
       replyingTo: [],
     };
     const root = article('alice', 'Root.', { statusId: '8000' });
