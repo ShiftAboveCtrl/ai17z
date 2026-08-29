@@ -179,6 +179,17 @@ async function readArticle(page: Page, articleSelector: string, index = 0): Prom
     .getAttribute('datetime')
     .catch(() => null);
 
+  // X marks a verified account with a badge inside the name block. Its absence
+  // is reported as "not verified" only when the name block itself was readable;
+  // an unread block is unknown, not unverified.
+  const authorVerified = nameBlock
+    ? (await article
+        .locator(SEL.verifiedBadge)
+        .first()
+        .count()
+        .catch(() => 0)) > 0
+    : null;
+
   const whole = await article.innerText().catch(() => '');
 
   return {
@@ -189,6 +200,7 @@ async function readArticle(page: Page, articleSelector: string, index = 0): Prom
     text: textParts.join('\n').trim(),
     url: normalizeTargetId(url),
     createdAt,
+    authorVerified,
     replyingTo: replyingToHandles(whole),
   };
 }

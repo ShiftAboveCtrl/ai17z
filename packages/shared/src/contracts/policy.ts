@@ -40,6 +40,14 @@ export const ContentPolicy = z.object({
   allowedRemoteHandles: z.array(z.string().max(120)).max(2_000).default([]),
   /** Handles belonging to the agent itself. Never act on our own content. */
   selfHandles: z.array(z.string().max(120)).max(50).default([]),
+  /**
+   * Only answer authors the platform shows as verified.
+   *
+   * Fails closed: an author whose verification could not be read is refused
+   * too, because a restriction that quietly passes when it cannot check is not
+   * a restriction. The refusal says which of the two happened.
+   */
+  requireVerifiedAuthor: z.boolean().default(false),
 });
 export type ContentPolicy = z.infer<typeof ContentPolicy>;
 

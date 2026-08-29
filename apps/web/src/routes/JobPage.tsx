@@ -134,6 +134,8 @@ export function JobPage() {
         </section>
       )}
 
+      <ContextPanel job={job} retrievals={retrievals} />
+
       <WhyPanel trace={trace} />
 
       <section className="mt-14">
@@ -424,5 +426,108 @@ function WhyRow({ term, detail, tone = 'text-bone-dim' }: { term: string; detail
       <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">{term}</dt>
       <dd className={`text-sm leading-relaxed ${tone}`}>{detail}</dd>
     </div>
+  );
+}
+
+/**
+ * Who addressed the agent, what they were replying to, and what it read.
+ *
+ * The two failures this makes visible are the ones that used to be invisible:
+ * a reply about to go to the wrong post, and an agent answering a vague
+ * question because it never saw the post the question was about. The action
+ * target and the conversation are shown as separate things, because they are.
+ */
+function ContextPanel({ job, retrievals }: { job: JobDetail['job']; retrievals: JobDetail['retrievals'] }) {
+  const context = job.resolvedContext;
+  if (!context) return null;
+  const conversation = context.conversation;
+
+  return (
+    <section className="mt-14">
+      <div className="mb-4 flex items-baseline justify-between gap-4">
+        <p className="eyebrow">Context</p>
+        {conversation && (
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">
+            {conversation.method === 'STATUS_ANCHORED' ? 'anchored by status id' : 'event only'}
+            {conversation.branchConfirmed ? ' · branch confirmed' : ''}
+          </span>
+        )}
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-ink-line">
+        <div className="border-b border-ink-line bg-signal-calm/[0.05] px-5 py-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-signal-calm">Replying to</p>
+          <p className="mt-1.5 text-[13px] text-bone-dim">
+            {context.targetAuthorHandle ? `@${context.targetAuthorHandle}` : 'unknown author'}
+          </p>
+          <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-bone">
+            {conversation?.incoming.text || context.incomingText || '(no text)'}
+          </p>
+          {context.targetUrl && (
+            <a
+              href={context.targetUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="mt-2 block break-all font-mono text-[10px] text-bone-faint hover:text-bone-dim"
+            >
+              {context.targetUrl}
+            </a>
+          )}
+        </div>
+
+        {conversation && conversation.ancestors.length > 0 ? (
+          // Root first, direct parent last, exactly as the resolver produced it.
+          [...conversation.ancestors].reverse().map((post, index) => {
+            const isParent = index === 0;
+            const isRoot = index === conversation.ancestors.length - 1;
+            return (
+              <div key={post.remoteId ?? index} className="border-b border-ink-line px-5 py-3.5 last:border-b-0">
+                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">
+                  {isParent ? 'Parent' : isRoot ? 'Root' : `Ancestor ${conversation.ancestors.length - index}`}
+                  {' · '}
+                  {post.authorHandle ? `@${post.authorHandle}` : 'unknown'}
+                  {post.isSelf ? ' (this agent)' : ''}
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-bone-dim">{post.text}</p>
+              </div>
+            );
+          })
+        ) : context.parentText ? (
+          <div className="px-5 py-3.5">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">Parent</p>
+            <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-bone-dim">{context.parentText}</p>
+          </div>
+        ) : (
+          <div className="px-5 py-3.5">
+            <p className="text-[12px] text-bone-faint">Nothing above it. This was the start of the thread.</p>
+          </div>
+        )}
+
+        {conversation?.quote && (
+          <div className="border-t border-ink-line bg-ink-panel/40 px-5 py-3.5">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">
+              Quoted · {conversation.quote.authorHandle ? `@${conversation.quote.authorHandle}` : 'unknown'}
+            </p>
+            <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-bone-dim">
+              {conversation.quote.text}
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 font-mono text-[10px] text-bone-faint">
+        {conversation && (
+          <>
+            <span>{conversation.participants.length} participant(s)</span>
+            {conversation.excludedCount > 0 && <span>{conversation.excludedCount} left out (other branches)</span>}
+          </>
+        )}
+        <span>{retrievals.length} memory item(s)</span>
+      </div>
+
+      {conversation?.note && (
+        <p className="mt-2 text-[12px] leading-relaxed text-bone-faint">{conversation.note}</p>
+      )}
+    </section>
   );
 }
