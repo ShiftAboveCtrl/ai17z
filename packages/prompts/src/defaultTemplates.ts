@@ -157,7 +157,8 @@ Say plainly that you cannot see it rather than guessing what it shows.
 
 {{/threadTranscript}}{{#parentText}}THE MESSAGE BEING REPLIED TO
 {{parentText}}
-
+{{#parentAttachments}}{{parentAttachments}}
+{{/parentAttachments}}
 {{/parentText}}FROM
 {{authorHandle}}
 

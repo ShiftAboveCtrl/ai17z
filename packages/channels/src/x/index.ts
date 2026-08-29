@@ -18,7 +18,17 @@ import { SEL, X_URLS, articleForStatus } from './selectors';
 import { observeAuthPage } from './auth';
 import { X_MONITORS } from './monitors';
 import { readMediaInventory } from './media';
+import { type ArticleSnapshot, parentTextOf, resolveBranch } from './conversation';
 import { buildStatusUrl, extractStatusId, handleFromUrl, looksUnavailable, normalizeHandle, normalizeTargetId } from './targets';
+
+/**
+ * How far down a status page to read.
+ *
+ * A busy thread renders hundreds of replies, and everything past the focal post
+ * is a different branch anyway. Twenty covers a deep ancestor chain with room
+ * to spare and keeps one context resolution to a few hundred milliseconds.
+ */
+const MAX_ARTICLES_READ = 20;
 
 /**
  * Short randomised pause between UI steps.
@@ -84,15 +94,36 @@ function selfHandles(ctx: ChannelContext): string[] {
     .filter((h): h is string => Boolean(h));
 }
 
-interface ArticleSnapshot {
-  statusId: string | null;
-  authorHandle: string | null;
-  text: string;
-  url: string | null;
+/**
+ * Handles from the "Replying to @a @b" line X renders above a reply.
+ *
+ * There is no test id on that line, so it is read from the article's own text
+ * rather than by selector — which also means a redesign of the markup does not
+ * silently turn the cross-check off. X truncates the list ("and 3 others"), so
+ * this is a confirmation signal and never the thing that picks a parent.
+ */
+export function replyingToHandles(articleText: string): string[] {
+  const line = articleText.split('\n').find((l) => /^\s*replying to\b/i.test(l));
+  if (!line) return [];
+  return [...line.matchAll(/@([A-Za-z0-9_]{1,15})/g)]
+    .map((m) => normalizeHandle(m[1]))
+    .filter((h): h is string => Boolean(h));
+}
+
+/**
+ * Whether a post says enough to be answered without looking at anything else.
+ *
+ * Deliberately crude and deliberately conservative: "thoughts?" and "this?" are
+ * questions about something else, and treating them as self-contained is how an
+ * agent answers confidently about a chart it never saw.
+ */
+function textStandsAlone(text: string): boolean {
+  const withoutNoise = text.replace(/@[A-Za-z0-9_]{1,15}/g, '').replace(/https?:\/\/\S+/g, '').trim();
+  return withoutNoise.split(/\s+/).filter(Boolean).length >= 8;
 }
 
 /** Reads one anchored article. All extraction is scoped to the article element. */
-async function readArticle(page: Page, articleSelector: string): Promise<ArticleSnapshot> {
+async function readArticle(page: Page, articleSelector: string, index = 0): Promise<ArticleSnapshot> {
   const article = page.locator(articleSelector).first();
   const href = await article
     .locator('a[href*="/status/"]')
@@ -101,23 +132,38 @@ async function readArticle(page: Page, articleSelector: string): Promise<Article
     .catch(() => null);
   const url = href ? `https://x.com${href.startsWith('/') ? href : `/${href}`}` : null;
 
+  // "Display Name\n@handle\n·\n2h" is how X composes this block, so the first
+  // line is the display name and the rest is machine detail.
   const nameBlock = await article
     .locator(SEL.userName)
     .first()
     .innerText()
     .catch(() => '');
   const handleFromName = nameBlock.match(/@([A-Za-z0-9_]{1,15})/)?.[1] ?? null;
+  const displayName = nameBlock.split('\n')[0]?.trim() || null;
 
   const textParts = await article
     .locator(SEL.tweetText)
     .allInnerTexts()
     .catch(() => [] as string[]);
 
+  const createdAt = await article
+    .locator('time')
+    .first()
+    .getAttribute('datetime')
+    .catch(() => null);
+
+  const whole = await article.innerText().catch(() => '');
+
   return {
+    index,
     statusId: extractStatusId(url),
     authorHandle: normalizeHandle(handleFromName) ?? handleFromUrl(url),
+    authorDisplayName: displayName && !displayName.startsWith('@') ? displayName : null,
     text: textParts.join('\n').trim(),
     url: normalizeTargetId(url),
+    createdAt,
+    replyingTo: replyingToHandles(whole),
   };
 }
 
@@ -312,27 +358,7 @@ export const xAdapter: ChannelAdapter = {
       }
 
       const target = await readArticle(page, anchor);
-
-      // Preceding articles on a status page are the ancestor thread, oldest first.
-      const all = page.locator(SEL.tweetArticle);
-      const total = Math.min(await all.count(), 12);
-      const thread: ResolvedContext['thread'] = [];
-      let parentText: string | null = null;
       const me = selfHandles(ctx);
-
-      for (let index = 0; index < total; index += 1) {
-        const snapshot = await readArticle(page, `${SEL.tweetArticle} >> nth=${index}`);
-        if (!snapshot.text) continue;
-        if (snapshot.statusId === statusId) break;
-        parentText = snapshot.text;
-        thread.push({
-          role: snapshot.authorHandle && me.includes(snapshot.authorHandle) ? 'OUTBOUND' : 'INBOUND',
-          remoteMessageId: snapshot.statusId,
-          authorHandle: snapshot.authorHandle,
-          text: snapshot.text,
-          createdAt: null,
-        });
-      }
 
       // What is attached to the post. Read here rather than at ingest, because
       // the status page is where the media actually renders, and this is the one
@@ -342,17 +368,89 @@ export const xAdapter: ChannelAdapter = {
         return { media: [], quoted: null, links: [] };
       });
 
+      // Read every article on the page in order, then reason about them off the
+      // page. Which of them is the mention, which are its ancestors, and which
+      // belong to a different branch is decided in `resolveBranch`, where it is
+      // covered by fixtures rather than by whatever X rendered today.
+      const all = page.locator(SEL.tweetArticle);
+      const total = Math.min(await all.count(), MAX_ARTICLES_READ);
+      const snapshots: ArticleSnapshot[] = [];
+      for (let index = 0; index < total; index += 1) {
+        snapshots.push(await readArticle(page, `${SEL.tweetArticle} >> nth=${index}`, index));
+      }
+
+      const outcome = resolveBranch({
+        articles: snapshots,
+        focalStatusId: statusId,
+        selfHandles: me,
+        quote: inventory.quoted,
+      });
+
+      // The anchor above already proved this status is on the page, so a failure
+      // here means the page changed underneath us between the two reads.
+      if (!outcome.ok) {
+        throw PipelineError.retryable('branch_not_resolved', outcome.detail, { url, statusId, reason: outcome.reason });
+      }
+      const conversation = outcome.conversation;
+
+      // What the parent post is carrying, when the mention leans on it.
+      //
+      // "@agent thoughts?" under a chart is a question about the chart. Reading
+      // the parent's attachments costs one extra DOM pass, so it is only done
+      // when the mention says little on its own and carries nothing itself —
+      // which is exactly the case where answering without it means guessing.
+      let parentInventory = null;
+      const leansOnParent =
+        conversation.parent?.remoteId &&
+        inventory.media.length === 0 &&
+        !inventory.quoted &&
+        !textStandsAlone(conversation.incoming.text);
+      if (leansOnParent) {
+        parentInventory = await readMediaInventory(
+          page,
+          articleForStatus(conversation.parent!.remoteId!),
+          conversation.parent!.text,
+        ).catch(() => null);
+      }
+
+      // The invariant the whole design rests on: the action target is the post
+      // that addressed the agent, never an ancestor. Everything else here is
+      // context. If these ever disagree the reply is about to go to the wrong
+      // person, so it stops rather than guessing.
+      if (conversation.incoming.remoteId !== statusId) {
+        throw PipelineError.permanent(
+          'target_context_mismatch',
+          `Resolved branch reports incoming post ${conversation.incoming.remoteId ?? 'unknown'} but the action target is ${statusId}.`,
+        );
+      }
+
+      const thread: ResolvedContext['thread'] = conversation.ancestors.map((post) => ({
+        role: post.isSelf ? ('OUTBOUND' as const) : ('INBOUND' as const),
+        remoteMessageId: post.remoteId,
+        authorHandle: post.authorHandle,
+        text: post.text,
+        createdAt: post.createdAt,
+      }));
+
       return {
         targetRef,
         targetUrl: url,
         targetAuthorHandle: target.authorHandle ?? event.remoteAuthorHandle,
-        conversationRef: statusId,
-        incomingText: target.text || event.text,
-        parentText,
+        conversationRef: conversation.root?.remoteId ?? statusId,
+        incomingText: conversation.incoming.text || target.text || event.text,
+        parentText: parentTextOf(conversation),
         thread,
+        conversation,
         meta: {
           statusId,
           threadDepth: thread.length,
+          articlesOnPage: snapshots.length,
+          branchConfirmed: conversation.branchConfirmed,
+          excludedFromOtherBranches: conversation.excludedCount,
+          // Exposed rather than merged: this media belongs to the parent post,
+          // not to the incoming one, and conflating them would tell the model
+          // the wrong person attached it.
+          parentInventory,
           resolvedAt: new Date().toISOString(),
           // Carried in meta so nothing downstream of the adapter has to know
           // what an X media container looks like.

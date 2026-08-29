@@ -1,4 +1,4 @@
-import type { NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
+import type { ContextPost, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
 import { PipelineError, sha256Hex } from '@xbam/shared';
 import type {
   ActionRequest,
@@ -46,14 +46,54 @@ export const mockAdapter: ChannelAdapter = {
   async resolveContext(_ctx: ChannelContext, event: NormalizedEvent): Promise<ResolvedContext> {
     const raw = event.raw as { parentText?: unknown; thread?: unknown };
     const parentText = typeof raw.parentText === 'string' && raw.parentText.trim() ? raw.parentText : null;
+    const targetRef = event.remoteMessageId ?? event.remoteEventId;
+
+    // The mock has no page to read, so the branch is whatever the caller stated.
+    // Reported as EVENT_ONLY for exactly that reason: a resolver that says it
+    // read a thread it never saw is worse than one that admits it did not.
+    const incoming: ContextPost = {
+      remoteId: targetRef,
+      remoteUrl: event.remoteUrl,
+      authorHandle: event.remoteAuthorHandle,
+      authorDisplayName: event.remoteAuthorDisplayName,
+      text: event.text,
+      createdAt: event.occurredAt,
+      isSelf: false,
+    };
+    const parent: ContextPost | null = parentText
+      ? {
+          remoteId: event.parentRemoteMessageId,
+          remoteUrl: null,
+          authorHandle: null,
+          authorDisplayName: null,
+          text: parentText,
+          createdAt: null,
+          isSelf: false,
+        }
+      : null;
+
     return {
-      targetRef: event.remoteMessageId ?? event.remoteEventId,
+      targetRef,
       targetUrl: event.remoteUrl,
       targetAuthorHandle: event.remoteAuthorHandle,
       conversationRef: event.remoteConversationId ?? event.remoteEventId,
       incomingText: event.text,
       parentText,
       thread: [],
+      conversation: {
+        incoming,
+        parent,
+        ancestors: parent ? [parent] : [],
+        root: parent,
+        quote: null,
+        participants: event.remoteAuthorHandle ? [event.remoteAuthorHandle] : [],
+        excludedCount: 0,
+        method: 'EVENT_ONLY',
+        branchConfirmed: false,
+        note: parent
+          ? 'Mock channel: the parent was supplied with the event, not read from a page.'
+          : 'Mock channel: only the incoming message is known.',
+      },
       meta: { channel: 'mock', resolvedAt: new Date().toISOString() },
     };
   },

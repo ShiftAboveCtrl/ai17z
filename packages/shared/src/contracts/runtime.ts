@@ -13,6 +13,7 @@ import {
   ProviderKind,
   TraceEventType,
 } from './enums';
+import { QuotedPost } from './multimodal';
 
 /**
  * Platform-independent inbound event. Channel adapters normalise into this shape;
@@ -49,9 +50,70 @@ export const ContextMessage = z.object({
 });
 export type ContextMessage = z.infer<typeof ContextMessage>;
 
+/** One post in a conversation, with everything known about who wrote it. */
+export const ContextPost = z.object({
+  remoteId: z.string().max(300).nullable().default(null),
+  remoteUrl: z.string().max(2_000).nullable().default(null),
+  authorHandle: z.string().max(300).nullable().default(null),
+  authorDisplayName: z.string().max(300).nullable().default(null),
+  text: z.string().max(50_000).default(''),
+  createdAt: z.string().nullable().default(null),
+  /** Written by the account this agent operates. */
+  isSelf: z.boolean().default(false),
+});
+export type ContextPost = z.infer<typeof ContextPost>;
+
+export const BranchResolution = z.enum([
+  /** The focal post was located by its own status id on a freshly loaded page. */
+  'STATUS_ANCHORED',
+  /** Nothing but the event itself was available; there is no branch. */
+  'EVENT_ONLY',
+]);
+export type BranchResolution = z.infer<typeof BranchResolution>;
+
+/**
+ * The conversation branch leading to the incoming post.
+ *
+ * This is context and only context. Nothing in here may ever decide where an
+ * action is sent: that is `ResolvedContext.targetRef`, which is anchored to the
+ * incoming post's own status id. Confusing the two is how an agent ends up
+ * replying to the root of a thread instead of the person who addressed it.
+ *
+ * `ancestors` is the path from the root down to the direct parent, oldest
+ * first. Sibling branches are excluded by construction, not filtered later.
+ */
+export const ConversationContext = z.object({
+  /** The post that addressed the agent. Always the action target. */
+  incoming: ContextPost,
+  /** What `incoming` is a reply to, when it is a reply at all. */
+  parent: ContextPost.nullable().default(null),
+  /** Root first, direct parent last. Empty when the incoming post is a root. */
+  ancestors: z.array(ContextPost).default([]),
+  root: ContextPost.nullable().default(null),
+  quote: QuotedPost.nullable().default(null),
+  /** Handles seen anywhere on the branch, in the order they first appear. */
+  participants: z.array(z.string().max(300)).default([]),
+  /** Posts on the page that belong to other branches and were left out. */
+  excludedCount: z.number().int().min(0).default(0),
+  method: BranchResolution.default('EVENT_ONLY'),
+  /**
+   * Whether the platform's own "replying to" line agrees with the parent this
+   * resolver picked. False is not an error; X truncates that line. It means the
+   * branch rests on render order alone.
+   */
+  branchConfirmed: z.boolean().default(false),
+  /** Why the branch came out the way it did, in a sentence a person can read. */
+  note: z.string().max(500).default(''),
+});
+export type ConversationContext = z.infer<typeof ConversationContext>;
+
 /** What the channel adapter could establish about the situation. */
 export const ResolvedContext = z.object({
-  /** Canonical, normalised identity of the thing we would act on. */
+  /**
+   * ACTION TARGET. Canonical, normalised identity of the post that will receive
+   * the reply — never an ancestor, never the root, never something inferred
+   * from the conversation. Derived from the incoming post's own status id.
+   */
   targetRef: z.string().max(2_000).nullable().default(null),
   targetUrl: z.string().max(2_000).nullable().default(null),
   targetAuthorHandle: z.string().max(300).nullable().default(null),
@@ -60,6 +122,8 @@ export const ResolvedContext = z.object({
   parentText: z.string().nullable().default(null),
   /** Prior turns the adapter could see, oldest first. */
   thread: z.array(ContextMessage).default([]),
+  /** SEMANTIC CONTEXT. Structured branch, for prompts and for the debug view. */
+  conversation: ConversationContext.nullable().default(null),
   /** Adapter-specific extras, surfaced in the trace but not in the prompt. */
   meta: z.record(z.unknown()).default({}),
 });
