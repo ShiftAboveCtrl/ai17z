@@ -4,9 +4,13 @@ import { ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
+  capabilities as capabilitiesRepo,
   ops,
+  pipelines as pipelinesRepo,
   posting as postingRepo,
+  providers as providersRepo,
   radar as radarRepo,
+  workers as workersRepo,
   type UserRow,
 } from '@xbam/database';
 import { postIntervalSeconds, readEasyView, toPersona, toPolicy, toRadarSourceKinds } from '@xbam/runtime';
@@ -153,6 +157,153 @@ export async function easyRoutes(app: FastifyInstance): Promise<void> {
         postIntervalSeconds: interval,
         radarSourceKinds: sourceKinds,
       };
+    }),
+  );
+}
+
+/**
+ * What is stopping this agent from running.
+ *
+ * Each entry names one thing and what to do about it, in a sentence somebody
+ * can act on. "Browser context state authentication health failure" is not a
+ * sentence somebody can act on.
+ */
+export interface Blocker {
+  what: string;
+  fix: string;
+  /** Where in the UI the fix lives, when there is a place to send them. */
+  where: 'account' | 'models' | 'persona' | 'worker' | 'capabilities' | null;
+}
+
+async function preflight(agentId: string): Promise<Blocker[]> {
+  const blockers: Blocker[] = [];
+
+  const [persona, policy, pipeline, models, links] = await Promise.all([
+    agentsRepo.getActivePersona(agentId),
+    agentsRepo.getActivePolicy(agentId),
+    pipelinesRepo.getActivePipeline(agentId),
+    providersRepo.listModelConfigs(agentId),
+    accountsRepo.listAgentAccounts(agentId),
+  ]);
+
+  if (!persona) {
+    blockers.push({ what: 'This agent has no character yet.', fix: 'Set a name and a personality.', where: 'persona' });
+  }
+  if (!policy) {
+    blockers.push({ what: 'This agent has no rules yet.', fix: 'Finish the setup.', where: 'persona' });
+  }
+  if (!pipeline) {
+    blockers.push({ what: 'This agent has no pipeline.', fix: 'Reopen the agent page, which creates one.', where: null });
+  }
+
+  const primary = models.find((m) => m.role === 'primary');
+  if (!primary) {
+    blockers.push({
+      what: 'No AI model is connected.',
+      fix: 'Choose a provider and a model.',
+      where: 'models',
+    });
+  } else {
+    const credential = await providersRepo.getProvider(primary.providerCredentialId);
+    if (!credential?.enabled) {
+      blockers.push({
+        what: `The ${credential?.provider ?? 'model'} provider is switched off.`,
+        fix: 'Turn it back on in Settings, or choose a different one.',
+        where: 'models',
+      });
+    }
+  }
+
+  const enabledLinks = links.filter((l) => l.enabled);
+  if (enabledLinks.length === 0) {
+    blockers.push({
+      what: 'No account is connected, so there is nothing for it to read.',
+      fix: 'Connect an X account.',
+      where: 'account',
+    });
+  }
+
+  let needsBrowser = false;
+  for (const link of enabledLinks) {
+    const account = await accountsRepo.getAccount(link.accountId);
+    if (!account) continue;
+    if (account.channel === 'x') needsBrowser = true;
+
+    if (account.status !== 'CONNECTED') {
+      blockers.push({
+        what:
+          account.status === 'NEEDS_AUTH' || account.status === 'SESSION_EXPIRED'
+            ? `The X session for @${account.handle} has expired.`
+            : `@${account.handle} is not connected (${account.status.toLowerCase().replace(/_/g, ' ')}).`,
+        fix: 'Sign in again.',
+        where: 'account',
+      });
+    }
+
+    const grants = await capabilitiesRepo.grantsFor(agentId, link.accountId);
+    if (!grants.has('REPLY')) {
+      blockers.push({
+        what: `This agent is not permitted to reply through @${account.handle}.`,
+        fix: 'Grant it the reply capability on the account.',
+        where: 'capabilities',
+      });
+    }
+  }
+
+  if (needsBrowser) {
+    const workers = await workersRepo.present();
+    if (!workers.some((w) => w.browserCapable)) {
+      blockers.push({
+        what: 'Nothing is running that can open a browser.',
+        fix: 'Start the worker on the machine with Chrome (npm run dev:worker).',
+        where: 'worker',
+      });
+    }
+  }
+
+  return blockers;
+}
+
+/**
+ * Starting an agent, with the checks done before rather than after.
+ *
+ * The alternative is activating an agent that immediately fails on its first
+ * job and reports it as an error nobody asked for. Refusing up front, with the
+ * one thing that needs fixing, is the better shape.
+ */
+export async function easyStartRoutes(app: FastifyInstance): Promise<void> {
+  app.get(
+    '/api/agents/:id/preflight',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const blockers = await preflight(agent.id);
+      return { ready: blockers.length === 0, blockers };
+    }),
+  );
+
+  app.post(
+    '/api/agents/:id/start',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const blockers = await preflight(agent.id);
+      if (blockers.length > 0) return { started: false, blockers, state: agent.state };
+
+      const updated = await agentsRepo.updateAgent(agent.id, { state: 'ACTIVE', lastError: null });
+      await ops.audit({ actorUserId: user.id, action: 'agent.started', entityType: 'agent', entityId: agent.id });
+      return { started: true, blockers: [], state: updated.state };
+    }),
+  );
+
+  app.post(
+    '/api/agents/:id/pause',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const updated = await agentsRepo.updateAgent(agent.id, { state: 'PAUSED' });
+      await ops.audit({ actorUserId: user.id, action: 'agent.paused', entityType: 'agent', entityId: agent.id });
+      return { state: updated.state };
     }),
   );
 }
