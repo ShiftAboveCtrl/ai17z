@@ -22,6 +22,8 @@ export const SEL = {
   loginForm: '[data-testid="loginButton"], input[autocomplete="username"]',
   tweetArticle: 'article[data-testid="tweet"]',
   userName: '[data-testid="User-Name"]',
+  /** The badge X puts beside a verified account's name. */
+  verifiedBadge: '[data-testid="User-Name"] [data-testid="icon-verified"]',
   tweetText: '[data-testid="tweetText"]',
   replyButton: '[data-testid="reply"]',
   dialog: 'div[role="dialog"]',

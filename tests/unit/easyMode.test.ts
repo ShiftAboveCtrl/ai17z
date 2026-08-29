@@ -87,6 +87,26 @@ describe('Easy answers become real configuration', () => {
     expect(toPolicy(setup, base).content.allowedRemoteHandles).toEqual([]);
   });
 
+  it('makes "verified accounts only" a rule the gate enforces', () => {
+    // This is the one Easy Mode control that would otherwise be decoration: the
+    // audience has to land on a policy field somebody actually reads.
+    const policy = toPolicy({ ...setup, replies: { ...setup.replies, audience: 'VERIFIED_ONLY' } });
+    expect(policy.content.requireVerifiedAuthor).toBe(true);
+    expect(toPolicy(setup).content.requireVerifiedAuthor).toBe(false);
+  });
+
+  it('reads the verified rule back as the verified audience', () => {
+    const policy = toPolicy({ ...setup, replies: { ...setup.replies, audience: 'VERIFIED_ONLY' } });
+    const view = readEasyView({
+      persona: toPersona(setup),
+      policy,
+      postIntervalSeconds: null,
+      radarSourceKinds: toRadarSourceKinds(setup),
+    });
+    expect(view.setup.replies.audience).toBe('VERIFIED_ONLY');
+    expect(view.setup.replies.filters.verifiedOnly).toBe(true);
+  });
+
   it('turns posting frequency into an interval, and off into nothing', () => {
     expect(postIntervalSeconds(setup)).toBe(5 * 3_600);
     expect(postIntervalSeconds({ ...setup, posting: { enabled: false, frequency: 'DAILY' } })).toBeNull();

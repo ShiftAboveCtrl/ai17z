@@ -60,6 +60,15 @@ export const ContextPost = z.object({
   createdAt: z.string().nullable().default(null),
   /** Written by the account this agent operates. */
   isSelf: z.boolean().default(false),
+  /**
+   * Whether the platform shows this author as verified.
+   *
+   * Three states on purpose. `null` means the channel could not tell, which is
+   * different from "no" and matters: a policy that only answers verified
+   * accounts must refuse both, but for different reasons, and the person
+   * reading the trace needs to know which.
+   */
+  authorVerified: z.boolean().nullable().default(null),
 });
 export type ContextPost = z.infer<typeof ContextPost>;
 
