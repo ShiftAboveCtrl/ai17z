@@ -10,6 +10,7 @@ import { SocialRadar } from './radar';
 import { PersonaSyncRunner } from './personaSync';
 import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
+import { PostScheduler } from './posting';
 
 loadEnv();
 const log = createLogger('worker');
@@ -115,6 +116,10 @@ async function main(): Promise<void> {
   // need is a command on PATH, which is a different capability from a display.
   const personaSync = new PersonaSyncRunner(workerId);
   personaSync.start();
+  // Deciding to post needs a database and a model; only sending it needs a
+  // browser, and the job queue routes that to a worker that has one.
+  const posts = new PostScheduler();
+  posts.start();
   await worker.start();
   if (capabilities.browserCapable) {
     poller.start();
@@ -142,6 +147,7 @@ async function main(): Promise<void> {
     signIns.stop();
     socialRadar.stop();
     personaSync.stop();
+    posts.stop();
     await worker.stop();
     await closeAllSessions().catch((e) => log.warn('browser cleanup failed', { message: errorMessage(e) }));
     await closePool().catch(() => undefined);

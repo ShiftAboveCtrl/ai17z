@@ -11,6 +11,9 @@ export const X_URLS = {
   notifications: 'https://x.com/notifications',
   mentions: 'https://x.com/notifications/mentions',
   login: 'https://x.com/i/flow/login',
+  /** X renamed this from /compose/tweet; both still resolve. */
+  compose: 'https://x.com/compose/post',
+  profile: (handle: string) => `https://x.com/${handle}`,
 };
 
 export const SEL = {
@@ -25,6 +28,9 @@ export const SEL = {
   composer: '[data-testid="tweetTextarea_0"]',
   submitInline: 'div[role="dialog"] [data-testid="tweetButtonInline"]',
   submitButton: 'div[role="dialog"] [data-testid="tweetButton"]',
+  /** The composer on the timeline, used when the compose route does not open. */
+  inlineComposer: '[data-testid="tweetTextarea_0"]',
+  inlineSubmit: '[data-testid="tweetButtonInline"], [data-testid="tweetButton"]',
   timeLink: 'a[href*="/status/"] time',
 } as const;
 

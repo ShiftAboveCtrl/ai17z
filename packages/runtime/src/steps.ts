@@ -68,10 +68,40 @@ async function adapterContext(bundle: JobBundle) {
   return buildChannelContext(account, bundle.job.id);
 }
 
+/**
+ * The context for a post the agent decided to make.
+ *
+ * There is no remote target to resolve and no conversation to read: the event
+ * carries a brief written from the idea backlog. Built here rather than in the
+ * adapter because it is the same on every channel, and because sending a
+ * browser to a status page that does not exist would be a strange way to find
+ * out there is nothing to look at.
+ */
+function selfOriginatedContext(bundle: JobBundle): ResolvedContext {
+  return {
+    targetRef: null,
+    targetUrl: null,
+    targetAuthorHandle: null,
+    conversationRef: bundle.event.remoteEventId,
+    incomingText: bundle.event.text,
+    parentText: null,
+    thread: [],
+    conversation: null,
+    meta: {
+      origin: 'self',
+      ideaId: (bundle.event.payload as { ideaId?: string })?.ideaId ?? null,
+      resolvedAt: new Date().toISOString(),
+    },
+  };
+}
+
 export async function stepResolveContext(bundle: JobBundle): Promise<void> {
   const adapter = getChannelAdapter(bundle.job.channel);
   const ctx = await adapterContext(bundle);
-  const resolved = await adapter.resolveContext(ctx, eventToNormalized(bundle));
+  const resolved =
+    bundle.job.actionType === 'POST'
+      ? selfOriginatedContext(bundle)
+      : await adapter.resolveContext(ctx, eventToNormalized(bundle));
 
   // The adapter reports what it could see remotely. Anything it could not see,
   // but that we already recorded, is filled in from our own conversation history.
@@ -170,6 +200,7 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     channelName: getChannelAdapter(bundle.job.channel).displayName,
     toolDescriptions: describeTools(toolKeys),
     memoryCharBudget: bundle.policy.memory.retrieval.totalCharBudget,
+    actionType: bundle.job.actionType,
   });
 
   await observability.emitTrace({
@@ -359,7 +390,11 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     }
   }
 
-  const signature = targetRef ? contentSignature(targetRef, output) : null;
+  // A post has no target, so its signature is taken against the account itself.
+  // Without this the "have we already sent this exact text" check simply does
+  // not apply to posts, and an agent could publish the same thought twice.
+  const signatureRef = targetRef ?? (job.actionType === 'POST' ? `self:post:${job.accountId ?? 'none'}` : null);
+  const signature = signatureRef ? contentSignature(signatureRef, output) : null;
 
   // A previous system may already have sent this exact text to this target.
   if (!job.dryRun && targetRef) {

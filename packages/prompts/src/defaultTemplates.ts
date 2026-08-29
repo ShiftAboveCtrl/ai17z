@@ -178,7 +178,7 @@ INCOMING MESSAGE:
     title: 'Task',
     role: 'user',
     template: `TASK
-Write one {{channelName}} reply to the incoming message above, as {{displayName}}.`,
+{{taskInstruction}}`,
   },
   {
     key: 'OUTPUT_CONTRACT',
