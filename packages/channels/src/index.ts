@@ -14,3 +14,13 @@ export {
   looksUnavailable,
   UNAVAILABLE_MARKERS,
 } from './x/targets';
+export {
+  resolveBranch,
+  branchFromEventOnly,
+  parentTextOf,
+  DEFAULT_MAX_ANCESTORS,
+  type ArticleSnapshot,
+  type BranchInput,
+  type BranchOutcome,
+} from './x/conversation';
+export { replyingToHandles } from './x/index';

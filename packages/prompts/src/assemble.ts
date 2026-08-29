@@ -1,4 +1,4 @@
-import type { RelationshipContext, SocialMediaContext, StanceContext } from '@xbam/shared/contracts';
+import type { MediaInventory, RelationshipContext, SocialMediaContext, StanceContext } from '@xbam/shared/contracts';
 import type {
   ChatMessage,
   ContextMessage,
@@ -72,6 +72,29 @@ function renderTranscript(thread: ContextMessage[], agentName: string): string {
     .join('\n');
 }
 
+/**
+ * What the post being replied to is carrying, stated plainly.
+ *
+ * Nothing here has been read by a vision model — these are attachments the
+ * adapter saw on the parent post. Saying so is the point: a short mention under
+ * a chart is a question about the chart, and the model should know it is
+ * answering without having seen it rather than inventing what it showed.
+ */
+function renderParentAttachments(inventory: MediaInventory | undefined): string {
+  if (!inventory) return '';
+  const parts: string[] = [];
+  const images = inventory.media.filter((m) => m.kind === 'image').length;
+  const videos = inventory.media.filter((m) => m.kind === 'video' || m.kind === 'gif').length;
+  if (images > 0) parts.push(`${images} image${images === 1 ? '' : 's'}`);
+  if (videos > 0) parts.push(`${videos} video${videos === 1 ? '' : 's'}`);
+  if (inventory.quoted) {
+    const who = inventory.quoted.authorHandle ? `@${inventory.quoted.authorHandle}` : 'someone';
+    parts.push(`a quoted post from ${who}: "${inventory.quoted.text.replace(/\s+/g, ' ').trim().slice(0, 240)}"`);
+  }
+  if (parts.length === 0) return '';
+  return `That post also carries ${parts.join(' and ')}. You have not seen the attachments, so do not describe them.`;
+}
+
 function renderOutputRules(persona: PersonaVersion, policy: PolicyConfig): string {
   const rules: string[] = [`Stay under ${policy.output.maxCharacters} characters.`];
   if (policy.output.minCharacters > 1) rules.push(`Write at least ${policy.output.minCharacters} characters.`);
@@ -122,6 +145,8 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const stance = (context.meta as { stance?: StanceContext } | undefined)?.stance;
   const threadState = (context.meta as { thread?: Parameters<typeof renderThreadState>[0] } | undefined)?.thread;
   const openCommitments = (context.meta as { openCommitments?: { promise: string }[] } | undefined)?.openCommitments;
+  // Attached by the X adapter when the mention leans on what its parent carries.
+  const parentInventory = (context.meta as { parentInventory?: MediaInventory | null } | undefined)?.parentInventory ?? undefined;
 
   const values = {
     channelName: input.channelName,
@@ -151,6 +176,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     threadState: renderThreadState(threadState),
     threadTranscript: renderTranscript(context.thread, persona.displayName),
     parentText: context.parentText ?? '',
+    parentAttachments: renderParentAttachments(parentInventory),
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
     incomingText: context.incomingText,
     toolsBlock: bulletList(input.toolDescriptions),
