@@ -12,6 +12,7 @@ import {
   findBrowser,
   launchChrome,
   leaseSession,
+  sessionTabs,
   profilePathIsLocal,
   resolveProfileDir,
 } from '@xbam/browser';
@@ -285,13 +286,145 @@ describe('concurrent callers share one browser', () => {
     };
 
     try {
-      // Three at once. Before the launch lock this opened three browsers, two
-      // of which could not have the profile.
-      const leases = await Promise.all([leaseSession(config), leaseSession(config), leaseSession(config)]);
+      // Three at once, one per role. Before the launch lock this opened three
+      // browsers, two of which could not have the profile. Leasing three
+      // different roles rather than the same one three times is deliberate:
+      // same-role leases now queue behind each other, which is the point.
+      const leases = await Promise.all([
+        leaseSession(config, 'ACTION'),
+        leaseSession(config, 'MENTIONS'),
+        leaseSession(config, 'NOTIFICATIONS'),
+      ]);
       const ports = new Set(leases.map((l) => l.identity.cdpUrl));
       expect(ports.size).toBe(1);
       expect(leases[0]!.identity.verifiedGoogleChrome).toBe(true);
+
+      // Three roles means three distinct pages in the one browser.
+      const pages = new Set(leases.map((l) => l.page));
+      expect(pages.size).toBe(3);
+      expect(leases.map((l) => l.role)).toEqual(['ACTION', 'MENTIONS', 'NOTIFICATIONS']);
+
       for (const lease of leases) await lease.release();
+    } finally {
+      await closeSession(accountId).catch(() => undefined);
+    }
+  }, 120_000);
+
+  it('reuses the tab for a role instead of opening another, and reports all three', async () => {
+    if (!chromeAvailable) {
+      console.log('SKIPPED: Google Chrome is not installed here. This is not a pass.');
+      return;
+    }
+
+    const accountId = `roles-${Date.now()}`;
+    const config = {
+      accountId,
+      engine: 'GOOGLE_CHROME' as const,
+      mode: 'CDP' as const,
+      profileDir: join(profileRoot, 'roles'),
+      cdpUrl: null,
+      headless: true,
+    };
+
+    try {
+      const first = await leaseSession(config, 'MENTIONS');
+      const firstPage = first.page;
+      await first.release();
+
+      const second = await leaseSession(config, 'MENTIONS');
+      // The same tab, not a fourth one. This is what stops a poller opening a
+      // notifications tab every tick until the browser has seventeen of them.
+      expect(second.page).toBe(firstPage);
+      await second.release();
+
+      await (await leaseSession(config, 'ACTION')).release();
+      await (await leaseSession(config, 'NOTIFICATIONS')).release();
+
+      const health = sessionTabs(accountId);
+      expect(health.map((t) => t.role)).toEqual(['ACTION', 'MENTIONS', 'NOTIFICATIONS']);
+      expect(health.every((t) => t.state === 'READY')).toBe(true);
+    } finally {
+      await closeSession(accountId).catch(() => undefined);
+    }
+  }, 120_000);
+
+  it('recreates one tab without disturbing the others', async () => {
+    if (!chromeAvailable) {
+      console.log('SKIPPED: Google Chrome is not installed here. This is not a pass.');
+      return;
+    }
+
+    const accountId = `recover-${Date.now()}`;
+    const config = {
+      accountId,
+      engine: 'GOOGLE_CHROME' as const,
+      mode: 'CDP' as const,
+      profileDir: join(profileRoot, 'recover'),
+      cdpUrl: null,
+      headless: true,
+    };
+
+    try {
+      const action = await leaseSession(config, 'ACTION');
+      const actionPage = action.page;
+      await action.release();
+
+      const mentions = await leaseSession(config, 'MENTIONS');
+      const closedPage = mentions.page;
+      await mentions.release();
+
+      // Somebody closes the mentions tab. The account must keep working.
+      await closedPage.close();
+      expect(sessionTabs(accountId).find((t) => t.role === 'MENTIONS')?.state).toBe('MISSING');
+
+      const reopened = await leaseSession(config, 'MENTIONS');
+      expect(reopened.page).not.toBe(closedPage);
+      expect(reopened.page.isClosed()).toBe(false);
+      await reopened.release();
+
+      // The action tab was never touched.
+      const again = await leaseSession(config, 'ACTION');
+      expect(again.page).toBe(actionPage);
+      await again.release();
+    } finally {
+      await closeSession(accountId).catch(() => undefined);
+    }
+  }, 120_000);
+
+  it('serialises two operations on the same tab', async () => {
+    if (!chromeAvailable) {
+      console.log('SKIPPED: Google Chrome is not installed here. This is not a pass.');
+      return;
+    }
+
+    const accountId = `serial-${Date.now()}`;
+    const config = {
+      accountId,
+      engine: 'GOOGLE_CHROME' as const,
+      mode: 'CDP' as const,
+      profileDir: join(profileRoot, 'serial'),
+      cdpUrl: null,
+      headless: true,
+    };
+
+    try {
+      const order: string[] = [];
+      const first = await leaseSession(config, 'ACTION');
+      order.push('first-acquired');
+
+      // Starts waiting; must not proceed while the first lease is held.
+      const secondPending = leaseSession(config, 'ACTION').then((lease) => {
+        order.push('second-acquired');
+        return lease;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(order).toEqual(['first-acquired']);
+
+      order.push('first-released');
+      await first.release();
+      const second = await secondPending;
+      expect(order).toEqual(['first-acquired', 'first-released', 'second-acquired']);
+      await second.release();
     } finally {
       await closeSession(accountId).catch(() => undefined);
     }

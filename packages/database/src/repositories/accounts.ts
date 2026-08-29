@@ -281,6 +281,22 @@ export async function upsertBrowserSession(input: {
  * running browser says it is. A claim of "real Chrome" that rests on only one
  * of those is a claim somebody has to take on trust.
  */
+/**
+ * Snapshots what each tab is doing.
+ *
+ * Overwritten, never appended: this is live process state, and a stale row is
+ * worse than none. `tabs_updated_at` is what tells the reader whether to
+ * believe it.
+ */
+export async function recordBrowserTabs(accountId: string, tabs: unknown[]): Promise<void> {
+  await query(
+    `UPDATE browser_sessions
+        SET tabs = $2::jsonb, tabs_updated_at = now(), updated_at = now()
+      WHERE account_id = $1`,
+    [accountId, JSON.stringify(tabs)],
+  );
+}
+
 export async function recordBrowserIdentity(input: {
   accountId: string;
   executablePath: string | null;
