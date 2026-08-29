@@ -334,6 +334,87 @@ ends up in a fight on its owner's behalf.
 what happened between the agent and a person; the entity graph records that two
 things were named together and makes no other claim.
 
+## The three-tab X runtime
+
+One page doing everything is why reading used to break posting. An account keeps
+three role-bound tabs in the one real Chrome: `ACTION` for replies, posts and the
+verification before them; `MENTIONS` for search and own threads; `NOTIFICATIONS`
+for X's own surface as an independent source.
+
+A tab is identified by `window.name` (`ai17z-tab:<ROLE>`), not by an in-process
+map, so a worker reattaching to a running Chrome adopts the tabs it already has
+instead of opening three more every restart. Every lease re-asserts the tag,
+because a cross-origin navigation clears it.
+
+Different roles run concurrently; two operations on the same role queue behind
+each other. A closed tab is recreated on its own without restarting the browser
+or touching the other two. **Never add a fourth role without a reason a person
+would recognise**, and never let a monitor navigate the action tab.
+
+The worker publishes tab health to `browser_sessions.tabs` every ten seconds,
+because the API owns no browsers and cannot ask. Anything older than 90 seconds
+is treated as "no browser running" whatever the snapshot says. See
+`docs/architecture/X_RUNTIME.md`.
+
+## Nested mentions and conversation context
+
+Target identity and semantic context are separate problems, and conflating them
+is how an agent replies to the wrong person. `ResolvedContext.targetRef` is the
+action target, derived from the incoming post's own status id;
+`ResolvedContext.conversation` is context and may never influence where an action
+goes. The X adapter asserts they agree and fails permanently if they do not.
+
+The focal post is found by looking for the article that links to its own status
+id, exactly as AI4CZ did, and **there is no positional fallback**: no match means
+`focal_article_not_found` and a stop.
+
+What AI4CZ did not do, and `packages/channels/src/x/conversation.ts` does: walk
+the whole ancestor chain. On a status page X has already resolved the reply chain
+and renders the path from root to focal above it, so the ancestors are "the
+articles before the focal" and sibling branches are excluded structurally rather
+than filtered afterwards.
+
+`resolveBranch` is pure and takes article snapshots, so eleven fixtures in
+`tests/unit/xConversation.test.ts` pin the behaviour rather than a live browser.
+Case 4 — a mention four levels deep — is the AI4CZ regression. See
+`docs/legacy-nested-mentions.md`.
+
+## Easy Mode
+
+Easy Mode is a view over the same configuration, not a second system. There is no
+`easy_setup` table: `packages/runtime/src/easyMode.ts` projects eleven answers
+onto the same versioned persona, policy, cadence, radar sources and posting
+schedule the advanced screens edit, and reads them back.
+
+Two properties, both tested. The round trip is a fixed point, so opening the
+setup screen and pressing save does not change an agent. And the projection is
+deliberately partial in one direction: Advanced can express things Easy has no
+word for, and `readEasyView` reports each in a sentence instead of flattening it.
+**An Easy Mode save must never overwrite a setting it does not show.**
+
+Easy Mode simplifies configuration, never intelligence. An agent set up there
+still gets relationship memory, stance consistency, thread context, multimodal
+context, the voice compiler, anti-repetition, multi-source discovery and
+exact-target verification. Do not add an Easy Mode control that turns one off.
+
+Every Easy Mode control must map to something a code path actually reads. "Only
+verified accounts" sat in the contract with nothing behind it until
+`content.requireVerifiedAuthor` and the audience gate existed. See
+`docs/architecture/EASY_MODE.md`.
+
+## Posting
+
+An agent may say something nobody asked for, on a schedule that is a ceiling
+rather than a timetable. Coming due means looking at the idea backlog; an empty
+backlog means silence, and `agent_posting.last_reason` records that. **A timer
+firing is not a reason to speak.**
+
+A post is manufactured as a `SCHEDULED_TRIGGER` event carrying the brief, so it
+runs the same ten pipeline steps as a reply. Its idempotency key is anchored to
+the idea. A post has no target, so its content signature is taken against the
+account — without that, the "already sent this exact text" check simply does not
+apply to posts.
+
 ## Enums with CHECK constraints
 
 Four enums have a database CHECK behind them: account statuses, trace types,
