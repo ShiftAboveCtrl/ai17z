@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -220,7 +220,11 @@ export interface LaunchedChrome {
   port: number;
   pid: number | null;
   profileDir: string;
-  process: ChildProcess;
+  /**
+   * The spawned process, when AI17Z started it. Null when it attached to a
+   * Chrome that was already open, which it does not own and must not kill.
+   */
+  process: ChildProcess | null;
 }
 
 /**
@@ -248,9 +252,12 @@ export interface LaunchedChrome {
  * and the error is about a missing port rather than a held lock.
  */
 export async function closeChrome(
-  launched: { pid: number | null; cdpUrl: string },
+  launched: { pid: number | null; cdpUrl: string; profileDir?: string | null },
   timeoutMs = 20_000,
 ): Promise<boolean> {
+  // The recorded endpoint is forgotten first, so a launch that races this close
+  // cannot attach to a browser on its way out.
+  if (launched.profileDir) await forgetEndpoint(launched.profileDir);
   // Ask Chrome to quit first. This matters beyond politeness: cookies and
   // local storage are flushed on a clean shutdown, so force-killing a browser
   // somebody just signed in with can lose the session that was the whole point.
@@ -306,6 +313,95 @@ export async function waitForCdpGone(cdpUrl: string, timeoutMs = 20_000): Promis
   return false;
 }
 
+/**
+ * Where a Chrome that AI17Z started recorded its debugging port.
+ *
+ * Kept beside the profile rather than in the database, because it describes the
+ * profile and has to be readable by a process that has only a path. Written on
+ * every launch and read on the next one.
+ */
+function endpointFile(profileDir: string): string {
+  return join(profileDir, 'ai17z-cdp.json');
+}
+
+/**
+ * The Chrome already serving this profile, if there is one.
+ *
+ * Chrome outliving the worker is deliberate — restarting AI17Z must not close a
+ * window somebody is signing into. But a restarted worker had no way back to it
+ * and would spawn a second Chrome on the same profile, at which point Chrome
+ * hands off to the running copy and exits without ever opening the new port. The
+ * result was every poll failing with "the browser did not open its debugging
+ * port", on an account whose browser was sitting there working.
+ *
+ * So the port is remembered, and a launch attaches to a live one instead.
+ */
+export async function existingChrome(profileDir: string): Promise<{ cdpUrl: string; port: number; pid: number | null } | null> {
+  let recorded: { cdpUrl?: unknown; port?: unknown; pid?: unknown };
+  try {
+    recorded = JSON.parse(await readFile(endpointFile(profileDir), 'utf8')) as typeof recorded;
+  } catch {
+    // No file, or nothing readable in it. Either way there is nothing to attach
+    // to, and launching is the right answer.
+    return null;
+  }
+
+  const cdpUrl = typeof recorded.cdpUrl === 'string' ? recorded.cdpUrl : null;
+  if (!cdpUrl) return null;
+
+  // Short timeout on purpose: this is a guess, and a wrong guess must not cost
+  // anything. A port nothing answers on means the browser is gone.
+  const identity = await cdpIdentity(cdpUrl, 2_500).catch(() => null);
+  if (!identity) return null;
+
+  // A browser with hundreds of tabs answers /json/version perfectly well and
+  // then times out the CDP handshake, because attaching means attaching to
+  // every target. That is not a hypothetical: a single-page predecessor leaked
+  // one tab per poll and reached 253, at which point the account looked broken
+  // for a reason nothing reported. Refusing here says what is actually wrong.
+  const pages = await countPages(cdpUrl);
+  if (pages > MAX_ATTACHABLE_PAGES) {
+    throw PipelineError.permanent(
+      'browser_too_many_tabs',
+      `The Chrome open for this profile has ${pages} tabs, and attaching to it will time out. Close it and AI17Z will start a fresh one; the signed-in session is kept in the profile on disk.`,
+      { cdpUrl, pages },
+    );
+  }
+
+  return {
+    cdpUrl,
+    port: typeof recorded.port === 'number' ? recorded.port : 0,
+    pid: typeof recorded.pid === 'number' ? recorded.pid : null,
+  };
+}
+
+/**
+ * Beyond this many open tabs, `connectOverCDP` reliably exceeds its timeout.
+ * The runtime keeps three, so anything near this is a leak, not a workload.
+ */
+const MAX_ATTACHABLE_PAGES = 40;
+
+/** How many pages a browser has, without opening a CDP session to find out. */
+async function countPages(cdpUrl: string): Promise<number> {
+  try {
+    const response = await fetch(`${cdpUrl.replace(/\/$/, '')}/json/list`, {
+      signal: AbortSignal.timeout(4_000),
+    });
+    if (!response.ok) return 0;
+    const targets = (await response.json()) as { type?: string }[];
+    return targets.filter((t) => t.type === 'page').length;
+  } catch {
+    // Not being able to count is not a reason to refuse; the attach itself will
+    // report whatever is actually wrong.
+    return 0;
+  }
+}
+
+/** Forgets the recorded endpoint, after closing the browser it described. */
+export async function forgetEndpoint(profileDir: string): Promise<void> {
+  await rm(endpointFile(profileDir), { force: true }).catch(() => undefined);
+}
+
 export async function launchChrome(input: {
   engine: BrowserEngine;
   profileDir: string;
@@ -315,6 +411,27 @@ export async function launchChrome(input: {
 }): Promise<LaunchedChrome> {
   const installation = await findBrowser(input.engine);
   await mkdir(input.profileDir, { recursive: true });
+
+  // A Chrome this account already has open is the one to use. Spawning a second
+  // on the same profile does not produce a second browser; it produces a failed
+  // launch and an account that looks broken.
+  const alive = await existingChrome(input.profileDir);
+  if (alive) {
+    log.info('attaching to the Chrome already open for this profile', {
+      cdpUrl: alive.cdpUrl,
+      pid: alive.pid,
+      profileDir: input.profileDir,
+    });
+    return {
+      installation,
+      cdpUrl: alive.cdpUrl,
+      port: alive.port,
+      pid: alive.pid,
+      profileDir: input.profileDir,
+      process: null,
+    };
+  }
+
   const port = await freePort();
 
   const args = [
@@ -346,6 +463,14 @@ export async function launchChrome(input: {
 
   const cdpUrl = `http://127.0.0.1:${port}`;
   await waitForCdp(cdpUrl, 30_000);
+
+  // Written only once the port is answering, so the file never points at a
+  // browser that failed to start.
+  await writeFile(
+    endpointFile(input.profileDir),
+    JSON.stringify({ cdpUrl, port, pid: child.pid ?? null, startedAt: new Date().toISOString() }, null, 2),
+    'utf8',
+  ).catch((error) => log.warn('could not record the debugging port', { message: errorMessage(error) }));
 
   return {
     installation,

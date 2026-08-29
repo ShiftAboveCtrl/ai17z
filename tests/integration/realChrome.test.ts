@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,7 @@ import {
   cdpIsGoogleChrome,
   closeChrome,
   closeSession,
+  existingChrome,
   findBrowser,
   launchChrome,
   leaseSession,
@@ -429,4 +430,60 @@ describe('concurrent callers share one browser', () => {
       await closeSession(accountId).catch(() => undefined);
     }
   }, 120_000);
+});
+
+describe('a Chrome that outlived the worker', () => {
+  it('is attached to rather than spawned over', async () => {
+    if (!chromeAvailable) {
+      console.log('SKIPPED: Google Chrome is not installed here. This is not a pass.');
+      return;
+    }
+
+    // The failure this reproduces: Chrome outliving the worker is deliberate, but
+    // a restarted worker had no way back to it. It would launch again on the same
+    // profile, Chrome would hand off to the running copy and exit without opening
+    // the new port, and every poll failed with "the browser did not open its
+    // debugging port" on an account whose browser was sitting there working.
+    const profileDir = join(profileRoot, 'outlived');
+
+    const first = await launchChrome({ engine: 'GOOGLE_CHROME', profileDir, startUrl: null, headless: true });
+    started.push({ pid: first.pid });
+    expect(first.process).not.toBeNull();
+
+    // A second launch, as a restarted worker would make. Same browser, no spawn.
+    const second = await launchChrome({ engine: 'GOOGLE_CHROME', profileDir, startUrl: null, headless: true });
+    expect(second.cdpUrl).toBe(first.cdpUrl);
+    expect(second.pid).toBe(first.pid);
+    // Null is what says "AI17Z did not start this one and must not kill it".
+    expect(second.process).toBeNull();
+
+    // And it is the same live browser, not a recorded guess.
+    const identity = await cdpIdentity(second.cdpUrl);
+    expect(identity.product).toMatch(/^Chrome\//);
+
+    await closeChrome({ ...first, profileDir }, 25_000);
+
+    // Once it is gone the record goes with it, so the next launch really launches.
+    expect(await existingChrome(profileDir)).toBeNull();
+    const third = await launchChrome({ engine: 'GOOGLE_CHROME', profileDir, startUrl: null, headless: true });
+    started.push({ pid: third.pid });
+    expect(third.process).not.toBeNull();
+    expect(third.cdpUrl).not.toBe(first.cdpUrl);
+  }, 180_000);
+
+  it('ignores a recorded endpoint that nothing answers on', async () => {
+    // A browser somebody closed by hand leaves the file behind. Probing must be
+    // cheap and wrong-guess-proof, not a 30-second wait on a dead port.
+    const profileDir = join(profileRoot, 'stale');
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(
+      join(profileDir, 'ai17z-cdp.json'),
+      JSON.stringify({ cdpUrl: 'http://127.0.0.1:1', port: 1, pid: 999999 }),
+      'utf8',
+    );
+
+    const began = Date.now();
+    expect(await existingChrome(profileDir)).toBeNull();
+    expect(Date.now() - began).toBeLessThan(10_000);
+  }, 30_000);
 });

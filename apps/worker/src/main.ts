@@ -3,7 +3,7 @@ import { createLogger, envInt, envString, errorMessage, loadEnv } from '@xbam/sh
 import { accounts as accountsRepo, browserTasks, closePool, pingDatabase, workers as workersRepo } from '@xbam/database';
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import { bootstrapRuntime, runJob } from '@xbam/runtime';
-import { activeSessionAccountIds, closeAllSessions, sessionTabs } from '@xbam/browser';
+import { activeSessionAccountIds, closeAllSessions, sessionIdentity, sessionTabs } from '@xbam/browser';
 import { ChannelPoller } from './poller';
 import { SignInWatcher } from './signIn';
 import { SocialRadar } from './radar';
@@ -96,6 +96,23 @@ async function main(): Promise<void> {
     const live = new Set(activeSessionAccountIds());
     for (const accountId of live) {
       await accountsRepo.recordBrowserTabs(accountId, sessionTabs(accountId)).catch(() => undefined);
+      // Identity alongside the tabs, from the same live session. Recording it
+      // only on browser tasks left the account page naming a pid and a port
+      // from some earlier browser while the tabs described the current one.
+      const identity = sessionIdentity(accountId);
+      if (identity) {
+        await accountsRepo
+          .recordBrowserIdentity({
+            accountId,
+            executablePath: identity.executablePath,
+            browserProduct: identity.product,
+            browserVersion: identity.version,
+            browserPid: identity.pid,
+            cdpProduct: identity.cdpProduct,
+            cdpUrl: identity.cdpUrl,
+          })
+          .catch(() => undefined);
+      }
       published.add(accountId);
     }
     // An account whose browser has gone needs one last write, or the page keeps
