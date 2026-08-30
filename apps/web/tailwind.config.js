@@ -24,6 +24,11 @@ export default {
       },
       fontFamily: {
         sans: ['Kanit', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        // The monumental headings only. Kanit's descenders are short and flat
+        // at every weight, which at 96px reads as text with its bottom sliced
+        // off. Archivo is the same grotesque register with descenders that
+        // actually hang.
+        display: ['Archivo', 'Kanit', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       letterSpacing: {

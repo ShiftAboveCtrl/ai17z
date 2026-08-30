@@ -24,9 +24,14 @@ import { chromium, type Browser } from 'playwright';
  * Deleting `padding-block-end` from `.monument` fails it.
  *
  * It runs against whichever font resolves, which matters: a machine with no
- * network never gets Kanit and falls back to a face whose descenders are deeper
- * still (0.24em against Kanit's 0.18em). The padding is sized for the worse of
- * the two, because a heading that only renders correctly online is not fixed.
+ * network gets neither Archivo nor Kanit and falls back to a system face whose
+ * descenders are deeper still. The padding is sized for the worst of them,
+ * because a heading that only renders correctly online is not fixed.
+ *
+ * Kanit is still the body face. It is not the display face because its
+ * descenders are short and flat-terminated at every weight, which at 96px reads
+ * as text with its bottom sliced off — a rendering that is correct and looks
+ * broken, which is the worst kind.
  *
  * Rendered in Playwright's Chromium on purpose: this measures CSS layout, and
  * says nothing about which browser drives an X session. Browser identity is
@@ -75,12 +80,12 @@ describe('monumental headings paint their descenders', () => {
       <html><head>
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Kanit:wght@200;300;400;500;600;700&display=swap">
+          href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Kanit:wght@200;300;400;500;600;700&display=swap">
         <style>
           body { margin: 0; background: #0a0a0a; }
-          /* What @apply font-sans font-semibold tracking-monument expands to. */
+          /* What @apply font-display font-semibold tracking-monument expands to. */
           h1 {
-            font-family: Kanit, ui-sans-serif, system-ui, sans-serif;
+            font-family: Archivo, Kanit, ui-sans-serif, system-ui, sans-serif;
             font-weight: 600;
             letter-spacing: -0.045em;
             margin: 0;
