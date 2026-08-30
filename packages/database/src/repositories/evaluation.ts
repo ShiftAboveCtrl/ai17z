@@ -26,7 +26,7 @@ export interface SocialMetrics {
 async function traceAverage(agentId: string, type: string, field: string, days: number): Promise<number | null> {
   const row = await queryOne<{ avg: string | null }>(
     `SELECT avg((data->>$3)::numeric) AS avg FROM trace_events
-      WHERE agent_id = $1 AND type = $2 AND created_at > now() - ($4::int * interval '1 day')
+      WHERE agent_id = $1 AND type = $2 AND at > now() - ($4::int * interval '1 day')
         AND data ? $3`,
     [agentId, type, field, days],
   );
@@ -36,7 +36,7 @@ async function traceAverage(agentId: string, type: string, field: string, days: 
 async function traceCount(agentId: string, type: string, days: number): Promise<number> {
   const row = await queryOne<{ n: number }>(
     `SELECT count(*)::int AS n FROM trace_events
-      WHERE agent_id = $1 AND type = $2 AND created_at > now() - ($3::int * interval '1 day')`,
+      WHERE agent_id = $1 AND type = $2 AND at > now() - ($3::int * interval '1 day')`,
     [agentId, type, days],
   );
   return row?.n ?? 0;
@@ -46,7 +46,7 @@ export async function socialMetrics(agentId: string, windowDays = 7): Promise<So
   const decisions = await query<{ decision: string; n: number }>(
     `SELECT data->>'decision' AS decision, count(*)::int AS n FROM trace_events
       WHERE agent_id = $1 AND type = 'ENGAGEMENT_DECIDED'
-        AND created_at > now() - ($2::int * interval '1 day')
+        AND at > now() - ($2::int * interval '1 day')
       GROUP BY 1`,
     [agentId, windowDays],
   );
@@ -56,7 +56,7 @@ export async function socialMetrics(agentId: string, windowDays = 7): Promise<So
     await query(
       `SELECT data->>'intent' AS intent, count(*)::int AS n FROM trace_events
         WHERE agent_id = $1 AND type = 'INTENT_SELECTED'
-          AND created_at > now() - ($2::int * interval '1 day')
+          AND at > now() - ($2::int * interval '1 day')
           AND data ? 'intent'
         GROUP BY 1 ORDER BY 2 DESC`,
       [agentId, windowDays],
@@ -72,7 +72,7 @@ export async function socialMetrics(agentId: string, windowDays = 7): Promise<So
             count(*)::int AS n
        FROM trace_events
       WHERE agent_id = $1 AND type = 'VOICE_COMPILED'
-        AND created_at > now() - ($2::int * interval '1 day')
+        AND at > now() - ($2::int * interval '1 day')
       GROUP BY 1`,
     [agentId, windowDays],
   );

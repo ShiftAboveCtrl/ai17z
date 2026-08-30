@@ -1,6 +1,7 @@
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { LogOut, Plus } from 'lucide-react';
+import { useViewMode, type ViewMode } from '@app/lib/viewMode';
 import { useSession } from '@app/lib/session';
 
 /**
@@ -11,6 +12,7 @@ export function TopBar() {
   const { signOut, user } = useSession();
   const { pathname } = useLocation();
   const [scrolled, setScrolled] = useState(false);
+  const [mode, setMode] = useViewMode();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -48,6 +50,7 @@ export function TopBar() {
         </div>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          <ModeSwitch mode={mode} onChange={setMode} />
           {pathname !== '/agents/new' && (
             <Link to="/agents/new" className="btn-ghost px-3 py-2 text-xs sm:px-4">
               <Plus className="h-3.5 w-3.5" aria-hidden />
@@ -80,5 +83,44 @@ export function TopBar() {
         </NavLink>
       </div>
     </header>
+  );
+}
+
+/**
+ * The one control that decides how much of AI17Z is on screen.
+ *
+ * A segmented switch rather than a link or a menu item, because it is a state
+ * the person is in and not somewhere they can go, and because it needs to be
+ * findable without looking for it. It sits in the bar on every page for the
+ * same reason.
+ */
+function ModeSwitch({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Interface detail"
+      className="flex items-center rounded-full border border-ink-line bg-ink-panel/70 p-0.5"
+    >
+      {(
+        [
+          ['easy', 'Easy', 'The few settings that matter'],
+          ['advanced', 'Advanced', 'Every setting AI17Z has'],
+        ] as const
+      ).map(([value, label, title]) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={mode === value}
+          title={title}
+          onClick={() => onChange(value)}
+          className={`rounded-full px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] transition-colors sm:px-3 ${
+            mode === value ? 'bg-bone/[0.12] text-bone' : 'text-bone-faint hover:text-bone-dim'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }

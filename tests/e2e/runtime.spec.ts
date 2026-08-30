@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { signIn, uniqueName } from './helpers';
+import { deleteAgentsNamed, deleteMockAccountsNamed, signIn, uniqueName } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -175,4 +175,24 @@ test('memory section counts what the agent actually learned', async ({ page }) =
   await expect(memory.getByRole('button', { name: /^\d+ USER$/ })).toBeVisible({ timeout: 20_000 });
   await memory.getByRole('button', { name: /USER/ }).click();
   await expect(memory).toContainText(/teal/i, { timeout: 20_000 });
+});
+
+/**
+ * These run against the real stack as the real owner, so what they create ends
+ * up in somebody's actual agent list. Cleaning up is part of the test.
+ */
+test.afterAll(async ({ browser }) => {
+  const page = await browser.newPage();
+  try {
+    await signIn(page);
+    const agents = await deleteAgentsNamed(page, 'E2E Runtime');
+    const accounts = await deleteMockAccountsNamed(page, 'e2e_runtime_');
+    console.log(`cleanup: removed ${agents} agent(s) and ${accounts} mock account(s)`);
+  } catch (error) {
+    // Never fail a passing run on cleanup, but say so: a silent leak is how
+    // thirty-seven of these accumulated.
+    console.warn('cleanup failed:', (error as Error).message);
+  } finally {
+    await page.close();
+  }
 });

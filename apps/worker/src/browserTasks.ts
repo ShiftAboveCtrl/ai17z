@@ -7,6 +7,7 @@ import {
   closeSession,
   resolveProfileDir,
   leaseSession,
+  shutdownBrowser,
   runBrowserPreflight,
   safeUrl,
   sessionIdentity,
@@ -266,6 +267,20 @@ export class BrowserTaskRunner {
         await adapter.disconnect(ctx);
         await accountsRepo.updateAccount(account.id, { status: 'DISCONNECTED', lastHealthStatus: 'Disconnected' });
         return { detail: 'Browser session closed.' };
+      }
+
+      case 'SHUTDOWN_BROWSER': {
+        // What "stop the agent" has to mean: the window goes, and its renderers
+        // with it. Detaching leaves a signed-in Chrome sitting on the desktop.
+        const outcome = await shutdownBrowser(account.id, profileDir);
+        await accountsRepo.updateAccount(account.id, {
+          // The account is still connected in the sense that matters: the
+          // session lives in the profile and comes back on the next launch.
+          lastHealthStatus: outcome.detail.slice(0, 200),
+          touchHealthCheck: true,
+        });
+        await accountsRepo.recordBrowserTabs(account.id, []).catch(() => undefined);
+        return outcome as unknown as Record<string, unknown>;
       }
 
       case 'CLEAR': {
