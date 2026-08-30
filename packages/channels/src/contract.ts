@@ -149,6 +149,15 @@ export interface ChannelAdapter {
    */
   lookUp?(ctx: ChannelContext, request: { query: string; kind: 'search' | 'link' }): Promise<LookedUp[]>;
 
+  /**
+   * Whether this action already happened on the remote.
+   *
+   * Asked when an action is recovered after the worker performing it died:
+   * it may have died before X saw it or after, and only the remote knows.
+   * Without this, recovery is a duplicate-post machine.
+   */
+  wasAlreadyDone?(ctx: ChannelContext, request: ActionRequest): Promise<{ done: boolean; remoteActionId: string | null; remoteActionUrl: string | null; detail: string }>;
+
   observeAuth?(ctx: ChannelContext): Promise<AuthObservation>;
   /**
    * Polls one radar source and reports what it saw.
