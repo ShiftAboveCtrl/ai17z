@@ -359,13 +359,26 @@ export async function existingChrome(profileDir: string): Promise<{ cdpUrl: stri
   // every target. That is not a hypothetical: a single-page predecessor leaked
   // one tab per poll and reached 253, at which point the account looked broken
   // for a reason nothing reported. Refusing here says what is actually wrong.
+  const recordedPid = typeof recorded.pid === 'number' ? recorded.pid : null;
+
   const pages = await countPages(cdpUrl);
   if (pages > MAX_ATTACHABLE_PAGES) {
-    throw PipelineError.permanent(
-      'browser_too_many_tabs',
-      `The Chrome open for this profile has ${pages} tabs, and attaching to it will time out. Close it and AI17Z will start a fresh one; the signed-in session is kept in the profile on disk.`,
-      { cdpUrl, pages },
-    );
+    log.warn('the open Chrome has too many tabs to attach to; replacing it', { cdpUrl, pages });
+    await replaceUnusable(cdpUrl, recordedPid, profileDir);
+    return null;
+  }
+
+  // Answering /json/version is not the same as accepting a connection. A Chrome
+  // that has been up for days reaches a state where the HTTP endpoint replies
+  // instantly and the CDP handshake never completes, which stranded a live
+  // account behind a browser that looked perfectly healthy from outside.
+  //
+  // So the probe is the thing that will actually be done. It costs one short
+  // connect on a path that would otherwise wait twenty seconds and fail.
+  if (!(await canAttach(cdpUrl))) {
+    log.warn('the open Chrome is not accepting connections; replacing it', { cdpUrl, pid: recordedPid });
+    await replaceUnusable(cdpUrl, recordedPid, profileDir);
+    return null;
   }
 
   return {
@@ -381,6 +394,24 @@ export async function existingChrome(profileDir: string): Promise<{ cdpUrl: stri
  */
 const MAX_ATTACHABLE_PAGES = 40;
 
+/**
+ * Whether a real CDP session can be opened, which is the only useful question.
+ *
+ * Short timeout on purpose: this is a health check on a browser AI17Z is about
+ * to replace if the answer is no, and a slow no costs the same as a fast one
+ * except in patience.
+ */
+async function canAttach(cdpUrl: string, timeoutMs = 6_000): Promise<boolean> {
+  try {
+    const { chromium } = await import('playwright');
+    const browser = await chromium.connectOverCDP(cdpUrl, { timeout: timeoutMs });
+    await browser.close().catch(() => undefined);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** How many pages a browser has, without opening a CDP session to find out. */
 async function countPages(cdpUrl: string): Promise<number> {
   try {
@@ -395,6 +426,22 @@ async function countPages(cdpUrl: string): Promise<number> {
     // report whatever is actually wrong.
     return 0;
   }
+}
+
+/**
+ * Closes a browser that cannot be used, so a fresh one can have the profile.
+ *
+ * Returning null is not enough on its own: the unusable Chrome still holds the
+ * profile, and the next launch would hand off to it and exit without ever
+ * opening a port. That is the failure this whole path exists to avoid.
+ *
+ * Only ever called for a browser AI17Z started, which is what the endpoint file
+ * records. Closed gracefully first, so the signed-in session is flushed to disk
+ * and comes back with the replacement.
+ */
+async function replaceUnusable(cdpUrl: string, pid: number | null, profileDir: string): Promise<void> {
+  await closeChrome({ pid, cdpUrl, profileDir }, 20_000).catch(() => undefined);
+  await forgetEndpoint(profileDir);
 }
 
 /** Forgets the recorded endpoint, after closing the browser it described. */

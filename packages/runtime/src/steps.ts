@@ -462,6 +462,42 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   }
 
   const action = claim.action;
+  const adapter = getChannelAdapter(job.channel);
+
+  // An action recovered from a worker that died mid-flight. It may have died
+  // before X saw the reply or after, and only X knows which — so ask, rather
+  // than assume. Assuming it did not happen is how recovery becomes a
+  // duplicate-post machine; assuming it did is how a reply silently vanishes.
+  if (claim.retakenFromStale && !job.dryRun && adapter.wasAlreadyDone) {
+    const already = await adapter
+      .wasAlreadyDone(await adapterContext(bundle), {
+        type: job.actionType,
+        targetRef,
+        text: output,
+        idempotencyKey: job.idempotencyKey,
+        dryRun: false,
+      })
+      .catch(() => null);
+
+    if (already?.done) {
+      await actionsRepo.completeAction(action.id, {
+        status: 'EXECUTED',
+        remoteActionId: already.remoteActionId,
+        remoteActionUrl: already.remoteActionUrl,
+        contentSignature: signature,
+      });
+      await jobsRepo.updateJob(job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
+      await observability.emitTrace({
+        jobId: job.id,
+        agentId: bundle.agent.id,
+        type: 'ACTION_SKIPPED_DUPLICATE',
+        level: 'warn',
+        message: already.detail,
+        data: { actionId: action.id, remoteActionId: already.remoteActionId, recovered: true },
+      });
+      return;
+    }
+  }
   await observability.emitTrace({
     jobId: job.id,
     agentId: bundle.agent.id,
@@ -469,8 +505,6 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     message: job.dryRun ? `Dry run: ${job.actionType}` : `Executing ${job.actionType}`,
     data: { actionId: action.id, targetRef, dryRun: job.dryRun },
   });
-
-  const adapter = getChannelAdapter(job.channel);
   const ctx = await adapterContext(bundle);
 
   try {

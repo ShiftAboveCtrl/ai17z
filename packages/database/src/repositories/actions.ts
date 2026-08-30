@@ -21,9 +21,22 @@ export interface ClaimActionInput {
 }
 
 export type ClaimActionResult =
-  | { outcome: 'CLAIMED'; action: ActionRecord }
+  | { outcome: 'CLAIMED'; action: ActionRecord; retakenFromStale?: boolean }
   | { outcome: 'ALREADY_EXECUTED'; action: ActionRecord }
   | { outcome: 'IN_PROGRESS'; action: ActionRecord };
+
+/**
+ * How long an action may sit EXECUTING before it is assumed abandoned.
+ *
+ * Longer than any real action: a reply is seconds, and the browser timeouts
+ * around it are tens of seconds. Ten minutes means the worker is gone.
+ *
+ * Retaking is not the same as re-sending. A worker can die after X accepted the
+ * reply and before the row was updated, so a retaken action is checked against
+ * the remote before it is performed again — see `wasAlreadyDone` on the channel
+ * adapter. Without that check this would be a duplicate-post machine.
+ */
+const STALE_EXECUTING_MS = 10 * 60_000;
 
 /**
  * Reserves the right to perform a remote action. The partial unique index on
@@ -66,6 +79,30 @@ export async function claimAction(input: ClaimActionInput): Promise<ClaimActionR
         [action.id],
       );
       return { outcome: 'CLAIMED', action: mapRow<ActionRecord>(retaken) as ActionRecord };
+    }
+
+    // An action left EXECUTING by a worker that died. Nothing recovered these,
+    // so one interrupted reply made its job permanently unrunnable: every later
+    // attempt was told another worker was already on it, forever.
+    if (action.status === 'EXECUTING') {
+      const stale = await queryOne(
+        `UPDATE actions
+            SET last_error = NULL, error_class = NULL
+          WHERE id = $1
+            AND status = 'EXECUTING'
+            AND updated_at < now() - ($2::int * interval '1 millisecond')
+        RETURNING ${COLUMNS}`,
+        [action.id, STALE_EXECUTING_MS],
+      );
+      if (stale) {
+        return {
+          outcome: 'CLAIMED',
+          action: mapRow<ActionRecord>(stale) as ActionRecord,
+          // The caller must check the remote before acting. This flag is the
+          // difference between recovering an action and sending it twice.
+          retakenFromStale: true,
+        };
+      }
     }
     return { outcome: 'IN_PROGRESS', action };
   }

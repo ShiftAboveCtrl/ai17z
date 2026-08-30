@@ -632,6 +632,41 @@ export const xAdapter: ChannelAdapter = {
     });
   },
 
+  /**
+   * Looks on X for the thing this action would have done.
+   *
+   * The same read-back that confirms a fresh reply, asked before one is sent
+   * rather than after. A worker can die between X accepting a reply and the row
+   * being updated, and the only way to tell those apart is to go and look.
+   */
+  async wasAlreadyDone(ctx: ChannelContext, request: ActionRequest) {
+    const me = selfHandles(ctx);
+    const statusId = extractStatusId(normalizeTargetId(request.targetRef));
+
+    return withSession(ctx, 'ACTION', async ({ page }) => {
+      // A post has no target, so the account's own timeline is where to look.
+      const where = request.type === 'POST' ? (me[0] ? X_URLS.profile(me[0]) : X_URLS.home) : buildStatusUrl(request.targetRef);
+      if (!where) return { done: false, remoteActionId: null, remoteActionUrl: null, detail: 'No target to check.' };
+
+      await goto(page, where);
+      const found = await findOwnReply(page, request.text, me);
+      if (!found) {
+        return {
+          done: false,
+          remoteActionId: null,
+          remoteActionUrl: null,
+          detail: `Nothing matching this text is on ${statusId ? `status ${statusId}` : 'the timeline'}, so it was not sent.`,
+        };
+      }
+      return {
+        done: true,
+        remoteActionId: found.statusId,
+        remoteActionUrl: found.url,
+        detail: `This was already sent as ${found.statusId}; the previous attempt succeeded before it was recorded.`,
+      };
+    });
+  },
+
   async executeAction(ctx: ChannelContext, request: ActionRequest): Promise<ActionResult> {
     if (request.type !== 'REPLY' && request.type !== 'POST') {
       throw PipelineError.permanent('unsupported_action', `The X adapter cannot perform ${request.type} yet.`);
@@ -651,7 +686,44 @@ export const xAdapter: ChannelAdapter = {
     const anchor = articleForStatus(statusId);
 
     return withSession(ctx, 'ACTION', async ({ page }) => {
+      // Navigate here rather than trusting where verifyAction left the tab.
+      //
+      // Verification and execution are separate leases, and anything else can
+      // use the action tab in between — a scheduled post navigates it to the
+      // compose page, a finished reply returns it to the timeline. Acting on
+      // whatever happens to be loaded is how an automation replies to the wrong
+      // post, and it is why this failed with "the composer did not open" while
+      // sitting on /compose/post.
+      const url = buildStatusUrl(verification.targetRef)!;
+      await goto(page, url);
+
       const article = page.locator(anchor).first();
+      const rendered = await article
+        .waitFor({ state: 'visible', timeout: 15_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!rendered) {
+        throw PipelineError.retryable(
+          'target_not_rendered',
+          `Status ${statusId} did not render on ${url}, so there was nothing to reply to.`,
+          { url },
+        );
+      }
+
+      // Re-check the author on the freshly loaded page. The verification a
+      // moment ago was on a different load, and this is the last look before
+      // something irreversible.
+      const onPage = await readArticle(page, anchor);
+      if (onPage.statusId !== statusId) {
+        throw PipelineError.review(
+          'target_moved',
+          `The anchored article now reports status ${onPage.statusId ?? 'unknown'}, expected ${statusId}.`,
+        );
+      }
+      if (onPage.authorHandle && selfHandles(ctx).includes(onPage.authorHandle)) {
+        throw PipelineError.permanent('self_reply', `The target post belongs to this account (@${onPage.authorHandle}).`);
+      }
+
       const replyButton = article.locator(SEL.replyButton).first();
       if (!(await replyButton.isVisible().catch(() => false))) {
         throw PipelineError.retryable('reply_button_missing', 'The reply control was not visible on the target post.');
@@ -677,7 +749,11 @@ export const xAdapter: ChannelAdapter = {
         }
       }
 
-      await opened.editor.click();
+      // Focused rather than clicked. X's @-mention typeahead opens over the
+      // composer and swallows pointer events, so a click waits thirty seconds
+      // for an element that is visible, enabled, stable, and covered. Focus
+      // needs no pointer at all, and typing focuses anyway.
+      await opened.editor.focus();
       // Typed rather than pasted: X only enables the submit button once its editor
       // has processed real input events.
       await opened.editor.type(request.text, { delay: 12 });
@@ -688,18 +764,7 @@ export const xAdapter: ChannelAdapter = {
         throw PipelineError.retryable('composer_empty', 'The composer was still empty after typing the reply.');
       }
 
-      const submit = opened.scope.locator(SEL.anySubmit).first();
-      const canSubmit = await submit
-        .waitFor({ state: 'visible', timeout: 8_000 })
-        .then(() => true)
-        .catch(() => false);
-      if (canSubmit && (await submit.isEnabled().catch(() => false))) {
-        await submit.click({ timeout: 10_000 });
-      } else {
-        // The keyboard shortcut works whether or not the button rendered where
-        // this expected it to.
-        await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
-      }
+      await submitComposer(page, opened);
 
       // Whichever composer it was, it going away is the signal X accepted it.
       const closed = await opened.editor
@@ -710,7 +775,26 @@ export const xAdapter: ChannelAdapter = {
           ((await opened.editor.innerText().catch(() => 'x')) ?? '').trim().length === 0,
         );
       if (!closed) {
-        throw PipelineError.retryable('composer_did_not_close', 'The composer stayed open, so the reply was not accepted.');
+        // A composer that has not gone is usually a reply X did not accept, and
+        // occasionally one it accepted while the editor stayed on screen. Those
+        // look identical from here and are opposite: retrying the first is
+        // correct, retrying the second posts twice. So go and look before
+        // deciding, which is the only thing that actually distinguishes them.
+        const sent = await findOwnReply(page, request.text, selfHandles(ctx));
+        if (!sent) {
+          throw PipelineError.retryable('composer_did_not_close', 'The composer stayed open, so the reply was not accepted.');
+        }
+        await returnToIdle(page);
+        return {
+          status: 'EXECUTED' as const,
+          remoteActionId: sent.statusId,
+          remoteActionUrl: sent.url,
+          verification: {
+            ...verification,
+            detail: `${verification.detail} The composer stayed open, but the reply is on the thread as ${sent.statusId}.`,
+            evidence: { ...verification.evidence, readBackConfirmed: true, composerStayedOpen: true },
+          },
+        };
       }
 
       await settle(1_500, 2_800);
@@ -781,6 +865,36 @@ async function openComposer(page: Page, timeoutMs = 15_000): Promise<OpenCompose
     editor: inDialog ? dialog.locator(SEL.anyComposer).first() : editor,
     inDialog,
   };
+}
+
+/**
+ * Sends what is in the composer.
+ *
+ * Two ways, in order of preference. The button is the honest one: it is what a
+ * person clicks, and X disables it until the editor is genuinely ready. But the
+ * @-mention typeahead opens over the composer and swallows pointer events, so
+ * the click can wait out its timeout against a button that is perfectly fine
+ * and merely covered. The keyboard shortcut goes through the same handler and
+ * no overlay can intercept it.
+ */
+async function submitComposer(page: Page, opened: OpenComposer): Promise<void> {
+  const submit = opened.scope.locator(SEL.anySubmit).first();
+  const ready = await submit
+    .waitFor({ state: 'visible', timeout: 8_000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (ready && (await submit.isEnabled().catch(() => false))) {
+    // Short timeout: if something is covering it, fall through rather than
+    // spending thirty seconds finding that out.
+    const clicked = await submit
+      .click({ timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (clicked) return;
+  }
+
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
 }
 
 /** Handles from the composer's own "Replying to @someone" line. */
@@ -865,7 +979,7 @@ async function postOwn(
     const composer = opened.editor;
     const submit = opened.scope.locator(SEL.anySubmit).first();
 
-    await composer.click();
+    await composer.focus();
     // Typed rather than pasted: X only enables the submit button once its editor
     // has processed real input events.
     await composer.type(request.text, { delay: 12 });
@@ -889,7 +1003,7 @@ async function postOwn(
     if (!(await submit.isEnabled().catch(() => false))) {
       throw PipelineError.retryable('post_button_disabled', 'X did not enable the post button.');
     }
-    await submit.click({ timeout: 10_000 });
+    await submitComposer(page, opened);
     await settle(2_000, 3_500);
 
     // Read back from the account's own timeline. A dialog that closed is not
