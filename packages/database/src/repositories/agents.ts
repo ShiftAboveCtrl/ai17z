@@ -1,4 +1,5 @@
 import type { Agent, PersonaDraft, PersonaVersion, PolicyConfig } from '@xbam/shared/contracts';
+import { PolicyConfig as PolicyConfigSchema } from '@xbam/shared/contracts';
 import { DEFAULT_POLICY, NotFoundError, slugify } from '@xbam/shared';
 import { query, queryOne, withTransaction, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
@@ -230,16 +231,37 @@ export interface PolicyVersionRow {
   createdAt: string;
 }
 
+/**
+ * Reads a stored policy forward into the current shape.
+ *
+ * A row written before a field existed simply does not have it, and every
+ * reader would then have to guard for a section that is undefined rather than
+ * defaulted. Parsing through the schema fills the gaps with the same defaults a
+ * new agent gets, which is what "the config is versioned" is supposed to mean.
+ *
+ * This is a read: the row is not rewritten. The next save records the filled-in
+ * shape as an ordinary new version, with its change note.
+ */
+function fillDefaults(row: PolicyVersionRow): PolicyVersionRow {
+  const parsed = PolicyConfigSchema.safeParse(row.config ?? {});
+  return { ...row, config: parsed.success ? parsed.data : DEFAULT_POLICY };
+}
+
+function readPolicyRow(row: Record<string, unknown> | null): PolicyVersionRow | null {
+  const mapped = mapRow<PolicyVersionRow>(row);
+  return mapped ? fillDefaults(mapped) : null;
+}
+
 export async function getActivePolicy(agentId: string): Promise<PolicyVersionRow | null> {
   const row = await queryOne(
     `SELECT pv.* FROM agents a JOIN policy_versions pv ON pv.id = a.policy_version_id WHERE a.id = $1`,
     [agentId],
   );
-  return mapRow<PolicyVersionRow>(row);
+  return readPolicyRow(row);
 }
 
 export async function getPolicyVersion(id: string): Promise<PolicyVersionRow | null> {
-  return mapRow<PolicyVersionRow>(await queryOne('SELECT * FROM policy_versions WHERE id = $1', [id]));
+  return readPolicyRow(await queryOne('SELECT * FROM policy_versions WHERE id = $1', [id]));
 }
 
 export async function listPolicyVersions(agentId: string): Promise<PolicyVersionRow[]> {
@@ -248,7 +270,7 @@ export async function listPolicyVersions(agentId: string): Promise<PolicyVersion
       WHERE p.agent_id = $1 ORDER BY pv.version DESC`,
     [agentId],
   );
-  return mapRows<PolicyVersionRow>(rows);
+  return mapRows<PolicyVersionRow>(rows).map(fillDefaults);
 }
 
 export async function savePolicyVersion(
