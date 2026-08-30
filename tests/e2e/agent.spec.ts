@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openAgent, signIn, uniqueName } from './helpers';
+import { deleteAgentsNamed, deleteMockAccountsNamed, openAgent, signIn, uniqueName } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -67,4 +67,24 @@ test('edits the persona and cuts a new version', async ({ page }) => {
 
   await expect(identity.getByText('saved')).toBeVisible({ timeout: 20_000 });
   await expect(version).not.toHaveText(before, { timeout: 20_000 });
+});
+
+/**
+ * These run against the real stack as the real owner, so what they create ends
+ * up in somebody's actual agent list. Cleaning up is part of the test.
+ */
+test.afterAll(async ({ browser }) => {
+  const page = await browser.newPage();
+  try {
+    await signIn(page);
+    const agents = await deleteAgentsNamed(page, 'E2E Agent');
+    const accounts = await deleteMockAccountsNamed(page, 'e2e_agent_');
+    console.log(`cleanup: removed ${agents} agent(s) and ${accounts} mock account(s)`);
+  } catch (error) {
+    // Never fail a passing run on cleanup, but say so: a silent leak is how
+    // thirty-seven of these accumulated.
+    console.warn('cleanup failed:', (error as Error).message);
+  } finally {
+    await page.close();
+  }
 });

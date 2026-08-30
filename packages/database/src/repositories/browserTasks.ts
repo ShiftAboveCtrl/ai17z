@@ -20,7 +20,8 @@ export type BrowserTaskKind =
   | 'DISCONNECT'
   | 'INGEST'
   | 'PREFLIGHT'
-  | 'CANCEL_AUTH';
+  | 'CANCEL_AUTH'
+  | 'SHUTDOWN_BROWSER';
 
 export interface BrowserTaskRow {
   id: string;

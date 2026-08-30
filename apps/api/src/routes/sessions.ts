@@ -30,6 +30,7 @@ const TASK_KINDS = [
   'DISCONNECT',
   'INGEST',
   'CANCEL_AUTH',
+  'SHUTDOWN_BROWSER',
 ] as const;
 
 /**

@@ -3,6 +3,7 @@ import { EasySetup, type RadarSourceKind } from '@xbam/shared/contracts';
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   accounts as accountsRepo,
+  browserTasks,
   agents as agentsRepo,
   capabilities as capabilitiesRepo,
   ops,
@@ -307,6 +308,58 @@ export async function easyStartRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * Stopping an agent, all the way down.
+   *
+   * Pausing used to set a state and leave a signed-in Chrome on the desktop
+   * with three tabs polling nothing. Stop now also queues a browser shutdown
+   * per account, which closes the window and its renderers — gracefully first,
+   * so the session is flushed to the profile and comes straight back on start.
+   *
+   * The API owns no browsers, so it records the intent and the worker does it.
+   * A browser AI17Z did not start is only detached from.
+   */
+  app.post(
+    '/api/agents/:id/stop',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const updated = await agentsRepo.updateAgent(agent.id, { state: 'PAUSED' });
+
+      const closing: { handle: string; queued: boolean; detail: string }[] = [];
+      for (const link of await accountsRepo.listAgentAccounts(agent.id)) {
+        const account = await accountsRepo.getAccount(link.accountId);
+        if (!account || !getChannelAdapter(account.channel).requiresBrowser) continue;
+        try {
+          await browserTasks.enqueueBrowserTask({
+            accountId: account.id,
+            kind: 'SHUTDOWN_BROWSER',
+            requestedBy: user.id,
+            params: {},
+          });
+          closing.push({ handle: account.handle, queued: true, detail: 'Closing the browser.' });
+        } catch (error) {
+          // One account already busy must not stop the agent being stopped.
+          closing.push({
+            handle: account.handle,
+            queued: false,
+            detail: error instanceof Error ? error.message : 'Could not queue a browser shutdown.',
+          });
+        }
+      }
+
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'agent.stopped',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { browsers: closing.length },
+      });
+      return { state: updated.state, closing };
+    }),
+  );
+
+  /** Kept for anything that only wants the state change. */
   app.post(
     '/api/agents/:id/pause',
     handler(async (request) => {

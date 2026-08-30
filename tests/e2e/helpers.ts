@@ -38,3 +38,54 @@ export async function openAgent(page: Page, name: string): Promise<void> {
   await page.getByRole('heading', { name, exact: true }).first().click();
   await page.locator('#identity').waitFor({ timeout: 20_000 });
 }
+
+/**
+ * Removes an agent this run created, through the API the UI uses.
+ *
+ * These specs run against the real stack signed in as the real owner, so
+ * anything they leave behind is left in somebody's actual list of agents. That
+ * is how thirty-seven "E2E Agent" rows accumulated. Deleting an agent cascades
+ * to its personas, policies, jobs, traces, and memories.
+ *
+ * Best-effort: a cleanup failure must not fail a passing test, but it is
+ * reported so a leak does not go unnoticed.
+ */
+export async function deleteAgentsNamed(page: Page, prefix: string): Promise<number> {
+  return page.evaluate(async (namePrefix) => {
+    const token = localStorage.getItem('ai17z.session') ?? localStorage.getItem('xbam.session');
+    if (!token) return 0;
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const listed = await fetch('/api/agents', { headers }).then((r) => r.json());
+    const items: { id: string; name: string }[] = listed?.data?.items ?? [];
+    let removed = 0;
+    for (const agent of items) {
+      if (!agent.name.startsWith(namePrefix)) continue;
+      const res = await fetch(`/api/agents/${agent.id}`, { method: 'DELETE', headers });
+      if (res.ok) removed += 1;
+    }
+    return removed;
+  }, prefix);
+}
+
+/**
+ * Mock accounts a run created. Named after the agent, so the same prefix finds
+ * them, and only ever mock: nothing here can touch a real X account.
+ */
+export async function deleteMockAccountsNamed(page: Page, handlePrefix: string): Promise<number> {
+  return page.evaluate(async (prefix) => {
+    const token = localStorage.getItem('ai17z.session') ?? localStorage.getItem('xbam.session');
+    if (!token) return 0;
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const listed = await fetch('/api/accounts', { headers }).then((r) => r.json());
+    const items: { id: string; channel: string; handle: string }[] = listed?.data?.items ?? [];
+    let removed = 0;
+    for (const account of items) {
+      if (account.channel !== 'mock' || !account.handle.startsWith(prefix)) continue;
+      const res = await fetch(`/api/accounts/${account.id}`, { method: 'DELETE', headers });
+      if (res.ok) removed += 1;
+    }
+    return removed;
+  }, handlePrefix);
+}

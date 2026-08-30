@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronDown, Copy, ExternalLink, Pause, Play, Settings2, Trash2 } from 'lucide-react';
-import { ApiError, del, patch, post } from '@app/lib/api';
+import { ChevronDown, Copy, ExternalLink, Play, Square, Trash2 } from 'lucide-react';
+import { ApiError, del, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AgentDetail } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
@@ -20,6 +20,7 @@ import { PipelineSection } from './sections/PipelineSection';
 import { ToolsSection } from './sections/ToolsSection';
 import { PoliciesSection } from './sections/PoliciesSection';
 import { ActivitySection } from './sections/ActivitySection';
+import { useViewMode } from '@app/lib/viewMode';
 import { EasyAgentView } from './EasyAgentView';
 
 // Three.js loads only once an agent page is actually open.
@@ -40,40 +41,16 @@ const SECTIONS = [
   ['activity', 'Activity'],
 ] as const;
 
-/**
- * Which of the two views somebody last used.
- *
- * Remembered across agents rather than per agent: a person is an Easy Mode
- * person or an Advanced person, and being dropped into the other one because
- * they clicked a different agent is disorienting.
- */
-const MODE_KEY = 'ai17z.agentView';
-
-function readMode(): 'easy' | 'advanced' {
-  try {
-    return localStorage.getItem(MODE_KEY) === 'advanced' ? 'advanced' : 'easy';
-  } catch {
-    // Private-mode browsers block storage. Easy is the right default anyway.
-    return 'easy';
-  }
-}
-
 export function AgentPage() {
   const { agentId = '' } = useParams();
   const { data, error, loading, reload } = useResource<AgentDetail>(agentId ? `/api/agents/${agentId}` : null);
   const [active, setActive] = useState<string>('identity');
-  const [mode, setMode] = useState<'easy' | 'advanced'>(readMode);
+  const [mode] = useViewMode();
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(MODE_KEY, mode);
-    } catch {
-      // Not being able to remember the preference is not worth reporting.
-    }
-  }, [mode]);
+  const [blockers, setBlockers] = useState<{ what: string; fix: string }[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Highlights whichever section currently owns the viewport.
   useEffect(() => {
@@ -118,14 +95,35 @@ export function AgentPage() {
   if (!data) return null;
 
   const { agent, persona, policy, pipeline, models, accounts, stats, memoryCounts, tools } = data;
-  const paused = agent.state === 'PAUSED';
+  const running = agent.state === 'ACTIVE';
   const channel = accounts[0];
 
-  const togglePause = async () => {
+  /**
+   * Stop means stop: the state changes and the browser closes with it.
+   *
+   * Start runs the preflight first, so an agent that cannot work says why
+   * instead of going ACTIVE and failing on its first job.
+   */
+  const toggleRunning = async () => {
     setBusy(true);
     setActionError(null);
+    setBlockers([]);
     try {
-      await patch(`/api/agents/${agent.id}`, { state: paused ? 'ACTIVE' : 'PAUSED' });
+      if (running) {
+        const result = await post<{ closing: { handle: string; detail: string }[] }>(`/api/agents/${agent.id}/stop`, {});
+        setNotice(
+          result.closing.length > 0
+            ? `Stopped. ${result.closing.map((c) => `@${c.handle}: ${c.detail}`).join(' ')}`
+            : 'Stopped.',
+        );
+      } else {
+        const result = await post<{ started: boolean; blockers: { what: string; fix: string }[] }>(
+          `/api/agents/${agent.id}/start`,
+          {},
+        );
+        if (!result.started) setBlockers(result.blockers);
+        else setNotice('Running. It opens a browser when it next has something to read.');
+      }
       reload();
     } catch (e) {
       setActionError(e instanceof ApiError ? e.message : 'That did not work.');
@@ -152,17 +150,36 @@ export function AgentPage() {
 
   return (
     <main className="pb-32">
-      <section className="relative mx-auto flex min-h-[86vh] max-w-page flex-col items-center justify-center px-6 pt-32 text-center sm:px-10">
+      {/*
+        Advanced keeps the full-height opening: it is a page you scroll through.
+        Easy is a page you read, so the hero shrinks to a header and the four
+        things somebody actually came for are on screen without scrolling.
+      */}
+      <section
+        className={`relative mx-auto flex max-w-page flex-col items-center px-6 text-center sm:px-10 ${
+          mode === 'easy' ? 'pb-10 pt-28 sm:pt-32' : 'min-h-[86vh] justify-center pt-32'
+        }`}
+      >
         <FadeIn>
           <Suspense fallback={<AgentGlyph agentId={agent.id} name={agent.name} imageUrl={agent.avatarUrl} size="xl" />}>
-            <div className="h-56 w-56 overflow-hidden rounded-3xl border border-ink-line sm:h-72 sm:w-72">
+            <div
+              className={`overflow-hidden rounded-3xl border border-ink-line ${
+                mode === 'easy' ? 'h-28 w-28 sm:h-32 sm:w-32' : 'h-56 w-56 sm:h-72 sm:w-72'
+              }`}
+            >
               <AgentPortrait agentId={agent.id} name={agent.name} imageUrl={agent.avatarUrl} className="h-full w-full" />
             </div>
           </Suspense>
         </FadeIn>
 
         <FadeIn delay={0.1}>
-          <h1 className="mt-10 text-[15vw] font-light leading-[0.86] tracking-monument text-bone sm:text-[7vw]">
+          <h1
+            className={`font-light tracking-monument text-bone ${
+              mode === 'easy'
+                ? 'mt-5 text-[10vw] leading-[1] sm:text-[3.4vw]'
+                : 'mt-10 text-[15vw] leading-[0.86] sm:text-[7vw]'
+            }`}
+          >
             {agent.name}
           </h1>
         </FadeIn>
@@ -182,16 +199,21 @@ export function AgentPage() {
         </FadeIn>
 
         <FadeIn delay={0.3}>
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-2">
-            <button type="button" className="btn-ghost" onClick={() => void togglePause()} disabled={busy}>
+          <div className={`flex flex-wrap items-center justify-center gap-2 ${mode === 'easy' ? 'mt-6' : 'mt-10'}`}>
+            <button
+              type="button"
+              className={running ? 'btn-ghost' : 'btn-primary'}
+              onClick={() => void toggleRunning()}
+              disabled={busy}
+            >
               {busy ? (
                 <Spinner className="h-3.5 w-3.5" />
-              ) : paused ? (
-                <Play className="h-3.5 w-3.5" aria-hidden />
+              ) : running ? (
+                <Square className="h-3.5 w-3.5" aria-hidden />
               ) : (
-                <Pause className="h-3.5 w-3.5" aria-hidden />
+                <Play className="h-3.5 w-3.5" aria-hidden />
               )}
-              {paused ? 'Resume' : 'Pause'}
+              {running ? 'Stop' : 'Start'}
             </button>
             {channel?.channel === 'x' && channel.handle && (
               <a
@@ -207,14 +229,6 @@ export function AgentPage() {
             <Link className="btn-quiet" to="/activity">
               Activity
             </Link>
-            <button
-              type="button"
-              className="btn-quiet"
-              onClick={() => setMode(mode === 'easy' ? 'advanced' : 'easy')}
-            >
-              <Settings2 className="h-3.5 w-3.5" aria-hidden />
-              {mode === 'easy' ? 'Advanced' : 'Simple view'}
-            </button>
             {mode === 'advanced' && (
               <>
                 <button type="button" className="btn-quiet" onClick={() => void duplicate()} disabled={busy}>
@@ -236,9 +250,28 @@ export function AgentPage() {
           </div>
         )}
 
-        {paused && (
+        {blockers.length > 0 && (
+          <div className="mt-6 w-full max-w-md space-y-2 rounded-lg border border-signal-wait/40 bg-signal-wait/[0.06] p-4 text-left">
+            <p className="text-sm text-bone">It cannot start yet:</p>
+            <ul className="space-y-1.5">
+              {blockers.map((blocker) => (
+                <li key={blocker.what} className="text-[13px] leading-relaxed text-bone-dim">
+                  {blocker.what} <span className="text-bone-faint">{blocker.fix}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {notice && (
+          <p className="mt-6 max-w-md break-words rounded-lg border border-ink-line px-4 py-3 text-[13px] leading-relaxed text-bone-dim">
+            {notice}
+          </p>
+        )}
+
+        {!running && blockers.length === 0 && !notice && (
           <p className="mt-8 max-w-md rounded-lg border border-signal-wait/30 bg-signal-wait/[0.06] px-4 py-3 text-sm text-signal-wait">
-            This agent is paused. New events are still recorded, but no jobs are created for it.
+            This agent is stopped. Nothing is read and no browser is open for it.
           </p>
         )}
 

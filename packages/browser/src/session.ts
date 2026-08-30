@@ -4,7 +4,15 @@ import { resolve } from 'node:path';
 import type { BrowserContext, Page } from 'playwright';
 import { PipelineError, createLogger, envBool, errorMessage } from '@xbam/shared';
 import type { BrowserChannel, BrowserIdentity, LeasedSession, SessionConfig } from './types';
-import { cdpIdentity, cdpIsGoogleChrome, launchChrome, waitForCdp, type LaunchedChrome } from './chrome';
+import {
+  cdpIdentity,
+  cdpIsGoogleChrome,
+  closeChrome,
+  existingChrome,
+  launchChrome,
+  waitForCdp,
+  type LaunchedChrome,
+} from './chrome';
 import { acquireTab, lockTab, retagIfLost, tabHealth, type TabHealth, type TabMap, type TabRole } from './tabs';
 
 const log = createLogger('browser');
@@ -557,4 +565,55 @@ export function activeSessionAccountIds(): string[] {
  */
 export function sessionIdentity(accountId: string): BrowserIdentity | null {
   return contexts.get(accountId)?.identity ?? null;
+}
+
+/**
+ * Closes an account's browser, rather than merely letting go of it.
+ *
+ * `closeSession` detaches: for a CDP-attached browser Playwright drops the
+ * connection and Chrome carries on. That is right when somebody else started
+ * the browser and wrong when AI17Z did, and "stop this agent" has to mean the
+ * window and its process tree actually go away.
+ *
+ * Which of the two applies is answered by the endpoint file AI17Z writes beside
+ * the profile when it spawns Chrome. No file means AI17Z did not start this
+ * browser and must not kill it — a custom CDP endpoint belongs to whoever
+ * opened it, and closing somebody's own browser would be a genuine harm.
+ *
+ * Chrome is asked to quit before it is killed, because cookies and local
+ * storage are flushed on a clean shutdown and the signed-in session is the
+ * whole point of the profile.
+ */
+export async function shutdownBrowser(
+  accountId: string,
+  profileDir: string | null,
+): Promise<{ closed: boolean; detail: string }> {
+  const entry = contexts.get(accountId);
+  const identity = entry?.identity ?? null;
+  await closeSession(accountId);
+
+  if (!profileDir) {
+    return { closed: false, detail: 'Detached from the browser. AI17Z has no profile recorded for this account.' };
+  }
+
+  const owned = await existingChrome(profileDir).catch(() => null);
+  if (!owned) {
+    return {
+      closed: false,
+      detail: 'Detached. This browser was not started by AI17Z, so it has been left running.',
+    };
+  }
+
+  const gone = await closeChrome(
+    { pid: owned.pid ?? identity?.pid ?? null, cdpUrl: owned.cdpUrl, profileDir },
+    25_000,
+  );
+  log.info('browser shut down', { accountId, cdpUrl: owned.cdpUrl, pid: owned.pid, gone });
+
+  return gone
+    ? { closed: true, detail: 'Browser closed. The signed-in session is kept in the profile on disk.' }
+    : {
+        closed: false,
+        detail: `Asked the browser at ${owned.cdpUrl} to close and it is still answering. It may need closing by hand.`,
+      };
 }
