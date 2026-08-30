@@ -313,6 +313,11 @@ export const PIPELINE_NODE_KINDS = [
   'RESOLVE_CONTEXT',
   /** Understands images, quoted posts and links attached to the event. */
   'MEDIA_RESOLVE',
+  /**
+   * Looks up anything the answer depends on that a training set cannot hold.
+   * Skipped for the ordinary reply, which is most of them.
+   */
+  'RESEARCH',
   /** Loads what the agent knows about the person it is replying to. */
   'RELATIONSHIP',
   /** Loads what the agent already believes about what is being discussed. */
@@ -416,6 +421,8 @@ export const TRACE_EVENT_TYPES = [
   'VOICE_COMPILED',
   'QUALITY_SCORED',
   'REPETITION_DETECTED',
+  /** Something was looked up off-platform because the answer changes daily. */
+  'RESEARCH_DONE',
 ] as const;
 export const TraceEventType = enumOf(TRACE_EVENT_TYPES).schema;
 export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];

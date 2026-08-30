@@ -159,7 +159,10 @@ Say plainly that you cannot see it rather than guessing what it shows.
 {{parentText}}
 {{#parentAttachments}}{{parentAttachments}}
 {{/parentAttachments}}
-{{/parentText}}FROM
+{{/parentText}}{{#researchBlock}}LOOKED UP JUST NOW
+{{researchBlock}}
+
+{{/researchBlock}}FROM
 {{authorHandle}}
 
 INCOMING MESSAGE:

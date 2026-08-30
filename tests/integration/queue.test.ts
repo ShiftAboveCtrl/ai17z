@@ -107,6 +107,9 @@ describe('the durable queue', () => {
       'stance',
       'engagement',
       'intent',
+      // Between deciding to answer and choosing what to recall: nothing is
+      // looked up for a mention the agent was never going to reply to.
+      'research',
       'memory',
       'persona',
       'generate',
