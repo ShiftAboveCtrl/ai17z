@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderResearch, research, whatToResearch, type Finding } from '@xbam/runtime';
+import { choosePair, renderResearch, research, whatToResearch, type Finding } from '@xbam/runtime';
 
 /**
  * Knowing when to go and look.
@@ -199,5 +199,77 @@ describe('how findings are put to the model', () => {
 
   it('renders nothing at all when nothing was looked up', () => {
     expect(renderResearch({ findings: [], failed: [], note: '' })).toBe('');
+  });
+});
+
+describe('picking which pair answers the question', () => {
+  const pair = (over: Record<string, unknown>) => ({
+    baseToken: { name: 'Uniswap', symbol: 'UNI', address: '0xuni' },
+    priceUsd: '5.18',
+    liquidity: { usd: 1_000_000 },
+    volume: { h24: 100_000 },
+    ...over,
+  });
+
+  it('ignores a manipulated pair that tops the liquidity table', () => {
+    // The real case: the deepest UNI pair on DexScreener is UNI/SASHIMI and it
+    // reports five million dollars a token. Liquidity ranking picks it; a
+    // median cannot be moved by one outlier.
+    const chosen = choosePair(
+      [
+        pair({ priceUsd: '5178076.45', liquidity: { usd: 57_000_000 } }),
+        pair({ priceUsd: '5.18', liquidity: { usd: 15_000_000 } }),
+        pair({ priceUsd: '5.17', liquidity: { usd: 5_000_000 } }),
+      ],
+      null,
+    );
+    expect(chosen!.price).toBeCloseTo(5.18, 2);
+  });
+
+  it('sums liquidity across pairs rather than quoting one', () => {
+    const chosen = choosePair(
+      [pair({ liquidity: { usd: 1_000_000 } }), pair({ liquidity: { usd: 2_000_000 } })],
+      null,
+    );
+    expect(chosen!.totalLiquidity).toBe(3_000_000);
+    expect(chosen!.pairCount).toBe(2);
+  });
+
+  it('picks one token when several share a ticker, and says how many', () => {
+    // Anyone can mint a token called WIF. A search for it returned an impostor
+    // with $26k of liquidity instead of the one with $132M.
+    const real = { name: 'dogwifhat', symbol: 'WIF', address: '0xreal' };
+    const fake = { name: 'WIF', symbol: 'WIF', address: '0xfake' };
+    const chosen = choosePair(
+      [
+        { baseToken: fake, priceUsd: '0.0000265', liquidity: { usd: 26_000 } },
+        { baseToken: real, priceUsd: '0.2666', liquidity: { usd: 132_000_000 } },
+      ],
+      'WIF',
+    );
+    expect(chosen!.best.baseToken!.address).toBe('0xreal');
+    expect(chosen!.price).toBeCloseTo(0.2666, 4);
+    expect(chosen!.ambiguous).toBe(1);
+  });
+
+  it('does not report ambiguity for an address lookup', () => {
+    const chosen = choosePair([pair({})], null);
+    expect(chosen!.ambiguous).toBe(0);
+  });
+
+  it('drops pairs with no liquidity and no usable price', () => {
+    expect(choosePair([pair({ liquidity: { usd: 0 } })], null)).toBeNull();
+    expect(choosePair([pair({ priceUsd: 'not a number' })], null)).toBeNull();
+  });
+
+  it('keeps only pairs where the ticker is the token being priced', () => {
+    const chosen = choosePair(
+      [
+        { baseToken: { symbol: 'SOL', address: '0xsol' }, priceUsd: '200', liquidity: { usd: 9_000_000 } },
+        { baseToken: { symbol: 'UNI', address: '0xuni' }, priceUsd: '5.18', liquidity: { usd: 1_000_000 } },
+      ],
+      'UNI',
+    );
+    expect(chosen!.price).toBeCloseTo(5.18, 2);
   });
 });
