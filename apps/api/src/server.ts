@@ -7,6 +7,7 @@ import { healthRoutes } from './routes/health';
 import { agentRoutes } from './routes/agents';
 import { agentConfigRoutes } from './routes/agentConfig';
 import { easyRoutes, easyStartRoutes } from './routes/easy';
+import { characterRoutes } from './routes/character';
 import { providerRoutes } from './routes/providers';
 import { accountRoutes } from './routes/accounts';
 import { sessionRoutes } from './routes/sessions';
@@ -51,6 +52,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(agentConfigRoutes);
   await app.register(easyRoutes);
   await app.register(easyStartRoutes);
+  await app.register(characterRoutes);
   await app.register(providerRoutes);
   await app.register(accountRoutes);
   await app.register(sessionRoutes);

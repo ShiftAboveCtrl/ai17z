@@ -20,6 +20,7 @@ const ROLE_WORDS: Record<BrowserTabStatus['role'], { name: string; does: string 
   ACTION: { name: 'Acting', does: 'Replies and posts happen here.' },
   MENTIONS: { name: 'Mentions', does: 'Looks for people talking to it.' },
   NOTIFICATIONS: { name: 'Notifications', does: "X's own notifications, as a second opinion." },
+  RESEARCH: { name: 'Looking things up', does: 'Reads the open web when a mention is about something current.' },
 };
 
 /** Older than this and the snapshot is describing a browser that has gone. */

@@ -38,6 +38,7 @@ import { chooseIntent, decideEngagement, readTemperature, recentRepliesTo } from
 import { compileForJob } from './voice';
 import { loadThreadContext, observeEntities, recordNarratives } from './arcs';
 import { harvestIdeas } from './content';
+import { research, whatToResearch } from './research';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -1092,4 +1093,85 @@ export async function stepQualityGate(bundle: JobBundle): Promise<void> {
   if (report.outcome !== 'accept') {
     throw PipelineError.review('quality_gate', report.reason);
   }
+}
+
+/**
+ * Looks up anything the answer depends on that the model cannot know.
+ *
+ * "What is this about?" under a post from an hour ago is unanswerable from a
+ * training set, and a model asked it anyway will invent something. Before this
+ * step the only options were silence or a guess.
+ *
+ * Runs after context resolution, because what to look up is decided from the
+ * conversation and not from the mention alone: the question is usually "what is
+ * this", and "this" is the parent post.
+ *
+ * Nothing is looked up for an ordinary reply. Searching the web before every
+ * message is slow, expensive, and no help at all in answering "nice one".
+ */
+export async function stepResearch(bundle: JobBundle): Promise<void> {
+  const { job } = bundle;
+  const context = job.resolvedContext;
+  if (!context) return;
+
+  const inventory = MediaInventory.safeParse((context.meta as { inventory?: unknown })?.inventory);
+  const lookups = whatToResearch({
+    incoming: context.incomingText,
+    parent: context.parentText,
+    links: inventory.success ? inventory.data.links : [],
+    hasUnreadMedia: inventory.success && inventory.data.media.length > 0,
+  });
+
+  if (lookups.length === 0) {
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'RESEARCH_DONE',
+      message: 'Nothing here needed looking up.',
+      data: { lookups: 0 },
+    });
+    return;
+  }
+
+  // Searching needs a browser, which the channel owns. A channel without one
+  // simply cannot, and the result says so rather than pretending it tried.
+  const adapter = getChannelAdapter(job.channel);
+  const search = adapter.lookUp
+    ? async (query: string) => {
+        const ctx = await adapterContext(bundle);
+        const kind = lookups.find((l) => l.query === query)?.kind === 'link' ? 'link' : 'search';
+        const found = await adapter.lookUp!(ctx, { query, kind });
+        return found.map((item) => ({
+          kind: kind as 'search' | 'link',
+          query,
+          source: kind === 'link' ? 'The page they linked' : 'Web search',
+          title: item.title,
+          summary: item.snippet,
+          url: item.url,
+          retrievedAt: new Date().toISOString(),
+        }));
+      }
+    : undefined;
+
+  const result = await research(lookups, { search });
+
+  await jobsRepo.updateJob(job.id, {
+    resolvedContext: { ...context, meta: { ...context.meta, research: result } },
+  });
+  bundle.job.resolvedContext = { ...context, meta: { ...context.meta, research: result } };
+
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    type: 'RESEARCH_DONE',
+    level: result.findings.length === 0 && result.failed.length > 0 ? 'warn' : 'info',
+    message: result.note,
+    data: {
+      // The reasons, not only the count: "looked up 2 things" tells nobody
+      // whether it looked up the right two.
+      lookups: lookups.map((l) => ({ kind: l.kind, query: l.query.slice(0, 80), reason: l.reason })),
+      findings: result.findings.map((f) => ({ source: f.source, title: f.title.slice(0, 100), url: f.url })),
+      failed: result.failed,
+    },
+  });
 }

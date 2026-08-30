@@ -5,6 +5,7 @@ export { xAdapter } from './x/index';
 export { observeAuthPage } from './x/auth';
 export { CHALLENGE_SIGNALS } from './x/selectors';
 export { linksInText, upgradeImageUrl, readMediaInventory } from './x/media';
+export { webSearch, readPage, type WebResult } from './x/websearch';
 export {
   normalizeTargetId,
   extractStatusId,

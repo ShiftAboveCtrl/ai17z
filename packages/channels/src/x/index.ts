@@ -20,12 +20,14 @@ import type {
   DiagnosticCapture,
   HealthResult,
   IngestOptions,
+  LookedUp,
   VerificationResult,
 } from '../contract';
 import { SEL, X_URLS, articleForStatus } from './selectors';
 import { observeAuthPage } from './auth';
 import { X_MONITORS } from './monitors';
 import { readMediaInventory } from './media';
+import { readPage, webSearch } from './websearch';
 import { type ArticleSnapshot, parentTextOf, resolveBranch } from './conversation';
 import { buildStatusUrl, extractStatusId, handleFromUrl, looksUnavailable, normalizeHandle, normalizeTargetId } from './targets';
 
@@ -304,6 +306,23 @@ export const xAdapter: ChannelAdapter = {
       // the radar records it and the other sources keep working.
       return { candidates: [], cursor: null, error: errorMessage(error) };
     }
+  },
+
+  /**
+   * Looks something up, on the tab kept for exactly that.
+   *
+   * The browser is already open and signed in, so this costs nothing extra and
+   * needs no search API key. It runs on RESEARCH so a lookup cannot disturb a
+   * monitor mid-scroll or a reply mid-compose.
+   */
+  async lookUp(ctx: ChannelContext, request: { query: string; kind: 'search' | 'link' }): Promise<LookedUp[]> {
+    return withSession(ctx, 'RESEARCH', async ({ page }) => {
+      if (request.kind === 'link') {
+        const read = await readPage(page, request.query);
+        return read ? [read] : [];
+      }
+      return webSearch(page, request.query);
+    });
   },
 
   async observeAuth(ctx: ChannelContext): Promise<AuthObservation> {
@@ -638,37 +657,58 @@ export const xAdapter: ChannelAdapter = {
         throw PipelineError.retryable('reply_button_missing', 'The reply control was not visible on the target post.');
       }
       await replyButton.click({ timeout: 10_000 });
-      await settle(600, 1_400);
 
-      const dialog = page.locator(SEL.dialog).first();
-      if (!(await dialog.isVisible().catch(() => false))) {
+      const opened = await openComposer(page);
+      if (!opened) {
         throw PipelineError.retryable('composer_did_not_open', 'The reply composer did not open.');
       }
 
-      const composer = dialog.locator(SEL.composer).first();
-      await composer.waitFor({ state: 'visible', timeout: 10_000 });
-      await composer.click();
+      // The last chance to notice the composer belongs to a different post than
+      // the one that was anchored. AI4CZ wrote this check and never called it.
+      const expected = verification.targetAuthorHandle;
+      if (opened.inDialog && expected) {
+        const replyingTo = await composerReplyingTo(page);
+        if (replyingTo.length > 0 && !replyingTo.includes(expected)) {
+          throw PipelineError.review(
+            'composer_wrong_target',
+            `The composer says it is replying to @${replyingTo.join(', @')}, but the target is @${expected}.`,
+            { expected, replyingTo },
+          );
+        }
+      }
+
+      await opened.editor.click();
       // Typed rather than pasted: X only enables the submit button once its editor
       // has processed real input events.
-      await composer.type(request.text, { delay: 12 });
+      await opened.editor.type(request.text, { delay: 12 });
       await settle(400, 900);
 
-      const typed = (await composer.innerText().catch(() => '')).trim();
+      const typed = (await opened.editor.innerText().catch(() => '')).trim();
       if (!typed) {
         throw PipelineError.retryable('composer_empty', 'The composer was still empty after typing the reply.');
       }
 
-      const submit = dialog.locator(`${SEL.submitInline}, ${SEL.submitButton}`).first();
-      if (await submit.isVisible().catch(() => false)) {
+      const submit = opened.scope.locator(SEL.anySubmit).first();
+      const canSubmit = await submit
+        .waitFor({ state: 'visible', timeout: 8_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (canSubmit && (await submit.isEnabled().catch(() => false))) {
         await submit.click({ timeout: 10_000 });
       } else {
+        // The keyboard shortcut works whether or not the button rendered where
+        // this expected it to.
         await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
       }
 
-      const closed = await dialog
+      // Whichever composer it was, it going away is the signal X accepted it.
+      const closed = await opened.editor
         .waitFor({ state: 'detached', timeout: 20_000 })
         .then(() => true)
-        .catch(() => false);
+        .catch(async () =>
+          // An inline composer is not detached, only emptied.
+          ((await opened.editor.innerText().catch(() => 'x')) ?? '').trim().length === 0,
+        );
       if (!closed) {
         throw PipelineError.retryable('composer_did_not_close', 'The composer stayed open, so the reply was not accepted.');
       }
@@ -706,6 +746,53 @@ export const xAdapter: ChannelAdapter = {
     });
   },
 };
+
+interface OpenComposer {
+  scope: ReturnType<Page['locator']>;
+  editor: ReturnType<Page['locator']>;
+  inDialog: boolean;
+}
+
+/**
+ * Waits for a composer to appear, wherever X decided to put it.
+ *
+ * Clicking reply usually opens a dialog and sometimes just focuses the box
+ * already sitting under the post on a status page. The old code waited only for
+ * the dialog, and did so with an instant visibility check after a fixed pause —
+ * so it reported "the reply composer did not open" while one was plainly on
+ * screen, which is a bad thing for an automation to be wrong about.
+ *
+ * Waits for the editor itself, because that is the thing that has to be typed
+ * into, and reports which container it landed in so the caller knows whether
+ * the "replying to" line is available to check.
+ */
+async function openComposer(page: Page, timeoutMs = 15_000): Promise<OpenComposer | null> {
+  const editor = page.locator(SEL.anyComposer).first();
+  const appeared = await editor
+    .waitFor({ state: 'visible', timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false);
+  if (!appeared) return null;
+
+  const dialog = page.locator(SEL.dialog).first();
+  const inDialog = (await dialog.count().catch(() => 0)) > 0 && (await dialog.isVisible().catch(() => false));
+  return {
+    scope: inDialog ? dialog : page.locator('main').first(),
+    editor: inDialog ? dialog.locator(SEL.anyComposer).first() : editor,
+    inDialog,
+  };
+}
+
+/** Handles from the composer's own "Replying to @someone" line. */
+async function composerReplyingTo(page: Page): Promise<string[]> {
+  const dialog = page.locator(SEL.dialog).first();
+  const text = await dialog.innerText().catch(() => '');
+  const line = text.split('\n').find((l) => /^\s*replying to\b/i.test(l));
+  if (!line) return [];
+  return [...line.matchAll(/@([A-Za-z0-9_]{1,15})/g)]
+    .map((m) => normalizeHandle(m[1]))
+    .filter((h): h is string => Boolean(h));
+}
 
 /**
  * Puts the action tab back to a known state after acting.
@@ -764,19 +851,19 @@ async function postOwn(
     // The compose route opens a dialog on its own. When X changes it, the
     // timeline's inline composer is the fallback rather than a failure.
     await goto(page, X_URLS.compose);
-    let scope = page.locator(SEL.dialog).first();
-    let composer = scope.locator(SEL.composer).first();
-    let submit = scope.locator(`${SEL.submitInline}, ${SEL.submitButton}`).first();
+    let opened = await openComposer(page, 8_000);
 
-    if (!(await composer.isVisible().catch(() => false))) {
+    if (!opened) {
+      // The compose route did not give us one; the timeline's own composer is
+      // the fallback rather than a failure.
       await goto(page, X_URLS.home);
-      scope = page.locator('main').first();
-      composer = scope.locator(SEL.inlineComposer).first();
-      submit = scope.locator(SEL.inlineSubmit).first();
-      if (!(await composer.isVisible().catch(() => false))) {
+      opened = await openComposer(page, 10_000);
+      if (!opened) {
         throw PipelineError.retryable('composer_did_not_open', 'The post composer did not open.');
       }
     }
+    const composer = opened.editor;
+    const submit = opened.scope.locator(SEL.anySubmit).first();
 
     await composer.click();
     // Typed rather than pasted: X only enables the submit button once its editor
