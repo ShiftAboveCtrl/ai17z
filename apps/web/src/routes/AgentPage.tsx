@@ -174,7 +174,7 @@ export function AgentPage() {
 
         <FadeIn delay={0.1}>
           <h1
-            className={`font-light tracking-monument text-bone ${
+            className={`font-display font-light tracking-monument text-bone ${
               mode === 'easy'
                 ? 'mt-5 text-[10vw] leading-[1] sm:text-[3.4vw]'
                 : 'mt-10 text-[15vw] leading-[0.86] sm:text-[7vw]'
