@@ -51,6 +51,13 @@ export interface HealthResult {
  * the loop — the window is handed back to the person and nothing further is
  * clicked, typed, or dismissed on their behalf.
  */
+/** One thing a channel's browser found on the open web. */
+export interface LookedUp {
+  title: string;
+  snippet: string;
+  url: string | null;
+}
+
 export interface AuthObservation {
   state: 'SIGNED_IN' | 'AWAITING_LOGIN' | 'AUTHENTICATING' | 'CHALLENGE' | 'UNREACHABLE';
   /** A sentence for the person watching. Never contains challenge content. */
@@ -135,6 +142,13 @@ export interface ChannelAdapter {
    * Looks at an already-open sign-in window and reports what it shows. Optional:
    * a channel that needs no browser sign-in simply does not implement it.
    */
+  /**
+   * Looks something up on the open web, using the browser this channel already
+   * has open. Optional: a channel with no browser simply cannot, and the
+   * research step reports that as a gap rather than pretending.
+   */
+  lookUp?(ctx: ChannelContext, request: { query: string; kind: 'search' | 'link' }): Promise<LookedUp[]>;
+
   observeAuth?(ctx: ChannelContext): Promise<AuthObservation>;
   /**
    * Polls one radar source and reports what it saw.

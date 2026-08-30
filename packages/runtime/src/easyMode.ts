@@ -140,6 +140,16 @@ export function toPolicy(setup: EasySetup, base: PolicyConfig = DEFAULT_POLICY):
       // pretended. Dry run is a separate, deliberate thing.
       dryRunDefault: false,
     },
+    output: {
+      ...base.output,
+      // Enforced on the finished text, not merely asked for in the prompt.
+      emoji: {
+        use: easy.emoji.use,
+        allowed: easy.emoji.allowed,
+        maxPerMessage: easy.emoji.maxPerMessage,
+        messagesPercent: easy.emoji.messagesPercent,
+      },
+    },
     content: {
       ...base.content,
       allowedRemoteHandles: audience === 'ALLOWLIST' ? allowlist : [],
@@ -300,6 +310,12 @@ export function readEasyView(input: EasyViewInput): EasyView {
       selectivity: selectivityOf(policy),
       filters,
       allowlist: policy.content.allowedRemoteHandles,
+    },
+    emoji: {
+      use: policy.output.emoji.use,
+      allowed: policy.output.emoji.allowed,
+      maxPerMessage: policy.output.emoji.maxPerMessage,
+      messagesPercent: policy.output.emoji.messagesPercent,
     },
     posting: { enabled: input.postIntervalSeconds !== null, frequency },
     operation: policy.automation.mode === 'AUTONOMOUS' ? 'AUTOMATIC' : 'REVIEW_FIRST',

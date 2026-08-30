@@ -44,6 +44,10 @@ export function defaultPipelineDraft(triggerLabel = 'Mention received'): Pipelin
       { key: 'silent', kind: 'END', label: 'Stayed silent', config: { reason: 'not worth answering' }, x: 1, y: 7 },
       { key: 'ask', kind: 'END', label: 'Asked a person', config: { reason: 'sent for review' }, x: 2, y: 7 },
       { key: 'intent', kind: 'INTENT', label: 'What kind of reply', config: {}, x: 0, y: 7 },
+      // After the decision to answer, so nothing is looked up for a mention the
+      // agent was never going to reply to. Skipped entirely for the ordinary
+      // reply; most messages need nothing looked up.
+      { key: 'research', kind: 'RESEARCH', label: 'Look it up', config: {}, x: 0, y: 8 },
       { key: 'memory', kind: 'RETRIEVE_MEMORY', label: 'Retrieve memory', config: {}, x: 0, y: 8 },
       { key: 'persona', kind: 'ASSEMBLE_PERSONA', label: 'Assemble persona', config: {}, x: 0, y: 9 },
       { key: 'generate', kind: 'GENERATE', label: 'Generate', config: { role: 'primary' }, x: 0, y: 10 },
@@ -70,7 +74,8 @@ export function defaultPipelineDraft(triggerLabel = 'Mention received'): Pipelin
       { from: 'engagement', to: 'intent', branch: 'engage', condition: null },
       { from: 'engagement', to: 'silent', branch: 'ignore', condition: null },
       { from: 'engagement', to: 'ask', branch: 'review', condition: null },
-      { from: 'intent', to: 'memory', branch: 'next', condition: null },
+      { from: 'intent', to: 'research', branch: 'next', condition: null },
+      { from: 'research', to: 'memory', branch: 'next', condition: null },
       { from: 'memory', to: 'persona', branch: 'next', condition: null },
       { from: 'persona', to: 'generate', branch: 'next', condition: null },
       { from: 'generate', to: 'validate', branch: 'next', condition: null },

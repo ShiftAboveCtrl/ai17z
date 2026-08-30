@@ -117,8 +117,26 @@ export const EasyPosting = z.object({
 });
 export type EasyPosting = z.infer<typeof EasyPosting>;
 
+/**
+ * How much emoji, in the words somebody would use.
+ *
+ * A real question, not a nicety: a model left to itself decorates every
+ * sentence, and an account that does that reads as a bot to everyone who sees
+ * it. Maps straight onto the enforced output policy.
+ */
+export const EasyEmoji = z.object({
+  use: z.enum(['NONE', 'MINIMAL', 'SELECTED', 'UNRESTRICTED']).default('MINIMAL'),
+  /** Only consulted when `use` is SELECTED. */
+  allowed: z.array(z.string().max(16)).max(60).default([]),
+  maxPerMessage: z.number().int().min(0).max(20).default(1),
+  /** Roughly what share of messages may carry one at all. */
+  messagesPercent: z.number().int().min(0).max(100).default(25),
+});
+export type EasyEmoji = z.infer<typeof EasyEmoji>;
+
 export const EasySetup = z.object({
   character: EasyCharacter,
+  emoji: EasyEmoji.default({}),
   replies: EasyReplies.default({}),
   posting: EasyPosting.default({}),
   operation: EasyOperation.default('REVIEW_FIRST'),
@@ -140,3 +158,107 @@ export const EasyView = z.object({
   beyondEasyMode: z.array(z.string().max(300)).default([]),
 });
 export type EasyView = z.infer<typeof EasyView>;
+
+/**
+ * The questions a character needs answered before it is worth running.
+ *
+ * One list, three ways in: typed by hand, filled by a model from a description,
+ * or brought back on a filled-in template. All three land here, so a character
+ * built by any of them is the same shape and the same depth — and so the
+ * template a person hands to another assistant is generated from this list
+ * rather than written twice and drifting.
+ *
+ * `weight` is how much a missing answer hurts. It drives the completeness score
+ * so somebody can see they have described a voice but not what it cares about.
+ */
+export const CHARACTER_QUESTIONS = [
+  {
+    key: 'name',
+    weight: 3,
+    ask: 'What is this character called?',
+    why: 'The name it speaks under.',
+  },
+  {
+    key: 'description',
+    weight: 2,
+    ask: 'In one line, who are they?',
+    why: 'Shown wherever the agent is listed.',
+  },
+  {
+    key: 'personality',
+    weight: 3,
+    ask: 'What are they like? Temperament, what amuses them, what irritates them.',
+    why: 'The single biggest influence on how a reply reads.',
+  },
+  {
+    key: 'tone',
+    weight: 2,
+    ask: 'How do they sound? Warm, dry, blunt, formal.',
+    why: 'Sets the register of every sentence.',
+  },
+  {
+    key: 'caresAbout',
+    weight: 3,
+    ask: 'What do they actually care about? Five to ten subjects.',
+    why: 'Decides what is worth replying to and what is noise.',
+  },
+  {
+    key: 'speaksLike',
+    weight: 3,
+    ask: 'How do they construct a sentence? Length, punctuation, slang, whether they hedge.',
+    why: 'The mechanics of the voice, as opposed to its mood.',
+  },
+  {
+    key: 'examples',
+    weight: 4,
+    ask: 'Write five things they would actually say. Real sentences, not descriptions.',
+    why: 'Worth more than every other answer combined. A model imitates examples; it only approximates adjectives.',
+  },
+  {
+    key: 'opinions',
+    weight: 2,
+    ask: 'What do they believe that others argue with? Two or three positions.',
+    why: 'An agent with no positions hedges everything and reads as a press release.',
+  },
+  {
+    key: 'avoids',
+    weight: 2,
+    ask: 'What would they never say or do?',
+    why: 'Becomes the prohibited-behaviour list, which is enforced.',
+  },
+  {
+    key: 'audience',
+    weight: 1,
+    ask: 'Who are they talking to?',
+    why: 'Changes how much is assumed and how much is explained.',
+  },
+] as const;
+
+export type CharacterQuestionKey = (typeof CHARACTER_QUESTIONS)[number]['key'];
+
+/** What a model, a template, or a person fills in. */
+export const CharacterAnswers = z.object({
+  name: z.string().max(120).default(''),
+  description: z.string().max(500).default(''),
+  personality: z.string().max(4_000).default(''),
+  tone: z.string().max(1_000).default(''),
+  caresAbout: z.array(z.string().max(120)).max(40).default([]),
+  speaksLike: z.string().max(4_000).default(''),
+  examples: z.array(z.string().max(2_000)).max(50).default([]),
+  opinions: z.array(z.string().max(500)).max(20).default([]),
+  avoids: z.array(z.string().max(500)).max(20).default([]),
+  audience: z.string().max(500).default(''),
+});
+export type CharacterAnswers = z.infer<typeof CharacterAnswers>;
+
+/** How complete a set of answers is, and what is still missing. */
+export const CharacterCompleteness = z.object({
+  /** 0-100, weighted by how much each answer matters. */
+  score: z.number().int().min(0).max(100),
+  missing: z.array(z.object({ key: z.string(), ask: z.string(), why: z.string() })).default([]),
+});
+export type CharacterCompleteness = z.infer<typeof CharacterCompleteness>;
+
+/** Where a set of answers came from. Recorded, because provenance matters. */
+export const CharacterSource = z.enum(['TYPED', 'DESCRIBED', 'TEMPLATE', 'LEARNED']);
+export type CharacterSource = z.infer<typeof CharacterSource>;

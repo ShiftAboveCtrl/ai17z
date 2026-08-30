@@ -33,6 +33,24 @@ export const SEL = {
   /** The composer on the timeline, used when the compose route does not open. */
   inlineComposer: '[data-testid="tweetTextarea_0"]',
   inlineSubmit: '[data-testid="tweetButtonInline"], [data-testid="tweetButton"]',
+  /**
+   * Any composer, in a modal or inline on a status page.
+   *
+   * X does both: clicking reply usually opens a dialog, and sometimes just
+   * focuses the box already sitting under the post. Waiting only for the dialog
+   * reported "the composer did not open" while one was plainly on screen.
+   */
+  anyComposer: '[data-testid="tweetTextarea_0"]',
+  /** Submit, whichever composer it belongs to. */
+  anySubmit: '[data-testid="tweetButton"], [data-testid="tweetButtonInline"]',
+  /**
+   * The "Replying to @someone" line X puts at the top of a reply composer.
+   *
+   * AI4CZ wrote a check against this and never wired it up. It is the last
+   * chance to notice that the composer belongs to a different post than the one
+   * that was anchored.
+   */
+  replyingToLine: 'div[role="dialog"] a[href^="/"][role="link"]',
   timeLink: 'a[href*="/status/"] time',
 } as const;
 

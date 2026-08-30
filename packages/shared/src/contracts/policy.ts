@@ -21,6 +21,47 @@ export const IdentityPolicy = z.object({
 });
 export type IdentityPolicy = z.infer<typeof IdentityPolicy>;
 
+/**
+ * How much emoji is allowed, which is a real question and not a nicety.
+ *
+ * Models left to themselves punctuate every sentence with one, and an account
+ * that does that reads as a bot to every human who sees it. The setting is
+ * enforced, not suggested: surplus emoji are stripped in the validator, so a
+ * model having an enthusiastic day cannot get past it.
+ */
+export const EmojiUse = z.enum([
+  /** None at all, ever. */
+  'NONE',
+  /** At most `maxPerMessage`, and only when it genuinely adds something. */
+  'MINIMAL',
+  /** Only the ones on the list, still capped. */
+  'SELECTED',
+  /** No rule. Whatever the model does. */
+  'UNRESTRICTED',
+]);
+export type EmojiUse = z.infer<typeof EmojiUse>;
+
+export const EmojiPolicy = z.object({
+  use: EmojiUse.default('MINIMAL'),
+  /**
+   * Ceiling per message. One is a person with a light touch; three is a brand
+   * account. Ignored when `use` is NONE or UNRESTRICTED.
+   */
+  maxPerMessage: z.number().int().min(0).max(20).default(1),
+  /**
+   * The permitted set, when `use` is SELECTED. Anything else is stripped.
+   */
+  allowed: z.array(z.string().max(16)).max(60).default([]),
+  /**
+   * Roughly what share of messages may carry any emoji at all, 0-100. A cap on
+   * frequency rather than on count: an agent that uses one emoji in every
+   * single message is still an agent nobody believes is a person.
+   */
+  messagesPercent: z.number().int().min(0).max(100).default(25),
+});
+export type EmojiPolicy = z.infer<typeof EmojiPolicy>;
+
+
 export const OutputPolicy = z.object({
   maxCharacters: z.number().int().positive().max(20_000).default(280),
   minCharacters: z.number().int().min(0).max(1_000).default(1),
@@ -28,6 +69,8 @@ export const OutputPolicy = z.object({
   forbidLinks: z.boolean().default(false),
   forbidMentionsOfOthers: z.boolean().default(false),
   stripSurroundingQuotes: z.boolean().default(true),
+  /** How much emoji, and which. Enforced by the validator, not suggested. */
+  emoji: EmojiPolicy.default({}),
   /** Reject output containing any of these (case-insensitive substring match). */
   bannedPhrases: z.array(z.string().max(200)).max(500).default([]),
 });

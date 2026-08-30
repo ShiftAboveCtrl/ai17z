@@ -25,6 +25,7 @@ import {
   tidy,
 } from './render';
 import { describeDisclosure, describeIdentity } from './identity';
+import { describeEmojiPolicy } from './emojiRule';
 
 export interface AssembleInput {
   layers: PromptLayerTemplate[];
@@ -75,6 +76,41 @@ function renderTranscript(thread: ContextMessage[], agentName: string): string {
 }
 
 /**
+ * What was looked up, framed as evidence rather than as knowledge.
+ *
+ * The distinction matters: an agent that launders a search result into its own
+ * voice will state a wrong one exactly as confidently as a right one. So each
+ * finding keeps the name of where it came from, and the block ends by saying
+ * this was looked up rather than known.
+ */
+function renderResearchBlock(research: unknown): string {
+  const result = research as
+    | { findings?: { source: string; title: string; summary: string; url: string | null }[]; failed?: { query: string; reason: string }[] }
+    | undefined;
+  if (!result) return '';
+  const findings = result.findings ?? [];
+  const failed = result.failed ?? [];
+  if (findings.length === 0 && failed.length === 0) return '';
+
+  const lines: string[] = [];
+  for (const finding of findings) {
+    lines.push(`${finding.source} - ${finding.title}`);
+    if (finding.summary) lines.push(`  ${finding.summary.replace(/\s+/g, ' ').slice(0, 500)}`);
+    if (finding.url) lines.push(`  ${finding.url}`);
+  }
+  if (failed.length > 0) {
+    lines.push(`Could not check: ${failed.map((f) => f.query.slice(0, 60)).join('; ')}.`);
+    lines.push('Say you do not know rather than guessing at those.');
+  }
+  lines.push('');
+  lines.push(
+    'This was looked up a moment ago and is not something you already knew. Use it where it answers the question, ' +
+      'attribute a number if the number matters, and never present any of it as your own knowledge.',
+  );
+  return lines.join('\n');
+}
+
+/**
  * What the post being replied to is carrying, stated plainly.
  *
  * Nothing here has been read by a vision model — these are attachments the
@@ -104,6 +140,8 @@ function renderOutputRules(persona: PersonaVersion, policy: PolicyConfig): strin
   if (policy.output.forbidHashtags) rules.push('Do not use hashtags.');
   if (policy.output.forbidLinks) rules.push('Do not include links.');
   if (policy.output.forbidMentionsOfOthers) rules.push('Do not mention other accounts.');
+  const emoji = describeEmojiPolicy(policy.output.emoji);
+  if (emoji) rules.push(emoji);
   rules.push('No surrounding quotation marks, no preamble, no sign-off.');
   return bulletList(rules);
 }
@@ -149,6 +187,9 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const openCommitments = (context.meta as { openCommitments?: { promise: string }[] } | undefined)?.openCommitments;
   // Attached by the X adapter when the mention leans on what its parent carries.
   const parentInventory = (context.meta as { parentInventory?: MediaInventory | null } | undefined)?.parentInventory ?? undefined;
+  // Attached by the research step when the answer depends on something a
+  // training set cannot hold.
+  const research = (context.meta as { research?: { rendered?: string } } | undefined)?.research;
 
   const values = {
     channelName: input.channelName,
@@ -179,6 +220,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     threadTranscript: renderTranscript(context.thread, persona.displayName),
     parentText: context.parentText ?? '',
     parentAttachments: renderParentAttachments(parentInventory),
+    researchBlock: renderResearchBlock(research),
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
     incomingText: context.incomingText,
     toolsBlock: bulletList(input.toolDescriptions),

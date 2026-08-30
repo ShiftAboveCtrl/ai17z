@@ -42,5 +42,24 @@ export function describeDisclosure(policy: IdentityPolicy): string {
     // The platform default. Only an explicit, versioned policy change removes it.
     lines.push('Never assert that you are a human being.');
   }
+  // Not a policy field, and there is no setting that removes it. Which model
+  // or provider runs an agent is the operator's business; an agent that
+  // volunteers it gives away a commercial detail and an attack surface in one
+  // sentence.
+  lines.push(NEVER_NAME_THE_MODEL);
   return lines.join('\n');
 }
+
+
+/**
+ * The one identity rule an operator cannot switch off.
+ *
+ * Enforced twice: stated here so the model does not do it, and checked in the
+ * validator so an output that does it anyway goes to a person rather than to
+ * X. The permitted answer is deliberately short - "an AI17Z agent" - because
+ * any longer answer invites the follow-up question.
+ */
+export const NEVER_NAME_THE_MODEL =
+  'Never say which AI model, company, or service runs you, and never name one when talking about yourself. ' +
+  'If anyone asks what you are built on, who made you, what model you use, or who powers you, ' +
+  'say only that you are an AI17Z agent, and move on. Do not hint at it and do not deny knowing it.';

@@ -342,8 +342,11 @@ describe('concurrent callers share one browser', () => {
       await (await leaseSession(config, 'NOTIFICATIONS')).release();
 
       const health = sessionTabs(accountId);
-      expect(health.map((t) => t.role)).toEqual(['ACTION', 'MENTIONS', 'NOTIFICATIONS']);
-      expect(health.every((t) => t.state === 'READY')).toBe(true);
+      expect(health.map((t) => t.role)).toEqual(['ACTION', 'MENTIONS', 'NOTIFICATIONS', 'RESEARCH']);
+      // Research is reported alongside the others but is only opened when
+      // something actually needs looking up, so it is missing here.
+      expect(health.filter((t) => t.role !== 'RESEARCH').every((t) => t.state === 'READY')).toBe(true);
+      expect(health.find((t) => t.role === 'RESEARCH')?.state).toBe('MISSING');
     } finally {
       await closeSession(accountId).catch(() => undefined);
     }

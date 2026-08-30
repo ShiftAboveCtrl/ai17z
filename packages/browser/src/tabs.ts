@@ -17,6 +17,9 @@ const log = createLogger('browser-tabs');
  *   ACTION         replies, posts, and the target verification before them
  *   MENTIONS       mention and reply discovery, and the agent's own threads
  *   NOTIFICATIONS  X's own notifications surface, as an independent source
+ *   RESEARCH       looking things up off X, so an agent asked about something
+ *                  that happened this morning is not limited to whatever its
+ *                  model was trained on
  *
  * A tab is identified by `window.name`, not by an in-process map, so a worker
  * that restarts and reattaches to a browser still running adopts the tabs it
@@ -24,9 +27,9 @@ const log = createLogger('browser-tabs');
  * ending up with seventeen notification tabs.
  */
 
-export type TabRole = 'ACTION' | 'MENTIONS' | 'NOTIFICATIONS';
+export type TabRole = 'ACTION' | 'MENTIONS' | 'NOTIFICATIONS' | 'RESEARCH';
 
-export const TAB_ROLES: readonly TabRole[] = ['ACTION', 'MENTIONS', 'NOTIFICATIONS'] as const;
+export const TAB_ROLES: readonly TabRole[] = ['ACTION', 'MENTIONS', 'NOTIFICATIONS', 'RESEARCH'] as const;
 
 /** Written into `window.name`, which survives navigation within an origin. */
 const TAG_PREFIX = 'ai17z-tab:';

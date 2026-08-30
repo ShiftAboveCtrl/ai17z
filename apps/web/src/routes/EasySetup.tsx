@@ -9,6 +9,7 @@ import { AgentGlyph } from '@app/components/AgentGlyph';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { SignInProgress } from '@app/components/SignInProgress';
 import { ErrorPanel, Field, Spinner, StatusDot, Toggle } from '@app/components/ui';
+import { CharacterBuilder, CompletenessBar, type CharacterDraft } from '@app/components/CharacterBuilder';
 
 /**
  * Making one agent, in the fewest decisions that still produce a real one.
@@ -67,6 +68,7 @@ interface Draft {
   examplesText: string;
   caresText: string;
   allowlistText: string;
+  avoidsText: string;
 }
 
 const EMPTY: Draft = {
@@ -99,6 +101,7 @@ const EMPTY: Draft = {
       },
       allowlist: [],
     },
+    emoji: { use: 'MINIMAL', allowed: [], maxPerMessage: 1, messagesPercent: 25 },
     posting: { enabled: false, frequency: 'OCCASIONALLY' },
     operation: 'REVIEW_FIRST',
   },
@@ -109,6 +112,7 @@ const EMPTY: Draft = {
   examplesText: '',
   caresText: '',
   allowlistText: '',
+  avoidsText: '',
 };
 
 function list(text: string): string[] {
@@ -128,6 +132,7 @@ export function EasySetup() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blockers, setBlockers] = useState<{ what: string; fix: string }[]>([]);
+  const [draftCompleteness, setDraftCompleteness] = useState<CharacterDraft['completeness'] | null>(null);
 
   const providers = useResource<{ items: ProviderCredential[] }>('/api/providers');
 
@@ -135,6 +140,35 @@ export function EasySetup() {
   const setSetup = (patch: Partial<EasySetupType>) => setDraft((d) => ({ ...d, setup: { ...d.setup, ...patch } }));
 
   const providerSpec = PROVIDERS.find((p) => p.kind === draft.providerKind) ?? PROVIDERS[0]!;
+
+  /**
+   * Folds a built character into the wizard's own fields.
+   *
+   * Deliberately not saved here: it becomes the contents of the form, so
+   * whoever built it reads and edits it before it is anybody's agent.
+   */
+  const applyDraft = (built: CharacterDraft) => {
+    setDraftCompleteness(built.completeness);
+    setDraft((d) => ({
+      ...d,
+      name: built.answers.name.trim() || d.name,
+      caresText: built.answers.caresAbout.join(', '),
+      examplesText: built.answers.examples.join('\n'),
+      avoidsText: built.answers.avoids.join('\n'),
+      setup: {
+        ...d.setup,
+        character: {
+          ...d.setup.character,
+          description: built.answers.description,
+          personality: built.answers.personality,
+          tone: built.answers.tone,
+          speaksLike: built.answers.speaksLike,
+          // Hand-written or model-written, it is no longer one of the presets.
+          preset: 'CUSTOM',
+        },
+      },
+    }));
+  };
 
   /** Everything the wizard has collected, in the shape the API stores. */
   const currentSetup = (): EasySetupType => ({
@@ -294,6 +328,23 @@ export function EasySetup() {
 
         {step === 2 && (
           <>
+            {agentId && (
+              <CharacterBuilder
+                agentId={agentId}
+                onDraft={(draft) => applyDraft(draft)}
+              />
+            )}
+
+            {draftCompleteness && (
+              <div className="rounded-xl border border-ink-line p-5">
+                <CompletenessBar completeness={draftCompleteness} />
+              </div>
+            )}
+
+            <p className="pt-2 text-[13px] leading-relaxed text-bone-faint">
+              Or fill it in yourself. Anything the builder produced is editable below.
+            </p>
+
             <Field label="Who is this?" htmlFor="description" hint="One line. Shown wherever the agent is listed.">
               <input
                 id="description"
@@ -345,6 +396,77 @@ export function EasySetup() {
                 placeholder="governance, token distribution"
               />
             </Field>
+
+            <Field label="Emoji" hint="Models left alone put one in every sentence, which is the fastest way to read as a bot.">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    ['NONE', 'None at all', 'Never, whatever the other person does'],
+                    ['MINIMAL', 'Rarely', 'At most one, and only when it earns its place'],
+                    ['SELECTED', 'Only ones I pick', 'From a list you choose'],
+                    ['UNRESTRICTED', 'No rule', 'Whatever the model does'],
+                  ] as const
+                ).map(([value, label, hint]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setSetup({ emoji: { ...draft.setup.emoji, use: value } })}
+                    className={`rounded-lg border px-3.5 py-3 text-left transition-colors ${
+                      draft.setup.emoji.use === value
+                        ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone'
+                        : 'border-ink-line text-bone-dim hover:border-bone-faint'
+                    }`}
+                  >
+                    <span className="block text-sm">{label}</span>
+                    <span className="mt-1 block text-[11px] text-bone-faint">{hint}</span>
+                  </button>
+                ))}
+              </div>
+            </Field>
+
+            {draft.setup.emoji.use === 'SELECTED' && (
+              <Field label="Which ones?" htmlFor="emoji-allowed" hint="Paste the emoji it may use. Anything else is removed.">
+                <input
+                  id="emoji-allowed"
+                  className="field text-lg"
+                  value={draft.setup.emoji.allowed.join(' ')}
+                  onChange={(e) =>
+                    setSetup({
+                      emoji: { ...draft.setup.emoji, allowed: [...e.target.value.matchAll(/\p{Extended_Pictographic}/gu)].map((m) => m[0]) },
+                    })
+                  }
+                  placeholder="🔥 👀 🫡"
+                />
+              </Field>
+            )}
+
+            {(draft.setup.emoji.use === 'MINIMAL' || draft.setup.emoji.use === 'SELECTED') && (
+              <div className="grid gap-6 sm:grid-cols-2">
+                <Field label="At most, per message" htmlFor="emoji-max">
+                  <input
+                    id="emoji-max"
+                    type="number"
+                    min={0}
+                    max={5}
+                    className="field"
+                    value={draft.setup.emoji.maxPerMessage}
+                    onChange={(e) => setSetup({ emoji: { ...draft.setup.emoji, maxPerMessage: Number(e.target.value) || 0 } })}
+                  />
+                </Field>
+                <Field label="In how many messages" htmlFor="emoji-share" hint={`About ${draft.setup.emoji.messagesPercent}% of them.`}>
+                  <input
+                    id="emoji-share"
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    className="w-full"
+                    value={draft.setup.emoji.messagesPercent}
+                    onChange={(e) => setSetup({ emoji: { ...draft.setup.emoji, messagesPercent: Number(e.target.value) } })}
+                  />
+                </Field>
+              </div>
+            )}
 
             <Field
               label="Things they would say"

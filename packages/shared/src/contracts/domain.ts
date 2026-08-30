@@ -211,7 +211,7 @@ export type PipelineDraft = z.infer<typeof PipelineDraft>;
 
 /** One of the three role-bound tabs an account's browser keeps open. */
 export const BrowserTabStatus = z.object({
-  role: z.enum(['ACTION', 'MENTIONS', 'NOTIFICATIONS']),
+  role: z.enum(['ACTION', 'MENTIONS', 'NOTIFICATIONS', 'RESEARCH']),
   state: z.enum(['READY', 'BUSY', 'MISSING', 'FAILED']),
   url: z.string().nullable().default(null),
   openedAt: z.string().nullable().default(null),

@@ -40,9 +40,19 @@ describe('describeDisclosure', () => {
     expect(describeDisclosure(policy)).toContain('Never assert that you are a human being.');
   });
 
-  it('omits the restriction only when the operator explicitly allows it', () => {
+  it('omits the human-claim restriction only when the operator explicitly allows it', () => {
     const policy = PolicyConfig.parse({ identity: { mayDenyBeingAI: true, disclosure: 'NONE' } }).identity;
-    expect(describeDisclosure(policy)).toBe('');
+    expect(describeDisclosure(policy)).not.toContain('Never assert that you are a human being.');
+  });
+
+  it('never omits the rule about what is running the agent', () => {
+    // The one identity rule with no setting behind it. Even the most permissive
+    // policy an operator can write still carries it.
+    const permissive = PolicyConfig.parse({ identity: { mayDenyBeingAI: true, disclosure: 'NONE' } }).identity;
+    for (const policy of [PolicyConfig.parse({}).identity, permissive]) {
+      expect(describeDisclosure(policy)).toContain('AI17Z agent');
+      expect(describeDisclosure(policy)).toContain('Never say which AI model');
+    }
   });
 });
 

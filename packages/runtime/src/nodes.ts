@@ -8,6 +8,7 @@ import {
   stepGenerate,
   stepResolveContext,
   stepResolveMedia,
+  stepResearch,
   stepRelationship,
   stepStance,
   stepStanceCheck,
@@ -183,6 +184,10 @@ export const NODE_HANDLERS: Record<string, NodeHandler> = {
   },
   MEDIA_RESOLVE: async (bundle) => {
     await stepResolveMedia(bundle);
+    return { branch: 'next' };
+  },
+  RESEARCH: async (bundle) => {
+    await stepResearch(bundle);
     return { branch: 'next' };
   },
   RELATIONSHIP: async (bundle) => {

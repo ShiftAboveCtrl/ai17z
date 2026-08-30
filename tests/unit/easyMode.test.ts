@@ -107,6 +107,31 @@ describe('Easy answers become real configuration', () => {
     expect(view.setup.replies.filters.verifiedOnly).toBe(true);
   });
 
+  it('makes the emoji answer a rule the validator enforces', () => {
+    const none = toPolicy({ ...setup, emoji: { use: 'NONE', allowed: [], maxPerMessage: 1, messagesPercent: 25 } });
+    expect(none.output.emoji.use).toBe('NONE');
+
+    const picked = toPolicy({
+      ...setup,
+      emoji: { use: 'SELECTED', allowed: ['🔥'], maxPerMessage: 2, messagesPercent: 50 },
+    });
+    expect(picked.output.emoji.allowed).toEqual(['🔥']);
+    expect(picked.output.emoji.maxPerMessage).toBe(2);
+    expect(picked.output.emoji.messagesPercent).toBe(50);
+  });
+
+  it('reads the emoji rule back unchanged', () => {
+    const answers = { use: 'SELECTED' as const, allowed: ['🔥'], maxPerMessage: 2, messagesPercent: 50 };
+    const policy = toPolicy({ ...setup, emoji: answers });
+    const view = readEasyView({
+      persona: toPersona(setup),
+      policy,
+      postIntervalSeconds: null,
+      radarSourceKinds: toRadarSourceKinds(setup),
+    });
+    expect(view.setup.emoji).toEqual(answers);
+  });
+
   it('turns posting frequency into an interval, and off into nothing', () => {
     expect(postIntervalSeconds(setup)).toBe(5 * 3_600);
     expect(postIntervalSeconds({ ...setup, posting: { enabled: false, frequency: 'DAILY' } })).toBeNull();

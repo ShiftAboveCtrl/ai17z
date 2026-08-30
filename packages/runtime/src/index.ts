@@ -21,3 +21,6 @@ export * from './defaultPipeline';
 export * from './bootstrap';
 export * from './easyMode';
 export * from './originate';
+export * from './emoji';
+export * from './character';
+export * from './research';

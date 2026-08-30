@@ -119,3 +119,11 @@ export async function savePipelineVersion(
   });
   return (await getPipelineVersion(id)) as PipelineVersionRecord;
 }
+
+/** Agents that have a pipeline at all, for an upgrade pass over them. */
+export async function agentsWithPipelines(): Promise<string[]> {
+  const rows = await query<{ agent_id: string }>(
+    'SELECT DISTINCT agent_id FROM pipelines ORDER BY agent_id',
+  );
+  return rows.map((r) => r.agent_id);
+}
