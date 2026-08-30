@@ -415,6 +415,83 @@ the idea. A post has no target, so its content signature is taken against the
 account — without that, the "already sent this exact text" check simply does not
 apply to posts.
 
+## Looking things up
+
+An agent asked "what is this about?" under a post from an hour ago cannot answer
+from a training set, and a model asked anyway invents something. The research
+step decides from the conversation whether the answer depends on something
+current, and looks it up: the open web through the browser already running (on
+the RESEARCH tab), and DexScreener for a contract address or ticker.
+
+**It does nothing for the ordinary reply.** Searching before every message is
+slow, expensive, and no better at answering "nice one". The decision is about
+the *shape* of the question, not a keyword list.
+
+**Findings are evidence, never knowledge.** Each keeps the name of its source
+and the prompt says it was looked up a moment ago. An agent that launders a
+search result into its own voice states a wrong one exactly as confidently as a
+right one. A lookup that fails is reported so the model says it does not know.
+
+**A search challenge is a full stop**, exactly like a sign-in challenge. It is
+recognised, the engine is abandoned for the next one, and if they all decline
+the gap is recorded. Nothing here solves a puzzle.
+
+**Market data: median, not deepest.** The deepest UNI pair on DexScreener is
+UNI/SASHIMI reporting $5,178,076 a token against a real $5.18. One broken pair
+tops a liquidity table and cannot move a median. And a ticker is not an
+identity: pairs are grouped by contract, the deepest group wins, the address is
+quoted, and the others are acknowledged.
+
+## Acting on X
+
+**`executeAction` navigates to its own target.** Verification and execution are
+separate leases and anything can use the action tab in between — a scheduled
+post leaves it on `/compose/post`. Acting on whatever happens to be loaded is
+how an automation replies to the wrong post.
+
+**The composer is focused, never clicked.** X opens an @-mention typeahead over
+it that swallows pointer events, so a click waits out its timeout against an
+element that is visible, enabled, stable, and covered. Submit falls back to the
+keyboard for the same reason. The composer may be a dialog or inline on the
+status page; wait for the editor, not for the dialog.
+
+**A composer that does not close is ambiguous.** Usually a reply X refused,
+occasionally one it accepted anyway. Look at the thread before deciding, because
+retrying the second posts twice.
+
+**An action left EXECUTING by a dead worker is retaken, then checked.** A worker
+can die before X saw the reply or after. `wasAlreadyDone` asks the remote, and
+without it recovery is a duplicate-post machine.
+
+**A Chrome that answers `/json/version` but never completes a CDP handshake is
+replaced, not retried into.** `existingChrome` probes with a real connect.
+
+## Emoji and identity
+
+Both are enforced on the finished text, not requested in the prompt.
+
+`output.emoji` has four settings and a frequency cap. A model left alone
+decorates every sentence and an account that does so reads as a bot to everyone
+who sees it; the instruction decays over a long prompt, so surplus emoji are
+removed.
+
+**An agent never says what runs it.** Not a policy field, no setting, no code
+path around it: asked what model, company, or service is behind it, an agent may
+say it is an AI17Z agent and nothing more. Stated in the identity layer and
+checked in the validator, which sends a disclosure to a person rather than to X.
+
+## Building a character
+
+Three ways in, one shape out: describe it and let the agent's own model fill it
+in, hand `characterTemplate()` to another assistant and bring the answer back,
+or learn a voice from a public account. All answer the same `CHARACTER_QUESTIONS`
+list, which is also what generates the template — so it cannot drift from what
+AI17Z reads.
+
+Nothing is saved until somebody has seen it. Examples are weighted highest in
+the completeness score because a model imitates examples and only approximates
+adjectives.
+
 ## Enums with CHECK constraints
 
 Four enums have a database CHECK behind them: account statuses, trace types,
