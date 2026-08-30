@@ -163,7 +163,7 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
 
 // ── DexScreener ──────────────────────────────────────────────────────────────
 
-interface DexPair {
+export interface DexPair {
   chainId?: string;
   dexId?: string;
   url?: string;
@@ -188,11 +188,25 @@ function formatUsd(value: number | undefined): string {
  * Looks a token up on DexScreener.
  *
  * No key, no account, no configuration — which is why it is the one market
- * source wired in by default. The most liquid pair is the one reported: a token
- * with fifty pairs has one that matters and forty-nine that are noise.
+ * source wired in by default.
+ *
+ * The price is the *median* across pairs, not the price on the deepest one.
+ * That is not fussiness: the deepest UNI pair on DexScreener is UNI/SASHIMI,
+ * which reports $5,178,076 a token against a real price of $5.18. One
+ * manipulated or broken pair can top the liquidity table; it cannot move a
+ * median. Liquidity is summed across pairs for the same reason.
  */
 export async function lookupToken(query: string, timeoutMs = 8_000): Promise<Finding | null> {
-  const url = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query)}`;
+  const cleaned = query.replace(/^\$/, '');
+  const isAddress = /^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(cleaned);
+  // The dedicated endpoint for an address returns only that token's pairs.
+  // `search` matches either side, which is how a query for a token comes back
+  // with pairs where it is the quote asset and the price belongs to something
+  // else entirely.
+  const url = isAddress
+    ? `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(cleaned)}`
+    : `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(cleaned)}`;
+
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
@@ -201,24 +215,32 @@ export async function lookupToken(query: string, timeoutMs = 8_000): Promise<Fin
     if (!response.ok) return null;
 
     const body = (await response.json()) as { pairs?: DexPair[] };
-    const pairs = (body.pairs ?? []).filter((p) => (p.liquidity?.usd ?? 0) > 0);
+    let pairs = (body.pairs ?? []).filter((p) => (p.liquidity?.usd ?? 0) > 0);
     if (pairs.length === 0) return null;
 
-    const best = pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]!;
-    const name = best.baseToken?.name ?? best.baseToken?.symbol ?? query;
+    const chosen = choosePair(pairs, isAddress ? null : cleaned);
+    if (!chosen) return null;
+    const { best, price, totalLiquidity, totalVolume, pairCount, oldest, ambiguous } = chosen;
+    const name = best.baseToken?.name ?? best.baseToken?.symbol ?? cleaned;
     const symbol = best.baseToken?.symbol ? `$${best.baseToken.symbol}` : '';
     const change = best.priceChange?.h24;
 
     const parts = [
-      best.priceUsd ? `price $${best.priceUsd}` : null,
+      `price $${formatPrice(price)}`,
       change !== undefined ? `${change > 0 ? '+' : ''}${change}% over 24h` : null,
-      `liquidity ${formatUsd(best.liquidity?.usd)}`,
-      best.volume?.h24 !== undefined ? `24h volume ${formatUsd(best.volume.h24)}` : null,
+      `liquidity ${formatUsd(totalLiquidity)} across ${pairCount} pair${pairCount === 1 ? '' : 's'}`,
+      totalVolume > 0 ? `24h volume ${formatUsd(totalVolume)}` : null,
       best.fdv !== undefined ? `FDV ${formatUsd(best.fdv)}` : null,
       best.chainId ? `on ${best.chainId}` : null,
       // Age matters more than any other number for a token somebody is asking
       // about in a reply, and it is the one nobody volunteers.
-      best.pairCreatedAt ? `pair created ${describeAge(best.pairCreatedAt)}` : null,
+      oldest ? `first pair created ${describeAge(oldest)}` : null,
+      // The address, because a ticker is not an identity and somebody reading
+      // the reply may want to check which token this actually was.
+      best.baseToken?.address ? `contract ${best.baseToken.address}` : null,
+      ambiguous > 0
+        ? `${ambiguous} other token${ambiguous === 1 ? '' : 's'} use this ticker; this is the one with the deepest liquidity`
+        : null,
     ].filter(Boolean);
 
     return {
@@ -234,6 +256,84 @@ export async function lookupToken(query: string, timeoutMs = 8_000): Promise<Fin
     log.debug('token lookup failed', { query, message: errorMessage(error) });
     return null;
   }
+}
+
+export interface ChosenPair {
+  best: DexPair;
+  price: number;
+  totalLiquidity: number;
+  totalVolume: number;
+  pairCount: number;
+  oldest: number | undefined;
+  /** How many other tokens share this ticker. Zero for an address lookup. */
+  ambiguous: number;
+}
+
+/**
+ * Picks which pair, and which price, actually answers the question.
+ *
+ * Two real failures shaped this, both found against the live API:
+ *
+ *   - The deepest UNI pair on DexScreener is UNI/SASHIMI, reporting $5,178,076
+ *     a token against a real price of $5.18. One manipulated or broken pair can
+ *     top the liquidity table; it cannot move a median.
+ *   - A search for $WIF returns twenty different tokens using that ticker. The
+ *     answer came back as an impostor with $26k of liquidity. Anyone can mint a
+ *     token called anything, so a ticker is not an identity: group by contract
+ *     and take the deepest group, then say how many others there were.
+ *
+ * `symbol` is null for an address lookup, where neither problem arises.
+ */
+export function choosePair(pairs: DexPair[], symbol: string | null): ChosenPair | null {
+  let candidates = pairs.filter((p) => (p.liquidity?.usd ?? 0) > 0);
+  if (candidates.length === 0) return null;
+
+  let ambiguous = 0;
+  if (symbol) {
+    const wanted = symbol.toLowerCase().replace(/^\$/, '');
+    const priced = candidates.filter((p) => p.baseToken?.symbol?.toLowerCase() === wanted);
+    if (priced.length > 0) candidates = priced;
+
+    const byAddress = new Map<string, DexPair[]>();
+    for (const pair of candidates) {
+      const key = pair.baseToken?.address?.toLowerCase() ?? 'unknown';
+      byAddress.set(key, [...(byAddress.get(key) ?? []), pair]);
+    }
+    if (byAddress.size > 1) {
+      ambiguous = byAddress.size - 1;
+      candidates = [...byAddress.values()].sort(
+        (a, b) =>
+          b.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0) - a.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0),
+      )[0]!;
+    }
+  }
+
+  const withPrice = candidates
+    .map((pair) => ({ pair, price: Number(pair.priceUsd) }))
+    .filter((p) => Number.isFinite(p.price) && p.price > 0)
+    .sort((a, b) => a.price - b.price);
+  if (withPrice.length === 0) return null;
+
+  const median = withPrice[Math.floor(withPrice.length / 2)]!;
+  return {
+    best: median.pair,
+    price: median.price,
+    totalLiquidity: candidates.reduce((sum, p) => sum + (p.liquidity?.usd ?? 0), 0),
+    totalVolume: candidates.reduce((sum, p) => sum + (p.volume?.h24 ?? 0), 0),
+    pairCount: candidates.length,
+    oldest: candidates
+      .map((p) => p.pairCreatedAt)
+      .filter((t): t is number => typeof t === 'number')
+      .sort((a, b) => a - b)[0],
+    ambiguous,
+  };
+}
+
+/** Prices span nine orders of magnitude, so the useful precision moves. */
+function formatPrice(value: number): string {
+  if (value >= 1) return value.toFixed(2);
+  if (value >= 0.01) return value.toFixed(4);
+  return value.toPrecision(3);
 }
 
 function describeAge(createdAtMs: number): string {
