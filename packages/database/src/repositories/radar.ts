@@ -217,3 +217,35 @@ export async function ownPostsToCheck(accountId: string, limit: number, maxAgeHo
 export async function markOwnPostChecked(id: string, replyCount: number): Promise<void> {
   await query('UPDATE own_posts SET last_checked_at = now(), reply_count = $2 WHERE id = $1', [id, replyCount]);
 }
+
+/**
+ * Brings an account's failing sources forward after one of them works.
+ *
+ * Sources back off when they fail, and they nearly always fail together because
+ * they nearly always fail for the same reason: the browser was not there. Once
+ * one source proves the browser is back, the others are still sitting out a
+ * backoff earned by a problem that is over. Left alone they recover eventually,
+ * but "eventually" was half an hour of an account looking broken while the
+ * error on screen named a port that no longer existed.
+ *
+ * Only sources that were actually failing are moved, and only forward.
+ */
+export async function retryFailingSources(accountId: string, exceptSourceId: string): Promise<number> {
+  const rows = await query(
+    `UPDATE radar_sources
+        SET next_poll_at = now(), updated_at = now()
+      WHERE account_id = $1
+        AND id <> $2
+        AND enabled
+        AND consecutive_failures > 0
+        AND next_poll_at > now()
+      RETURNING id`,
+    [accountId, exceptSourceId],
+  );
+  return rows.length;
+}
+
+/** Makes one source due now, for a person who has just fixed something. */
+export async function retryNow(sourceId: string): Promise<void> {
+  await query('UPDATE radar_sources SET next_poll_at = now(), updated_at = now() WHERE id = $1', [sourceId]);
+}

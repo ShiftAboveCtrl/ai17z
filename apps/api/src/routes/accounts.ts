@@ -49,6 +49,14 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const input = parseBody(CreateAccountInput, request);
       const adapter = getChannelAdapter(input.channel);
+
+      // Connecting a handle that is already connected is a thing people do, and
+      // a unique-index violation surfacing as "something went wrong" tells them
+      // nothing. The existing account is the right answer: accounts are separate
+      // from agents precisely so one can be attached to several.
+      const existing = await accountsRepo.findByHandle(user.id, input.channel, input.handle);
+      if (existing) return existing;
+
       const account = await accountsRepo.createAccount({
         ownerId: user.id,
         channel: input.channel,

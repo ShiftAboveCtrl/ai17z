@@ -4,3 +4,4 @@ export * from './diagnostics';
 export * from './preflight';
 export * from './chrome';
 export * from './tabs';
+export * from './explain';

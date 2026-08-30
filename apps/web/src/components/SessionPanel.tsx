@@ -153,25 +153,12 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
         )}
       </div>
 
-      {browserBacked &&
-        ['STARTING_BROWSER', 'BROWSER_READY', 'AWAITING_LOGIN', 'AUTHENTICATING', 'CHALLENGE_REQUIRES_USER', 'TIMEOUT', 'SESSION_EXPIRED'].includes(
-          data.account.status,
-        ) && (
-          <SignInProgress
-            account={data.account}
-            cancelling={pending === 'CANCEL_AUTH'}
-            onCancel={() => void run('CANCEL_AUTH')}
-          />
-        )}
-
-      {browserBacked && <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />}
-
-      {browserBacked && <BrowserIdentityPanel session={data.session} />}
-
-      {browserBacked && <RadarPanel accountId={accountId} />}
-
-      {browserBacked && <CadencePanel accountId={accountId} />}
-
+      {/*
+        The buttons come first. They are what somebody opened this panel to
+        press, and they used to sit below the browser configuration, the
+        identity evidence, the radar and the cadence — four panels of reading
+        before the thing you came for.
+      */}
       {browserBacked ? (
         <div className="flex flex-wrap gap-2">
           {ACTIONS.map(({ kind, label, icon: Icon }) => (
@@ -192,6 +179,25 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
           The mock channel needs no session. Events are injected from the activity view.
         </p>
       )}
+
+      {browserBacked &&
+        ['STARTING_BROWSER', 'BROWSER_READY', 'AWAITING_LOGIN', 'AUTHENTICATING', 'CHALLENGE_REQUIRES_USER', 'TIMEOUT', 'SESSION_EXPIRED'].includes(
+          data.account.status,
+        ) && (
+          <SignInProgress
+            account={data.account}
+            cancelling={pending === 'CANCEL_AUTH'}
+            onCancel={() => void run('CANCEL_AUTH')}
+          />
+        )}
+
+      {browserBacked && <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />}
+
+      {browserBacked && <BrowserIdentityPanel session={data.session} />}
+
+      {browserBacked && <RadarPanel accountId={accountId} />}
+
+      {browserBacked && <CadencePanel accountId={accountId} />}
 
       {browserBacked && workers.data && !workers.data.browserWorkerPresent && (
         <div className="rounded-lg border border-signal-wait/40 bg-signal-wait/[0.06] px-3.5 py-3">

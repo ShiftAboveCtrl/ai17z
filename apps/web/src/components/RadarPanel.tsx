@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Radar, Trash2 } from 'lucide-react';
+import { Plus, Radar, RotateCw, Trash2 } from 'lucide-react';
 import { ApiError, del, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
@@ -17,6 +17,7 @@ interface RadarSource {
   lastResultAt: string | null;
   lastError: string | null;
   consecutiveFailures: number;
+  nextPollAt: string | null;
   config: { intervalSeconds?: number; mayTrigger?: boolean };
 }
 
@@ -87,6 +88,32 @@ export function RadarPanel({ accountId }: { accountId: string }) {
     reload();
   };
 
+  /** Makes a source due now, for somebody who has just fixed what broke it. */
+  const retry = async (id: string) => {
+    setBusy(true);
+    try {
+      await post(`/api/accounts/${accountId}/radar/${id}/retry`, {});
+      // The worker picks it up on its next tick, a few seconds out.
+      setTimeout(reload, 4_000);
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : 'That could not be retried.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retryAll = async () => {
+    setBusy(true);
+    try {
+      await post(`/api/accounts/${accountId}/radar/retry`, {});
+      setTimeout(reload, 4_000);
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : 'Those could not be retried.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4 rounded-lg border border-ink-line bg-ink-panel/60 p-4">
       <div className="flex items-baseline justify-between gap-3">
@@ -121,6 +148,18 @@ export function RadarPanel({ accountId }: { accountId: string }) {
                 <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">
                   {source.enabled ? source.status.toLowerCase() : 'off'}
                 </span>
+                {source.consecutiveFailures > 0 && (
+                  <button
+                    type="button"
+                    className="btn-quiet p-1.5"
+                    aria-label={`Try ${KIND_NAMES[source.kind] ?? source.kind} again now`}
+                    title="Try again now"
+                    onClick={() => void retry(source.id)}
+                    disabled={busy}
+                  >
+                    <RotateCw className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn-quiet p-1.5 hover:text-signal-fail"
@@ -136,6 +175,9 @@ export function RadarPanel({ accountId }: { accountId: string }) {
                     are shown rather than one standing in for the other. */}
                 last worked {timeAgo(source.lastSuccessAt)} · last found something {timeAgo(source.lastResultAt)}
                 {source.consecutiveFailures > 0 && ` · ${source.consecutiveFailures} failures in a row`}
+                {/* A backed-off source is not a stopped one, and saying when it
+                    tries again is the difference between the two. */}
+                {source.consecutiveFailures > 0 && source.nextPollAt && ` · next try ${timeAgo(source.nextPollAt)}`}
               </p>
               {source.config.mayTrigger === false && (
                 <p className="mt-1 text-[11px] text-bone-faint">Context only — this never creates a reply.</p>
@@ -155,6 +197,12 @@ export function RadarPanel({ accountId }: { accountId: string }) {
           <Plus className="h-3.5 w-3.5" aria-hidden />
           Watch an account or topic
         </button>
+        {data.sources.some((source) => source.consecutiveFailures > 0) && (
+          <button type="button" className="btn-quiet px-0 text-xs" onClick={() => void retryAll()} disabled={busy}>
+            <RotateCw className="h-3.5 w-3.5" aria-hidden />
+            Try all of them again now
+          </button>
+        )}
         {data.sources.length > 0 && (
           <button type="button" className="btn-quiet px-0 text-xs" onClick={() => void enableDefaults()} disabled={busy}>
             Restore the standard monitors
