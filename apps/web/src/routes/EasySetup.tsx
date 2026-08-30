@@ -136,6 +136,18 @@ export function EasySetup() {
 
   const providerSpec = PROVIDERS.find((p) => p.kind === draft.providerKind) ?? PROVIDERS[0]!;
 
+  /** Everything the wizard has collected, in the shape the API stores. */
+  const currentSetup = (): EasySetupType => ({
+    ...draft.setup,
+    character: {
+      ...draft.setup.character,
+      name: draft.name.trim(),
+      caresAbout: list(draft.caresText),
+      examples: list(draft.examplesText),
+    },
+    replies: { ...draft.setup.replies, allowlist: list(draft.allowlistText) },
+  });
+
   /** Creates the agent so the rest of the flow has something to attach to. */
   const createAgent = async () => {
     if (agentId) return agentId;
@@ -171,17 +183,7 @@ export function EasySetup() {
     setError(null);
     try {
       const id = await createAgent();
-      const setup: EasySetupType = {
-        ...draft.setup,
-        character: {
-          ...draft.setup.character,
-          name: draft.name.trim(),
-          caresAbout: list(draft.caresText),
-          examples: list(draft.examplesText),
-        },
-        replies: { ...draft.setup.replies, allowlist: list(draft.allowlistText) },
-      };
-      await put(`/api/agents/${id}/easy`, setup);
+      await put(`/api/agents/${id}/easy`, currentSetup());
 
       // Checked before activating rather than after: an agent that goes ACTIVE
       // and fails on its first job has told nobody anything useful.
@@ -198,6 +200,20 @@ export function EasySetup() {
       navigate(`/agents/${id}`);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'The agent could not be started.');
+      setBusy(false);
+    }
+  };
+
+  /** Keeps everything configured, leaves the agent stopped, and goes to it. */
+  const finishLater = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const id = await createAgent();
+      await put(`/api/agents/${id}/easy`, currentSetup());
+      navigate(`/agents/${id}`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'That could not be saved.');
       setBusy(false);
     }
   };
@@ -612,10 +628,21 @@ export function EasySetup() {
             <ArrowRight className="h-4 w-4" aria-hidden />
           </button>
         ) : (
-          <button type="button" className="btn-primary" onClick={() => void start()} disabled={busy}>
-            {busy ? <Spinner /> : <Check className="h-4 w-4" aria-hidden />}
-            Start agent
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/*
+              Skipping a step has to lead somewhere. Without this the only way
+              out of the last screen was Start, which refuses when nothing is
+              connected — so anybody who skipped X was stuck on a finished
+              wizard with no way to keep what they had made.
+            */}
+            <button type="button" className="btn-quiet" onClick={() => void finishLater()} disabled={busy}>
+              Save and finish later
+            </button>
+            <button type="button" className="btn-primary" onClick={() => void start()} disabled={busy}>
+              {busy ? <Spinner /> : <Check className="h-4 w-4" aria-hidden />}
+              Start agent
+            </button>
+          </div>
         )}
       </div>
     </main>
@@ -660,7 +687,9 @@ function ConnectX({
     setError(null);
     try {
       const clean = handle.trim().replace(/^@/, '');
-      const created = await post<{ id: string }>('/api/accounts', {
+      // The API returns the existing account when this handle is already
+      // connected, so reconnecting one is not an error.
+      const created = await post<{ id: string; status: string }>('/api/accounts', {
         channel: 'x',
         handle: clean,
         displayName: clean,
@@ -671,7 +700,12 @@ function ConnectX({
         actionType: 'REPLY',
       });
       onAccount(created.id);
-      await post(`/api/accounts/${created.id}/session/tasks`, { kind: 'OPEN_AUTH' });
+
+      // An account already signed in needs no sign-in window. Opening one would
+      // close over a working session and ask somebody to log in again.
+      if (created.status !== 'CONNECTED') {
+        await post(`/api/accounts/${created.id}/session/tasks`, { kind: 'OPEN_AUTH' });
+      }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'X could not be connected.');
     } finally {

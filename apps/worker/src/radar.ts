@@ -2,6 +2,7 @@ import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, radar as radarRepo, type RadarSourceRow } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import { buildChannelContext, reconcileCandidates } from '@xbam/runtime';
+import { describeBrowserError } from '@xbam/browser';
 
 const log = createLogger('radar');
 
@@ -91,7 +92,7 @@ export class SocialRadar {
           sourceId: source.id,
           nextPollAt: new Date(Date.now() + this.backoff(source, interval)),
           found: 0,
-          error: poll.error.slice(0, 500),
+          error: describeBrowserError(poll.error).slice(0, 500),
         });
         log.warn('radar source failed', { kind: source.kind, target, message: poll.error });
         return;
@@ -113,6 +114,16 @@ export class SocialRadar {
       });
       if (ownPostId) await radarRepo.markOwnPostChecked(ownPostId, poll.candidates.length);
 
+      // This source just proved the browser works. Anything else on the account
+      // sitting out a backoff earned by the browser being gone should try again
+      // now rather than in twenty minutes. The check is on the other sources,
+      // not this one: the source that recovers first is usually the one that
+      // was never failing.
+      const revived = await radarRepo.retryFailingSources(source.accountId, source.id);
+      if (revived > 0) {
+        log.info('a working source brought the failing ones forward', { accountId: source.accountId, revived });
+      }
+
       if (outcome.created > 0 || outcome.corroborated > 0) {
         log.info('radar source polled', {
           kind: source.kind,
@@ -129,7 +140,7 @@ export class SocialRadar {
           sourceId: source.id,
           nextPollAt: new Date(Date.now() + this.backoff(source, interval)),
           found: 0,
-          error: message.slice(0, 500),
+          error: describeBrowserError(message).slice(0, 500),
         })
         .catch(() => undefined);
       log.warn('radar source threw', { kind: source.kind, message });

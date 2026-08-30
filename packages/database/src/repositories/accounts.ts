@@ -18,6 +18,22 @@ export async function getAccount(id: string): Promise<Account | null> {
   return mapRow<Account>(await queryOne(`SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE id = $1`, [id]));
 }
 
+/**
+ * An account this owner already has on this channel, by handle.
+ *
+ * Case-insensitive, matching the unique index, so "@Alice" and "@alice" are the
+ * same account rather than a constraint violation nobody can read.
+ */
+export async function findByHandle(ownerId: string, channel: string, handle: string): Promise<Account | null> {
+  return mapRow<Account>(
+    await queryOne(
+      `SELECT ${ACCOUNT_COLUMNS} FROM accounts
+        WHERE owner_id = $1 AND channel = $2 AND lower(handle) = lower($3)`,
+      [ownerId, channel, handle.replace(/^@+/, '')],
+    ),
+  );
+}
+
 export async function requireAccount(id: string): Promise<Account> {
   const account = await getAccount(id);
   if (!account) throw new NotFoundError('Account');

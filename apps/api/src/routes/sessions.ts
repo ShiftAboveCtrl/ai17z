@@ -233,6 +233,41 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * Try this source again now.
+   *
+   * A failing source backs off, which is right, but somebody who has just fixed
+   * the thing that broke it should not have to wait out a delay earned by a
+   * problem that is over.
+   */
+  app.post(
+    '/api/accounts/:id/radar/:sourceId/retry',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const account = await ownedAccount(params(request).id!, user);
+      const source = await radarRepo.getSource(params(request).sourceId!);
+      if (!source || source.accountId !== account.id) throw new NotFoundError('Radar source');
+      await radarRepo.retryNow(source.id);
+      return { retrying: true };
+    }),
+  );
+
+  /** All of them, for when the browser was the problem. */
+  app.post(
+    '/api/accounts/:id/radar/retry',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const account = await ownedAccount(params(request).id!, user);
+      let retried = 0;
+      for (const source of await radarRepo.listSources(account.id)) {
+        if (!source.enabled) continue;
+        await radarRepo.retryNow(source.id);
+        retried += 1;
+      }
+      return { retried };
+    }),
+  );
+
   app.delete(
     '/api/accounts/:id/radar/:sourceId',
     handler(async (request) => {
