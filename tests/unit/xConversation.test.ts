@@ -365,3 +365,45 @@ describe('reading the replying-to line', () => {
     expect(replyingToHandles('Alice\n@alice\nI was replying to @bob earlier today.')).toEqual([]);
   });
 });
+
+/**
+ * The focal post sitting past the read window.
+ *
+ * `resolveContext` waits for an anchor proving the status is in the DOM, then
+ * reads the first twenty articles and asks `resolveBranch` to find the focal
+ * among them. On a busy page the focal is not in the first twenty, so the
+ * anchor said "it is here" and the branch resolver said "it is not", and the
+ * job retried five times against a post the page was plainly rendering.
+ *
+ * `resolveBranch` is right to refuse -- picking a neighbour is how an agent
+ * replies to the wrong person. The window is what had to change. These pin the
+ * refusal so it cannot be softened into a guess.
+ */
+describe('a focal post beyond the articles that were read', () => {
+  const article = (id: string, text: string) => ({
+    statusId: id,
+    authorHandle: `author${id}`,
+    text,
+    url: `https://x.com/author${id}/status/${id}`,
+    index: Number(id),
+    replyingTo: [],
+    media: [],
+    links: [],
+  });
+
+  it('refuses rather than guessing when the focal was not among them', () => {
+    const truncated = Array.from({ length: 20 }, (_, i) => article(String(i), `post ${i}`));
+    const outcome = resolveBranch({ articles: truncated, focalStatusId: '42', selfHandles: ['agent'] });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok === false && outcome.reason).toBe('focal_article_not_found');
+  });
+
+  it('resolves the same page once the window reaches the focal', () => {
+    const full = Array.from({ length: 43 }, (_, i) => article(String(i), `post ${i}`));
+    const outcome = resolveBranch({ articles: full, focalStatusId: '42', selfHandles: ['agent'] });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.ok === true && outcome.conversation.incoming.remoteId).toBe('42');
+    // Everything above the focal is its ancestor chain, capped by policy.
+    expect(outcome.ok === true && outcome.conversation.ancestors.length).toBeGreaterThan(0);
+  });
+});

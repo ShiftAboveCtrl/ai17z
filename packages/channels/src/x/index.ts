@@ -443,7 +443,23 @@ export const xAdapter: ChannelAdapter = {
       // belong to a different branch is decided in `resolveBranch`, where it is
       // covered by fixtures rather than by whatever X rendered today.
       const all = page.locator(SEL.tweetArticle);
-      const total = Math.min(await all.count(), MAX_ARTICLES_READ);
+      const count = await all.count();
+
+      // Where the focal post actually sits, because the window has to include
+      // it. The anchor above proved the status is somewhere in the DOM, not
+      // that it is in the first twenty articles -- and on a busy page it is
+      // not. That combination reported `focal_article_not_found` for a post the
+      // page was plainly rendering, and retried it five times before giving up.
+      const focalIndex = await all
+        .evaluateAll(
+          (nodes, id) => nodes.findIndex((node) => node.querySelector(`a[href*="/status/${id}"]`)),
+          statusId,
+        )
+        .catch(() => -1);
+
+      // The cap still holds for the ordinary case; it stretches only as far as
+      // it must to take in the post being replied to.
+      const total = focalIndex >= 0 ? Math.min(count, Math.max(MAX_ARTICLES_READ, focalIndex + 1)) : Math.min(count, MAX_ARTICLES_READ);
       const snapshots: ArticleSnapshot[] = [];
       for (let index = 0; index < total; index += 1) {
         snapshots.push(await readArticle(page, `${SEL.tweetArticle} >> nth=${index}`, index));
