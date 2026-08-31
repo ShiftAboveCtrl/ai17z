@@ -106,6 +106,25 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
     ? getChannelAdapter(event.channel).requiresBrowser
     : false;
 
+  // Read before the transaction opens, never inside it.
+  //
+  // `withTransaction` holds one pooled connection for its whole body, so a
+  // pooled read taken inside it needs a second connection at the same time.
+  // With enough concurrent ingests every connection in the pool is held by a
+  // transaction waiting for one that does not exist, and the pool deadlocks
+  // until each attempt times out. Twelve monitors surfacing one post -- which
+  // is an ordinary Tuesday for the radar -- dropped eleven of them.
+  //
+  // Neither of these is modified by the transaction, so hoisting them is also
+  // the shorter transaction, which is what you want under contention anyway.
+  const agentsById = new Map<string, Awaited<ReturnType<typeof agentsRepo.getAgent>>>();
+  const policiesById = new Map<string, Awaited<ReturnType<typeof agentsRepo.getActivePolicy>>>();
+  for (const link of links) {
+    if (agentsById.has(link.agentId)) continue;
+    agentsById.set(link.agentId, await agentsRepo.getAgent(link.agentId));
+    policiesById.set(link.agentId, await agentsRepo.getActivePolicy(link.agentId));
+  }
+
   const pendingTraces: Array<{ jobId: string; agentId: string; data: Record<string, unknown> }> = [];
 
   const outcome = await withTransaction(async (tx) => {
@@ -113,7 +132,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
     const outcome: IngestOutcome = { eventId: stored.id, eventCreated, jobs: [], skipped: [] };
 
     for (const link of links) {
-      const agent = await agentsRepo.getAgent(link.agentId);
+      const agent = agentsById.get(link.agentId) ?? null;
       if (!agent) {
         outcome.skipped.push({ agentId: link.agentId, reason: 'agent no longer exists' });
         continue;
@@ -143,7 +162,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         }
       }
 
-      const policyRow = await agentsRepo.getActivePolicy(agent.id);
+      const policyRow = policiesById.get(agent.id) ?? null;
       const policy = PolicyConfig.parse(policyRow?.config ?? {});
       const mode = policy.automation.mode;
 
