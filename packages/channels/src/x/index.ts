@@ -154,11 +154,26 @@ function textStandsAlone(text: string): boolean {
 /** Reads one anchored article. All extraction is scoped to the article element. */
 async function readArticle(page: Page, articleSelector: string, index = 0): Promise<ArticleSnapshot> {
   const article = page.locator(articleSelector).first();
-  const href = await article
-    .locator('a[href*="/status/"]')
-    .first()
-    .getAttribute('href')
-    .catch(() => null);
+
+  // An article's own permalink is the link wrapping its timestamp. Taking the
+  // first `/status/` link instead meant an article carrying a quoted post could
+  // report the quoted post's id as its own -- so the focal post was read under
+  // the wrong id, `resolveBranch` could not find it, and the job retried five
+  // times against a post the page was plainly showing before going to a person.
+  //
+  // Falls back to the first link, because an article with no timestamp is
+  // stranger than one whose first link is the right one.
+  const href =
+    (await article
+      .locator('a:has(time)')
+      .first()
+      .getAttribute('href')
+      .catch(() => null)) ??
+    (await article
+      .locator('a[href*="/status/"]')
+      .first()
+      .getAttribute('href')
+      .catch(() => null));
   const url = href ? `https://x.com${href.startsWith('/') ? href : `/${href}`}` : null;
 
   // "Display Name\n@handle\n·\n2h" is how X composes this block, so the first
