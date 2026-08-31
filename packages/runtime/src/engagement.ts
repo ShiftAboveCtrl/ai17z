@@ -35,8 +35,32 @@ const SARCASM = /\b(sure|right|obviously|totally|of course)\b.*\b(lol|\.\.\.)|\/
 // agent answer a request for clarification by adding more.
 const CONFUSED = /\b(confused|(don'?t|do not|cannot|can'?t) (get|understand|follow)|what do you mean|lost me|huh)\b/i;
 
+/**
+ * Handles, generously.
+ *
+ * Fifteen is X's limit and this used to enforce it, which meant a longer handle
+ * on any other channel was stripped down to fourteen characters and left a
+ * fragment behind: "@somebody_longer hey" became "r hey", which is not a
+ * greeting as far as an anchored pattern is concerned. Over-matching a handle
+ * costs nothing here; under-matching one silently changes the verdict.
+ */
+const HANDLE = /@[A-Za-z0-9_]{1,32}/g;
+
 function countMentions(text: string): number {
-  return (text.match(/@[A-Za-z0-9_]{1,15}/g) ?? []).length;
+  return (text.match(HANDLE) ?? []).length;
+}
+
+/**
+ * The message with the handles taken out.
+ *
+ * Every mention on X begins with the handle it is addressed to, so an anchored
+ * pattern like "is this only a greeting" never matched a real message: "@agent
+ * hey" is not "hey" as far as a regex is concerned. The word count already
+ * stripped them, which is why a bare greeting scored as thin content rather
+ * than as a greeting and squeaked over the threshold with a reply of "Hey."
+ */
+function withoutHandles(text: string): string {
+  return text.replace(HANDLE, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /** How the incoming message reads. A signal, not a verdict about the person. */
@@ -47,7 +71,7 @@ export function readTemperature(text: string): ConversationTemperature {
   if (CONFUSED.test(text)) return 'confused';
   if (TECHNICAL.test(text)) return 'technical';
   if (QUESTION.test(text)) return 'curious';
-  if (THANKS.test(text) || GREETING_ONLY.test(text.trim())) return 'friendly';
+  if (THANKS.test(text) || GREETING_ONLY.test(withoutHandles(text))) return 'friendly';
   if (text.length > 220) return 'serious';
   return 'casual';
 }
@@ -62,7 +86,45 @@ export interface ReplyValueInput {
   recentRepliesToPerson: number;
   /** True when the agent already answered somewhere in this thread. */
   alreadyRepliedInThread: boolean;
+  /**
+   * What this agent cares about, from its persona.
+   *
+   * Only consulted when nobody addressed it. Somebody who asks a question
+   * deserves an answer whatever the subject; a post the agent merely came
+   * across is a different matter, and an account that replies to everything it
+   * sees reads as a bot however well it writes.
+   */
+  topics?: string[];
+  /**
+   * Whether there is a post above this one carrying the subject.
+   *
+   * "thoughts?" under an argument about sequencers is a real question. The same
+   * word on its own is not a question about anything, and answering it means
+   * inventing the subject -- which is exactly what happened: asked "thoughts?"
+   * with nothing above it, the agent reviewed a piece of software nobody had
+   * mentioned. A question mark is not content.
+   */
+  hasParent?: boolean;
   policy: EngagementPolicy;
+}
+
+/**
+ * Whether a message is about anything this agent cares about.
+ *
+ * Word-level and generous: a topic of "token distribution" matches a post about
+ * distribution, because the point is to tell "adjacent to my subject" from
+ * "nothing to do with me", not to score relevance precisely.
+ */
+export function touchesTopics(text: string, topics: string[]): boolean {
+  if (topics.length === 0) return true;
+  const haystack = ` ${text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')} `;
+  return topics.some((topic) =>
+    topic
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((word) => word.length >= 4)
+      .some((word) => haystack.includes(` ${word}`)),
+  );
 }
 
 /**
@@ -82,7 +144,15 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
     value += delta;
   };
 
-  if (QUESTION.test(text)) add('asks a direct question', 25);
+  const spoken = withoutHandles(text);
+  const words = spoken.split(/\s+/).filter(Boolean).length;
+
+  // "thoughts?" under an argument is a question. On its own it is a question
+  // about nothing, and the bonus for asking one is what pushed the agent into
+  // answering it -- by inventing the subject.
+  const subjectless = QUESTION.test(text) && words <= 3 && !input.hasParent;
+  if (QUESTION.test(text) && !subjectless) add('asks a direct question', 25);
+  if (subjectless) add('a question with no subject and nothing above it', -25);
   if (input.directlyAddressed) add('addressed to this account', 15);
 
   const mentions = countMentions(text);
@@ -91,10 +161,9 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
     add(`tags ${mentions} accounts at once`, -45);
   }
 
-  if (SPAM.test(text)) add('reads as promotional', -50);
-  if (GREETING_ONLY.test(text)) add('a greeting with nothing in it', -30);
+  if (SPAM.test(spoken)) add('reads as promotional', -50);
+  if (GREETING_ONLY.test(spoken)) add('a greeting with nothing in it', -30);
 
-  const words = text.replace(/@[A-Za-z0-9_]{1,15}/g, '').split(/\s+/).filter(Boolean).length;
   if (words <= 2 && !QUESTION.test(text)) add('almost no content', -20);
   if (words >= 25) add('a substantial message', 10);
 
@@ -118,7 +187,15 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
     add('already replied in this thread', -35);
   }
 
-  if (THANKS.test(text) && words <= 6) add('a thank-you that needs no answer', -15);
+  if (THANKS.test(spoken) && words <= 6) add('a thank-you that needs no answer', -15);
+
+  // Only for something the agent came across rather than was asked. A crypto
+  // agent offering condolences under a stranger's personal post is not being
+  // kind, it is being a bot that replies to everything.
+  if (!input.directlyAddressed && (input.topics?.length ?? 0) > 0) {
+    if (touchesTopics(text, input.topics!)) add('about something this agent follows', 10);
+    else add('nothing to do with what this agent follows', -30);
+  }
 
   return { value: Math.max(0, Math.min(100, Math.round(value))), factors };
 }

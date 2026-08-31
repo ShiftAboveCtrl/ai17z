@@ -235,6 +235,44 @@ describe('picking which pair answers the question', () => {
     expect(chosen!.pairCount).toBe(2);
   });
 
+  it('is not fooled by a pool claiming huge liquidity and trading nothing', () => {
+    // A search for $UNI returned a Solana token claiming $6.6 billion of
+    // liquidity against $3.99 of daily volume, and it won on liquidity. A pool
+    // that size does not trade four dollars a day; liquidity is a number in a
+    // pool and volume is trades that had to happen.
+    const real = { name: 'Uniswap', symbol: 'UNI', address: '0xreal' };
+    const fake = { name: 'Uniswap', symbol: 'UNI', address: '0xfake' };
+    const chosen = choosePair(
+      [
+        { baseToken: fake, priceUsd: '11.04', liquidity: { usd: 6_600_000_000 }, volume: { h24: 3.99 } },
+        { baseToken: real, priceUsd: '5.13', liquidity: { usd: 15_000_000 }, volume: { h24: 4_500_000 } },
+      ],
+      'UNI',
+    );
+    expect(chosen!.best.baseToken!.address).toBe('0xreal');
+    expect(chosen!.price).toBeCloseTo(5.13, 2);
+  });
+
+  it('ignores an untraded pool when pricing a token', () => {
+    // Within one token, a pool with no activity is not price discovery either.
+    const token = { name: 'Thing', symbol: 'THING', address: '0xa' };
+    const chosen = choosePair(
+      [
+        { baseToken: token, priceUsd: '999', liquidity: { usd: 50_000_000 }, volume: { h24: 0 } },
+        { baseToken: token, priceUsd: '2.00', liquidity: { usd: 500_000 }, volume: { h24: 250_000 } },
+      ],
+      null,
+    );
+    expect(chosen!.price).toBeCloseTo(2, 2);
+  });
+
+  it('still prices a token where nothing has traded today', () => {
+    // The volume floor excludes dead pools, not small tokens.
+    const token = { name: 'Quiet', symbol: 'QUIET', address: '0xq' };
+    const chosen = choosePair([{ baseToken: token, priceUsd: '0.50', liquidity: { usd: 20_000 }, volume: { h24: 0 } }], null);
+    expect(chosen!.price).toBeCloseTo(0.5, 2);
+  });
+
   it('picks one token when several share a ticker, and says how many', () => {
     // Anyone can mint a token called WIF. A search for it returned an impostor
     // with $26k of liquidity instead of the one with $132M.

@@ -91,7 +91,15 @@ async function walk(job: JobRecord, workerId: string): Promise<void> {
 
     const handler = NODE_HANDLERS[node.kind];
     if (!handler) {
-      await failPermanently(current, 'node_kind_unknown', `No handler for pipeline node kind "${node.kind}".`);
+      // Almost always a worker older than the pipeline it just claimed: a node
+      // kind was added, the graph was upgraded, and one process in the fleet is
+      // still running the previous build. Saying so beats naming the enum,
+      // because the fix is a deploy and not a pipeline edit.
+      await failPermanently(
+        current,
+        'node_kind_unknown',
+        `This worker has no handler for pipeline node "${node.kind}", which means it is running an older build than the pipeline expects. Update or restart the workers; nothing is wrong with the agent.`,
+      );
       return;
     }
 

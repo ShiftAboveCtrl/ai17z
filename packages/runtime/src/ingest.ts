@@ -1,6 +1,7 @@
-import type { ActionType, Capability, JobRecord, NormalizedEvent } from '@xbam/shared/contracts';
-import { PolicyConfig } from '@xbam/shared/contracts';
-import { actionIdempotencyKey, createLogger } from '@xbam/shared';
+import type { ActionType, Capability, JobRecord } from '@xbam/shared/contracts';
+import { z } from 'zod';
+import { NormalizedEvent, PolicyConfig } from '@xbam/shared/contracts';
+import { PipelineError, actionIdempotencyKey, createLogger } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -24,6 +25,27 @@ export interface IngestOutcome {
   skipped: Array<{ agentId: string; reason: string }>;
 }
 
+/**
+ * What ingest accepts, checked at run time and not only by the compiler.
+ *
+ * Strict on purpose. A caller that misspells a key -- passing `{ options: {
+ * dryRun: true } }` instead of `{ dryRun: true }`, which is a mistake I made --
+ * would otherwise have the key silently ignored and fall through to the policy
+ * default. When the policy default is "act for real", a typo in a test harness
+ * publishes a reply. Failing the call is the only acceptable answer: the
+ * dangerous option must never be what you get by getting it wrong.
+ */
+export const IngestOptionsSchema = z
+  .object({
+    accountId: z.string().uuid().nullable(),
+    event: NormalizedEvent,
+    /** Restrict to a single agent. Used by mock injection and manual triggers. */
+    onlyAgentId: z.string().uuid().optional(),
+    /** Overrides the policy default for this event. */
+    dryRun: z.boolean().optional(),
+  })
+  .strict();
+
 export interface IngestOptions {
   accountId: string | null;
   event: NormalizedEvent;
@@ -43,7 +65,18 @@ const RUNNABLE_STATES = new Set(['DRAFT', 'ACTIVE']);
  * keyed on the remote event id, so this function is safe to call repeatedly with
  * the same event: the second call returns the same rows and creates nothing.
  */
-export async function ingestNormalizedEvent(options: IngestOptions): Promise<IngestOutcome> {
+export async function ingestNormalizedEvent(input: IngestOptions): Promise<IngestOutcome> {
+  const parsed = IngestOptionsSchema.safeParse(input);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw PipelineError.permanent(
+      'ingest_bad_options',
+      `Ingest was called with options it does not accept: ${issue?.path.join('.') || 'unknown'} ${issue?.message ?? ''}. ` +
+        'Nothing was queued. This is refused rather than defaulted because the default is to act for real.',
+      { issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })) },
+    );
+  }
+  const options = parsed.data as IngestOptions;
   const { event, accountId } = options;
 
   const links = options.onlyAgentId

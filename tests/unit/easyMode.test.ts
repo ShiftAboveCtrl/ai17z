@@ -132,6 +132,36 @@ describe('Easy answers become real configuration', () => {
     expect(view.setup.emoji).toEqual(answers);
   });
 
+  it('makes the language answer a real persona instruction', () => {
+    // Found by watching it reply in Polish to a Polish post and Hindi to a
+    // Hindi one. Correct with no rule set, and invisible unless you knew to
+    // look in Advanced.
+    expect(toPersona(setup).languagePolicy).toBe('');
+    expect(toPersona({ ...setup, language: 'ENGLISH' }).languagePolicy).toContain('Always reply in English');
+    expect(
+      toPersona({ ...setup, language: 'CUSTOM', languageDetail: 'Always reply in Japanese.' }).languagePolicy,
+    ).toBe('Always reply in Japanese.');
+  });
+
+  it('reads a language rule back instead of calling it unrepresentable', () => {
+    for (const [language, detail] of [
+      ['MIRROR', ''],
+      ['ENGLISH', ''],
+      ['CUSTOM', 'Always reply in Japanese.'],
+    ] as const) {
+      const answers = { ...setup, language, languageDetail: detail };
+      const view = readEasyView({
+        persona: toPersona(answers),
+        policy: toPolicy(answers),
+        postIntervalSeconds: null,
+        radarSourceKinds: toRadarSourceKinds(answers),
+      });
+      expect(view.setup.language).toBe(language);
+      expect(view.setup.languageDetail).toBe(detail);
+      expect(view.beyondEasyMode.join(' ')).not.toContain('language rule');
+    }
+  });
+
   it('turns posting frequency into an interval, and off into nothing', () => {
     expect(postIntervalSeconds(setup)).toBe(5 * 3_600);
     expect(postIntervalSeconds({ ...setup, posting: { enabled: false, frequency: 'DAILY' } })).toBeNull();
@@ -296,7 +326,11 @@ describe('reading an agent back into Easy Mode', () => {
       radarSourceKinds: toRadarSourceKinds(setup),
     });
     const notes = result.beyondEasyMode.join(' ');
-    expect(notes).toContain('Japanese');
+    // A language rule used to be listed here. It is now one of the questions
+    // Easy Mode asks, so it is shown rather than apologised for.
+    expect(result.setup.language).toBe('CUSTOM');
+    expect(result.setup.languageDetail).toContain('Japanese');
+    expect(notes).not.toContain('Japanese');
     expect(notes).toContain('Custom instructions');
     expect(notes).toContain('prohibited behaviour');
   });

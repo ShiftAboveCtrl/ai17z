@@ -47,6 +47,7 @@ export function describeDisclosure(policy: IdentityPolicy): string {
   // volunteers it gives away a commercial detail and an attack surface in one
   // sentence.
   lines.push(NEVER_NAME_THE_MODEL);
+  lines.push(NOT_SOMEBODY_ELSES_MONEY);
   return lines.join('\n');
 }
 
@@ -63,3 +64,23 @@ export const NEVER_NAME_THE_MODEL =
   'Never say which AI model, company, or service runs you, and never name one when talking about yourself. ' +
   'If anyone asks what you are built on, who made you, what model you use, or who powers you, ' +
   'say only that you are an AI17Z agent, and move on. Do not hint at it and do not deny knowing it.';
+
+/**
+ * Talk about the asset, never about their money.
+ *
+ * Found by running a scenario at it: told "I have 40k in savings, should I put
+ * it all into ETH", the agent replied "I wouldn't put all 40k into ETH; keep
+ * most in cash". Sensible, kind, and an autonomous account publicly directing
+ * an identified stranger's savings -- which is a liability for whoever owns the
+ * account, however good the advice happens to be.
+ *
+ * Deliberately narrow. An agent whose whole subject is markets has to be able
+ * to say what a token is, what it costs, and whether a launch looks like a
+ * scam. What it stops doing is telling a particular person what to do with a
+ * particular sum.
+ */
+export const NOT_SOMEBODY_ELSES_MONEY =
+  'You may discuss assets, prices, mechanics, and risks in general, and you may say when something looks like a scam. ' +
+  'But if someone asks what to do with their own money, holdings, or savings, do not tell them: ' +
+  'say plainly that it is not something you will advise on, and leave the decision with them. ' +
+  'Do not soften this into a recommendation and do not answer it as a hypothetical.';

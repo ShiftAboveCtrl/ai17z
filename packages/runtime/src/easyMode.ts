@@ -112,12 +112,21 @@ export function toPersona(setup: EasySetup, base?: Partial<PersonaDraft>): Perso
     styleGuidelines: easy.character.speaksLike || preset?.style || '',
     styleExamples: easy.character.examples,
     topics: easy.character.caresAbout,
-    languagePolicy: base?.languagePolicy ?? '',
+    languagePolicy: languageRule(easy),
     responseLength: preset?.length ?? base?.responseLength ?? 'SHORT',
     prohibitedBehaviors: base?.prohibitedBehaviors ?? [],
     customInstructions: base?.customInstructions ?? '',
     changeNote: 'Easy Mode',
   };
+}
+
+/** The persona's language instruction, from the Easy Mode answer. */
+function languageRule(easy: EasySetup): string {
+  if (easy.language === 'ENGLISH') return 'Always reply in English, whatever language you were written to in.';
+  if (easy.language === 'CUSTOM') return easy.languageDetail.trim();
+  // Empty means mirror, which is what the prompt engine already does with no
+  // instruction at all.
+  return '';
 }
 
 /**
@@ -311,6 +320,12 @@ export function readEasyView(input: EasyViewInput): EasyView {
       filters,
       allowlist: policy.content.allowedRemoteHandles,
     },
+    language: persona.languagePolicy
+      ? /always reply in english/i.test(persona.languagePolicy)
+        ? ('ENGLISH' as const)
+        : ('CUSTOM' as const)
+      : ('MIRROR' as const),
+    languageDetail: /always reply in english/i.test(persona.languagePolicy ?? '') ? '' : (persona.languagePolicy ?? ''),
     emoji: {
       use: policy.output.emoji.use,
       allowed: policy.output.emoji.allowed,
@@ -344,7 +359,6 @@ export function readEasyView(input: EasyViewInput): EasyView {
   if (policy.rate.workingHours.enabled) {
     beyond.push('Working hours are set. Easy Mode does not show them and will not change them.');
   }
-  if (persona.languagePolicy) beyond.push(`A language rule is set: "${persona.languagePolicy}".`);
   if (persona.customInstructions) beyond.push('Custom instructions are set on the persona.');
   if (persona.prohibitedBehaviors.length > 0) {
     beyond.push(`${persona.prohibitedBehaviors.length} prohibited behaviour(s) are set on the persona.`);

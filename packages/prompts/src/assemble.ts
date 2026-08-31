@@ -228,10 +228,17 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     // The TASK layer reads this. A post has no incoming message to answer, and
     // telling a model to "reply" to its own brief produces something that reads
     // like half a conversation.
+    //
+    // The reply case names the person and says they are being spoken to,
+    // because "reply to the incoming message" left that implicit and the model
+    // drifted into the third person: paid a compliment, the agent answered
+    // "they keep things sharp", reviewing itself as a bystander.
     taskInstruction:
       input.actionType === 'POST'
         ? `Write one ${input.channelName} post, as ${persona.displayName}. Nobody asked you anything; this is something you wanted to say.`
-        : `Write one ${input.channelName} reply to the incoming message above, as ${persona.displayName}.`,
+        : `Write one ${input.channelName} reply, as ${persona.displayName}, to ${
+            context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'the person'
+          }. They are speaking to you. Answer them — address them, not a third party, and never describe yourself from the outside.`,
   };
 
   const layers: PromptLayer[] = [];

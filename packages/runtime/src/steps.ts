@@ -952,16 +952,26 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
   const relationship = (context?.meta as { relationship?: RelationshipContext } | undefined)?.relationship ?? null;
 
   const handle = context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle;
-  const selfHandles = policy.content.selfHandles.map((h) => h.replace(/^@+/, '').toLowerCase());
+
+  // The account's own handle is the authoritative one, and it was missing here.
+  // `policy.content.selfHandles` is an aliases list nobody fills in, so for
+  // every agent set up through Easy Mode this test was against an empty array:
+  // "addressed to this account" never scored, on any mention, ever. The policy
+  // list still contributes, for a second handle or a former name.
+  const selfHandles = [bundle.account?.handle, ...policy.content.selfHandles]
+    .filter((h): h is string => Boolean(h))
+    .map((h) => h.replace(/^@+/, '').toLowerCase());
   const directlyAddressed = selfHandles.some((self) => text.toLowerCase().includes(`@${self}`));
 
   const verdict = decideEngagement({
+    topics: bundle.persona.topics,
     text,
     directlyAddressed,
     relationship,
     threadDepth: context?.thread.length ?? 0,
     recentRepliesToPerson: await recentRepliesTo(bundle.agent.id, handle),
     alreadyRepliedInThread: (context?.thread ?? []).some((m) => m.role === 'OUTBOUND'),
+    hasParent: Boolean(context?.parentText?.trim()) || (context?.thread.length ?? 0) > 0,
     policy: policy.engagement,
   });
 

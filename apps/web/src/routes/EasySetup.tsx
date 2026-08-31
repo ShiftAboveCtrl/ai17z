@@ -102,6 +102,8 @@ const EMPTY: Draft = {
       allowlist: [],
     },
     emoji: { use: 'MINIMAL', allowed: [], maxPerMessage: 1, messagesPercent: 25 },
+    language: 'MIRROR',
+    languageDetail: '',
     posting: { enabled: false, frequency: 'OCCASIONALLY' },
     operation: 'REVIEW_FIRST',
   },
@@ -396,6 +398,47 @@ export function EasySetup() {
                 placeholder="governance, token distribution"
               />
             </Field>
+
+            <Field
+              label="What language should it reply in?"
+              hint="With no rule it answers in whatever language it was written to, which surprises most people the first time it happens."
+            >
+              <div className="grid gap-2 sm:grid-cols-3">
+                {(
+                  [
+                    ['MIRROR', 'Match the message', 'Polish in, Polish out'],
+                    ['ENGLISH', 'Always English', 'Whatever it was asked in'],
+                    ['CUSTOM', 'Something else', 'Write the rule yourself'],
+                  ] as const
+                ).map(([value, label, hint]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setSetup({ language: value })}
+                    className={`rounded-lg border px-3.5 py-3 text-left transition-colors ${
+                      draft.setup.language === value
+                        ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone'
+                        : 'border-ink-line text-bone-dim hover:border-bone-faint'
+                    }`}
+                  >
+                    <span className="block text-sm">{label}</span>
+                    <span className="mt-1 block text-[11px] text-bone-faint">{hint}</span>
+                  </button>
+                ))}
+              </div>
+            </Field>
+
+            {draft.setup.language === 'CUSTOM' && (
+              <Field label="Which language?" htmlFor="lang-detail">
+                <input
+                  id="lang-detail"
+                  className="field"
+                  value={draft.setup.languageDetail}
+                  onChange={(e) => setSetup({ languageDetail: e.target.value })}
+                  placeholder="Always reply in Simplified Chinese."
+                />
+              </Field>
+            )}
 
             <Field label="Emoji" hint="Models left alone put one in every sentence, which is the fastest way to read as a bot.">
               <div className="grid gap-2 sm:grid-cols-2">
