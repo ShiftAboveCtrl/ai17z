@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import pg from 'pg';
 import { createLogger, envInt, loadEnv } from '@xbam/shared';
 
@@ -43,10 +44,36 @@ export async function closePool(): Promise<void> {
   await p.end();
 }
 
+/**
+ * Whether the caller is currently inside a transaction.
+ *
+ * A pooled query taken while a transaction is open needs a *second* connection
+ * at the same time as the one the transaction is holding. Do that on enough
+ * requests at once and every connection in the pool belongs to a transaction
+ * waiting for a connection that does not exist -- the pool deadlocks and stays
+ * that way until each caller times out.
+ *
+ * It cost eleven of twelve simultaneous ingests, which is not an exotic load: it
+ * is several radar monitors surfacing the same post. The reads were correct, the
+ * transaction was correct, and the combination silently dropped the work.
+ *
+ * So the pool refuses instead. It is also a correctness rule, not only a
+ * liveness one: a pooled read inside a transaction cannot see that
+ * transaction's own uncommitted writes, so it quietly answers with stale data.
+ */
+const inTransaction = new AsyncLocalStorage<true>();
+
 export async function query<T extends Record<string, unknown> = Record<string, unknown>>(
   text: string,
   params: QueryParam[] = [],
 ): Promise<T[]> {
+  if (inTransaction.getStore()) {
+    throw new Error(
+      'A pooled query was run inside withTransaction, which can deadlock the pool and cannot see the ' +
+        'own uncommitted writes of that transaction. Pass the `tx` through, or hoist the read out of it. ' +
+        `transaction. Query: ${text.replace(/\s+/g, ' ').trim().slice(0, 120)}`,
+    );
+  }
   const res = await getPool().query(text, params as never[]);
   return res.rows as T[];
 }
@@ -83,7 +110,9 @@ export async function withTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T>
   };
   try {
     await client.query('BEGIN');
-    const result = await fn(tx);
+    // The body runs inside the marker, so any pooled query it reaches is
+    // refused rather than left to deadlock the pool under load.
+    const result = await inTransaction.run(true, () => fn(tx));
     await client.query('COMMIT');
     return result;
   } catch (error) {
