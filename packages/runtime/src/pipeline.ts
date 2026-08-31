@@ -1,7 +1,7 @@
 import type { JobRecord, PipelineNode } from '@xbam/shared/contracts';
 import { PipelineError, createLogger, errorMessage } from '@xbam/shared';
 import { accountLease, jobs as jobsRepo, observability, pipelines as pipelinesRepo } from '@xbam/database';
-import { failPermanently, scheduleRetry, sendToReview } from '@xbam/jobs';
+import { failPermanently, scheduleRetry, sendToReview, waitForInFlight } from '@xbam/jobs';
 import { loadJobBundle, type JobBundle } from './loadJob';
 import { NODE_HANDLERS } from './nodes';
 import { buildGraph, nextNode, type Graph } from './graph';
@@ -179,6 +179,12 @@ async function handleFailure(job: JobRecord, node: PipelineNode, attempt: number
   }
   if (pipelineError.errorClass === 'REVIEW_REQUIRED') {
     await sendToReview(job, pipelineError.reason, pipelineError.message);
+    return;
+  }
+  // Refused because the work is still going, not because it failed. Charging an
+  // attempt for this sends a job to review having never been retried once.
+  if (pipelineError.reason === 'action_in_progress') {
+    await waitForInFlight({ ...job, attemptCount: attempt - 1 }, job.status, pipelineError.message);
     return;
   }
   if (attempt >= job.maxAttempts) {

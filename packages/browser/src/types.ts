@@ -1,9 +1,9 @@
 export type BrowserEngine = 'GOOGLE_CHROME' | 'MICROSOFT_EDGE' | 'PLAYWRIGHT_CHROMIUM' | 'CUSTOM_CDP';
 
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Locator, Page } from 'playwright';
 import type { TabRole } from './tabs';
 
-export type { BrowserContext, Page };
+export type { BrowserContext, Locator, Page };
 
 /**
  * Which browser build to drive.

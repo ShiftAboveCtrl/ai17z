@@ -147,11 +147,24 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
   const spoken = withoutHandles(text);
   const words = spoken.split(/\s+/).filter(Boolean).length;
 
+  // Whether this is about anything the agent follows. Only consulted when
+  // nobody addressed it: somebody who asks the agent a question deserves an
+  // answer whatever the subject, but a post it merely came across is different.
+  const gateOnTopic = !input.directlyAddressed && (input.topics?.length ?? 0) > 0;
+  const onTopic = gateOnTopic ? touchesTopics(text, input.topics!) : true;
+
   // "thoughts?" under an argument is a question. On its own it is a question
   // about nothing, and the bonus for asking one is what pushed the agent into
   // answering it -- by inventing the subject.
   const subjectless = QUESTION.test(text) && words <= 3 && !input.hasParent;
-  if (QUESTION.test(text) && !subjectless) add('asks a direct question', 25);
+
+  // A question the agent was not asked, about something it does not follow, is
+  // not a question for it. Awarding the bonus anyway is how a crypto account
+  // replied to a stranger's football post: off-topic -30 and asks-a-question
+  // +25 landed on exactly the threshold, and exactly the threshold engages.
+  const notForUs = !onTopic && !input.directlyAddressed;
+
+  if (QUESTION.test(text) && !subjectless && !notForUs) add('asks a direct question', 25);
   if (subjectless) add('a question with no subject and nothing above it', -25);
   if (input.directlyAddressed) add('addressed to this account', 15);
 
@@ -192,8 +205,8 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
   // Only for something the agent came across rather than was asked. A crypto
   // agent offering condolences under a stranger's personal post is not being
   // kind, it is being a bot that replies to everything.
-  if (!input.directlyAddressed && (input.topics?.length ?? 0) > 0) {
-    if (touchesTopics(text, input.topics!)) add('about something this agent follows', 10);
+  if (gateOnTopic) {
+    if (onTopic) add('about something this agent follows', 10);
     else add('nothing to do with what this agent follows', -30);
   }
 

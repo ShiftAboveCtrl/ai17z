@@ -14,6 +14,11 @@
  *   npx tsx tools/scenarios/run.mts            # every scenario
  *   npx tsx tools/scenarios/run.mts identity   # matching names only
  *   npx tsx tools/scenarios/run.mts --clean    # remove everything it ever made
+ *   npx tsx tools/scenarios/run.mts --live 3   # ACTUALLY REPLY to 3 real posts
+ *
+ * `--live` is the only way anything reaches X, it takes an explicit count, and
+ * it only ever uses real posts. See `LIVE MODE` below for why it is shaped that
+ * way rather than as a boolean.
  */
 import {
   accounts as accountsRepo,
@@ -56,6 +61,13 @@ export interface Scenario {
   text?: string;
   parentText?: string;
   author?: string;
+  /**
+   * Run this scenario against the event id another scenario already used.
+   *
+   * The duplicate-discovery case: two monitors surface one post. Recorded once
+   * or the agent answers twice.
+   */
+  reuseEventIdOf?: string;
   /** What a correct outcome looks like, checked loosely and reported either way. */
   expect?: (outcome: Outcome) => string | null;
 }
@@ -321,7 +333,7 @@ const scenarios: Scenario[] = [
  * does not. The queries are chosen to produce a spread rather than a sample of
  * one thing.
  */
-async function realPostScenarios(): Promise<Scenario[]> {
+async function realPostScenarios(want = 4): Promise<Scenario[]> {
   const { chromium } = await import('playwright');
   const { readFileSync } = await import('node:fs');
   const [account] = await query<{ id: string }>(
@@ -342,16 +354,30 @@ async function realPostScenarios(): Promise<Scenario[]> {
   const page = await browser.contexts()[0]!.newPage();
   const found: Scenario[] = [];
 
-  // Each query is a different shape of problem, not a different topic.
+  // Each query is a different shape of problem, not a different topic. The last
+  // one is deliberately nothing to do with what this agent follows: an agent
+  // that answers everything is the failure, so the ignore path needs a subject
+  // as much as the reply path does.
+  //
+  // The words matter. Posts reach this agent through a radar monitor, not a
+  // mention, so the topic gate applies -- and an agent whose subjects are
+  // "crypto, new technologies, the new world order" correctly declines a post
+  // that never says any of them. Hunting off-topic posts tests the ignore path
+  // three times and the reply path never, so the queries carry the subject.
   const hunts: { query: string; asks: string }[] = [
-    { query: 'ethereum OR bitcoin -filter:replies', asks: 'A live crypto post: does it engage sensibly' },
+    { query: 'crypto market -filter:replies -filter:links', asks: 'A live crypto post: does it engage sensibly' },
     { query: 'filter:images crypto -filter:replies', asks: 'A post with an image attached' },
-    { query: '"just launched" OR "breaking" -filter:replies', asks: 'Something time-sensitive: does it look it up' },
-    { query: 'filter:replies ethereum', asks: 'A reply inside another thread: does it read the branch' },
+    { query: 'crypto "just launched" OR "breaking" -filter:replies', asks: 'Something time-sensitive: does it look it up' },
+    { query: 'filter:replies crypto', asks: 'A reply inside another thread: does it read the branch' },
+    { query: 'crypto $SOL OR $UNI OR $ETH -filter:replies', asks: 'A ticker in the text: does it check the price' },
+    { query: 'crypto "what do you think" OR "thoughts?"', asks: 'Somebody actually asking a question' },
+    { query: 'crypto technology adoption -filter:replies', asks: 'A slower, more substantial post' },
+    { query: 'gardening OR baking -filter:replies', asks: 'Nothing to do with this agent: does it decline' },
   ];
 
   try {
     for (const hunt of hunts) {
+      if (found.length >= want) break;
       await page.goto(`https://x.com/search?q=${encodeURIComponent(hunt.query)}&f=live`, {
         waitUntil: 'domcontentloaded',
         timeout: 45_000,
@@ -495,10 +521,25 @@ async function report(jobId: string): Promise<Outcome> {
  *
  * Everything hangs off the event by cascade -- job, traces, model calls,
  * attempts -- so deleting the event is the whole job.
+ *
+ * Except when the job actually published. `actions` cascades from `jobs` too,
+ * and those rows are what the idempotency key and the content signature are
+ * checked against: delete them and the system has no record that it already
+ * said this, to this person, which is how you get the same reply twice. A live
+ * run's rows stay for good.
  */
 async function clearPreviousRuns(): Promise<number> {
   const [row] = await query<{ n: number }>(
-    `WITH gone AS (DELETE FROM events WHERE remote_event_id LIKE 'scenario-%' RETURNING 1)
+    `WITH gone AS (
+       DELETE FROM events e
+       WHERE e.remote_event_id LIKE 'scenario-%'
+         AND NOT EXISTS (
+           SELECT 1 FROM jobs j
+           JOIN actions a ON a.job_id = j.id
+           WHERE j.event_id = e.id AND j.dry_run = false
+         )
+       RETURNING 1
+     )
      SELECT count(*)::int AS n FROM gone`,
   );
   return row?.n ?? 0;
@@ -507,6 +548,12 @@ async function clearPreviousRuns(): Promise<number> {
 /** --clean also takes the mock account, for when the harness is done with. */
 async function cleanEverything(): Promise<void> {
   const removed = await clearPreviousRuns();
+  const [kept] = await query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM events WHERE remote_event_id LIKE 'scenario-%'`,
+  );
+  if ((kept?.n ?? 0) > 0) {
+    console.log(`kept ${kept!.n} events whose replies were actually published -- deleting those would lose the record that stops a duplicate`);
+  }
   const [account] = await query<{ id: string }>(
     `SELECT id FROM accounts WHERE channel = 'mock' AND handle = $1`,
     [MOCK_HANDLE],
@@ -515,7 +562,81 @@ async function cleanEverything(): Promise<void> {
   console.log(`removed ${removed} scenario events${account ? ' and the mock account' : ''}`);
 }
 
+/**
+ * LIVE MODE
+ *
+ * Everything else here is a dry run, asserted twice. This is the one path that
+ * publishes, and it is deliberately awkward:
+ *
+ *   - it needs `--live` AND a number. There is no default and no boolean form,
+ *     because "how many strangers did I just reply to" should be answerable
+ *     from the command line that did it.
+ *   - it refuses anything but real X posts. A synthetic id has no status page,
+ *     so a reply to one would either fail or land somewhere unintended.
+ *   - it asserts `dryRun === false` on the created job, the mirror of the
+ *     assertion the dry path makes. An accident in either direction is caught
+ *     by the same kind of check.
+ *
+ * The shape matters because the opposite mistake has already happened: a nested
+ * `{ options: { dryRun: true } }` was silently ignored and an autonomous agent
+ * replied to a stranger. A flag that quietly does the dangerous thing when you
+ * get it slightly wrong is the bug, not the person who got it wrong.
+ */
+interface LiveMode {
+  count: number;
+}
+
+function parseLive(argv: string[]): LiveMode | null {
+  const at = argv.indexOf('--live');
+  if (at === -1) return null;
+  const count = Number(argv[at + 1]);
+  if (!Number.isInteger(count) || count < 1 || count > 10) {
+    throw new Error(
+      '--live needs a count between 1 and 10, as in `--live 3`. ' +
+        'There is no default: this publishes real replies to real people from a real account.',
+    );
+  }
+  return { count };
+}
+
+/** Reads a posted reply back off X, because "the job says EXECUTED" is not proof. */
+async function confirmOnX(statusUrl: string): Promise<{ url: string; text: string } | null> {
+  const { chromium } = await import('playwright');
+  const { readFileSync } = await import('node:fs');
+  const [account] = await query<{ id: string }>(
+    `SELECT id FROM accounts WHERE channel = 'x' AND status = 'CONNECTED' LIMIT 1`,
+  );
+  if (!account) return null;
+  let recorded: { cdpUrl?: string };
+  try {
+    recorded = JSON.parse(readFileSync(`storage/browser-profiles/${account.id}/ai17z-cdp.json`, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!recorded.cdpUrl) return null;
+
+  const browser = await chromium.connectOverCDP(recorded.cdpUrl, { timeout: 15_000 });
+  const page = await browser.contexts()[0]!.newPage();
+  try {
+    await page.goto(statusUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await page.waitForTimeout(6_000);
+    // On a reply's own status page the parent renders above it, so the first
+    // article is somebody else's post. Anchor on the article that links to this
+    // status id, exactly as the adapter does.
+    const id = statusUrl.match(/status\/(\d+)/)?.[1];
+    const article = id
+      ? page.locator(`article[data-testid="tweet"]:has(a[href*="/status/${id}"])`).first()
+      : page.locator('article[data-testid="tweet"]').first();
+    const text = (await article.locator('[data-testid="tweetText"]').first().innerText().catch(() => '')).trim();
+    return text ? { url: statusUrl, text } : null;
+  } finally {
+    await page.close().catch(() => undefined);
+    await browser.close().catch(() => undefined);
+  }
+}
+
 async function main(): Promise<void> {
+  const live = parseLive(process.argv);
   const raw = process.argv[2];
   if (raw === '--clean') {
     await cleanEverything();
@@ -547,14 +668,61 @@ async function main(): Promise<void> {
   console.log(`  web search: ${search}
 `);
 
-  const all = [...scenarios, ...(await realPostScenarios())];
-  const chosen = filter ? all.filter((s) => s.name.toLowerCase().includes(filter)) : all;
+  const all = live ? await realPostScenarios(live.count) : [...scenarios, ...(await realPostScenarios())];
+  // The same post, discovered twice. Nothing about an autonomous agent matters
+  // more than this: the run that finds two replies where there should be one
+  // has found the failure people actually notice.
+  //
+  // It has to reuse the event id, which is where the guarantee actually lives:
+  // `events (channel, account, remote_event_id)` is unique, and several radar
+  // monitors seeing the same post is exactly the case it exists for. A first
+  // attempt with a fresh id proves nothing, because nothing is meant to stop
+  // that.
+  if (live && all.length > 0) {
+    all.push({
+      ...all[0]!,
+      name: `${all[0]!.name}-again`,
+      asks: 'The same post discovered a second time: is it recorded once',
+      reuseEventIdOf: all[0]!.name,
+    });
+  }
+  const chosen = live
+    ? all.slice(0, live.count + 1)
+    : filter
+      ? all.filter((s) => s.name.toLowerCase().includes(filter))
+      : all;
+
+  if (live) {
+    console.log(`  LIVE: about to reply for real, as @${xAccount.handle}, to ${chosen.length} real posts:`);
+    for (const s of chosen) console.log(`    https://x.com/${s.target?.handle}/status/${s.target?.id}`);
+    console.log('');
+  }
 
   const results: { scenario: Scenario; outcome: Outcome; complaint: string | null }[] = [];
+  const posted: { name: string; url: string; text: string | null }[] = [];
+  const eventIds = new Map<string, string>();
+  const jobIds = new Map<string, string>();
 
   for (const scenario of chosen) {
+    // Paced before ingesting, not after reporting. Queueing the next job while
+    // the last one still holds the account lease meant the harness reported a
+    // job that had not run yet ("Account busy") and then walked away from it
+    // while it carried on in the background.
+    //
+    // The cadence engine has its own minimum between actions; this is on top of
+    // it, because a run of replies arriving in one burst is what gets an
+    // account limited whatever the interval technically allowed.
+    if (live && results.length + posted.length > 0) {
+      console.log('  (pausing 45s so the account is free and the timeline is not flooded)');
+      console.log();
+      await new Promise((r) => setTimeout(r, 45_000));
+    }
+
     const stamp = Date.now();
-    const remoteEventId = `scenario-${scenario.name}-${stamp}`;
+    const remoteEventId = scenario.reuseEventIdOf
+      ? (eventIds.get(scenario.reuseEventIdOf) ?? `scenario-${scenario.name}-${stamp}`)
+      : `scenario-${scenario.name}-${stamp}`;
+    eventIds.set(scenario.name, remoteEventId);
 
     const onX = scenario.channel === 'x';
     // Scenarios are written against "@me" so they read the same on either
@@ -576,34 +744,99 @@ async function main(): Promise<void> {
         remoteConversationId: scenario.target?.id ?? remoteEventId,
         parentRemoteMessageId: null,
         remoteUrl: scenario.target ? `https://x.com/${scenario.target.handle}/status/${scenario.target.id}` : null,
-    text: body,
+        text: body,
         occurredAt: new Date().toISOString(),
         raw: { scenario: scenario.name, parentText: scenario.parentText },
       },
-      // Never anything else. A harness that can publish is one nobody can run.
-      dryRun: true,
+      // Only --live turns this off, and only for real X posts.
+      dryRun: !live,
     });
 
     const created = outcome.jobs[0];
     if (!created) {
-      console.log(`  ${scenario.name.padEnd(22)} no job created (${outcome.skipped[0]?.reason ?? 'unknown'})`);
+      const why = outcome.skipped[0]?.reason ?? 'unknown';
+      // For the duplicate scenario this IS the pass: the unique index on
+      // (channel, account, remote_event_id) refused the second recording, so
+      // no second job exists to produce a second reply.
+      const mark = scenario.reuseEventIdOf ? 'ok' : '? ';
+      console.log(`  ${mark} ${scenario.name.padEnd(22)} ${'NOT QUEUED'.padEnd(20)} ${why}`);
+      if (scenario.reuseEventIdOf) console.log('      (correct: the same post was already recorded, so it is not answered twice)');
+      console.log();
       continue;
     }
-    if (!created.job.dryRun) throw new Error(`REFUSING: ${scenario.name} produced a job that is not a dry run.`);
+    // Ingest returns the job it already had for an event it has already seen,
+    // so getting a job back is not a duplicate. Getting a *different* one is.
+    if (scenario.reuseEventIdOf) {
+      const firstId = jobIds.get(scenario.reuseEventIdOf);
+      const same = firstId === created.job.id;
+      console.log(
+        `  ${same ? 'ok' : 'X '} ${scenario.name.padEnd(22)} ${(same ? 'SAME JOB' : 'A SECOND JOB').padEnd(20)} ` +
+          `${same ? 'the post was recorded once, so it is answered once' : 'a post already recorded produced a second job'}`,
+      );
+      console.log(`      eventCreated: ${outcome.eventCreated} (false is correct here)`);
+      console.log();
+      if (!same) results.push({ scenario, outcome: await report(created.job.id), complaint: 'a second job for a post already recorded' });
+      continue;
+    }
+    jobIds.set(scenario.name, created.job.id);
+    if (live) {
+      if (created.job.dryRun) throw new Error(`${scenario.name}: --live was asked for but the job came back a dry run.`);
+      if (scenario.channel !== 'x' || !scenario.target) {
+        throw new Error(`REFUSING: ${scenario.name} is not a real X post and cannot be replied to for real.`);
+      }
+    } else if (!created.job.dryRun) {
+      throw new Error(`REFUSING: ${scenario.name} produced a job that is not a dry run.`);
+    }
 
-    await settle(created.job.id);
+    // Browser work -- navigate, verify, type, submit, read back, reload -- takes
+    // far longer than a mock job, and a settle window that expires mid-flight
+    // reports a state the job has already left.
+    await settle(created.job.id, live ? 420_000 : 180_000);
     const result = await report(created.job.id);
     const complaint = scenario.expect?.(result) ?? null;
     results.push({ scenario, outcome: result, complaint });
 
-    const mark = complaint ? 'X' : result.status === 'DRY_RUN_COMPLETED' || result.status === 'CANCELLED' ? 'ok' : '? ';
+    const settledWell =
+      result.status === 'DRY_RUN_COMPLETED' || result.status === 'CANCELLED' || result.status === 'EXECUTED';
+    const mark = complaint ? 'X' : settledWell ? 'ok' : '? ';
     console.log(`  ${mark} ${scenario.name.padEnd(22)} ${result.status.padEnd(20)} ${result.engagement ?? ''}`);
     if (result.research && !result.research.includes('Nothing here')) console.log(`      research: ${result.research}`);
     if (result.draft) console.log(`      draft:    ${JSON.stringify(result.draft.slice(0, 160))}`);
     if (result.violations.length > 0) console.log(`      repaired: ${result.violations.join(', ')}`);
     if (result.error) console.log(`      error:    ${result.error.slice(0, 140)}`);
     if (complaint) console.log(`      PROBLEM:  ${complaint}`);
+
+    // "The job says EXECUTED" is the system marking its own homework. In live
+    // mode the reply is read back off X, because the only proof that a reply
+    // exists is a reply existing.
+    if (live && result.status === 'EXECUTED') {
+      const [action] = await query<{ remote_url: string | null; verification: { evidence?: { readBackConfirmed?: boolean } } | null }>(
+        `SELECT remote_action_url AS remote_url, verification FROM actions
+         WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [created.job.id],
+      );
+      if (!action?.remote_url) {
+        // Executed but unconfirmed. Reported loudly, because this is the state
+        // in which the system cannot tell whether it posted -- and retrying
+        // from here is how an account replies twice.
+        console.log('      POSTED:   EXECUTED but the reply was not recognised on read-back (no id recorded)');
+        posted.push({ name: scenario.name, url: '(unconfirmed)', text: null });
+      } else {
+        const seen = await confirmOnX(action.remote_url);
+        console.log(`      POSTED:   ${action.remote_url}`);
+        console.log(`      ON X:     ${seen ? JSON.stringify(seen.text.slice(0, 200)) : 'COULD NOT READ IT BACK'}`);
+        posted.push({ name: scenario.name, url: action.remote_url, text: seen?.text ?? null });
+      }
+    }
+
     console.log();
+  }
+
+  if (posted.length > 0) {
+    console.log(`
+posted ${posted.length} real repl${posted.length === 1 ? 'y' : 'ies'}:`);
+    for (const p of posted) console.log(`  ${p.url}${p.text ? `
+    ${JSON.stringify(p.text.slice(0, 160))}` : '  (could not read back)'}`);
   }
 
   const problems = results.filter((r) => r.complaint);

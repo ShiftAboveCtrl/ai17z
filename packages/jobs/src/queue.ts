@@ -1,6 +1,6 @@
 import type { JobRecord } from '@xbam/shared/contracts';
 import { backoffMs, createLogger } from '@xbam/shared';
-import { jobs as jobsRepo, observability } from '@xbam/database';
+import { actions as actionsRepo, jobs as jobsRepo, observability } from '@xbam/database';
 
 const log = createLogger('queue');
 
@@ -28,6 +28,39 @@ export function capabilitiesFor(role: WorkerRole): { browserCapable: boolean; jo
   };
 }
 
+/**
+ * Waits for work that is still going, without spending an attempt on it.
+ *
+ * `claimAction` refuses a job whose action is already EXECUTING, which is
+ * correct -- retrying past it is how a reply goes out twice. But the refusal was
+ * being counted as a failed attempt, and the backoff spends all five in about
+ * thirty seconds while an action stays un-retakeable for ten minutes. So any
+ * browser action that outlived its job lease was guaranteed to reach review
+ * having never actually been retried.
+ *
+ * Nothing was attempted here, so nothing is charged. The delay is a flat minute
+ * rather than a backoff, because the thing being waited for is another worker
+ * finishing, not a fault that might clear.
+ */
+export async function waitForInFlight(job: JobRecord, resumeStatus: JobRecord['status'], reason: string): Promise<void> {
+  const runAt = new Date(Date.now() + 60_000).toISOString();
+  await jobsRepo.updateJob(job.id, {
+    status: resumeStatus,
+    runAt,
+    errorClass: 'RETRYABLE',
+    lastError: reason,
+    releaseLock: true,
+  });
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: job.agentId,
+    type: 'JOB_RETRY_SCHEDULED',
+    level: 'warn',
+    message: 'Waiting for the action already in flight to finish; this does not count as an attempt.',
+    data: { reason, runAt, attempt: job.attemptCount },
+  });
+}
+
 /** Schedules a retry with jittered exponential backoff and records why. */
 export async function scheduleRetry(job: JobRecord, resumeStatus: JobRecord['status'], reason: string): Promise<void> {
   const attempt = job.attemptCount + 1;
@@ -52,6 +85,9 @@ export async function scheduleRetry(job: JobRecord, resumeStatus: JobRecord['sta
 }
 
 export async function failPermanently(job: JobRecord, reason: string, message: string): Promise<void> {
+  // Nothing is executing once the job has stopped, and a row that says
+  // otherwise blocks the next claim on that key and misleads whoever reads it.
+  await actionsRepo.failInFlightForJob(job.id, message);
   await jobsRepo.updateJob(job.id, {
     status: 'PERMANENT_FAILURE',
     errorClass: 'PERMANENT',
@@ -69,6 +105,7 @@ export async function failPermanently(job: JobRecord, reason: string, message: s
 }
 
 export async function sendToReview(job: JobRecord, reason: string, message: string): Promise<void> {
+  await actionsRepo.failInFlightForJob(job.id, message);
   await jobsRepo.updateJob(job.id, {
     status: 'REVIEW_REQUIRED',
     errorClass: 'REVIEW_REQUIRED',
