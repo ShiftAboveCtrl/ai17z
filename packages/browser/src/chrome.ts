@@ -268,7 +268,17 @@ export async function closeChrome(
     if (process.platform === 'win32') {
       // /T for the child renderers: killing only the parent leaves the profile
       // locked and the next launch hands off to it instead of starting.
-      await run('taskkill', ['/PID', String(launched.pid), '/T', '/F'], { timeout: 10_000 }).catch(() => undefined);
+      //
+      // Thirty seconds, not ten. A Chrome with twenty-odd renderers on a busy
+      // machine takes longer than ten to come down, and a taskkill cut short by
+      // its own timeout leaves the browser running while this reports success.
+      // The next launch then fails with "the debugging port did not open",
+      // which describes a symptom three steps removed from the cause.
+      await run('taskkill', ['/PID', String(launched.pid), '/T', '/F'], { timeout: 30_000 }).catch((error) =>
+        // Not swallowed. Whether the kill worked decides whether the profile is
+        // free, and the caller is about to act on that.
+        log.warn('could not force the browser to close', { pid: launched.pid, message: errorMessage(error) }),
+      );
     } else {
       try {
         process.kill(launched.pid);
@@ -277,7 +287,9 @@ export async function closeChrome(
       }
     }
   }
-  return waitForCdpGone(launched.cdpUrl, timeoutMs);
+  const gone = await waitForCdpGone(launched.cdpUrl, timeoutMs);
+  if (!gone) log.warn('the browser is still answering after being told to close', { pid: launched.pid });
+  return gone;
 }
 
 /** Sends the CDP command that asks the browser to shut down cleanly. */
@@ -325,6 +337,72 @@ function endpointFile(profileDir: string): string {
 }
 
 /**
+ * The Chrome holding this profile, found without a record of it.
+ *
+ * The record file is written beside the profile and can go missing -- a tidy-up
+ * script, a half-finished stop, somebody clearing a directory. When it does, a
+ * perfectly healthy signed-in Chrome becomes invisible: the launcher finds no
+ * record, starts a second Chrome on the same profile, and Chrome hands off to
+ * the running copy and exits without ever opening the new port. Every poll then
+ * fails with "the browser did not open its debugging port" while the browser it
+ * describes is sitting on screen, signed in and working.
+ *
+ * A profile directory can only be held by one Chrome at a time, and AI17Z
+ * derives that directory from the account id. So the directory *is* the
+ * identity, and a browser holding it can be found by asking the operating
+ * system which process has it open -- no record required.
+ *
+ * Returns the port that browser was started with. Everything after this still
+ * has to prove the port answers and accepts a connection; this only finds a
+ * candidate.
+ */
+async function chromeHoldingProfile(profileDir: string): Promise<{ port: number; pid: number } | null> {
+  const wanted = profileDir.replace(/[/\\]+$/, '').toLowerCase();
+
+  try {
+    if (process.platform === 'win32') {
+      const { stdout } = await run(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | ` +
+            `Where-Object { $_.CommandLine -like '*--remote-debugging-port=*' } | ` +
+            `ForEach-Object { "$($_.ProcessId)|$($_.CommandLine)" }`,
+        ],
+        // Chrome command lines are enormous and there can be dozens of
+        // processes, so the default 1MB buffer is not enough to see them all.
+        // Enumerating processes is slow when a lot of Chrome is open.
+        { timeout: 45_000, maxBuffer: 16 * 1024 * 1024 },
+      );
+      return firstMatch(stdout, wanted, (line) => line.split('|')[0]);
+    }
+
+    const { stdout } = await run('ps', ['-eo', 'pid=,args='], { timeout: 45_000, maxBuffer: 16 * 1024 * 1024 });
+    return firstMatch(stdout, wanted, (line) => line.trim().split(/\s+/)[0]);
+  } catch {
+    // Not being able to ask is the same as not finding one: launch instead.
+    return null;
+  }
+}
+
+function firstMatch(
+  stdout: string,
+  wantedProfile: string,
+  pidOf: (line: string) => string | undefined,
+): { port: number; pid: number } | null {
+  for (const line of stdout.split(/\r?\n/)) {
+    const lower = line.toLowerCase();
+    if (!lower.includes(`--user-data-dir=${wantedProfile}`)) continue;
+    const port = Number(line.match(/--remote-debugging-port=(\d+)/)?.[1]);
+    const pid = Number(pidOf(line));
+    if (!Number.isInteger(port) || port <= 0 || !Number.isInteger(pid)) continue;
+    return { port, pid };
+  }
+  return null;
+}
+
+/**
  * The Chrome already serving this profile, if there is one.
  *
  * Chrome outliving the worker is deliberate — restarting AI17Z must not close a
@@ -337,13 +415,11 @@ function endpointFile(profileDir: string): string {
  * So the port is remembered, and a launch attaches to a live one instead.
  */
 export async function existingChrome(profileDir: string): Promise<{ cdpUrl: string; port: number; pid: number | null } | null> {
-  let recorded: { cdpUrl?: unknown; port?: unknown; pid?: unknown };
+  let recorded: { cdpUrl?: unknown; port?: unknown; pid?: unknown } = {};
   try {
     recorded = JSON.parse(await readFile(endpointFile(profileDir), 'utf8')) as typeof recorded;
   } catch {
-    // No file, or nothing readable in it. Either way there is nothing to attach
-    // to, and launching is the right answer.
-    return null;
+    // No file, or nothing readable in it.
   }
 
   const cdpUrl = typeof recorded.cdpUrl === 'string' ? recorded.cdpUrl : null;
@@ -439,9 +515,16 @@ async function countPages(cdpUrl: string): Promise<number> {
  * records. Closed gracefully first, so the signed-in session is flushed to disk
  * and comes back with the replacement.
  */
-async function replaceUnusable(cdpUrl: string, pid: number | null, profileDir: string): Promise<void> {
-  await closeChrome({ pid, cdpUrl, profileDir }, 20_000).catch(() => undefined);
+async function replaceUnusable(cdpUrl: string, pid: number | null, profileDir: string): Promise<boolean> {
+  const closed = await closeChrome({ pid, cdpUrl, profileDir }, 20_000).catch(() => false);
   await forgetEndpoint(profileDir);
+  return closed;
+}
+
+/** True when that process is still alive and still holding this profile. */
+async function stillHoldingProfile(profileDir: string, pid: number): Promise<boolean> {
+  const holder = await chromeHoldingProfile(profileDir);
+  return holder?.pid === pid;
 }
 
 /** Forgets the recorded endpoint, after closing the browser it described. */
@@ -455,6 +538,11 @@ export async function launchChrome(input: {
   /** Opened immediately, so the window lands somewhere useful. */
   startUrl?: string | null;
   headless?: boolean;
+  /**
+   * Internal. Set once when a launch has already failed to a Chrome holding the
+   * profile, so recovery is attempted exactly once and cannot loop.
+   */
+  afterRecovery?: boolean;
 }): Promise<LaunchedChrome> {
   const installation = await findBrowser(input.engine);
   await mkdir(input.profileDir, { recursive: true });
@@ -509,7 +597,74 @@ export async function launchChrome(input: {
   child.unref();
 
   const cdpUrl = `http://127.0.0.1:${port}`;
-  await waitForCdp(cdpUrl, 30_000);
+  try {
+    await waitForCdp(cdpUrl, 30_000);
+  } catch (error) {
+    // The port never opened. By far the most common reason is that a Chrome is
+    // already holding this profile: Chrome hands the arguments to the running
+    // copy and exits, so the new port belongs to a process that is gone.
+    //
+    // Asking the operating system which process holds the profile is slow --
+    // enumerating processes takes tens of seconds on a machine with a lot of
+    // Chrome open -- so it is not worth doing before every launch. Here it is:
+    // thirty seconds have already been spent failing, and the alternative is an
+    // account that stays broken while its browser sits there signed in.
+    if (input.afterRecovery) throw error;
+
+    const holder = await chromeHoldingProfile(input.profileDir);
+    if (!holder) throw error;
+
+    const recovered = `http://127.0.0.1:${holder.port}`;
+    log.warn('the profile was already held by a running Chrome', {
+      wanted: cdpUrl,
+      found: recovered,
+      pid: holder.pid,
+    });
+
+    // Recorded, then handed to `existingChrome`, which is where the judgement
+    // about whether a browser is actually usable already lives: too many tabs
+    // to attach to, or answering /json/version while never completing a
+    // handshake. Writing the record and returning it here would skip all of
+    // that and hand back a browser nothing can drive.
+    await writeFile(
+      endpointFile(input.profileDir),
+      JSON.stringify(
+        { cdpUrl: recovered, port: holder.port, pid: holder.pid, startedAt: new Date().toISOString(), recovered: true },
+        null,
+        2,
+      ),
+      'utf8',
+    ).catch(() => undefined);
+
+    const usable = await existingChrome(input.profileDir);
+    if (usable) {
+      return {
+        installation,
+        cdpUrl: usable.cdpUrl,
+        port: usable.port,
+        pid: usable.pid,
+        profileDir: input.profileDir,
+        process: child,
+      };
+    }
+
+    // `existingChrome` found it unusable and tried to close it. If it is still
+    // there the profile is still locked, and relaunching would fail again with
+    // a message about a port, three steps removed from the cause. Say what is
+    // actually wrong and name the process, so somebody can end it.
+    if (await stillHoldingProfile(input.profileDir, holder.pid)) {
+      throw PipelineError.review(
+        'profile_locked',
+        `A Chrome (pid ${holder.pid}) is holding this account's profile and will not close, so a new one cannot ` +
+          `start: Chrome hands its arguments to the running copy and exits. Close that window, or end process ` +
+          `${holder.pid} and its children, then connect again.`,
+        { pid: holder.pid, cdpUrl: recovered, profileDir: input.profileDir },
+      );
+    }
+
+    log.warn('the Chrome holding the profile could not be driven; launching a fresh one', { found: recovered });
+    return launchChrome({ ...input, afterRecovery: true });
+  }
 
   // Written only once the port is answering, so the file never points at a
   // browser that failed to start.
