@@ -1,7 +1,7 @@
-import type { ActionType, Capability, JobRecord } from '@xbam/shared/contracts';
+import type { ActionType, Capability, JobRecord, NormalizedEvent as NormalizedEventType } from '@xbam/shared/contracts';
 import { z } from 'zod';
 import { NormalizedEvent, PolicyConfig } from '@xbam/shared/contracts';
-import { PipelineError, actionIdempotencyKey, createLogger } from '@xbam/shared';
+import { PipelineError, actionIdempotencyKey, createLogger, sanitizeText } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -77,7 +77,21 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
     );
   }
   const options = parsed.data as IngestOptions;
-  const { event, accountId } = options;
+  const { accountId } = options;
+
+  // Cleaned once, here, because this is the one door every channel comes
+  // through. A NUL byte in a mention is not a hypothetical -- Postgres text
+  // cannot store one, so it came back as an unclassified driver error at
+  // ingest, from a post anybody can write. Zero-widths and bidirectional
+  // overrides go the same way: they survive the round trip and come out as
+  // something else on somebody's client.
+  const event: NormalizedEventType = {
+    ...options.event,
+    text: sanitizeText(options.event.text ?? ''),
+    remoteAuthorDisplayName: options.event.remoteAuthorDisplayName
+      ? sanitizeText(options.event.remoteAuthorDisplayName)
+      : options.event.remoteAuthorDisplayName,
+  };
 
   const links = options.onlyAgentId
     ? [{ agentId: options.onlyAgentId, triggerEventTypes: [event.type], actionType: 'REPLY' as ActionType }]
