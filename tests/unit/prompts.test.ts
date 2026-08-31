@@ -54,6 +54,19 @@ describe('describeDisclosure', () => {
       expect(describeDisclosure(policy)).toContain('Never say which AI model');
     }
   });
+
+  it('always carries the rule about money that is not the agent', () => {
+    // Asked "I have 40k in savings, should I put it all into ETH", the agent
+    // answered with what to do. Talking about the asset is the job; directing
+    // an identified stranger's savings is not, whatever the answer.
+    const permissive = PolicyConfig.parse({ identity: { mayDenyBeingAI: true, disclosure: 'NONE' } }).identity;
+    for (const policy of [PolicyConfig.parse({}).identity, permissive]) {
+      const rule = describeDisclosure(policy);
+      expect(rule).toContain('their own money');
+      // And it must not have turned into a blanket gag on the subject.
+      expect(rule).toContain('assets, prices, mechanics, and risks in general');
+    }
+  });
 });
 
 describe('assemblePrompt', () => {

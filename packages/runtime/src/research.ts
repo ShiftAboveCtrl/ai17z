@@ -239,7 +239,7 @@ export async function lookupToken(query: string, timeoutMs = 8_000): Promise<Fin
       // the reply may want to check which token this actually was.
       best.baseToken?.address ? `contract ${best.baseToken.address}` : null,
       ambiguous > 0
-        ? `${ambiguous} other token${ambiguous === 1 ? '' : 's'} use this ticker; this is the one with the deepest liquidity`
+        ? `${ambiguous} other token${ambiguous === 1 ? '' : 's'} use this ticker; this is the most traded one`
         : null,
     ].filter(Boolean);
 
@@ -294,6 +294,8 @@ export function choosePair(pairs: DexPair[], symbol: string | null): ChosenPair 
     const priced = candidates.filter((p) => p.baseToken?.symbol?.toLowerCase() === wanted);
     if (priced.length > 0) candidates = priced;
 
+    // Anyone can mint a token called anything, so a ticker is not an identity:
+    // group by contract and pick one group.
     const byAddress = new Map<string, DexPair[]>();
     for (const pair of candidates) {
       const key = pair.baseToken?.address?.toLowerCase() ?? 'unknown';
@@ -301,14 +303,21 @@ export function choosePair(pairs: DexPair[], symbol: string | null): ChosenPair 
     }
     if (byAddress.size > 1) {
       ambiguous = byAddress.size - 1;
-      candidates = [...byAddress.values()].sort(
-        (a, b) =>
-          b.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0) - a.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0),
-      )[0]!;
+      // Ranked by traded volume rather than by claimed liquidity. Liquidity is a
+      // number in a pool and can be inflated for nothing; volume is trades that
+      // had to happen. A search for $UNI returned a Solana token claiming $6.6B
+      // of liquidity against $3.99 of daily volume, and won on liquidity.
+      candidates = [...byAddress.values()].sort(compareGroups)[0]!;
     }
   }
 
-  const withPrice = candidates
+  // A pool nobody trades in is not price discovery. Pairs that do trade set the
+  // price; if none of them do, they are all we have and the price is whatever
+  // they say, which at least is not a lie about being busy.
+  const traded = candidates.filter((p) => (p.volume?.h24 ?? 0) >= MIN_MEANINGFUL_VOLUME_USD);
+  const pricing = traded.length > 0 ? traded : candidates;
+
+  const withPrice = pricing
     .map((pair) => ({ pair, price: Number(pair.priceUsd) }))
     .filter((p) => Number.isFinite(p.price) && p.price > 0)
     .sort((a, b) => a.price - b.price);
@@ -327,6 +336,40 @@ export function choosePair(pairs: DexPair[], symbol: string | null): ChosenPair 
       .sort((a, b) => a - b)[0],
     ambiguous,
   };
+}
+
+/**
+ * Below this, a pair is not trading and its price means nothing.
+ *
+ * A hundred dollars a day is a very low bar deliberately: it is meant to
+ * exclude pools with no activity at all, not to judge small tokens.
+ */
+const MIN_MEANINGFUL_VOLUME_USD = 100;
+
+/**
+ * Which of two tokens sharing a ticker is the one being asked about.
+ *
+ * Compared in order rather than scored, because these are unbounded numbers and
+ * any weighted sum either caps one of them or lets it drown the others.
+ *
+ *   1. 24h volume, because it is expensive to fake: it is trades that had to
+ *      happen. A Solana token claiming $6.6B of liquidity against $3.99 of
+ *      daily volume beat the real Uniswap on liquidity alone.
+ *   2. How many venues it trades in, because a token people hold trades in
+ *      several.
+ *   3. Liquidity, last, as the tie-break for when nothing has traded — which is
+ *      the only case where the number that gets inflated is the best available.
+ */
+function compareGroups(a: DexPair[], b: DexPair[]): number {
+  const sum = (pairs: DexPair[], pick: (p: DexPair) => number) => pairs.reduce((total, p) => total + pick(p), 0);
+
+  const byVolume = sum(b, (p) => p.volume?.h24 ?? 0) - sum(a, (p) => p.volume?.h24 ?? 0);
+  if (byVolume !== 0) return byVolume;
+
+  const byVenues = b.length - a.length;
+  if (byVenues !== 0) return byVenues;
+
+  return sum(b, (p) => p.liquidity?.usd ?? 0) - sum(a, (p) => p.liquidity?.usd ?? 0);
 }
 
 /** Prices span nine orders of magnitude, so the useful precision moves. */

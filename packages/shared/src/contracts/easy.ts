@@ -134,9 +134,29 @@ export const EasyEmoji = z.object({
 });
 export type EasyEmoji = z.infer<typeof EasyEmoji>;
 
+/**
+ * Which language to answer in.
+ *
+ * Not a nicety either. With no rule an agent mirrors whatever it is written to,
+ * so an English account replies in Polish to a Polish post and in Hindi to a
+ * Hindi one — correct behaviour that surprises everybody the first time they
+ * see it, and is invisible unless somebody thought to look in Advanced.
+ */
+export const EasyLanguage = z.enum([
+  /** Answer in whatever language the message was written in. */
+  'MIRROR',
+  'ENGLISH',
+  /** Something else, written out. */
+  'CUSTOM',
+]);
+export type EasyLanguage = z.infer<typeof EasyLanguage>;
+
 export const EasySetup = z.object({
   character: EasyCharacter,
   emoji: EasyEmoji.default({}),
+  language: EasyLanguage.default('MIRROR'),
+  /** Only read when `language` is CUSTOM. */
+  languageDetail: z.string().max(200).default(''),
   replies: EasyReplies.default({}),
   posting: EasyPosting.default({}),
   operation: EasyOperation.default('REVIEW_FIRST'),
