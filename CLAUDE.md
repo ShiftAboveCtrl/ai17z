@@ -53,9 +53,17 @@ npm test                   # vitest: unit + integration (needs Postgres)
 npm run import:ai4cz -- --dry-run
 ```
 
-Integration tests use a sibling `xbam_test` database, created automatically from
-`DATABASE_URL`. They truncate between cases, so never point `DATABASE_URL` at
-data you care about.
+Integration tests create their own database per test process, named
+`xbam_test_<pid>_<random>` and derived from `DATABASE_URL`. They truncate
+between cases, so never point `DATABASE_URL` at data you care about.
+
+The database is per process rather than shared because truncation needs an
+exclusive lock on every table at once: anything else touching that database at
+the same moment either deadlocks or has rows pulled out from under it, and the
+failure lands in whichever test happened to be running. Two consecutive runs are
+enough to trigger it, since vitest keeps its fork alive briefly after reporting.
+A shared test database made the suite fail in a different place each time and
+look exactly like a concurrency bug in the code under test.
 
 ## Architecture
 

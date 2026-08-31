@@ -12,6 +12,27 @@ export function backoffMs(attempt: number, baseMs = 2_000, capMs = 5 * 60_000): 
   return Math.round(exponential / 2 + Math.random() * (exponential / 2));
 }
 
+/**
+ * Removes characters that cannot be stored, or that should not be repeated.
+ *
+ * A NUL byte is the sharp one: Postgres text simply cannot hold `0x00`, so a
+ * mention containing one threw `invalid byte sequence for encoding "UTF8"`
+ * straight out of the driver -- an unclassified database error at ingest, from
+ * a post somebody can write on purpose.
+ *
+ * The rest are removed because they survive a round trip and come out as
+ * something else on somebody's client: other C0 controls, the zero-width
+ * family, and the bidirectional overrides that let text render in an order it
+ * is not written in.
+ *
+ * Tabs and newlines are kept. They are formatting somebody chose.
+ */
+export function sanitizeText(text: string): string {
+  return text
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
+}
+
 export function truncate(text: string, max: number, suffix = '...'): string {
   if (text.length <= max) return text;
   return text.slice(0, Math.max(0, max - suffix.length)) + suffix;
