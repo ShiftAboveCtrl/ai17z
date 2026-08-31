@@ -191,3 +191,36 @@ describe('a question with nothing to answer', () => {
     expect(verdict.factors.some((f) => f.label.includes('no subject'))).toBe(false);
   });
 });
+
+describe('a question about something else entirely', () => {
+  // A live run posted this: a crypto agent replied to a stranger's football
+  // transfer post about who would replace whose finishing. Off-topic scored
+  // -30, "asks a direct question" scored +25, and 40-30+25 is exactly the
+  // default threshold -- which engages.
+  const football =
+    'who would you rather have up front next season, David or Woltemade? genuinely torn on this one';
+
+  it('does not answer a football question on a crypto account', () => {
+    const verdict = decideEngagement({ ...base, text: football, directlyAddressed: false });
+    expect(verdict.decision).toBe('IGNORE');
+    expect(verdict.factors.some((f) => f.label.includes('asks a direct question'))).toBe(false);
+  });
+
+  it('still answers the same question when the agent was actually asked', () => {
+    // Being addressed is what makes a subject somebody else's business or
+    // yours. A question put to the agent gets an answer whatever it is about.
+    const verdict = decideEngagement({ ...base, text: `@agent ${football}`, directlyAddressed: true });
+    expect(verdict.decision).toBe('ENGAGE');
+    expect(verdict.factors.some((f) => f.label.includes('asks a direct question'))).toBe(true);
+  });
+
+  it('still answers an on-topic question it came across', () => {
+    const verdict = decideEngagement({
+      ...base,
+      text: 'is token distribution actually improving, or just being reported better?',
+      directlyAddressed: false,
+    });
+    expect(verdict.decision).toBe('ENGAGE');
+    expect(verdict.factors.some((f) => f.label.includes('asks a direct question'))).toBe(true);
+  });
+});
