@@ -165,6 +165,28 @@ export async function recordActionAttempt(input: {
   );
 }
 
+/**
+ * Closes off an action whose job has stopped for good.
+ *
+ * A job that goes to review or fails permanently used to leave its action row
+ * saying EXECUTING, which is untrue in two ways: nothing is executing, and the
+ * UI shows a job parked for a person next to an action that claims to be in
+ * flight. It also makes the next claim on that key report "another worker is
+ * already on it" until the stale window passes.
+ *
+ * Marked FAILED rather than deleted. Whether the reply reached X is exactly
+ * what a person coming to this job needs to decide, and the row is the evidence.
+ */
+export async function failInFlightForJob(jobId: string, message: string): Promise<number> {
+  const rows = await query(
+    `UPDATE actions SET status = 'FAILED', error_class = 'REVIEW_REQUIRED', last_error = $2
+      WHERE job_id = $1 AND status = 'EXECUTING'
+      RETURNING id`,
+    [jobId, message],
+  );
+  return rows.length;
+}
+
 export async function listJobActions(jobId: string): Promise<ActionRecord[]> {
   return mapRows<ActionRecord>(
     await query(`SELECT ${COLUMNS} FROM actions WHERE job_id = $1 ORDER BY created_at`, [jobId]),

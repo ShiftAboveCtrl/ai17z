@@ -551,4 +551,16 @@ was silently ignored once and an autonomous agent replied to a stranger.
 
 It clears its own rows at the start of each run, so the last run stays
 inspectable and two hundred synthetic jobs never accumulate in a real agent's
-history. Add a scenario when a real conversation surprises you.
+history — except a run that actually published, whose rows stay for good,
+because deleting them takes the `actions` row that stops the same reply going
+out twice. Add a scenario when a real conversation surprises you.
+
+`--live <n>` is the one path that publishes. It takes an explicit count and no
+default, refuses anything but a real X post, asserts the job is **not** a dry
+run (the mirror of the assertion every other path makes), paces itself past the
+account lease, and reads every reply back off X — because "the job says
+EXECUTED" is the system marking its own homework. Its last scenario re-offers
+the first post under **the same event id**, which is where duplicate suppression
+actually lives: `events (channel, account, remote_event_id)` is unique, and
+several radar monitors seeing one post is the case it exists for. A first
+attempt with a fresh id proves nothing, because nothing is meant to stop that.

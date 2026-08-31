@@ -6,6 +6,7 @@ import {
   leaseSession,
   safeUrl,
   type LeasedSession,
+  type Locator,
   type Page,
   type TabRole,
 } from '@xbam/browser';
@@ -753,16 +754,11 @@ export const xAdapter: ChannelAdapter = {
       // composer and swallows pointer events, so a click waits thirty seconds
       // for an element that is visible, enabled, stable, and covered. Focus
       // needs no pointer at all, and typing focuses anyway.
-      await opened.editor.focus();
-      // Typed rather than pasted: X only enables the submit button once its editor
-      // has processed real input events.
-      await opened.editor.type(request.text, { delay: 12 });
-      await settle(400, 900);
-
-      const typed = (await opened.editor.innerText().catch(() => '')).trim();
-      if (!typed) {
-        throw PipelineError.retryable('composer_empty', 'The composer was still empty after typing the reply.');
-      }
+      //
+      // Verified rather than assumed, and retried once: this used to check only
+      // that the composer was not empty, so a reply typed in halfway would have
+      // been submitted halfway.
+      await fillComposer(page, opened.editor, request.text);
 
       await submitComposer(page, opened);
 
@@ -926,22 +922,108 @@ async function returnToIdle(page: Page): Promise<void> {
 }
 
 /** Looks for the reply we just sent, matching on author and text prefix. */
-async function findOwnReply(
+/**
+ * Reduces text to the letters and digits in it, lowercased.
+ *
+ * Because what we submitted and what X renders are never byte-identical. X
+ * turns every @mention into a link element, and `innerText` puts whitespace
+ * around a link: "@someone-August" comes back as "@someone -August". Smart
+ * quotes, non-breaking spaces and zero-width characters do the same kind of
+ * thing more quietly.
+ *
+ * This mattered more than it looks. Failing to recognise its own reply is not
+ * a cosmetic problem: it is the check that tells "X refused this" apart from
+ * "X accepted it and left the composer up", and retrying the second posts
+ * twice. Two near-duplicate replies on the account are what this looked like
+ * from outside.
+ */
+export function fingerprint(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+async function scanForOwnReply(
   page: Page,
-  text: string,
+  needle: string,
   me: string[],
 ): Promise<{ statusId: string; url: string | null } | null> {
-  const needle = text.replace(/\s+/g, ' ').trim().slice(0, 40).toLowerCase();
   const articles = page.locator(SEL.tweetArticle);
   const count = Math.min(await articles.count().catch(() => 0), 20);
   for (let index = 0; index < count; index += 1) {
     const snapshot = await readArticle(page, `${SEL.tweetArticle} >> nth=${index}`);
     if (!snapshot.statusId || !snapshot.authorHandle) continue;
     if (!me.includes(snapshot.authorHandle)) continue;
-    if (!snapshot.text.replace(/\s+/g, ' ').toLowerCase().includes(needle)) continue;
+    if (!fingerprint(snapshot.text).includes(needle)) continue;
     return { statusId: snapshot.statusId, url: snapshot.url };
   }
   return null;
+}
+
+/**
+ * Puts the text into the composer, and proves it went in.
+ *
+ * Typing at X's editor fails often enough to matter: the @-mention typeahead
+ * opens over it and takes focus, and the editor is sometimes re-rendered
+ * between being located and being typed into. A live run hit this four times in
+ * a row on one reply and gave up -- which for an agent meant to run unattended
+ * is the difference between working and needing somebody.
+ *
+ * So it is attempted twice, and the second attempt clears first: a composer
+ * holding half the text is worse than an empty one, because the half would have
+ * been published.
+ *
+ * The check is on the fingerprint, not the raw string, because X's editor turns
+ * a typed @mention into a link node and innerText puts spaces around it.
+ */
+async function fillComposer(page: Page, editor: Locator, text: string): Promise<string> {
+  const wanted = fingerprint(text).slice(0, 60);
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) {
+      // Clear whatever landed. Select-all inside the editor, not the page.
+      await editor.focus().catch(() => undefined);
+      await page.keyboard.press('Control+A').catch(() => undefined);
+      await page.keyboard.press('Delete').catch(() => undefined);
+      await settle(300, 600);
+    }
+
+    await editor.focus().catch(() => undefined);
+    await editor.type(text, { delay: 12 }).catch(() => undefined);
+    await settle(400, 900);
+
+    const typed = (await editor.innerText().catch(() => '')).trim();
+    if (typed && (!wanted || fingerprint(typed).includes(wanted))) return typed;
+  }
+
+  const finally_ = (await editor.innerText().catch(() => '')).trim();
+  throw PipelineError.retryable(
+    finally_ ? 'composer_text_mismatch' : 'composer_empty',
+    finally_
+      ? 'The composer does not hold the text that was typed into it, after two attempts.'
+      : 'The composer was still empty after typing, twice.',
+    { typed: finally_.slice(0, 120) },
+  );
+}
+
+async function findOwnReply(
+  page: Page,
+  text: string,
+  me: string[],
+): Promise<{ statusId: string; url: string | null } | null> {
+  // Sixty characters of fingerprint, not forty of raw text: stripping the
+  // punctuation costs length, and a short needle matches the wrong post.
+  const needle = fingerprint(text).slice(0, 60);
+  if (!needle) return null;
+
+  const first = await scanForOwnReply(page, needle, me);
+  if (first) return first;
+
+  // One reload before giving up. X does not always graft a new reply into the
+  // thread it is showing, and the difference between "not there" and "not
+  // rendered yet" is the difference between posting once and posting twice --
+  // so it is worth three seconds to ask again properly.
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
+  await page.waitForTimeout(3_000);
+  return scanForOwnReply(page, needle, me);
 }
 
 /**
@@ -981,24 +1063,9 @@ async function postOwn(
 
     await composer.focus();
     // Typed rather than pasted: X only enables the submit button once its editor
-    // has processed real input events.
-    await composer.type(request.text, { delay: 12 });
-    await settle(500, 1_100);
-
-    const typed = (await composer.innerText().catch(() => '')).trim();
-    if (!typed) {
-      throw PipelineError.retryable('composer_empty', 'The composer was still empty after typing the post.');
-    }
-    // The composer holding something other than what was written means the text
-    // was mangled on the way in, and posting it would publish the mangling.
-    const wanted = request.text.replace(/\s+/g, ' ').trim().slice(0, 40).toLowerCase();
-    if (!typed.replace(/\s+/g, ' ').toLowerCase().includes(wanted)) {
-      throw PipelineError.retryable(
-        'composer_text_mismatch',
-        'The composer does not contain the text that was typed into it.',
-        { typed: typed.slice(0, 120) },
-      );
-    }
+    // has processed real input events. Proved to hold the right text before
+    // submitting, because posting a mangled composer publishes the mangling.
+    await fillComposer(page, composer, request.text);
 
     if (!(await submit.isEnabled().catch(() => false))) {
       throw PipelineError.retryable('post_button_disabled', 'X did not enable the post button.');
