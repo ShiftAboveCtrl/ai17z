@@ -13,6 +13,7 @@
  *
  *   npx tsx tools/scenarios/run.mts            # every scenario
  *   npx tsx tools/scenarios/run.mts identity   # matching names only
+ *   npx tsx tools/scenarios/run.mts --clean    # remove everything it ever made
  */
 import {
   accounts as accountsRepo,
@@ -24,6 +25,16 @@ import {
 import { ingestNormalizedEvent } from '@xbam/runtime';
 
 const AGENT_NAME = process.env.SCENARIO_AGENT ?? 'shift';
+/**
+ * Fifteen characters, because that is X's limit.
+ *
+ * The first version was `scenario_harness`, sixteen, and the handle-stripping
+ * regex was capped at X's fifteen -- so it left an "s" behind and every
+ * greeting check in the engagement heuristic silently stopped matching. The
+ * heuristic has been fixed to over-match instead; this stays realistic anyway,
+ * because a harness that is not shaped like the real thing tests the wrong one.
+ */
+const MOCK_HANDLE = 'scenariobot';
 const SETTLED = new Set(['EXECUTED', 'DRY_RUN_COMPLETED', 'PERMANENT_FAILURE', 'CANCELLED', 'REVIEW_REQUIRED', 'WAITING_FOR_APPROVAL']);
 
 export interface Scenario {
@@ -431,7 +442,7 @@ async function ensureMockAccount(agentId: string): Promise<{ accountId: string; 
   const account = await accountsRepo.createAccount({
     ownerId: agent!.owner_id,
     channel: 'mock',
-    handle: 'scenario_harness',
+    handle: MOCK_HANDLE,
     displayName: 'Scenario harness',
   });
   await accountsRepo.linkAgentAccount({
@@ -475,8 +486,46 @@ async function report(jobId: string): Promise<Outcome> {
   };
 }
 
+/**
+ * Removes the rows an earlier run left behind.
+ *
+ * Called at the start rather than the end, so the last run stays inspectable in
+ * the UI while nothing accumulates: two hundred synthetic jobs in a real
+ * agent's history is indistinguishable from the agent having been busy.
+ *
+ * Everything hangs off the event by cascade -- job, traces, model calls,
+ * attempts -- so deleting the event is the whole job.
+ */
+async function clearPreviousRuns(): Promise<number> {
+  const [row] = await query<{ n: number }>(
+    `WITH gone AS (DELETE FROM events WHERE remote_event_id LIKE 'scenario-%' RETURNING 1)
+     SELECT count(*)::int AS n FROM gone`,
+  );
+  return row?.n ?? 0;
+}
+
+/** --clean also takes the mock account, for when the harness is done with. */
+async function cleanEverything(): Promise<void> {
+  const removed = await clearPreviousRuns();
+  const [account] = await query<{ id: string }>(
+    `SELECT id FROM accounts WHERE channel = 'mock' AND handle = $1`,
+    [MOCK_HANDLE],
+  );
+  if (account) await query('DELETE FROM accounts WHERE id = $1', [account.id]);
+  console.log(`removed ${removed} scenario events${account ? ' and the mock account' : ''}`);
+}
+
 async function main(): Promise<void> {
-  const filter = process.argv[2]?.toLowerCase();
+  const raw = process.argv[2];
+  if (raw === '--clean') {
+    await cleanEverything();
+    return;
+  }
+  const filter = raw?.toLowerCase();
+
+  const cleared = await clearPreviousRuns();
+  if (cleared > 0) console.log(`cleared ${cleared} events from the last run
+`);
 
   const [agent] = await query<{ id: string }>('SELECT id FROM agents WHERE name = $1', [AGENT_NAME]);
   if (!agent) throw new Error(`No agent called "${AGENT_NAME}".`);
