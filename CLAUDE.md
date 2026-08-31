@@ -536,3 +536,19 @@ add a code path that bypasses it.
 - Integration tests run against real Postgres, because unique indexes carry the
   guarantees and a mock would test the wrong thing.
 - New runtime behaviour needs a test that would fail without it.
+
+`tools/scenarios/run.mts` is the third kind: it drives the whole pipeline
+against a real account with a real model and reports what the agent actually
+said. It answers questions no mock can — does the engagement heuristic decline
+the right things, does the voice survive a hostile message, does a reply read
+like a person wrote it. Twelve situations are exact words on the mock channel;
+four are live posts pulled from X a minute earlier.
+
+Every job is asserted to be a dry run before the pipeline touches it. **A
+harness that can publish is one nobody can afford to run** — the strict option
+parsing in `ingest.ts` exists because a nested `{ options: { dryRun: true } }`
+was silently ignored once and an autonomous agent replied to a stranger.
+
+It clears its own rows at the start of each run, so the last run stays
+inspectable and two hundred synthetic jobs never accumulate in a real agent's
+history. Add a scenario when a real conversation surprises you.
