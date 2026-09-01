@@ -1,5 +1,6 @@
 import type { PolicyConfig } from '@xbam/shared/contracts';
 import { applyEmojiPolicy } from './emoji';
+import { removeEmDashes } from './punctuation';
 
 export type Severity = 'REPAIRED' | 'REVIEW' | 'REJECT';
 
@@ -172,6 +173,16 @@ export function validateOutput(raw: string, policy: PolicyConfig): ValidationRes
   if (emoji.removed > 0) {
     output = emoji.text;
     violations.push({ rule: 'emoji', severity: 'REPAIRED', message: emoji.reason ?? 'Removed emoji.' });
+  }
+
+  // Em dashes, always, whatever the policy says. There is no field for this and
+  // no way to switch it on: it is the single most reliable sign that a machine
+  // wrote something, and an option somebody can switch off is an option that
+  // will be on by accident.
+  const dashes = removeEmDashes(output);
+  if (dashes.replaced > 0) {
+    output = dashes.text;
+    violations.push({ rule: 'em_dash', severity: 'REPAIRED', message: dashes.reason ?? 'Replaced em dashes.' });
   }
 
   if (output.length > policy.output.maxCharacters) {

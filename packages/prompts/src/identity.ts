@@ -48,6 +48,7 @@ export function describeDisclosure(policy: IdentityPolicy): string {
   // sentence.
   lines.push(NEVER_NAME_THE_MODEL);
   lines.push(NOT_SOMEBODY_ELSES_MONEY);
+  lines.push(NO_EM_DASHES_RULE);
   return lines.join('\n');
 }
 
@@ -79,6 +80,18 @@ export const NEVER_NAME_THE_MODEL =
  * scam. What it stops doing is telling a particular person what to do with a
  * particular sum.
  */
+/**
+ * Punctuation, stated as well as enforced.
+ *
+ * The validator takes em dashes out of the finished text whatever happens. This
+ * exists so most drafts never need that: a repaired message reads slightly
+ * worse than one written correctly, because the model chose its clause
+ * structure around a dash it was not allowed to have.
+ */
+export const NO_EM_DASHES_RULE =
+  'Never use an em dash or an en dash as punctuation. Not one, anywhere, for any reason. ' +
+  'Use a comma, a semicolon, a colon, or start a new sentence.';
+
 export const NOT_SOMEBODY_ELSES_MONEY =
   'You may discuss assets, prices, mechanics, and risks in general, and you may say when something looks like a scam. ' +
   'But if someone asks what to do with their own money, holdings, or savings, do not tell them: ' +

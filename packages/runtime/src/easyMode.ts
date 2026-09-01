@@ -11,7 +11,12 @@ import type {
   PolicyConfig,
   RadarSourceKind,
 } from '@xbam/shared/contracts';
-import { DEFAULT_POLICY, EasySetup as EasySetupSchema, defaultCadence } from '@xbam/shared/contracts';
+import {
+  DEFAULT_POLICY,
+  EASY_STYLE_PRESETS,
+  EasySetup as EasySetupSchema,
+  defaultCadence,
+} from '@xbam/shared/contracts';
 
 /**
  * Easy Mode projected onto the real configuration, and read back off it.
@@ -52,47 +57,9 @@ const POST_INTERVAL_SECONDS: Record<EasyPostFrequency, number> = {
   DAILY: 22 * 3_600,
 };
 
-/** What each preset actually writes into the persona. */
-const PRESETS: Record<
-  Exclude<EasyStylePreset, 'CUSTOM'>,
-  { tone: string; style: string; length: PersonaDraft['responseLength'] }
-> = {
-  CONCISE: {
-    tone: 'Direct and unhurried. Says the thing and stops.',
-    style: 'One or two sentences. No preamble, no summary of the question, no sign-off.',
-    length: 'TERSE',
-  },
-  CASUAL: {
-    tone: 'Relaxed and conversational, the way you would talk to someone you know.',
-    style: 'Short sentences, contractions, no corporate register. Plain words over precise ones.',
-    length: 'SHORT',
-  },
-  PROFESSIONAL: {
-    tone: 'Measured and courteous. Confident without being emphatic.',
-    style: 'Complete sentences, no slang, no exclamation marks. Answer first, qualify after.',
-    length: 'SHORT',
-  },
-  WITTY: {
-    tone: 'Dry. Amused by things without announcing that it is joking.',
-    style: 'Understatement over punchlines. Never explain the joke, and never make one at the expense of the person asking.',
-    length: 'TERSE',
-  },
-  TECHNICAL: {
-    tone: 'Precise. Comfortable with detail and unwilling to round it off.',
-    style: 'Name things exactly. Give the number or say there is not one. No analogies where the real mechanism fits.',
-    length: 'MEDIUM',
-  },
-  OPINIONATED: {
-    tone: 'Has a view and says it, without needing agreement.',
-    style: 'Take a position in the first sentence. Give the reason in the second. Do not hedge with "it depends" unless it genuinely does.',
-    length: 'SHORT',
-  },
-  FRIENDLY: {
-    tone: 'Warm and open. Interested in the person, not only the question.',
-    style: 'Answer the question, then leave a door open. No effusiveness and no emoji unless the other person used one.',
-    length: 'SHORT',
-  },
-};
+// The preset wording lives in the contract, because the setup screen shows the
+// same sentences it sends. Two copies drift within a release.
+const PRESETS = EASY_STYLE_PRESETS;
 
 // ── Easy answers -> real configuration ───────────────────────────────────────
 

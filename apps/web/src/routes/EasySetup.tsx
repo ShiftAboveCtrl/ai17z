@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Sparkles } from 'lucide-react';
+import { EASY_STYLE_PRESETS } from '@xbam/shared/contracts';
 import type { EasySetup as EasySetupType, EasyAudience, EasyStylePreset } from '@xbam/shared/contracts';
 import { ApiError, post, put } from '@app/lib/api';
 import { usePolling, useResource } from '@app/lib/hooks';
@@ -25,17 +26,11 @@ import { CharacterBuilder, CompletenessBar, type CharacterDraft } from '@app/com
  * a wizard that loses everything if you close it is a wizard people distrust.
  */
 
-const STEPS = ['Agent', 'Connect X', 'Character', 'Connect AI', 'Replies', 'Posts', 'Operation', 'Review'] as const;
+// Connect AI sits before Character deliberately. Describing a character is the
+// step that can hand the questions to the agent's own model and let it fill
+// them in, and there is no model to ask until this step is done.
+const STEPS = ['Agent', 'Connect X', 'Connect AI', 'Character', 'Replies', 'Posts', 'Operation', 'Review'] as const;
 
-const PRESET_BLURB: Record<Exclude<EasyStylePreset, 'CUSTOM'>, string> = {
-  CONCISE: 'Says the thing and stops.',
-  CASUAL: 'Talks the way you would to someone you know.',
-  PROFESSIONAL: 'Measured, courteous, no slang.',
-  WITTY: 'Dry. Never explains the joke.',
-  TECHNICAL: 'Precise, comfortable with detail.',
-  OPINIONATED: 'Takes a position in the first sentence.',
-  FRIENDLY: 'Warm, and interested in the person.',
-};
 
 const AUDIENCE_OPTIONS: { value: EasyAudience; label: string; detail: string }[] = [
   { value: 'EVERYONE', label: 'Everyone', detail: 'Anything that mentions or replies to it gets an answer.' },
@@ -328,7 +323,7 @@ export function EasySetup() {
           />
         )}
 
-        {step === 2 && (
+        {step === 3 && (
           <>
             {agentId && (
               <CharacterBuilder
@@ -359,7 +354,7 @@ export function EasySetup() {
 
             <Field label="How do they speak?" hint="A starting point. Everything here stays editable afterwards.">
               <div className="grid gap-2 sm:grid-cols-2">
-                {(Object.keys(PRESET_BLURB) as Exclude<EasyStylePreset, 'CUSTOM'>[]).map((preset) => (
+                {(Object.keys(EASY_STYLE_PRESETS) as Exclude<EasyStylePreset, 'CUSTOM'>[]).map((preset) => (
                   <button
                     key={preset}
                     type="button"
@@ -370,8 +365,19 @@ export function EasySetup() {
                         : 'border-ink-line text-bone-dim hover:border-bone-faint'
                     }`}
                   >
-                    <span className="block text-sm capitalize">{preset.toLowerCase()}</span>
-                    <span className="mt-1 block text-[11px] text-bone-faint">{PRESET_BLURB[preset]}</span>
+                    <span className="block text-sm">{EASY_STYLE_PRESETS[preset].label}</span>
+                    <span className="mt-1 block text-[11px] text-bone-faint">{EASY_STYLE_PRESETS[preset].blurb}</span>
+                    {/*
+                      The sentences the model is actually given, shown on the
+                      chosen one. A label is a promise; this is the instruction
+                      that has to keep it, and somebody picking a voice should
+                      be able to read it.
+                    */}
+                    {draft.setup.character.preset === preset && (
+                      <span className="mt-2 block border-t border-ink-line pt-2 text-[10px] leading-relaxed text-bone-faint">
+                        {EASY_STYLE_PRESETS[preset].tone} {EASY_STYLE_PRESETS[preset].style}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -444,7 +450,7 @@ export function EasySetup() {
               <div className="grid gap-2 sm:grid-cols-2">
                 {(
                   [
-                    ['NONE', 'None at all', 'Never, whatever the other person does'],
+                    ['NONE', 'None at all', 'Not even when the other person uses them'],
                     ['MINIMAL', 'Rarely', 'At most one, and only when it earns its place'],
                     ['SELECTED', 'Only ones I pick', 'From a list you choose'],
                     ['UNRESTRICTED', 'No rule', 'Whatever the model does'],
@@ -528,7 +534,7 @@ export function EasySetup() {
           </>
         )}
 
-        {step === 3 && (
+        {step === 2 && (
           <ConnectAI
             spec={providerSpec}
             draft={draft}

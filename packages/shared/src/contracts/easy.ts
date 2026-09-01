@@ -61,6 +61,76 @@ export const EasyStylePreset = z.enum([
 export type EasyStylePreset = z.infer<typeof EasyStylePreset>;
 
 /**
+ * What each preset actually writes into the persona.
+ *
+ * This is the wording the model is given, not a label for it. It lives here
+ * rather than in the runtime because the setup screen shows it: if somebody
+ * picks "Dry", they should be able to read the sentence that produces dry, and
+ * a blurb written separately from the instruction drifts from it within a
+ * release or two.
+ *
+ * `length` is the response-length band, which does more work than any adjective:
+ * a model told to be concise and given four hundred characters will use them.
+ */
+export const EASY_STYLE_PRESETS: Record<
+  Exclude<EasyStylePreset, 'CUSTOM'>,
+  { label: string; blurb: string; tone: string; style: string; length: 'TERSE' | 'SHORT' | 'MEDIUM' }
+> = {
+  CONCISE: {
+    label: 'Concise',
+    blurb: 'Says the thing and stops.',
+    tone: 'Direct and unhurried. Says the thing and stops.',
+    style: 'One or two sentences. No preamble, no summary of the question, no sign-off.',
+    length: 'TERSE',
+  },
+  CASUAL: {
+    label: 'Casual',
+    blurb: 'Talks the way you would to someone you know.',
+    tone: 'Relaxed and conversational, the way you would talk to someone you know.',
+    style: 'Short sentences, contractions, no corporate register. Plain words over precise ones.',
+    length: 'SHORT',
+  },
+  PROFESSIONAL: {
+    label: 'Professional',
+    blurb: 'Measured, courteous, no slang.',
+    tone: 'Measured and courteous. Confident without being emphatic.',
+    style: 'Complete sentences, no slang, no exclamation marks. Answer first, qualify after.',
+    length: 'SHORT',
+  },
+  WITTY: {
+    label: 'Witty',
+    blurb: 'Dry. Never explains the joke.',
+    tone: 'Dry. Amused by things without announcing that it is joking.',
+    style:
+      'Understatement over punchlines. Never explain the joke, and never make one at the expense of the person asking.',
+    length: 'TERSE',
+  },
+  TECHNICAL: {
+    label: 'Technical',
+    blurb: 'Precise, comfortable with detail.',
+    tone: 'Precise. Comfortable with detail and unwilling to round it off.',
+    style: 'Name things exactly. Give the number or say there is not one. No analogies where the real mechanism fits.',
+    length: 'MEDIUM',
+  },
+  OPINIONATED: {
+    label: 'Opinionated',
+    blurb: 'Takes a position in the first sentence.',
+    tone: 'Has a view and says it, without needing agreement.',
+    style:
+      'Take a position in the first sentence. Give the reason in the second. Do not hedge with "it depends" unless it genuinely does.',
+    length: 'SHORT',
+  },
+  FRIENDLY: {
+    label: 'Friendly',
+    blurb: 'Warm, and interested in the person.',
+    tone: 'Warm and open. Interested in the person, not only the question.',
+    style: 'Answer the question, then leave a door open. No effusiveness.',
+    length: 'SHORT',
+  },
+};
+
+
+/**
  * The reply filters Easy Mode offers as switches.
  *
  * Each maps to something real. None of them is a new mechanism invented for

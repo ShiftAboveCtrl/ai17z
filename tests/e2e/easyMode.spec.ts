@@ -40,16 +40,16 @@ test('walks a new owner from nothing to a configured agent', async ({ page }) =>
   await expect(page.getByText(/connect an account later/i)).toBeVisible();
   await continueStep(page);
 
-  // 3 — Character. The answers a model can actually imitate.
+  // 3 — Connect AI, and it comes before Character on purpose: describing a
+  // character is the step that can hand the questions to the agent own model,
+  // and there is no model to ask until this one is done.
   await expect(page.getByText(/step 3 of 8/i)).toBeVisible();
-  await page.locator('#description').fill('Answers questions about token distribution.');
-  await page.locator('#personality').fill('Direct. Says the thing and stops.');
   await continueStep(page);
 
-  // 4 — Connect AI. An existing provider is chosen rather than a key typed:
-  // key entry has its own test in the settings suite, and a test should not be
-  // inventing credentials.
+  // 4 — Character. The answers a model can actually imitate.
   await expect(page.getByText(/step 4 of 8/i)).toBeVisible();
+  await page.locator('#description').fill('Answers questions about token distribution.');
+  await page.locator('#personality').fill('Direct. Says the thing and stops.');
   await continueStep(page);
 
   // 5 — Replies. Who it answers.
