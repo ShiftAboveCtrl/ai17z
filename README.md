@@ -59,6 +59,14 @@ costs less.
 
 ### Windows
 
+> **Not inside OneDrive, Dropbox or Google Drive.** npm links every package into
+> `node_modules` with a symlink, and a syncing folder refuses those while it is
+> reconciling, so the install dies several minutes in with `EBUSY: resource busy
+> or locked, symlink`. On Windows your Desktop is inside OneDrive by default,
+> which makes this the most likely way a first install fails. `C:\devi17z` or
+> `%USERPROFILE%i17z` are both fine. The installer checks and stops rather than
+> letting you find out the slow way.
+
 One line, in PowerShell, in a folder you can write to:
 
 ```powershell
@@ -305,6 +313,14 @@ the system working.
 **Something is wrong and you cannot tell what.** Run the doctor.
 
 ---
+
+**`EBUSY: resource busy or locked, symlink` during install.** The folder is
+inside OneDrive, Dropbox or another syncing folder. Move the project somewhere
+that is not synced and install again. Nothing is wrong with npm or the machine:
+the sync driver holds the directory while it reconciles a freshly created tree,
+and npm workspaces need real symlinks. It is intermittent, which makes it worse
+rather than better, since one install can succeed and the next fail on a
+different package.
 
 ## Running a second installation
 
