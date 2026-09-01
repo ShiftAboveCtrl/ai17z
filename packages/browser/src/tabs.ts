@@ -136,6 +136,49 @@ async function findExisting(context: BrowserContext, role: TabRole): Promise<Pag
 }
 
 /**
+ * Claims tabs already open in a browser this process did not start.
+ *
+ * Attaching to a running Chrome finds whatever the last worker left: tagged
+ * tabs, which are adopted by role, and sometimes an untagged one. An untagged
+ * page is usually the action tab after a navigation cleared its `window.name`,
+ * and leaving it that way is only a reporting problem right up until it is not:
+ * health says ACTION is MISSING while the tab sits there, and the next
+ * adoption is a guess between it and any tab a person opened themselves.
+ *
+ * Called once when a session is established, so the reported state matches the
+ * browser from the first health snapshot rather than from the first action.
+ */
+export async function adoptOpenTabs(context: BrowserContext, tabs: TabMap): Promise<void> {
+  const pages = context.pages().filter((p) => !p.isClosed());
+  const tags = await Promise.all(pages.map((p) => readTag(p)));
+
+  for (const [index, page] of pages.entries()) {
+    const role = tags[index];
+    if (role && !tabs.has(role)) {
+      tabs.set(role, { role, page, openedAt: Date.now(), lastUsedAt: Date.now(), lastError: null, queue: Promise.resolve(), busy: false });
+    }
+  }
+
+  // One untagged page becomes ACTION, which is what it almost always was.
+  if (!tabs.has('ACTION')) {
+    const orphan = pages.find((_, index) => tags[index] === null);
+    if (orphan) {
+      await writeTag(orphan, 'ACTION');
+      tabs.set('ACTION', {
+        role: 'ACTION',
+        page: orphan,
+        openedAt: Date.now(),
+        lastUsedAt: Date.now(),
+        lastError: null,
+        queue: Promise.resolve(),
+        busy: false,
+      });
+      log.info('adopted an untagged tab as the action tab', { url: orphan.url().slice(0, 80) });
+    }
+  }
+}
+
+/**
  * The page for a role, created once and reused.
  *
  * Recovery is per role: a closed or crashed tab is replaced on its own without
