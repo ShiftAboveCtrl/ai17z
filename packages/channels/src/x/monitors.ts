@@ -35,11 +35,17 @@ interface Seen {
 
 async function readArticle(page: Page, selector: string): Promise<Seen> {
   const article = page.locator(selector).first();
-  const href = await article
-    .locator('a[href*="/status/"]')
-    .first()
-    .getAttribute('href')
-    .catch(() => null);
+
+  // The article own permalink is the link wrapping its timestamp. Taking the
+  // first `/status/` link instead means an article carrying a quoted post
+  // reports the quoted post id as its own -- so the radar would discover a
+  // mention under the wrong status, and everything downstream would resolve
+  // context for, and reply to, a post nobody mentioned. The reply path had this
+  // bug and was fixed; this is the same reader, in the discovery path, where it
+  // matters more.
+  const href =
+    (await article.locator('a:has(time)').first().getAttribute('href').catch(() => null)) ??
+    (await article.locator('a[href*="/status/"]').first().getAttribute('href').catch(() => null));
   const url = href ? `https://x.com${href.startsWith('/') ? href : `/${href}`}` : null;
 
   const nameBlock = await article
@@ -62,6 +68,32 @@ async function readArticle(page: Page, selector: string): Promise<Seen> {
 }
 
 /**
+ * How far a monitor will scroll looking for more.
+ *
+ * X renders a viewport's worth and loads the rest on scroll, so reading only
+ * what was there on arrival sees perhaps five posts. Every one of the six
+ * monitors goes through this function, so that ceiling was the ceiling on
+ * everything the agent could discover: a burst larger than one screen left the
+ * older half unseen, and for the oldest of them, unseen for good.
+ *
+ * Bounded four ways, because an infinite feed has no end to scroll to: enough
+ * candidates, the cursor reached, nothing new after a scroll, or a hard cap.
+ */
+const MAX_SCROLL_PASSES = 8;
+const SCROLL_PIXELS = 2_000;
+
+/** Whether the already-seen mark is on screen yet. */
+async function reachedCursor(ctx: MonitorContext, articles: ReturnType<MonitorContext['page']['locator']>): Promise<boolean> {
+  if (!ctx.cursor) return false;
+  const count = Math.min(await articles.count().catch(() => 0), 60);
+  for (let index = 0; index < count; index += 1) {
+    const snapshot = await readArticle(ctx.page, `${SEL.tweetArticle} >> nth=${index}`);
+    if (snapshot.statusId === ctx.cursor) return true;
+  }
+  return false;
+}
+
+/**
  * Walks whatever timeline is currently loaded and turns it into candidates.
  *
  * Scans further than the limit because timelines interleave things that are not
@@ -69,8 +101,24 @@ async function readArticle(page: Page, selector: string): Promise<Seen> {
  */
 async function harvest(ctx: MonitorContext, eventType: string, sourceLabel: string): Promise<RadarCandidate[]> {
   const articles = ctx.page.locator(SEL.tweetArticle);
+
+  // Scroll until there is enough, or until the last thing we already saw comes
+  // into view. Reaching the cursor means everything below it is old news, which
+  // is what keeps an ordinary poll cheap while still catching a burst.
+  const wanted = Math.max(ctx.limit, 1) * 3;
+  for (let pass = 0; pass < MAX_SCROLL_PASSES; pass += 1) {
+    const before = await articles.count().catch(() => 0);
+    if (before >= wanted) break;
+    if (await reachedCursor(ctx, articles)) break;
+    await ctx.page.mouse.wheel(0, SCROLL_PIXELS).catch(() => undefined);
+    await ctx.page.waitForTimeout(800);
+    const after = await articles.count().catch(() => before);
+    // Nothing new arrived: this is the end of what X will give us.
+    if (after <= before) break;
+  }
+
   const available = await articles.count().catch(() => 0);
-  const scan = Math.min(available, Math.max(ctx.limit, 1) * 3);
+  const scan = Math.min(available, wanted);
 
   const candidates: RadarCandidate[] = [];
   const seen = new Set<string>();
@@ -118,6 +166,17 @@ async function goto(page: Page, url: string): Promise<void> {
 }
 
 /** X's search URL for a query, newest first rather than ranked. */
+/**
+ * The harvest loop, exposed so the scrolling can be tested.
+ *
+ * Every monitor funnels through `harvest`, so its bounds are the bounds on
+ * everything an agent can discover. That deserves a test against a page whose
+ * behaviour is known, rather than only against X.
+ */
+export function harvestForTest(ctx: MonitorContext): Promise<RadarCandidate[]> {
+  return harvest(ctx, 'MENTION', 'test');
+}
+
 export function latestSearchUrl(query: string): string {
   return `https://x.com/search?q=${encodeURIComponent(query)}&f=live`;
 }
