@@ -34,57 +34,99 @@ best ideas, replaces its architecture, and imports its history as one agent.
 
 ## What you need
 
-- **Docker Desktop** (Windows) or **Docker Engine** (Ubuntu)
-- **Node 22 or newer**, for the worker that drives the browser
-- **Google Chrome**, if you want to connect an X account
+Three things, and the installer checks all of them before it does anything:
 
-Chrome is the real thing, not Chromium and not Edge. AI17Z spawns it and
-attaches over the debugging protocol, and refuses to substitute another browser
-for it. Everything else works without one.
+| | Why | Where |
+| --- | --- | --- |
+| **Docker Desktop** | Postgres, the API and the web app run in containers | [docker.com](https://www.docker.com/products/docker-desktop/) |
+| **Node 22 or newer** | The worker that drives a real browser runs on your machine, not in a container | [nodejs.org](https://nodejs.org) |
+| **Google Chrome** | Only for connecting an X account. Everything else works without it | [google.com/chrome](https://www.google.com/chrome/) |
 
-## Install on Windows
+Chrome means Google Chrome. Not Chromium, not Edge. AI17Z spawns it and attaches
+over the debugging protocol, and refuses to substitute another browser rather
+than pretend one is the other.
 
-Three commands, from a PowerShell window in a folder you can write to:
+About 6 GB of disk once the images are built, most of it the worker image, which
+carries a browser. The first build takes a few minutes; after that, seconds.
+
+You do **not** need: an OpenAI account, an X account, a server, a domain, or a
+paid anything. A local model through Ollama costs nothing and the mock provider
+costs less.
+
+---
+
+## Install
+
+### Windows
+
+One line, in PowerShell, in a folder you can write to:
+
+```powershell
+irm REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_URL | iex
+```
+
+That clones the repository into `.\ai17z`, checks the machine, and starts it.
+
+Piping a script from the internet into a shell asks you to trust whatever the
+server sends, and you are allowed to want to look first:
+
+```powershell
+irm REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_URL -OutFile bootstrap.ps1
+notepad bootstrap.ps1
+.\bootstrap.ps1
+```
+
+Or do it by hand, which is the same three steps the bootstrap runs:
 
 ```powershell
 git clone REPLACE_WITH_AI17Z_GITHUB_URL ai17z
 cd ai17z
-.\install-ai17z.ps1
+.\install-ai17z.ps1 -Start
 ```
 
-Then start it:
+### Ubuntu
 
-```powershell
-.\start-ai17z.ps1
+```bash
+curl -fsSL REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_SH_URL | bash
 ```
 
-and open **http://localhost:8080**. The first screen asks you to create an
-account; that account is yours and lives only on this machine.
-
-`install-ai17z.ps1` checks Docker, Node and Chrome, tells you what is missing
-and where to get it, and writes a `.env` with a master key generated for your
-installation. It installs nothing behind your back. It never overwrites an
-existing `.env`, because that file holds the key your stored provider
-credentials are encrypted with.
-
-If any of it does not work, run `.\doctor-ai17z.ps1`. It reports every part
-separately and distinguishes working, not set up yet, and broken.
-
-## Install on Ubuntu
+or by hand:
 
 ```bash
 git clone REPLACE_WITH_AI17Z_GITHUB_URL ai17z
 cd ai17z
-./install-ai17z.sh
-./start-ai17z.sh
+./install-ai17z.sh --start
 ```
 
-Same three steps and the same result. Connecting an X account opens a real
-Chrome window for you to sign in to, so a desktop session is needed for that
-part; the rest runs anywhere Docker does. See **Support** below for exactly what
-has and has not been verified.
+Connecting an X account opens a real Chrome window for you to sign in to, so
+that part needs a desktop session. The rest runs anywhere Docker does. See
+**Support** below for what has and has not actually been verified.
 
-## Checking it over
+### No git?
+
+Download the zip from the repository's **Code → Download ZIP**, extract it, and
+run the installer from inside the folder. Nothing in AI17Z needs git after the
+files are on disk:
+
+```powershell
+cd ai17z-main
+.\install-ai17z.ps1 -Start
+```
+
+The bootstrap scripts do this for you if git is missing.
+
+### Then
+
+Open **http://localhost:8080**. The first screen asks you to create an account.
+That account is yours, it lives on this machine, and there is no sign-up.
+
+`install-ai17z.ps1` installs nothing behind your back: it checks what is there,
+says where to get whatever is missing, runs `npm install`, and writes a `.env`
+with a master key generated for your installation. It never overwrites an
+existing `.env`, because that file holds the key your stored provider
+credentials are encrypted with.
+
+## If something is wrong
 
 ```powershell
 .\doctor-ai17z.ps1
@@ -94,9 +136,10 @@ has and has not been verified.
 ./doctor-ai17z.sh
 ```
 
-Reports on every part, and distinguishes three things a new user cannot tell
-apart otherwise: working, not set up yet, and broken. A fresh installation with
-no X account is not an error, and the doctor says so.
+It reports every part separately and tells three things apart that otherwise
+look the same: working, not set up yet, and broken. A fresh installation with no
+model provider and no X account is not broken, and it says so, with the step
+that fixes each one.
 
 ## Stopping
 
@@ -330,6 +373,7 @@ description, and what to be honest about in an announcement.
 
 ## Documentation
 
+- [Engineering notes](docs/ENGINEERING.md) — the invariants, and what broke to produce each one
 - [Architecture overview](docs/architecture/OVERVIEW.md)
 - [Data model](docs/architecture/DATA_MODEL.md)
 - [Jobs and the runtime](docs/architecture/JOBS.md)

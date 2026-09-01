@@ -14,9 +14,12 @@
 
 .PARAMETER SkipInstall
   Check the machine and write configuration, but do not run npm install.
+
+.PARAMETER Start
+  Start AI17Z as soon as setup finishes, so the whole thing is one command.
 #>
 [CmdletBinding()]
-param([switch] $SkipInstall)
+param([switch] $SkipInstall, [switch] $Start)
 
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
@@ -124,6 +127,15 @@ if ($SkipInstall) {
 Write-Host ''
 Write-Host '  Setup finished.' -ForegroundColor Green
 Write-Host ''
+
+# Started from here when asked, so somebody can install and run in one command
+# rather than reading which script comes next. Setup is idempotent and start is
+# idempotent, so this is safe to repeat.
+if ($Start) {
+  & (Join-Path $PSScriptRoot 'start-ai17z.ps1')
+  exit $LASTEXITCODE
+}
+
 Write-Host '  Next:' -ForegroundColor White
 Write-Host '    .\start-ai17z.ps1     start everything' -ForegroundColor Gray
 Write-Host '    .\doctor-ai17z.ps1    check it over' -ForegroundColor Gray
