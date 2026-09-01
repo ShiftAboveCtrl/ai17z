@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
+import {
+  posting as postingRepo, z } from 'zod';
 import {
   CAPABILITIES,
   Capability,
@@ -195,6 +196,30 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const account = await accountsRepo.getAccount(body.accountId);
       if (!account || account.ownerId !== user.id) throw new NotFoundError('Account');
       await accountsRepo.linkAgentAccount({ agentId: agent.id, ...body });
+
+      // A posting schedule with no account is a schedule that never fires.
+      //
+      // Easy Mode writes the schedule from the answers, and if the account is
+      // connected later -- which is the ordinary order when somebody skips
+      // "Connect X" and comes back to it -- the schedule keeps the null it was
+      // written with. The scheduler then comes due forever, finds no account,
+      // and records "No account is connected for this agent to post through"
+      // in a column nobody reads. It looks exactly like an agent with nothing
+      // to say.
+      //
+      // Binding here rather than in `linkAgentAccount` because this is the
+      // agent-facing route: the repository function is also used by importers
+      // and fixtures that have no opinion about posting.
+      const schedule = await postingRepo.getSchedule(agent.id);
+      if (schedule && !schedule.accountId) {
+        await postingRepo.setSchedule({
+          agentId: agent.id,
+          accountId: body.accountId,
+          enabled: schedule.enabled,
+          intervalSeconds: schedule.intervalSeconds,
+        });
+        if (schedule.enabled) await capabilitiesRepo.grant(agent.id, body.accountId, 'POST');
+      }
       // Linking grants the defaults on its own; an explicit set overrides them.
       if (body.capabilities) {
         await capabilitiesRepo.setGrants(agent.id, body.accountId, body.capabilities, user.id);

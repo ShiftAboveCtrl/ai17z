@@ -112,6 +112,18 @@ export async function easyRoutes(app: FastifyInstance): Promise<void> {
         intervalSeconds: interval ?? 21_600,
       });
 
+      // Turning posting on has to grant the permission that lets it happen.
+      //
+      // Capabilities are deliberately separate from what an agent attempts, and
+      // linking an account grants only READ, GENERATE and the reply action. So
+      // an agent could have posting enabled, a schedule, a backlog of ideas and
+      // no way to use any of it -- the scheduler came due, found no permission,
+      // and wrote its reason into a column nobody reads. It looked exactly like
+      // an agent that had nothing to say.
+      if (interval !== null && accountId) {
+        await capabilitiesRepo.grant(agent.id, accountId, 'POST');
+      }
+
       // Radar sources belong to the account, so an agent with none connected
       // simply has nothing to turn on yet.
       let sourceKinds: RadarSourceKind[] = [];
