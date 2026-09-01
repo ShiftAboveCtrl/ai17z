@@ -6,7 +6,18 @@ import type { ChatMessage } from '@xbam/shared/contracts';
 
 interface ChatCompletionResponse {
   id?: string;
-  choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+      /**
+       * Where a reasoning model puts its thinking. DeepSeek, and now several
+       * others, return the visible answer in `content` and the working in
+       * `reasoning_content` -- and both are charged against `max_tokens`.
+       */
+      reasoning_content?: string | null;
+    };
+    finish_reason?: string;
+  }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   error?: { message?: string };
 }
@@ -78,11 +89,29 @@ export function createOpenAiCompatibleAdapter(
       if (data.error?.message) {
         throw PipelineError.permanent('provider_error', `${label}: ${data.error.message}`);
       }
-      const text = data.choices?.[0]?.message?.content ?? '';
+      const choice = data.choices?.[0];
+      const text = choice?.message?.content ?? '';
       if (!text.trim()) {
-        // An empty completion is a real failure, not something to quietly drop.
-        throw PipelineError.retryable('empty_completion', `${label} returned an empty completion.`, {
-          finishReason: data.choices?.[0]?.finish_reason ?? null,
+        // Empty, but not necessarily silent.
+        //
+        // A reasoning model charges its thinking to the same budget as its
+        // answer, so a ceiling set for the answer alone gets spent before the
+        // answer starts. `deepseek-v4-flash-vision-exp` read an image
+        // perfectly, wrote four hundred tokens of correct analysis into
+        // `reasoning_content`, hit the cap, and returned `content: ""`. The
+        // report said "returned an empty completion", which is true and sends
+        // whoever reads it looking in exactly the wrong place.
+        const thinking = (choice?.message?.reasoning_content ?? '').trim();
+        const ranOut = choice?.finish_reason === 'length';
+        const detail =
+          thinking && ranOut
+            ? `${label} spent its whole token budget thinking and never began the answer. Raise max tokens for this role.`
+            : thinking
+              ? `${label} returned reasoning but no answer.`
+              : `${label} returned an empty completion.`;
+        throw PipelineError.retryable('empty_completion', detail, {
+          finishReason: choice?.finish_reason ?? null,
+          reasoningChars: thinking.length,
         });
       }
       return {
