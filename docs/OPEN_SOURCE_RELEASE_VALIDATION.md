@@ -27,11 +27,11 @@ account. Neither failed. Neither was run.
 
 | Kind | Files | Tests |
 | --- | --- | --- |
-| Unit | 30 | 400 |
-| Integration (real Postgres) | 37 | 344 |
-| Real Chrome | 1 | 18 |
-| End to end (Playwright, running app) | 5 | 18 |
-| **Total automated** | **71 + 5** | **762 + 18** |
+| Unit | 31 | 411 |
+| Integration (real Postgres), of which | 40 | 352 |
+| &nbsp;&nbsp;— real Google Chrome | 1 | 18 |
+| End to end (Playwright, running app) | 4 | 18 |
+| **Total automated** | **75** | **781** |
 | Scenario harness (real model, real account, dry run) | 1 | 20 situations |
 
 Counted from the runner, not repeated from a previous report.
@@ -51,6 +51,19 @@ SOURCE UNCHANGED: 8f8626f
 The six skips in run 2 are the real-Chrome suite, which skips rather than
 passes when a Chrome from a previous run still holds the profile. Nothing else
 differed between runs.
+
+Reading that output rather than its last line found two more defects (12 and 13
+below). After fixing them, at the tip:
+
+```
+typecheck errors: 0
+Test Files  71 passed (71)
+     Tests  763 passed (763)      no unhandled errors
+```
+
+That is one run, not three. The three-run above stands as the frozen evidence;
+what changed after it is a test helper, a five-line guard in the worker loop,
+and this document.
 
 The 18 end-to-end tests were run twice, against two different installations:
 
@@ -89,6 +102,7 @@ Each was found by running something, not by reading it.
 | 10 | Research read three blurbs instead of an answer | Product review | DuckDuckGo snippets rarely answer a question |
 | 11 | Brave's "Searching" read as the answer | Building the above | The page holds a constant length while fetching, so a stability-based wait settles on a status word |
 | 12 | Nine E2E failures saying only "never reached the agents page" | The frozen three-run | Taking my address out of the defaults was right, but there is exactly one owner and login will not say which half was wrong, so running the suite against an installation that already has one now fails silently. It reports its own cause |
+| 13 | The guard against a worker dying on a failed tick did not cover a tick that throws before it returns | Five unhandled errors in the three-run output, under a green summary line | Only a rejected promise was caught. A synchronous throw leaves the timer callback uncaught, which is fatal — and the test passed anyway, because `setInterval` keeps firing after its callback throws, so counting ticks proved nothing |
 
 ---
 

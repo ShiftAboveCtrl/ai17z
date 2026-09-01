@@ -22,13 +22,34 @@ const log = createLogger('loop');
  * handle usefully; this is the floor under all of them.
  */
 export function startLoop(name: string, intervalMs: number, tick: () => Promise<void>): NodeJS.Timeout {
-  const timer = setInterval(() => {
-    tick().catch((error) => {
-      log.error('a loop tick failed and was swallowed so the worker keeps running', {
-        loop: name,
-        message: errorMessage(error),
-      });
+  const swallow = (error: unknown): void => {
+    log.error('a loop tick failed and was swallowed so the worker keeps running', {
+      loop: name,
+      message: errorMessage(error),
     });
+  };
+
+  const timer = setInterval(() => {
+    // Two ways to fail, and only one of them is a rejected promise. A tick that
+    // throws before it returns -- reading a property of something that is
+    // suddenly undefined, a synchronous validate at the top -- never produces a
+    // promise to attach `catch` to. That throw leaves the timer callback as an
+    // uncaught exception, which ends the process just as surely as the
+    // unhandled rejection this function was written to stop.
+    //
+    // It looked handled for a while: `setInterval` keeps firing after a callback
+    // throws, so a test that only counts ticks passes while the guarantee is
+    // broken. Under a test runner the exception is caught and reported; in the
+    // worker it is fatal.
+    try {
+      const running = tick();
+      // Defended rather than assumed: the signature says Promise, and the whole
+      // point here is what happens when a caller does something the signature
+      // did not expect.
+      if (running && typeof running.catch === 'function') running.catch(swallow);
+    } catch (error) {
+      swallow(error);
+    }
   }, intervalMs);
 
   // Never hold the process open on its own account. A worker with nothing left

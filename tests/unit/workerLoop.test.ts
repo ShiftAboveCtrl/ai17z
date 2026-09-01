@@ -58,6 +58,25 @@ describe('a worker loop', () => {
     expect(calls).toBeGreaterThan(1);
   });
 
+  it('does not leave an uncaught exception behind either', async () => {
+    // Counting ticks is not enough to prove this one, and for a while that was
+    // the whole test. `setInterval` keeps firing after its callback throws, so
+    // the count went up while the exception escaped to the process -- reported
+    // by the test runner as an unhandled error, and fatal in the worker. The
+    // assertion has to be about what got out, not about what carried on.
+    const uncaught = vi.fn();
+    process.on('uncaughtException', uncaught);
+
+    const timer = startLoop('test', 10, () => {
+      throw new Error('thrown before any promise exists');
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    clearInterval(timer);
+    process.off('uncaughtException', uncaught);
+
+    expect(uncaught).not.toHaveBeenCalled();
+  });
+
   it('goes on running when a tick succeeds again', async () => {
     let calls = 0;
     const timer = startLoop('test', 10, async () => {
