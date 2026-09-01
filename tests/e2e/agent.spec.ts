@@ -1,18 +1,23 @@
 import { expect, test } from '@playwright/test';
-import { deleteAgentsNamed, deleteMockAccountsNamed, openAgent, signIn, uniqueName } from './helpers';
+import { deleteAgentsNamed, deleteMockAccountsNamed, openAgent, signIn, uniqueName, useInterface } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
 const AGENT_NAME = uniqueName('E2E Agent');
 
 test('signs in and shows the agents page', async ({ page }) => {
+  await useInterface(page, 'advanced');
   await signIn(page);
   await expect(page.getByRole('heading', { name: 'Your agents' })).toBeVisible();
 });
 
-test('creates an agent through the wizard', async ({ page }) => {
+test('creates an agent through the advanced wizard', async ({ page }) => {
+  await useInterface(page, 'advanced');
   await signIn(page);
-  await page.getByRole('link', { name: /create agent/i }).first().click();
+  // Straight to the advanced wizard. "Create agent" in the header goes to Easy
+  // Mode now, which is a different eight-step flow with its own test -- this one
+  // exists to prove Advanced still does everything it used to.
+  await page.goto('/agents/new/advanced');
 
   await expect(page.getByText(/step 1 of 8/i)).toBeVisible();
   await page.locator('#name').fill(AGENT_NAME);
@@ -38,6 +43,7 @@ test('creates an agent through the wizard', async ({ page }) => {
 });
 
 test('shows the agent sections and the pipeline it actually runs', async ({ page }) => {
+  await useInterface(page, 'advanced');
   await signIn(page);
   await openAgent(page, AGENT_NAME);
 
@@ -53,6 +59,7 @@ test('shows the agent sections and the pipeline it actually runs', async ({ page
 });
 
 test('edits the persona and cuts a new version', async ({ page }) => {
+  await useInterface(page, 'advanced');
   await signIn(page);
   await openAgent(page, AGENT_NAME);
 
@@ -76,7 +83,8 @@ test('edits the persona and cuts a new version', async ({ page }) => {
 test.afterAll(async ({ browser }) => {
   const page = await browser.newPage();
   try {
-    await signIn(page);
+    await useInterface(page, 'advanced');
+  await signIn(page);
     const agents = await deleteAgentsNamed(page, 'E2E Agent');
     const accounts = await deleteMockAccountsNamed(page, 'e2e_agent_');
     console.log(`cleanup: removed ${agents} agent(s) and ${accounts} mock account(s)`);

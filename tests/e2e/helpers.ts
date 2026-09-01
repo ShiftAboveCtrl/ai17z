@@ -4,6 +4,29 @@ export const OWNER_EMAIL = process.env.XBAM_E2E_EMAIL ?? 'hamza@cloudtalha.com';
 export const OWNER_PASSWORD = process.env.XBAM_E2E_PASSWORD ?? 'xbam-local-dev-2026';
 
 /**
+ * Picks Easy or Advanced before the app boots.
+ *
+ * The switch is one setting for the whole application, kept in localStorage and
+ * defaulting to Easy. Every test that asserts on an Advanced surface has to say
+ * so: the agent page renders a completely different view in Easy, and a test
+ * that does not choose is really asserting "whatever the default happens to be
+ * today". These tests were written before the switch existed and were doing
+ * exactly that.
+ *
+ * `addInitScript` runs before the page's own scripts on every navigation, which
+ * is the only point early enough for the first render to see it.
+ */
+export async function useInterface(page: Page, mode: 'easy' | 'advanced'): Promise<void> {
+  await page.addInitScript((chosen) => {
+    try {
+      window.localStorage.setItem('ai17z.viewMode', chosen as string);
+    } catch {
+      // Storage blocked; the test will fail on its own assertion, not here.
+    }
+  }, mode);
+}
+
+/**
  * Signs in through the real form. The session token lands in localStorage, so
  * subsequent navigations in the same context stay authenticated.
  */
