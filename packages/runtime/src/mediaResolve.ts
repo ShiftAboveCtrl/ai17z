@@ -124,6 +124,13 @@ export interface ResolveMediaInput {
   jobId: string | null;
   text: string;
   inventory: MediaInventory;
+  /**
+   * True when these attachments belong to the post being replied to rather
+   * than to the mention itself. Carried through so the prompt can say whose
+   * picture it is; describing somebody else's screenshot as "your image" is a
+   * small lie that reads as a large one.
+   */
+  onParentPost?: boolean;
   policy: MediaPolicy;
   /** Ceiling on vision calls, taken from the budget policy. */
   maxCalls: number;
@@ -201,7 +208,7 @@ export async function resolveMedia(input: ResolveMediaInput): Promise<SocialMedi
     await mediaRepo.recordUnderstanding(row.id, understanding);
   }
 
-  return buildContext(input.eventId, input.text, input.inventory);
+  return buildContext(input.eventId, input.text, input.inventory, input.onParentPost ?? false);
 }
 
 /** Turns everything stored about an event into the shape prompts render. */
@@ -209,6 +216,7 @@ export async function buildContext(
   eventId: string,
   text: string,
   inventory?: MediaInventory,
+  onParentPost = false,
 ): Promise<SocialMediaContext> {
   const [rows, quote, links] = await Promise.all([
     mediaRepo.listMedia(eventId),
@@ -234,13 +242,14 @@ export async function buildContext(
 
   return {
     items,
+    onParentPost,
     quoted: quote
       ? { authorHandle: quote.authorHandle, text: quote.text, mediaSummary: quote.mediaSummary }
       : null,
     links: links.map((l) => ({ url: l.url, title: l.title, summary: l.summary, resolution: l.resolution })),
     hasUnderstandingGap: hasGap,
     gapDetail: hasGap
-      ? `${unread.length} attached ${unread.length === 1 ? 'item was' : 'items were'} not read, and this post says little without them: ${unread[0]?.error ?? 'no reason recorded'}`
+      ? `${unread.length} attached ${unread.length === 1 ? 'item was' : 'items were'} on ${onParentPost ? 'the post above' : 'this post'} and not read, and the question needs them: ${unread[0]?.error ?? 'no reason recorded'}`
       : null,
   };
 }

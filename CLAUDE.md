@@ -108,6 +108,12 @@ RECEIVED -> CONTEXT_RESOLVED -> MEMORY_RESOLVED -> GENERATED -> VALIDATED
 sweep returns the job to the settled state before that step (`IN_FLIGHT_RESUME`
 in `contracts/enums.ts`). This is why a restart resumes rather than restarts.
 
+A limit that has not cleared is not a failure. `retryAfterMs` from a gate --
+cooldown, rate ceiling, budget, quiet hours -- goes to `waitForLimit`, which
+waits the stated time and charges no attempt. Answering a thirty-second cooldown
+with the ordinary backoff spends all five attempts in eighteen seconds and sends
+a finished reply to review one second short of being allowed to send it.
+
 Failures are classified, never guessed:
 
 - `PipelineError.retryable` schedules a jittered backoff and keeps the job
@@ -340,9 +346,42 @@ jobs, which is why the reply bug went unseen for as long as it did.
 **Media that could not be read is an explicit gap.** The prompt says so and the
 model is told to admit it. Never let an unread image pass silently.
 
+**The picture is usually not on the message.** A mention almost never carries an
+image; the one being asked about is on the post above. `stepResolveMedia` falls
+through to `parentInventory` when the mention carries nothing itself, and
+`onParentPost` travels with it so the prompt says whose picture it is. Before
+this the parent's image was found, its URL recorded, and nothing ever looked at
+it.
+
+**Whether a message stands alone is not a word count.** `refersToSomethingElse`
+in `@xbam/shared` is the one implementation -- there were two copies and both
+counted to eight. "What did he roundtrip on?" is thirteen words and answerable
+only from a screenshot. A pronoun counts only when the message is *asking* about
+what it stands for and nothing earlier could be its antecedent; a long statement
+containing "they" is still a complete thought.
+
+**A question about the picture is never a web search.** A search engine will
+return something that sounds similar, confidently. `whatToResearch` reads each
+question in a message separately and routes them: what is in the image goes to
+vision, what changes by the day goes to Brave, and a message that asks nothing
+specific falls back to the parent as subject. Searching the words around a
+picture is how "Nothing as waking up on a 30k roundtrip during sleep GM" became
+three articles about waking at 3am.
+
 **Vision uses the `vision` role only.** Falling back to the primary model sends
 an image to something that cannot read it and gets a confident description of
-nothing.
+nothing. Every role the runtime asks for has a row on the
+Intelligence screen: a role nothing can set is a capability the product does not
+have, and `vision` had no row at all.
+
+**The model may choose the plan, never the floor.** `planLookups` asks a
+`classifier` model what to look up, and only when one is configured, there is
+something to decide, and it answers within six seconds. Every other outcome --
+no model, a timeout, malformed JSON -- falls back to the deterministic rules.
+The trace records which decided, because a plan and a pattern match look
+identical once both are a list of queries. Never route planning to the primary
+model: an expensive reasoning call to decide whether to search is the opposite
+of the point.
 
 **Relationships and stances are learned from what was published.** Not from
 drafts, not from dry runs. A dry run is explicitly not a public position, and an

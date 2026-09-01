@@ -156,3 +156,45 @@ describe('telling the model what is attached', () => {
     expect(renderLinks([])).toBe('');
   });
 });
+
+/**
+ * The picture the question is about is usually not on the message.
+ *
+ * A mention almost never carries an image. Somebody replies to a screenshot,
+ * tags the agent, and asks about the screenshot -- so the attachment that
+ * matters belongs to the post above, and until this worked the agent had never
+ * once looked at one. The adapter read the parent's attachments, recorded the
+ * image URL, and the only thing done with it was a line saying "you have not
+ * seen the attachments, so do not describe them".
+ */
+describe('attachments on the post above', () => {
+  const item = {
+    kind: 'image' as const,
+    position: 0,
+    description: 'A trading terminal showing a position closed at break-even.',
+    extractedText: null,
+    altText: null,
+    status: 'analyzed' as const,
+    confidence: 0.9,
+  };
+
+  it('says whose picture it is', () => {
+    // Without this the model is handed a description with no owner, and a reply
+    // that says "your chart" about somebody else's screenshot is a small lie
+    // that reads as a large one.
+    const rendered = renderMedia([item], true);
+    expect(rendered).toContain('the post they were replying to');
+    expect(rendered).toContain('trading terminal');
+  });
+
+  it('says nothing about ownership when it is their own', () => {
+    const rendered = renderMedia([item], false);
+    expect(rendered).not.toContain('replying to');
+    expect(rendered).toContain('trading terminal');
+  });
+
+  it('still reports one that could not be read', () => {
+    const rendered = renderMedia([{ ...item, description: null, status: 'skipped' as const }], true);
+    expect(rendered).toContain('not examined');
+  });
+});
