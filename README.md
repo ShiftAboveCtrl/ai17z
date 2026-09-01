@@ -326,20 +326,11 @@ npm run typecheck
 
 ## License
 
-**Not chosen yet, and that blocks public release.** Until a licence is added,
-nobody has permission to use, copy or redistribute this, whatever the repository
-visibility says.
+[MIT](LICENSE). Use it, change it, ship it; keep the copyright notice.
 
-The dependency audit does not constrain the choice. Of 372 installed packages:
-305 MIT, 23 ISC, 13 Apache-2.0, 7 BlueOak-1.0.0, 6 BSD-3-Clause, 1 CC-BY-4.0,
-1 0BSD, and 16 that declare nothing. None are copyleft -- no GPL, AGPL, SSPL or
-BUSL anywhere in the tree -- so any of the usual choices is compatible:
+Nothing in the tree argues with that. Of 372 installed packages: 305 MIT,
+23 ISC, 13 Apache-2.0, 7 BlueOak-1.0.0, 6 BSD-3-Clause, 1 CC-BY-4.0, 1 0BSD,
+and 16 that declare nothing. No GPL, AGPL, SSPL or BUSL anywhere.
 
-- **MIT** -- shortest, most permissive, what most of the dependencies use.
-- **Apache-2.0** -- same freedoms plus an explicit patent grant and a NOTICE
-  file. Worth it if contributors may work for employers with patents.
-- **AGPL-3.0** -- requires anyone running a modified copy as a network service
-  to publish their changes. Choose it deliberately, not by default: it would
-  make this awkward to use inside a company.
-
-Whichever you pick, add a LICENSE file at the root and replace this section.
+The licence covers this code. It does not cover what you do with it: the terms
+of any service an agent acts on are between you and that service.
