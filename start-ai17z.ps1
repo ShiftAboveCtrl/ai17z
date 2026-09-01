@@ -52,20 +52,34 @@ function Write-Step($Message) { Write-Host "  $Message" -ForegroundColor Cyan }
 function Write-Done($Message) { Write-Host "  $Message" -ForegroundColor Green }
 function Write-Warn($Message) { Write-Host "  $Message" -ForegroundColor Yellow }
 
+# Something the owner can fix, said plainly and then stopped.
+#
+# `throw` prints the message under a CategoryInfo block, a FullyQualifiedErrorId
+# and the source line that raised it. That is right for a bug and wrong for
+# "Docker is not running", which is not a fault -- it is a thing to go and do.
+# The message was already clear; it was buried under a stack trace.
+function Stop-WithReason($Message, $Fix) {
+  Write-Host ''
+  Write-Host "  $Message" -ForegroundColor Red
+  if ($Fix) { Write-Host "  $Fix" -ForegroundColor Yellow }
+  Write-Host ''
+  exit 1
+}
+
 Write-Host ''
 Write-Host 'AI17Z' -ForegroundColor White
 Write-Host ''
 
 # -- Prerequisites -----------------------------------------------------------
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-  throw 'Docker is not on PATH. Install Docker Desktop and start it, then run this again.'
+  Stop-WithReason 'Docker is not on PATH.' 'Install Docker Desktop, start it, then run this again.'
 }
 $ErrorActionPreference = 'Continue'
 docker info *> $null
 $dockerUp = $LASTEXITCODE -eq 0
 $ErrorActionPreference = 'Stop'
 if (-not $dockerUp) {
-  throw 'Docker is installed but not running. Start Docker Desktop, wait for it to settle, then run this again.'
+  Stop-WithReason 'Docker is installed but not running.' 'Start Docker Desktop, wait for the whale to settle, then run this again.'
 }
 
 if (-not (Test-Path '.env')) {
