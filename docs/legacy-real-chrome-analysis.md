@@ -2,7 +2,7 @@
 
 Static analysis only. Neither legacy project was modified, executed, installed
 into, or formatted. `ai4cz` last changed 2026-08-23 18:44, before this work
-began; `ai4yi` was read from `C:\Users\ta0as\ai4yi`.
+began; `ai4yi` was read from the AI4YI checkout.
 
 ---
 

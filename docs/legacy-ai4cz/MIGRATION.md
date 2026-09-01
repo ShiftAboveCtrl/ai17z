@@ -2,7 +2,7 @@
 
 ## The rule
 
-`C:\Users\ta0as\OneDrive\Desktop\ai4cz` is immutable evidence. The importer opens
+The directory named by `AI4CZ_LEGACY_DIR` is immutable evidence. The importer opens
 its SQLite database read-only and reads a handful of JSON and TypeScript files.
 It writes nothing, installs nothing, and copies no secret out.
 

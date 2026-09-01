@@ -27,7 +27,7 @@ memory, a model, a policy, and a set of channels it can act on. The runtime is
 generic: X, OpenRouter, a persona, and a reply are all configuration.
 
 AI17Z descends from a working system called AI4CZ, which lives at
-`C:\Users\ta0as\OneDrive\Desktop\ai4cz`. AI17Z kept its ideas and replaced its
+the directory named by `AI4CZ_LEGACY_DIR`. AI17Z kept its ideas and replaced its
 architecture.
 
 ## Hard boundary: the legacy directory
