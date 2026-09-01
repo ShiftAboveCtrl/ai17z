@@ -106,7 +106,7 @@ jobs:
         run: |
           set -euo pipefail
           # These must never be in the repository regardless of their contents.
-          if git ls-files | grep -E '^\.env$|^storage/|browser-profiles/' ; then
+          if git ls-files | grep -E '^\.env$|^storage/|browser-profiles/|accounts\.db' ; then
             echo "Runtime state is tracked. It must not be."
             exit 1
           fi
