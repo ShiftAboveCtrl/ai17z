@@ -19,3 +19,9 @@ tsconfig.tsbuildinfo
 test-results/
 playwright-report/
 var/
+
+# twscrape writes this into the working directory. It was tracked and shipped
+# empty, which is harmless right up until somebody adds an account to it and
+# commits their credentials without noticing.
+accounts.db
+*.db-journal
