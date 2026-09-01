@@ -19,7 +19,7 @@ account. Neither failed. Neither was run.
 | --- | --- |
 | Branch | `ai17z-overhaul` |
 | Frozen commit for the three-run | `8f8626f` |
-| Tag | `ai17z-oss-rc` |
+| Tag | `ai17z-oss-rc`, moved to the tip after defects 12 and 13 |
 | Checkpoint before this round | `pre-open-source-hardening` |
 | Database backup taken first | `storage/backups/xbam-preoss-*.dump` |
 
