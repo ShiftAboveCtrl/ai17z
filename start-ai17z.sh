@@ -41,15 +41,48 @@ docker info >/dev/null 2>&1 || stop_with_reason \
 [ -f .env ] || stop_with_reason \
   "No .env file." "Run ./install-ai17z.sh first -- it creates one with a fresh master key."
 
+# -- Ports -------------------------------------------------------------------
+# Checked before Docker is asked to bind them. The alternative is "Bind for
+# 127.0.0.1:55433 failed: port is already allocated" from a daemon, which tells
+# somebody running a second installation nothing they can act on.
+env_port() { # key default
+  local v=""
+  # tail, not head: a duplicated key in .env resolves last-wins, which is what
+  # docker compose does too.
+  [ -f .env ] && v="$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" .env | tail -1 | tr -d "'" )"
+  echo "${v:-$2}"
+}
+
+port_taken() {
+  if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null | grep -q ":$1 "
+  elif command -v lsof >/dev/null 2>&1; then lsof -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+  else return 1
+  fi
+}
+
+# Ports held by this installation are not a conflict.
+if [ -z "$(docker compose ps -q 2>/dev/null)" ]; then
+  taken=""
+  for pair in "API:AI17Z_API_PORT:8787" "Web:AI17Z_WEB_PORT:8080" "Postgres:POSTGRES_PORT:55432"; do
+    name="${pair%%:*}"; rest="${pair#*:}"; key="${rest%%:*}"; def="${rest##*:}"
+    p="$(env_port "$key" "$def")"
+    if port_taken "$p"; then taken="${taken}    ${name} wants ${p}. Set ${key} in .env to something else.
+"; fi
+  done
+  if [ -n "$taken" ]; then
+    stop_with_reason "Something is already using ports AI17Z needs." "$(printf "%b" "$taken")
+  If that something is another AI17Z, give this one its own name too:
+    AI17Z_INSTANCE=second"
+  fi
+fi
+
 # -- The stack ---------------------------------------------------------------
 step "Starting the containers..."
 docker compose up -d
 done_ "Containers up."
 
-api_port="$(sed -n 's/^[[:space:]]*AI17Z_API_PORT[[:space:]]*=[[:space:]]*//p' .env | head -1)"
-api_port="${api_port:-8787}"
-web_port="$(sed -n 's/^[[:space:]]*AI17Z_WEB_PORT[[:space:]]*=[[:space:]]*//p' .env | head -1)"
-web_port="${web_port:-8080}"
+api_port="$(env_port AI17Z_API_PORT 8787)"
+web_port="$(env_port AI17Z_WEB_PORT 8080)"
 
 # Wait for the API to actually answer, not merely for the container to exist.
 step "Waiting for the API..."
