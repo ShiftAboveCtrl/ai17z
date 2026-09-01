@@ -11,29 +11,21 @@ verified by doing it, twice, from an empty directory.
 
 ## Before you push
 
-### 1. Put the repository URL in
+### 1. Point it at your repository
 
-Three places name it, all with the same placeholder:
-
-```bash
-grep -rl REPLACE_WITH_AI17Z_GITHUB_URL --include=*.md .
-```
-
-Replace it once:
+Four URLs are derived from one: the clone URL, the zip, and the raw URL of each
+bootstrap script. Create the repository on GitHub first, then:
 
 ```powershell
-Get-ChildItem -Recurse -Filter *.md |
-  Where-Object { $_.FullName -notlike '*node_modules*' } |
-  ForEach-Object {
-    (Get-Content $_.FullName -Raw).Replace(
-      'REPLACE_WITH_AI17Z_GITHUB_URL',
-      'https://github.com/YOU/ai17z.git'
-    ) | Set-Content $_.FullName -NoNewline
-  }
+.\scripts\set-repo-url.ps1 -Url https://github.com/YOU/ai17z
 ```
 
-The clone command in the README is `git clone <url> ai17z`, with the directory
-named explicitly, so it works whatever the repository is called.
+It takes any form GitHub shows you, including the SSH one, and rewrites every
+tracked `.md`, `.ps1` and `.sh` that mentions a placeholder. Check it with
+`git diff`.
+
+Pass `-Branch` if your default branch is not `main`; the zip and raw URLs both
+name a branch and would otherwise 404.
 
 ### 2. Check nothing personal is going out
 

@@ -1,6 +1,12 @@
-# CLAUDE.md
+# Engineering notes
 
-Guidance for Claude Code working in this repository.
+The rules this codebase runs on, and why each one is there.
+
+Every paragraph below was written after something went wrong. They are
+invariants rather than style preferences: breaking one does not fail a test, it
+fails in production, quietly, in a way somebody has already spent a day
+tracking down. Read this before changing anything in `packages/runtime`,
+`packages/channels` or `migrations`.
 
 ## The rename: XBAM became AI17Z
 
