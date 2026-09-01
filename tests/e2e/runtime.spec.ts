@@ -1,5 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
-import { deleteAgentsNamed, deleteMockAccountsNamed, signIn, uniqueName, useInterface } from './helpers';
+import {
+  deleteAgentsNamed,
+  deleteMockAccountsNamed,
+  deleteProvidersLabelled,
+  signIn,
+  uniqueName,
+  useInterface,
+} from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -190,10 +197,13 @@ test.afterAll(async ({ browser }) => {
   const page = await browser.newPage();
   try {
     await useInterface(page, 'advanced');
-  await signIn(page);
+    await signIn(page);
     const agents = await deleteAgentsNamed(page, 'E2E Runtime');
     const accounts = await deleteMockAccountsNamed(page, 'e2e_runtime_');
-    console.log(`cleanup: removed ${agents} agent(s) and ${accounts} mock account(s)`);
+    // Providers are listed on the health page by label, so a test provider left
+    // behind buries the real ones. Twenty-four of them had accumulated.
+    const providers = await deleteProvidersLabelled(page, 'E2E Mock');
+    console.log(`cleanup: removed ${agents} agent(s), ${accounts} mock account(s), ${providers} provider(s)`);
   } catch (error) {
     // Never fail a passing run on cleanup, but say so: a silent leak is how
     // thirty-seven of these accumulated.
