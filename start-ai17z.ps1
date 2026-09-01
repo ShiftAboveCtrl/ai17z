@@ -113,7 +113,32 @@ if (-not $alreadyOurs) {
   $taken = @($wanted | Where-Object { Test-PortTaken $_.Port })
   if ($taken.Count -gt 0) {
     $lines = ($taken | ForEach-Object { "    $($_.Name) wants $($_.Port). Set $($_.Key) in .env to something else." }) -join "`n"
-    Stop-WithReason "Something is already using $($taken.Count) of the ports AI17Z needs." "$lines`n`n  If that something is another AI17Z, give this one its own name too:`n    AI17Z_INSTANCE=second"
+    $extra = "`n`n  If that something is another AI17Z, give this one its own name too:`n    AI17Z_INSTANCE=second"
+    if ($taken | Where-Object { $_.Key -eq 'POSTGRES_PORT' }) {
+      # Moving POSTGRES_PORT alone moves the published port and nothing else.
+      # DATABASE_URL is what the migrator and the native worker dial, and it
+      # carries its own port, so a second installation with only POSTGRES_PORT
+      # changed runs its migrations against the first installation's database.
+      $extra += "`n`n  Changing POSTGRES_PORT is only half of it: DATABASE_URL carries its own`n  port and is what migrations dial. Change both, to the same number."
+    }
+    Stop-WithReason "Something is already using $($taken.Count) of the ports AI17Z needs." "$lines$extra"
+  }
+}
+
+# The two must agree, whether or not there was ever a conflict.
+#
+# `POSTGRES_PORT` publishes the container's port; `DATABASE_URL` is what the
+# migrator and the native worker actually connect to. Nothing keeps them in
+# step, so editing one is a silent way to point this installation's migrations
+# at a different installation's database. Refused rather than guessed at: this
+# script does not get to decide which of the two somebody meant.
+$pgPort = Get-EnvPort 'POSTGRES_PORT' '55432'
+$dbUrl = Get-EnvPort 'DATABASE_URL' ''
+if ($dbUrl -and $dbUrl -match '^postgres(ql)?://[^/]*@(localhost|127\.0\.0\.1):(?<port>\d+)/') {
+  if ($matches.port -ne $pgPort) {
+    Stop-WithReason `
+      "POSTGRES_PORT is $pgPort but DATABASE_URL points at port $($matches.port)." `
+      "Migrations and the native worker use DATABASE_URL, so this would touch a database on $($matches.port) while the containers publish $pgPort.`n  Set both to the same port in .env."
   }
 }
 
@@ -238,6 +263,10 @@ if ($NoBrowser) {
 }
 
 Write-Host ''
-Write-Host '  Open  ' -NoNewline; Write-Host 'http://localhost:8080' -ForegroundColor White
+# The port this installation actually published, not the default. A second
+# installation was told to open 8080 while serving on 8090, which is the first
+# installation's address: the last line of a successful start pointed at
+# somebody else's copy.
+Write-Host '  Open  ' -NoNewline; Write-Host "http://localhost:$(Get-EnvPort 'AI17Z_WEB_PORT' '8080')" -ForegroundColor White
 Write-Host '  Stop  ' -NoNewline; Write-Host '.\stop-ai17z.ps1' -ForegroundColor White
 Write-Host ''
