@@ -59,6 +59,26 @@ export interface IngestOptions {
 const RUNNABLE_STATES = new Set(['DRAFT', 'ACTIVE']);
 
 /**
+ * How far back work may be created for something already recorded.
+ *
+ * Widening what an agent is triggered by must change what happens next, not
+ * what happened yesterday. Without this, adding REPLY to an account link would
+ * have made a live agent answer sixteen replies it had recorded and ignored
+ * over the previous ten hours -- all at once, as fast as its rate limit allowed,
+ * to people who had long since moved on. The same trap is waiting behind
+ * MONITOR_ONLY: switch an agent to autonomous and it answers everything it ever
+ * watched.
+ *
+ * Six hours because a reply worth answering is answered while the conversation
+ * is still happening, and a monitor that is merely slow -- backed off, waiting
+ * on a browser, restarted -- is minutes behind, never hours.
+ *
+ * This applies only to an event that was already on record. A post discovered
+ * for the first time is new work whatever timestamp it carries.
+ */
+const RETROACTIVE_WORK_WINDOW_MS = 6 * 60 * 60_000;
+
+/**
  * Turns a channel event into durable work.
  *
  * The event row and every job it produces are written in one transaction and
@@ -144,6 +164,20 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
   const outcome = await withTransaction(async (tx) => {
     const { event: stored, created: eventCreated } = await eventsRepo.ingestEvent(tx, accountId, event);
     const outcome: IngestOutcome = { eventId: stored.id, eventCreated, jobs: [], skipped: [] };
+
+    // Something recorded long ago that never produced work does not produce it
+    // now. A manual trigger is a person asking on purpose and is exempt.
+    const staleMs = Date.now() - new Date(stored.ingestedAt).getTime();
+    if (!eventCreated && !options.onlyAgentId && staleMs > RETROACTIVE_WORK_WINDOW_MS) {
+      const hours = Math.round(staleMs / 3_600_000);
+      for (const link of links) {
+        outcome.skipped.push({
+          agentId: link.agentId,
+          reason: `first seen ${hours}h ago and nothing was queued for it then; not queuing it retroactively`,
+        });
+      }
+      return outcome;
+    }
 
     for (const link of links) {
       const agent = agentsById.get(link.agentId) ?? null;

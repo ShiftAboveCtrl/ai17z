@@ -318,6 +318,14 @@ found dropped at the door with "not triggered by REPLY". The default is
 to answer is the engagement heuristic's decision; not being allowed to consider
 it is not a decision.
 
+**Widening what an agent is triggered by changes what happens next, never what
+happened yesterday.** An event already on record that produced no work does not
+produce it six hours later because a setting changed --
+`RETROACTIVE_WORK_WINDOW_MS` in `ingest.ts`, exempt for a manual trigger. This
+is not hypothetical: adding REPLY to the account links handed a live agent
+sixteen replies it had ignored overnight, and two sixteen-hour-old answers went
+out before the guard existed. The same trap sits behind MONITOR_ONLY.
+
 **A conversation is the thread, not the post.** Ingest keys it on the post
 because a mention read off a search result carries no ancestry; the root is
 known only once the status page has been walked, and `bindToThread` in
