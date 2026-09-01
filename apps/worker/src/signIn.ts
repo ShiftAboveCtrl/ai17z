@@ -2,6 +2,7 @@ import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, ops } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { buildChannelContext } from '@xbam/runtime';
+import { startLoop } from './loop';
 
 const log = createLogger('sign-in');
 
@@ -29,7 +30,7 @@ export class SignInWatcher {
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.tick(), this.intervalMs);
+    this.timer = startLoop('sign-in', this.intervalMs, () => this.tick());
   }
 
   stop(): void {

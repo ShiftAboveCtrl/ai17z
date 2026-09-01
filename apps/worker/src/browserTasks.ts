@@ -13,6 +13,7 @@ import {
   sessionIdentity,
 } from '@xbam/browser';
 import { buildChannelContext, ingestNormalizedEvent, storageDir } from '@xbam/runtime';
+import { startLoop } from './loop';
 
 const log = createLogger('browser-tasks');
 
@@ -38,7 +39,7 @@ export class BrowserTaskRunner {
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.tick(), this.intervalMs);
+    this.timer = startLoop('browser-tasks', this.intervalMs, () => this.tick());
   }
 
   stop(): void {

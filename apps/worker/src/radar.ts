@@ -3,6 +3,7 @@ import { accounts as accountsRepo, radar as radarRepo, type RadarSourceRow } fro
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import { buildChannelContext, reconcileCandidates } from '@xbam/runtime';
 import { describeBrowserError } from '@xbam/browser';
+import { startLoop } from './loop';
 
 const log = createLogger('radar');
 
@@ -25,7 +26,7 @@ export class SocialRadar {
   start(): void {
     if (this.timer) return;
     log.info('social radar starting', { tickMs: this.tickMs, perTick: this.perTick });
-    this.timer = setInterval(() => void this.tick(), this.tickMs);
+    this.timer = startLoop('radar', this.tickMs, () => this.tick());
   }
 
   stop(): void {

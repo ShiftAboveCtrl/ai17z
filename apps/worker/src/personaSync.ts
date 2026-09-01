@@ -1,6 +1,7 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { personaSources } from '@xbam/database';
 import { syncPersonaSource } from '@xbam/persona';
+import { startLoop } from './loop';
 
 const log = createLogger('persona-sync');
 
@@ -22,7 +23,7 @@ export class PersonaSyncRunner {
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.tick(), this.intervalMs);
+    this.timer = startLoop('persona-sync', this.intervalMs, () => this.tick());
   }
 
   stop(): void {
