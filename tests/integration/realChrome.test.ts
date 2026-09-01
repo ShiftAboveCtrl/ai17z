@@ -45,17 +45,46 @@ beforeAll(async () => {
   }
 });
 
-afterAll(async () => {
-  // Everything launched here is detached, so it has to be cleaned up by pid.
-  for (const proc of started) {
-    if (proc.pid) {
-      try {
-        process.kill(proc.pid);
-      } catch {
-        // Already gone. Nothing to do, and nothing worth failing a test over.
-      }
+/**
+ * Ends a Chrome and the renderers underneath it.
+ *
+ * `process.kill(pid)` ends the browser process and leaves its children running,
+ * and those children keep holding the profile lock. The next run then finds a
+ * Chrome sitting on the directory it wants, cannot start, and fails for a reason
+ * that has nothing to do with what it was testing.
+ *
+ * This is the same lesson the stop script learned about the worker, in a place
+ * nobody had applied it. It had leaked more than a thousand Chrome processes on
+ * this machine before anybody noticed -- enough to make an unrelated
+ * process-table measurement useless.
+ */
+async function killTree(pid: number): Promise<void> {
+  if (process.platform === 'win32') {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(execFile)('taskkill', ['/PID', String(pid), '/T', '/F']).catch(() => undefined);
+    return;
+  }
+  try {
+    // Negative pid is the process group, which is where the renderers are.
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Already gone. Nothing to do, and nothing worth failing a test over.
     }
   }
+}
+
+afterAll(async () => {
+  // Everything launched here is detached, so it has to be cleaned up by pid --
+  // and by tree, or the renderers outlive the run holding the profile.
+  for (const proc of started) {
+    if (proc.pid) await killTree(proc.pid);
+  }
+  // Give the renderers a moment to release the directory before removing it.
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
   if (profileRoot) await rm(profileRoot, { recursive: true, force: true }).catch(() => undefined);
 });
 

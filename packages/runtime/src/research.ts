@@ -97,6 +97,26 @@ export interface ResearchSubject {
 }
 
 /**
+ * Turns a post into something worth asking an answer engine.
+ *
+ * The search behind this used to be a keyword engine, where pasting two hundred
+ * characters of somebody's post was fine: more words, more overlap, more
+ * results. An answer engine is not that. It reads the query as a question, and
+ * a wall of text with no question in it gets a wall of text back.
+ *
+ * So: a length a person would actually type, and a time frame when the reason
+ * for searching was that the answer changes. "Latest" is doing real work there
+ * -- without it an answer engine happily summarises something from two years
+ * ago, which is exactly the failure the lookup existed to prevent.
+ */
+function asQuestion(subject: string, timeSensitive: boolean): string {
+  // Long enough to carry the subject, short enough to read as a question.
+  const trimmed = subject.split(/(?<=[.!?])\s/)[0]!.trim() || subject.trim();
+  const core = (trimmed.length > 120 ? trimmed.slice(0, 120).replace(/\s\S*$/, '') : trimmed).trim();
+  return timeSensitive ? `What is the latest on: ${core}` : core;
+}
+
+/**
  * What to look up, and why.
  *
  * Returns nothing for the ordinary case, which is most of them: an agent that
@@ -150,7 +170,7 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
     if (subjectText.split(' ').filter(Boolean).length >= 3) {
       add({
         kind: 'search',
-        query: subjectText.slice(0, 200),
+        query: asQuestion(subjectText, timeSensitive),
         reason: asking
           ? 'They asked what this is about, and the answer is not in the post.'
           : 'The subject changes by the day, so a trained answer would be out of date.',
