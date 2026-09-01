@@ -48,15 +48,21 @@ describe('the same post arriving from several places at once', () => {
     const fixture = await createFixture();
     const event = mockEvent('A post several monitors will all surface at the same moment, worth answering');
 
-    // Twelve simultaneous ingests. In production these are radar monitors, a
-    // mentions scrape and a notifications scrape racing each other.
+    // Fifty simultaneous ingests of one post. Well past anything the radar can
+    // actually produce, which is the point: the pool holds ten connections, so
+    // this is forty callers waiting for one. It is the shape that deadlocked
+    // before the reads were hoisted out of the transaction.
     const outcomes = await Promise.allSettled(
-      times(12).map(() => ingestNormalizedEvent({ accountId: null, onlyAgentId: fixture.agentId, event })),
+      times(50).map(() => ingestNormalizedEvent({ accountId: null, onlyAgentId: fixture.agentId, event })),
     );
     const ok = outcomes.filter((o) => o.status === 'fulfilled') as PromiseFulfilledResult<{
       eventCreated: boolean;
     }>[];
-    expect(ok.length).toBeGreaterThan(0);
+    // Every one of them, not merely one. A caller that is dropped has lost a
+    // post, and the radar would never know.
+    const rejected = outcomes.filter((o) => o.status === 'rejected') as PromiseRejectedResult[];
+    expect(rejected.map((r) => String(r.reason).slice(0, 100))).toEqual([]);
+    expect(ok).toHaveLength(50);
 
     const [events] = await query<{ n: number }>(
       'SELECT count(*)::int AS n FROM events WHERE remote_event_id = $1',
@@ -88,6 +94,40 @@ describe('the same post arriving from several places at once', () => {
       [fixture.agentId],
     );
     expect(acts!.n).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('unrelated work under the same load', () => {
+  it('admits fifty distinct posts at once without serialising them', async () => {
+    // The other half of the concurrency question. Controls that stop duplicates
+    // must not turn independent work into a queue: fifty different posts are
+    // fifty different events and fifty different jobs.
+    const fixture = await createFixture();
+    const events = times(50).map((i) =>
+      mockEvent(`Distinct message ${i}, long enough to be worth a considered answer about governance`),
+    );
+
+    const started = Date.now();
+    const outcomes = await Promise.allSettled(
+      events.map((event) => ingestNormalizedEvent({ accountId: null, onlyAgentId: fixture.agentId, event })),
+    );
+    const elapsed = Date.now() - started;
+
+    const rejected = outcomes.filter((o) => o.status === 'rejected') as PromiseRejectedResult[];
+    expect(rejected.map((r) => String(r.reason).slice(0, 100))).toEqual([]);
+
+    const [events_] = await query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM events WHERE remote_event_id = ANY($1::text[])`,
+      [events.map((e) => e.remoteEventId)],
+    );
+    expect(events_!.n).toBe(50);
+
+    const jobs = await jobsRepo.listJobs({ agentId: fixture.agentId, limit: 100 });
+    expect(jobs.items).toHaveLength(50);
+
+    // Not a benchmark -- a smoke alarm. Fifty independent admissions taking
+    // minutes would mean something is holding a lock it does not need.
+    expect(elapsed).toBeLessThan(60_000);
   });
 });
 
