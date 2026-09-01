@@ -128,7 +128,26 @@ function trimToLimit(text: string, limit: number): string {
  * be repaired is escalated rather than quietly dropped, which is the failure
  * mode the legacy system had when an empty completion silently discarded a mention.
  */
-export function validateOutput(raw: string, policy: PolicyConfig): ValidationResult {
+/** Escapes a handle so it cannot smuggle pattern syntax into the check. */
+function escapeForPattern(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function validateOutput(
+  raw: string,
+  policy: PolicyConfig,
+  /**
+   * Who this reply is going to, when it is a reply to somebody.
+   *
+   * Used only to take their handle off the front. A reply on X already
+   * addresses the person -- the platform puts them in the thread -- so typing
+   * the handle again duplicates it, spends characters that are capped, and is
+   * one of the more recognisable tells of an automated account. The model does
+   * it inconsistently, which is worse than always: the same agent answered one
+   * compliment with "Thanks, kind." and the next with "Appreciate that, @kind."
+   */
+  targetHandle?: string | null,
+): ValidationResult {
   const violations: Violation[] = [];
   let output = raw.replace(/\r\n/g, '\n').trim();
 
@@ -145,6 +164,29 @@ export function validateOutput(raw: string, policy: PolicyConfig): ValidationRes
   if (labelled !== output) {
     violations.push({ rule: 'label_prefix', severity: 'REPAIRED', message: 'Removed a leading label.' });
     output = labelled;
+  }
+
+  // The handle of the person being answered, at the front, where the platform
+  // has already put them. Only theirs, and only leading: naming them in the
+  // middle of a sentence is a choice, and naming somebody else is a different
+  // rule entirely.
+  const target = targetHandle?.replace(/^@+/, '').trim();
+  if (target) {
+    const deduped = output
+      .replace(new RegExp(`^(?:@${escapeForPattern(target)}[\\s,:-]+)+`, 'i'), '')
+      .trim();
+    if (deduped && deduped !== output) {
+      violations.push({
+        rule: 'leading_mention',
+        severity: 'REPAIRED',
+        message: `Removed a leading @${target}: a reply already addresses them.`,
+      });
+      // "@kind, appreciate that" becomes "appreciate that", which starts a
+      // message with a lower-case letter for no reason a reader can see. Only
+      // a plain letter is touched: a ticker or a link opening the sentence was
+      // written that way deliberately.
+      output = /^[a-z]/.test(deduped) ? deduped[0]!.toUpperCase() + deduped.slice(1) : deduped;
+    }
   }
 
   if (!output) {

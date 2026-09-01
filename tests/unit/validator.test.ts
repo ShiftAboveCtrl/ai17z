@@ -77,3 +77,56 @@ describe('validateOutput', () => {
     expect(result.violations.some((v) => v.severity === 'REJECT')).toBe(true);
   });
 });
+
+/**
+ * A reply on X already addresses the person.
+ *
+ * The platform puts them in the thread, so typing the handle again duplicates
+ * it, spends characters against a cap, and is one of the more recognisable
+ * tells of an automated account. The model does it inconsistently, which reads
+ * worse than always: the same agent answered one compliment with "Thanks,
+ * kind." and the next with "Appreciate that, @kind."
+ *
+ * Only the handle of the person being answered, and only at the front. Naming
+ * them mid-sentence is a choice; naming somebody else is a different rule.
+ */
+describe('the handle of the person being answered', () => {
+  it('comes off the front', () => {
+    const result = validateOutput('@guyletibro The requirement is the real catch here.', policy(), 'guyletibro');
+    expect(result.output).toBe('The requirement is the real catch here.');
+    expect(result.violations.some((v) => v.rule === 'leading_mention')).toBe(true);
+  });
+
+  it('takes the punctuation with it and starts the sentence properly', () => {
+    const result = validateOutput('@kind, appreciate that.', policy(), 'kind');
+    expect(result.output).toBe('Appreciate that.');
+  });
+
+  it('leaves them alone in the middle of a sentence', () => {
+    const result = validateOutput('Appreciate that, @kind.', policy(), 'kind');
+    expect(result.output).toBe('Appreciate that, @kind.');
+  });
+
+  it('never touches somebody else', () => {
+    const result = validateOutput('@someoneelse has a point there.', policy(), 'kind');
+    expect(result.output).toBe('@someoneelse has a point there.');
+  });
+
+  it('handles the handle written twice', () => {
+    expect(validateOutput('@kind @kind doubled up', policy(), 'kind').output).toBe('Doubled up');
+  });
+
+  it('leaves a message that is only the handle, rather than emptying it', () => {
+    // Removing it would leave nothing, and an empty reply is a worse outcome
+    // than a redundant one.
+    expect(validateOutput('@kind', policy(), 'kind').output).toBe('@kind');
+  });
+
+  it('does nothing when there is nobody to answer', () => {
+    expect(validateOutput('@anyone hello', policy(), null).output).toBe('@anyone hello');
+  });
+
+  it('is not fooled by a handle carrying pattern syntax', () => {
+    expect(validateOutput('@a.b+c hello', policy(), 'a.b+c').output).toBe('Hello');
+  });
+});

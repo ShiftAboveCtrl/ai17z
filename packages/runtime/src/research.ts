@@ -167,15 +167,48 @@ function asQuestion(subject: string, timeSensitive: boolean): string {
 const READS_AS_QUESTION =
   /^(?:what|why|how|when|where|who|which|is|are|do|does|did|can|could|would|should|will|whats|whos)\b/i;
 
+/** An interrogative. Necessary for a lookup, nowhere near sufficient. */
+const INTERROGATIVE = /\b(?:what|who|when|where|which|how (?:much|many|old|far|long))\b/i;
+
 /**
- * A question with an answer that exists in the world.
- *
- * Distinct from time-sensitive: "what is the capital of Peru" is not current
- * but is a fact; "you around?" is neither. Kept narrow, because the cost of a
- * wrong yes is a slow reply carrying irrelevant search results.
+ * Words that name something checkable whatever the sentence around them.
  */
-const ASKS_A_FACT =
-  /\b(?:what|who|when|where|which|how (?:much|many|old|far|long))\b|\b(?:weather|price|score|address|founded|located|population|capital|release|launch|deadline)\b/i;
+const FACT_WORD =
+  /\b(?:weather|temperature|price|market ?cap|score|founded|launched|released|population|capital|deadline|rate|address|listed|hacked|exploit|outage)\b/i;
+
+/**
+ * Something in the question that a source could actually be asked about.
+ *
+ * An interrogative on its own is not enough, and treating it as enough is how
+ * a conversation about a fee model produced a web search. "What happens to the
+ * pairs that never migrated" is a question about an idea the two of them were
+ * discussing; there is no page anywhere that answers it, and searching only
+ * fills the prompt with something that sounds related.
+ *
+ * A name, a ticker, a number or a fact word is the difference. "Who founded
+ * Solana" has a name. "What is the weather in Chicago" has both. "What happens
+ * to the pairs that never migrated" has none of them, and the conversation is
+ * the only place its answer lives.
+ *
+ * The capitalisation test misses a lowercase proper noun, which social media is
+ * full of. That is the deliberate shape of this: the rules take the clear
+ * cases, and the classifier model -- when the owner has configured one -- takes
+ * the middle. Wrongly not searching costs a reply that says it does not know;
+ * wrongly searching costs a reply built on something irrelevant.
+ */
+function namesSomethingCheckable(question: string): boolean {
+  if (FACT_WORD.test(question)) return true;
+  // A capitalised word that is not merely the first one.
+  if (/\S\s+[A-Z][A-Za-z]{2,}/.test(question)) return true;
+  if (/\$[A-Za-z]{2,10}\b/.test(question)) return true;
+  // A number that is not part of a word: a year, an amount, a version.
+  if (/(?:^|\s)\d[\d,.]*/.test(question)) return true;
+  return false;
+}
+
+const ASKS_A_FACT = {
+  test: (question: string): boolean => INTERROGATIVE.test(question) && namesSomethingCheckable(question),
+};
 
 /**
  * What to look up, and why.

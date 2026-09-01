@@ -298,7 +298,11 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
   const raw = bundle.job.generatedOutput;
   if (raw === null) throw PipelineError.retryable('output_missing', 'Validation ran before anything was generated.');
 
-  const result = validateOutput(raw, bundle.policy);
+  const result = validateOutput(
+    raw,
+    bundle.policy,
+    bundle.job.resolvedContext?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+  );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
 
   if (!result.ok) {
