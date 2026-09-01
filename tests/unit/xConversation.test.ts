@@ -386,9 +386,13 @@ describe('a focal post beyond the articles that were read', () => {
     text,
     url: `https://x.com/author${id}/status/${id}`,
     index: Number(id),
+    authorDisplayName: null,
+    createdAt: null,
+    authorVerified: null,
     replyingTo: [],
     media: [],
     links: [],
+    quoted: null,
   });
 
   it('refuses rather than guessing when the focal was not among them', () => {

@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import {
-  posting as postingRepo, z } from 'zod';
+import { z } from 'zod';
 import {
   CAPABILITIES,
   Capability,
@@ -18,6 +17,7 @@ import {
   accounts as accountsRepo,
   agents as agentsRepo,
   capabilities as capabilitiesRepo,
+  posting as postingRepo,
   relationships as relationshipsRepo,
   stances as stancesRepo,
   voice as voiceRepo,
