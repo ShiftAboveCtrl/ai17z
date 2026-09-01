@@ -78,6 +78,45 @@ export interface JobSummary extends JobRecord {
   remoteUrl: string | null;
 }
 
+/**
+ * One thing the radar found, and what became of it.
+ *
+ * Shaped by `packages/database/src/repositories/mentions.ts`, which reads it
+ * out of events, discoveries, jobs, actions and conversations rather than
+ * keeping a copy.
+ */
+export type MentionState =
+  | 'REPLIED'
+  | 'WORKING'
+  | 'NEEDS_REVIEW'
+  | 'DECLINED'
+  | 'FAILED'
+  | 'DRY_RUN'
+  | 'NOT_ACTIONED';
+
+export interface MentionRow {
+  eventId: string;
+  type: string;
+  authorHandle: string | null;
+  authorDisplay: string | null;
+  text: string;
+  url: string | null;
+  occurredAt: string | null;
+  ingestedAt: string;
+  foundBy: string[];
+  state: MentionState;
+  jobId: string | null;
+  jobStatus: string | null;
+  decision: { decision: string; value: number; reason: string } | null;
+  replyText: string | null;
+  replyUrl: string | null;
+  repliedAt: string | null;
+  conversationId: string | null;
+  threadMessages: number;
+  ourTurns: number;
+  priorFromPerson: number;
+}
+
 export interface DiagnosticRow {
   id: string;
   jobId: string | null;

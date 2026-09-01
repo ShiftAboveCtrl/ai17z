@@ -77,6 +77,23 @@ event, so the existing unique index is what makes concurrent sightings safe.
 one failure is degraded; only repetition is failing. Collapsing those is exactly
 how the old single surface hid its own outage.
 
+**Finding a reply is not the same as being allowed to act on it.** Two of these
+monitors exist solely to find replies, and for a long time both worked
+perfectly while every reply they found was thrown away: `agent_accounts.trigger_event_types`
+defaulted to `["MENTION"]` in five places, and ingest refuses an event type the
+link does not name. Nineteen of twenty-three replies to a live account were
+dropped there -- never declined, because the engagement heuristic never saw
+them. The default is now `DEFAULT_TRIGGER_EVENT_TYPES`, defined once, and a link
+somebody has deliberately narrowed is still respected.
+
+**Every scroll ends up in the same three places.** The post goes to `events`,
+which monitor saw it to `event_discoveries`, and the exchange to `conversations`
+and `messages` -- and `repositories/mentions.ts` reads all of it back as one
+list: who said something, whether they got an answer, whether this is somebody
+the agent is already talking to, and if nothing happened, why. It is a read, not
+a table. A mention with no job has no row in a list of jobs, which is precisely
+how a monitor being ignored stays invisible.
+
 **Watching is not permission to reply.** A tracked account informs context and
 creates nothing unless `mayTrigger` is turned on deliberately.
 
@@ -103,6 +120,22 @@ be resolvable.
 Familiarity is earned by **exchanges**, not volume. Somebody who mentions the
 agent thirty times and is never answered stays `NEW`, because that is not a
 conversation. Time counts too: twenty exchanges in an afternoon is a thread.
+
+**A conversation is the thread, not the post.** A mention read off a search
+result carries its own status id and nothing else, so ingest has to key the
+conversation on the post; the root is only known once the status page has been
+opened and its ancestors walked. `bindToThread` merges the two at that point.
+Without it every message opens a conversation of its own -- 345 of them holding
+exactly two messages, one from them and one from us -- and the agent meets
+everybody for the first time, every time.
+
+**Knowing when to stop is a taper, not a ceiling.** Each turn the agent has
+already taken in a thread costs the next one more (-6, -18, -36), so answering
+somebody's follow-up is ordinary and being five deep is not. A message that
+closes an exchange -- "makes sense", "fair enough", an emoji -- is recognised as
+closing it, but only once the agent is actually in the thread: the same words
+opening a conversation are a person being friendly, and there is no last word to
+insist on having.
 
 The exchange is recorded **after the reply goes out**. Counting unanswered
 mentions is how somebody persistent comes to look like a regular.

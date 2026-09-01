@@ -1,10 +1,34 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { usePolling, useResource } from '@app/lib/hooks';
-import type { JobSummary } from '@app/lib/types';
+import type { JobSummary, MentionRow, MentionState } from '@app/lib/types';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { EmptyState, ErrorPanel, Loading } from '@app/components/ui';
 import { JobCard } from '@app/components/JobCard';
+import { MentionCard } from '@app/components/MentionCard';
+
+/**
+ * Two questions, not one.
+ *
+ * The jobs list answers "what did the agent do", which is what you want when
+ * something went wrong. The inbox answers "who said something to me and did
+ * they get an answer", which is what you want the rest of the time -- and until
+ * this existed there was nowhere at all to see a mention the agent never picked
+ * up, because a mention with no job has no card in a list of jobs.
+ */
+const VIEWS = [
+  { key: 'inbox', label: 'Mentions' },
+  { key: 'jobs', label: 'Jobs' },
+] as const;
+
+const MENTION_FILTERS: { key: MentionState | 'all'; label: string }[] = [
+  { key: 'all', label: 'Everything' },
+  { key: 'REPLIED', label: 'Replied' },
+  { key: 'NEEDS_REVIEW', label: 'Waiting for you' },
+  { key: 'DECLINED', label: 'Left alone' },
+  { key: 'NOT_ACTIONED', label: 'Not picked up' },
+  { key: 'FAILED', label: 'Failed' },
+];
 
 const FILTERS = [
   { key: 'live', label: 'Live', statuses: 'RECEIVED,CONTEXT_RESOLVED,MEMORY_RESOLVED,GENERATED,VALIDATED,CONTEXT_RESOLVING,MEMORY_RETRIEVING,GENERATING,VALIDATING,EXECUTING' },
@@ -14,10 +38,18 @@ const FILTERS = [
   { key: 'all', label: 'Everything', statuses: '' },
 ] as const;
 
+/** One filter chip, so the two lists cannot drift apart visually. */
+const CHIP = (active: boolean) =>
+  `whitespace-nowrap rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] transition-colors ${
+    active ? 'border-signal-calm/60 bg-signal-calm/[0.08] text-bone' : 'border-ink-line text-bone-faint hover:text-bone-dim'
+  }`;
+
 export function ActivityPage() {
   const [params] = useSearchParams();
   const agentId = params.get('agentId');
+  const [view, setView] = useState<(typeof VIEWS)[number]['key']>('inbox');
   const [filter, setFilter] = useState<(typeof FILTERS)[number]['key']>('all');
+  const [mentionFilter, setMentionFilter] = useState<MentionState | 'all'>('all');
 
   const path = useMemo(() => {
     const query = new URLSearchParams({ limit: '30' });
@@ -27,7 +59,15 @@ export function ActivityPage() {
     return `/api/jobs?${query.toString()}`;
   }, [agentId, filter]);
 
+  const mentionPath = useMemo(() => {
+    const query = new URLSearchParams({ limit: '40' });
+    if (agentId) query.set('agentId', agentId);
+    if (mentionFilter !== 'all') query.set('state', mentionFilter);
+    return `/api/mentions?${query.toString()}`;
+  }, [agentId, mentionFilter]);
+
   const jobs = useResource<{ items: JobSummary[]; total: number }>(path);
+  const mentions = useResource<{ items: MentionRow[]; counts: Record<MentionState, number> }>(mentionPath);
   const counts = useResource<{ counts: Record<string, number> }>(
     agentId ? `/api/jobs/counts?agentId=${agentId}` : '/api/jobs/counts',
   );
@@ -35,45 +75,111 @@ export function ActivityPage() {
   const hasLive = (jobs.data?.items ?? []).some(
     (j) => !['EXECUTED', 'DRY_RUN_COMPLETED', 'PERMANENT_FAILURE', 'CANCELLED'].includes(j.status),
   );
-  usePolling(() => {
-    jobs.reload();
-    counts.reload();
-  }, 3000, hasLive || filter === 'live');
+  usePolling(
+    () => {
+      jobs.reload();
+      counts.reload();
+      mentions.reload();
+    },
+    3000,
+    hasLive || filter === 'live',
+  );
 
   const needsReview =
     (counts.data?.counts.WAITING_FOR_APPROVAL ?? 0) + (counts.data?.counts.REVIEW_REQUIRED ?? 0);
+
+  // The two numbers somebody running a social account actually wants: how many
+  // people got an answer, and how many did not.
+  const replied = mentions.data?.counts.REPLIED ?? 0;
+  const unanswered = (mentions.data?.counts.DECLINED ?? 0) + (mentions.data?.counts.NOT_ACTIONED ?? 0);
 
   return (
     <main className="mx-auto max-w-page px-6 pb-32 pt-32 sm:px-10 sm:pt-44">
       <header className="mb-14">
         <FadeIn>
           <p className="eyebrow mb-6">
-            {jobs.data ? `${jobs.data.total} job${jobs.data.total === 1 ? '' : 's'}` : 'Loading'}
+            {view === 'inbox'
+              ? mentions.data
+                ? `${replied} answered · ${unanswered} left alone`
+                : 'Loading'
+              : jobs.data
+                ? `${jobs.data.total} job${jobs.data.total === 1 ? '' : 's'}`
+                : 'Loading'}
             {needsReview > 0 ? ` · ${needsReview} waiting for you` : ''}
           </p>
         </FadeIn>
         <AnimatedText as="h1" text="Activity" className="monument text-[16vw] leading-[0.84] sm:text-[9vw] lg:text-[6.5vw]" />
       </header>
 
+      <div className="mb-8 flex gap-2">
+        {VIEWS.map((v) => (
+          <button
+            key={v.key}
+            type="button"
+            onClick={() => setView(v.key)}
+            aria-pressed={view === v.key}
+            className={`rounded-full px-5 py-2 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors ${
+              view === v.key ? 'bg-bone text-ink' : 'border border-ink-line text-bone-faint hover:text-bone-dim'
+            }`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
+
       <div className="scroll-x mb-10 -mx-6 px-6 sm:mx-0 sm:px-0">
         <div className="flex gap-2">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setFilter(f.key)}
-              aria-pressed={filter === f.key}
-              className={`whitespace-nowrap rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] transition-colors ${
-                filter === f.key ? 'border-signal-calm/60 bg-signal-calm/[0.08] text-bone' : 'border-ink-line text-bone-faint hover:text-bone-dim'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+          {view === 'inbox'
+            ? MENTION_FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setMentionFilter(f.key)}
+                  aria-pressed={mentionFilter === f.key}
+                  className={CHIP(mentionFilter === f.key)}
+                >
+                  {f.label}
+                  {f.key !== 'all' && mentions.data ? ` ${mentions.data.counts[f.key] ?? 0}` : ''}
+                </button>
+              ))
+            : FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setFilter(f.key)}
+                  aria-pressed={filter === f.key}
+                  className={CHIP(filter === f.key)}
+                >
+                  {f.label}
+                </button>
+              ))}
         </div>
       </div>
 
-      {jobs.loading && !jobs.data ? (
+      {view === 'inbox' ? (
+        mentions.loading && !mentions.data ? (
+          <Loading label="Loading mentions" />
+        ) : mentions.error ? (
+          <ErrorPanel title="Mentions could not be loaded." detail={mentions.error} />
+        ) : (mentions.data?.items.length ?? 0) === 0 ? (
+          <EmptyState
+            title="Nothing has come in."
+            detail={
+              mentionFilter === 'all'
+                ? 'Connect an account and the radar will start recording what it finds here.'
+                : 'No mentions are in this state right now.'
+            }
+          />
+        ) : (
+          <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-2">
+            {mentions.data?.items.map((mention, index) => (
+              <FadeIn key={mention.eventId} delay={Math.min(index * 0.04, 0.3)}>
+                <MentionCard mention={mention} />
+              </FadeIn>
+            ))}
+          </div>
+        )
+      ) : jobs.loading && !jobs.data ? (
         <Loading label="Loading activity" />
       ) : jobs.error ? (
         <ErrorPanel title="Activity could not be loaded." detail={jobs.error} />

@@ -310,6 +310,25 @@ the UI, and a score without its reasons is not shippable.
 see the same mention; the reconciler merges on the remote status id and the
 existing unique index is what makes that safe. Never add a second event store.
 
+**A reply to the agent is an event it can act on.** `agent_accounts.trigger_event_types`
+gates ingest, and defaulting it to `["MENTION"]` alone meant `reply_search` and
+`own_threads` -- two of the four monitors, both working -- had every REPLY they
+found dropped at the door with "not triggered by REPLY". The default is
+`DEFAULT_TRIGGER_EVENT_TYPES` in `contracts/enums.ts` and nowhere else. Whether
+to answer is the engagement heuristic's decision; not being allowed to consider
+it is not a decision.
+
+**A conversation is the thread, not the post.** Ingest keys it on the post
+because a mention read off a search result carries no ancestry; the root is
+known only once the status page has been walked, and `bindToThread` in
+`steps.ts` merges the two then. Without it every message opens a conversation of
+its own and "have we spoken before" is always no.
+
+**The inbox is a read model, never a table.** `repositories/mentions.ts` answers
+"who said something and did they get an answer" out of events, discoveries,
+jobs, actions and conversations. A mention with no job has no card in a list of
+jobs, which is why the reply bug went unseen for as long as it did.
+
 **Media that could not be read is an explicit gap.** The prompt says so and the
 model is told to admit it. Never let an unread image pass silently.
 
