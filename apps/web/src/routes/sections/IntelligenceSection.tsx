@@ -217,8 +217,12 @@ export function IntelligenceSection({
             <Field label="Temperature" htmlFor="mtemp">
               <input id="mtemp" className="field" inputMode="decimal" value={temperature} onChange={(e) => setTemperature(e.target.value)} placeholder="0.7" />
             </Field>
-            <Field label="Max tokens" htmlFor="mmax">
-              <input id="mmax" className="field" inputMode="numeric" value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder="300" />
+            <Field
+              label="Max tokens"
+              htmlFor="mmax"
+              hint="A reasoning model charges its thinking to this too. Leave room, or it runs out before the answer starts."
+            >
+              <input id="mmax" className="field" inputMode="numeric" value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder={editing === 'vision' ? '1500' : '300'} />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-4">

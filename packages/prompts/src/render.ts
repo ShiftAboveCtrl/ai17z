@@ -12,6 +12,8 @@ export type TemplateValues = Record<string, string | number | boolean | null | u
  *   {{#name}}...{{/name}}   include block when the value is non-empty
  *   {{^name}}...{{/name}}   include block when the value is empty
  *
+ * Sections may nest, as long as the nested one has a different name.
+ *
  * No loops, no partials, no arbitrary expressions: prompt templates are content,
  * not code, and a template must never be able to do something surprising.
  */
@@ -25,14 +27,39 @@ export function renderTemplate(template: string, values: TemplateValues): string
     return false;
   };
 
-  const withSections = template.replace(
-    /\{\{([#^])([a-zA-Z0-9_]+)\}\}([\s\S]*?)\{\{\/\2\}\}/g,
-    (_match, kind: string, key: string, body: string) => {
-      const empty = isEmpty(key);
-      const include = kind === '#' ? !empty : empty;
-      return include ? body : '';
-    },
-  );
+  /*
+    Sections nest, so resolving them has to recurse.
+
+    A single left-to-right pass takes the body of an outer section as literal
+    text, markers and all. The default reply template does exactly this:
+
+      {{#parentText}}THE MESSAGE BEING REPLIED TO
+      {{parentText}}
+      {{#parentAttachments}}{{parentAttachments}}
+      {{/parentAttachments}}
+      {{/parentText}}
+
+    The outer section matched, its body was emitted verbatim, and the value pass
+    then replaced the inner `{{parentAttachments}}` and left the two markers
+    behind. Every prompt with a post above it carried two lines of raw template
+    syntax into the model -- which is both noise and a plain statement that the
+    prompt was assembled by a machine.
+
+    Recursing through the body of an included section handles any depth. The
+    body of an excluded one is dropped without looking inside it, which is the
+    same answer and cheaper.
+  */
+  const resolveSections = (text: string): string =>
+    text.replace(
+      /\{\{([#^])([a-zA-Z0-9_]+)\}\}([\s\S]*?)\{\{\/\2\}\}/g,
+      (_match, kind: string, key: string, body: string) => {
+        const empty = isEmpty(key);
+        const include = kind === '#' ? !empty : empty;
+        return include ? resolveSections(body) : '';
+      },
+    );
+
+  const withSections = resolveSections(template);
 
   return withSections.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_match, key: string) => {
     const value = values[key];

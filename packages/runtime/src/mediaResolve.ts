@@ -60,6 +60,59 @@ export async function hasVisionModel(agentId: string): Promise<boolean> {
 }
 
 /**
+ * How large an image may be before it is not worth sending.
+ *
+ * Five megabytes is comfortably above anything X serves at `name=large` and
+ * comfortably below the request limits providers publish. A photograph that
+ * exceeds it is skipped with a reason rather than sent to be rejected.
+ */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** Long enough for a slow CDN, short enough not to hold a reply hostage. */
+const IMAGE_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Fetches the image and inlines it, rather than handing the provider a link.
+ *
+ * Sending a URL assumes the provider can fetch it, and for X media that
+ * assumption is simply false. The first real attempt came back:
+ *
+ *   DeepSeek returned 400: .messages[0].image[0]: Failed to download image
+ *   from https://pbs.twimg.com/media/HRJY_BmWUAAGIcZ?format=jpg&name=large
+ *
+ * The same URL fetched from here returns 81KB of JPEG on the first try with no
+ * headers at all. Whatever pbs.twimg.com does to datacentre traffic, it is not
+ * something to negotiate with from inside a reply: the bytes are three hundred
+ * milliseconds away and we are the ones who found the URL.
+ *
+ * Falls back to the plain URL rather than failing. A provider that can fetch it
+ * should be allowed to, and an agent that cannot see is a reported gap, never a
+ * broken job.
+ */
+async function inlineImage(url: string): Promise<{ url: string; inlined: boolean; reason?: string }> {
+  // Already a data URI, or something we should not be fetching.
+  if (!/^https?:\/\//i.test(url)) return { url, inlined: false, reason: 'not an http url' };
+
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS) });
+    if (!response.ok) return { url, inlined: false, reason: `the image host answered ${response.status}` };
+
+    const type = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+    if (!type.startsWith('image/')) return { url, inlined: false, reason: `the host served ${type || 'no content type'}` };
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.byteLength === 0) return { url, inlined: false, reason: 'the image was empty' };
+    if (bytes.byteLength > MAX_IMAGE_BYTES) {
+      return { url, inlined: false, reason: `the image is ${Math.round(bytes.byteLength / 1024)}KB, past the limit` };
+    }
+
+    return { url: `data:${type};base64,${bytes.toString('base64')}`, inlined: true };
+  } catch (error) {
+    return { url, inlined: false, reason: errorMessage(error) };
+  }
+}
+
+/**
  * Looks at one media item with the configured vision model.
  *
  * Uses the `vision` role only. Falling back to the primary model would send an
@@ -75,6 +128,11 @@ async function analyseOne(input: {
   maxCalls: number;
 }): Promise<MediaUnderstanding> {
   try {
+    const image = await inlineImage(input.url);
+    if (!image.inlined) {
+      log.debug('sending the image by url rather than inline', { url: input.url, reason: image.reason });
+    }
+
     const result = await generate({
       agentId: input.agentId,
       jobId: input.jobId,
@@ -85,7 +143,7 @@ async function analyseOne(input: {
         {
           role: 'user',
           content: input.kind === 'gif' ? GIF_INSTRUCTION : VISION_INSTRUCTION,
-          images: [{ url: input.url, label: input.altText }],
+          images: [{ url: image.url, label: input.altText }],
         },
       ],
     });
