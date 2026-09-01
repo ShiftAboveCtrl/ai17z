@@ -777,9 +777,32 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
 export async function stepResolveMedia(bundle: JobBundle): Promise<void> {
   const { job, policy } = bundle;
   const context = job.resolvedContext;
-  const inventory = MediaInventory.safeParse((context?.meta as { inventory?: unknown })?.inventory);
+  const own = MediaInventory.safeParse((context?.meta as { inventory?: unknown })?.inventory);
+  const parent = MediaInventory.safeParse((context?.meta as { parentInventory?: unknown })?.parentInventory);
 
-  if (!inventory.success || (inventory.data.media.length === 0 && !inventory.data.quoted && inventory.data.links.length === 0)) {
+  const empty = (i: typeof own) =>
+    !i.success || (i.data.media.length === 0 && !i.data.quoted && i.data.links.length === 0);
+
+  /*
+    When the question is about the picture above.
+
+    The adapter already reads the parent's attachments -- that is what
+    `leansOnParent` is for -- and until now the only thing done with them was a
+    line in the prompt saying "that post also carries 1 image. You have not seen
+    the attachments, so do not describe them." Which is honest, and useless.
+
+    Somebody asked "what did he roundtrip on?" under somebody else's screenshot.
+    The image was found, its URL was recorded, and nothing ever looked at it,
+    because this step only ever considered the mention's own attachments and a
+    mention almost never has any. The answer was always in the post above.
+
+    Only when the mention carries nothing itself, so the ordinary case is
+    untouched and no reply pays for two rounds of vision.
+  */
+  const usingParent = empty(own) && !empty(parent);
+  const inventory = usingParent ? parent : own;
+
+  if (empty(inventory)) {
     await observability.emitTrace({
       jobId: job.id,
       agentId: bundle.agent.id,
@@ -794,8 +817,11 @@ export async function stepResolveMedia(bundle: JobBundle): Promise<void> {
     eventId: job.eventId,
     agentId: bundle.agent.id,
     jobId: job.id,
+    // The text the media has to make sense of. For the parent's attachments
+    // that is the mention, because the mention is what asked about them.
     text: context?.incomingText ?? '',
-    inventory: inventory.data,
+    inventory: inventory.data!,
+    onParentPost: usingParent,
     policy: policy.media,
     maxCalls: policy.budget.maxModelCallsPerJob,
   });
@@ -807,12 +833,13 @@ export async function stepResolveMedia(bundle: JobBundle): Promise<void> {
     level: resolved.hasUnderstandingGap ? 'warn' : 'info',
     message: resolved.hasUnderstandingGap
       ? `Something that mattered was not read: ${resolved.gapDetail}`
-      : `Understood ${resolved.items.filter((i) => i.status === 'analyzed').length} of ${resolved.items.length} attached items.`,
+      : `Understood ${resolved.items.filter((i) => i.status === 'analyzed').length} of ${resolved.items.length} attached items${usingParent ? ' on the post above' : ''}.`,
     data: {
       items: resolved.items.map((i) => ({ kind: i.kind, status: i.status, description: i.description })),
       quoted: resolved.quoted ? { authorHandle: resolved.quoted.authorHandle } : null,
       links: resolved.links.map((l) => ({ url: l.url, resolution: l.resolution })),
       hasUnderstandingGap: resolved.hasUnderstandingGap,
+      onParentPost: usingParent,
     },
   });
 

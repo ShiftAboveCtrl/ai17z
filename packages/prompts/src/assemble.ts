@@ -118,8 +118,15 @@ function renderResearchBlock(research: unknown): string {
  * a chart is a question about the chart, and the model should know it is
  * answering without having seen it rather than inventing what it showed.
  */
-function renderParentAttachments(inventory: MediaInventory | undefined): string {
-  if (!inventory) return '';
+/**
+ * What the post above carries, when nobody has looked at it.
+ *
+ * Only reached when the attachments were not analysed -- once they have been,
+ * `renderMedia` describes them properly and saying "you have not seen the
+ * attachments" underneath would contradict the descriptions directly above it.
+ */
+function renderParentAttachments(inventory: MediaInventory | undefined, alreadyDescribed: boolean): string {
+  if (!inventory || alreadyDescribed) return '';
   const parts: string[] = [];
   const images = inventory.media.filter((m) => m.kind === 'image').length;
   const videos = inventory.media.filter((m) => m.kind === 'video' || m.kind === 'gif').length;
@@ -212,14 +219,14 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     revisedBlock: renderRevisions(stance),
     commitmentBlock: renderCommitments(openCommitments),
     callbackBlock: renderCallback(relationship),
-    mediaBlock: renderMedia(mediaContext?.items ?? []),
+    mediaBlock: renderMedia(mediaContext?.items ?? [], mediaContext?.onParentPost ?? false),
     quotedBlock: renderQuoted(mediaContext?.quoted ?? null),
     linkBlock: renderLinks(mediaContext?.links ?? []),
     mediaGap: mediaContext?.hasUnderstandingGap ? mediaContext.gapDetail ?? '' : '',
     threadState: renderThreadState(threadState),
     threadTranscript: renderTranscript(context.thread, persona.displayName),
     parentText: context.parentText ?? '',
-    parentAttachments: renderParentAttachments(parentInventory),
+    parentAttachments: renderParentAttachments(parentInventory, mediaContext?.onParentPost ?? false),
     researchBlock: renderResearchBlock(research),
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
     incomingText: context.incomingText,
