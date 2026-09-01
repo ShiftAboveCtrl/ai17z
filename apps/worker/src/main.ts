@@ -11,6 +11,7 @@ import { PersonaSyncRunner } from './personaSync';
 import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
+import { startLoop } from './loop';
 
 loadEnv();
 const log = createLogger('worker');
@@ -62,7 +63,7 @@ async function main(): Promise<void> {
       .catch((e) => log.warn('heartbeat failed', { message: errorMessage(e) }));
   };
   await announce();
-  const heartbeat = setInterval(() => void announce(), 60_000);
+  const heartbeat = startLoop('heartbeat', 60_000, announce);
 
   /**
    * Frees browser tasks nothing is going to finish.
@@ -81,7 +82,7 @@ async function main(): Promise<void> {
     }
   };
   await sweep();
-  const sweeper = setInterval(() => void sweep(), 60_000);
+  const sweeper = startLoop('recovery-sweep', 60_000, sweep);
 
   /**
    * Publishes what each account's three tabs are doing.
@@ -123,7 +124,7 @@ async function main(): Promise<void> {
       published.delete(accountId);
     }
   };
-  const tabReporter = capabilities.browserCapable ? setInterval(() => void publishTabs(), 10_000) : null;
+  const tabReporter = capabilities.browserCapable ? startLoop('tab-health', 10_000, publishTabs) : null;
 
   const poller = new ChannelPoller();
   const browserTaskRunner = new BrowserTaskRunner(workerId);

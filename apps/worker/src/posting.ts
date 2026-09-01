@@ -1,5 +1,6 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { runDuePosts } from '@xbam/runtime';
+import { startLoop } from './loop';
 
 const log = createLogger('posting');
 
@@ -27,7 +28,7 @@ export class PostScheduler {
   start(): void {
     if (this.timer) return;
     log.info('post scheduler starting', { tickMs: this.tickMs, perTick: this.perTick });
-    this.timer = setInterval(() => void this.tick(), this.tickMs);
+    this.timer = startLoop('posting', this.tickMs, () => this.tick());
   }
 
   stop(): void {

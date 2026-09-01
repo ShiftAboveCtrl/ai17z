@@ -2,6 +2,7 @@ import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, cadences as cadencesRepo } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import { buildChannelContext, ingestNormalizedEvent, nextPollDelayMs } from '@xbam/runtime';
+import { startLoop } from './loop';
 
 const log = createLogger('poller');
 
@@ -30,9 +31,7 @@ export class ChannelPoller {
   start(): void {
     if (this.timer) return;
     log.info('channel poller starting', { tickMs: this.tickMs, perTick: this.perTick });
-    this.timer = setInterval(() => {
-      void this.tick();
-    }, this.tickMs);
+    this.timer = startLoop('poller', this.tickMs, () => this.tick());
   }
 
   stop(): void {
