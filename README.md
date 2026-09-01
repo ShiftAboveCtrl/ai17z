@@ -320,6 +320,14 @@ npm test          # unit + integration, against real Postgres
 npm run typecheck
 ```
 
+## Publishing this
+
+If you are forking or releasing your own copy, [Publishing](docs/PUBLISHING.md)
+lists the handful of things that cannot be done in code: the repository URL, the
+description, and what to be honest about in an announcement.
+
+---
+
 ## Documentation
 
 - [Architecture overview](docs/architecture/OVERVIEW.md)
