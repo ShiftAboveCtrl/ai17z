@@ -1,0 +1,113 @@
+name: CI
+
+# Everything here runs without an X account, a real Chrome session, or anybody's
+# API keys. A contributor who cannot sign in to X still gets a full signal on a
+# pull request; the tests that genuinely need those live in a separate manual
+# suite and are named so nobody mistakes one for the other.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # A throwaway key, generated for this run and thrown away with it. The real
+  # one is never in the repository and never in CI.
+  AI17Z_MASTER_KEY: dGVzdC1vbmx5LW1hc3Rlci1rZXktMzItYnl0ZXMhIQ==
+  DATABASE_URL: postgres://xbam:xbam@localhost:5432/xbam
+
+jobs:
+  check:
+    name: typecheck, tests, build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # Pinned to the major version the migrations are written against.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: xbam
+          POSTGRES_PASSWORD: xbam
+          POSTGRES_DB: xbam
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U xbam"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Browsers for the tests that drive a synthetic page. These prove nothing
+      # about Google Chrome and do not claim to -- the real-Chrome suite skips
+      # loudly rather than passing where Chrome is absent.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Migrate
+        run: npm run migrate
+
+      - name: Tests
+        run: npx vitest run --reporter=basic
+
+      - name: Build web
+        run: npm run build:web
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: removing a secret from the current tree does not
+          # remove it from the commits behind it.
+          fetch-depth: 0
+
+      - name: Look for anything key-shaped
+        run: |
+          set -euo pipefail
+          # Deliberately narrow. A scanner that cries wolf gets switched off.
+          patterns='sk-[a-zA-Z0-9]{20,}|sk-ant-[a-zA-Z0-9-]{20,}|ghp_[a-zA-Z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+          if git grep -nIE "$patterns" -- . ':!*.lock' ':!package-lock.json' > /tmp/hits 2>/dev/null; then
+            echo "Something key-shaped is committed:"
+            # Locations only. The value itself is never printed.
+            cut -d: -f1,2 /tmp/hits
+            exit 1
+          fi
+          echo "No key-shaped strings in the tree."
+
+      - name: Look for an X session
+        run: |
+          set -euo pipefail
+          if git grep -nIE 'auth_token[" ]*[:=][" ]*[a-f0-9]{20,}|\bct0[" ]*[:=][" ]*[a-f0-9]{20,}' -- . > /tmp/x 2>/dev/null; then
+            echo "Something that looks like an X session cookie is committed:"
+            cut -d: -f1,2 /tmp/x
+            exit 1
+          fi
+          echo "No X session cookies in the tree."
+
+      - name: Nothing private is tracked
+        run: |
+          set -euo pipefail
+          # These must never be in the repository regardless of their contents.
+          if git ls-files | grep -E '^\.env$|^storage/|browser-profiles/' ; then
+            echo "Runtime state is tracked. It must not be."
+            exit 1
+          fi
+          echo "No runtime state tracked."
