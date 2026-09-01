@@ -1,4 +1,5 @@
 import type { Account, AgentAccountLink, BrowserEngine, BrowserSession, ChannelId } from '@xbam/shared/contracts';
+import { DEFAULT_TRIGGER_EVENT_TYPES } from '@xbam/shared/contracts';
 import { NotFoundError } from '@xbam/shared';
 import { query, queryOne, withTransaction } from '../pool';
 import { mapRow, mapRows } from '../mapper';
@@ -224,7 +225,7 @@ export async function linkAgentAccount(input: {
       [
         input.agentId,
         input.accountId,
-        JSON.stringify(input.triggerEventTypes ?? ['MENTION']),
+        JSON.stringify(input.triggerEventTypes ?? [...DEFAULT_TRIGGER_EVENT_TYPES]),
         actionType,
         input.enabled ?? true,
       ],

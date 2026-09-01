@@ -36,6 +36,24 @@ const SARCASM = /\b(sure|right|obviously|totally|of course)\b.*\b(lol|\.\.\.)|\/
 const CONFUSED = /\b(confused|(don'?t|do not|cannot|can'?t) (get|understand|follow)|what do you mean|lost me|huh)\b/i;
 
 /**
+ * A message that closes an exchange rather than continuing it.
+ *
+ * These are the things people say when a conversation is finished: agreement,
+ * acknowledgement, a sign-off. Answering one is how an exchange goes from four
+ * turns to nine, with the agent having the last word every time -- which reads
+ * far worse than not answering, because the other person has already stopped.
+ *
+ * Deliberately anchored and short. "Fair enough" on its own ends a thread;
+ * "fair enough, but the fee model still assumes" is somebody still talking, and
+ * the length check below is what keeps those apart.
+ */
+const CLOSING =
+  /^(ok(ay)?|k|kk|cool|nice|great|awesome|perfect|got it|gotcha|makes sense|fair|fair enough|agreed|true|right|yep|yeah|yes|indeed|no worries|np|will do|noted|sounds good|good point|good luck|see you|later|bye|ttyl|o7|gg)[\s!.,]*$/i;
+
+/** Emoji-only, which is the other way people say "we are done here". */
+const REACTION_ONLY = /^[\p{Extended_Pictographic}\p{Emoji_Presentation}️‍\s!.,]+$/u;
+
+/**
  * Handles, generously.
  *
  * Fifteen is X's limit and this used to enforce it, which meant a longer handle
@@ -86,6 +104,16 @@ export interface ReplyValueInput {
   recentRepliesToPerson: number;
   /** True when the agent already answered somewhere in this thread. */
   alreadyRepliedInThread: boolean;
+  /**
+   * How many times the agent has spoken in this thread.
+   *
+   * The difference between "we have talked before" and "I have said four things
+   * and they keep going" is the whole question of when to stop, and a boolean
+   * cannot express it. Answering somebody's follow-up is ordinary; being six
+   * messages deep in a thread nobody else is reading is where an agent starts
+   * to look like it cannot let go.
+   */
+  ourRepliesInThread?: number;
   /**
    * What this agent cares about, from its persona.
    *
@@ -195,9 +223,34 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
     add('recently answered them', -8);
   }
 
-  if (input.threadDepth > input.policy.maxThreadDepth) add('thread has gone on a long way', -25);
   if (input.alreadyRepliedInThread && !input.policy.allowThreadFollowUps) {
     add('already replied in this thread', -35);
+  }
+
+  // How far into an exchange this is, and how much of it has been the agent.
+  //
+  // The old rule was a single cliff at maxThreadDepth: nothing at all up to six
+  // messages, minus twenty-five at seven. That is not how a conversation runs
+  // out. Each turn is a little less worth taking than the one before, so the
+  // cost grows with the number of times the agent has already spoken here, and
+  // the ceiling stays as the point where it stops regardless.
+  const ourTurns = input.ourRepliesInThread ?? (input.alreadyRepliedInThread ? 1 : 0);
+  if (input.policy.allowThreadFollowUps && ourTurns > 0) {
+    // -6, -18, -36 ... deliberately steeper than linear. Two exchanges is a
+    // conversation; five is an agent that will not stop.
+    add(
+      ourTurns === 1 ? 'answered them once in this thread already' : `answered ${ourTurns} times in this thread already`,
+      -6 * ourTurns * ourTurns,
+    );
+  }
+  if (input.threadDepth > input.policy.maxThreadDepth) add('thread has gone on a long way', -25);
+
+  // Somebody saying "makes sense" is not asking for anything. Only counted once
+  // the agent is actually in the thread: the same words opening a conversation
+  // are a person being friendly, and there is nothing to be the last word of.
+  const closing = (CLOSING.test(spoken) || REACTION_ONLY.test(spoken)) && !QUESTION.test(spoken);
+  if (closing && (ourTurns > 0 || input.alreadyRepliedInThread)) {
+    add('they are closing the conversation, not continuing it', -45);
   }
 
   if (THANKS.test(spoken) && words <= 6) add('a thank-you that needs no answer', -15);

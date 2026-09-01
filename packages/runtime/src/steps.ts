@@ -1,7 +1,7 @@
 import type { Capability, JobRecord, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
 import { MediaInventory, positionsConflict } from '@xbam/shared/contracts';
 import type { QualityReport, RelationshipContext, StanceContext } from '@xbam/shared/contracts';
-import { PipelineError, contentSignature, truncate } from '@xbam/shared';
+import { PipelineError, contentSignature, createLogger, errorMessage, truncate } from '@xbam/shared';
 import {
   actions as actionsRepo,
   agents as agentsRepo,
@@ -42,6 +42,8 @@ import { research, whatToResearch } from './research';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
+
+const log = createLogger('steps');
 
 /** Rebuilds the NormalizedEvent shape the adapter expects from the stored row. */
 function eventToNormalized(bundle: JobBundle): NormalizedEvent {
@@ -96,6 +98,54 @@ function selfOriginatedContext(bundle: JobBundle): ResolvedContext {
   };
 }
 
+/**
+ * Files this exchange under the thread it belongs to.
+ *
+ * Ingest keys the conversation on the post, because that is all it has: a
+ * mention read off a search result carries its own status id and no ancestry.
+ * The thread root only becomes known here, once the status page has been opened
+ * and its ancestors walked -- which is also the moment the agent finds out this
+ * is the fourth message in a conversation rather than the first message from a
+ * stranger.
+ *
+ * Skipping this step is what made "have we spoken before" unanswerable: every
+ * message opened a conversation of its own, so 345 of them held exactly two
+ * messages and the relationship history was empty every single time.
+ *
+ * Best-effort on purpose. Bookkeeping that fails must not stop a reply going
+ * out; the worst case is the pre-existing behaviour.
+ */
+async function bindToThread(bundle: JobBundle, resolved: ResolvedContext): Promise<void> {
+  const root = resolved.conversationRef;
+  const current = bundle.job.conversationId;
+  if (!root || !current) return;
+
+  try {
+    const existing = await conversationsRepo.getConversation(current);
+    if (!existing || existing.remoteConversationId === root) return;
+
+    await withTransaction(async (tx) => {
+      const thread = await conversationsRepo.upsertConversation(tx, {
+        agentId: bundle.agent.id,
+        accountId: bundle.job.accountId,
+        channel: bundle.job.channel,
+        remoteConversationId: root,
+        remoteUserId: bundle.event.remoteAuthorId,
+        remoteHandle: resolved.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+      });
+      if (thread.id === current) return;
+      await conversationsRepo.mergeConversation(tx, current, thread.id);
+      await jobsRepo.updateJob(bundle.job.id, { conversationId: thread.id }, tx);
+      bundle.job.conversationId = thread.id;
+    });
+  } catch (error) {
+    log.warn('could not file this message under its thread', {
+      jobId: bundle.job.id,
+      message: errorMessage(error),
+    });
+  }
+}
+
 export async function stepResolveContext(bundle: JobBundle): Promise<void> {
   const adapter = getChannelAdapter(bundle.job.channel);
   const ctx = await adapterContext(bundle);
@@ -103,6 +153,9 @@ export async function stepResolveContext(bundle: JobBundle): Promise<void> {
     bundle.job.actionType === 'POST'
       ? selfOriginatedContext(bundle)
       : await adapter.resolveContext(ctx, eventToNormalized(bundle));
+
+  // Now that the thread is known, put this exchange with the rest of it.
+  await bindToThread(bundle, resolved);
 
   // The adapter reports what it could see remotely. Anything it could not see,
   // but that we already recorded, is filled in from our own conversation history.
@@ -971,6 +1024,9 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
     threadDepth: context?.thread.length ?? 0,
     recentRepliesToPerson: await recentRepliesTo(bundle.agent.id, handle),
     alreadyRepliedInThread: (context?.thread ?? []).some((m) => m.role === 'OUTBOUND'),
+    // Not whether the agent has spoken here, but how often. One follow-up is a
+    // conversation; four is an agent that will not let a thread end.
+    ourRepliesInThread: (context?.thread ?? []).filter((m) => m.role === 'OUTBOUND').length,
     hasParent: Boolean(context?.parentText?.trim()) || (context?.thread.length ?? 0) > 0,
     policy: policy.engagement,
   });

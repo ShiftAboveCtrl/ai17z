@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   CAPABILITIES,
   Capability,
+  DEFAULT_TRIGGER_EVENT_TYPES,
   Disposition,
   Familiarity,
   StancePosition,
@@ -186,7 +187,7 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const body = parseBody(
         z.object({
           accountId: z.string().uuid(),
-          triggerEventTypes: z.array(z.string()).min(1).default(['MENTION']),
+          triggerEventTypes: z.array(z.string()).min(1).default([...DEFAULT_TRIGGER_EVENT_TYPES]),
           actionType: z.string().default('REPLY'),
           enabled: z.boolean().default(true),
           capabilities: z.array(Capability).optional(),
