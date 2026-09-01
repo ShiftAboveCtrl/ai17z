@@ -112,3 +112,29 @@ export async function deleteMockAccountsNamed(page: Page, handlePrefix: string):
     return removed;
   }, handlePrefix);
 }
+
+/**
+ * Removes providers a test created.
+ *
+ * Without this, every run leaves one behind and they accumulate on the health
+ * page, which lists each provider by label. Twenty-four "E2E Mock" rows sitting
+ * above the real ones is not a broken feature, but a health page nobody can
+ * read is a health page nobody reads.
+ */
+export async function deleteProvidersLabelled(page: Page, prefix: string): Promise<number> {
+  return page.evaluate(async (labelPrefix) => {
+    const token = localStorage.getItem('ai17z.session') ?? localStorage.getItem('xbam.session');
+    if (!token) return 0;
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const listed = await fetch('/api/providers', { headers }).then((r) => r.json());
+    const items: { id: string; label: string }[] = listed?.data?.items ?? [];
+    let removed = 0;
+    for (const provider of items) {
+      if (!provider.label.startsWith(labelPrefix)) continue;
+      const res = await fetch(`/api/providers/${provider.id}`, { method: 'DELETE', headers });
+      if (res.ok) removed += 1;
+    }
+    return removed;
+  }, prefix);
+}
