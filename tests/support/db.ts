@@ -42,21 +42,23 @@ async function adminClient(): Promise<pg.Client> {
 }
 
 /**
- * Removes databases left behind by runs that were killed.
+ * Removes test databases nobody is connected to.
  *
- * A dropped connection cannot drop its own database, so an interrupted run
- * leaks one. Left alone they accumulate for as long as somebody keeps
- * interrupting test runs, which is to say indefinitely. Anything older than an
- * hour cannot belong to a run still going.
+ * A process cannot drop the database it is using, and one that is killed never
+ * gets the chance, so runs leak them. Having no connections is the honest test
+ * for "finished": a run still going always holds at least one.
+ *
+ * Done at the start rather than the end for the same reason -- the run that
+ * made the mess is exactly the one that cannot clean it up.
  */
-async function dropAbandoned(client: pg.Client): Promise<void> {
+async function dropFinished(client: pg.Client): Promise<void> {
   const { rows } = await client.query<{ datname: string }>(
-    `SELECT datname FROM pg_database
-      WHERE datname LIKE 'xbam_test_%'
-        AND (pg_stat_file('base/' || oid || '/PG_VERSION', true)).modification < now() - interval '1 hour'`,
+    `SELECT d.datname FROM pg_database d
+      WHERE d.datname LIKE 'xbam_test_%'
+        AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)`,
   );
   for (const row of rows) {
-    await client.query(`DROP DATABASE IF EXISTS "${row.datname}" WITH (FORCE)`).catch(() => undefined);
+    await client.query(`DROP DATABASE IF EXISTS "${row.datname}"`).catch(() => undefined);
   }
 }
 
@@ -68,7 +70,7 @@ export async function setupTestDatabase(): Promise<void> {
 
   const admin = await adminClient();
   try {
-    await dropAbandoned(admin).catch(() => undefined);
+    await dropFinished(admin).catch(() => undefined);
     await admin.query(`CREATE DATABASE "${name}"`);
   } finally {
     await admin.end().catch(() => undefined);
@@ -118,23 +120,18 @@ export async function truncateAll(): Promise<void> {
   throw lastError;
 }
 
+/**
+ * Closes the pool between files, and keeps the database.
+ *
+ * `afterAll` runs once per file, not once per run, so dropping here made a new
+ * database for every file -- sixty-odd per run, none of them cleaned up,
+ * because the process that owns one is the one that cannot drop it. The pool
+ * reopens on the next query against the same URL, so closing it is all this
+ * needs to do; the database is dropped by the next run's `dropFinished`, once
+ * nobody is connected to it.
+ */
 export async function teardownTestDatabase(): Promise<void> {
   await closePool();
-  if (!owned) return;
-  const name = owned;
-  owned = null;
-
-  // Best effort. A database left behind is tidied by the next run rather than
-  // failing this one, which has already reported its results.
-  const admin = await adminClient().catch(() => null);
-  if (!admin) return;
-  try {
-    await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
-  } catch {
-    // Ignored on purpose: see above.
-  } finally {
-    await admin.end().catch(() => undefined);
-  }
 }
 
 export const uniqueSuffix = (): string => randomBytes(4).toString('hex');
