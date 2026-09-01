@@ -5,7 +5,7 @@ A local-first platform for building and running autonomous agents.
 An agent in AI17Z is an identity, a memory, a model, a policy, and the channels it
 is allowed to act on. None of that is code: you create an agent, give it a voice,
 point it at a model, connect an account, and turn it on. The runtime underneath
-is deliberately boring — Postgres, a job table, typed contracts — so that the
+is deliberately boring â€” Postgres, a job table, typed contracts â€” so that the
 interesting part is the agent, not the plumbing.
 
 AI17Z is the successor to a working system called AI4CZ. It keeps that system's
@@ -21,7 +21,7 @@ best ideas, replaces its architecture, and imports its history as one agent.
   memories it retrieved and *why*, every model attempt, and the verification
   that preceded the action.
 - **Idempotent execution.** The same event cannot produce two remote actions.
-  Not by convention — by unique index.
+  Not by convention â€” by unique index.
 - **Memory that spans conversations.** Six scopes, with an explicit write policy
   and deterministic retrieval you can inspect.
 - **Replaceable models.** OpenAI, Anthropic, OpenRouter, Ollama, any
@@ -62,7 +62,7 @@ costs less.
 One line, in PowerShell, in a folder you can write to:
 
 ```powershell
-irm REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_URL | iex
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 | iex
 ```
 
 That clones the repository into `.\ai17z`, checks the machine, and starts it.
@@ -71,7 +71,7 @@ Piping a script from the internet into a shell asks you to trust whatever the
 server sends, and you are allowed to want to look first:
 
 ```powershell
-irm REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_URL -OutFile bootstrap.ps1
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 -OutFile bootstrap.ps1
 notepad bootstrap.ps1
 .\bootstrap.ps1
 ```
@@ -79,7 +79,7 @@ notepad bootstrap.ps1
 Or do it by hand, which is the same three steps the bootstrap runs:
 
 ```powershell
-git clone REPLACE_WITH_AI17Z_GITHUB_URL ai17z
+git clone https://github.com/ShiftAboveCtrl/ai17z.git ai17z
 cd ai17z
 .\install-ai17z.ps1 -Start
 ```
@@ -87,13 +87,13 @@ cd ai17z
 ### Ubuntu
 
 ```bash
-curl -fsSL REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_SH_URL | bash
+curl -fsSL https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.sh | bash
 ```
 
 or by hand:
 
 ```bash
-git clone REPLACE_WITH_AI17Z_GITHUB_URL ai17z
+git clone https://github.com/ShiftAboveCtrl/ai17z.git ai17z
 cd ai17z
 ./install-ai17z.sh --start
 ```
@@ -104,7 +104,7 @@ that part needs a desktop session. The rest runs anywhere Docker does. See
 
 ### No git?
 
-Download the zip from the repository's **Code → Download ZIP**, extract it, and
+Download the zip from the repository's **Code â†’ Download ZIP**, extract it, and
 run the installer from inside the folder. Nothing in AI17Z needs git after the
 files are on disk:
 
@@ -170,7 +170,7 @@ docker compose up -d
 
 A containerised worker has no browser and no display, so it takes jobs and
 leaves browser-backed accounts alone. Run a native worker alongside it for
-those — the Windows script above does this for you, and
+those â€” the Windows script above does this for you, and
 [Driving a real browser](docs/operations/BROWSER_SESSIONS.md) covers the rest.
 
 Then open **http://localhost:8080** and create your owner account.
@@ -208,11 +208,11 @@ Open **http://localhost:5173**.
 ## First run
 
 1. **Create your owner account.** Local, one person, stored as a scrypt hash.
-2. **Add a model provider.** Settings → Add provider. Ollama needs no key.
+2. **Add a model provider.** Settings â†’ Add provider. Ollama needs no key.
    Everything else takes an API key, encrypted at rest with your master key and
    never returned by the API afterwards.
 3. **Create an agent.** Eight short steps. Keep the mock channel.
-4. **Inject a test event.** On the agent page, Activity → *Inject a test event*.
+4. **Inject a test event.** On the agent page, Activity â†’ *Inject a test event*.
    The whole pipeline runs locally: context, memory, prompt, model, validation,
    target verification. Only the final action is simulated.
 5. **Open the job.** Every decision it made is on one page.
@@ -373,7 +373,7 @@ description, and what to be honest about in an announcement.
 
 ## Documentation
 
-- [Engineering notes](docs/ENGINEERING.md) — the invariants, and what broke to produce each one
+- [Engineering notes](docs/ENGINEERING.md) â€” the invariants, and what broke to produce each one
 - [Architecture overview](docs/architecture/OVERVIEW.md)
 - [Data model](docs/architecture/DATA_MODEL.md)
 - [Jobs and the runtime](docs/architecture/JOBS.md)
