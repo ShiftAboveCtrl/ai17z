@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   accounts as accountsRepo,
+  query,
   conversations as conversationsRepo,
   jobs as jobsRepo,
   withTransaction,
@@ -75,6 +76,71 @@ describe('a reply to the agent', () => {
 
     expect(outcome.jobs).toHaveLength(0);
     expect(outcome.skipped[0]!.reason).toContain('REPLY');
+  });
+});
+
+/**
+ * Widening what an agent is triggered by changes what happens next, not what
+ * happened yesterday.
+ *
+ * Adding REPLY to the account links was right, and on a live installation it
+ * would also have handed the agent sixteen replies it had recorded and ignored
+ * over the previous ten hours -- to be answered all at once, as fast as the rate
+ * limit allowed, to people who had moved on. The same trap sits behind
+ * MONITOR_ONLY: switch an agent to autonomous and it answers everything it ever
+ * watched.
+ */
+describe('work is not created retroactively', () => {
+  it('does not queue something recorded hours ago and ignored', async () => {
+    const fixture = await createFixture();
+    const account = await linkedAccount(fixture.ownerId, fixture.agentId, ['MENTION']);
+
+    // Recorded while the link would not act on a reply.
+    const event = mockEvent('a reply nobody queued at the time', { type: 'REPLY' });
+    const first = await ingestNormalizedEvent({ accountId: account.id, event });
+    expect(first.jobs).toHaveLength(0);
+
+    await query("UPDATE events SET ingested_at = now() - interval '10 hours' WHERE id = $1", [first.eventId]);
+
+    // The link is widened, and a monitor sees the same post again.
+    await accountsRepo.linkAgentAccount({ agentId: fixture.agentId, accountId: account.id });
+    const second = await ingestNormalizedEvent({ accountId: account.id, event });
+
+    expect(second.jobs).toHaveLength(0);
+    expect(second.skipped[0]!.reason).toContain('retroactively');
+  });
+
+  it('still queues something recorded a moment ago', async () => {
+    // The window has to be wide enough for an ordinary re-sighting: several
+    // monitors find the same post within a minute, and the second one arriving
+    // must not be mistaken for history.
+    const fixture = await createFixture();
+    const account = await linkedAccount(fixture.ownerId, fixture.agentId, ['MENTION']);
+
+    const event = mockEvent('seen twice in the same minute', { type: 'REPLY' });
+    await ingestNormalizedEvent({ accountId: account.id, event });
+    await accountsRepo.linkAgentAccount({ agentId: fixture.agentId, accountId: account.id });
+
+    const second = await ingestNormalizedEvent({ accountId: account.id, event });
+    expect(second.jobs).toHaveLength(1);
+  });
+
+  it('lets a person trigger one on purpose whatever its age', async () => {
+    // A manual trigger is somebody deciding, which is the one case where acting
+    // on something old is exactly what was asked for.
+    const fixture = await createFixture();
+    const account = await linkedAccount(fixture.ownerId, fixture.agentId, ['MENTION']);
+
+    const event = mockEvent('an old one somebody wants answered', { type: 'REPLY' });
+    const first = await ingestNormalizedEvent({ accountId: account.id, event });
+    await query("UPDATE events SET ingested_at = now() - interval '3 days' WHERE id = $1", [first.eventId]);
+
+    const manual = await ingestNormalizedEvent({
+      accountId: account.id,
+      event,
+      onlyAgentId: fixture.agentId,
+    });
+    expect(manual.jobs).toHaveLength(1);
   });
 });
 
