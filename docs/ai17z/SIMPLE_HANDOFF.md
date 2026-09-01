@@ -193,9 +193,9 @@ Three-tab acceptance in that file: three roles share one browser and get three
 distinct pages; a role reuses its tab; a closed tab recovers without touching
 the others; two operations on one tab serialise.
 
-**Live, on the real `@shiftabovectrl` account:** attached to the running Chrome
+**Live, on the real `@youraccount` account:** attached to the running Chrome
 (pid 63168, port 10482), opened `MENTIONS` on
-`x.com/search?q=to:shiftabovectrl -from:shiftabovectrl&f=live` and
+`x.com/search?q=to:youraccount -from:youraccount&f=live` and
 `NOTIFICATIONS` on `x.com/notifications/mentions` as separate tabs, and after a
 worker reload **adopted** the notifications tab by `window.name` rather than
 opening a fourth.

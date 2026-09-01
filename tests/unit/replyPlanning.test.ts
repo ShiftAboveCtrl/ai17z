@@ -24,7 +24,7 @@ import { parsePlan, questionsIn, whatToResearch, worthPlanning } from '@xbam/run
  */
 
 const REAL_CASE = {
-  incoming: '@shiftabovectrl what did he roundtrip on? also whats the weather like in Chicago today',
+  incoming: '@youraccount what did he roundtrip on? also whats the weather like in Chicago today',
   parent: 'Nothing as waking up on a 30k roundtrip during sleep GM',
   hasUnreadMedia: true,
 };

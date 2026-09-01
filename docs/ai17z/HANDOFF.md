@@ -186,7 +186,7 @@ To find out: add a key in Settings and press Test Connection.
 | Account | State |
 | --- | --- |
 | `@ai4cz_binance` | `ERROR` — stale message from a containerised worker that tried a managed launch before browser routing existed |
-| `@shiftabovectrl` | `NEEDS_AUTH` |
+| `@youraccount` | `NEEDS_AUTH` |
 | `@shiftabovectr` | `ERROR` |
 
 The stale error is cosmetic and clears on the next Test session, which will now
