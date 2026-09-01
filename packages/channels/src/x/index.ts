@@ -919,11 +919,33 @@ async function openComposer(page: Page, timeoutMs = 15_000): Promise<OpenCompose
     .catch(() => false);
   if (!appeared) return null;
 
-  const dialog = page.locator(SEL.dialog).first();
-  const inDialog = (await dialog.count().catch(() => 0)) > 0 && (await dialog.isVisible().catch(() => false));
+  // The *visible* dialog, not the first one.
+  //
+  // X renders two `role="dialog"` nodes on the compose route and the first is
+  // hidden. Taking `.first()` and asking whether it is visible therefore
+  // concluded "not in a dialog", which scoped the submit button to `main` --
+  // where the only candidate is the inline composer's button, permanently
+  // disabled because the inline composer is empty. The text went into the
+  // dialog, the dialog's own button was enabled, and the code was looking at a
+  // different button on the page behind it.
+  //
+  // Five live attempts failed on "X did not enable the post button" while a
+  // diagnostic screenshot showed an enabled Post button holding the right text.
+  const dialogs = page.locator(SEL.dialog);
+  const count = await dialogs.count().catch(() => 0);
+  let dialog: Locator | null = null;
+  for (let index = 0; index < count; index += 1) {
+    const candidate = dialogs.nth(index);
+    if (await candidate.isVisible().catch(() => false)) {
+      dialog = candidate;
+      break;
+    }
+  }
+
+  const inDialog = dialog !== null;
   return {
-    scope: inDialog ? dialog : page.locator('main').first(),
-    editor: inDialog ? dialog.locator(SEL.anyComposer).first() : editor,
+    scope: dialog ?? page.locator('main').first(),
+    editor: dialog ? dialog.locator(SEL.anyComposer).first() : editor,
     inDialog,
   };
 }
@@ -975,6 +997,22 @@ async function composerReplyingTo(page: Page): Promise<string[]> {
  * Best-effort by design: a failure here has nothing to do with whether the
  * reply was sent, and reporting it as one would be wrong.
  */
+/**
+ * Polls until a control becomes enabled, or gives up.
+ *
+ * Playwright has no built-in wait for "enabled", only for visible, attached,
+ * stable and editable. X toggles `aria-disabled` on its submit buttons a beat
+ * after the composer changes, so a single check is a coin toss.
+ */
+async function waitForEnabled(locator: Locator, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await locator.isEnabled().catch(() => false)) return true;
+    await sleep(250);
+  }
+  return false;
+}
+
 async function returnToIdle(page: Page): Promise<void> {
   try {
     if (await page.locator(SEL.dialog).first().isVisible().catch(() => false)) {
@@ -1083,6 +1121,7 @@ async function findOwnReply(
   page: Page,
   text: string,
   me: string[],
+  reloads = 1,
 ): Promise<{ statusId: string; url: string | null } | null> {
   // Sixty characters of fingerprint, not forty of raw text: stripping the
   // punctuation costs length, and a short needle matches the wrong post.
@@ -1092,13 +1131,21 @@ async function findOwnReply(
   const first = await scanForOwnReply(page, needle, me);
   if (first) return first;
 
-  // One reload before giving up. X does not always graft a new reply into the
-  // thread it is showing, and the difference between "not there" and "not
-  // rendered yet" is the difference between posting once and posting twice --
-  // so it is worth three seconds to ask again properly.
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
-  await page.waitForTimeout(3_000);
-  return scanForOwnReply(page, needle, me);
+  // Reload before giving up. X does not always graft a new post into the page
+  // it is showing, and the difference between "not there" and "not rendered
+  // yet" is the difference between posting once and posting twice -- so it is
+  // worth a few seconds to ask again properly.
+  //
+  // A profile timeline lags further behind than a status page, which is why the
+  // post path asks for more attempts than the reply path: a real post appeared
+  // at the top of the profile moments after being reported unconfirmed.
+  for (let attempt = 0; attempt < reloads; attempt += 1) {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
+    await page.waitForTimeout(3_000 + attempt * 2_000);
+    const found = await scanForOwnReply(page, needle, me);
+    if (found) return found;
+  }
+  return null;
 }
 
 /**
@@ -1142,8 +1189,26 @@ async function postOwn(
     // submitting, because posting a mangled composer publishes the mangling.
     await fillComposer(page, composer, request.text);
 
-    if (!(await submit.isEnabled().catch(() => false))) {
-      throw PipelineError.retryable('post_button_disabled', 'X did not enable the post button.');
+    // Wait for X to enable the button rather than asking once.
+    //
+    // A live post failed five times on "X did not enable the post button", and
+    // the diagnostic screenshot taken at the moment of failure showed the
+    // dialog holding the right text with the Post button plainly enabled. X
+    // enables it on a debounce after input, and this asked immediately after
+    // typing and never looked again -- so the check was racing a UI that was
+    // about to agree with it.
+    //
+    // `aria-disabled` is what X actually sets, which Playwright's `isEnabled`
+    // understands; the problem was never the predicate, only when it was asked.
+    const enabled = await submit
+      .isEnabled()
+      .then((ok) => ok || waitForEnabled(submit, 10_000))
+      .catch(() => false);
+    if (!enabled) {
+      throw PipelineError.retryable(
+        'post_button_disabled',
+        'X did not enable the post button within ten seconds of the text being typed.',
+      );
     }
     await submitComposer(page, opened);
     await settle(2_000, 3_500);
@@ -1166,7 +1231,7 @@ async function postOwn(
     }
 
     await goto(page, X_URLS.profile(handle));
-    const readBack = await findOwnReply(page, request.text, me);
+    const readBack = await findOwnReply(page, request.text, me, 3);
     await returnToIdle(page);
 
     if (!readBack) {

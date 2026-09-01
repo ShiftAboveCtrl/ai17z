@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { jobs as jobsRepo, query } from '@xbam/database';
-import { ingestNormalizedEvent } from '@xbam/runtime';
+import { accounts as accountsRepo, content as contentRepo, jobs as jobsRepo, query } from '@xbam/database';
+import { ingestNormalizedEvent, originatePost } from '@xbam/runtime';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { drainAgentJobs } from '../support/runner';
@@ -101,6 +101,94 @@ describe('every action-capable path under a dry run', () => {
     const real = await ingestNormalizedEvent({ accountId: null, onlyAgentId: fixture.agentId, event });
     expect(real.eventCreated).toBe(false);
     expect(real.jobs[0]?.job.id).toBe(rehearsal.jobs[0]?.job.id);
+  });
+});
+
+describe('an original post is not an exception', () => {
+  it('honours a dry run instead of hardcoding a real action', async () => {
+    // This was a hardcoded `dryRun: false`, on the reasoning that a post has no
+    // target to rehearse against. The effect was that the dry-run guarantee
+    // depended on which path the work took, which is not a guarantee.
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({
+      ownerId: fixture.ownerId, channel: 'mock',
+      handle: `poster_${Date.now().toString(36).slice(-6)}`, displayName: 'Poster',
+    });
+    await accountsRepo.linkAgentAccount({
+      agentId: fixture.agentId, accountId: account.id,
+      triggerEventTypes: ['MENTION'], actionType: 'POST', enabled: true,
+    });
+    await contentRepo.addIdea({
+      agentId: fixture.agentId,
+      summary: 'Something the agent thought about earlier and might be worth saying',
+      score: 90,
+    });
+
+    const outcome = await originatePost({ agentId: fixture.agentId, accountId: account.id, dryRun: true });
+    if (!outcome.jobId) return; // No idea survived the backlog rules; nothing to assert.
+
+    const job = await jobsRepo.requireJob(outcome.jobId);
+    expect(job.dryRun).toBe(true);
+    expect(job.actionType).toBe('POST');
+
+    await drainAgentJobs(fixture.agentId);
+    expect(await realActionsFor(fixture.agentId)).toBe(0);
+  });
+
+  it('does not spend the idea it rehearsed', async () => {
+    // A rehearsal said nothing, so the thing it might have said is still
+    // unsaid. Consuming it means the first real post afterwards finds an empty
+    // backlog and stays quiet for a reason that is not true.
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({
+      ownerId: fixture.ownerId, channel: 'mock',
+      handle: `poster_${Date.now().toString(36).slice(-6)}`, displayName: 'Poster',
+    });
+    await accountsRepo.linkAgentAccount({
+      agentId: fixture.agentId, accountId: account.id,
+      triggerEventTypes: ['MENTION'], actionType: 'POST', enabled: true,
+    });
+    await contentRepo.addIdea({
+      agentId: fixture.agentId,
+      summary: 'An idea that should survive being rehearsed against',
+      score: 95,
+    });
+
+    const first = await originatePost({ agentId: fixture.agentId, accountId: account.id, dryRun: true });
+    if (!first.jobId) return;
+
+    // The backlog still has it, so a second run finds something to say.
+    const second = await originatePost({ agentId: fixture.agentId, accountId: account.id, dryRun: true });
+    expect(second.reason).not.toMatch(/nothing in the idea backlog/i);
+  });
+
+  it('does not block the real post it was rehearsing for', async () => {
+    // The real key is anchored to the idea, so a rehearsal that took it would
+    // leave the real post refused as a duplicate of something that never went
+    // out -- permanently, and silently.
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({
+      ownerId: fixture.ownerId, channel: 'mock',
+      handle: `poster_${Date.now().toString(36).slice(-6)}`, displayName: 'Poster',
+    });
+    await accountsRepo.linkAgentAccount({
+      agentId: fixture.agentId, accountId: account.id,
+      triggerEventTypes: ['MENTION'], actionType: 'POST', enabled: true,
+    });
+    await contentRepo.addIdea({
+      agentId: fixture.agentId,
+      summary: 'An idea rehearsed once and then actually posted',
+      score: 95,
+    });
+
+    const rehearsal = await originatePost({ agentId: fixture.agentId, accountId: account.id, dryRun: true });
+    if (!rehearsal.jobId) return;
+    await drainAgentJobs(fixture.agentId);
+
+    const real = await originatePost({ agentId: fixture.agentId, accountId: account.id, dryRun: false });
+    expect(real.reason).not.toMatch(/already exists/i);
+    expect(real.jobId).not.toBe(rehearsal.jobId);
+    expect((await jobsRepo.requireJob(real.jobId!)).dryRun).toBe(false);
   });
 });
 
