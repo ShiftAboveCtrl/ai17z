@@ -5,6 +5,7 @@ import {
   resolveProfileDir,
   leaseSession,
   safeUrl,
+  retagIfLost,
   type LeasedSession,
   type Locator,
   type Page,
@@ -40,6 +41,16 @@ import { buildStatusUrl, extractStatusId, handleFromUrl, looksUnavailable, norma
  * to spare and keeps one context resolution to a few hundred milliseconds.
  */
 const MAX_ARTICLES_READ = 20;
+
+/**
+ * How many times to scroll a feed looking for more.
+ *
+ * Eight passes of two thousand pixels reaches roughly sixty mentions, which is
+ * far more than a poll every two minutes will ever need. The cap exists because
+ * an infinite feed has no end to scroll to, and a poller that tries to find one
+ * never returns.
+ */
+const MAX_SCROLL_PASSES = 8;
 
 /**
  * Short randomised pause between UI steps.
@@ -379,7 +390,30 @@ export const xAdapter: ChannelAdapter = {
 
       const me = selfHandles(ctx);
       const articles = page.locator(SEL.tweetArticle);
-      const count = Math.min(await articles.count(), Math.max(options.limit, 1) * 3);
+
+      // Scroll until there is enough to read, or the page stops growing.
+      //
+      // X renders a viewport's worth and loads the rest as you scroll, so
+      // reading only what was there on arrival sees perhaps five mentions. That
+      // is fine on a quiet account and wrong on a busy one: a burst larger than
+      // the first screen leaves the older half unseen until it happens to drift
+      // back up, which for the oldest of them is never.
+      //
+      // Bounded three ways -- enough articles, no new ones after a scroll, or a
+      // hard cap -- because "scroll to the end" on an infinite feed is not a
+      // thing that finishes.
+      const wanted = Math.max(options.limit, 1) * 3;
+      for (let pass = 0; pass < MAX_SCROLL_PASSES; pass += 1) {
+        const before = await articles.count().catch(() => 0);
+        if (before >= wanted) break;
+        await page.mouse.wheel(0, 2_000).catch(() => undefined);
+        await settle(600, 1_100);
+        const after = await articles.count().catch(() => before);
+        // Nothing new arrived: this is the end of what X will give us.
+        if (after <= before) break;
+      }
+
+      const count = Math.min(await articles.count(), wanted);
       const events: NormalizedEvent[] = [];
       const seen = new Set<string>();
 
@@ -947,6 +981,16 @@ async function returnToIdle(page: Page): Promise<void> {
       await page.keyboard.press('Escape').catch(() => undefined);
     }
     await page.goto(X_URLS.home, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+
+    // Re-assert the tag, because that navigation just cleared it.
+    //
+    // A tab is identified by `window.name`, and a navigation wipes it. Leases
+    // retag on the way in, so work always found its tab -- but between actions
+    // the action tab sat at /home with an empty name. Health reported ACTION as
+    // MISSING while the tab was plainly open, and adoption fell back to "any
+    // untagged tab", which is a guess: open a tab yourself and it could have
+    // been adopted as the one AI17Z posts from.
+    await retagIfLost(page, 'ACTION');
   } catch {
     // Nothing to do about it, and nothing depends on it.
   }
