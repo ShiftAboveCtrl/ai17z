@@ -33,6 +33,22 @@ export async function grantsForAgent(agentId: string): Promise<Map<string, Capab
  * because the set is small and a partially applied permission change is the one
  * outcome that must not be possible.
  */
+/**
+ * Adds one capability without disturbing the others.
+ *
+ * `setGrants` replaces the whole set, which is right for an editor and wrong
+ * for "posting was just switched on": it would silently drop REPLY along the
+ * way, and an agent that stops answering mentions because it started posting is
+ * a worse bug than the one being fixed.
+ */
+export async function grant(agentId: string, accountId: string, capability: Capability): Promise<void> {
+  await query(
+    `INSERT INTO agent_account_capabilities (agent_id, account_id, capability)
+     VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+    [agentId, accountId, capability],
+  );
+}
+
 export async function setGrants(
   agentId: string,
   accountId: string,

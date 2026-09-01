@@ -38,6 +38,8 @@ export interface OriginateResult {
 }
 
 export async function originatePost(input: {
+  /** Overrides the policy default, the way ingest does for a reply. */
+  dryRun?: boolean;
   agentId: string;
   accountId: string | null;
 }): Promise<OriginateResult> {
@@ -74,9 +76,18 @@ export async function originatePost(input: {
   if (!account) return { posted: false, reason: 'The account no longer exists.', jobId: null };
   const channel = account.channel;
   const actionType: ActionType = 'POST';
-  // One job per idea, forever. If the worker dies between creating the job and
-  // recording the attempt, the retry finds the same key and does not post twice.
-  const remoteEventId = `post:${brief.idea.id}`;
+  const dryRun = input.dryRun ?? policy.config.automation.dryRunDefault;
+  // One *real* job per idea, forever. If the worker dies between creating the
+  // job and recording the attempt, the retry finds the same key and does not
+  // post twice.
+  //
+  // A rehearsal gets its own id. The real key is anchored to the idea, so
+  // without this a dry run took it and the real post that followed was refused
+  // as a duplicate of something that never went out -- permanently, and
+  // silently, which is the worst way for a guarantee to fail. It is the same
+  // reasoning as the partial unique index on `actions`: a rehearsal must not
+  // spend anything the real action needs.
+  const remoteEventId = dryRun ? `post:${brief.idea.id}:rehearsal` : `post:${brief.idea.id}`;
   const idempotencyKey = sha256Hex(`${channel}:${input.accountId}:${remoteEventId}:${actionType}:${agent.id}`);
 
   const outcome = await withTransaction(async (tx) => {
@@ -104,9 +115,16 @@ export async function originatePost(input: {
       channel,
       actionType,
       idempotencyKey,
-      // A post is a real action or it is nothing; there is no target to dry-run
-      // against, and REVIEW_BEFORE_ACTION still holds it for a person.
-      dryRun: false,
+      // The same rule as every other action: the policy decides.
+      //
+      // This used to be a hardcoded `false`, on the reasoning that "a post is a
+      // real action or it is nothing; there is no target to dry-run against".
+      // Both halves are wrong. A dry run produces the text without publishing
+      // it, which is exactly what somebody wants before letting an agent post
+      // unattended -- more so than for a reply, because nobody prompted it. And
+      // an agent set to rehearse everything would have published anyway, which
+      // makes the dry-run guarantee conditional on which path the work took.
+      dryRun,
       maxAttempts: policy.config.safety.maxAttempts,
       personaVersionId: agent.personaVersionId,
       policyVersionId: agent.policyVersionId,
@@ -130,7 +148,17 @@ export async function originatePost(input: {
     data: { origin: 'self', ideaId: brief.idea.id, actionType, idempotencyKey },
   });
 
-  log.info('post originated', { agentId: agent.id, ideaId: brief.idea.id, jobId: outcome.job.id });
+  // A rehearsal does not spend the idea.
+  //
+  // Same reasoning as stances and relationships being learned only from what
+  // was published: a dry run said nothing, so the thing it might have said is
+  // still unsaid. Consuming it means the first real post after a rehearsal
+  // finds an empty backlog and stays quiet for a reason that is not true --
+  // and it makes the rehearsal itself unrepeatable, which is most of what a
+  // rehearsal is for.
+  if (dryRun) await releaseIdea(brief.idea.id);
+
+  log.info('post originated', { agentId: agent.id, ideaId: brief.idea.id, jobId: outcome.job.id, dryRun });
   return { posted: true, reason: `Posting: ${brief.idea.summary.slice(0, 200)}`, jobId: outcome.job.id };
 }
 
