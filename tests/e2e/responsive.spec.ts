@@ -54,7 +54,7 @@ for (const size of WIDTHS) {
       // exceeding `clientHeight` is exactly the overflow that used to eat the
       // descenders.
       const clipped = await page.evaluate(() =>
-        [...document.querySelectorAll('.monument')]
+        Array.from(document.querySelectorAll('.monument'))
           .map((el) => {
             const node = el as HTMLElement;
             return {

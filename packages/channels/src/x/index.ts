@@ -931,17 +931,7 @@ async function openComposer(page: Page, timeoutMs = 15_000): Promise<OpenCompose
   //
   // Five live attempts failed on "X did not enable the post button" while a
   // diagnostic screenshot showed an enabled Post button holding the right text.
-  const dialogs = page.locator(SEL.dialog);
-  const count = await dialogs.count().catch(() => 0);
-  let dialog: Locator | null = null;
-  for (let index = 0; index < count; index += 1) {
-    const candidate = dialogs.nth(index);
-    if (await candidate.isVisible().catch(() => false)) {
-      dialog = candidate;
-      break;
-    }
-  }
-
+  const dialog = await visibleDialog(page);
   const inDialog = dialog !== null;
   return {
     scope: dialog ?? page.locator('main').first(),
@@ -980,9 +970,37 @@ async function submitComposer(page: Page, opened: OpenComposer): Promise<void> {
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
 }
 
+/**
+ * The dialog a person can actually see.
+ *
+ * X renders more than one `role="dialog"` node and the first in the DOM is
+ * hidden. Every place that took `.first()` was therefore reading an empty
+ * element and drawing a confident conclusion from it:
+ *
+ *   - the composer scope picked the page behind the dialog, so the submit
+ *     button it watched was the inline composer's, permanently disabled;
+ *   - `composerReplyingTo` read no text, found no "Replying to" line, and
+ *     returned nothing -- which made the wrong-target guard skip itself,
+ *     because the caller only acts on a non-empty result;
+ *   - `returnToIdle` decided no dialog was open and left one up.
+ *
+ * The middle one is the reason this is a helper rather than three fixes: a
+ * safety check that silently stops checking is worse than one that fails.
+ */
+async function visibleDialog(page: Page): Promise<Locator | null> {
+  const dialogs = page.locator(SEL.dialog);
+  const count = await dialogs.count().catch(() => 0);
+  for (let index = 0; index < count; index += 1) {
+    const candidate = dialogs.nth(index);
+    if (await candidate.isVisible().catch(() => false)) return candidate;
+  }
+  return null;
+}
+
 /** Handles from the composer's own "Replying to @someone" line. */
 async function composerReplyingTo(page: Page): Promise<string[]> {
-  const dialog = page.locator(SEL.dialog).first();
+  const dialog = await visibleDialog(page);
+  if (!dialog) return [];
   const text = await dialog.innerText().catch(() => '');
   const line = text.split('\n').find((l) => /^\s*replying to\b/i.test(l));
   if (!line) return [];
@@ -1015,7 +1033,7 @@ async function waitForEnabled(locator: Locator, timeoutMs: number): Promise<bool
 
 async function returnToIdle(page: Page): Promise<void> {
   try {
-    if (await page.locator(SEL.dialog).first().isVisible().catch(() => false)) {
+    if (await visibleDialog(page)) {
       await page.keyboard.press('Escape').catch(() => undefined);
     }
     await page.goto(X_URLS.home, { waitUntil: 'domcontentloaded', timeout: 20_000 });
