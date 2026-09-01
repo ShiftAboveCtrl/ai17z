@@ -32,3 +32,6 @@ accounts.db
 .aider*
 .vscode/
 .idea/
+
+# Repository backups. Never publishable: a bundle is the whole history.
+*.bundle
