@@ -8,13 +8,13 @@
 
   Meant to be run this way:
 
-    irm REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_URL | iex
+    irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 | iex
 
   That pattern -- fetch a script and run it -- asks you to trust whatever the
   server sends. If you would rather look first, and you should, download it,
   read it, and run the file:
 
-    irm REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_URL -OutFile bootstrap.ps1
+    irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 -OutFile bootstrap.ps1
     notepad bootstrap.ps1
     .\bootstrap.ps1
 
@@ -42,8 +42,8 @@ $ErrorActionPreference = 'Stop'
 
 # Replaced when the repository is published. Both point at the same repository:
 # the first is what git clones, the second is what a browser downloads.
-$RepoUrl = 'REPLACE_WITH_AI17Z_GITHUB_URL'
-$ZipUrl  = 'REPLACE_WITH_AI17Z_ZIP_URL'
+$RepoUrl = 'https://github.com/ShiftAboveCtrl/ai17z.git'
+$ZipUrl  = 'https://github.com/ShiftAboveCtrl/ai17z/archive/refs/heads/main.zip'
 
 function Write-Step($Message) { Write-Host "  $Message" -ForegroundColor Cyan }
 function Write-Done($Message) { Write-Host "  $Message" -ForegroundColor Green }
