@@ -29,7 +29,7 @@
     "start:api": "tsx apps/api/src/main.ts",
     "start:worker": "tsx apps/worker/src/main.ts",
     "build:web": "npm --workspace @xbam/web run build",
-    "typecheck": "tsc -b tsconfig.json --pretty && tsc -p tests/e2e/tsconfig.json --noEmit && npm --workspace @xbam/web exec tsc -- --noEmit",
+    "typecheck": "tsc -b tsconfig.json --pretty false && tsc -p tests/e2e/tsconfig.json --noEmit && npm --workspace @xbam/web exec tsc -- --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

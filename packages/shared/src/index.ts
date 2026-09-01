@@ -5,3 +5,4 @@ export * from './logger';
 export * from './crypto';
 export * from './env';
 export * from './util';
+export * from './reference';
