@@ -52,7 +52,50 @@ export async function signIn(page: Page): Promise<void> {
       .catch(() => false);
     if (landed) return;
   }
-  throw new Error('Never reached the agents page after signing in.');
+  throw new Error(await whySignInFailed(page));
+}
+
+/**
+ * Says why sign-in failed, rather than that it did.
+ *
+ * There is exactly one owner: `POST /api/bootstrap/owner` refuses once a user
+ * exists, and login answers "incorrect email or password" without saying which,
+ * because telling an attacker that an address exists is worse than being vague
+ * at a person. Both are right, and together they turn the common contributor
+ * mistake -- running this suite against an installation that already has an
+ * owner -- into a timeout with no explanation. Sixty seconds later you have
+ * nine failures and a screenshot of a login form.
+ *
+ * So the reason is worked out here, where the answer is cheap and harms nobody:
+ * an unauthenticated status endpoint already says whether an owner exists, and
+ * this is a test helper on the same machine as the database.
+ */
+async function whySignInFailed(page: Page): Promise<string> {
+  const needsOwner = await page
+    .evaluate(async () => {
+      const res = await fetch('/api/bootstrap/status');
+      const body = await res.json();
+      return Boolean(body?.data?.needsOwner ?? body?.needsOwner);
+    })
+    .catch(() => null);
+
+  if (needsOwner === null) {
+    return (
+      `Could not reach the API behind ${page.url()}. ` +
+      'Start the stack (npm run dev, or docker compose up) and check XBAM_E2E_URL.'
+    );
+  }
+  if (needsOwner) {
+    return (
+      'The database has no owner and creating one did not work. ' +
+      'This is a real failure in the bootstrap screen, not a configuration problem.'
+    );
+  }
+  return (
+    `This installation already has an owner, and ${OWNER_EMAIL} is not it. ` +
+    'These specs sign in as the owner, so run them against a fresh database, or set ' +
+    'AI17Z_E2E_EMAIL and AI17Z_E2E_PASSWORD to an owner that exists.'
+  );
 }
 
 /** A name unique to this run, so repeated runs never collide. */
