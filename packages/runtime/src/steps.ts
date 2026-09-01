@@ -389,8 +389,29 @@ async function captureFailureDiagnostics(bundle: JobBundle, actionId: string | n
   }
 }
 
+/**
+ * Records the turn, and remembers what was said in it.
+ *
+ * A rehearsal records the half that happened. Somebody really did send the
+ * message, so it is worth remembering; the agent did not send a reply, so its
+ * draft is not something it said.
+ *
+ * This was not enforced here and it caused a wrong answer in front of me. The
+ * same job was rehearsed four times while a media bug was being fixed, and each
+ * rehearsal wrote its draft into thread memory as "me: I can't see the image".
+ * By the fourth run the vision model was working, the picture was described
+ * correctly in the prompt, and the agent read its own three unsent drafts above
+ * it and wrote "Still can't see the image". It was being consistent with
+ * something it had never said.
+ *
+ * The rule already existed for relationships and stances -- learned from what
+ * was published, never from a dry run -- and the transcript and thread memory
+ * were the two places it was not applied.
+ */
 export async function persistTurnAndMemory(bundle: JobBundle, outgoing: string, remoteMessageId: string | null): Promise<void> {
-  if (bundle.job.conversationId) {
+  const published = !bundle.job.dryRun;
+
+  if (bundle.job.conversationId && published) {
     await withTransaction(async (tx) => {
       await conversationsRepo.recordMessage(tx, {
         conversationId: bundle.job.conversationId!,
@@ -413,7 +434,11 @@ export async function persistTurnAndMemory(bundle: JobBundle, outgoing: string, 
       remoteUserId: bundle.event.remoteAuthorId,
       policy: bundle.policy.memory,
     },
-    { incomingText: bundle.job.resolvedContext?.incomingText ?? bundle.event.text, outgoingText: outgoing },
+    {
+      incomingText: bundle.job.resolvedContext?.incomingText ?? bundle.event.text,
+      // The draft of a reply that was never sent is not a thing the agent said.
+      outgoingText: published ? outgoing : '',
+    },
   );
 }
 
