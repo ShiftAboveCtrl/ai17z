@@ -82,6 +82,41 @@ if (-not $dockerUp) {
   Stop-WithReason 'Docker is installed but not running.' 'Start Docker Desktop, wait for the whale to settle, then run this again.'
 }
 
+# -- Ports -------------------------------------------------------------------
+# Checked before Docker is asked to bind them, because the alternative is
+# "Bind for 127.0.0.1:55433 failed: port is already allocated" from a daemon,
+# which tells somebody running a second installation nothing they can act on.
+function Get-EnvPort($Key, $Default) {
+  if (Test-Path '.env') {
+    foreach ($line in Get-Content '.env') {
+      if ($line -match "^\s*$([regex]::Escape($Key))\s*=\s*(.+)$") { $value = $matches[1].Trim() }
+    }
+  }
+  if ($value) { return $value }
+  return $Default
+}
+
+function Test-PortTaken($Port) {
+  return [bool](Get-NetTCPConnection -LocalPort ([int]$Port) -State Listen -ErrorAction SilentlyContinue)
+}
+
+$ourContainers = @()
+try { $ourContainers = @(docker compose ps --format '{{.Name}}' 2>$null) } catch { }
+$alreadyOurs = $ourContainers.Count -gt 0
+
+if (-not $alreadyOurs) {
+  $wanted = @(
+    @{ Name = 'API';      Key = 'AI17Z_API_PORT';  Port = (Get-EnvPort 'AI17Z_API_PORT' '8787') },
+    @{ Name = 'Web';      Key = 'AI17Z_WEB_PORT';  Port = (Get-EnvPort 'AI17Z_WEB_PORT' '8080') },
+    @{ Name = 'Postgres'; Key = 'POSTGRES_PORT';   Port = (Get-EnvPort 'POSTGRES_PORT' '55432') }
+  )
+  $taken = @($wanted | Where-Object { Test-PortTaken $_.Port })
+  if ($taken.Count -gt 0) {
+    $lines = ($taken | ForEach-Object { "    $($_.Name) wants $($_.Port). Set $($_.Key) in .env to something else." }) -join "`n"
+    Stop-WithReason "Something is already using $($taken.Count) of the ports AI17Z needs." "$lines`n`n  If that something is another AI17Z, give this one its own name too:`n    AI17Z_INSTANCE=second"
+  }
+}
+
 if (-not (Test-Path '.env')) {
   Write-Warn 'No .env found. Creating one from .env.example with a fresh master key.'
   Copy-Item '.env.example' '.env'
