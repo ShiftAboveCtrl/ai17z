@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { deleteAgentsNamed, deleteMockAccountsNamed, signIn, uniqueName } from './helpers';
+import { deleteAgentsNamed, deleteMockAccountsNamed, signIn, uniqueName, useInterface } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -33,6 +33,7 @@ async function waitForStatus(page: Page, agentId: string, statuses: string[], ti
 }
 
 test('adds a model provider from settings', async ({ page }) => {
+  await useInterface(page, 'advanced');
   await signIn(page);
   await page.goto('/settings');
   await page.getByRole('button', { name: /add provider/i }).click();
@@ -52,6 +53,7 @@ test('adds a model provider from settings', async ({ page }) => {
 });
 
 test('runs a dry run end to end and shows the trace', async ({ page }) => {
+  await useInterface(page, 'advanced');
   await signIn(page);
   const auth = await token(page);
 
@@ -107,6 +109,7 @@ test('runs a dry run end to end and shows the trace', async ({ page }) => {
 });
 
 test('holds a job for approval, then executes the edited text', async ({ page }) => {
+  await useInterface(page, 'advanced');
   await signIn(page);
   await page.goto(`/agents/${agentId}`);
 
@@ -143,6 +146,7 @@ test('holds a job for approval, then executes the edited text', async ({ page })
 });
 
 test('shows why a memory was retrieved in a different conversation', async ({ page }) => {
+  await useInterface(page, 'advanced');
   await signIn(page);
   await page.goto(`/agents/${agentId}`);
 
@@ -167,6 +171,7 @@ test('shows why a memory was retrieved in a different conversation', async ({ pa
 });
 
 test('memory section counts what the agent actually learned', async ({ page }) => {
+  await useInterface(page, 'advanced');
   await signIn(page);
   await page.goto(`/agents/${agentId}`);
   const memory = page.locator('#memory');
@@ -184,7 +189,8 @@ test('memory section counts what the agent actually learned', async ({ page }) =
 test.afterAll(async ({ browser }) => {
   const page = await browser.newPage();
   try {
-    await signIn(page);
+    await useInterface(page, 'advanced');
+  await signIn(page);
     const agents = await deleteAgentsNamed(page, 'E2E Runtime');
     const accounts = await deleteMockAccountsNamed(page, 'e2e_runtime_');
     console.log(`cleanup: removed ${agents} agent(s) and ${accounts} mock account(s)`);
