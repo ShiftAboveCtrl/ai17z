@@ -62,12 +62,12 @@ fi
 # -- Node --------------------------------------------------------------------
 if ! command -v node >/dev/null 2>&1; then
   row "Node" "FAIL" "Not installed."
-  failures+=("Node: AI17Z needs Node 20 or newer for the worker that drives Chrome.")
+  failures+=("Node: AI17Z needs Node 22 or newer for the worker that drives Chrome.")
 else
   node_major="$(node --version | sed 's/^v//' | cut -d. -f1)"
-  if [ "$node_major" -lt 20 ]; then
+  if [ "$node_major" -lt 22 ]; then
     row "Node" "FAIL" "$(node --version) is too old."
-    failures+=("Node: AI17Z needs Node 20 or newer.")
+    failures+=("Node: AI17Z needs Node 22 or newer.")
   else
     row "Node" "PASS" "$(node --version)"
   fi
@@ -155,6 +155,49 @@ if mkdir -p "$profile_root" 2>/dev/null && touch "$profile_root/.doctor-write-pr
 else
   row "Storage" "FAIL" "Cannot write to $profile_root"
   failures+=("Storage: check permissions, or set XBAM_BROWSER_PROFILE_DIR to a writable location.")
+fi
+
+# -- Database and what is configured -----------------------------------------
+#
+# The Windows doctor has checked these since it was written and this one never
+# did, so the same installation could be called ready by one and unexamined by
+# the other. A newcomer following the Ubuntu path got less help than one
+# following the Windows path, for no reason anybody chose.
+#
+# Read out of the health endpoint rather than by talking to Postgres directly,
+# because that is the same answer the application itself acts on, and it needs
+# no database client installed.
+health="$(curl -fsS -m 6 "http://localhost:${api_port}/api/health" 2>/dev/null || true)"
+if [ -n "$health" ]; then
+  if printf '%s' "$health" | grep -q '"name":"Database","status":"healthy"'; then
+    row "Database" "PASS" "Reachable from the API."
+  else
+    row "Database" "FAIL" "The API cannot reach Postgres."
+    failures+=("Database: check the container with 'docker compose ps' and 'docker compose logs postgres'.")
+  fi
+
+  # Counted by what each component is. Reading the `optional` flag as "is a
+  # provider" is what made the Windows doctor report one AI provider on an
+  # installation that had none: the browser is optional too.
+  providers="$(printf '%s' "$health" | grep -o '"kind":"provider"' | wc -l | tr -d ' ')"
+  if [ "$providers" = "0" ]; then
+    row "AI providers" "NOT CONFIGURED" "None yet. An agent cannot think without one."
+    todo+=("AI providers: open http://localhost:${web_port}, go to Settings, add a provider.")
+  else
+    row "AI providers" "PASS" "$providers configured."
+  fi
+
+  accounts="$(printf '%s' "$health" | grep -o '"kind":"account"' | wc -l | tr -d ' ')"
+  if [ "$accounts" = "0" ]; then
+    row "Accounts" "NOT CONFIGURED" "None yet. Nothing to read or reply to."
+    todo+=("Accounts: create an agent, then connect an account to it.")
+  else
+    row "Accounts" "PASS" "$accounts connected."
+  fi
+else
+  row "Database" "NOT RUNNING" "API is down, so this could not be checked."
+  row "AI providers" "NOT RUNNING" "API is down, so this could not be checked."
+  row "Accounts" "NOT RUNNING" "API is down, so this could not be checked."
 fi
 
 # -- Report ------------------------------------------------------------------

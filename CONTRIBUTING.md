@@ -7,7 +7,7 @@ separated and named so nobody mistakes one for the other.
 ## Getting set up
 
 ```bash
-git clone <repository-url>
+git clone REPLACE_WITH_AI17Z_GITHUB_URL ai17z
 cd ai17z
 ./install-ai17z.sh        # or .\install-ai17z.ps1 on Windows
 npm run db:up
