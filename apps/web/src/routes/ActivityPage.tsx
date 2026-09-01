@@ -83,7 +83,15 @@ export function ActivityPage() {
           detail={filter === 'all' ? 'Inject a test event from an agent activity section to see the pipeline run.' : 'No jobs match this filter right now.'}
         />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-2">
+          {/*
+            `min-w-0` on the children is not decoration. A grid item defaults to
+            `min-width: auto`, so it refuses to shrink below the min-content
+            width of what is inside it -- a card holding a handle and a job
+            summary pushed its track from 342px to 405px, and the whole page
+            scrolled sideways on a phone. The track was always right; the item
+            was ignoring it.
+          */}
           {jobs.data?.items.map((job, index) => (
             <FadeIn key={job.id} delay={Math.min(index * 0.04, 0.3)}>
               <JobCard job={job} showAgent={!agentId} />
