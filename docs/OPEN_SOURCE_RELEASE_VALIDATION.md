@@ -305,10 +305,11 @@ display. That is not an Ubuntu test and is not claimed as one.
 
 Everything that could be done in code has been. These cannot:
 
-1. **Choose a licence.** Nothing in 372 dependencies constrains it — no
-   copyleft anywhere. MIT, Apache-2.0 and AGPL-3.0 are all compatible; the
-   trade-offs are in the README. Until a `LICENSE` file exists, nobody has
-   permission to use this.
+1. ~~Choose a licence.~~ **Done: MIT.** `LICENSE` at the root, declared in
+   `package.json`, and the README says so. Nothing in 372 dependencies argued
+   with it — no copyleft anywhere in the tree. The copyright line reads
+   "AI17Z contributors"; put your own name or handle there if you would rather
+   hold it personally.
 2. **Create the public repository** and set its description and topics.
 3. **Verify Ubuntu**, or find somebody who can. Steps above.
 4. **Connect a second X account**, if multi-account matters to you.
