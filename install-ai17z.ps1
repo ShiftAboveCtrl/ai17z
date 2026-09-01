@@ -53,11 +53,11 @@ if (-not $dockerUp) {
 Write-Done 'Docker is running.'
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Stop-WithReason 'Node.js is not installed.' 'AI17Z needs Node 20 or newer for the worker that drives Chrome. Get it from nodejs.org, then run this again.'
+  Stop-WithReason 'Node.js is not installed.' 'AI17Z needs Node 22 or newer for the worker that drives Chrome. Get it from nodejs.org, then run this again.'
 }
 $nodeMajor = [int](((node --version) -replace '^v', '') -split '\.')[0]
-if ($nodeMajor -lt 20) {
-  Stop-WithReason "Node $nodeMajor is too old." 'AI17Z needs Node 20 or newer. Update from nodejs.org, then run this again.'
+if ($nodeMajor -lt 22) {
+  Stop-WithReason "Node $nodeMajor is too old." 'AI17Z needs Node 22 or newer. Update from nodejs.org, then run this again.'
 }
 Write-Done "Node $(node --version) is fine."
 
