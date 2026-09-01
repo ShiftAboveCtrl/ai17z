@@ -66,6 +66,33 @@ if (Test-Path $Directory) {
   }
 }
 
+# Checked here as well as in the installer, because this is where the directory
+# is chosen and the clone has not happened yet. Cloning five megabytes into a
+# folder that cannot host the project is a slower way to be told the same thing.
+#
+# On Windows the Desktop is inside OneDrive by default, so "run it from my
+# Desktop" is both the natural thing to do and the thing that fails.
+$target = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Directory))
+$syncRoots = @(
+  @{ Name = 'OneDrive'; Path = $env:OneDrive },
+  @{ Name = 'OneDrive'; Path = $env:OneDriveCommercial },
+  @{ Name = 'OneDrive'; Path = $env:OneDriveConsumer },
+  @{ Name = 'Dropbox'; Path = (Join-Path $env:USERPROFILE 'Dropbox') },
+  @{ Name = 'Google Drive'; Path = (Join-Path $env:USERPROFILE 'Google Drive') },
+  @{ Name = 'iCloud Drive'; Path = (Join-Path $env:USERPROFILE 'iCloudDrive') }
+) | Where-Object { $_.Path -and (Test-Path $_.Path) }
+
+$inSync = $syncRoots | Where-Object { $target.StartsWith($_.Path, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+if ($inSync) {
+  Stop-WithReason `
+    "$target is inside $($inSync.Name)." `
+    ("npm links each package into node_modules with a symlink, and a syncing folder refuses those while it reconciles.`n" +
+     "  The install fails several minutes in with `"EBUSY: resource busy or locked, symlink`".`n`n" +
+     "  Run this from somewhere that is not synced. For example:`n" +
+     "    cd $env:USERPROFILE`n" +
+     "    irm <this url> | iex")
+}
+
 # -- Fetch -------------------------------------------------------------------
 # git if it is here, a zip if it is not. Nothing in AI17Z needs git afterwards,
 # so somebody without it is not a second-class installation -- they just cannot

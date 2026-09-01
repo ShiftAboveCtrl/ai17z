@@ -17,9 +17,14 @@
 
 .PARAMETER Start
   Start AI17Z as soon as setup finishes, so the whole thing is one command.
+
+.PARAMETER AllowSyncedFolder
+  Install even though this folder is inside OneDrive, Dropbox or similar.
+  npm's symlinks fail intermittently there; only use this if yours is known to
+  work.
 #>
 [CmdletBinding()]
-param([switch] $SkipInstall, [switch] $Start)
+param([switch] $SkipInstall, [switch] $Start, [switch] $AllowSyncedFolder)
 
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
@@ -80,6 +85,43 @@ if ($chrome) {
   Write-Warn 'Get it from google.com/chrome. Chromium and Edge are not substitutes.'
 }
 
+# -- Where this is being installed -------------------------------------------
+#
+# npm workspaces link every package into node_modules with a real symlink, and
+# a file-syncing folder will not reliably let that happen. OneDrive, Dropbox,
+# Google Drive and iCloud all put a filter driver in front of the directory;
+# while it is reconciling a freshly created tree, the symlink call comes back
+# EBUSY. It is not deterministic, which is worse than if it were: an install can
+# work, and the next one in the same place fails on a different package.
+#
+# This matters more on Windows than it sounds, because Desktop and Documents are
+# inside OneDrive by default on a new machine, so "clone it to my Desktop" is
+# the normal thing to do and the thing that breaks.
+#
+# Refused rather than warned. The failure it prevents arrives several minutes
+# later as `EBUSY: resource busy or locked, symlink`, which says nothing about
+# folders or syncing and sends people looking at npm.
+$here = (Get-Location).Path
+$syncRoots = @(
+  @{ Name = 'OneDrive'; Path = $env:OneDrive },
+  @{ Name = 'OneDrive'; Path = $env:OneDriveCommercial },
+  @{ Name = 'OneDrive'; Path = $env:OneDriveConsumer },
+  @{ Name = 'Dropbox'; Path = (Join-Path $env:USERPROFILE 'Dropbox') },
+  @{ Name = 'Google Drive'; Path = (Join-Path $env:USERPROFILE 'Google Drive') },
+  @{ Name = 'iCloud Drive'; Path = (Join-Path $env:USERPROFILE 'iCloudDrive') }
+) | Where-Object { $_.Path -and (Test-Path $_.Path) }
+
+$inSync = $syncRoots | Where-Object { $here.StartsWith($_.Path, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+if ($inSync -and -not $AllowSyncedFolder) {
+  Stop-WithReason `
+    "This folder is inside $($inSync.Name), which cannot host a Node project reliably." `
+    ("npm links each package into node_modules with a symlink, and a syncing folder refuses those while it reconciles: you get`n" +
+     "  EBUSY: resource busy or locked, symlink`n`n" +
+     "  Move it somewhere outside $($inSync.Name) and run this again. Anywhere on the disk that is not synced will do:`n" +
+     "    C:\dev\ai17z    or    $env:USERPROFILE\ai17z`n`n" +
+     "  If you are certain your setup is fine, re-run with -AllowSyncedFolder.")
+}
+
 # -- Configuration -----------------------------------------------------------
 if (Test-Path '.env') {
   Write-Done '.env already exists, leaving it alone.'
@@ -119,7 +161,9 @@ if ($SkipInstall) {
   Write-Step 'Installing dependencies (this takes a few minutes the first time)...'
   npm install
   if ($LASTEXITCODE -ne 0) {
-    Stop-WithReason 'npm install failed.' 'The output above says why. A stale node_modules is the usual cause: delete it and run this again.'
+    Stop-WithReason 'npm install failed.' ("The output above says why. Two common causes:`n" +
+      "    EBUSY / symlink   the folder is inside OneDrive or another syncing folder. Move it out.`n" +
+      "    anything else     a stale node_modules. Delete it and run this again.")
   }
   Write-Done 'Dependencies installed.'
 }
