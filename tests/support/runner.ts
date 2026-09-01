@@ -16,7 +16,14 @@ const WORKER = 'test-worker';
 export async function drainAgentJobs(agentId: string, maxRounds = 12): Promise<number> {
   let processed = 0;
   for (let round = 0; round < maxRounds; round += 1) {
-    const claimed = (await jobsRepo.claimJobs(WORKER, 5, 60_000)).filter((j) => j.agentId === agentId);
+    // Narrowed in the claim rather than after it. Claiming broadly and
+    // filtering locks jobs this drain will not run, and then stops early
+    // because the filtered list came back empty.
+    const claimed = await jobsRepo.claimJobs(WORKER, 5, 60_000, {
+      browserCapable: true,
+      jobsCapable: true,
+      agentId,
+    });
     if (claimed.length === 0) break;
     for (const job of claimed) {
       await runJob(job, WORKER);

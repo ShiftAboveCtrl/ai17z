@@ -94,6 +94,11 @@ export interface ClaimOptions {
    * another worker could have completed.
    */
   browserCapable: boolean;
+  /**
+   * Narrow the claim to one agent. Tests only: production claims across every
+   * agent, which is what makes several workers share a queue.
+   */
+  agentId?: string;
   /** When false, this worker claims only browser work. */
   jobsCapable: boolean;
 }
@@ -112,6 +117,14 @@ export async function claimJobs(
       ? 'requires_browser'
       : 'NOT requires_browser';
 
+  // Narrowing to one agent is for tests, which need to drive their own work
+  // without draining somebody else's. It has to happen inside the claim: a
+  // caller that claims broadly and filters afterwards has already locked jobs
+  // it is not going to run, and stops early believing the queue is empty.
+  const onlyAgent = options.agentId ? 'AND agent_id = $5' : '';
+  const params: unknown[] = [workerId, leaseMs / 1000, [...CLAIMABLE_JOB_STATUSES], limit];
+  if (options.agentId) params.push(options.agentId);
+
   const rows = await query(
     `UPDATE jobs SET locked_by = $1,
                      lock_expires_at = now() + make_interval(secs => $2::double precision),
@@ -121,13 +134,14 @@ export async function claimJobs(
          WHERE status = ANY($3::text[])
            AND run_at <= now()
            AND ${capability}
+           ${onlyAgent}
            AND (locked_by IS NULL OR lock_expires_at < now())
          ORDER BY priority ASC, run_at ASC
          FOR UPDATE SKIP LOCKED
          LIMIT $4
       )
       RETURNING ${COLUMNS}`,
-    [workerId, leaseMs / 1000, [...CLAIMABLE_JOB_STATUSES], limit],
+    params,
   );
   return mapRows<JobRecord>(rows);
 }
