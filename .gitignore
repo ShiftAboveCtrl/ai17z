@@ -25,3 +25,10 @@ var/
 # commits their credentials without noticing.
 accounts.db
 *.db-journal
+
+# Editor and assistant tooling, per-developer rather than per-project.
+.claude/
+.cursor/
+.aider*
+.vscode/
+.idea/

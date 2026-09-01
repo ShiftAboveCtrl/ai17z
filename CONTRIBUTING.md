@@ -73,7 +73,7 @@ fail for a reason unrelated to your change.
 
 ## Things worth knowing before you change them
 
-Read `CLAUDE.md`. It is long, and every paragraph in it is there because
+Read [Engineering notes](docs/ENGINEERING.md). It is long, and every paragraph in it is there because
 something went wrong once. The short version:
 
 - **Only the worker opens a browser.** A container cannot drive Chrome on the

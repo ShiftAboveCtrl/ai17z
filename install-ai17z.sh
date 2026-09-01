@@ -106,6 +106,12 @@ fi
 echo
 echo "  ${GREEN}Setup finished.${OFF}"
 echo
+# Started from here when asked, so somebody can install and run in one command
+# rather than reading which script comes next. Both are idempotent.
+if [ "${START_AFTER:-0}" = "1" ] || [ "${1:-}" = "--start" ]; then
+  exec ./start-ai17z.sh
+fi
+
 echo "  Next:"
 echo "    ${GREY}./start-ai17z.sh     start everything${OFF}"
 echo "    ${GREY}./doctor-ai17z.sh    check it over${OFF}"
