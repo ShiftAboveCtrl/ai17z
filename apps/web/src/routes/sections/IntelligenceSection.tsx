@@ -6,11 +6,39 @@ import type { ModelConfig, ProviderCredential } from '@app/lib/types';
 import { EmptyState, Field, Modal, Spinner } from '@app/components/ui';
 import { IndexedRow, Section } from './Section';
 
+/**
+ * The roles this screen can set, and what each one actually does.
+ *
+ * Two were missing and one was mislabelled, which had a cost. There was no row
+ * for `vision`, so there was no way to give an agent one from anywhere in the
+ * application -- an agent asked about a screenshot could never see it, and the
+ * only sign was a skipped media row in a trace. And `classifier` said "reserved
+ * for future classification steps" while three code paths were already asking
+ * for it, so anyone reading this screen would reasonably leave it empty.
+ *
+ * A role that nothing asks for does not belong here. These four are read by
+ * `mediaResolve`, `plan`, `arcs` and `voice`; the rest of MODEL_ROLES is not
+ * wired to anything yet and would be a promise rather than a setting.
+ */
 const ROLES = [
   { role: 'primary', label: 'Primary model', hint: 'Tried first for every generation.' },
   { role: 'fallback_1', label: 'Fallback', hint: 'Used when the primary fails or is unavailable.' },
   { role: 'fallback_2', label: 'Second fallback', hint: 'Last resort before the job retries later.' },
-  { role: 'classifier', label: 'Cheap classifier', hint: 'Reserved for future classification steps.' },
+  {
+    role: 'vision',
+    label: 'Vision',
+    hint: 'Reads images and video frames. Without one, an image is an admitted gap.',
+  },
+  {
+    role: 'classifier',
+    label: 'Cheap classifier',
+    hint: 'Decides what to look up, and summarises long threads. Small and fast is the point.',
+  },
+  {
+    role: 'voice_rewrite',
+    label: 'Voice rewrite',
+    hint: 'Optional second pass that pulls a draft back towards the agent\'s own voice.',
+  },
 ] as const;
 
 export function IntelligenceSection({
@@ -75,6 +103,26 @@ export function IntelligenceSection({
 
   const selected = providers.data?.items.find((p) => p.id === providerId);
 
+  /*
+    Two roles do their damage by being absent rather than wrong, so they are
+    called out rather than left as another "Not set" row among nine.
+
+    Without `vision` an agent replies to a screenshot having never looked at it,
+    and everything succeeds: the media is marked skipped, the reply is written,
+    and the only sign is one line in a trace nobody opens. Somebody asked "what
+    did he roundtrip on?" under a trade screenshot and got an answer assembled
+    from three articles about sleep.
+
+    Without `classifier` the agent still works, but it decides what to look up
+    from patterns alone, which is right at both ends of the range and blind in
+    the middle.
+  */
+  const hasVision = models.some((m) => m.role === 'vision');
+  const hasClassifier = models.some((m) => m.role === 'classifier');
+  const visionCandidates = (providers.data?.items ?? [])
+    .flatMap((p) => p.availableModels.map((m) => ({ provider: p.label, model: m })))
+    .filter((c) => /vision|vl\b|multimodal|omni/i.test(c.model));
+
   return (
     <Section
       id="intelligence"
@@ -83,6 +131,40 @@ export function IntelligenceSection({
       heading="What it thinks with."
       lede="Providers are adapters. Swapping one changes nothing about the persona, the memory, or the pipeline, and every attempt is recorded whether it succeeded or not."
     >
+      {(providers.data?.items.length ?? 0) > 0 && !hasVision && (
+        <div className="mb-8 rounded-2xl border border-signal-wait/30 bg-signal-wait/[0.06] p-5">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-signal-wait">Cannot read images</p>
+          <p className="mt-2 break-words text-sm leading-relaxed text-bone-dim">
+            No vision model is set, so an image on a post is described to this agent as something it could not see. It
+            will say so rather than guess, but it cannot answer a question about a chart or a screenshot.
+            {visionCandidates.length > 0 && (
+              <>
+                {' '}
+                Your providers offer{' '}
+                <span className="text-bone">{visionCandidates.slice(0, 3).map((c) => c.model).join(', ')}</span>.
+              </>
+            )}
+          </p>
+          <button type="button" className="btn-ghost mt-4" onClick={() => openEditor('vision')}>
+            Set a vision model
+          </button>
+        </div>
+      )}
+
+      {(providers.data?.items.length ?? 0) > 0 && !hasClassifier && (
+        <div className="mb-8 rounded-2xl border border-ink-line p-5">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-bone-faint">Deciding without help</p>
+          <p className="mt-2 break-words text-sm leading-relaxed text-bone-dim">
+            No classifier model is set. What to look up before replying is decided by rules alone, which is reliable for
+            an ordinary reply and weaker on a message that asks two different things at once. A cheap, fast model here
+            is asked only when there is something to decide.
+          </p>
+          <button type="button" className="btn-ghost mt-4" onClick={() => openEditor('classifier')}>
+            Set a classifier model
+          </button>
+        </div>
+      )}
+
       {providers.data?.items.length === 0 ? (
         <EmptyState
           title="No providers configured."

@@ -41,12 +41,27 @@ with the tree verified unchanged afterwards:
 
 ```
 frozen at: 8f8626f
-typecheck errors: 0
+typecheck errors: 0     <- WRONG, see below
 run 1:  762 passed (762)
 run 2:  756 passed | 6 skipped (762)
 run 3:  762 passed (762)
 SOURCE UNCHANGED: 8f8626f
 ```
+
+**Correction: the typecheck line above was false.** `tsc` puts colour codes
+between the words "error" and "TS", so the `grep -c 'error TS'` this and several
+other checks relied on matched nothing and reported zero however many errors
+there were. At that commit there were five: four in
+`tests/integration/monitorScroll.test.ts` (a required field missing from a test
+fixture) and, once the reply-planning work started, one in the web app --
+including the one that mattered, `'vision'` not being assignable, because there
+was no vision row on the screen that sets model roles.
+
+None of them affected the running system, and CI would have caught all five
+because it runs `npm run typecheck` directly rather than grepping it. But the
+number in this document was not measured, and the test counts beside it were.
+`--pretty false` is now on the typecheck script so the output is greppable, and
+the count below was taken after that change.
 
 The six skips in run 2 are the real-Chrome suite, which skips rather than
 passes when a Chrome from a previous run still holds the profile. Nothing else
@@ -56,9 +71,9 @@ Reading that output rather than its last line found two more defects (12 and 13
 below). After fixing them, at the tip:
 
 ```
-typecheck errors: 0
-Test Files  71 passed (71)
-     Tests  763 passed (763)      no unhandled errors
+typecheck: clean (verified with colour off, and by exit code)
+Test Files  74 passed (74)
+     Tests  816 passed (816)      no unhandled errors
 ```
 
 That is one run, not three. The three-run above stands as the frozen evidence;
