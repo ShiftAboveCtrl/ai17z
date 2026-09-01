@@ -61,6 +61,57 @@ export async function waitForInFlight(job: JobRecord, resumeStatus: JobRecord['s
   });
 }
 
+/**
+ * Waits out a limit that has not been reached yet, without spending an attempt.
+ *
+ * A rate ceiling, a cooldown, quiet hours: none of these are failures. Nothing
+ * was attempted and nothing went wrong -- the agent is simply not allowed to
+ * act yet, and it knows exactly how long for, because the gate returns the
+ * number.
+ *
+ * Treating them as failures was catastrophic in the small. A reply blocked by a
+ * thirty-second cooldown was retried on the ordinary backoff -- 1s, 2s, 7s, 8s
+ * -- so all five attempts were spent in eighteen seconds, every one of them
+ * inside the same cooldown window, and the job went to review saying "Cooling
+ * down between actions (1s remaining). (gave up after 5 attempts)". One second
+ * of patience would have sent it. The reply was written, validated and scored,
+ * and then quietly never went out.
+ *
+ * A minute of slack on top, because the ceiling is computed from a clock that
+ * has already moved by the time the job is claimed again.
+ */
+export async function waitForLimit(
+  job: JobRecord,
+  resumeStatus: JobRecord['status'],
+  reason: string,
+  retryAfterMs: number,
+): Promise<void> {
+  const delay = Math.max(1_000, Math.min(retryAfterMs + 1_000, 6 * 60 * 60_000));
+  const runAt = new Date(Date.now() + delay).toISOString();
+  await jobsRepo.updateJob(job.id, {
+    status: resumeStatus,
+    runAt,
+    errorClass: 'RETRYABLE',
+    lastError: reason,
+    releaseLock: true,
+  });
+  await observability.emitTrace({
+    jobId: job.id,
+    agentId: job.agentId,
+    type: 'JOB_RETRY_SCHEDULED',
+    level: 'info',
+    message: `Waiting ${describeWait(delay)} for a limit to clear; this does not count as an attempt.`,
+    data: { reason, runAt, attempt: job.attemptCount, retryAfterMs },
+  });
+}
+
+function describeWait(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 90) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 90 ? `${minutes}m` : `${Math.round(minutes / 60)}h`;
+}
+
 /** Schedules a retry with jittered exponential backoff and records why. */
 export async function scheduleRetry(job: JobRecord, resumeStatus: JobRecord['status'], reason: string): Promise<void> {
   const attempt = job.attemptCount + 1;

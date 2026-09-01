@@ -1,4 +1,4 @@
-import { createLogger, errorMessage } from '@xbam/shared';
+import { createLogger, errorMessage, refersToSomethingElse } from '@xbam/shared';
 
 const log = createLogger('research');
 
@@ -97,24 +97,85 @@ export interface ResearchSubject {
 }
 
 /**
- * Turns a post into something worth asking an answer engine.
+ * The separate things somebody asked in one message.
+ *
+ * People ask two questions at once and expect two answers. "what did he
+ * roundtrip on? also whats the weather like in Chicago today" is a question
+ * about a screenshot and a question about the weather, and treating it as one
+ * subject gets neither: what actually happened was a web search for the parent
+ * post's text, three articles about waking up at 3am, and no weather at all.
+ *
+ * Split on question marks, keeping the run of text before each one. A trailing
+ * fragment with no question mark is kept only if it reads as a request --
+ * "explain the fee change" is a question without the punctuation.
+ */
+export function questionsIn(text: string): string[] {
+  const spoken = text
+    .replace(/@[A-Za-z0-9_]{1,32}/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!spoken) return [];
+
+  const questions: string[] = [];
+  let cursor = 0;
+  for (let i = 0; i < spoken.length; i += 1) {
+    if (spoken[i] !== '?') continue;
+    const clause = spoken.slice(cursor, i).trim();
+    cursor = i + 1;
+    if (clause) questions.push(trimConnective(clause));
+  }
+
+  const tail = spoken.slice(cursor).trim();
+  if (tail && IMPERATIVE_ASK.test(tail)) questions.push(trimConnective(tail));
+  // No punctuation anywhere, but the whole message is a request.
+  if (questions.length === 0 && IMPERATIVE_ASK.test(spoken)) questions.push(spoken);
+
+  return questions.filter((q) => q.split(/\s+/).filter(Boolean).length >= 2);
+}
+
+/** "also whats the weather" is a question; "also" is not part of it. */
+function trimConnective(clause: string): string {
+  return clause.replace(/^(?:and|also|plus|but|so|then|oh|btw|by the way)[,\s]+/i, '').trim();
+}
+
+/** A request phrased without a question mark. */
+const IMPERATIVE_ASK = /\b(?:explain|tell me|what'?s|whats|how much|how many|any (?:news|update)|look up|check)\b/i;
+
+/**
+ * Turns one question into something worth asking an answer engine.
  *
  * The search behind this used to be a keyword engine, where pasting two hundred
  * characters of somebody's post was fine: more words, more overlap, more
  * results. An answer engine is not that. It reads the query as a question, and
  * a wall of text with no question in it gets a wall of text back.
  *
- * So: a length a person would actually type, and a time frame when the reason
- * for searching was that the answer changes. "Latest" is doing real work there
- * -- without it an answer engine happily summarises something from two years
- * ago, which is exactly the failure the lookup existed to prevent.
+ * A question already phrased as one is passed through: "whats the weather like
+ * in Chicago today" is exactly what a person would type. The "latest on" prefix
+ * is only for a *subject* -- a post the agent was asked about, which is a topic
+ * rather than a question -- where without it an answer engine happily
+ * summarises something from two years ago.
  */
 function asQuestion(subject: string, timeSensitive: boolean): string {
-  // Long enough to carry the subject, short enough to read as a question.
   const trimmed = subject.split(/(?<=[.!?])\s/)[0]!.trim() || subject.trim();
   const core = (trimmed.length > 120 ? trimmed.slice(0, 120).replace(/\s\S*$/, '') : trimmed).trim();
-  return timeSensitive ? `What is the latest on: ${core}` : core;
+  if (READS_AS_QUESTION.test(core)) return core.endsWith('?') ? core : core + '?';
+  return timeSensitive ? 'What is the latest on: ' + core : core;
 }
+
+/** Already phrased as a question, so it needs no framing. */
+const READS_AS_QUESTION =
+  /^(?:what|why|how|when|where|who|which|is|are|do|does|did|can|could|would|should|will|whats|whos)\b/i;
+
+/**
+ * A question with an answer that exists in the world.
+ *
+ * Distinct from time-sensitive: "what is the capital of Peru" is not current
+ * but is a fact; "you around?" is neither. Kept narrow, because the cost of a
+ * wrong yes is a slow reply carrying irrelevant search results.
+ */
+const ASKS_A_FACT =
+  /\b(?:what|who|when|where|which|how (?:much|many|old|far|long))\b|\b(?:weather|price|score|address|founded|located|population|capital|release|launch|deadline)\b/i;
 
 /**
  * What to look up, and why.
@@ -122,14 +183,26 @@ function asQuestion(subject: string, timeSensitive: boolean): string {
  * Returns nothing for the ordinary case, which is most of them: an agent that
  * searches the web before every reply is slow, expensive, and no better at
  * answering "nice one".
+ *
+ * The order of business is: things named unambiguously in the text (a contract
+ * address, a ticker) first; then each question the person actually asked; and
+ * only if they asked nothing specific of their own, the subject of the post
+ * they were replying to.
+ *
+ * That last fallback used to be the *only* behaviour, which is the failure this
+ * exists to prevent. Asked "what did he roundtrip on? also whats the weather
+ * like in Chicago today", it searched the parent post's text and came back with
+ * three articles about waking up at 3am. Neither question was looked up. One of
+ * them could not have been -- the answer was in an image -- and that is the
+ * other half of the rule below.
  */
 export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
   const lookups: Lookup[] = [];
-  const haystack = `${subject.incoming}\n${subject.parent ?? ''}`;
+  const haystack = subject.incoming + '\n' + (subject.parent ?? '');
   const seen = new Set<string>();
 
   const add = (lookup: Lookup) => {
-    const key = `${lookup.kind}:${lookup.query.toLowerCase()}`;
+    const key = lookup.kind + ':' + lookup.query.toLowerCase();
     if (seen.has(key) || lookups.length >= max) return;
     seen.add(key);
     lookups.push(lookup);
@@ -146,7 +219,7 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
     add({ kind: 'token', query: match[0], reason: 'A contract address was mentioned.' });
   }
   for (const match of haystack.matchAll(TICKER)) {
-    add({ kind: 'token', query: match[1]!, reason: `A ticker ($${match[1]}) was mentioned.` });
+    add({ kind: 'token', query: match[1]!, reason: 'A ticker ($' + match[1] + ') was mentioned.' });
   }
 
   const asking = ASKS_ABOUT_SOMETHING.some((re) => re.test(subject.incoming));
@@ -159,9 +232,42 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
     }
   }
 
-  if (asking || timeSensitive) {
-    // Search for what the conversation is about, not for the question itself:
-    // "what is this about" is a useless query, and the parent is the subject.
+  // Each question they actually asked, judged on its own.
+  const questions = questionsIn(subject.incoming);
+  let answeredSomething = false;
+  for (const question of questions) {
+    // A question about something on the page is not a question for the web.
+    // "What did he roundtrip on" is answered by looking at the screenshot; a
+    // search engine can only return something else that sounds similar, and it
+    // will, confidently.
+    if (refersToSomethingElse(question) && (subject.hasUnreadMedia || subject.parent)) continue;
+
+    // Not everything with a question mark needs the internet. "you around?"
+    // does not, and neither does "worth it?". Two conditions together: long
+    // enough to name its own subject, and either current or a matter of fact.
+    if (question.split(/\s+/).filter(Boolean).length < 3) continue;
+    const questionIsTimely = TIME_SENSITIVE.some((re) => re.test(question));
+    if (!questionIsTimely && !ASKS_A_FACT.test(question)) continue;
+
+    add({
+      kind: 'search',
+      query: asQuestion(question, questionIsTimely),
+      reason: questionIsTimely
+        ? 'They asked something whose answer changes by the day.'
+        : 'They asked something with an answer that exists somewhere.',
+    });
+    answeredSomething = true;
+  }
+
+  // Only if they asked nothing specific of their own. "What is this about?"
+  // has no subject in it -- the subject is the post above.
+  if (!answeredSomething && (asking || timeSensitive)) {
+    // A post whose substance is a picture has no subject in its text, and
+    // searching the words around a picture returns whatever those words happen
+    // to collocate with. That is how "Nothing as waking up on a 30k roundtrip
+    // during sleep GM" became three articles about waking at 3am.
+    if (subject.hasUnreadMedia && !asking) return lookups;
+
     const subjectText = (subject.parent ?? subject.incoming)
       .replace(/@[A-Za-z0-9_]{1,15}/g, ' ')
       .replace(/https?:\/\/\S+/g, ' ')

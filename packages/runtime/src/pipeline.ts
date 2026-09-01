@@ -1,7 +1,7 @@
 import type { JobRecord, PipelineNode } from '@xbam/shared/contracts';
 import { PipelineError, createLogger, errorMessage } from '@xbam/shared';
 import { accountLease, jobs as jobsRepo, observability, pipelines as pipelinesRepo } from '@xbam/database';
-import { failPermanently, scheduleRetry, sendToReview, waitForInFlight } from '@xbam/jobs';
+import { failPermanently, scheduleRetry, sendToReview, waitForInFlight, waitForLimit } from '@xbam/jobs';
 import { loadJobBundle, type JobBundle } from './loadJob';
 import { NODE_HANDLERS } from './nodes';
 import { buildGraph, nextNode, type Graph } from './graph';
@@ -185,6 +185,17 @@ async function handleFailure(job: JobRecord, node: PipelineNode, attempt: number
   // attempt for this sends a job to review having never been retried once.
   if (pipelineError.reason === 'action_in_progress') {
     await waitForInFlight({ ...job, attemptCount: attempt - 1 }, job.status, pipelineError.message);
+    return;
+  }
+
+  // Refused because a limit has not cleared yet, and the gate said how long for.
+  // Nothing was attempted, so nothing is charged, and the wait is the number it
+  // gave rather than a generic backoff. A thirty-second cooldown answered with
+  // 1s, 2s, 7s, 8s spends every attempt inside its own window and sends a
+  // finished reply to review one second short of being allowed to send it.
+  const retryAfterMs = pipelineError.data.retryAfterMs;
+  if (typeof retryAfterMs === 'number' && retryAfterMs > 0) {
+    await waitForLimit({ ...job, attemptCount: attempt - 1 }, job.status, pipelineError.message, retryAfterMs);
     return;
   }
   if (attempt >= job.maxAttempts) {

@@ -143,9 +143,24 @@ export function AgentPage() {
     }
   };
 
+  /**
+   * Removes the agent, and says so if it did not.
+   *
+   * This used to swallow the error and navigate home regardless, so a delete
+   * that failed for any reason looked exactly like one that worked -- until the
+   * agent turned up again in the list. Sending somebody to a page that
+   * contradicts what just happened is worse than telling them it did not work.
+   */
   const destroy = async () => {
-    await del(`/api/agents/${agent.id}`).catch(() => undefined);
-    window.location.href = '/';
+    setBusy(true);
+    try {
+      await del(`/api/agents/${agent.id}`);
+      window.location.href = '/';
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : 'The agent could not be deleted.');
+      setConfirmDelete(false);
+      setBusy(false);
+    }
   };
 
   return (
@@ -230,17 +245,24 @@ export function AgentPage() {
               Activity
             </Link>
             {mode === 'advanced' && (
-              <>
-                <button type="button" className="btn-quiet" onClick={() => void duplicate()} disabled={busy}>
-                  <Copy className="h-3.5 w-3.5" aria-hidden />
-                  Duplicate
-                </button>
-                <button type="button" className="btn-quiet hover:text-signal-fail" onClick={() => setConfirmDelete(true)}>
-                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                  Delete
-                </button>
-              </>
+              <button type="button" className="btn-quiet" onClick={() => void duplicate()} disabled={busy}>
+                <Copy className="h-3.5 w-3.5" aria-hidden />
+                Duplicate
+              </button>
             )}
+            {/*
+              Delete is not an advanced operation.
+              
+              It sat behind the Advanced switch with Duplicate, which meant an
+              agent created in Easy Mode -- the way most of them are created,
+              and the way half-finished drafts pile up -- could not be removed
+              from any screen at all. Making one is offered in Easy; removing
+              one has to be too.
+            */}
+            <button type="button" className="btn-quiet hover:text-signal-fail" onClick={() => setConfirmDelete(true)}>
+              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+              Delete
+            </button>
           </div>
         </FadeIn>
 

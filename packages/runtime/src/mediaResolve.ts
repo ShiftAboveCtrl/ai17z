@@ -4,7 +4,7 @@ import type {
   MediaUnderstanding,
   SocialMediaContext,
 } from '@xbam/shared/contracts';
-import { createLogger, errorMessage } from '@xbam/shared';
+import { createLogger, errorMessage, textStandsAlone } from '@xbam/shared';
 import { media as mediaRepo, providers as providersRepo } from '@xbam/database';
 import { generate } from '@xbam/models';
 
@@ -20,13 +20,16 @@ const log = createLogger('media-resolve');
  * quietly left out. Pretending is worse than admitting.
  */
 
-/** Is there enough text here to stand on its own? */
-export function textCarriesTheQuestion(text: string): boolean {
-  const withoutMentions = text.replace(/@[A-Za-z0-9_]{1,15}/g, '').replace(/https?:\/\/\S+/g, '').trim();
-  // A handful of words with no substantive content — "thoughts?", "this?" — is
-  // a post whose meaning is somewhere other than its text.
-  return withoutMentions.split(/\s+/).filter(Boolean).length >= 8;
-}
+/**
+ * Is there enough here to answer without looking at anything else?
+ *
+ * One implementation, in @xbam/shared, because the channel adapter asks the
+ * same question when it decides whether to spend a DOM pass reading the
+ * parent's attachments -- and when the two copies were separate they were both
+ * a bare word count, which is how a thirteen-word question about a screenshot
+ * was answered without anybody looking at the screenshot.
+ */
+export const textCarriesTheQuestion = textStandsAlone;
 
 /**
  * Whether failing to read the media should stop a response.

@@ -92,6 +92,7 @@ describe('a monitor reading a feed longer than one screen', () => {
     const found = await xMonitors.harvestForTest({
       page,
       selfHandles: ['agent'],
+      target: null,
       limit: 10,
       cursor: null,
     });
@@ -108,6 +109,7 @@ describe('a monitor reading a feed longer than one screen', () => {
     const found = await xMonitors.harvestForTest({
       page,
       selfHandles: ['agent'],
+      target: null,
       limit: 20,
       cursor: '2094700000000000002',
     });
@@ -124,6 +126,7 @@ describe('a monitor reading a feed longer than one screen', () => {
     const found = await xMonitors.harvestForTest({
       page,
       selfHandles: ['agent'],
+      target: null,
       limit: 30,
       cursor: null,
     });
@@ -140,6 +143,7 @@ describe('a monitor reading a feed longer than one screen', () => {
     const found = await xMonitors.harvestForTest({
       page,
       selfHandles: ['someone7', 'someone12'],
+      target: null,
       limit: 15,
       cursor: null,
     });

@@ -25,3 +25,4 @@ export * from './emoji';
 export * from './punctuation';
 export * from './character';
 export * from './research';
+export * from './plan';

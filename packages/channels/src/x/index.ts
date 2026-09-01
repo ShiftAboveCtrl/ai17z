@@ -1,5 +1,5 @@
 import type { NormalizedEvent, RadarPollResult, ResolvedContext } from '@xbam/shared/contracts';
-import { PipelineError, envBool, errorMessage, sleep } from '@xbam/shared';
+import { PipelineError, envBool, errorMessage, sleep, textStandsAlone } from '@xbam/shared';
 import {
   captureScreenshot,
   resolveProfileDir,
@@ -157,10 +157,9 @@ export function replyingToHandles(articleText: string): string[] {
  * questions about something else, and treating them as self-contained is how an
  * agent answers confidently about a chart it never saw.
  */
-function textStandsAlone(text: string): boolean {
-  const withoutNoise = text.replace(/@[A-Za-z0-9_]{1,15}/g, '').replace(/https?:\/\/\S+/g, '').trim();
-  return withoutNoise.split(/\s+/).filter(Boolean).length >= 8;
-}
+// `textStandsAlone` now lives in @xbam/shared, because the runtime asks the
+// same question when deciding whether an unread image is a gap worth admitting
+// to, and the two copies had drifted into being a bare word count.
 
 /** Reads one anchored article. All extraction is scoped to the article element. */
 async function readArticle(page: Page, articleSelector: string, index = 0): Promise<ArticleSnapshot> {

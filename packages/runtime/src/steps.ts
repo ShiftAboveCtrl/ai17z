@@ -25,7 +25,7 @@ import { generate } from '@xbam/models';
 import { getChannelAdapter } from '@xbam/channels';
 import { describeTools } from '@xbam/tools';
 import { buildChannelContext, syntheticAccount } from './channelContext';
-import { resolveMedia } from './mediaResolve';
+import { hasVisionModel, resolveMedia } from './mediaResolve';
 import { loadRelationshipContext, recordExchange } from './relationship';
 import {
   checkStanceConsistency,
@@ -39,6 +39,7 @@ import { compileForJob } from './voice';
 import { loadThreadContext, observeEntities, recordNarratives } from './arcs';
 import { harvestIdeas } from './content';
 import { research, whatToResearch } from './research';
+import { planLookups } from './plan';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -222,15 +223,22 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
   const context = bundle.job.resolvedContext;
   if (!context) throw PipelineError.retryable('context_missing', 'Generation ran before context was resolved.');
 
+  // Every gate that knows how long it will be blocked says so, and every throw
+  // carries that through: a limit is waited out rather than retried, and a wait
+  // does not spend an attempt. A daily budget cap answered with an exponential
+  // backoff burns all five attempts in under a minute of a twenty-four hour
+  // wait, which is how a job dies of a ceiling that would have cleared.
   const audience = checkAudience(bundle.policy, context);
   if (!audience.allow) {
     throw audience.kind === 'PERMANENT'
       ? PipelineError.permanent(audience.reason, audience.message)
-      : PipelineError.retryable(audience.reason, audience.message);
+      : PipelineError.retryable(audience.reason, audience.message, { retryAfterMs: audience.retryAfterMs });
   }
 
   const budget = await checkBudget(bundle.agent.id, bundle.policy);
-  if (!budget.allow) throw PipelineError.retryable(budget.reason, budget.message);
+  if (!budget.allow) {
+    throw PipelineError.retryable(budget.reason, budget.message, { retryAfterMs: budget.retryAfterMs });
+  }
 
   const template = bundle.job.promptTemplateVersionId
     ? await promptsRepo.getTemplateVersion(bundle.job.promptTemplateVersionId)
@@ -1215,20 +1223,59 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
   if (!context) return;
 
   const inventory = MediaInventory.safeParse((context.meta as { inventory?: unknown })?.inventory);
-  const lookups = whatToResearch({
+  const links = inventory.success ? inventory.data.links : [];
+  const hasMedia = inventory.success && (inventory.data.media.length > 0 || Boolean(inventory.data.quoted));
+
+  const byRules = whatToResearch({
     incoming: context.incomingText,
     parent: context.parentText,
-    links: inventory.success ? inventory.data.links : [],
-    hasUnreadMedia: inventory.success && inventory.data.media.length > 0,
+    links,
+    hasUnreadMedia: hasMedia,
   });
+
+  // The rules are right about both ends of the range and blind in the middle,
+  // where the question is what a sentence means rather than what it matches.
+  // A cheap model settles it when one is configured; when one is not, or it is
+  // slow, or it answers badly, the rules stand.
+  const plan = await planLookups(bundle.agent.id, job.id, {
+    incoming: context.incomingText,
+    parent: context.parentText,
+    hasMedia,
+    links,
+    deterministic: byRules,
+  });
+  const lookups = plan.lookups;
+
+  // The answer is in the picture and the agent cannot see pictures.
+  //
+  // This is the quietest way for a reply to be wrong: everything succeeds, the
+  // model writes something plausible about a screenshot nobody looked at, and
+  // the only trace of the problem is one skipped media row. Somebody asked
+  // "what did he roundtrip on?" under a trade screenshot and got an answer
+  // assembled out of three articles about waking up at 3am.
+  if (plan.needsImage && !(await hasVisionModel(bundle.agent.id))) {
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'MEDIA_RESOLVED',
+      level: 'warn',
+      message:
+        'Answering this depends on the attached image, and this agent has no vision model. ' +
+        'The reply will say it could not see it. Set a vision model under Intelligence.',
+      data: { needsImage: true, visionConfigured: false },
+    });
+  }
 
   if (lookups.length === 0) {
     await observability.emitTrace({
       jobId: job.id,
       agentId: bundle.agent.id,
       type: 'RESEARCH_DONE',
-      message: 'Nothing here needed looking up.',
-      data: { lookups: 0 },
+      message:
+        plan.decidedBy === 'model'
+          ? 'Nothing here needed looking up; the model was asked and said so.'
+          : 'Nothing here needed looking up.',
+      data: { lookups: 0, decidedBy: plan.decidedBy, fellBackBecause: plan.fellBackBecause ?? null },
     });
     return;
   }
@@ -1269,6 +1316,10 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
     data: {
       // The reasons, not only the count: "looked up 2 things" tells nobody
       // whether it looked up the right two.
+      // Which decided, as well as what: a plan and a pattern match look
+      // identical once they are both a list of queries.
+      decidedBy: plan.decidedBy,
+      fellBackBecause: plan.fellBackBecause ?? null,
       lookups: lookups.map((l) => ({ kind: l.kind, query: l.query.slice(0, 80), reason: l.reason })),
       findings: result.findings.map((f) => ({ source: f.source, title: f.title.slice(0, 100), url: f.url })),
       failed: result.failed,
