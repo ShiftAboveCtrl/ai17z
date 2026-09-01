@@ -15,7 +15,7 @@ async function collect(): Promise<HealthReport> {
   const checkedAt = nowIso();
   const components: HealthComponent[] = [];
 
-  components.push({ name: 'API', status: 'healthy', detail: 'Serving requests', optional: false, checkedAt });
+  components.push({ name: 'API', status: 'healthy', detail: 'Serving requests', optional: false, kind: 'core', checkedAt });
 
   const db = await pingDatabase();
   components.push({
@@ -23,6 +23,7 @@ async function collect(): Promise<HealthReport> {
     status: db.ok ? 'healthy' : 'offline',
     detail: db.detail,
     optional: false,
+    kind: 'core',
     checkedAt,
   });
 
@@ -36,10 +37,11 @@ async function collect(): Promise<HealthReport> {
         status: 'healthy',
         detail: `${review} awaiting a person, ${stuck} retrying`,
         optional: false,
+        kind: 'core',
         checkedAt,
       });
     } catch (error) {
-      components.push({ name: 'Queue', status: 'degraded', detail: (error as Error).message, optional: false, checkedAt });
+      components.push({ name: 'Queue', status: 'degraded', detail: (error as Error).message, optional: false, kind: 'core', checkedAt });
     }
 
     for (const owner of await usersRepo.listUsers()) {
@@ -60,6 +62,7 @@ async function collect(): Promise<HealthReport> {
           status,
           detail: usable ? (credential.lastStatus ?? 'Not tested yet') : 'No API key stored',
           optional: true,
+          kind: 'provider',
           checkedAt,
         });
       }
@@ -79,6 +82,7 @@ async function collect(): Promise<HealthReport> {
                 : 'degraded',
           detail: sessionless ? 'No session required' : (account.lastHealthStatus ?? account.status),
           optional: true,
+          kind: 'account',
           checkedAt,
         });
       }
@@ -90,6 +94,7 @@ async function collect(): Promise<HealthReport> {
     status: browserEnabled() ? 'healthy' : 'offline',
     detail: browserEnabled() ? `${activeSessionCount()} live session(s)` : 'Disabled by configuration',
     optional: true,
+    kind: 'browser',
     checkedAt,
   });
 

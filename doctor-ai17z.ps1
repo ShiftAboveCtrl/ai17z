@@ -192,11 +192,27 @@ if (Test-Endpoint "http://localhost:$apiPort/api/health") {
     } else {
       Add-Result 'Database' 'FAIL' 'Not reachable from the API.' 'Check the postgres container: docker compose ps'
     }
-    $providers = @($health.data.components | Where-Object { $_.optional -eq $true })
+    # Counted by what they are, not by whether a fault in them is fatal.
+    # `optional` was read as "is a provider", and with nothing configured the
+    # only optional component is the browser -- so a fresh installation was told
+    # it had one AI provider when it had none.
+    $providers = @($health.data.components | Where-Object { $_.kind -eq 'provider' })
     if ($providers.Count -eq 0) {
-      Add-Result 'AI providers' 'NOT CONFIGURED' 'None yet.' 'Add one in Settings once AI17Z is open.'
+      Add-Result 'AI providers' 'NOT CONFIGURED' 'None yet. An agent cannot think without one.' 'Open http://localhost:8080, go to Settings, add a provider.'
     } else {
-      Add-Result 'AI providers' 'PASS' "$($providers.Count) configured." ''
+      $bad = @($providers | Where-Object { $_.status -eq 'offline' -or $_.status -eq 'degraded' })
+      if ($bad.Count -gt 0) {
+        Add-Result 'AI providers' 'WARN' "$($providers.Count) configured, $($bad.Count) not answering." 'Check the key in Settings.'
+      } else {
+        Add-Result 'AI providers' 'PASS' "$($providers.Count) configured." ''
+      }
+    }
+
+    $accounts = @($health.data.components | Where-Object { $_.kind -eq 'account' })
+    if ($accounts.Count -eq 0) {
+      Add-Result 'Accounts' 'NOT CONFIGURED' 'None yet. Nothing to read or reply to.' 'Create an agent, then connect an account to it.'
+    } else {
+      Add-Result 'Accounts' 'PASS' "$($accounts.Count) connected." ''
     }
   } catch {
     Add-Result 'Database' 'FAIL' 'Health endpoint unreadable.' 'Check the api container: docker compose logs api'
@@ -204,6 +220,7 @@ if (Test-Endpoint "http://localhost:$apiPort/api/health") {
 } else {
   Add-Result 'Database' 'NOT RUNNING' 'API is down, so this could not be checked.' 'Run .\start-ai17z.ps1.'
   Add-Result 'AI providers' 'NOT RUNNING' 'API is down, so this could not be checked.' ''
+  Add-Result 'Accounts' 'NOT RUNNING' 'API is down, so this could not be checked.' ''
 }
 
 # -- Report ------------------------------------------------------------------

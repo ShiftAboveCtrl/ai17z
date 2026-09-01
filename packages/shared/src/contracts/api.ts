@@ -63,6 +63,18 @@ export const HealthComponent = z.object({
   status: z.enum(['healthy', 'degraded', 'offline', 'unknown']),
   detail: z.string().nullable(),
   optional: z.boolean(),
+  /**
+   * What sort of thing this is.
+   *
+   * `optional` says whether a fault here makes the platform unhealthy. It does
+   * not say what the component is, and reading it as though it did produced a
+   * false pass on the one screen a newcomer relies on: with nothing configured
+   * at all, the doctor counted the single optional component -- the browser --
+   * and reported "AI providers: 1 configured". A fresh installation was told it
+   * had a model when it had none, which points somebody away from the first
+   * thing they have to do.
+   */
+  kind: z.enum(['core', 'provider', 'account', 'browser']).default('core'),
   checkedAt: z.string(),
 });
 export type HealthComponent = z.infer<typeof HealthComponent>;

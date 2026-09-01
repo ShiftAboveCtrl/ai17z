@@ -35,7 +35,7 @@ best ideas, replaces its architecture, and imports its history as one agent.
 ## What you need
 
 - **Docker Desktop** (Windows) or **Docker Engine** (Ubuntu)
-- **Node 20 or newer**, for the worker that drives the browser
+- **Node 22 or newer**, for the worker that drives the browser
 - **Google Chrome**, if you want to connect an X account
 
 Chrome is the real thing, not Chromium and not Edge. AI17Z spawns it and
@@ -44,23 +44,36 @@ for it. Everything else works without one.
 
 ## Install on Windows
 
+Three commands, from a PowerShell window in a folder you can write to:
+
 ```powershell
-git clone <repository-url>
+git clone REPLACE_WITH_AI17Z_GITHUB_URL ai17z
 cd ai17z
 .\install-ai17z.ps1
+```
+
+Then start it:
+
+```powershell
 .\start-ai17z.ps1
 ```
 
-Then open **http://localhost:8080**.
+and open **http://localhost:8080**. The first screen asks you to create an
+account; that account is yours and lives only on this machine.
 
-`install-ai17z.ps1` checks what the machine has, and writes a `.env` with a
-master key generated for your installation. It never overwrites an existing one:
-that file holds the key your stored provider credentials are encrypted with.
+`install-ai17z.ps1` checks Docker, Node and Chrome, tells you what is missing
+and where to get it, and writes a `.env` with a master key generated for your
+installation. It installs nothing behind your back. It never overwrites an
+existing `.env`, because that file holds the key your stored provider
+credentials are encrypted with.
+
+If any of it does not work, run `.\doctor-ai17z.ps1`. It reports every part
+separately and distinguishes working, not set up yet, and broken.
 
 ## Install on Ubuntu
 
 ```bash
-git clone <repository-url>
+git clone REPLACE_WITH_AI17Z_GITHUB_URL ai17z
 cd ai17z
 ./install-ai17z.sh
 ./start-ai17z.sh
@@ -102,6 +115,9 @@ provider key and every browser session, and asks for the word DELETE first.
 
 ## Quick start with Docker
 
+> You do not need this section if you used the installer above. It is here for
+> people who would rather drive Docker themselves.
+
 ```bash
 cp .env.example .env
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
@@ -132,7 +148,7 @@ The API applies migrations on start, so a fresh stack comes up ready to use.
 
 ## Quick start without Docker
 
-You need Node 22+ and a Postgres you can reach.
+You need Node 22 or newer and a Postgres you can reach.
 
 ```bash
 cp .env.example .env          # then fill in AI17Z_MASTER_KEY

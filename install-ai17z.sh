@@ -46,12 +46,12 @@ done_ "Docker is running."
 
 command -v node >/dev/null 2>&1 || stop_with_reason \
   "Node.js is not installed." \
-  "AI17Z needs Node 20 or newer for the worker that drives Chrome. See https://nodejs.org."
+  "AI17Z needs Node 22 or newer for the worker that drives Chrome. See https://nodejs.org."
 
 node_major="$(node --version | sed 's/^v//' | cut -d. -f1)"
-[ "$node_major" -ge 20 ] || stop_with_reason \
+[ "$node_major" -ge 22 ] || stop_with_reason \
   "Node $(node --version) is too old." \
-  "AI17Z needs Node 20 or newer."
+  "AI17Z needs Node 22 or newer."
 done_ "Node $(node --version) is fine."
 
 # Not fatal: everything except connecting an X account works without a browser,
