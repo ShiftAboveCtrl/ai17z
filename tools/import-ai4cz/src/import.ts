@@ -1,4 +1,5 @@
 import { createLogger } from '@xbam/shared';
+import { DEFAULT_TRIGGER_EVENT_TYPES } from '@xbam/shared/contracts';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -146,7 +147,7 @@ export async function importAi4cz(options: ImportOptions): Promise<ImportReport>
     await accountsRepo.linkAgentAccount({
       agentId: agent.id,
       accountId: account.id,
-      triggerEventTypes: ['MENTION'],
+      triggerEventTypes: [...DEFAULT_TRIGGER_EVENT_TYPES],
       actionType: 'REPLY',
       enabled: false,
     });

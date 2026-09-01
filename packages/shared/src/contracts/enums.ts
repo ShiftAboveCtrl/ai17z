@@ -150,6 +150,23 @@ export const EVENT_TYPES = [
 export const EventType = enumOf(EVENT_TYPES).schema;
 export type EventType = (typeof EVENT_TYPES)[number];
 
+/**
+ * What a new account link is triggered by.
+ *
+ * MENTION alone was the default everywhere, and it is why an agent would answer
+ * a stranger and then go silent the moment that stranger answered back. Two of
+ * the four monitors exist solely to find replies -- `reply_search` runs
+ * `to:@handle -from:@handle`, `own_threads` reads the agent's own threads -- and
+ * both were finding them, recording them, and having ingest drop every one with
+ * "not triggered by REPLY". Nineteen of twenty-three replies to this account
+ * were discarded at that line.
+ *
+ * A reply to something the agent said is the most addressed message it will
+ * ever receive. Whether to answer it is a judgement, and there is a whole
+ * heuristic for that; not being allowed to consider it is not a judgement.
+ */
+export const DEFAULT_TRIGGER_EVENT_TYPES: readonly EventType[] = ['MENTION', 'REPLY'];
+
 export const ACTION_TYPES = [
   'REPLY',
   'POST',

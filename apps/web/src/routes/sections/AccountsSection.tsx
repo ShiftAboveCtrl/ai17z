@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { DEFAULT_TRIGGER_EVENT_TYPES } from '@xbam/shared/contracts';
 import { ApiError, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AccountRow, AgentAccountRow } from '@app/lib/types';
@@ -41,7 +42,7 @@ export function AccountsSection({
         existing ?? (await post<{ id: string }>('/api/accounts', { channel, handle: handle.trim(), displayName: handle.trim() }));
       await post(`/api/agents/${agentId}/accounts`, {
         accountId: account.id,
-        triggerEventTypes: ['MENTION'],
+        triggerEventTypes: [...DEFAULT_TRIGGER_EVENT_TYPES],
         actionType: 'REPLY',
       });
       setAdding(false);

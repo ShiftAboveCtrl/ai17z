@@ -8,6 +8,7 @@ import {
   events as eventsRepo,
   jobs as jobsRepo,
   memories as memoriesRepo,
+  mentions as mentionsRepo,
   observability,
   ops,
   type UserRow,
@@ -29,6 +30,14 @@ const JobFilters = Pagination.extend({
   dryRun: z.enum(['true', 'false']).optional(),
 });
 
+const MentionFilters = Pagination.extend({
+  agentId: z.string().uuid().optional(),
+  accountId: z.string().uuid().optional(),
+  state: z
+    .enum(['REPLIED', 'WORKING', 'NEEDS_REVIEW', 'DECLINED', 'FAILED', 'DRY_RUN', 'NOT_ACTIONED'])
+    .optional(),
+});
+
 export async function jobRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/api/jobs',
@@ -45,6 +54,38 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
         offset: query.offset,
       });
       return { ...result, limit: query.limit, offset: query.offset };
+    }),
+  );
+
+  /**
+   * Everything the radar found, and what became of it.
+   *
+   * A jobs list answers "what did the agent do". This answers the question an
+   * owner actually asks about a social account: of everyone who said something
+   * to me, who got an answer, who did not, and which of these people we are
+   * already in the middle of a conversation with.
+   *
+   * It is a read over the existing tables -- events, discoveries, jobs, actions,
+   * conversations -- and not a store, because the reconciler merging several
+   * monitors onto one status id only works while there is one copy of the truth.
+   */
+  app.get(
+    '/api/mentions',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const query = parseQuery(MentionFilters, request);
+      if (query.agentId) await ownedAgent(query.agentId, user);
+
+      const [items, counts] = await Promise.all([
+        mentionsRepo.listMentions({
+          agentId: query.agentId ?? null,
+          accountId: query.accountId ?? null,
+          state: query.state ?? null,
+          limit: query.limit,
+        }),
+        mentionsRepo.countMentionStates({ agentId: query.agentId ?? null, accountId: query.accountId ?? null }),
+      ]);
+      return { items, counts };
     }),
   );
 

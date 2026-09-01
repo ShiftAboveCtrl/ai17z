@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { DEFAULT_TRIGGER_EVENT_TYPES } from '@xbam/shared/contracts';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { ApiError, post, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
@@ -127,7 +128,7 @@ export function CreateAgent() {
         });
         await post(`/api/agents/${agent.id}/accounts`, {
           accountId: account.id,
-          triggerEventTypes: ['MENTION'],
+          triggerEventTypes: [...DEFAULT_TRIGGER_EVENT_TYPES],
           actionType: 'REPLY',
         });
       }
