@@ -1,7 +1,11 @@
 import type { Page } from '@playwright/test';
 
-export const OWNER_EMAIL = process.env.XBAM_E2E_EMAIL ?? 'hamza@cloudtalha.com';
-export const OWNER_PASSWORD = process.env.XBAM_E2E_PASSWORD ?? 'xbam-local-dev-2026';
+// A local development identity, not anybody's real address. The suite creates
+// this owner on a fresh database and signs in as it; point the environment
+// variables at something else to run against an existing installation.
+export const OWNER_EMAIL = process.env.AI17Z_E2E_EMAIL ?? process.env.XBAM_E2E_EMAIL ?? 'owner@ai17z.local';
+export const OWNER_PASSWORD =
+  process.env.AI17Z_E2E_PASSWORD ?? process.env.XBAM_E2E_PASSWORD ?? 'ai17z-local-dev-2026';
 
 /**
  * Picks Easy or Advanced before the app boots.

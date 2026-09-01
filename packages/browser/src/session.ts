@@ -561,9 +561,29 @@ export function resolveProfileDir(accountId: string, stored: string | null | und
   return profilePathIsLocal(stored) ? (stored as string) : defaultProfileDir(accountId);
 }
 
+/**
+ * The name of this installation, for anything two of them could collide over.
+ *
+ * Two checkouts already have separate `./storage` directories, so the default
+ * needs nothing. It matters when somebody points several installations at one
+ * absolute path -- a shared drive, a big disk, a deliberate layout -- because
+ * two Chromes on one profile directory is the one thing the profile lock
+ * cannot save you from: the lock is per account id, and the same account id in
+ * two databases is two different accounts that happen to look alike.
+ */
+export function instanceName(): string {
+  // Dots go too, not only slashes. A name is a label, and a label with dots in
+  // it is one `resolve` away from being a path.
+  const cleaned = (process.env.AI17Z_INSTANCE || 'default').trim().replace(/[^A-Za-z0-9_-]/g, '-');
+  return cleaned || 'default';
+}
+
 export function defaultProfileDir(accountId: string): string {
   const base = process.env.XBAM_BROWSER_PROFILE_DIR || './storage/browser-profiles';
-  return resolve(base, accountId);
+  // Only named instances get their own subdirectory, so an existing
+  // installation keeps the paths its sessions already live in.
+  const instance = instanceName();
+  return instance === 'default' ? resolve(base, accountId) : resolve(base, instance, accountId);
 }
 
 export function activeSessionCount(): number {

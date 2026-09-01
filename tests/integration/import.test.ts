@@ -8,7 +8,9 @@ import { seedCatalogue } from '../support/fixtures';
 
 installHarness();
 
-const LEGACY_DIR = process.env.AI4CZ_LEGACY_DIR ?? 'C:/Users/ta0as/OneDrive/Desktop/ai4cz';
+// No default: this suite needs a real AI4CZ installation to read, and there is
+// no sensible guess for where somebody keeps theirs. It skips without one.
+const LEGACY_DIR = process.env.AI4CZ_LEGACY_DIR ?? '';
 const available = existsSync(LEGACY_DIR);
 
 /**
