@@ -137,6 +137,16 @@ export const SocialMediaContext = z.object({
       }),
     )
     .default([]),
+  /**
+   * True when these attachments are on the post being replied to rather than on
+   * the mention itself.
+   *
+   * A mention almost never carries an image; the picture being asked about is
+   * nearly always the one above. Describing somebody else's screenshot to the
+   * model as "the image on their post" is a small lie that produces a large
+   * one, so whose it is travels with it.
+   */
+  onParentPost: z.boolean().default(false),
   /** True when something that probably mattered could not be read. */
   hasUnderstandingGap: z.boolean().default(false),
   gapDetail: z.string().nullable().default(null),

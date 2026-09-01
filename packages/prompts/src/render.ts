@@ -73,9 +73,18 @@ export function numberedList(items: readonly string[]): string {
  * that could not be read says so rather than being omitted: silence would let
  * the model assume there was nothing there.
  */
-export function renderMedia(items: SocialMediaContext['items']): string {
+export function renderMedia(items: SocialMediaContext['items'], onParentPost = false): string {
   if (items.length === 0) return '';
   const lines: string[] = [];
+
+  // Whose picture it is, said once at the top.
+  //
+  // A mention almost never carries an image; the one being asked about is
+  // nearly always on the post above. Handing the model a description with no
+  // owner is how a reply ends up saying "your chart" about somebody else's
+  // screenshot -- and it is the post above that the question usually points at,
+  // so getting this wrong is not a rare case.
+  if (onParentPost) lines.push('These are attached to the post they were replying to, not to their message:');
 
   for (const item of items) {
     const label = `${item.kind === 'gif' ? 'GIF' : item.kind}${items.length > 1 ? ` ${item.position + 1}` : ''}`;
