@@ -32,16 +32,71 @@ best ideas, replaces its architecture, and imports its history as one agent.
 
 ---
 
-## Quick start on Windows
+## What you need
+
+- **Docker Desktop** (Windows) or **Docker Engine** (Ubuntu)
+- **Node 20 or newer**, for the worker that drives the browser
+- **Google Chrome**, if you want to connect an X account
+
+Chrome is the real thing, not Chromium and not Edge. AI17Z spawns it and
+attaches over the debugging protocol, and refuses to substitute another browser
+for it. Everything else works without one.
+
+## Install on Windows
 
 ```powershell
+git clone <repository-url>
+cd ai17z
+.\install-ai17z.ps1
 .\start-ai17z.ps1
 ```
 
-That brings up the stack, applies migrations, waits for the API to actually
-answer, and starts a second worker natively so that "Real Chrome" means the
-Chrome on your machine. `.\stop-ai17z.ps1` stops both. Neither script deletes
-anything; `-Volumes` does, and asks first.
+Then open **http://localhost:8080**.
+
+`install-ai17z.ps1` checks what the machine has, and writes a `.env` with a
+master key generated for your installation. It never overwrites an existing one:
+that file holds the key your stored provider credentials are encrypted with.
+
+## Install on Ubuntu
+
+```bash
+git clone <repository-url>
+cd ai17z
+./install-ai17z.sh
+./start-ai17z.sh
+```
+
+Same three steps and the same result. Connecting an X account opens a real
+Chrome window for you to sign in to, so a desktop session is needed for that
+part; the rest runs anywhere Docker does. See **Support** below for exactly what
+has and has not been verified.
+
+## Checking it over
+
+```powershell
+.\doctor-ai17z.ps1
+```
+
+```bash
+./doctor-ai17z.sh
+```
+
+Reports on every part, and distinguishes three things a new user cannot tell
+apart otherwise: working, not set up yet, and broken. A fresh installation with
+no X account is not an error, and the doctor says so.
+
+## Stopping
+
+```powershell
+.\stop-ai17z.ps1
+```
+
+```bash
+./stop-ai17z.sh
+```
+
+Data survives. `-Volumes` / `--volumes` deletes the database, every stored
+provider key and every browser session, and asks for the word DELETE first.
 
 ---
 
@@ -107,6 +162,109 @@ Nothing here requires X, or any external account at all.
 
 ---
 
+## Easy Mode and Advanced Mode
+
+Easy Mode is eight questions and is the default. It is not a cut-down second
+system: it writes the same versioned persona, policy, cadence and radar
+configuration the Advanced screens edit, and reads them back. Change something
+in Advanced and Easy shows it; change it in Easy and Advanced shows it.
+
+Advanced keeps everything -- prompt layers, pipeline nodes, memory scopes, model
+roles and fallbacks, the stance ledger, cadence, capabilities, browser
+diagnostics. Nothing was removed to make Easy Mode simple.
+
+The switch is in the header, and it is one setting for the whole application.
+
+---
+
+## Where your data lives
+
+Everything AI17Z stores is on your machine:
+
+| What | Where |
+| --- | --- |
+| Database (agents, events, jobs, memories, relationships) | Docker volume |
+| Provider API keys | The same database, encrypted with your master key |
+| X browser profiles and sessions | `storage/browser-profiles/` |
+| Failure screenshots | `storage/diagnostics/` |
+| The master key itself | `.env`, and nowhere else |
+
+**Back up `.env`.** Losing the master key makes every stored provider credential
+unreadable, and there is no recovery.
+
+### What leaves your machine
+
+The runtime is local. The model is not, unless you choose a local one.
+
+- **Ollama** runs on your machine. Nothing leaves it.
+- **OpenAI, Anthropic, OpenRouter, DeepSeek** and any other remote provider
+  receive the context AI17Z sends them: the incoming post, the conversation
+  around it, the retrieved memories and the persona. That is how they answer.
+
+If that matters to you, use Ollama.
+
+---
+
+## Support
+
+Honest about what has actually been verified:
+
+| Platform | Status |
+| --- | --- |
+| Windows 11 + Docker Desktop + Google Chrome | Verified end to end, including real X |
+| Ubuntu Desktop | Scripts written and syntax-checked; **not verified on Ubuntu** |
+| Ubuntu Server (headless) | Not a supported flow. Signing in to X needs a real browser window |
+
+Ubuntu is not claimed as tested. The install, start, stop and doctor scripts
+exist and their logic runs, but nobody has yet taken a clean Ubuntu machine
+through the whole flow. If you do, the doctor tells you what it finds.
+
+---
+
+## Troubleshooting
+
+**"Docker is installed but not running."** Start Docker Desktop and wait for it
+to settle, then run the start script again.
+
+**Ports already in use.** Something else has 8080, 8787 or 55432. Set
+`AI17Z_WEB_PORT`, `AI17Z_API_PORT` or `POSTGRES_PORT` in `.env`.
+
+**"Google Chrome not found."** Install it from google.com/chrome. Chromium and
+Edge are different browsers and are not used as substitutes.
+
+**An X account will not connect.** Connecting opens a real Chrome window and
+waits for you to sign in by hand. If X asks for a code, a CAPTCHA or confirms an
+unusual login, AI17Z stops and leaves the window alone -- it never types a
+password and never answers a security challenge. Finish it yourself and it
+carries on.
+
+**The agent is running but never replies.** Open the agent's Activity. Every
+decision is recorded, including the decision not to answer and the reasons
+behind it. "Not worth answering: nothing to do with what this agent follows" is
+the system working.
+
+**Something is wrong and you cannot tell what.** Run the doctor.
+
+---
+
+## Running a second installation
+
+Two AI17Z installations on one machine need different names and ports, because
+the Docker project name is what container and volume names are derived from. In
+the second checkout's `.env`:
+
+```
+AI17Z_INSTANCE=trading
+AI17Z_API_PORT=8797
+AI17Z_WEB_PORT=8090
+POSTGRES_PORT=55433
+```
+
+They then share nothing: separate database, storage, browser profiles and
+containers. A normal single installation needs none of this.
+
+---
+
 ## Importing AI4CZ
 
 ```bash
@@ -168,4 +326,20 @@ npm run typecheck
 
 ## License
 
-Private project. Not licensed for redistribution.
+**Not chosen yet, and that blocks public release.** Until a licence is added,
+nobody has permission to use, copy or redistribute this, whatever the repository
+visibility says.
+
+The dependency audit does not constrain the choice. Of 372 installed packages:
+305 MIT, 23 ISC, 13 Apache-2.0, 7 BlueOak-1.0.0, 6 BSD-3-Clause, 1 CC-BY-4.0,
+1 0BSD, and 16 that declare nothing. None are copyleft -- no GPL, AGPL, SSPL or
+BUSL anywhere in the tree -- so any of the usual choices is compatible:
+
+- **MIT** -- shortest, most permissive, what most of the dependencies use.
+- **Apache-2.0** -- same freedoms plus an explicit patent grant and a NOTICE
+  file. Worth it if contributors may work for employers with patents.
+- **AGPL-3.0** -- requires anyone running a modified copy as a network service
+  to publish their changes. Choose it deliberately, not by default: it would
+  make this awkward to use inside a company.
+
+Whichever you pick, add a LICENSE file at the root and replace this section.
