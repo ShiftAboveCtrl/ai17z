@@ -7,7 +7,7 @@ separated and named so nobody mistakes one for the other.
 ## Getting set up
 
 ```bash
-git clone REPLACE_WITH_AI17Z_GITHUB_URL ai17z
+git clone https://github.com/ShiftAboveCtrl/ai17z.git ai17z
 cd ai17z
 ./install-ai17z.sh        # or .\install-ai17z.ps1 on Windows
 npm run db:up
@@ -53,7 +53,7 @@ guarantees and a mock would test the wrong thing. If you are changing anything
 about idempotency, recovery or isolation, this is where it belongs.
 
 **End to end** with Playwright against a running application, using its own
-Chromium. These prove nothing about Google Chrome and do not claim to — only
+Chromium. These prove nothing about Google Chrome and do not claim to â€” only
 `tests/integration/realChrome.test.ts` may be cited for that, and it skips
 loudly rather than passing when Chrome is absent.
 
@@ -65,7 +65,7 @@ touches it.
 ## What a change needs
 
 New runtime behaviour needs a test that would fail without it. Not a test that
-exercises the code — one that fails if you revert the change.
+exercises the code â€” one that fails if you revert the change.
 
 Prefer a test against a synthetic page over one against X. X changes its DOM
 without notice, and a test that depends on today's markup is a test that will

@@ -52,10 +52,10 @@ $rawPs1 = "https://raw.githubusercontent.com/$owner/$repo/$Branch/bootstrap.ps1"
 $rawSh = "https://raw.githubusercontent.com/$owner/$repo/$Branch/bootstrap.sh"
 
 $replacements = @{
-  'REPLACE_WITH_AI17Z_GITHUB_URL'           = $cloneUrl
-  'REPLACE_WITH_AI17Z_ZIP_URL'              = $zipUrl
-  'REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_URL'    = $rawPs1
-  'REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_SH_URL' = $rawSh
+  'https://github.com/ShiftAboveCtrl/ai17z.git'           = $cloneUrl
+  'https://github.com/ShiftAboveCtrl/ai17z/archive/refs/heads/main.zip'              = $zipUrl
+  'https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1'    = $rawPs1
+  'https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.sh' = $rawSh
 }
 
 # Only files that are actually part of the repository, and never node_modules.

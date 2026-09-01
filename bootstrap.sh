@@ -7,12 +7,12 @@
 #
 # Meant to be run this way:
 #
-#   curl -fsSL REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_SH_URL | bash
+#   curl -fsSL https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.sh | bash
 #
 # That pattern -- fetch a script and run it -- asks you to trust whatever the
 # server sends. If you would rather look first, and you should:
 #
-#   curl -fsSL REPLACE_WITH_AI17Z_RAW_BOOTSTRAP_SH_URL -o bootstrap.sh
+#   curl -fsSL https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.sh -o bootstrap.sh
 #   less bootstrap.sh
 #   bash bootstrap.sh
 #
@@ -28,8 +28,8 @@
 set -euo pipefail
 
 # Replaced when the repository is published.
-REPO_URL="REPLACE_WITH_AI17Z_GITHUB_URL"
-ZIP_URL="REPLACE_WITH_AI17Z_ZIP_URL"
+REPO_URL="https://github.com/ShiftAboveCtrl/ai17z.git"
+ZIP_URL="https://github.com/ShiftAboveCtrl/ai17z/archive/refs/heads/main.zip"
 
 GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
 step() { echo "  ${CYAN}$1${OFF}"; }
