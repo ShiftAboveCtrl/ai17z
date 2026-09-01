@@ -17,7 +17,10 @@ import { buildAi4czPersona } from './persona';
 const log = createLogger('import-ai4cz');
 const SOURCE = 'ai4cz';
 const AGENT_SLUG = 'ai4cz';
-const X_HANDLE = 'ai4cz_binance';
+// Whose AI4CZ installation this is. The default is the handle the original
+// AI4CZ ran as; anybody importing a different one sets AI4CZ_X_HANDLE rather
+// than editing this file.
+const X_HANDLE = process.env.AI4CZ_X_HANDLE || 'ai4cz_binance';
 
 export interface ImportReport {
   agentId: string | null;

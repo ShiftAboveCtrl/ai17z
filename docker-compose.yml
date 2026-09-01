@@ -1,4 +1,19 @@
-name: xbam
+# One AI17Z installation per instance name.
+#
+# The project name scopes container names and volume names, so two checkouts
+# with different instance names never see each other database, storage or
+# browser volume. Set AI17Z_INSTANCE=trading in a second checkout .env and it
+# gets its own everything.
+#
+# The default stays `xbam`, deliberately. The project name is what Docker
+# derives volume names from, so changing it points an existing installation at
+# an empty database -- the data is not destroyed, but the stack comes up as if
+# it were a fresh install. That is the same reason the database and volumes
+# kept their old names through the rename.
+#
+# Chrome debugging ports are already chosen per launch, so they need nothing
+# here. The project name and these two published ports were the collisions.
+name: ${AI17Z_INSTANCE:-xbam}
 
 services:
   postgres:
@@ -34,7 +49,7 @@ services:
       XBAM_STORAGE_DIR: /data/storage
       XBAM_RUN_MIGRATIONS: "1"
     ports:
-      - "8787:8787"
+      - "${AI17Z_API_PORT:-8787}:8787"
     volumes:
       - xbam_storage:/data/storage
     depends_on:
@@ -82,7 +97,7 @@ services:
         VITE_XBAM_API_URL: ""
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "${AI17Z_WEB_PORT:-8080}:80"
     depends_on:
       - api
 
