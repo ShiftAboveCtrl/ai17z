@@ -13,7 +13,16 @@ import {
   waitForCdp,
   type LaunchedChrome,
 } from './chrome';
-import { acquireTab, lockTab, retagIfLost, tabHealth, type TabHealth, type TabMap, type TabRole } from './tabs';
+import {
+  acquireTab,
+  adoptOpenTabs,
+  lockTab,
+  retagIfLost,
+  tabHealth,
+  type TabHealth,
+  type TabMap,
+  type TabRole,
+} from './tabs';
 
 const log = createLogger('browser');
 
@@ -85,7 +94,16 @@ async function openOnce(config: SessionConfig): Promise<Entry> {
   const inFlight = opening.get(config.accountId);
   if (inFlight) return inFlight;
 
-  const started = openContext(config).finally(() => opening.delete(config.accountId));
+  // Claim whatever the browser already has open before anybody asks for a tab.
+  // Attaching to a Chrome this process did not start finds the previous
+  // worker's tabs, and adopting them here means health reports the truth from
+  // the first snapshot rather than from the first action.
+  const started = openContext(config)
+    .then(async (entry) => {
+      await adoptOpenTabs(entry.context, entry.tabs).catch(() => undefined);
+      return entry;
+    })
+    .finally(() => opening.delete(config.accountId));
   opening.set(config.accountId, started);
   return started;
 }
