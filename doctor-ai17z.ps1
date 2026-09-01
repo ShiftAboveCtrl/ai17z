@@ -136,14 +136,28 @@ if (Test-Endpoint "http://localhost:$webPort") {
 }
 
 # -- Native worker -----------------------------------------------------------
+# Looked for the same way the start script decides, or the two disagree in
+# front of somebody trying to work out whether their installation is healthy.
 $workerPidFile = Join-Path $PSScriptRoot 'storage\native-worker.pid'
 $workerAlive = $false
 if (Test-Path $workerPidFile) {
   $wpid = (Get-Content $workerPidFile | Select-Object -First 1).Trim()
   if ($wpid -and (Get-Process -Id ([int]$wpid) -ErrorAction SilentlyContinue)) { $workerAlive = $true }
 }
+$workerElsewhere = $null
+if (-not $workerAlive) {
+  $others = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine -like '*apps?worker*' })
+  foreach ($proc in $others) {
+    if ($proc.CommandLine -like "*$PSScriptRoot*") { $workerAlive = $true; break }
+  }
+  if (-not $workerAlive -and $others.Count -gt 0) { $workerElsewhere = $others[0] }
+}
+
 if ($workerAlive) {
   Add-Result 'Native worker' 'PASS' 'Running. This is the one that can see Chrome.' ''
+} elseif ($workerElsewhere) {
+  Add-Result 'Native worker' 'WARN' "Another installation is running one (pid $($workerElsewhere.ProcessId))." 'Only one native worker runs per machine. Stop the other installation if you want this one to drive Chrome.'
 } else {
   Add-Result 'Native worker' 'NOT RUNNING' 'Not started.' 'Run .\start-ai17z.ps1. Without it, X accounts cannot be used: a container cannot drive a browser on your machine.'
 }
