@@ -107,7 +107,9 @@ else
   # Only browser work. The containerised worker takes everything else, and two
   # workers claiming the same jobs is just contention.
   AI17Z_WORKER_ROLE=browser \
-  AI17Z_WORKER_ID="native-$(hostname)" \
+  # The pid matters: two native workers sharing an id is two processes with one
+  # identity, and both the job lease and the account lease stop separating them.
+  AI17Z_WORKER_ID="native-$(hostname)-$$" \
     nohup npm run dev:worker >"$LOG_FILE" 2>"${LOG_FILE}.err" &
   echo $! > "$PID_FILE"
   sleep 2

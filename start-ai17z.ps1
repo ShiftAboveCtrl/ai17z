@@ -237,7 +237,19 @@ if ($NoBrowser) {
       # Only browser work. The containerised worker already takes everything
       # else, and two workers claiming the same jobs is just contention.
       $env:AI17Z_WORKER_ROLE = 'browser'
-      $env:AI17Z_WORKER_ID = "native-$env:COMPUTERNAME"
+      # The pid matters. Two native workers on one machine sharing an id is two
+      # processes with one identity, and every guarantee that hangs off the
+      # worker id stops holding between them: `jobs.locked_by` says the job is
+      # taken by "native-FRACTAL", the other native worker is also
+      # "native-FRACTAL", and it takes it too. The account lease is deliberately
+      # reentrant for the worker already holding it, so the lock that exists to
+      # stop two browsers driving one account waves the second one through.
+      #
+      # It happens in the ordinary way: `.\start-ai17z.ps1` and then
+      # `npm run dev`, which starts a worker of its own. The worker's own
+      # default is hostname-pid and was already unique; this overrode it with
+      # something that was not.
+      $env:AI17Z_WORKER_ID = "native-$env:COMPUTERNAME-$PID"
 
       # On Windows npm is a shell script, not an executable, so Start-Process
       # cannot launch it directly: it has to be the .cmd shim.
