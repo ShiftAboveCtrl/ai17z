@@ -5,7 +5,7 @@ A local-first platform for building and running autonomous agents.
 An agent in AI17Z is an identity, a memory, a model, a policy, and the channels it
 is allowed to act on. None of that is code: you create an agent, give it a voice,
 point it at a model, connect an account, and turn it on. The runtime underneath
-is deliberately boring â€” Postgres, a job table, typed contracts â€” so that the
+is deliberately boring — Postgres, a job table, typed contracts — so that the
 interesting part is the agent, not the plumbing.
 
 AI17Z is the successor to a working system called AI4CZ. It keeps that system's
@@ -21,7 +21,7 @@ best ideas, replaces its architecture, and imports its history as one agent.
   memories it retrieved and *why*, every model attempt, and the verification
   that preceded the action.
 - **Idempotent execution.** The same event cannot produce two remote actions.
-  Not by convention â€” by unique index.
+  Not by convention — by unique index.
 - **Memory that spans conversations.** Six scopes, with an explicit write policy
   and deterministic retrieval you can inspect.
 - **Replaceable models.** OpenAI, Anthropic, OpenRouter, Ollama, any
@@ -176,7 +176,7 @@ docker compose up -d
 
 A containerised worker has no browser and no display, so it takes jobs and
 leaves browser-backed accounts alone. Run a native worker alongside it for
-those â€” the Windows script above does this for you, and
+those — the Windows script above does this for you, and
 [Driving a real browser](docs/operations/BROWSER_SESSIONS.md) covers the rest.
 
 Then open **http://localhost:8080** and create your owner account.
@@ -394,7 +394,7 @@ description, and what to be honest about in an announcement.
 
 ## Documentation
 
-- [Engineering notes](docs/ENGINEERING.md) â€” the invariants, and what broke to produce each one
+- [Engineering notes](docs/ENGINEERING.md) — the invariants, and what broke to produce each one
 - [Architecture overview](docs/architecture/OVERVIEW.md)
 - [Data model](docs/architecture/DATA_MODEL.md)
 - [Jobs and the runtime](docs/architecture/JOBS.md)
