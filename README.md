@@ -323,21 +323,27 @@ different package.
 
 ## Running a second installation
 
-Two AI17Z installations on one machine need different names and ports, because
-the Docker project name is what container and volume names are derived from. In
-the second checkout's `.env`:
+Every installation names itself after the folder it was installed into, and that
+name decides which Docker volumes it uses. A clone into `ai17z-test` is
+`ai17z-test`: its own database, its own browser profiles, its own containers.
+Nothing is shared with any other checkout on the machine.
+
+That name is written into `.env` once, when the installer creates it, and never
+touched again -- so updating in place with `git pull` keeps the data it already
+had.
+
+Two of them can run side by side if you give the second one its own ports:
 
 ```
-AI17Z_INSTANCE=trading
 AI17Z_API_PORT=8797
 AI17Z_WEB_PORT=8090
-POSTGRES_PORT=55433
+POSTGRES_PORT=55450
+DATABASE_URL=postgres://xbam:xbam@localhost:55450/xbam
 ```
 
-They then share nothing: separate database, storage, browser profiles and
-containers. A normal single installation needs none of this.
-
----
+`DATABASE_URL` carries its own port and is what migrations and the native worker
+dial, so it has to move with `POSTGRES_PORT`. The start script refuses if the two
+disagree rather than letting one installation migrate another's database.
 
 ## Importing AI4CZ
 
