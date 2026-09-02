@@ -155,6 +155,42 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * Stop everything that has not finished.
+   *
+   * The single-job route below is the precise one. This is the one somebody
+   * wants when a queue has run away from them and they need it to stop now,
+   * rather than pressing cancel forty times while more arrive.
+   *
+   * Only work that has not finished: an executed job is history and a cancelled
+   * one is already stopped.
+   */
+  app.post(
+    '/api/jobs/cancel-all',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const query = parseQuery(z.object({ agentId: z.string().uuid().optional() }), request);
+      if (query.agentId) await ownedAgent(query.agentId, user);
+
+      const owned = new Set((await agentsRepo.listAgents(user.id)).map((a) => a.id));
+      const running = await jobsRepo.listJobs({ agentId: query.agentId, limit: 500 });
+      const stoppable = running.items.filter(
+        (job) =>
+          owned.has(job.agentId) &&
+          !['EXECUTED', 'DRY_RUN_COMPLETED', 'CANCELLED', 'PERMANENT_FAILURE'].includes(job.status),
+      );
+
+      let stopped = 0;
+      for (const job of stoppable) {
+        // One failure must not strand the rest: this is the button somebody
+        // presses when things are already going wrong.
+        await cancelJob(job.id).then(() => { stopped += 1; }).catch(() => undefined);
+      }
+      await ops.audit({ actorUserId: user.id, action: 'jobs.cancelled_all', entityType: 'agent', entityId: query.agentId ?? null });
+      return { stopped, considered: stoppable.length };
+    }),
+  );
+
   app.post(
     '/api/jobs/:id/cancel',
     handler(async (request) => {

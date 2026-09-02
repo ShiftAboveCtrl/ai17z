@@ -31,6 +31,8 @@ interface Seen {
   authorHandle: string | null;
   text: string;
   url: string | null;
+  /** When X says it was posted. Null when the element could not be read. */
+  createdAt: string | null;
 }
 
 async function readArticle(page: Page, selector: string): Promise<Seen> {
@@ -59,11 +61,22 @@ async function readArticle(page: Page, selector: string): Promise<Seen> {
     .allInnerTexts()
     .catch(() => [] as string[]);
 
+  // The post's own time, off the element X renders it in. Without this every
+  // discovery is stamped with the moment it was found, so a post from last month
+  // and one from a minute ago are indistinguishable downstream -- and an agent
+  // that scrolls far enough queues a reply to both.
+  const createdAt = await article
+    .locator('time')
+    .first()
+    .getAttribute('datetime')
+    .catch(() => null);
+
   return {
     statusId: extractStatusId(url),
     authorHandle: normalizeHandle(nameBlock.match(/@([A-Za-z0-9_]{1,15})/)?.[1] ?? null) ?? handleFromUrl(url),
     text: textParts.join('\n').trim(),
     url: normalizeTargetId(url),
+    createdAt,
   };
 }
 
@@ -146,7 +159,10 @@ async function harvest(ctx: MonitorContext, eventType: string, sourceLabel: stri
       text: snapshot.text,
       parentRemoteId: null,
       conversationRemoteId: snapshot.statusId,
-      occurredAt: new Date().toISOString(),
+      // What X says, not when we happened to look. Falls back to now only when
+      // the element could not be read, which is the safe direction: an unknown
+      // age is treated as current rather than silently dropped.
+      occurredAt: snapshot.createdAt ?? new Date().toISOString(),
       eventType,
       raw: { source: sourceLabel, index },
     });

@@ -1,7 +1,7 @@
 import type { ActionType, Capability, JobRecord, NormalizedEvent as NormalizedEventType } from '@xbam/shared/contracts';
 import { z } from 'zod';
 import { NormalizedEvent, PolicyConfig } from '@xbam/shared/contracts';
-import { PipelineError, actionIdempotencyKey, createLogger, sanitizeText } from '@xbam/shared';
+import { PipelineError, actionIdempotencyKey, createLogger, envInt, sanitizeText } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -77,6 +77,39 @@ const RUNNABLE_STATES = new Set(['DRAFT', 'ACTIVE']);
  * for the first time is new work whatever timestamp it carries.
  */
 const RETROACTIVE_WORK_WINDOW_MS = 6 * 60 * 60_000;
+
+/**
+ * How old a post may be and still be worth answering.
+ *
+ * The retroactive window above covers something we recorded and ignored. This
+ * covers the other half: something we are seeing for the first time that was
+ * written long before we looked.
+ *
+ * Both happen for ordinary reasons. A monitor scrolls eight screens into a
+ * search result and reaches last month. An account is connected and its
+ * notifications tab is a year of history. A source is added, or the agent is
+ * switched on after a week off. Every one of those is a first sighting of a post
+ * nobody expects a reply to, and each one queues a job, takes the account lease,
+ * spends a model call, and delays the message that arrived a minute ago.
+ *
+ * Two hours because a reply is a conversation and conversations have a shelf
+ * life. Answering a two-hour-old mention is late; answering a two-day-old one
+ * reads as a bot working through a backlog, which is exactly what it is.
+ *
+ * Deliberately generous in one direction: a post whose age cannot be read at all
+ * is treated as current. Refusing what we cannot measure would silently drop
+ * real mentions the first time X changed its markup.
+ */
+const MAX_POST_AGE_MS = envInt('AI17Z_MAX_POST_AGE_MINUTES', 120) * 60_000;
+
+/** How old the post is, or null when nothing readable said. */
+function postAgeMs(occurredAt: string | null | undefined, now = Date.now()): number | null {
+  if (!occurredAt) return null;
+  const at = new Date(occurredAt).getTime();
+  if (!Number.isFinite(at)) return null;
+  // A timestamp in the future is a clock disagreement, not an old post.
+  return Math.max(0, now - at);
+}
 
 /**
  * Turns a channel event into durable work.
@@ -164,6 +197,28 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
   const outcome = await withTransaction(async (tx) => {
     const { event: stored, created: eventCreated } = await eventsRepo.ingestEvent(tx, accountId, event);
     const outcome: IngestOutcome = { eventId: stored.id, eventCreated, jobs: [], skipped: [] };
+
+    // A post written long before we saw it. Recorded, so the inbox shows it and
+    // a person can act on it, but no work is queued: it is history, not a
+    // conversation. A manual trigger is somebody deciding otherwise.
+    const age = postAgeMs(event.occurredAt);
+    if (age !== null && age > MAX_POST_AGE_MS && !options.onlyAgentId) {
+      const hours = Math.round(age / 3_600_000);
+      for (const link of links) {
+        outcome.skipped.push({
+          agentId: link.agentId,
+          reason:
+            hours >= 1
+              ? `posted about ${hours}h ago, past the ${Math.round(MAX_POST_AGE_MS / 60_000)} minute freshness window`
+              : `posted ${Math.round(age / 60_000)} minutes ago, past the freshness window`,
+        });
+      }
+      log.info('event recorded but too old to answer', {
+        remoteEventId: event.remoteEventId,
+        ageHours: hours,
+      });
+      return outcome;
+    }
 
     // Something recorded long ago that never produced work does not produce it
     // now. A manual trigger is a person asking on purpose and is exempt.

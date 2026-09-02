@@ -16,6 +16,10 @@
     "tools/*"
   ],
   "scripts": {
+    "setup": "node scripts/ensure-env.mjs",
+    "predev": "node scripts/ensure-env.mjs",
+    "premigrate": "node scripts/ensure-env.mjs",
+    "predb:up": "node scripts/ensure-env.mjs",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose stop postgres",
     "migrate": "tsx packages/database/src/cli/migrate.ts",

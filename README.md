@@ -170,9 +170,7 @@ provider key and every browser session, and asks for the word DELETE first.
 > people who would rather drive Docker themselves.
 
 ```bash
-cp .env.example .env
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-# paste that into AI17Z_MASTER_KEY in .env
+npm run setup          # writes .env with a master key, if there is not one
 docker compose up -d
 ```
 
@@ -202,12 +200,13 @@ The API applies migrations on start, so a fresh stack comes up ready to use.
 You need Node 22 or newer and a Postgres you can reach.
 
 ```bash
-cp .env.example .env          # then fill in AI17Z_MASTER_KEY
 npm install
-npm run db:up                 # or point DATABASE_URL at your own Postgres
-npm run migrate
 npm run dev                   # api + worker + web
 ```
+
+`dev`, `migrate` and `db:up` each make sure `.env` exists with a master key
+before they run, so there is nothing to generate or paste. Point `DATABASE_URL`
+at your own Postgres if you would rather not use the container.
 
 Open **http://localhost:5173**.
 

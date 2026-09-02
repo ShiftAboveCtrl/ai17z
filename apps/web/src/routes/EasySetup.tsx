@@ -60,6 +60,8 @@ interface Draft {
   apiKey: string;
   baseUrl: string;
   model: string;
+  /** The model that reads images. Blank means the agent will not read any. */
+  visionModel: string;
   examplesText: string;
   caresText: string;
   allowlistText: string;
@@ -106,6 +108,7 @@ const EMPTY: Draft = {
   apiKey: '',
   baseUrl: '',
   model: '',
+  visionModel: '',
   examplesText: '',
   caresText: '',
   allowlistText: '',
@@ -966,6 +969,22 @@ function ConnectAI({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
 
+  /*
+    Which of the provider's models can read an image.
+
+    Matched on the name, which is the only signal a provider list gives. Wrong
+    in the harmless direction: a bad guess is a suggestion somebody can ignore
+    or overwrite, and an empty list simply means no placeholder.
+  */
+  const visionCandidates = useMemo(
+    () =>
+      (providers.find((p) => p.provider === draft.providerKind)?.availableModels ?? []).filter((m) =>
+        /vision|vl|multimodal|omni|sonnet|gpt-4o|gemini/i.test(m),
+      ),
+    [providers, draft.providerKind],
+  );
+  const visionSuggestion = visionCandidates[0] ?? '';
+
   const existing = useMemo(
     () => providers.find((p) => p.provider === draft.providerKind && p.enabled) ?? null,
     [providers, draft.providerKind],
@@ -1004,6 +1023,32 @@ function ConnectAI({
           providerCredentialId: credential.id,
           model,
           parameters: {},
+        });
+      }
+
+      /*
+        The vision model, set here or not at all.
+
+        Most mentions worth answering are about a picture -- a chart, a
+        screenshot, a receipt -- and an agent without this role reads them as an
+        admitted gap: "I can't see the image". That is honest and it is a bad
+        answer, and there was no point in the setup where anybody was told the
+        choice existed. It became something you discovered after the agent had
+        already replied badly in public.
+
+        Offered rather than forced: it is a second model and it costs money per
+        image, so somebody may genuinely not want one. What must not happen is
+        not being asked.
+      */
+      const vision = draft.visionModel.trim();
+      if (vision) {
+        await put(`/api/agents/${agentId}/models`, {
+          role: 'vision',
+          providerCredentialId: credential.id,
+          model: vision,
+          // Reasoning tokens are charged against the same ceiling as the answer,
+          // so a limit chosen for two sentences is spent before the answer starts.
+          parameters: { maxTokens: 1500 },
         });
       }
     } catch (e) {
@@ -1072,6 +1117,26 @@ function ConnectAI({
           onChange={(e) => set({ model: e.target.value })}
           placeholder="anthropic/claude-sonnet-4"
         />
+      </Field>
+
+      <Field
+        label="Model for reading images"
+        htmlFor="visionModel"
+        hint="Most questions worth answering are about a picture. Without one, the agent says it cannot see them."
+      >
+        <input
+          id="visionModel"
+          className="field font-mono text-[13px]"
+          value={draft.visionModel}
+          onChange={(e) => set({ visionModel: e.target.value })}
+          placeholder={visionSuggestion || 'leave blank if you do not want one'}
+          list="vision-model-options"
+        />
+        <datalist id="vision-model-options">
+          {visionCandidates.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
       </Field>
 
       <button type="button" className="btn-ghost" onClick={() => void connect()} disabled={busy}>

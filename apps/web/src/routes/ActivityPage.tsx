@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { usePolling, useResource } from '@app/lib/hooks';
+import { post } from '@app/lib/api';
 import type { JobSummary, MentionRow, MentionState } from '@app/lib/types';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { EmptyState, ErrorPanel, Loading } from '@app/components/ui';
@@ -93,6 +94,38 @@ export function ActivityPage() {
   const replied = mentions.data?.counts.REPLIED ?? 0;
   const unanswered = (mentions.data?.counts.DECLINED ?? 0) + (mentions.data?.counts.NOT_ACTIONED ?? 0);
 
+  /*
+    Stopping everything at once.
+
+    Cancelling one job at a time is the precise tool and the wrong one when a
+    queue has run away: more arrive while you work through it. This is the
+    button for that moment, and it is deliberately not hidden behind a menu --
+    somebody looking for it is already having a bad time.
+
+    Confirmed first, because it throws away work in progress, and it names the
+    number so the confirmation says something true rather than "are you sure".
+  */
+  const [stopping, setStopping] = useState(false);
+  const inFlight =
+    (counts.data?.counts.RECEIVED ?? 0) +
+    (counts.data?.counts.CONTEXT_RESOLVED ?? 0) +
+    (counts.data?.counts.MEMORY_RESOLVED ?? 0) +
+    (counts.data?.counts.GENERATED ?? 0) +
+    (counts.data?.counts.VALIDATED ?? 0) +
+    (counts.data?.counts.RETRYABLE_FAILURE ?? 0);
+
+  const stopEverything = async () => {
+    setStopping(true);
+    try {
+      await post(agentId ? `/api/jobs/cancel-all?agentId=${agentId}` : '/api/jobs/cancel-all', {});
+      jobs.reload();
+      counts.reload();
+      mentions.reload();
+    } finally {
+      setStopping(false);
+    }
+  };
+
   return (
     <main className="mx-auto max-w-page px-6 pb-32 pt-32 sm:px-10 sm:pt-44">
       <header className="mb-14">
@@ -111,7 +144,21 @@ export function ActivityPage() {
         <AnimatedText as="h1" text="Activity" className="monument text-[16vw] leading-[0.84] sm:text-[9vw] lg:text-[6.5vw]" />
       </header>
 
-      <div className="mb-8 flex gap-2">
+      <div className="mb-8 flex flex-wrap items-center gap-2">
+        {inFlight > 0 && (
+          <button
+            type="button"
+            className="order-last ml-auto rounded-full border border-signal-fail/40 px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-fail transition-colors hover:bg-signal-fail/10 disabled:opacity-50"
+            onClick={() => {
+              if (window.confirm(`Stop ${inFlight} job${inFlight === 1 ? '' : 's'} that have not finished?`)) {
+                void stopEverything();
+              }
+            }}
+            disabled={stopping}
+          >
+            {stopping ? 'Stopping...' : `Stop ${inFlight} in flight`}
+          </button>
+        )}
         {VIEWS.map((v) => (
           <button
             key={v.key}
