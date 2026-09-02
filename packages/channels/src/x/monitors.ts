@@ -95,15 +95,59 @@ async function readArticle(page: Page, selector: string): Promise<Seen> {
 const MAX_SCROLL_PASSES = 8;
 const SCROLL_PIXELS = 2_000;
 
-/** Whether the already-seen mark is on screen yet. */
-async function reachedCursor(ctx: MonitorContext, articles: ReturnType<MonitorContext['page']['locator']>): Promise<boolean> {
-  if (!ctx.cursor) return false;
-  const count = Math.min(await articles.count().catch(() => 0), 60);
-  for (let index = 0; index < count; index += 1) {
-    const snapshot = await readArticle(ctx.page, `${SEL.tweetArticle} >> nth=${index}`);
-    if (snapshot.statusId === ctx.cursor) return true;
-  }
-  return false;
+/**
+ * Every article on the page, read in one call.
+ *
+ * The obvious way -- a Playwright locator per article, then an attribute call
+ * per field -- is about five round trips to the browser per post. Checking
+ * whether the cursor was on screen did that for sixty articles on every one of
+ * eight scroll passes, and then the scan did it again: roughly two thousand
+ * seven hundred round trips for a single poll of a single monitor, most of them
+ * re-reading posts that had already been read moments earlier.
+ *
+ * Four monitors doing that on a shared tab is a browser that is never idle,
+ * which is also why resolving context for a reply was slow: it was queued behind
+ * a scroll loop talking to the same Chrome.
+ *
+ * This is one evaluation instead. The extraction rules are unchanged and are
+ * deliberately the same ones the single-article reader uses: the permalink is
+ * the link wrapping the timestamp, because taking the first `/status/` link
+ * makes an article carrying a quoted post report the quoted post's id as its
+ * own.
+ */
+async function readAllArticles(page: Page, limit: number): Promise<Seen[]> {
+  const raw = await page
+    .locator(SEL.tweetArticle)
+    .evaluateAll(
+      (nodes, max) =>
+        nodes.slice(0, max).map((node) => {
+          const el = node as HTMLElement;
+          const timed = el.querySelector('a:has(time)') as HTMLAnchorElement | null;
+          const anyStatus = el.querySelector('a[href*="/status/"]') as HTMLAnchorElement | null;
+          const href = timed?.getAttribute('href') ?? anyStatus?.getAttribute('href') ?? null;
+          const nameBlock = (el.querySelector('[data-testid="User-Name"]') as HTMLElement | null)?.innerText ?? '';
+          const text = Array.from(el.querySelectorAll('[data-testid="tweetText"]'))
+            .map((t) => (t as HTMLElement).innerText)
+            .join('\n')
+            .trim();
+          const createdAt = el.querySelector('time')?.getAttribute('datetime') ?? null;
+          return { href, nameBlock, text, createdAt };
+        }),
+      limit,
+    )
+    .catch(() => [] as { href: string | null; nameBlock: string; text: string; createdAt: string | null }[]);
+
+  return raw.map((item) => {
+    const url = item.href ? `https://x.com${item.href.startsWith('/') ? item.href : `/${item.href}`}` : null;
+    return {
+      statusId: extractStatusId(url),
+      authorHandle:
+        normalizeHandle(item.nameBlock.match(/@([A-Za-z0-9_]{1,15})/)?.[1] ?? null) ?? handleFromUrl(url),
+      text: item.text,
+      url: normalizeTargetId(url),
+      createdAt: item.createdAt,
+    };
+  });
 }
 
 /**
@@ -119,25 +163,28 @@ async function harvest(ctx: MonitorContext, eventType: string, sourceLabel: stri
   // into view. Reaching the cursor means everything below it is old news, which
   // is what keeps an ordinary poll cheap while still catching a burst.
   const wanted = Math.max(ctx.limit, 1) * 3;
+  let snapshots: Seen[] = [];
   for (let pass = 0; pass < MAX_SCROLL_PASSES; pass += 1) {
-    const before = await articles.count().catch(() => 0);
-    if (before >= wanted) break;
-    if (await reachedCursor(ctx, articles)) break;
+    // One read per pass, reused for both decisions below. The page is a moving
+    // target while it loads, so this is also the batch the scan works from:
+    // counting articles and then reading them separately can disagree.
+    snapshots = await readAllArticles(ctx.page, wanted);
+    if (snapshots.length >= wanted) break;
+    if (ctx.cursor && snapshots.some((s) => s.statusId === ctx.cursor)) break;
+
+    const before = snapshots.length;
     await ctx.page.mouse.wheel(0, SCROLL_PIXELS).catch(() => undefined);
     await ctx.page.waitForTimeout(800);
-    const after = await articles.count().catch(() => before);
     // Nothing new arrived: this is the end of what X will give us.
-    if (after <= before) break;
+    if ((await articles.count().catch(() => before)) <= before) break;
   }
-
-  const available = await articles.count().catch(() => 0);
-  const scan = Math.min(available, wanted);
+  if (snapshots.length === 0) snapshots = await readAllArticles(ctx.page, wanted);
 
   const candidates: RadarCandidate[] = [];
   const seen = new Set<string>();
 
-  for (let index = 0; index < scan && candidates.length < ctx.limit; index += 1) {
-    const snapshot = await readArticle(ctx.page, `${SEL.tweetArticle} >> nth=${index}`);
+  for (const snapshot of snapshots) {
+    if (candidates.length >= ctx.limit) break;
     if (!snapshot.statusId || seen.has(snapshot.statusId)) continue;
     seen.add(snapshot.statusId);
 
@@ -164,7 +211,7 @@ async function harvest(ctx: MonitorContext, eventType: string, sourceLabel: stri
       // age is treated as current rather than silently dropped.
       occurredAt: snapshot.createdAt ?? new Date().toISOString(),
       eventType,
-      raw: { source: sourceLabel, index },
+      raw: { source: sourceLabel },
     });
   }
   return candidates;
