@@ -395,7 +395,6 @@ description, and what to be honest about in an announcement.
 - [Local setup](docs/operations/LOCAL_SETUP.md)
 - [Docker](docs/operations/DOCKER.md)
 - [Driving a real browser](docs/operations/BROWSER_SESSIONS.md)
-- [AI4CZ migration](docs/legacy-ai4cz/MIGRATION.md)
 
 ## License
 
