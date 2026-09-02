@@ -70,10 +70,20 @@ test('edits the persona and cuts a new version', async ({ page }) => {
   const before = await version.innerText();
 
   await page.locator('#personality').fill('Edited by the end-to-end suite.');
+  // The two that were sent on every save without being editable anywhere. A
+  // reload is the assertion that matters: the form reported saving them before
+  // it could even show them.
+  await page.locator('#styleGuidelines').fill('One sentence, then stop.');
+  await page.locator('#customInstructions').fill('The address is ADDR-E2E-1234.');
   await identity.getByRole('button', { name: /save as version/i }).click();
 
   await expect(identity.getByText('saved')).toBeVisible({ timeout: 20_000 });
   await expect(version).not.toHaveText(before, { timeout: 20_000 });
+
+  await page.reload();
+  await page.locator('#identity').waitFor({ timeout: 30_000 });
+  await expect(page.locator('#styleGuidelines')).toHaveValue('One sentence, then stop.');
+  await expect(page.locator('#customInstructions')).toHaveValue('The address is ADDR-E2E-1234.');
 });
 
 /**

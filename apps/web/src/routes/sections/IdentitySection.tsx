@@ -129,6 +129,41 @@ export function IdentitySection({
         </div>
       </div>
 
+      {/*
+        Full width rather than a third column: both of these are paragraphs, and
+        both were unreachable until now. They are saved on every edit and are
+        rendered into every prompt, so an agent could carry rules nobody could
+        read or change from here.
+      */}
+      <div className="mt-6 space-y-6">
+        <Field
+          label="Style guidelines"
+          htmlFor="styleGuidelines"
+          hint="How it writes, in prose. Injected as the style layer of every prompt, alongside the examples."
+        >
+          <textarea
+            id="styleGuidelines"
+            rows={6}
+            className="field resize-y"
+            value={draft.styleGuidelines}
+            onChange={(e) => set('styleGuidelines', e.target.value)}
+          />
+        </Field>
+        <Field
+          label="Additional instructions"
+          htmlFor="customInstructions"
+          hint="Standing rules and facts it always has to hand: links, addresses, how to answer a particular kind of question."
+        >
+          <textarea
+            id="customInstructions"
+            rows={8}
+            className="field resize-y"
+            value={draft.customInstructions}
+            onChange={(e) => set('customInstructions', e.target.value)}
+          />
+        </Field>
+      </div>
+
       <div className="mt-10">
         <PersonaSources agentId={agentId} onApplied={onSaved} />
       </div>
