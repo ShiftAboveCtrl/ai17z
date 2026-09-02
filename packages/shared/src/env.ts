@@ -83,14 +83,24 @@ const BRAND_PREFIX = 'AI17Z_';
  * touching anything. Renaming a variable is never worth losing a credential.
  */
 export function applyBrandCompatibility(env: NodeJS.ProcessEnv = process.env): void {
+  // An empty value counts as absent, in both directions.
+  //
+  // Set-but-empty is what a container gets when compose interpolates a variable
+  // that is not in `.env`, and it is not a choice anybody made. Treating it as a
+  // value meant an empty `XBAM_MASTER_KEY` from the compose file blocked the
+  // mirror from a perfectly good `AI17Z_MASTER_KEY`, so the process ended up
+  // with no key while both names were technically present. `envString` has
+  // always drawn the line in the same place.
+  const missing = (v: string | undefined) => v === undefined || v === '';
+
   for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) continue;
+    if (missing(value)) continue;
     if (key.startsWith(LEGACY_PREFIX)) {
       const branded = BRAND_PREFIX + key.slice(LEGACY_PREFIX.length);
-      if (env[branded] === undefined) env[branded] = value;
+      if (missing(env[branded])) env[branded] = value;
     } else if (key.startsWith(BRAND_PREFIX)) {
       const legacy = LEGACY_PREFIX + key.slice(BRAND_PREFIX.length);
-      if (env[legacy] === undefined) env[legacy] = value;
+      if (missing(env[legacy])) env[legacy] = value;
     }
   }
 }
