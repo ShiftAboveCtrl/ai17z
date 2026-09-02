@@ -346,23 +346,6 @@ DATABASE_URL=postgres://xbam:xbam@localhost:55450/xbam
 dial, so it has to move with `POSTGRES_PORT`. The start script refuses if the two
 disagree rather than letting one installation migrate another's database.
 
-## Importing AI4CZ
-
-```bash
-npm run import:ai4cz -- --dry-run    # read and report, write nothing
-npm run import:ai4cz                 # import for real
-```
-
-Set `AI4CZ_LEGACY_DIR` in `.env` first. The legacy project is opened read-only
-and is never modified. The importer is idempotent: running it twice imports
-nothing the second time.
-
-It brings across the persona, the voice corpus, the conversation history, and
-the ledgers that stop the agent replying to a year-old backlog. It does **not**
-bring across API keys, cookies, browser sessions, or the instruction telling the
-model never to admit what it is. See
-[`docs/legacy-ai4cz/MIGRATION.md`](docs/legacy-ai4cz/MIGRATION.md).
-
 ---
 
 ## Layout
@@ -374,7 +357,7 @@ apps/web        the interface
 packages/       shared contracts, database, runtime, memory, prompts,
                 models, channels, browser, jobs, tools
 migrations/     numbered SQL, applied in order
-tools/          the AI4CZ importer, visual validation
+tools/          the importer, visual validation
 docs/           architecture, operations, migration
 ```
 
