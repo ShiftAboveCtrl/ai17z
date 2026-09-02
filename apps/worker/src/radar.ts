@@ -56,7 +56,11 @@ export class SocialRadar {
     if (!adapter.pollRadarSource) return;
 
     const config = source.config ?? {};
-    const interval = (config.intervalSeconds ?? 180) * 1_000;
+    // The source's own setting wins; `AI17Z_RADAR_DEFAULT_INTERVAL_S` moves the
+    // floor for every source that has none, which is every source created before
+    // the interval was written into the config. It was 180 for all of them, so
+    // nobody was noticed in under three minutes however the sources were set up.
+    const interval = (config.intervalSeconds ?? envInt('AI17Z_RADAR_DEFAULT_INTERVAL_S', 60)) * 1_000;
 
     // own_threads has no fixed target: it walks whichever of the agent's recent
     // posts is least recently checked, so a busy account cycles through them

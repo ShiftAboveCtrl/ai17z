@@ -45,23 +45,34 @@ async function graphForJob(job: JobRecord): Promise<Graph> {
  * so a crash resumes at the node it was on rather than restarting the job.
  */
 export async function runJob(job: JobRecord, workerId: string): Promise<void> {
-  if (job.requiresBrowser && job.accountId) {
-    const outcome = await accountLease.withAccountLease(
-      { accountId: job.accountId, workerId, reason: `job ${job.id}`, ttlMs: 5 * 60_000 },
-      () => walk(job, workerId),
-    );
-    if (!outcome.held) {
-      await jobsRepo.updateJob(job.id, {
-        runAt: new Date(Date.now() + 15_000).toISOString(),
-        releaseLock: true,
-        lastError: `Account busy: ${outcome.heldBy?.reason ?? 'another operation'}`,
-      });
-      log.info('account busy, deferring job', { jobId: job.id, accountId: job.accountId });
-    }
-    return;
-  }
   await walk(job, workerId);
 }
+
+/**
+ * The one node that may not run twice at once on an account.
+ *
+ * The account lease used to wrap the whole job. That made an account strictly
+ * one job at a time, end to end -- including the model call, the web lookup and
+ * the memory writes, none of which touch the browser. Everything else deferred
+ * fifteen seconds and tried again, so a queue of nine took the ninth job about
+ * ten minutes to start. Measured: context resolution was reported at 184 to 826
+ * seconds while generation was four to twenty-seven, and almost all of that was
+ * a job sitting in the queue rather than doing anything.
+ *
+ * It is also what defeated the three-tab design. Those tabs exist so reading and
+ * acting can happen at the same time; a lease over the whole job means they
+ * never do.
+ *
+ * Reading is already serialised where it has to be: `withSession` takes a lease
+ * per tab role, so two jobs both resolving context queue for the ACTION tab and
+ * neither corrupts the other.
+ *
+ * Acting is different, and keeps the lease. Two replies going out at once on one
+ * account would pass the rate gate independently -- each checks the last action
+ * before either has recorded one -- so the minimum spacing between actions
+ * silently stops applying. That is the guarantee this lease is actually for.
+ */
+const NEEDS_EXCLUSIVE_ACCOUNT = new Set(['EXECUTE_ACTION']);
 
 async function walk(job: JobRecord, workerId: string): Promise<void> {
   let current = job;
@@ -103,6 +114,18 @@ async function walk(job: JobRecord, workerId: string): Promise<void> {
       return;
     }
 
+    // Somebody pressed stop while this was running.
+    //
+    // Checked between nodes rather than inside them: a node either completes or
+    // fails, and tearing one out halfway is how a reply gets sent by a job that
+    // then reports being cancelled. Between nodes there is nothing in flight, the
+    // position is committed, and stopping is simply not taking the next step.
+    if (current.status === 'CANCELLED') {
+      log.info('job cancelled, stopping between nodes', { jobId: current.id, node: nodeKey });
+      await jobsRepo.updateJob(current.id, { releaseLock: true });
+      return;
+    }
+
     // Position is committed before the work, so a crash re-runs this node rather
     // than skipping it. Every node that touches the outside world is idempotent.
     if (current.currentNodeKey !== nodeKey) {
@@ -120,7 +143,27 @@ async function walk(job: JobRecord, workerId: string): Promise<void> {
 
     let outcome;
     try {
-      outcome = await handler({ ...bundle, job: current }, node);
+      const exclusive = NEEDS_EXCLUSIVE_ACCOUNT.has(node.kind) && current.accountId !== null;
+      if (exclusive) {
+        const held = await accountLease.withAccountLease(
+          { accountId: current.accountId!, workerId, reason: `job ${current.id}`, ttlMs: 5 * 60_000 },
+          () => handler({ ...bundle, job: current }, node),
+        );
+        if (!held.held) {
+          // Somebody else is acting on this account. Nothing was attempted, so
+          // nothing is charged; the job waits and keeps the position it reached.
+          await jobsRepo.updateJob(current.id, {
+            runAt: new Date(Date.now() + 15_000).toISOString(),
+            releaseLock: true,
+            lastError: `Account busy: ${held.heldBy?.reason ?? 'another operation'}`,
+          });
+          log.info('account busy, deferring at the action', { jobId: current.id, accountId: current.accountId });
+          return;
+        }
+        outcome = held.value;
+      } else {
+        outcome = await handler({ ...bundle, job: current }, node);
+      }
       await jobsRepo.recordAttempt({
         jobId: current.id,
         attempt,

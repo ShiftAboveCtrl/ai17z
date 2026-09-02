@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, RefreshCw, X } from 'lucide-react';
+import { ArrowLeft, Check, RefreshCw, Square, X } from 'lucide-react';
 import { ApiError, artifactObjectUrl, post } from '@app/lib/api';
 import { usePolling, useResource } from '@app/lib/hooks';
 import type { JobDetail } from '@app/lib/types';
@@ -45,6 +45,10 @@ export function JobPage() {
   const output = edited ?? job.validatedOutput ?? job.generatedOutput ?? '';
   const decidable = job.status === 'WAITING_FOR_APPROVAL' || job.status === 'REVIEW_REQUIRED';
   const retryable = ['REVIEW_REQUIRED', 'PERMANENT_FAILURE', 'RETRYABLE_FAILURE', 'CANCELLED'].includes(job.status);
+  // Anything that has not finished can be stopped. The route already existed;
+  // nothing in the interface ever called it, so a job on its way to saying
+  // something could only be watched.
+  const stoppable = !['EXECUTED', 'DRY_RUN_COMPLETED', 'CANCELLED', 'PERMANENT_FAILURE'].includes(job.status);
 
   const act = async (path: string, body?: unknown) => {
     setBusy(true);
@@ -83,6 +87,18 @@ export function JobPage() {
           from @{event?.remoteAuthorHandle ?? 'unknown'}
         </p>
       </FadeIn>
+
+      {stoppable && (
+        <div className="mt-8 flex items-center gap-4">
+          <button type="button" className="btn-ghost hover:text-signal-fail" onClick={() => void act('cancel')} disabled={busy}>
+            <Square className="h-3.5 w-3.5" aria-hidden />
+            Stop this job
+          </button>
+          <p className="text-xs text-bone-faint">
+            Stops between steps, so nothing is sent half-finished.
+          </p>
+        </div>
+      )}
 
       {job.lastError && (
         <div className="mt-8">

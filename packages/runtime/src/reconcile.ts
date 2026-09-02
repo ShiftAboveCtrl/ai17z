@@ -128,9 +128,27 @@ export async function reconcileCandidates(input: ReconcileInput): Promise<Reconc
  * notification meant a missed mention. Search runs alongside it precisely so
  * one surface being incomplete is no longer silence.
  */
+/**
+ * How often each surface is read, and why they differ.
+ *
+ * The interval is the floor on how long somebody waits to be noticed, and it
+ * was three minutes on every source. For an account whose whole point is
+ * answering people, three minutes of silence before the agent has even *seen*
+ * the message is most of the delay a person experiences.
+ *
+ * Notifications is the fastest and cheapest surface -- X has already decided
+ * something is addressed to you -- and it has a tab to itself, so it can be read
+ * often without queueing behind anything.
+ *
+ * The other three share the MENTIONS tab and therefore each other's time. A page
+ * load and a scroll is ten to twenty seconds, so putting all three on the same
+ * short interval just makes them wait for one another. They are staggered
+ * instead: the one most likely to catch what notifications dropped runs most
+ * often, and the thread walk, which is the slowest and least urgent, runs least.
+ */
 export const DEFAULT_X_RADAR: { kind: RadarSourceKind; label: string; intervalSeconds: number }[] = [
-  { kind: 'notifications', label: 'Notifications', intervalSeconds: 120 },
-  { kind: 'mention_search', label: 'Mention search', intervalSeconds: 180 },
-  { kind: 'reply_search', label: 'Reply search', intervalSeconds: 240 },
-  { kind: 'own_threads', label: 'Replies to own posts', intervalSeconds: 300 },
+  { kind: 'notifications', label: 'Notifications', intervalSeconds: 30 },
+  { kind: 'mention_search', label: 'Mention search', intervalSeconds: 60 },
+  { kind: 'reply_search', label: 'Reply search', intervalSeconds: 90 },
+  { kind: 'own_threads', label: 'Replies to own posts', intervalSeconds: 180 },
 ];
