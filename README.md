@@ -1,3 +1,4 @@
+There is a token for this project, the only CA is 0x16CB7cBb26295b60DF7f4B3B39a99a9A3c585E81
 # AI17Z
 
 A local-first platform for building and running autonomous agents.
