@@ -1,4 +1,4 @@
-There is a token for this project, the only CA is 0x16CB7cBb26295b60DF7f4B3B39a99a9A3c585E81
+There is a token for this project, the only CA is 0x67a9703b571d37bfab8d864bcdff9f3508d19eef6929d21301a3692a7be5b346
 # AI17Z
 
 A local-first platform for building and running autonomous agents.
