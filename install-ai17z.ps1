@@ -148,9 +148,30 @@ if (Test-Path '.env') {
     }
   }
   if (-not $written) { $out += "AI17Z_MASTER_KEY=$key" }
+  # Named after the folder it was installed into.
+  #
+  # The compose project name decides which Docker volumes an installation uses,
+  # and it defaulted to `xbam` for everybody. Two checkouts on one machine
+  # therefore shared a database, browser profiles and storage without either of
+  # them saying so -- so a throwaway clone made for testing quietly attached to
+  # the signed-in account and the real data of a working installation.
+  #
+  # Only ever written into a NEW .env. An existing installation keeps whatever
+  # name it already had, so updating in place with `git pull` still finds its own
+  # data, which is the reason the default was `xbam` in the first place.
+  $folder = (Split-Path -Leaf (Get-Location)).ToLower() -replace '[^a-z0-9]+', '-'
+  $folder = $folder.Trim('-')
+  if (-not $folder) { $folder = 'ai17z' }
+  if ($out -notmatch '^\s*AI17Z_INSTANCE\s*=\s*\S') {
+    $out += ''
+    $out += "# This installation's own Docker volumes and container names."
+    $out += "AI17Z_INSTANCE=$folder"
+  }
+
   $out | Set-Content '.env' -Encoding utf8
 
-  Write-Done '.env created.'
+  Write-Done ".env created. This installation is named '$folder'."
+  Write-Warn 'Its database and browser profiles are its own; no other checkout shares them.'
   Write-Warn 'Back it up. Losing the master key makes every stored provider credential unreadable.'
 }
 

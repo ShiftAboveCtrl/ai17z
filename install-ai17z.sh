@@ -88,7 +88,23 @@ else
     printf '\nAI17Z_MASTER_KEY=%s\n' "$key" >> .env
   fi
 
-  done_ ".env created."
+  # Named after the folder it was installed into: the compose project name
+  # decides which volumes an installation uses, and defaulting it to `xbam` for
+  # everybody meant two checkouts silently shared one database and one signed-in
+  # browser profile. Only ever written into a new .env, so updating in place
+  # keeps the name -- and the data -- it already had.
+  folder="$(basename "$(pwd)" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')"
+  [ -n "$folder" ] || folder="ai17z"
+  if ! grep -qE '^[[:space:]]*AI17Z_INSTANCE[[:space:]]*=[[:space:]]*[^[:space:]]' .env; then
+    {
+      echo
+      echo "# This installation's own Docker volumes and container names."
+      echo "AI17Z_INSTANCE=$folder"
+    } >> .env
+  fi
+
+  done_ ".env created. This installation is named '$folder'."
+  warn "Its database and browser profiles are its own; no other checkout shares them."
   warn "Back it up. Losing the master key makes every stored provider credential unreadable."
 fi
 
