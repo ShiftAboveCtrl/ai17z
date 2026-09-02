@@ -11,10 +11,6 @@ For working on AI17Z without Docker for the application itself.
 ## First time
 
 ```bash
-cp .env.example .env
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-# paste into AI17Z_MASTER_KEY in .env
-
 npm install
 npm run db:up
 npm run migrate

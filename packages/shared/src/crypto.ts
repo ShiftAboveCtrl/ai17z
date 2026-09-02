@@ -16,7 +16,9 @@ export function getMasterKey(): Buffer {
   const raw = (process.env.AI17Z_MASTER_KEY ?? process.env.XBAM_MASTER_KEY)?.trim();
   if (!raw) {
     throw new UnsafeConfigurationError(
-      'AI17Z_MASTER_KEY is not set. Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
+      'AI17Z_MASTER_KEY is not set. Run `npm run setup` to write one into .env, or ' +
+        're-run the installer. If you are in Docker, the container is not receiving the ' +
+        'value from .env: check that docker-compose.yml passes AI17Z_MASTER_KEY.',
     );
   }
   let key: Buffer;

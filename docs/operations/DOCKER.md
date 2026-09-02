@@ -3,9 +3,7 @@
 ## Start
 
 ```bash
-cp .env.example .env
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-# paste into AI17Z_MASTER_KEY in .env
+npm run setup   # writes .env with a master key, if there is not one
 
 docker compose up -d
 ```
