@@ -115,12 +115,22 @@ describe('no silent fallback to Chromium', () => {
     const originalPath = process.env.AI17Z_CHROME_PATH;
     const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
 
-    // Pretend to be a machine with no Chrome. Reported as linux rather than
-    // win32 on purpose: the Windows path consults the registry, which finds a
-    // real installation regardless of what the environment variables say, so
-    // forcing win32 here tests nothing. The posix candidates are absolute
-    // paths that do not exist on this machine, which is the state under test.
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    // Pretend to be the platform this machine is not.
+    //
+    // The state under test is "no Chrome anywhere", and the only way to reach
+    // it on a machine that has Chrome is to look for it somewhere else: the
+    // candidate list is per platform, so claiming to be the other one points it
+    // at absolute paths this host does not have.
+    //
+    // The first version always claimed linux, on the reasoning that the Windows
+    // branch consults the registry and would find a real install. True on a
+    // Windows developer machine, and exactly backwards on the Linux runner that
+    // installs Chrome at /usr/bin/google-chrome for the suite above: it found
+    // it, resolved, and the test failed on CI having passed everywhere else.
+    // (`fromWindowsRegistry` returns null off win32 by its own check, and `reg`
+    // does not exist on the runner in any case.)
+    const pretend = process.platform === 'win32' ? 'linux' : 'win32';
+    Object.defineProperty(process, 'platform', { value: pretend, configurable: true });
     process.env.AI17Z_CHROME_PATH = join(profileRoot, 'nowhere', 'chrome');
 
     try {
@@ -274,18 +284,24 @@ describe('a profile path from another machine is not trusted', () => {
     // cannot use that, and Chrome would silently create C:\app\... instead —
     // a second, empty profile with none of the session in it.
     const posixPath = '/app/storage/browser-profiles/abc';
-    const windowsPath = 'C:\Users\someone\storage\browser-profiles\abc';
+    // Doubled, because a backslash in a JavaScript string starts an escape.
+    // Written singly, "\Users\someone\storage\browser-profiles" loses three
+    // backslashes and turns "\b" into a backspace character, so the value under
+    // test stops being a Windows path at all. On Windows this branch is never
+    // taken and the damage stayed invisible; the Linux runner takes it.
+    const windowsPath = 'C:\\Users\\someone\\storage\\browser-profiles\\abc';
     const expected = process.platform === 'win32' ? posixPath : windowsPath;
     expect(profilePathIsLocal(expected)).toBe(false);
   });
 
   it('accepts a path that belongs to this machine', () => {
-    const local = process.platform === 'win32' ? 'C:\Users\someone\profiles\abc' : '/home/someone/profiles/abc';
+    const local =
+      process.platform === 'win32' ? 'C:\\Users\\someone\\profiles\\abc' : '/home/someone/profiles/abc';
     expect(profilePathIsLocal(local)).toBe(true);
   });
 
   it('falls back to the account-derived path when the stored one is foreign', () => {
-    const foreign = process.platform === 'win32' ? '/app/storage/browser-profiles/abc' : 'C:\app\abc';
+    const foreign = process.platform === 'win32' ? '/app/storage/browser-profiles/abc' : 'C:\\app\\abc';
     const resolved = resolveProfileDir('abc-123', foreign);
     expect(resolved).not.toBe(foreign);
     expect(resolved).toContain('abc-123');

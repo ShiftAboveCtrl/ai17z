@@ -84,3 +84,41 @@ describe('master key continuity', () => {
     expect(() => getMasterKey()).toThrow(/AI17Z_MASTER_KEY is not set/);
   });
 });
+
+/**
+ * A variable that is set but empty is not a value.
+ *
+ * This is what a container gets when compose interpolates a name that is not in
+ * `.env`, and nobody chose it. Counting it as a value meant an empty
+ * `XBAM_MASTER_KEY` blocked the mirror from a perfectly good
+ * `AI17Z_MASTER_KEY`: both names present, no key anywhere, and the first thing
+ * a new user does -- storing a provider API key -- failed with "AI17Z_MASTER_KEY
+ * is not set".
+ */
+describe('an empty value is treated as absent', () => {
+  it('does not let an empty legacy name shadow a real branded one', () => {
+    const env = { AI17Z_MASTER_KEY: 'a-real-key', XBAM_MASTER_KEY: '' } as NodeJS.ProcessEnv;
+    applyBrandCompatibility(env);
+    expect(env.XBAM_MASTER_KEY).toBe('a-real-key');
+  });
+
+  it('does not let an empty branded name shadow a real legacy one', () => {
+    const env = { XBAM_MASTER_KEY: 'a-real-key', AI17Z_MASTER_KEY: '' } as NodeJS.ProcessEnv;
+    applyBrandCompatibility(env);
+    expect(env.AI17Z_MASTER_KEY).toBe('a-real-key');
+  });
+
+  it('leaves both empty when neither was ever set', () => {
+    const env = { AI17Z_MASTER_KEY: '', XBAM_MASTER_KEY: '' } as NodeJS.ProcessEnv;
+    applyBrandCompatibility(env);
+    expect(env.AI17Z_MASTER_KEY).toBe('');
+    expect(env.XBAM_MASTER_KEY).toBe('');
+  });
+
+  it('still never overwrites a value somebody actually set', () => {
+    const env = { AI17Z_MASTER_KEY: 'new', XBAM_MASTER_KEY: 'old' } as NodeJS.ProcessEnv;
+    applyBrandCompatibility(env);
+    expect(env.XBAM_MASTER_KEY).toBe('old');
+    expect(env.AI17Z_MASTER_KEY).toBe('new');
+  });
+});

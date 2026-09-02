@@ -17,7 +17,11 @@ concurrency:
 env:
   # A throwaway key, generated for this run and thrown away with it. The real
   # one is never in the repository and never in CI.
-  AI17Z_MASTER_KEY: dGVzdC1vbmx5LW1hc3Rlci1rZXktMzItYnl0ZXMhIQ==
+  # Decodes to exactly 32 bytes: "test-only-master-key-32-bytes!!!". The first
+  # one said 32 in its own text and decoded to 31, one "!" short, so every test
+  # that seals a secret failed here and nowhere else. A developer machine has a
+  # real key in .env, so this value is only ever exercised by CI.
+  AI17Z_MASTER_KEY: dGVzdC1vbmx5LW1hc3Rlci1rZXktMzItYnl0ZXMhISE=
   DATABASE_URL: postgres://xbam:xbam@localhost:5432/xbam
 
 jobs:

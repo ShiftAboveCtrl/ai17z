@@ -42,10 +42,15 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-xbam}:${POSTGRES_PASSWORD:-xbam}@postgres:5432/${POSTGRES_DB:-xbam}
-      XBAM_MASTER_KEY: ${XBAM_MASTER_KEY}
+      # Either brand of name, because `.env.example` writes AI17Z_ and this
+      # file used to read only XBAM_. Compose interpolates before any process
+      # starts, so `applyBrandCompatibility` cannot rescue it: a fresh install
+      # handed the container an empty key and the first thing anybody does --
+      # storing a provider API key -- failed with "AI17Z_MASTER_KEY is not set".
+      AI17Z_MASTER_KEY: ${AI17Z_MASTER_KEY:-${XBAM_MASTER_KEY:-}}
       XBAM_API_PORT: "8787"
       XBAM_API_HOST: 0.0.0.0
-      XBAM_CORS_ORIGINS: ${XBAM_CORS_ORIGINS:-http://localhost:8080}
+      AI17Z_CORS_ORIGINS: ${AI17Z_CORS_ORIGINS:-${XBAM_CORS_ORIGINS:-http://localhost:8080}}
       XBAM_STORAGE_DIR: /data/storage
       XBAM_RUN_MIGRATIONS: "1"
     ports:
@@ -71,10 +76,15 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-xbam}:${POSTGRES_PASSWORD:-xbam}@postgres:5432/${POSTGRES_DB:-xbam}
-      XBAM_MASTER_KEY: ${XBAM_MASTER_KEY}
+      # Either brand of name, because `.env.example` writes AI17Z_ and this
+      # file used to read only XBAM_. Compose interpolates before any process
+      # starts, so `applyBrandCompatibility` cannot rescue it: a fresh install
+      # handed the container an empty key and the first thing anybody does --
+      # storing a provider API key -- failed with "AI17Z_MASTER_KEY is not set".
+      AI17Z_MASTER_KEY: ${AI17Z_MASTER_KEY:-${XBAM_MASTER_KEY:-}}
       XBAM_STORAGE_DIR: /data/storage
       XBAM_BROWSER_PROFILE_DIR: /data/browser-profiles
-      XBAM_BROWSER_ENABLED: ${XBAM_BROWSER_ENABLED:-1}
+      AI17Z_BROWSER_ENABLED: ${AI17Z_BROWSER_ENABLED:-${XBAM_BROWSER_ENABLED:-1}}
       XBAM_BROWSER_HEADLESS: "1"
       AI17Z_WORKER_CONCURRENCY: ${AI17Z_WORKER_CONCURRENCY:-2}
       # The container has no browser and no display. Browser-backed channels are
