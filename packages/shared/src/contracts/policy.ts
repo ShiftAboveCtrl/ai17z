@@ -73,6 +73,25 @@ export const OutputPolicy = z.object({
   emoji: EmojiPolicy.default({}),
   /** Reject output containing any of these (case-insensitive substring match). */
   bannedPhrases: z.array(z.string().max(200)).max(500).default([]),
+  /**
+   * The only wallet or contract addresses this agent may ever write.
+   *
+   * A model asked "what's your CA?" will answer. It has seen millions of
+   * addresses and will produce something correctly shaped, character by
+   * character, with no signal that it is inventing it -- and an address is the
+   * one kind of string where being nearly right is worse than refusing, because
+   * somebody sends money to it.
+   *
+   * That is not hypothetical here. On 2026-09-03 an agent with nothing
+   * configured published `0x16CB7c...5E81` to someone who asked, in Ethereum
+   * format, for a token that is not on Ethereum.
+   *
+   * The default is an empty list, which forbids every address. An agent that has
+   * not been given one cannot emit one, so this protects an installation nobody
+   * has configured -- the case that failed. Matching is exact and
+   * case-sensitive: base58 and EIP-55 both carry meaning in their capitals.
+   */
+  verifiedAddresses: z.array(z.string().max(120)).max(50).default([]),
 });
 export type OutputPolicy = z.infer<typeof OutputPolicy>;
 
