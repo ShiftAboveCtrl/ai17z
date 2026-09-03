@@ -1282,9 +1282,15 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
   const links = inventory.success ? inventory.data.links : [];
   const hasMedia = inventory.success && (inventory.data.media.length > 0 || Boolean(inventory.data.quoted));
 
+  // Whether the post being replied to is one of ours. The branch resolver
+  // already worked this out; research had no way to ask, so a reply to the
+  // agent made the agent's own last sentence the subject of a web search.
+  const parentIsOwn = context.conversation?.parent?.isSelf ?? false;
+
   const byRules = whatToResearch({
     incoming: context.incomingText,
     parent: context.parentText,
+    parentIsOwn,
     links,
     hasUnreadMedia: hasMedia,
   });
@@ -1295,7 +1301,11 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
   // slow, or it answers badly, the rules stand.
   const plan = await planLookups(bundle.agent.id, job.id, {
     incoming: context.incomingText,
-    parent: context.parentText,
+    // Same reason as the rules above: the classifier is choosing what to look
+    // up, and our own last reply is not something to look up. It would read a
+    // confident sentence written in this agent's voice as a claim about the
+    // world worth checking, which is how a model ends up researching itself.
+    parent: parentIsOwn ? null : context.parentText,
     hasMedia,
     links,
     deterministic: byRules,

@@ -90,6 +90,19 @@ export interface ResearchSubject {
   incoming: string;
   /** The post they were replying to, when there is one. */
   parent?: string | null;
+  /**
+   * Whether that parent is the agent's own post.
+   *
+   * When somebody replies to the agent, the parent *is* the agent's last reply,
+   * and the fallback below treats the parent as the thing being asked about. So
+   * an agent that had written "I'm an AI agent, I can't edit or fix websites."
+   * then sent exactly that sentence to a search engine as a question, and read
+   * the results back as evidence about the world.
+   *
+   * Own words are never evidence. The conversation already carries this as
+   * `ContextPost.isSelf`; research simply never asked for it.
+   */
+  parentIsOwn?: boolean;
   /** Links found on either. */
   links?: string[];
   /** Whether anything on the branch had an image nobody could read. */
@@ -123,11 +136,11 @@ export function questionsIn(text: string): string[] {
     if (spoken[i] !== '?') continue;
     const clause = spoken.slice(cursor, i).trim();
     cursor = i + 1;
-    if (clause) questions.push(trimConnective(clause));
+    if (clause) questions.push(...splitOnConnective(clause));
   }
 
   const tail = spoken.slice(cursor).trim();
-  if (tail && IMPERATIVE_ASK.test(tail)) questions.push(trimConnective(tail));
+  if (tail && IMPERATIVE_ASK.test(tail)) questions.push(...splitOnConnective(tail));
   // No punctuation anywhere, but the whole message is a request.
   if (questions.length === 0 && IMPERATIVE_ASK.test(spoken)) questions.push(spoken);
 
@@ -139,8 +152,51 @@ function trimConnective(clause: string): string {
   return clause.replace(/^(?:and|also|plus|but|so|then|oh|btw|by the way)[,\s]+/i, '').trim();
 }
 
-/** A request phrased without a question mark. */
-const IMPERATIVE_ASK = /\b(?:explain|tell me|what'?s|whats|how much|how many|any (?:news|update)|look up|check)\b/i;
+/**
+ * Two requests joined by "also", carrying one question mark between them.
+ *
+ * Splitting on punctuation alone assumes people punctuate each question, and
+ * they do not. Somebody wrote "how are you feeling about this post, also could
+ * you get me the weather details for new york city on septemeber 3rd?" -- one
+ * mark, at the very end. That arrived as a single question, and because its
+ * first half says "this post" the whole thing was discarded as referring to
+ * something already on screen. The weather was never looked up and never
+ * mentioned in the reply; the half that could be answered from the page
+ * silenced the half that needed the web.
+ *
+ * So the connective splits a clause as well as being trimmed from its front.
+ */
+const CONNECTIVE = /[,;]?\s+(?:and\s+also|also|and then|plus|as well as|and)\s+(?=\S)/i;
+
+function splitOnConnective(clause: string): string[] {
+  const parts: string[] = [];
+  let rest = trimConnective(clause);
+  // Bounded: a message with fifty "and"s is not fifty questions.
+  for (let guard = 0; guard < 4; guard += 1) {
+    const at = rest.search(CONNECTIVE);
+    if (at < 0) break;
+    const head = rest.slice(0, at).trim();
+    const tail = rest.slice(at).replace(CONNECTIVE, '').trim();
+    // Only a split that leaves two things worth asking about is a split.
+    if (head.split(/\s+/).length < 3 || tail.split(/\s+/).length < 3) break;
+    parts.push(head);
+    rest = tail;
+  }
+  parts.push(rest);
+  return parts.filter(Boolean);
+}
+
+/**
+ * A request phrased without a question mark.
+ *
+ * The polite forms matter as much as the blunt ones. "could you get me the
+ * weather details for new york city on septemeber 3rd" is a request for current
+ * information containing no interrogative word at all, so a gate looking only
+ * for what/who/when/where let it through unresearched, and the reply answered
+ * the other half of the message and said nothing about the weather.
+ */
+const IMPERATIVE_ASK =
+  /\b(?:explain|tell me|what'?s|whats|how much|how many|any (?:news|update)|look up|check|(?:could|can|would|will) you|get me|give me|find me|send me|show me)\b/i;
 
 /**
  * Turns one question into something worth asking an answer engine.
@@ -207,8 +263,41 @@ function namesSomethingCheckable(question: string): boolean {
 }
 
 const ASKS_A_FACT = {
-  test: (question: string): boolean => INTERROGATIVE.test(question) && namesSomethingCheckable(question),
+  // Either shape of asking counts. Requiring an interrogative word meant a
+  // request had to be blunt to be researched, and people are not blunt: the
+  // weather question that went unanswered was phrased "could you get me".
+  // The checkable half of the test is what keeps this narrow -- a polite
+  // request naming nothing in particular still does not reach the web.
+  test: (question: string): boolean =>
+    (INTERROGATIVE.test(question) || IMPERATIVE_ASK.test(question)) &&
+    namesSomethingCheckable(question) &&
+    !isOutburst(question),
 };
+
+/**
+ * Text that is a reaction rather than a question.
+ *
+ * "WHAT THE HELL?!?" has an interrogative and a capitalised word, so it passed
+ * both halves of the fact test and was sent to a search engine. So were "hey."
+ * and "Right." -- each one a browser round trip on the research tab, returning
+ * a dictionary entry and a Red Hot Chili Peppers video, which then entered the
+ * prompt as evidence.
+ *
+ * The test is for an absence: no noun of its own to look up. Shouting is a
+ * decent signal too, since somebody typing in capitals with three marks on the
+ * end is not asking for a citation.
+ */
+const OUTBURST = /^(?:wow|whoa|woah|damn|lol|lmao|omg|wtf|what the (?:hell|f\w*)|huh|hey|hi|yo|sup|right|ok(?:ay)?|nice|cool|based|gm|gn|fr|bruh|man|dude|ah+|oh+|haha+)\b/i;
+
+function isOutburst(text: string): boolean {
+  const bare = text.replace(/[^\p{L}\p{N}\s'$]/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (!bare) return true;
+  if (!OUTBURST.test(bare)) return false;
+  // "hey what did the Fed do today" opens with a greeting and is still a
+  // question, so an outburst only counts when nothing checkable follows it.
+  const after = bare.replace(OUTBURST, '').trim();
+  return !namesSomethingCheckable(after);
+}
 
 /**
  * What to look up, and why.
@@ -301,12 +390,22 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
     // during sleep GM" became three articles about waking at 3am.
     if (subject.hasUnreadMedia && !asking) return lookups;
 
+    // This whole branch means "they asked about the post above rather than
+    // about anything in their own message". When the post above is ours there
+    // is no subject here at all: the referent of "what about that?" is the
+    // agent's own last sentence, and neither it nor the vague question that
+    // points at it is something to send to a search engine.
+    //
+    // Anything genuinely checkable in their message was already handled by the
+    // questions loop, which does not depend on this branch.
+    if (subject.parentIsOwn && subject.parent) return lookups;
+
     const subjectText = (subject.parent ?? subject.incoming)
       .replace(/@[A-Za-z0-9_]{1,15}/g, ' ')
       .replace(/https?:\/\/\S+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    if (subjectText.split(' ').filter(Boolean).length >= 3) {
+    if (subjectText.split(' ').filter(Boolean).length >= 3 && !isOutburst(subjectText)) {
       add({
         kind: 'search',
         query: asQuestion(subjectText, timeSensitive),
