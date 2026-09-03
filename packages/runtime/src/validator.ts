@@ -50,6 +50,37 @@ const PROVIDER_NAMES = [
   'hugging face',
 ];
 
+/**
+ * Strings shaped like somewhere money can be sent.
+ *
+ * Deliberately wider than the chains anybody here uses. The rule is not "find
+ * the token's address", it is "notice that the model wrote something an address
+ * could be", and a false positive costs one held reply while a false negative
+ * costs somebody their money.
+ *
+ * Base58 excludes 0, O, I and l, which is what keeps the 32-44 character
+ * pattern off ordinary text; nothing in English runs that long without a space,
+ * and the alternative -- only checking the formats we recognise today -- fails
+ * silently the first time an agent is asked about a chain nobody anticipated.
+ */
+const ADDRESS_SHAPES: RegExp[] = [
+  /\b0x[a-fA-F0-9]{40}\b/g,
+  /\b(?:bc1|tb1)[02-9ac-hj-np-z]{11,71}\b/g,
+  /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g,
+];
+
+/** Every distinct address-shaped string in the text, in the order written. */
+function addressesIn(text: string): string[] {
+  const found: string[] = [];
+  for (const shape of ADDRESS_SHAPES) {
+    for (const match of text.matchAll(shape)) {
+      const value = match[0];
+      if (!found.includes(value)) found.push(value);
+    }
+  }
+  return found;
+}
+
 /** How the disclosure usually comes out, whatever the model is called. */
 const MODEL_DISCLOSURE = [
   /\bi(?:'m| am) (?:powered|run|running|built|based|hosted) (?:by|on|upon)\b/i,
@@ -265,6 +296,19 @@ export function validateOutput(
     if (needle && haystack.includes(needle)) {
       violations.push({ rule: 'blocked_topic', severity: 'REVIEW', message: `Output touches a blocked topic: "${topic}".` });
     }
+  }
+
+  for (const found of addressesIn(output)) {
+    if (policy.output.verifiedAddresses.includes(found)) continue;
+    violations.push({
+      rule: 'unverified_address',
+      severity: 'REJECT',
+      message:
+        policy.output.verifiedAddresses.length === 0
+          ? `Output contains an address (${found}) and no verified address is configured for this agent. ` +
+            'A model asked for one will invent it, so an agent that has not been given an address may not write one.'
+          : `Output contains an address (${found}) that is not one of this agent's verified addresses.`,
+    });
   }
 
   // Never negotiable, and checked before anything a policy could relax.
