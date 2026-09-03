@@ -313,6 +313,24 @@ describe('reading an agent back into Easy Mode', () => {
     expect(result.setup.character.preset).toBe('CUSTOM');
   });
 
+  it('an Easy Mode save keeps the fields Easy Mode cannot show', () => {
+    // Hidden state mutation is the failure being prevented: styleGuidelines and
+    // customInstructions reach every prompt, and for a while neither had an
+    // input anywhere, so an owner could not see them and a save that dropped
+    // them would look like nothing had happened.
+    const existing = {
+      ...toPersona(setup),
+      customInstructions: 'The contract address is 0x16CB7cBb26295b60DF7f4B3B39a99a9A3c585E81.',
+      prohibitedBehaviors: ['Never give price predictions'],
+      identityKind: 'BRAND' as const,
+    };
+
+    const saved = toPersona(setup, existing);
+    expect(saved.customInstructions).toBe(existing.customInstructions);
+    expect(saved.prohibitedBehaviors).toEqual(existing.prohibitedBehaviors);
+    expect(saved.identityKind).toBe('BRAND');
+  });
+
   it('reports persona settings Easy Mode does not edit', () => {
     const result = readEasyView({
       persona: {
