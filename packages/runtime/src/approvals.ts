@@ -31,7 +31,14 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
   const proposed = (input.editedOutput ?? job.validatedOutput ?? job.generatedOutput ?? '').trim();
   if (!proposed) throw new ConflictError('There is no message text to approve.');
 
-  const validation = validateOutput(proposed, policy);
+  // The same persona the job was generated against, for the same reason the
+  // pipeline passes it: an address the operator wrote into the agent is one the
+  // agent was given, and a person approving a reply that quotes it should not
+  // be told the agent may not say its own address.
+  const persona = job.personaVersionId ? await agentsRepo.getPersonaVersion(job.personaVersionId) : null;
+  const operatorText = [persona?.biography, persona?.customInstructions].filter(Boolean).join('\n');
+
+  const validation = validateOutput(proposed, policy, null, operatorText);
   const hardFailure = validation.violations.find((v) => v.severity === 'REJECT');
   if (hardFailure) {
     throw new ConflictError(`This message cannot be approved: ${hardFailure.message}`, {
