@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { resolve } from 'node:path';
 import { createLogger, errorMessage } from '@xbam/shared';
 import type { BrowserChannel } from './types';
+import { SHARED_CHROME_ARGS } from './chrome';
 import { browserEnabled, defaultProfileDir } from './session';
 
 const run = promisify(execFile);
@@ -169,7 +170,7 @@ export async function runBrowserPreflight(): Promise<PreflightReport> {
       await mkdir(launchDir, { recursive: true });
       const context = await chromium.launchPersistentContext(launchDir, {
         headless: true,
-        args: ['--no-first-run', '--no-default-browser-check'],
+        args: [...SHARED_CHROME_ARGS],
       });
       await context.close();
       checks.push({ name: 'Browser launch', status: 'ok', detail: 'A browser context opened and closed cleanly.' });

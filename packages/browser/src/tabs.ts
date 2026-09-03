@@ -179,6 +179,31 @@ export async function adoptOpenTabs(context: BrowserContext, tabs: TabMap): Prom
 }
 
 /**
+ * A tab that is open, answers every call, and can never show anything again.
+ *
+ * When Chrome kills a renderer for memory it does not close the tab: it
+ * navigates it to an internal error page. `isClosed()` stays false, locators
+ * resolve to nothing, and a monitor reads zero mentions and reports success.
+ * That is how a session died on 2026-09-03 with "Error code: Out of Memory"
+ * without anything recording an error.
+ *
+ * The crash event catches this at the moment it happens. This catches the tab
+ * that was already dead when we came back to it -- after a worker restart, or
+ * when the crash arrived while nothing was listening.
+ */
+export function isDeadPage(page: Page): boolean {
+  if (page.isClosed()) return true;
+  let url = '';
+  try {
+    url = page.url();
+  } catch {
+    // Asking a destroyed page for its URL is itself an answer.
+    return true;
+  }
+  return url.startsWith('chrome-error://') || url.startsWith('edge-error://') || url === 'about:blank#blocked';
+}
+
+/**
  * The page for a role, created once and reused.
  *
  * Recovery is per role: a closed or crashed tab is replaced on its own without
@@ -187,11 +212,18 @@ export async function adoptOpenTabs(context: BrowserContext, tabs: TabMap): Prom
  */
 export async function acquireTab(context: BrowserContext, tabs: TabMap, role: TabRole): Promise<TabState> {
   const existing = tabs.get(role);
-  if (existing && !existing.page.isClosed()) return existing;
+  if (existing && !existing.page.isClosed() && !isDeadPage(existing.page)) return existing;
 
   if (existing) {
-    log.info('tab was closed, recreating it', { role });
+    log.info(existing.page.isClosed() ? 'tab was closed, recreating it' : 'tab died, recreating it', {
+      role,
+      url: existing.page.isClosed() ? null : existing.page.url(),
+    });
     tabs.delete(role);
+    // A crashed tab is still an open tab. Left behind it costs the memory that
+    // killed it and gets adopted again by the next scan looking for our window
+    // name, which is still on it.
+    if (!existing.page.isClosed()) await existing.page.close().catch(() => undefined);
   }
 
   const adopted = await findExisting(context, role);
@@ -216,6 +248,20 @@ export async function acquireTab(context: BrowserContext, tabs: TabMap, role: Ta
   page.on('close', () => {
     if (tabs.get(role) === state) tabs.delete(role);
     log.info('tab closed', { role, adopted: Boolean(adopted) });
+  });
+
+  // A renderer killed for memory does not close its tab.
+  //
+  // This is the failure that looked healthiest: on 2026-09-03 a session died
+  // with "Error code: Out of Memory" and the tab stayed open on the error page.
+  // isClosed() is false, every method still resolves, and each read returns
+  // nothing at all -- so a monitor found no mentions, forever, while reporting
+  // success. Playwright raises `crash` for exactly this, and dropping the tab
+  // from the map is enough: the next acquire builds a fresh one.
+  page.on('crash', () => {
+    if (tabs.get(role) === state) tabs.delete(role);
+    state.lastError = 'the tab crashed, usually out of memory';
+    log.warn('tab crashed, it will be recreated on next use', { role });
   });
 
   log.info(adopted ? 'tab adopted' : 'tab opened', { role, pages: context.pages().length });
@@ -286,13 +332,25 @@ export function tabHealth(tabs: TabMap): TabHealth[] {
     } catch {
       url = null;
     }
+    // A tab sitting on an error page reports FAILED, not READY. Health that
+    // says READY for a tab which can never show anything again is worse than
+    // no health at all: it is what let an out-of-memory session look fine for
+    // four hours.
+    const dead = !closed && isDeadPage(state.page);
+
     return {
       role,
-      state: closed ? ('MISSING' as const) : state.lastError ? ('FAILED' as const) : state.busy ? ('BUSY' as const) : ('READY' as const),
+      state: closed
+        ? ('MISSING' as const)
+        : dead || state.lastError
+          ? ('FAILED' as const)
+          : state.busy
+            ? ('BUSY' as const)
+            : ('READY' as const),
       url,
       openedAt: new Date(state.openedAt).toISOString(),
       lastUsedAt: new Date(state.lastUsedAt).toISOString(),
-      lastError: state.lastError,
+      lastError: dead ? (state.lastError ?? 'the tab crashed, usually out of memory') : state.lastError,
     };
   });
 }

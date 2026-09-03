@@ -5,3 +5,4 @@ export * from './preflight';
 export * from './chrome';
 export * from './tabs';
 export * from './explain';
+export * from './cleanExit';

@@ -10,6 +10,7 @@ import {
   closeChrome,
   existingChrome,
   launchChrome,
+  SHARED_CHROME_ARGS,
   waitForCdp,
   type LaunchedChrome,
 } from './chrome';
@@ -185,7 +186,7 @@ async function openContext(config: SessionConfig): Promise<Entry> {
       const context = await chromium.launchPersistentContext(config.profileDir, {
         headless: config.headless,
         viewport: { width: 1280, height: 900 },
-        args: ['--no-first-run', '--no-default-browser-check'],
+        args: [...SHARED_CHROME_ARGS],
       });
       return {
         context,
