@@ -121,7 +121,12 @@ describe('how the question is asked', () => {
     });
 
     const search = lookups.find((l) => l.kind === 'search');
-    expect(search?.query).toMatch(/^What is the latest on: /i);
+    // The prefix used to be "What is the latest on: " followed by the post's
+    // first sentence, which is a paste rather than a question. The recency is
+    // still expressed; what it is attached to is now the subject.
+    expect(search?.query).toContain('Ethereum');
+    expect(search?.query).toMatch(/latest/i);
+    expect(search?.query).not.toContain('core devs have scheduled');
   });
 
   it('does not paste half a post at an answer engine', () => {
@@ -130,7 +135,16 @@ describe('how the question is asked', () => {
     const long = `Here is a very long post about ${'governance and fee markets '.repeat(20)}`;
     const lookups = whatToResearch({ incoming: '@agent what is this about?', parent: long });
 
-    const search = lookups.find((l) => l.kind === 'search');
+    // A wall of text naming nothing now produces no query at all, which is the
+    // stronger form of the same rule: there was never a good query to build.
+    expect(lookups.find((l) => l.kind === 'search')).toBeUndefined();
+  });
+
+  it('keeps a query short even when the post is enormous', () => {
+    const long = `Solana had an outage. ${'Governance and fee markets are contentious. '.repeat(20)}`;
+    const search = whatToResearch({ incoming: '@agent what is this about?', parent: long }).find(
+      (l) => l.kind === 'search',
+    );
     expect(search).toBeTruthy();
     expect(search!.query.length).toBeLessThanOrEqual(140);
   });

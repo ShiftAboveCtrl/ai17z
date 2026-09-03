@@ -29,25 +29,30 @@ describe('the ordinary reply needs nothing looked up', () => {
 
 describe('being asked about something', () => {
   it('searches for the subject, not for the question', () => {
-    // "what is this about" is a useless query. The parent is the subject.
+    // "what is this about" is a useless query. The parent is the subject -- and
+    // the subject is what the parent *names*, not the words it used. This used
+    // to assert the query contained "paused withdrawals", which is a paste of
+    // the post; a query built from a post's own phrasing is how "Absolutely
+    // WILD piece of tech here." reached a search engine.
     const lookups = whatToResearch({
       incoming: '@agent what is this post about?',
       parent: 'Protocol X paused withdrawals this morning pending a security review.',
     });
     const search = lookups.find((l) => l.kind === 'search');
     expect(search).toBeDefined();
-    expect(search!.query).toContain('paused withdrawals');
+    expect(search!.query).toContain('Protocol X');
     expect(search!.query).not.toContain('what is this post about');
   });
 
   it('strips handles and links out of the query', () => {
     const lookups = whatToResearch({
       incoming: '@agent whats going on here',
-      parent: '@someone @someoneelse look at this https://example.com/thing big news today',
+      parent: '@someone @someoneelse look at this https://example.com/thing about Protocol X today',
     });
     const search = lookups.find((l) => l.kind === 'search')!;
     expect(search.query).not.toContain('@someone');
     expect(search.query).not.toContain('https://');
+    expect(search.query).toContain('Protocol X');
   });
 
   it('falls back to the mention itself when there is no parent', () => {
@@ -63,9 +68,20 @@ describe('being asked about something', () => {
   it('carries the reason, so the trace says why it went looking', () => {
     const lookups = whatToResearch({
       incoming: '@agent what is this about?',
-      parent: 'The upgrade shipped and immediately broke withdrawals.',
+      // Names something, or there is correctly nothing to look up and no
+      // reason to record: a post that names nothing is not researched at all.
+      parent: 'The Protocol X upgrade shipped and immediately broke withdrawals.',
     });
     expect(lookups[0]!.reason.length).toBeGreaterThan(10);
+  });
+
+  it('records no reason when there was nothing to look up', () => {
+    // The other half of the same rule. A post with no subject produces no
+    // lookup, so there is no reason to carry -- rather than a lookup whose
+    // reason is a sentence about a query that should never have been sent.
+    expect(
+      whatToResearch({ incoming: '@agent what is this about?', parent: 'The upgrade shipped and broke everything.' }),
+    ).toEqual([]);
   });
 });
 
