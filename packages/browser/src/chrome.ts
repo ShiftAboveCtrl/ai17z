@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { PipelineError, createLogger, errorMessage } from '@xbam/shared';
+import { markProfilesExitedCleanly } from './cleanExit';
 
 const run = promisify(execFile);
 const log = createLogger('chrome');
@@ -23,6 +24,41 @@ const log = createLogger('chrome');
  */
 
 import type { BrowserEngine } from './types';
+
+/**
+ * Flags every launch path shares.
+ *
+ * Chrome is started from four places here -- the managed launch below, the
+ * persistent context in session.ts, the preflight check, and the PowerShell
+ * helper -- and each had grown its own list. Flags that stop a browser being
+ * unusable belong in all of them, and the way to be sure of that is for there
+ * to be one list.
+ *
+ * Two problems, both seen in production on 2026-09-03:
+ *
+ * The restore bubble. After a crash or an out-of-memory kill, Chrome offers to
+ * restore the previous session and, unasked, restores its tabs. This runtime
+ * identifies its four tabs by window.name, so restored tabs arrive untagged and
+ * the adopter finds strangers. Nobody is sitting there to dismiss the offer.
+ * Both flag spellings are here because the bubble was renamed between versions
+ * and neither name is documented as stable.
+ *
+ * Memory. A long-lived browser on a feed that never stops loading accumulates
+ * until a renderer is killed, and X is exactly that kind of page. These do not
+ * fix a leak; they lower the floor and stop three permanently-background tabs
+ * from being kept fully alive when nothing is reading them.
+ */
+export const SHARED_CHROME_ARGS: readonly string[] = [
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--hide-crash-restore-bubble',
+  '--disable-session-crashed-bubble',
+  '--disable-infobars',
+  '--disable-features=CalculateNativeWinOcclusion',
+  '--disable-background-timer-throttling',
+  '--disable-renderer-backgrounding',
+  '--disable-backgrounding-occluded-windows',
+];
 
 export interface ChromeInstallation {
   executable: string;
@@ -569,14 +605,27 @@ export async function launchChrome(input: {
 
   const port = await freePort();
 
+  // Before the flags, and for a different reason than the flags.
+  //
+  // --hide-crash-restore-bubble hides the bubble; it does not stop Chrome
+  // deciding the last session ended badly, and that decision is what restores
+  // the previous tabs. Restored tabs arrive without the window.name this
+  // runtime identifies its roles by, so the adopter finds four strangers.
+  //
+  // Safe here specifically because Chrome is not running against this profile:
+  // the branch above returned if it was, and Chrome rewrites this file on exit.
+  await markProfilesExitedCleanly(input.profileDir);
+
   const args = [
     `--remote-debugging-port=${port}`,
     // Loopback only. Without this the debug port can be reachable from the
     // network, and anything that reaches it drives a signed-in browser.
     '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${input.profileDir}`,
-    '--no-first-run',
-    '--no-default-browser-check',
+    ...SHARED_CHROME_ARGS,
+    // The GPU process is a second renderer's worth of memory for a page nobody
+    // is watching, and a headless runtime never needs hardware compositing.
+    ...(input.headless ? ['--disable-gpu'] : []),
     ...(input.headless ? ['--headless=new'] : ['--start-maximized']),
     ...(input.startUrl ? [input.startUrl] : []),
   ];

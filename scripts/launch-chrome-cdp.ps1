@@ -177,11 +177,23 @@ if ($SeedFromProfile) {
   }
 }
 
+# Kept in step with SHARED_CHROME_ARGS in packages/browser/src/chrome.ts, which
+# a test asserts. The two that matter most here: Chrome offers to restore the
+# previous session after a crash and restores its tabs unasked, which arrive
+# without the window.name the runtime identifies its roles by; and a browser
+# left on a feed all day is what produced "Error code: Out of Memory".
 $arguments = @(
   "--remote-debugging-port=$Port",
   "--user-data-dir=$Profile",
   '--no-first-run',
-  '--no-default-browser-check'
+  '--no-default-browser-check',
+  '--hide-crash-restore-bubble',
+  '--disable-session-crashed-bubble',
+  '--disable-infobars',
+  '--disable-features=CalculateNativeWinOcclusion',
+  '--disable-background-timer-throttling',
+  '--disable-renderer-backgrounding',
+  '--disable-backgrounding-occluded-windows'
 )
 
 Start-Process -FilePath $exe -ArgumentList $arguments
