@@ -302,6 +302,10 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     raw,
     bundle.policy,
     bundle.job.resolvedContext?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+    // What the operator wrote for this agent. An address they put in the
+    // biography or the standing instructions is one they gave it deliberately,
+    // and is the normal place for a project's own contract address to live.
+    [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
 

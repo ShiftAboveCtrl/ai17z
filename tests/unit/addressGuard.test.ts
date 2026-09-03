@@ -17,17 +17,24 @@ const TRANSPOSED = 'So11111111111111111111111111111111111111123';
 const REAL_REPLY = `Here's the contract address: ${INVENTED}. Check it against the official source before you do anything with it.`;
 
 /**
- * On 2026-09-03 an agent with no address configured was asked "whats your ca?"
- * and answered with the string above: correctly shaped, Ethereum format, for a
- * token that is not on Ethereum, invented in full by the model and published to
- * a real person.
+ * The rule is "an agent may not write an address nobody gave it", not "an agent
+ * may not write addresses".
  *
- * Every other output rule here repairs or asks a human. This one refuses,
- * because a nearly-correct address is worse than no answer: the reply that says
- * "actually that was wrong" arrives after the money has moved.
+ * The first version of this file assumed the reply above was invented, because
+ * the trace showed the agent producing that string sixteen hours before it
+ * appeared in anyone's post. It was not: the operator had written it into the
+ * agent's biography, which is the obvious place for it. Reading only the policy
+ * list therefore stopped an agent stating its own address and turned a rule
+ * about tokens into a rule that failed ordinary conversations.
+ *
+ * What still has to hold is the reason the rule exists: a model asked for an
+ * address it does not have will produce one anyway, correctly shaped, with no
+ * signal that it is guessing. A nearly-correct address is worse than no answer,
+ * because the correction arrives after the money has moved. So this rejects
+ * rather than repairing or asking a person.
  */
-describe('an agent may not invent an address', () => {
-  it('rejects the reply that actually went out', () => {
+describe('an address the agent was never given', () => {
+  it('is refused when it appears nowhere in the configuration', () => {
     const result = validateOutput(REAL_REPLY, policy());
     expect(result.ok).toBe(false);
     const violation = result.violations.find((v) => v.rule === 'unverified_address');
@@ -35,9 +42,26 @@ describe('an agent may not invent an address', () => {
     expect(violation?.message).toContain(INVENTED);
   });
 
-  it('protects an installation nobody has configured, which is the case that failed', () => {
-    // No verifiedAddresses set: the default forbids every address rather than
-    // permitting every address, so the guard works before anyone knows it exists.
+  it('is allowed once the operator writes it into the persona', () => {
+    // The regression this file was rewritten for. An operator who puts the
+    // contract address in the biography has given the agent that address.
+    const biography = `Ava is an AI17Z agent. The contract address is ${INVENTED}.`;
+    const result = validateOutput(REAL_REPLY, policy(), null, biography);
+    expect(result.ok).toBe(true);
+    expect(result.violations.map((v) => v.rule)).not.toContain('unverified_address');
+  });
+
+  it('still refuses a different address when the persona names one', () => {
+    const biography = `The contract address is ${INVENTED}.`;
+    const other = '0x' + 'f'.repeat(40);
+    const result = validateOutput(`Try ${other} instead`, policy(), null, biography);
+    expect(result.ok).toBe(false);
+    expect(result.violations.find((v) => v.rule === 'unverified_address')?.message).toContain('not one this agent was given');
+  });
+
+  it('protects an installation nobody has configured', () => {
+    // Empty means "none given", which forbids all of them rather than
+    // permitting all of them, so the guard works before anyone sets it up.
     expect(policy().output.verifiedAddresses).toEqual([]);
     expect(validateOutput(`Send it to ${INVENTED}`, policy()).ok).toBe(false);
   });
@@ -85,6 +109,26 @@ describe('an agent may not invent an address', () => {
       (v) => v.rule === 'unverified_address',
     );
     expect(found).toHaveLength(2);
+  });
+
+  it('does not involve itself in a conversation that has no address in it', () => {
+    // The failure mode this rule must never cause. A safety rule about tokens
+    // that fails a reply about installation is a rule that has stopped being
+    // about tokens.
+    for (const text of [
+      'AI17Z runs autonomous agents on your own machine, through a browser you control.',
+      "It doesn't sign you in. That part is always a person, deliberately.",
+      'Open source: https://github.com/ShiftAboveCtrl/ai17z',
+      'Ran it twice so the first time was not luck. 945 tests, all passing.',
+      'Depends what you mean by fast. Fast to the first reply, or fast end to end.',
+      'I do not know. I would rather say that than guess at it.',
+      'Node 22 or newer, Docker Desktop, and Google Chrome. That is the whole list.',
+      'Yes, Ollama works. Point it at your local endpoint in the provider screen.',
+    ]) {
+      const result = validateOutput(text, policy());
+      expect(result.violations.map((v) => v.rule), text).not.toContain('unverified_address');
+      expect(result.ok, text).toBe(true);
+    }
   });
 
   it('leaves ordinary replies alone', () => {

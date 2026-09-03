@@ -178,6 +178,19 @@ export function validateOutput(
    * compliment with "Thanks, kind." and the next with "Appreciate that, @kind."
    */
   targetHandle?: string | null,
+  /**
+   * Text the operator wrote for this agent: the persona biography and its
+   * standing instructions.
+   *
+   * An address the operator put in the agent's own configuration is one they
+   * chose to give it. The first version of this rule did not look here, so an
+   * agent whose contract address lives in its biography -- the obvious place to
+   * put it, and where a real one was -- could no longer say it, and an ordinary
+   * conversation failed on a rule about tokens. The safety property was never
+   * "an agent may not write addresses"; it is "an agent may not write an
+   * address nobody gave it".
+   */
+  operatorText?: string | null,
 ): ValidationResult {
   const violations: Violation[] = [];
   let output = raw.replace(/\r\n/g, '\n').trim();
@@ -298,16 +311,23 @@ export function validateOutput(
     }
   }
 
+  // An address is allowed when the operator has given the agent that exact
+  // address, either in the policy list or in the text they wrote for it.
+  const givenAddresses = new Set<string>(policy.output.verifiedAddresses);
+  for (const written of addressesIn(operatorText ?? '')) givenAddresses.add(written);
+
   for (const found of addressesIn(output)) {
-    if (policy.output.verifiedAddresses.includes(found)) continue;
+    if (givenAddresses.has(found)) continue;
     violations.push({
       rule: 'unverified_address',
       severity: 'REJECT',
       message:
-        policy.output.verifiedAddresses.length === 0
-          ? `Output contains an address (${found}) and no verified address is configured for this agent. ` +
-            'A model asked for one will invent it, so an agent that has not been given an address may not write one.'
-          : `Output contains an address (${found}) that is not one of this agent's verified addresses.`,
+        givenAddresses.size === 0
+          ? `Output contains an address (${found}) that appears nowhere in this agent's configuration. ` +
+            'A model asked for an address it does not have will produce one anyway, so an agent that was ' +
+            'never given one may not write one. Add it to the persona or to policy.output.verifiedAddresses.'
+          : `Output contains an address (${found}) that is not one this agent was given. ` +
+            `It has ${givenAddresses.size === 1 ? 'one address' : `${givenAddresses.size} addresses`}, and this is not among them.`,
     });
   }
 
