@@ -212,11 +212,115 @@ const IMPERATIVE_ASK =
  * rather than a question -- where without it an answer engine happily
  * summarises something from two years ago.
  */
-function asQuestion(subject: string, timeSensitive: boolean): string {
-  const trimmed = subject.split(/(?<=[.!?])\s/)[0]!.trim() || subject.trim();
-  const core = (trimmed.length > 120 ? trimmed.slice(0, 120).replace(/\s\S*$/, '') : trimmed).trim();
+function asQuestion(subject: string, timeSensitive: boolean): string | null {
+  const trimmed = subject.trim();
+  if (!trimmed) return null;
+
+  // Something already phrased as a question is the best query available: it is
+  // what the person actually wants to know, in their own words.
+  const firstSentence = trimmed.split(/(?<=[.!?])\s/)[0]!.trim() || trimmed;
+  const core = (firstSentence.length > 120 ? firstSentence.slice(0, 120).replace(/\s\S*$/, '') : firstSentence).trim();
   if (READS_AS_QUESTION.test(core)) return core.endsWith('?') ? core : core + '?';
-  return timeSensitive ? 'What is the latest on: ' + core : core;
+
+  // Otherwise: what is this *about*, not what did it say.
+  //
+  // This used to paste the first sentence behind "What is the latest on: ",
+  // which is how a search engine was asked about "Absolutely WILD piece of tech
+  // here." and "Windows is complete." Those are not questions and they have no
+  // subject; the answers came back about whatever those words collocate with.
+  //
+  // A statement is worth researching when it names something. When it names
+  // nothing, there is no query to build and the honest result is to look
+  // nothing up, which is what returning null means.
+  const subjects = namedSubjects(trimmed);
+  if (subjects.length === 0) return null;
+
+  const named = subjects.slice(0, 3).join(' ');
+  return timeSensitive ? `${named} latest news` : named;
+}
+
+/**
+ * The things a statement is about: names, tickers, quoted phrases, sites.
+ *
+ * Capitalised runs are taken from anywhere but the very first word, because
+ * every sentence starts with a capital and "Absolutely" is not a subject. A
+ * word in all caps is treated as shouting rather than as a name, for the same
+ * reason "WHAT THE HELL" was being researched.
+ */
+/**
+ * Words that are capitalised because a sentence started, not because they name
+ * anything. Adverbs and openers, which is what social posts begin with.
+ */
+const OPENER = new Set([
+  'absolutely', 'actually', 'obviously', 'honestly', 'seriously', 'literally', 'basically', 'apparently',
+  'definitely', 'probably', 'maybe', 'clearly', 'finally', 'currently', 'recently', 'personally',
+  'this', 'that', 'these', 'those', 'the', 'a', 'an', 'and', 'but', 'so', 'then', 'now', 'here', 'there',
+  'what', 'when', 'where', 'who', 'why', 'how', 'which', 'if', 'is', 'are', 'was', 'were', 'it', 'its',
+  'we', 'you', 'they', 'he', 'she', 'i', 'my', 'our', 'your', 'their', 'just', 'very', 'really', 'still',
+  'every', 'some', 'any', 'all', 'no', 'not', 'yes', 'ok', 'okay', 'wow', 'nice', 'good', 'great', 'love',
+  'holy', 'crazy', 'wild', 'insane', 'massive', 'huge', 'big', 'new', 'first', 'last', 'next', 'another',
+]);
+
+export function namedSubjects(text: string): string[] {
+  const found: string[] = [];
+  const add = (value: string) => {
+    const cleaned = value.trim().replace(/\s+/g, ' ');
+    if (!cleaned) return;
+    if (!found.some((f) => f.toLowerCase() === cleaned.toLowerCase())) found.push(cleaned);
+  };
+
+  // Digits allowed after the first letter, or $AI17Z -- this project's own
+  // ticker -- matches as far as "$AI" and then stops, which is no match at all.
+  for (const match of text.matchAll(/\$[A-Za-z][A-Za-z0-9]{1,9}\b/g)) add(match[0]);
+  for (const match of text.matchAll(/["“]([^"”]{3,60})["”]/g)) add(match[1]!);
+  for (const match of text.matchAll(/\b[a-z0-9-]+\.(?:com|org|io|net|xyz|dev|ai|co)\b/gi)) add(match[0]);
+
+  // Capitalised runs.
+  //
+  // The opening word of a sentence is capitalised whatever it is, so a run that
+  // is only the first word is discarded -- that is what stopped "Absolutely" in
+  // "Absolutely WILD piece of tech here." becoming a subject. But a run that
+  // *continues* past the first word is a name: "Project Q announced a
+  // migration" opens with the thing it is about, and dropping it because of
+  // where it sits in the sentence loses the only subject there was.
+  //
+  // ALL CAPS is shouting, not a name, which is the other half of why "WHAT THE
+  // HELL" was reaching a search engine.
+  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+    const words = sentence.trim().split(/\s+/);
+    let run: string[] = [];
+    let runStartedAt = 0;
+
+    const flush = () => {
+      // A single capitalised word that opened the sentence is a name only if it
+      // is not one of the words every sentence can start with. Position alone
+      // was too blunt: it correctly threw away "Absolutely" and wrongly threw
+      // away "Solana", and those are the same shape.
+      const lone = run.length === 1;
+      if (!lone || runStartedAt > 0 || !OPENER.has(run[0]!.toLowerCase())) {
+        if (run.length > 0) add(run.join(' '));
+      }
+      run = [];
+    };
+
+    for (const [index, word] of words.entries()) {
+      const bare = word.replace(/[^\p{L}\p{N}'-]/gu, '');
+      // A name proper, or a single capital or number continuing one: the Q in
+      // "Project Q", the 3 in "Layer 3".
+      const isName = /^[A-Z][a-z'’-]{1,}$/.test(bare) && bare.length > 2;
+      const continuesName = run.length > 0 && /^[A-Z0-9]$|^[A-Z][a-z]?$/.test(bare);
+
+      if (isName || continuesName) {
+        if (run.length === 0) runStartedAt = index;
+        run.push(bare);
+        continue;
+      }
+      flush();
+    }
+    flush();
+  }
+
+  return found;
 }
 
 /** Already phrased as a question, so it needs no framing. */
@@ -371,9 +475,11 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
     const questionIsTimely = TIME_SENSITIVE.some((re) => re.test(question));
     if (!questionIsTimely && !ASKS_A_FACT.test(question)) continue;
 
+    const query = asQuestion(question, questionIsTimely);
+    if (!query) continue;
     add({
       kind: 'search',
-      query: asQuestion(question, questionIsTimely),
+      query,
       reason: questionIsTimely
         ? 'They asked something whose answer changes by the day.'
         : 'They asked something with an answer that exists somewhere.',
@@ -406,9 +512,10 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
       .replace(/\s+/g, ' ')
       .trim();
     if (subjectText.split(' ').filter(Boolean).length >= 3 && !isOutburst(subjectText)) {
-      add({
+      const query = asQuestion(subjectText, timeSensitive);
+      if (query) add({
         kind: 'search',
-        query: asQuestion(subjectText, timeSensitive),
+        query,
         reason: asking
           ? 'They asked what this is about, and the answer is not in the post.'
           : 'The subject changes by the day, so a trained answer would be out of date.',
