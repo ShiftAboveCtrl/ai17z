@@ -50,5 +50,10 @@ COPY README.md CONTRIBUTING.md SECURITY.md ./
 COPY tools ./tools
 
 RUN mkdir -p /data/storage /data/browser-profiles && chown -R pwuser:pwuser /data /app
+# Which source this image was built from. There is no git in a container, so
+# being told at build time is the only way it can answer that.
+ARG AI17Z_BUILD_COMMIT=""
+ENV AI17Z_BUILD_COMMIT=$AI17Z_BUILD_COMMIT
+
 USER pwuser
 CMD ["npm", "run", "start:worker"]

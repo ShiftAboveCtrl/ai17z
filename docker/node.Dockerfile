@@ -48,6 +48,15 @@ COPY docs ./docs
 COPY README.md CONTRIBUTING.md SECURITY.md ./
 COPY tools ./tools
 
+# Which source this image was built from.
+#
+# There is no git in here and no repository either, so being told at build time
+# is the only way a container can answer "what version are you running". Empty
+# is honest rather than absent: the version then reports its source as unknown
+# instead of guessing.
+ARG AI17Z_BUILD_COMMIT=""
+ENV AI17Z_BUILD_COMMIT=$AI17Z_BUILD_COMMIT
+
 RUN mkdir -p /data/storage && chown -R node:node /data /app
 USER node
 EXPOSE 8787

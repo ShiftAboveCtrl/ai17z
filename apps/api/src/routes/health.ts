@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { HealthComponent, HealthReport } from '@xbam/shared/contracts';
-import { nowIso } from '@xbam/shared';
+import { buildVersion, describeVersion, nowIso } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   jobs as jobsRepo,
@@ -34,7 +34,16 @@ async function collect(): Promise<HealthReport> {
   const checkedAt = nowIso();
   const components: HealthComponent[] = [];
 
-  components.push({ name: 'API', status: 'healthy', detail: 'Serving requests', optional: false, kind: 'core', checkedAt });
+  // Which version this is. Without it, "have you updated?" and "which version
+  // has the bug?" are both unanswerable, and both get asked constantly.
+  components.push({
+    name: 'API',
+    status: 'healthy',
+    detail: `Serving requests, ${describeVersion()}`,
+    optional: false,
+    kind: 'core',
+    checkedAt,
+  });
 
   const db = await pingDatabase();
   components.push({

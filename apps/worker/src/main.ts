@@ -1,5 +1,5 @@
 import { hostname } from 'node:os';
-import { createLogger, envInt, envString, errorMessage, loadEnv } from '@xbam/shared';
+import { createLogger, describeVersion, envInt, envString, errorMessage, loadEnv } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   browserTasks,
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     }
 
     await workersRepo
-      .heartbeat({ id: workerId, role, ...capabilities, hostname: hostname(), tools })
+      .heartbeat({ id: workerId, role, ...capabilities, hostname: hostname(), version: describeVersion(), tools })
       .catch((e) => log.warn('heartbeat failed', { message: errorMessage(e) }));
   };
   await announce();
@@ -171,7 +171,7 @@ async function main(): Promise<void> {
     signIns.start();
     socialRadar.start();
   }
-  log.info('worker ready', { workerId, role, ...capabilities });
+  log.info('worker ready', { workerId, role, ...capabilities, version: describeVersion() });
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
