@@ -6,6 +6,38 @@ import { StancePolicy } from './stance';
 import { EngagementPolicy, OutreachPolicy, ToneMirroring } from './engagement';
 import { VoicePolicy } from './voice';
 
+/**
+ * Helping people with the software this agent runs on.
+ *
+ * The official agent for a project should be able to genuinely help somebody
+ * diagnose it, rather than quoting documentation at them. Doing that well needs
+ * three things the ordinary agent has no business carrying: what version this
+ * installation is, what its runtime is actually doing, and the project's own
+ * documentation.
+ *
+ * Off by default, and that default is the point. Everybody's agent turning into
+ * a support bot for the software it happens to run on is not a feature -- it is
+ * a persona leak, and it would make every agent sound like the same agent the
+ * moment anybody asked a technical question.
+ */
+export const SupportPolicy = z.object({
+  enabled: z.boolean().default(false),
+  /**
+   * Whether it may describe its own runtime when asked why something is not
+   * working. Separate from `enabled`, because "answer questions about the
+   * project" and "tell people about this installation" are different offers:
+   * a public support agent may want the first without the second.
+   */
+  describeOwnRuntime: z.boolean().default(true),
+  /**
+   * What it is supporting, in the owner's words. Named rather than assumed, so
+   * an agent supporting something other than AI17Z is a configuration and not
+   * a fork.
+   */
+  subject: z.string().max(120).default('AI17Z'),
+});
+export type SupportPolicy = z.infer<typeof SupportPolicy>;
+
 export const IdentityPolicy = z.object({
   disclosure: DisclosureMode.default('ON_REQUEST'),
   /**
@@ -215,6 +247,8 @@ export const PolicyConfig = z.object({
   engagement: EngagementPolicy.default({}),
   /** Speaking first, under a post nobody addressed to the agent. */
   outreach: OutreachPolicy.default({}),
+  /** Helping people with the software this agent runs on. */
+  support: SupportPolicy.default({}),
   tone: ToneMirroring.default({}),
   /** How the agent's own way of writing is enforced, whatever model wrote it. */
   voice: VoicePolicy.default({}),
