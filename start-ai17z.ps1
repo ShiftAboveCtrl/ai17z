@@ -155,6 +155,9 @@ if (-not (Test-Path '.env')) {
 # -- The stack ---------------------------------------------------------------
 if ($Rebuild) {
   Write-Step 'Rebuilding images...'
+  # Stamped into the images, because a container has no git and otherwise
+  # cannot say which source it is running.
+  $env:AI17Z_BUILD_COMMIT = (git rev-parse --short=12 HEAD 2>$null)
   Invoke-Native docker @('compose', 'build', 'api', 'web', 'worker') 'The image build failed. The output above says why.' | Out-Null
 }
 
