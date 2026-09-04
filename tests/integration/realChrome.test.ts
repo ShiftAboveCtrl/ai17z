@@ -77,12 +77,54 @@ async function killTree(pid: number): Promise<void> {
   }
 }
 
+/**
+ * Anything still running out of this run's profile directory.
+ *
+ * `started` only knows the browsers this file launched directly. The ones
+ * opened through `leaseSession` belong to the session manager, and their pids
+ * never reach that list -- so a passing run left sixty-one Chrome processes
+ * behind, every one of them holding a profile. Several runs of that is where
+ * the hundreds came from, and the hundreds are why a later run crawled and then
+ * failed with "a Chrome is holding this account's profile": the leak from one
+ * run is the flakiness of the next.
+ *
+ * The profile path is the whole filter, and it is this run's own temporary
+ * directory, so nothing else on the machine can match it.
+ */
+async function killAnythingUnder(root: string): Promise<number> {
+  if (process.platform !== 'win32') return 0;
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const escaped = root.replace(/'/g, "''");
+  const { stdout } = await run(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-Command',
+      `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | ` +
+        `Where-Object { $_.CommandLine -like '*${escaped}*' } | ` +
+        `ForEach-Object { $_.ProcessId }`,
+    ],
+    { timeout: 60_000, maxBuffer: 16 * 1024 * 1024 },
+  ).catch(() => ({ stdout: '' }));
+
+  const pids = stdout
+    .split(/\r?\n/)
+    .map((line) => Number(line.trim()))
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
+  for (const pid of pids) await killTree(pid);
+  return pids.length;
+}
+
 afterAll(async () => {
   // Everything launched here is detached, so it has to be cleaned up by pid --
   // and by tree, or the renderers outlive the run holding the profile.
   for (const proc of started) {
     if (proc.pid) await killTree(proc.pid);
   }
+  // And whatever this file did not launch itself. Without this the run leaks.
+  if (profileRoot) await killAnythingUnder(profileRoot).catch(() => 0);
   // Give the renderers a moment to release the directory before removing it.
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   if (profileRoot) await rm(profileRoot, { recursive: true, force: true }).catch(() => undefined);
