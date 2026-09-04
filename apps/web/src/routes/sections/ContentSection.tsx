@@ -32,11 +32,37 @@ interface Schedule {
   updatedAt: string;
 }
 
+interface Draft {
+  id: string;
+  status: string;
+  text: string | null;
+  createdAt: string;
+  idea: string | null;
+}
+
+interface Posted {
+  id: string;
+  text: string | null;
+  url: string | null;
+  executedAt: string | null;
+}
+
 interface ContentView {
   counts: Record<string, number>;
-  items: Idea[];
+  ideas: Idea[];
   schedule: Schedule | null;
+  drafts: Draft[];
+  posted: Posted[];
 }
+
+/** The four states a post passes through, in the order it passes through them. */
+type Stage = 'IDEAS' | 'DRAFTS' | 'SCHEDULED' | 'POSTED';
+const STAGES: { key: Stage; label: string; lede: string }[] = [
+  { key: 'IDEAS', label: 'Ideas', lede: 'Things worth saying, waiting their turn. An empty list means it says nothing, which is the right outcome rather than a gap to fill.' },
+  { key: 'DRAFTS', label: 'Drafts', lede: 'Written and held for you. Nothing goes out until you decide.' },
+  { key: 'SCHEDULED', label: 'Scheduled', lede: 'When it may next speak. The schedule is a ceiling, not a timetable.' },
+  { key: 'POSTED', label: 'Posted', lede: 'What actually went out.' },
+];
 
 /** Hours, said the way a person would say them. */
 function everyHowOften(seconds: number): string {
@@ -97,7 +123,8 @@ function provenance(idea: Idea): string {
  * an observation.
  */
 export function ContentSection({ index, agentId }: { index: number; agentId: string }) {
-  const view = useResource<ContentView>(`/api/agents/${agentId}/ideas`);
+  const view = useResource<ContentView>(`/api/agents/${agentId}/content`);
+  const [stage, setStage] = useState<Stage>('IDEAS');
   const [adding, setAdding] = useState(false);
   const [summary, setSummary] = useState('');
   const [detail, setDetail] = useState('');
@@ -184,14 +211,95 @@ export function ContentSection({ index, agentId }: { index: number; agentId: str
 
           {error && <p className="break-words text-[13px] text-red-300">{error}</p>}
 
-          {data.items.length === 0 ? (
+          {/* The four states a post passes through. Drafts and posted are read
+              from jobs and actions rather than a second table: a post already
+              runs the ten pipeline steps, so the job is the record. */}
+          <div className="flex flex-wrap gap-2">
+            {STAGES.map((s) => {
+              const count =
+                s.key === 'IDEAS' ? data.ideas.length : s.key === 'DRAFTS' ? data.drafts.length : s.key === 'POSTED' ? data.posted.length : 0;
+              const active = s.key === stage;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => setStage(s.key)}
+                  className={`rounded-lg border px-3 py-1.5 text-[13px] transition-colors ${
+                    active ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone' : 'border-ink-line text-bone-dim hover:border-bone-faint'
+                  }`}
+                >
+                  {s.label}
+                  {s.key !== 'SCHEDULED' && <span className="ml-2 font-mono text-[11px] text-bone-faint">{count}</span>}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[13px] text-bone-faint">{STAGES.find((s) => s.key === stage)!.lede}</p>
+
+          {stage === 'DRAFTS' && (
+            data.drafts.length === 0 ? (
+              <EmptyState title="Nothing waiting for you" detail="A post written while review is on waits here until you approve it." />
+            ) : (
+              <ul className="space-y-2">
+                {data.drafts.map((draft) => (
+                  <li key={draft.id} className="rounded-lg border border-bone/10 bg-black/20 p-4">
+                    {draft.idea && <p className="text-[12px] text-bone-faint">From: {draft.idea}</p>}
+                    <p className="mt-1 whitespace-pre-wrap break-words text-sm text-bone">{draft.text ?? 'Nothing was written.'}</p>
+                    <p className="mt-2 text-[12px] text-bone-faint">Written {timeAgo(draft.createdAt)}</p>
+                    <a href={`/jobs/${draft.id}`} className="mt-2 inline-block text-[12px] text-bone hover:underline">
+                      Read it and decide
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )
+          )}
+
+          {stage === 'SCHEDULED' && (
+            <div className="rounded-lg border border-bone/10 bg-black/20 p-4">
+              <p className="text-sm text-bone">{nextChance(data.schedule)}</p>
+              {data.schedule?.enabled && (
+                <p className="mt-2 text-[13px] text-bone-faint">
+                  It posts {everyHowOften(data.schedule.intervalSeconds)}, and only if there is something worth saying.
+                  Coming due is a chance to speak, not an obligation.
+                </p>
+              )}
+            </div>
+          )}
+
+          {stage === 'POSTED' && (
+            data.posted.length === 0 ? (
+              <EmptyState title="Nothing posted yet" detail="Posts it made of its own accord appear here. Replies are under Activity." />
+            ) : (
+              <ul className="space-y-2">
+                {data.posted.map((post) => (
+                  <li key={post.id} className="rounded-lg border border-bone/10 bg-black/20 p-4">
+                    <p className="whitespace-pre-wrap break-words text-sm text-bone">{post.text}</p>
+                    <p className="mt-2 text-[12px] text-bone-faint">
+                      {post.executedAt ? timeAgo(post.executedAt) : 'time unknown'}
+                      {post.url && (
+                        <>
+                          {' · '}
+                          <a href={post.url} target="_blank" rel="noreferrer" className="text-bone hover:underline">
+                            on X
+                          </a>
+                        </>
+                      )}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )
+          )}
+
+          {stage === 'IDEAS' && (data.ideas.length === 0 ? (
             <EmptyState
               title="No ideas yet"
               detail="Ideas are captured from conversations the agent has: a question worth answering where more people can see it, or a position it keeps coming back to. You can also add one yourself, and yours never ages out."
             />
           ) : (
             <ul className="space-y-2">
-              {data.items.map((idea) => (
+              {data.ideas.map((idea) => (
                 <li key={idea.id} className="rounded-lg border border-bone/10 bg-black/20 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -243,7 +351,7 @@ export function ContentSection({ index, agentId }: { index: number; agentId: str
                 </li>
               ))}
             </ul>
-          )}
+          ))}
         </div>
       )}
 

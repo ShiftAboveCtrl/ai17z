@@ -592,6 +592,47 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  // Everything an owner might want to see about what their agent is about to
+  // say, in the four states it passes through.
+  //
+  // Drafts and posts are read from jobs and actions rather than kept in a
+  // second table: a post already goes through the ten pipeline steps as a
+  // SCHEDULED_TRIGGER, so the record of it is the job, and a queue with its own
+  // copy would be a second thing to keep in step.
+  app.get(
+    '/api/agents/:id/content',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+
+      const [counts, ideas, schedule, drafts, posted] = await Promise.all([
+        contentRepo.counts(agent.id),
+        contentRepo.listIdeas(agent.id, 'unused', 60),
+        postingRepo.getSchedule(agent.id),
+        query<{ id: string; status: string; text: string | null; created_at: string; idea: string | null }>(
+          `SELECT j.id, j.status,
+                  coalesce(j.validated_output, j.generated_output) AS text,
+                  j.created_at,
+                  e.payload ->> 'ideaSummary' AS idea
+             FROM jobs j JOIN events e ON e.id = j.event_id
+            WHERE j.agent_id = $1 AND j.action_type = 'POST'
+              AND j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED')
+            ORDER BY j.created_at DESC LIMIT 40`,
+          [agent.id],
+        ),
+        query<{ id: string; text: string | null; url: string | null; executed_at: string | null }>(
+          `SELECT a.id, a.payload ->> 'text' AS text, a.remote_action_url AS url, a.executed_at
+             FROM actions a
+            WHERE a.agent_id = $1 AND a.type = 'POST' AND a.status = 'EXECUTED' AND a.dry_run = false
+            ORDER BY a.executed_at DESC NULLS LAST LIMIT 40`,
+          [agent.id],
+        ),
+      ]);
+
+      return { counts, ideas, schedule, drafts, posted };
+    }),
+  );
+
   app.patch(
     '/api/agents/:id/ideas/:ideaId',
     handler(async (request) => {
