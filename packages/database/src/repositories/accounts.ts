@@ -15,6 +15,17 @@ export async function listAccounts(ownerId: string): Promise<Account[]> {
   );
 }
 
+/**
+ * Every account in the installation, across owners.
+ *
+ * For the worker, which has no user to scope by: it is checking the health of
+ * the installation rather than answering somebody's request. Never reachable
+ * from an HTTP route, where the owner is always known and always scoped.
+ */
+export async function allAccounts(): Promise<Account[]> {
+  return mapRows<Account>(await query(`SELECT ${ACCOUNT_COLUMNS} FROM accounts ORDER BY created_at`));
+}
+
 export async function getAccount(id: string): Promise<Account | null> {
   return mapRow<Account>(await queryOne(`SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE id = $1`, [id]));
 }

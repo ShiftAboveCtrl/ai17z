@@ -1,4 +1,5 @@
 import { Link, NavLink, useLocation } from 'react-router-dom';
+import { Notifications } from '@app/components/Notifications';
 import { PauseAll } from '@app/components/PauseAll';
 import { useEffect, useState } from 'react';
 import { LogOut, Plus } from 'lucide-react';
@@ -55,6 +56,7 @@ export function TopBar() {
         </div>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          <Notifications />
           <ModeSwitch mode={mode} onChange={setMode} />
           {pathname !== '/agents/new' && (
             <Link to="/agents/new" className="btn-ghost px-3 py-2 text-xs sm:px-4">
