@@ -97,3 +97,63 @@ describe('a post the agent went looking for', () => {
     expect(verdict.decision).toBe('ENGAGE');
   });
 });
+
+/**
+ * A setting that nothing reads is a capability the product does not have.
+ *
+ * `requireTopicMatch` sat in the contract for one commit with no code path
+ * behind it, which is the same shape as "Only verified accounts" before the
+ * audience gate existed.
+ */
+describe('only approaching people about things it follows', () => {
+  const football = (over: Partial<Parameters<typeof decideEngagement>[0]> = {}) =>
+    decideEngagement({
+      text: 'Absolutely no excuse for that second half, the whole midfield went missing again.',
+      directlyAddressed: false,
+      relationship: null,
+      threadDepth: 0,
+      recentRepliesToPerson: 0,
+      alreadyRepliedInThread: false,
+      hasParent: true,
+      topics: ['local-first', 'agents', 'memory'],
+      unprompted: true,
+      policy: engagement(),
+      outreach: outreach({ enabled: true, minimumValue: 0, mode: 'AUTONOMOUS' }),
+      ...over,
+    });
+
+  it('says nothing under a post about something else', () => {
+    // Off-topic already costs points, but a deduction can be outweighed and
+    // this is a rule rather than a weight.
+    const verdict = football();
+    expect(verdict.decision).toBe('IGNORE');
+    expect(verdict.reason).toContain('not about anything this agent follows');
+  });
+
+  it('lets it through when the owner turned the requirement off', () => {
+    expect(football({ outreach: outreach({ enabled: true, minimumValue: 0, mode: 'AUTONOMOUS', requireTopicMatch: false }) }).decision).toBe('ENGAGE');
+  });
+
+  it('does not read an empty topic list as "nothing"', () => {
+    // An agent with no topics has not said what it follows, and refusing
+    // everything on that basis is reading silence as a decision.
+    expect(football({ topics: [] }).decision).toBe('ENGAGE');
+  });
+
+  it('still approaches when the post is about what it follows', () => {
+    const verdict = decideEngagement({
+      text: 'Memory is the hard part of local-first agents, not inference. Nobody has solved retrieval.',
+      directlyAddressed: false,
+      relationship: null,
+      threadDepth: 0,
+      recentRepliesToPerson: 0,
+      alreadyRepliedInThread: false,
+      hasParent: true,
+      topics: ['local-first', 'agents', 'memory'],
+      unprompted: true,
+      policy: engagement(),
+      outreach: outreach({ enabled: true, minimumValue: 0, mode: 'AUTONOMOUS' }),
+    });
+    expect(verdict.decision).toBe('ENGAGE');
+  });
+});
