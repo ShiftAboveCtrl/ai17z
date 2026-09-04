@@ -1,10 +1,11 @@
 import type { BrowserContext, Page } from 'playwright';
 import { PipelineError, createLogger, errorMessage } from '@xbam/shared';
+import { reconcileTabs } from './reconcile';
 
 const log = createLogger('browser-tabs');
 
 /**
- * Three tabs, each with one job.
+ * Four tabs, each with one job.
  *
  * One page doing everything is why reading used to break posting. A monitor
  * navigating to the notifications timeline while a reply composer was open
@@ -12,7 +13,7 @@ const log = createLogger('browser-tabs');
  * away the monitor's scroll position and its place in the timeline. Neither
  * failure is visible in a log — the work simply comes back empty.
  *
- * So the account gets three persistent tabs in the one browser:
+ * So the account gets four persistent tabs in the one browser:
  *
  *   ACTION         replies, posts, and the target verification before them
  *   MENTIONS       mention and reply discovery, and the agent's own threads
@@ -21,10 +22,14 @@ const log = createLogger('browser-tabs');
  *                  that happened this morning is not limited to whatever its
  *                  model was trained on
  *
- * A tab is identified by `window.name`, not by an in-process map, so a worker
- * that restarts and reattaches to a browser still running adopts the tabs it
- * already has instead of opening three more. That is the whole defence against
- * ending up with seventeen notification tabs.
+ * A tab is identified by `window.name` first, and by what it is showing when
+ * that has gone. The tag alone was the whole defence and it is not durable: a
+ * cross-origin navigation clears it, `retagIfLost` puts it back, and a worker
+ * that dies in the gap leaves a good tab nothing can recognise. The next worker
+ * opens its own beside it, which is how one profile came to hold fifteen pages,
+ * twelve of them the same timeline, until Chrome was killed for memory.
+ *
+ * See `reconcile.ts` for how identity is decided, and what is never touched.
  */
 
 export type TabRole = 'ACTION' | 'MENTIONS' | 'NOTIFICATIONS' | 'RESEARCH';
@@ -152,30 +157,57 @@ export async function adoptOpenTabs(context: BrowserContext, tabs: TabMap): Prom
   const pages = context.pages().filter((p) => !p.isClosed());
   const tags = await Promise.all(pages.map((p) => readTag(p)));
 
-  for (const [index, page] of pages.entries()) {
-    const role = tags[index];
-    if (role && !tabs.has(role)) {
-      tabs.set(role, { role, page, openedAt: Date.now(), lastUsedAt: Date.now(), lastError: null, queue: Promise.resolve(), busy: false });
+  const described = pages.map((page, index) => {
+    let url = '';
+    try {
+      url = page.url();
+    } catch {
+      // A page that cannot say where it is claims nothing and is left alone.
+    }
+    return { id: String(index), tag: tags[index] ?? null, url };
+  });
+
+  // Identity is decided by the tag first and by what the page is showing
+  // second. The second pass is the one that matters: window.name does not
+  // survive a cross-origin navigation, so a worker that died in the gap before
+  // `retagIfLost` ran left a perfectly good tab that nothing could recognise.
+  // The next worker opened its own beside it, and that is how one profile came
+  // to hold fifteen pages, twelve of them the same timeline, until Chrome was
+  // killed for memory.
+  const plan = reconcileTabs(described);
+
+  for (const [role, id] of Object.entries(plan.adopt)) {
+    const page = pages[Number(id)];
+    if (!page || tabs.has(role as TabRole)) continue;
+    // Re-assert the tag on anything claimed by shape, so the next worker has
+    // the strong signal rather than having to infer it again.
+    if (tags[Number(id)] !== role) await writeTag(page, role as TabRole);
+    tabs.set(role as TabRole, {
+      role: role as TabRole,
+      page,
+      openedAt: Date.now(),
+      lastUsedAt: Date.now(),
+      lastError: null,
+      queue: Promise.resolve(),
+      busy: false,
+    });
+  }
+
+  if (plan.close.length > 0) {
+    log.info('closing tabs a previous worker abandoned', {
+      closing: plan.close.length,
+      keeping: pages.length - plan.close.length,
+    });
+    for (const id of plan.close) {
+      await pages[Number(id)]?.close().catch(() => undefined);
     }
   }
 
-  // One untagged page becomes ACTION, which is what it almost always was.
-  if (!tabs.has('ACTION')) {
-    const orphan = pages.find((_, index) => tags[index] === null);
-    if (orphan) {
-      await writeTag(orphan, 'ACTION');
-      tabs.set('ACTION', {
-        role: 'ACTION',
-        page: orphan,
-        openedAt: Date.now(),
-        lastUsedAt: Date.now(),
-        lastError: null,
-        queue: Promise.resolve(),
-        busy: false,
-      });
-      log.info('adopted an untagged tab as the action tab', { url: orphan.url().slice(0, 80) });
-    }
-  }
+  log.info('adopted the tabs already open', {
+    adopted: Object.keys(plan.adopt),
+    toOpen: plan.create,
+    left: plan.keep.map((k) => k.reason),
+  });
 }
 
 /**
