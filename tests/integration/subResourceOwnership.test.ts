@@ -83,7 +83,7 @@ describe('acting on another owner\u2019s rows', () => {
       method: 'POST',
       url: `/api/agents/${mine.agentId}/commitments/${commitment!.id}`,
       headers: auth,
-      payload: { status: 'DROPPED' },
+      payload: { status: 'CANCELLED' },
     });
 
     expect(response.statusCode).toBe(404);

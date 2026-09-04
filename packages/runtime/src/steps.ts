@@ -41,6 +41,7 @@ import { harvestIdeas, markIdeaUsed } from './content';
 import { research, whatToResearch } from './research';
 import { planLookups } from './plan';
 import { classifyEvidence } from './evidenceClass';
+import { DEFAULT_FOLLOW_UP_MS, canFollowUp } from './followUp';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -754,6 +755,15 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
           .catch(() => undefined);
       }
       if (claims.commitment && policy.stance.trackCommitments) {
+        // A promise is only tracked when it can actually be kept.
+        //
+        // An agent that cannot reply through any account will never follow up,
+        // and recording a due date for it would produce a row that looks like
+        // tracking and is not -- which is worse than no row, because somebody
+        // reads it and believes it. So the commitment is still remembered, and
+        // the date that makes something a scheduled follow-up is only set when
+        // following up is possible.
+        const able = await canFollowUp(bundle.agent.id).catch(() => ({ able: false, why: 'Could not be checked.' }));
         await stancesRepo
           .recordCommitment({
             agentId: bundle.agent.id,
@@ -762,6 +772,9 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
             recipientHandle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
             jobId: job.id,
             remoteUrl: result.remoteActionUrl,
+            conversationId: job.conversationId,
+            sourceEventId: bundle.event.id,
+            dueAt: able.able ? new Date(Date.now() + DEFAULT_FOLLOW_UP_MS).toISOString() : null,
           })
           .catch(() => undefined);
       }

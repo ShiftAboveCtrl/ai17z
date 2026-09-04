@@ -1,5 +1,5 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { runDuePosts } from '@xbam/runtime';
+import { runDueFollowUps, runDuePosts } from '@xbam/runtime';
 import { startLoop } from './loop';
 
 const log = createLogger('posting');
@@ -40,6 +40,13 @@ export class PostScheduler {
     if (this.running) return;
     this.running = true;
     try {
+      // A promise that has come due, on the same tick as a post that has.
+      // Both are the same shape of thing -- something the agent decided to say
+      // that nobody prompted -- and both go through the ordinary pipeline.
+      for (const result of await runDueFollowUps(this.perTick)) {
+        log.info('followed up on a promise', { commitmentId: result.commitmentId, reason: result.reason, jobId: result.jobId });
+      }
+
       for (const result of await runDuePosts(this.perTick)) {
         // Logged either way. "Nothing in the backlog was worth posting" is the
         // answer to "why has it not posted", and it should not take a database
