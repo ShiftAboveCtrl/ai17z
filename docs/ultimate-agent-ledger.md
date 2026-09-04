@@ -23,6 +23,7 @@ ended at §101. They are outstanding as scope, not as work.
 
 | 102 | Follow-up / commitment memory | DONE | `commitments.test.ts` covers the lifecycle the brief names -- created, survives a restart, becomes due, produces a job, completes -- plus cancellation, a duplicate producing one follow-up rather than two, and giving up after three attempts instead of retrying for ever. |
 | 103 | Observation / learning review | DONE | Read across memory, relationships, stances, entities and commitments rather than from a store of its own. Verified live: a memory shows with its provenance and confidence, forgetting it removes it, and a kind that is a record rather than an opinion refuses with the reason.
+| 104 | Persona playground | DONE | `playground.test.ts`. Runs the real path -- prompt assembly, provider, voice compiler, validator -- and creates no job and no action, which is what makes it safe rather than a flag. Verified live against the mock provider: raw and final both returned, zero jobs, zero actions.
 
 ## Gaps left open deliberately
 
