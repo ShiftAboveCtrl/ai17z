@@ -15,6 +15,16 @@ export async function listAgents(ownerId: string): Promise<Agent[]> {
   );
 }
 
+/**
+ * Every agent in the installation, across owners.
+ *
+ * For the worker only, which is checking the health of the installation rather
+ * than answering somebody's request. HTTP routes always scope by owner.
+ */
+export async function allAgents(): Promise<Agent[]> {
+  return mapRows<Agent>(await query(`SELECT ${AGENT_COLUMNS} FROM agents ORDER BY created_at`));
+}
+
 export async function getAgent(id: string): Promise<Agent | null> {
   return mapRow<Agent>(await queryOne(`SELECT ${AGENT_COLUMNS} FROM agents WHERE id = $1`, [id]));
 }

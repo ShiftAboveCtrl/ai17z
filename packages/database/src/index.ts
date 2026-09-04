@@ -35,6 +35,7 @@ export * as arcs from './repositories/arcs';
 export * as content from './repositories/content';
 export * as posting from './repositories/posting';
 export * as evaluation from './repositories/evaluation';
+export * as notifications from './repositories/notifications';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.
@@ -42,6 +43,7 @@ export type { UserRow, IssuedSession } from './repositories/users';
 export type { AgentStats, PolicyVersionRow, CreateAgentRecord } from './repositories/agents';
 export type { AgentAccountRow } from './repositories/accounts';
 export type { MentionRow, MentionState, MentionFilter } from './repositories/mentions';
+export type { NotificationRecord, NotificationSeverity } from './repositories/notifications';
 export type { PipelineVersionRecord } from './repositories/pipelines';
 export type { EventRecord, IngestResult } from './repositories/events';
 export type { ConversationRecord } from './repositories/conversations';

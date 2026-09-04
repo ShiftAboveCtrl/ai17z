@@ -9,7 +9,7 @@ import {
   workers as workersRepo,
 } from '@xbam/database';
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
-import { bootstrapRuntime, runJob } from '@xbam/runtime';
+import { bootstrapRuntime, runJob, sweepNotifications } from '@xbam/runtime';
 import { activeSessionAccountIds, closeAllSessions, sessionIdentity, sessionTabs } from '@xbam/browser';
 import { ChannelPoller } from './poller';
 import { SignInWatcher } from './signIn';
@@ -96,6 +96,15 @@ async function main(): Promise<void> {
       if (ideas.released > 0 || ideas.discarded > 0 || ideas.used > 0) log.info('reconciled content ideas', { ...ideas });
     } catch (error) {
       log.warn('content idea sweep failed', { message: errorMessage(error) });
+    }
+    try {
+      // What the owner needs to know about the installation itself: an account
+      // locked out, an agent with no model, a limit reached. Derived from what
+      // is true now rather than raised from events, so a recovery path added
+      // later cannot forget to clear one.
+      await sweepNotifications();
+    } catch (error) {
+      log.warn('notification sweep failed', { message: errorMessage(error) });
     }
   };
   await sweep();
