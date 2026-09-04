@@ -1,5 +1,5 @@
 import { AlertTriangle, Check, Loader2, X } from 'lucide-react';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useEffect, useId, useRef, type ReactElement, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 export function StatusDot({ state, label }: { state: 'live' | 'wait' | 'fail' | 'idle'; label?: string }) {
@@ -81,6 +81,25 @@ export function EmptyState({
   );
 }
 
+/**
+ * A labelled control.
+ *
+ * The label is associated with what it labels, and that association is made
+ * here rather than asked of the caller. `htmlFor` used to be an optional prop
+ * that most callers did not pass, so most fields rendered text that looks like
+ * a label above a control with no accessible name at all -- an audit of the
+ * running app found ten on the Policies screen alone. Nothing about that is
+ * visible, which is why it survived: it is only wrong to somebody using a
+ * screen reader, or clicking a label and finding it does nothing.
+ *
+ * Two ways, because a field wraps two kinds of thing:
+ *
+ *   a single control      the label points at it, and it is given an id if it
+ *                         does not have one
+ *   anything else         a row of buttons, a group of checkboxes -- the label
+ *                         names the group instead, which is the only correct
+ *                         answer when there is no one control to point at
+ */
 export function Field({
   label,
   hint,
@@ -92,14 +111,35 @@ export function Field({
   hint?: string;
   error?: string | null;
   children: ReactNode;
+  /** Only when the control already has an id of its own. */
   htmlFor?: string;
 }) {
+  const generated = useId();
+  const only = isValidElement(children) ? (children as ReactElement<{ id?: string }>) : null;
+  const existingId = htmlFor ?? only?.props.id;
+  const controlId = existingId ?? (only ? generated : undefined);
+  const labelId = `${generated}-label`;
+
   return (
     <div className="space-y-2">
-      <label htmlFor={htmlFor} className="block font-mono text-[10px] uppercase tracking-[0.2em] text-bone-faint">
+      <label
+        id={labelId}
+        htmlFor={controlId}
+        className="block font-mono text-[10px] uppercase tracking-[0.2em] text-bone-faint"
+      >
         {label}
       </label>
-      {children}
+      {only && !existingId ? (
+        cloneElement(only, { id: controlId })
+      ) : only ? (
+        children
+      ) : (
+        // No single control to point at, so the label names the group. Without
+        // this these fields have no accessible name at all.
+        <div role="group" aria-labelledby={labelId}>
+          {children}
+        </div>
+      )}
       {hint && !error && <p className="text-xs leading-relaxed text-bone-faint">{hint}</p>}
       {error && <p className="break-words text-xs text-signal-fail">{error}</p>}
     </div>
