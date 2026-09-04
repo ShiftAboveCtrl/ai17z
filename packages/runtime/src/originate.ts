@@ -68,7 +68,7 @@ export async function originatePost(input: {
 
   const template = await promptsRepo.getActiveTemplate('reply.default');
   if (!template) {
-    await releaseIdea(brief.idea.id);
+    await releaseIdea(agent.id, brief.idea.id);
     return { posted: false, reason: 'The prompt template is missing.', jobId: null };
   }
 
@@ -136,7 +136,7 @@ export async function originatePost(input: {
   });
 
   if (!outcome.created) {
-    await releaseIdea(brief.idea.id);
+    await releaseIdea(agent.id, brief.idea.id);
     return { posted: false, reason: 'A job for this idea already exists.', jobId: outcome.job.id };
   }
 
@@ -156,7 +156,7 @@ export async function originatePost(input: {
   // finds an empty backlog and stays quiet for a reason that is not true --
   // and it makes the rehearsal itself unrepeatable, which is most of what a
   // rehearsal is for.
-  if (dryRun) await releaseIdea(brief.idea.id);
+  if (dryRun) await releaseIdea(agent.id, brief.idea.id);
 
   log.info('post originated', { agentId: agent.id, ideaId: brief.idea.id, jobId: outcome.job.id, dryRun });
   return { posted: true, reason: `Posting: ${brief.idea.summary.slice(0, 200)}`, jobId: outcome.job.id };

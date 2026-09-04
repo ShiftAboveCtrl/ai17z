@@ -110,7 +110,7 @@ describe('posting from the backlog', () => {
     const fixture = await createFixture();
     await content.addIdea({ agentId: fixture.agentId, summary: 'a thought worth having later' });
     const post = await nextPost(fixture.agentId);
-    await releaseIdea(post!.idea.id);
+    await releaseIdea(post!.idea.agentId, post!.idea.id);
     expect((await nextPost(fixture.agentId))?.idea.id).toBe(post!.idea.id);
   });
 });

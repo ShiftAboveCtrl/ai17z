@@ -257,13 +257,17 @@ export async function predictionsDue(agentId: string, limit = 20) {
   );
 }
 
-/** Only a person judges a prediction. Nothing here decides it automatically. */
-export async function resolvePrediction(id: string, outcome: string, note: string): Promise<void> {
-  await query('UPDATE predictions SET outcome = $2, outcome_note = $3, resolved_at = now() WHERE id = $1', [
-    id,
-    outcome,
-    note,
-  ]);
+/**
+ * Only a person judges a prediction. Nothing here decides one automatically.
+ *
+ * Scoped to the agent, for the reason spelled out on `resolveIdea`.
+ */
+export async function resolvePrediction(agentId: string, id: string, outcome: string, note: string): Promise<boolean> {
+  const rows = await query(
+    'UPDATE predictions SET outcome = $3, outcome_note = $4, resolved_at = now() WHERE id = $1 AND agent_id = $2 RETURNING id',
+    [id, agentId, outcome, note],
+  );
+  return rows.length > 0;
 }
 
 // ── Commitments ─────────────────────────────────────────────────────────────
@@ -315,6 +319,11 @@ export async function openCommitmentsTo(agentId: string, handle: string, limit =
   );
 }
 
-export async function resolveCommitment(id: string, status: 'DONE' | 'DROPPED'): Promise<void> {
-  await query('UPDATE commitments SET status = $2, resolved_at = now() WHERE id = $1', [id, status]);
+/** Scoped to the agent, for the reason spelled out on `resolveIdea`. */
+export async function resolveCommitment(agentId: string, id: string, status: 'DONE' | 'DROPPED'): Promise<boolean> {
+  const rows = await query(
+    'UPDATE commitments SET status = $3, resolved_at = now() WHERE id = $1 AND agent_id = $2 RETURNING id',
+    [id, agentId, status],
+  );
+  return rows.length > 0;
 }
