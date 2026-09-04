@@ -23,7 +23,7 @@ import { retrieveMemories, applyWritePolicy } from '@xbam/memory';
 import { assemblePrompt } from '@xbam/prompts';
 import { generate } from '@xbam/models';
 import { getChannelAdapter } from '@xbam/channels';
-import { collectDiagnostics, describeTools, summariseDiagnostics } from '@xbam/tools';
+import { collectDiagnostics, suppliedFacts, summariseDiagnostics } from '@xbam/tools';
 import { buildChannelContext, syntheticAccount } from './channelContext';
 import { hasVisionModel, resolveMedia } from './mediaResolve';
 import { loadRelationshipContext, recordExchange } from './relationship';
@@ -281,6 +281,17 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     .filter((t) => t.enabled && bundle.policy.tools.allowed.includes(t.key))
     .map((t) => t.key);
 
+  // What those tools actually contribute, as facts rather than as an offer.
+  //
+  // This block used to be headed TOOLS AVAILABLE and list every enabled tool,
+  // and nothing in AI17Z could call one: there is no tool-call loop. A model
+  // told it can check something writes as though it checked. See
+  // `packages/tools/src/supply.ts`.
+  const toolFacts = suppliedFacts({
+    keys: toolKeys,
+    timezone: bundle.policy.rate.workingHours.timezone,
+  });
+
   // Only for an agent whose owner turned this on. Collecting diagnostics costs
   // a handful of queries, and doing it for every reply everybody's agent writes
   // would be paying for a feature almost nobody has enabled.
@@ -303,7 +314,7 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     context,
     memories,
     channelName: getChannelAdapter(bundle.job.channel).displayName,
-    toolDescriptions: describeTools(toolKeys),
+    toolDescriptions: toolFacts,
     memoryCharBudget: bundle.policy.memory.retrieval.totalCharBudget,
     actionType: bundle.job.actionType,
     evidence,

@@ -43,7 +43,21 @@ and named rather than folded into a claim that the section is finished.
   are. Fetching a site means deciding about robots, rate, revisit and what
   counts as the same page, and none of that is decided.
 - **§94** PDFs are not read. `DOCUMENT_EXTENSIONS` is Markdown and text only.
-- **§95** No tool shows when it was last used successfully. The data exists in
-  traces; the tools screen does not read it.
+- **§95** *Closed, and the premise was wrong.* No tool shows when it was last
+  used successfully because **no tool has ever been used**: there is no
+  tool-call loop in AI17Z. Nothing parses a tool call out of a model's answer,
+  nothing executes one, nothing feeds a result back. The prompt nevertheless
+  carried a block headed `TOOLS AVAILABLE` listing every tool that was switched
+  on and permitted, which tells a model it can check things it cannot -- the
+  same class of defect as an unread image passing silently.
+
+  Fixed by making the model of a tool honest rather than by building a
+  tool-call loop. The runtime looks things up itself and hands over facts, so a
+  tool that is on now contributes a **fact** instead of an offer: `time.now`
+  becomes the date and time stated in the agent's own timezone, which is a real
+  capability it did not have. `memory.search` and `agent.diagnostics` already
+  arrive through other layers and contribute nothing here rather than being
+  listed twice. `http.fetch` is marked "nothing calls it" on the tools screen
+  instead of looking ready. `tests/unit/toolSupply.test.ts`.
 - **§95** Required capabilities are not shown per tool, because no built-in tool
   currently requires one beyond the policy allowlist.

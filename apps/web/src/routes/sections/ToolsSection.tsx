@@ -9,6 +9,9 @@ import { IndexedRow, Section } from './Section';
 interface ToolVerdict {
   key: string;
   state: 'READY' | 'BLOCKED' | 'OFF';
+  /** Whether anything actually uses it, which is not the same as being on. */
+  supply: 'RUNTIME_SUPPLIES' | 'ANOTHER_LAYER' | 'NOTHING_CALLS_IT';
+  says: string;
   summary: string;
   setting: string;
   fix: string | null;
@@ -129,10 +132,17 @@ export function ToolsSection({
               index={i + 1}
               label={tool.key}
               title={tool.name}
-              meta={tool.description}
+              meta={verdict?.says ? `${tool.description} ${verdict.says}` : tool.description}
               status={
-                <span className={`chip ${live ? 'border-signal-live/40 text-signal-live' : ''}`}>
-                  {verdict ? verdict.state.toLowerCase() : tool.enabled ? 'enabled' : 'disabled'}
+                <span className="flex flex-wrap items-center justify-end gap-1.5">
+                  <span className={`chip ${live ? 'border-signal-live/40 text-signal-live' : ''}`}>
+                    {verdict ? verdict.state.toLowerCase() : tool.enabled ? 'enabled' : 'disabled'}
+                  </span>
+                  {/* On is not the same as used. A tool nothing calls says so
+                      rather than sitting there looking ready. */}
+                  {verdict?.supply === 'NOTHING_CALLS_IT' && (
+                    <span className="chip border-signal-warn/40 text-signal-warn">nothing calls it</span>
+                  )}
                 </span>
               }
               onClick={() => open(tool)}
@@ -177,6 +187,23 @@ export function ToolsSection({
           </p>
         </div>
       ))}
+
+      {/*
+        The thing this screen used to leave unsaid.
+
+        Switching a tool on and permitting it in the policy is two decisions,
+        and the screen explained both. Neither of them makes anything call the
+        tool, and until now the prompt listed every enabled one under "tools
+        available" -- so a model was told it could check things it could not,
+        and answered as though it had.
+      */}
+      {readiness.some((r) => r.state === 'READY' && r.supply === 'NOTHING_CALLS_IT') && (
+        <p className="mt-6 max-w-2xl break-words rounded-lg border border-signal-warn/40 bg-signal-warn/5 p-3 text-[13px] leading-relaxed text-signal-warn">
+          Some of these are switched on and permitted, and nothing in AI17Z calls them. The agent does not choose
+          tools: the runtime looks things up itself, before the reply is written, and hands over what it found. Leaving
+          one on does no harm and does nothing.
+        </p>
+      )}
 
       {grantError && <p className="mt-4 text-sm text-signal-fail">{grantError}</p>}
 

@@ -172,9 +172,12 @@ INCOMING MESSAGE:
   },
   {
     key: 'TOOLS',
-    title: 'Tools',
+    title: 'What you know right now',
     role: 'user',
-    template: `{{#toolsBlock}}TOOLS AVAILABLE
+    // Not "TOOLS AVAILABLE". Nothing in AI17Z calls a tool, so listing them as
+    // available told the model it could check things it could not, and it
+    // answered as though it had. These are facts the runtime supplies.
+    template: `{{#toolsBlock}}WHAT YOU KNOW RIGHT NOW
 {{toolsBlock}}
 {{/toolsBlock}}`,
   },
