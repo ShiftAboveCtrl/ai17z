@@ -21,6 +21,8 @@ ended at §101. They are outstanding as scope, not as work.
 | 100 | Live agent status | DONE | `liveStatus.test.ts`. Eight states, each derived from work that exists. Verified in the running app: the dev agent reads NEEDS YOU with the reason beside it. |
 | 101 | Content queue | DONE | Four stages -- Ideas, Drafts, Scheduled, Posted -- verified in the running app: each renders its own list and its own empty state, with counts from the same request. Drafts and Posted are read from jobs and actions rather than a second table, because a post already runs the ten pipeline steps and the job is the record. |
 
+| 102 | Follow-up / commitment memory | DONE | `commitments.test.ts` covers the lifecycle the brief names -- created, survives a restart, becomes due, produces a job, completes -- plus cancellation, a duplicate producing one follow-up rather than two, and giving up after three attempts instead of retrying for ever. |
+
 ## Gaps left open deliberately
 
 These are the parts of a VERIFIED row that are genuinely missing. They are small
