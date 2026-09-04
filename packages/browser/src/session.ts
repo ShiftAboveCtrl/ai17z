@@ -17,13 +17,16 @@ import {
 import {
   acquireTab,
   adoptOpenTabs,
+  isDeadPage,
   lockTab,
   retagIfLost,
   tabHealth,
+  TAB_ROLES,
   type TabHealth,
   type TabMap,
   type TabRole,
 } from './tabs';
+import { diagnoseBrowser, orphanTabs, RESPONSE_BUDGET_MS, type BrowserVerdict, type TabProbe } from './watchdog';
 
 const log = createLogger('browser');
 
@@ -510,6 +513,136 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
 export function sessionTabs(accountId: string): TabHealth[] {
   const entry = contexts.get(accountId);
   return entry ? tabHealth(entry.tabs) : tabHealth(new Map());
+}
+
+/**
+ * Ask each of an account's tabs whether it is still alive, and rebuild the ones
+ * that are not.
+ *
+ * Probing costs a trivial evaluation per tab, which is the point: a tab that
+ * cannot answer that is a tab nothing else can read either, and finding out on
+ * a ten-second loop is far better than finding out when a mention goes
+ * unanswered for four hours.
+ *
+ * Recovery is per role. A crashed research tab is rebuilt without touching a
+ * sign-in halfway through on the action tab.
+ */
+export async function superviseSession(accountId: string): Promise<BrowserVerdict | null> {
+  const entry = contexts.get(accountId);
+  if (!entry || entry.closing) return null;
+
+  const attempts = recoveryAttempts.get(accountId) ?? new Map<TabRole, number>();
+  const probes: TabProbe[] = [];
+
+  for (const role of TAB_ROLES) {
+    const state = entry.tabs.get(role);
+    if (!state) {
+      probes.push({ role, present: false, closed: false, onErrorPage: false, respondedMs: null });
+      continue;
+    }
+    // A busy tab is mid-operation, not ill. Probing it would queue behind that
+    // work and time out, which would read as a hang and rebuild a healthy tab.
+    if (state.busy) {
+      probes.push({ role, present: true, closed: false, onErrorPage: false, respondedMs: 0 });
+      continue;
+    }
+
+    const closed = state.page.isClosed();
+    const dead = !closed && isDeadPage(state.page);
+    let respondedMs: number | null = null;
+    if (!closed && !dead) {
+      const started = Date.now();
+      const answered = await Promise.race([
+        state.page.evaluate(() => 1).then(() => true).catch(() => false),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), RESPONSE_BUDGET_MS)),
+      ]);
+      respondedMs = answered ? Date.now() - started : null;
+    }
+
+    probes.push({
+      role,
+      present: true,
+      closed,
+      onErrorPage: dead,
+      respondedMs,
+      attempts: attempts.get(role) ?? 0,
+    });
+  }
+
+  const connected = entry.context.browser()?.isConnected() ?? true;
+  const verdict = diagnoseBrowser({ connected, tabs: probes });
+
+  for (const role of verdict.roles) {
+    if (role.remedy !== 'RECREATE_TAB') continue;
+    attempts.set(role.role, (attempts.get(role.role) ?? 0) + 1);
+    recoveryAttempts.set(accountId, attempts);
+    log.warn('rebuilding a tab the watchdog found dead', {
+      accountId,
+      role: role.role,
+      ailment: role.ailment,
+      detail: role.detail,
+    });
+    const state = entry.tabs.get(role.role);
+    entry.tabs.delete(role.role);
+    if (state && !state.page.isClosed()) await state.page.close().catch(() => undefined);
+  }
+
+  // A browser-level problem cannot be fixed by rebuilding tabs inside it, so
+  // the session is dropped and the next lease reconnects or relaunches.
+  if (verdict.remedy === 'RECONNECT_BROWSER') {
+    log.warn('dropping a session the watchdog found unusable', { accountId, detail: verdict.detail });
+    contexts.delete(accountId);
+    recoveryAttempts.delete(accountId);
+  }
+
+  // A role that came back healthy has earned its attempt count back.
+  for (const role of verdict.roles) {
+    if (role.ailment === 'HEALTHY') attempts.delete(role.role);
+  }
+
+  await closeOrphanTabs(entry).catch(() => undefined);
+
+  return verdict;
+}
+
+/** Rebuild attempts per role, so a tab that will not come back stops being retried. */
+const recoveryAttempts = new Map<string, Map<TabRole, number>>();
+
+/**
+ * Close pages this account has open that no role is using.
+ *
+ * They accumulate across restarts: a worker that dies without closing its tabs
+ * leaves them, the next one cannot recognise them because a cross-origin
+ * navigation cleared the window.name they were identified by, and it opens its
+ * own. A real profile was found holding fifteen pages, twelve of them the same
+ * timeline -- several gigabytes of browser doing the work of four tabs, which
+ * is what an out-of-memory kill looks like in the hours before it happens.
+ *
+ * Never touches a sign-in or a composer. Those hold something that cannot be
+ * recreated, and sign-in is always the person's job.
+ */
+async function closeOrphanTabs(entry: Entry): Promise<void> {
+  const roleePages = new Set([...entry.tabs.values()].map((state) => state.page));
+  const pages = entry.context.pages().filter((page) => !page.isClosed());
+  if (pages.length <= TAB_ROLES.length + 1) return;
+
+  const describe = pages.map((page) => {
+    let url = '';
+    try {
+      url = page.url();
+    } catch {
+      // A page that cannot say where it is has nothing worth keeping.
+    }
+    return { url, isRole: roleePages.has(page) };
+  });
+
+  const closable = orphanTabs({ pages: describe });
+  if (closable.length === 0) return;
+
+  log.info('closing tabs no role is using', { count: closable.length, total: pages.length });
+  for (const index of closable) {
+    await pages[index]?.close().catch(() => undefined);
+  }
 }
 
 export async function closeSession(accountId: string): Promise<void> {
