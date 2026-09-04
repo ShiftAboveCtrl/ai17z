@@ -178,3 +178,57 @@ describe('what creates a persona version', () => {
     expect((await agentsRepo.getActivePersona(fixture.agentId))!.personality).toBe('three');
   });
 });
+
+/**
+ * Easy Mode writes both the persona and the policy on every save, so the same
+ * rule has to hold on both sides: opening the screen and pressing save is not
+ * an edit, and an agent nobody changed must not collect a version every time
+ * somebody looks at it.
+ */
+describe('saving from Easy Mode', () => {
+  const easySetup = () => ({
+    character: {
+      name: 'Scratch',
+      description: 'd',
+      personality: 'p',
+      preset: 'CUSTOM',
+      tone: 't',
+      speaksLike: 's',
+      caresAbout: ['a'],
+      examples: ['one two three four'],
+      language: 'MIRROR',
+    },
+    replies: { audience: 'EVERYONE', selectivity: 'BALANCED' },
+    posting: { enabled: false, frequency: 'OCCASIONALLY' },
+    operation: 'REVIEW_FIRST',
+  });
+
+  it('creates no version at all when nothing was changed', async () => {
+    const fixture = await createFixture();
+    const auth = await signIn(fixture.ownerEmail);
+
+    await app.inject({ method: 'PUT', url: `/api/agents/${fixture.agentId}/easy`, headers: auth, payload: easySetup() });
+    const personas = await versionCount(fixture.agentId);
+    const policies = (await agentsRepo.listPolicyVersions(fixture.agentId)).length;
+
+    // Save the identical answers again, which is what pressing save on an
+    // unchanged screen does.
+    await app.inject({ method: 'PUT', url: `/api/agents/${fixture.agentId}/easy`, headers: auth, payload: easySetup() });
+
+    expect(await versionCount(fixture.agentId)).toBe(personas);
+    expect((await agentsRepo.listPolicyVersions(fixture.agentId)).length).toBe(policies);
+  });
+
+  it('still records a version when something did change', async () => {
+    const fixture = await createFixture();
+    const auth = await signIn(fixture.ownerEmail);
+    await app.inject({ method: 'PUT', url: `/api/agents/${fixture.agentId}/easy`, headers: auth, payload: easySetup() });
+    const before = await versionCount(fixture.agentId);
+
+    const changed = easySetup();
+    changed.character.personality = 'Something genuinely different.';
+    await app.inject({ method: 'PUT', url: `/api/agents/${fixture.agentId}/easy`, headers: auth, payload: changed });
+
+    expect(await versionCount(fixture.agentId)).toBe(before + 1);
+  });
+});

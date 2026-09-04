@@ -1,6 +1,6 @@
 import type { Agent, PersonaDraft, PersonaVersion, PolicyConfig } from '@xbam/shared/contracts';
 import { PolicyConfig as PolicyConfigSchema } from '@xbam/shared/contracts';
-import { DEFAULT_POLICY, NotFoundError, slugify } from '@xbam/shared';
+import { DEFAULT_POLICY, NotFoundError, sameContent, slugify } from '@xbam/shared';
 import { query, queryOne, withTransaction, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
@@ -229,7 +229,7 @@ const PERSONA_FIELDS = [
  */
 export function personaDiffers(draft: PersonaDraft, active: PersonaVersion | null): boolean {
   if (!active) return true;
-  return PERSONA_FIELDS.some((field) => JSON.stringify(draft[field]) !== JSON.stringify(active[field]));
+  return PERSONA_FIELDS.some((field) => !sameContent(draft[field], active[field]));
 }
 
 /** Written into the change note so consecutive autosaves can be recognised. */
@@ -379,12 +379,26 @@ export async function listPolicyVersions(agentId: string): Promise<PolicyVersion
   return mapRows<PolicyVersionRow>(rows).map(fillDefaults);
 }
 
+/**
+ * Save a policy, creating a version only when the configuration differs.
+ *
+ * The same reason as personas: opening a screen and pressing save is not an
+ * edit, and Easy Mode writes both documents on every save. Without this an
+ * agent nobody has changed collects a policy version every time somebody looks
+ * at it, and the history stops being able to say when a rule actually changed.
+ */
 export async function savePolicyVersion(
   agentId: string,
   config: PolicyConfig,
   changeNote: string,
   createdBy: string | null,
 ): Promise<PolicyVersionRow> {
+  const active = await getActivePolicy(agentId);
+  // Content, not key order. A policy read back from jsonb has its keys in the
+  // column's order rather than the order the code that built it used, so a
+  // literal string comparison reports a change on every single save.
+  if (active && sameContent(active.config, config)) return active;
+
   return withTransaction(async (tx) => {
     const policy = await tx.one<{ id: string }>('SELECT id FROM policies WHERE agent_id = $1', [agentId]);
     if (!policy) throw new NotFoundError('Policy');
