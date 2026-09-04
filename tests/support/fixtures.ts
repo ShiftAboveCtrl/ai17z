@@ -7,6 +7,8 @@ import { uniqueSuffix } from './db';
 
 export interface Fixture {
   ownerId: string;
+  /** The address this owner signs in with, for tests that go through the API. */
+  ownerEmail: string;
   agentId: string;
   providerId: string;
 }
@@ -67,5 +69,7 @@ export async function createFixture(overrides: {
     parameters: {},
   });
 
-  return { ownerId: owner.id, agentId: agent.id, providerId: provider.id };
+  return {
+    ownerId: owner.id,
+    ownerEmail: owner.email, agentId: agent.id, providerId: provider.id };
 }
