@@ -60,7 +60,22 @@ const LENGTH_HINTS: Record<PersonaVersion['responseLength'], string> = {
 
 function renderMemories(memories: RetrievedMemory[], budget: number): string {
   if (memories.length === 0) return '';
-  const lines = memories.map((m) => `[${m.scope}] ${m.summary?.trim() || m.content.trim()}`);
+  const lines = memories.map((m) => {
+    // A document is rendered whole, and attributed.
+    //
+    // Every other scope stores a one-line summary and a longer body, so the
+    // summary is the right thing to show. A knowledge chunk's summary is its
+    // heading, and showing that alone put "Installing > Windows" into the
+    // prompt with none of the instructions under it -- the document was
+    // retrieved, cited, and empty.
+    if (m.scope === 'KNOWLEDGE') {
+      const where = [m.origin?.sourceName, m.origin?.path].filter(Boolean).join(', ');
+      const version = m.origin?.revision ? ` at ${m.origin.revision}` : '';
+      const attribution = where ? ` (${where}${version})` : '';
+      return `[DOCUMENT${attribution}] ${m.content.trim()}`;
+    }
+    return `[${m.scope}] ${m.summary?.trim() || m.content.trim()}`;
+  });
   // Keep the tail when trimming: recent, highest-ranked memory matters most.
   return truncateTail(lines.join('\n'), budget);
 }

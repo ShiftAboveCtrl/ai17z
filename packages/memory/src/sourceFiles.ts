@@ -12,7 +12,6 @@
  * secrets because secrets are not documents, which stays true for file types
  * nobody here has heard of yet.
  */
-import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, resolve, sep, extname, basename } from 'node:path';
 
@@ -241,11 +240,6 @@ export function looksLikeSecret(text: string): string | null {
     if (shape.test(text)) return what;
   }
   return null;
-}
-
-/** Stable identity for a chunk's content, matching the memories dedupe key. */
-export function contentHash(content: string): string {
-  return createHash('sha256').update(content.trim().replace(/\s+/g, ' ')).digest('hex');
 }
 
 /** A short, readable stamp for a folder with no git revision. */

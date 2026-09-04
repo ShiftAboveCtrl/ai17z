@@ -150,6 +150,22 @@ export const RetrievedMemory = z.object({
   score: z.number(),
   rank: z.number().int(),
   createdAt: z.string().nullable(),
+  /**
+   * For a KNOWLEDGE chunk: which document it came from and at what revision.
+   *
+   * Carried so an answer can say which version it describes. "Ubuntu is
+   * supported" is a different claim depending on whether it comes from the
+   * documentation installed now or from a conversation last March.
+   */
+  origin: z
+    .object({
+      path: z.string().nullable().default(null),
+      heading: z.string().nullable().default(null),
+      revision: z.string().nullable().default(null),
+      sourceName: z.string().nullable().default(null),
+    })
+    .nullable()
+    .default(null),
 });
 export type RetrievedMemory = z.infer<typeof RetrievedMemory>;
 

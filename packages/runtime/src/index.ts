@@ -28,3 +28,4 @@ export * from './research';
 export * from './plan';
 export * from './evidence';
 export * from './token';
+export * from './knowledge';
