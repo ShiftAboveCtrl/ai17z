@@ -327,3 +327,17 @@ export async function resolveCommitment(agentId: string, id: string, status: 'DO
   );
   return rows.length > 0;
 }
+
+/**
+ * How many separate times a position has been evidenced.
+ *
+ * The content brain reads this: a position taken once, in passing, in a reply,
+ * is an answer rather than something the agent keeps coming back to, and only
+ * the second kind is worth a post of its own.
+ */
+export async function countEvidence(stanceId: string): Promise<number> {
+  const row = await queryOne<{ n: number }>('SELECT count(*)::int AS n FROM stance_evidence WHERE stance_id = $1', [
+    stanceId,
+  ]);
+  return row?.n ?? 0;
+}

@@ -157,12 +157,23 @@ export async function resolveIdea(
   return rows.length > 0;
 }
 
+/**
+ * Whatever identifies the same thought however it was typed.
+ *
+ * Exact lowercase equality caught nothing in practice. The same question
+ * arrives with a different handle in front of it, a line break the client
+ * inserted, or a stray space, and every copy was captured as a new idea -- a
+ * real backlog held four near-identical "what's your thoughts on this?" rows.
+ * Matches `questionKey` in @xbam/shared, which normalises the same way.
+ */
+const NORMALISED = `regexp_replace(regexp_replace(lower($COLUMN$), '@[a-z0-9_]+', ' ', 'g'), '[^a-z0-9]+', '', 'g')`;
+
 /** Stops the same thought being captured twice from two conversations. */
 export async function similarExists(agentId: string, summary: string): Promise<boolean> {
   const row = await queryOne<{ n: number }>(
     `SELECT count(*)::int AS n FROM content_ideas
       WHERE agent_id = $1 AND status <> 'discarded'
-        AND lower(summary) = lower($2)`,
+        AND ${NORMALISED.replace('$COLUMN$', 'summary')} = ${NORMALISED.replace('$COLUMN$', '$2')}`,
     [agentId, summary.slice(0, 500)],
   );
   return (row?.n ?? 0) > 0;
