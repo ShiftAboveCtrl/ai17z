@@ -7,3 +7,4 @@ export * from './env';
 export * from './util';
 export * from './reference';
 export * from './supervisor';
+export * from './version';

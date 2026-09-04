@@ -37,6 +37,12 @@ services:
     build:
       context: .
       dockerfile: docker/node.Dockerfile
+      args:
+        # A container has no git and no repository, so the only way it can say
+        # which source it is running is to be told at build time. Empty is
+        # honest: the version then reports "source unknown" rather than
+        # guessing.
+        AI17Z_BUILD_COMMIT: ${AI17Z_BUILD_COMMIT:-}
     restart: unless-stopped
     command: ["npm", "run", "start:api"]
     environment:
@@ -71,6 +77,8 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
+      args:
+        AI17Z_BUILD_COMMIT: ${AI17Z_BUILD_COMMIT:-}
     restart: unless-stopped
     command: ["npm", "run", "start:worker"]
     environment:
