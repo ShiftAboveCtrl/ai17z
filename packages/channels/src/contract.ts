@@ -41,6 +41,17 @@ export interface HealthResult {
   detail: string;
   /** True when the remote considers this session authenticated. */
   authenticated: boolean;
+  /**
+   * Who the session is actually signed in as, when that can be read.
+   *
+   * "Signed in" without "as whom" is not enough to act on. Almost everything
+   * downstream keys off the account's handle -- mention search runs `@handle`,
+   * the engagement heuristic decides "addressed to this account" from it, and
+   * own-thread tracking follows it -- so a stored handle that no longer matches
+   * the live session produces an agent that searches for somebody else's
+   * mentions and never recognises being spoken to. Silently, and for ever.
+   */
+  handle?: string | null;
 }
 
 /**

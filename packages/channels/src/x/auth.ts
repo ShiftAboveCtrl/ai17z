@@ -62,7 +62,25 @@ async function bodyText(page: Page): Promise<string | null> {
   }
 }
 
+/**
+ * Which account this session belongs to.
+ *
+ * Two places, because X moved it. The profile link's href is `/handle` and is
+ * where it lives now; the account switcher's aria-label used to carry it and no
+ * longer does -- it reads "Account menu" on a real signed-in session, which is
+ * why the health check reported "signed in" for months without ever knowing as
+ * whom. Kept as a fallback rather than deleted, because a layout that still has
+ * it costs nothing to read.
+ */
 async function readHandle(page: Page): Promise<string | null> {
+  try {
+    const href = await page.locator(SEL.profileLink).first().getAttribute('href', { timeout: 3_000 });
+    // "/someone" and nothing else. A path with more in it is not a profile.
+    const fromHref = href?.match(/^\/([A-Za-z0-9_]{1,15})$/);
+    if (fromHref?.[1]) return fromHref[1];
+  } catch {
+    // Fall through to the older place.
+  }
   try {
     const label = await page.locator(SEL.loggedIn).first().getAttribute('aria-label', { timeout: 3_000 });
     const match = label?.match(/@([A-Za-z0-9_]{1,15})/);

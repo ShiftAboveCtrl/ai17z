@@ -166,10 +166,40 @@ export class BrowserTaskRunner {
         // is fine and someone needs to sign in again, while NEEDS_AUTH means
         // there was never a session to begin with.
         const signedOut = account.status === 'CONNECTED' ? 'SESSION_EXPIRED' : 'NEEDS_AUTH';
+
+        // Who it is signed in as, checked against who this account says it is.
+        //
+        // A mismatch is not cosmetic. Mention search runs `@handle`, the
+        // engagement heuristic decides "addressed to this account" from it, and
+        // own-thread tracking follows it -- so an account whose stored handle
+        // is not the signed-in one searches for somebody else's mentions and
+        // never recognises being spoken to. Nothing else would ever notice:
+        // every poll succeeds, and every poll finds nothing.
+        const live = health.handle?.replace(/^@+/, '').toLowerCase() ?? null;
+        const stored = account.handle?.replace(/^@+/, '').toLowerCase() ?? null;
+        const mismatched = Boolean(live && stored && live !== stored);
+        // Adopt the live handle when this account has never had a real one.
+        const adopt = Boolean(live && !stored);
+
         await accountsRepo.updateAccount(account.id, {
-          status: health.authenticated ? 'CONNECTED' : health.status === 'offline' ? 'ERROR' : signedOut,
-          lastHealthStatus: health.detail.slice(0, 200),
-          lastError: health.status === 'healthy' ? null : health.detail.slice(0, 500),
+          status: health.authenticated
+            ? mismatched
+              ? 'ERROR'
+              : 'CONNECTED'
+            : health.status === 'offline'
+              ? 'ERROR'
+              : signedOut,
+          ...(adopt ? { handle: health.handle!.replace(/^@+/, '') } : {}),
+          lastHealthStatus: mismatched
+            ? `Signed in as @${live}, but this account is set up as @${stored}.`
+            : health.detail.slice(0, 200),
+          lastError: mismatched
+            ? `This browser is signed in as @${live}, and the account is configured as @${stored}. ` +
+              `Everything that looks for mentions searches for @${stored}, so nothing will be found. ` +
+              `Either sign in as @${stored}, or connect @${live} as its own account.`
+            : health.status === 'healthy'
+              ? null
+              : health.detail.slice(0, 500),
           touchHealthCheck: true,
         });
         await accountsRepo.upsertBrowserSession({
@@ -181,7 +211,7 @@ export class BrowserTaskRunner {
           status: health.status,
           lastError: health.status === 'healthy' ? null : health.detail,
         });
-        return { status: health.status, detail: health.detail, authenticated: health.authenticated };
+        return { status: health.status, detail: health.detail, authenticated: health.authenticated, handle: health.handle ?? null };
       }
 
       case 'OPEN_AUTH': {
