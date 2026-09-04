@@ -168,18 +168,71 @@ export async function checkActionRate(
 }
 
 /** Daily spend ceiling, checked before generation. */
+/** When the current day or month runs out, so a refusal can say when to come back. */
+function resetsAt(period: 'day' | 'month'): string {
+  const now = new Date();
+  const next =
+    period === 'day'
+      ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
+      : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return next.toISOString();
+}
+
+/**
+ * Whether this agent may make another model call.
+ *
+ * Counts first, money second, and the order matters. Of 137 real model calls in
+ * a live installation not one carried a cost, because most providers do not
+ * report one and AI17Z will not invent pricing -- so a money cap alone is a
+ * control that never fires, which is worse than none because somebody sets it
+ * and stops worrying. Requests are always countable.
+ *
+ * Every refusal names the limit, the number reached, and when it resets. "Over
+ * budget" tells nobody whether to wait an hour or change a setting.
+ */
 export async function checkBudget(agentId: string, policy: PolicyConfig): Promise<GateDecision> {
-  const cap = policy.budget.maxCostUsdPerDay;
-  if (cap === null) return { allow: true };
-  const spent = await observability.spendToday(agentId);
-  if (spent >= cap) {
-    return {
-      allow: false,
-      kind: 'RETRYABLE',
-      reason: 'daily_budget_exhausted',
-      message: `Daily model budget reached (${spent.toFixed(4)} of ${cap} USD).`,
-      retryAfterMs: 60 * 60_000,
-    };
+  const { maxModelCallsPerDay, maxModelCallsPerMonth, maxCostUsdPerDay } = policy.budget;
+
+  if (maxModelCallsPerDay !== null) {
+    const today = await observability.callsSince(agentId, 'day');
+    if (today >= maxModelCallsPerDay) {
+      return {
+        allow: false,
+        kind: 'RETRYABLE',
+        reason: 'daily_call_limit_reached',
+        message: `Daily model call limit reached (${today} of ${maxModelCallsPerDay}). Resets ${resetsAt('day')}.`,
+        retryAfterMs: 60 * 60_000,
+      };
+    }
   }
+
+  if (maxModelCallsPerMonth !== null) {
+    const month = await observability.callsSince(agentId, 'month');
+    if (month >= maxModelCallsPerMonth) {
+      return {
+        allow: false,
+        kind: 'RETRYABLE',
+        reason: 'monthly_call_limit_reached',
+        message: `Monthly model call limit reached (${month} of ${maxModelCallsPerMonth}). Resets ${resetsAt('month')}.`,
+        // A month is too long to hold a job for, so this waits a day and is
+        // re-checked rather than pinned to the reset.
+        retryAfterMs: 24 * 60 * 60_000,
+      };
+    }
+  }
+
+  if (maxCostUsdPerDay !== null) {
+    const spent = await observability.spendToday(agentId);
+    if (spent >= maxCostUsdPerDay) {
+      return {
+        allow: false,
+        kind: 'RETRYABLE',
+        reason: 'daily_budget_exhausted',
+        message: `Daily model budget reached (${spent.toFixed(4)} of ${maxCostUsdPerDay} USD). Resets ${resetsAt('day')}.`,
+        retryAfterMs: 60 * 60_000,
+      };
+    }
+  }
+
   return { allow: true };
 }

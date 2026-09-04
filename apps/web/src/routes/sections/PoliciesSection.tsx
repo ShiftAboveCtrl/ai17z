@@ -1,8 +1,24 @@
 import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
-import { ApiError, put } from '@app/lib/api';
+import { ApiError, get, put } from '@app/lib/api';
 import { Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
 import { Section } from './Section';
+
+/** What the spending endpoint answers with. One report per limit, plus warnings. */
+interface LimitReport {
+  limit: number | null;
+  used: number;
+  inert: boolean;
+  says: string;
+}
+interface SpendingReport {
+  callsPerJob: LimitReport;
+  callsPerDay: LimitReport;
+  callsPerMonth: LimitReport;
+  researchPerEvent: LimitReport;
+  costPerDay: LimitReport;
+  warnings: string[];
+}
 
 const MODES = ['OFF', 'MONITOR_ONLY', 'MANUAL_ONLY', 'REVIEW_BEFORE_ACTION', 'AUTONOMOUS'] as const;
 const DISCLOSURE = ['ON_REQUEST', 'ALWAYS', 'NONE'] as const;
@@ -25,8 +41,20 @@ export function PoliciesSection({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [spending, setSpending] = useState<SpendingReport | null>(null);
 
   useEffect(() => setDraft(policy), [policy]);
+  // Read after every save, so the sentences under each limit describe the
+  // policy that is now in force rather than the one being edited.
+  useEffect(() => {
+    let live = true;
+    void get<SpendingReport>(`/api/agents/${agentId}/spending`)
+      .then((report) => live && setSpending(report))
+      .catch(() => live && setSpending(null));
+    return () => {
+      live = false;
+    };
+  }, [agentId, version]);
   if (!draft) return null;
 
   const patch = (mutate: (next: PolicyConfig) => void) => {
@@ -158,6 +186,78 @@ export function PoliciesSection({
           </Field>
           <Field label="Tools allowed" hint="Comma separated tool keys, for example time.now, memory.search.">
             <input className="field" value={draft.tools.allowed.join(', ')} onChange={(e) => patch((n) => void (n.tools.allowed = list(e.target.value)))} />
+          </Field>
+        </div>
+      </div>
+
+      {/*
+        What it costs to run, in one place.
+
+        The per-message limit is the one that always applies; the rest are
+        optional ceilings. Each says how close it is rather than only what it is
+        set to, because a limit nobody can see themselves approaching is one
+        they only find out about when a job stops.
+      */}
+      <div className="mt-10 border-t border-ink-line pt-8">
+        <p className="eyebrow">Spending</p>
+        <h4 className="mt-2 text-base font-light text-bone">What it may spend</h4>
+        <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
+          A model call is one request to a provider. Retries, fallbacks and the small classifier that decides whether to
+          look something up all count. Leave a ceiling blank for no limit.
+        </p>
+
+        {spending?.warnings.map((warning) => (
+          <p key={warning} className="mt-4 max-w-2xl break-words rounded-lg border border-signal-warn/40 bg-signal-warn/5 p-3 text-[13px] leading-relaxed text-signal-warn">
+            {warning}
+          </p>
+        ))}
+
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <Field label="Model calls per message" hint={spending?.callsPerJob.says}>
+            <input
+              type="number"
+              className="field"
+              value={draft.budget.maxModelCallsPerJob}
+              onChange={(e) => patch((n) => void (n.budget.maxModelCallsPerJob = Math.max(1, Number(e.target.value) || 1)))}
+            />
+          </Field>
+          <Field label="Lookups per message" hint={spending?.researchPerEvent.says}>
+            <input
+              type="number"
+              className="field"
+              value={draft.budget.maxResearchCallsPerEvent}
+              onChange={(e) => patch((n) => void (n.budget.maxResearchCallsPerEvent = Math.max(0, Number(e.target.value) || 0)))}
+            />
+          </Field>
+          <Field label="Model calls a day" hint={spending?.callsPerDay.says ?? 'Blank for no limit.'}>
+            <input
+              type="number"
+              className="field"
+              placeholder="No limit"
+              value={draft.budget.maxModelCallsPerDay ?? ''}
+              onChange={(e) => patch((n) => void (n.budget.maxModelCallsPerDay = e.target.value.trim() ? Number(e.target.value) : null))}
+            />
+          </Field>
+          <Field label="Model calls a month" hint={spending?.callsPerMonth.says ?? 'Blank for no limit.'}>
+            <input
+              type="number"
+              className="field"
+              placeholder="No limit"
+              value={draft.budget.maxModelCallsPerMonth ?? ''}
+              onChange={(e) => patch((n) => void (n.budget.maxModelCallsPerMonth = e.target.value.trim() ? Number(e.target.value) : null))}
+            />
+          </Field>
+          <Field
+            label="Spending a day, in USD"
+            hint={spending?.costPerDay.says ?? 'Only enforceable once the models it uses have prices set.'}
+          >
+            <input
+              type="number"
+              className="field"
+              placeholder="No limit"
+              value={draft.budget.maxCostUsdPerDay ?? ''}
+              onChange={(e) => patch((n) => void (n.budget.maxCostUsdPerDay = e.target.value.trim() ? Number(e.target.value) : null))}
+            />
           </Field>
         </div>
       </div>
