@@ -6,3 +6,4 @@ export * from './crypto';
 export * from './env';
 export * from './util';
 export * from './reference';
+export * from './supervisor';

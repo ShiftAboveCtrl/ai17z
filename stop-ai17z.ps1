@@ -71,8 +71,11 @@ if (Test-Path $PidFile) {
 
 # Belt and braces: a worker from an earlier cycle that outlived its pid file is
 # still a worker, and it will still poll and open browsers.
+# The supervisor counts too, and first: it exists to restart a worker that
+# stops, so killing the worker while it is still running just produces
+# another worker. Its own kill is a signal it recognises as deliberate.
 $stray = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -and $_.CommandLine -like '*apps?worker*' }
+  Where-Object { $_.CommandLine -and ($_.CommandLine -like '*supervise-worker*' -or $_.CommandLine -like '*apps?worker*') }
 if ($stray) {
   Write-Step "Stopping $($stray.Count) leftover worker process(es)..."
   foreach ($proc in $stray) {
