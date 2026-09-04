@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Pencil, Sparkles } from 'lucide-react';
 import type { EasySetup, EasyView } from '@xbam/shared/contracts';
+import { AccountsSection } from './sections/AccountsSection';
+import { IntelligenceSection } from './sections/IntelligenceSection';
+import { VoiceSection } from './sections/VoiceSection';
 import { ApiError, put } from '@app/lib/api';
 import { usePolling, useResource } from '@app/lib/hooks';
 import type { AgentDetail, JobSummary } from '@app/lib/types';
@@ -44,7 +47,7 @@ interface EasyPayload {
   detail?: string;
 }
 
-export function EasyAgentView({ agent }: { agent: AgentDetail }) {
+export function EasyAgentView({ agent, onChanged }: { agent: AgentDetail; onChanged: () => void }) {
   const easy = useResource<EasyPayload>(`/api/agents/${agent.agent.id}/easy`);
   const preflight = useResource<{ ready: boolean; blockers: { what: string; fix: string }[] }>(
     `/api/agents/${agent.agent.id}/preflight`,
@@ -133,7 +136,7 @@ export function EasyAgentView({ agent }: { agent: AgentDetail }) {
               <Line label="Through" value={model.providerLabel ?? 'a saved provider'} />
             </>
           ) : (
-            <p className="text-[13px] text-bone-faint">No model connected yet.</p>
+            <p className="text-[13px] text-bone-faint">No model connected yet. Connect one below.</p>
           )}
         </Panel>
 
@@ -167,6 +170,24 @@ export function EasyAgentView({ agent }: { agent: AgentDetail }) {
             </p>
           )}
         </Panel>
+      </div>
+
+      {/*
+        Connecting an account, choosing a model and hearing the voice are not
+        advanced concepts: they are three of the six things anybody must do to
+        have a working agent at all. Easy Mode used to describe them as problems
+        -- "Connect an X account" -- with nowhere to go, so the only way through
+        was to find the Advanced switch, which is not a thing a person should
+        have to discover to finish setting up.
+
+        These are the same components Advanced renders, in their compact
+        presentation. Not a simplified copy: one component, so a change to how an
+        account connects cannot apply in one view and not the other.
+      */}
+      <div className="space-y-10 border-t border-ink-line pt-8">
+        <AccountsSection index={0} agentId={agent.agent.id} accounts={agent.accounts} onChanged={onChanged} compact />
+        <IntelligenceSection index={0} agentId={agent.agent.id} models={agent.models} onChanged={onChanged} compact />
+        <VoiceSection index={0} agentId={agent.agent.id} compact />
       </div>
 
       {account?.channel === 'x' && <BrowserTabsPanel accountId={account.accountId} />}
