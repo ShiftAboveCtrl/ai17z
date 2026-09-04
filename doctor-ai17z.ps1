@@ -212,7 +212,7 @@ if (Test-Endpoint "http://localhost:$apiPort/api/health") {
     # it had one AI provider when it had none.
     $providers = @($health.data.components | Where-Object { $_.kind -eq 'provider' })
     if ($providers.Count -eq 0) {
-      Add-Result 'AI providers' 'NOT CONFIGURED' 'None yet. An agent cannot think without one.' 'Open http://localhost:8080, go to Settings, add a provider.'
+      Add-Result 'AI providers' 'NOT CONFIGURED' 'None yet. An agent cannot think without one.' "Open http://localhost:$webPort, go to Settings, add a provider."
     } else {
       $bad = @($providers | Where-Object { $_.status -eq 'offline' -or $_.status -eq 'degraded' })
       if ($bad.Count -gt 0) {
