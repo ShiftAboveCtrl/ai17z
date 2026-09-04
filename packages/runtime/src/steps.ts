@@ -1,7 +1,7 @@
 import type { Capability, JobRecord, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
 import { MediaInventory, positionsConflict } from '@xbam/shared/contracts';
 import type { QualityReport, RelationshipContext, StanceContext } from '@xbam/shared/contracts';
-import { PipelineError, contentSignature, createLogger, errorMessage, truncate } from '@xbam/shared';
+import { PipelineError, contentSignature, createLogger, describeVersion, errorMessage, truncate } from '@xbam/shared';
 import {
   actions as actionsRepo,
   agents as agentsRepo,
@@ -23,7 +23,7 @@ import { retrieveMemories, applyWritePolicy } from '@xbam/memory';
 import { assemblePrompt } from '@xbam/prompts';
 import { generate } from '@xbam/models';
 import { getChannelAdapter } from '@xbam/channels';
-import { describeTools } from '@xbam/tools';
+import { collectDiagnostics, describeTools, summariseDiagnostics } from '@xbam/tools';
 import { buildChannelContext, syntheticAccount } from './channelContext';
 import { hasVisionModel, resolveMedia } from './mediaResolve';
 import { loadRelationshipContext, recordExchange } from './relationship';
@@ -277,6 +277,19 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     .filter((t) => t.enabled && bundle.policy.tools.allowed.includes(t.key))
     .map((t) => t.key);
 
+  // Only for an agent whose owner turned this on. Collecting diagnostics costs
+  // a handful of queries, and doing it for every reply everybody's agent writes
+  // would be paying for a feature almost nobody has enabled.
+  const support = bundle.policy.support.enabled
+    ? {
+        subject: bundle.policy.support.subject,
+        version: describeVersion(),
+        runtime: bundle.policy.support.describeOwnRuntime
+          ? summariseDiagnostics(await collectDiagnostics(bundle.agent.id))
+          : null,
+      }
+    : undefined;
+
   const prompt = assemblePrompt({
     layers: template.layers,
     templateKey: template.templateKey,
@@ -290,6 +303,7 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     memoryCharBudget: bundle.policy.memory.retrieval.totalCharBudget,
     actionType: bundle.job.actionType,
     evidence,
+    support,
   });
 
   await observability.emitTrace({

@@ -163,6 +163,54 @@ export function PoliciesSection({
       </div>
 
       {/*
+        Helping people with the software this agent runs on. Off by default and
+        it stays that way: everybody's agent becoming a support bot for AI17Z is
+        a persona leak, not a feature.
+      */}
+      <div className="mt-10 border-t border-ink-line pt-8">
+        <p className="eyebrow">Support</p>
+        <h4 className="mt-2 text-base font-light text-bone">Helping people with the software it runs on</h4>
+        <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
+          Most agents should leave this off. It is for the official agent of a project: it lets this one answer
+          questions about the software using the documentation you have attached, say which version it is running, and
+          optionally describe what its own runtime is doing, so it can say &ldquo;your notifications monitor has been
+          failing for eleven minutes&rdquo; instead of &ldquo;have you checked your configuration&rdquo;.
+        </p>
+
+        <div className="mt-6 grid gap-8 lg:grid-cols-2">
+          <div className="space-y-6">
+            <Toggle
+              checked={draft.support.enabled}
+              onChange={(v) => patch((n) => void (n.support.enabled = v))}
+              label="Answer questions about the software"
+              description="Uses the documentation attached under Knowledge, and says which version this installation is."
+            />
+            {draft.support.enabled && (
+              <Toggle
+                checked={draft.support.describeOwnRuntime}
+                onChange={(v) => patch((n) => void (n.support.describeOwnRuntime = v))}
+                label="Describe its own runtime when asked"
+                description="Account, discovery, browser, models and recent failures. Never keys, sessions or anything a person typed."
+              />
+            )}
+          </div>
+
+          {draft.support.enabled && (
+            <div className="space-y-6">
+              <Field label="What it supports" hint="Named, so this works for something other than AI17Z without a fork.">
+                <input
+                  className="field"
+                  value={draft.support.subject}
+                  onChange={(e) => patch((n) => void (n.support.subject = e.target.value))}
+                  placeholder="AI17Z"
+                />
+              </Field>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/*
         Speaking first, which is a different act from answering and has a
         different failure mode. Everything above is about what the agent does
         when somebody comes to it; this is about it going to them.
