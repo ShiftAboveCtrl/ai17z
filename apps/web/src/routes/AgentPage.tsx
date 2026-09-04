@@ -7,6 +7,7 @@ import type { AgentDetail } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { ErrorPanel, Field, Loading, Modal, Spinner, StatusDot } from '@app/components/ui';
+import { LiveStatus } from '@app/components/LiveStatus';
 import { FadeIn } from '@app/components/motion';
 import { IdentitySection } from './sections/IdentitySection';
 import { AccountsSection } from './sections/AccountsSection';
@@ -223,7 +224,7 @@ export function AgentPage() {
 
         <FadeIn delay={0.2}>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
-            <StatusDot state={toneFor(agent.state)} label={humanStatus(agent.state)} />
+            <LiveStatus agentId={agent.id} fallback={{ tone: toneFor(agent.state), label: humanStatus(agent.state) }} />
             {channel && (
               <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-bone-faint">
                 {channel.channel} @{channel.handle}
