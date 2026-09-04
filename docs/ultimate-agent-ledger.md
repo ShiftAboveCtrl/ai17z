@@ -19,7 +19,7 @@ ended at §101. They are outstanding as scope, not as work.
 | 98 | Owner inbox | DONE | `inboxBuckets.test.ts` pins the ordering: anything waiting on a person outranks the kind of message, an answered question stops being a question, and every item lands in exactly one bucket. Verified on real rows across the six buckets, with the counts on the chips coming from the same query as the list. |
 | 99 | Conversation view | DONE | `conversationView.test.ts` pins the order root -> ancestors -> incoming -> reply, that what was used is shown (looked up, remembered, who this is, whether to answer), that a failed lookup is shown as well as a successful one, and that no chain-of-thought is rendered. |
 | 100 | Live agent status | DONE | `liveStatus.test.ts`. Eight states, each derived from work that exists. Verified in the running app: the dev agent reads NEEDS YOU with the reason beside it. |
-| 101 | Content queue | PARTIAL | §59-70 built Ideas end to end with a screen, ageing, provenance and per-idea failure reasons. Drafts, Scheduled and Posted are not yet separate views, and the actions are set-aside and put-back rather than edit / approve / schedule / post-now. |
+| 101 | Content queue | DONE | Four stages -- Ideas, Drafts, Scheduled, Posted -- verified in the running app: each renders its own list and its own empty state, with counts from the same request. Drafts and Posted are read from jobs and actions rather than a second table, because a post already runs the ten pipeline steps and the job is the record. |
 
 ## Gaps left open deliberately
 
