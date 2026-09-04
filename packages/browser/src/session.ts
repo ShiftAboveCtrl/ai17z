@@ -786,6 +786,12 @@ export async function shutdownBrowser(
     ? { closed: true, detail: 'Browser closed. The signed-in session is kept in the profile on disk.' }
     : {
         closed: false,
-        detail: `Asked the browser at ${owned.cdpUrl} to close and it is still answering. It may need closing by hand.`,
+        // Two ways to get here now, and the message has to be true of both:
+        // the browser is still answering, or it has stopped answering while
+        // something still holds the profile. Naming only the first was
+        // accurate until closing started waiting for the profile as well.
+        detail:
+          `Asked the browser at ${owned.cdpUrl} to close, and it has not fully let go: it is either still ` +
+          'answering or still holding its profile. It may need closing by hand.',
       };
 }
