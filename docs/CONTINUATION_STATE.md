@@ -249,7 +249,9 @@ kill by that filter; nothing else matches it.
 3. ~~release-candidate validation~~ DONE. 71 matrix rows that read NOT TESTED
    now cite the test that proves them; eight remain untested and each says what
    it would take. Nothing is marked PASS on inspection alone.
-4. three frozen-source runs on one commit -- IN PROGRESS at `19abf47`
+4. ~~three frozen-source runs on one commit~~ DONE at `0e2bfc2`. Three
+   consecutive full runs, 0 failures each, 0 Chrome processes left behind by
+   any of them. See "Three frozen runs" in the validation matrix
 5. ~~backup of the real installation~~ DONE. `pg_dump -Fc` of the golden
    runtime to `~/ai17z-test-backups/`, restored into a scratch database and
    compared: 1 agent, 156 events, 152 jobs, 94 actions, 185 memories, 1 sealed

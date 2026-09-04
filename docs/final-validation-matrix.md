@@ -105,8 +105,8 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Cold start | From no processes at all | - | - | - | - | - | NOT TESTED - needs a machine with no AI17Z processes | | |
 | Startup failure UX | Explains what failed | y | y | - | y | - | PASS (A+I+F) - `unit/supervisor.test.ts` gives up when it plainly cannot start and says why; `integration/secretHandling.test.ts` proves a missing, short or wrong master key refuses loudly in a fresh process rather than starting broken | | |
 | Soak harness | `npm run soak` exists and reports | - | - | y | - | - | PASS - npm run soak; flags trends, writes JSON | counted all machine Chrome | 7d98241 |
-| Soak run | Longest practical duration | - | - | - | - | - | NOT TESTED - the harness exists and was not run for a long duration this round | | |
-| Resource leaks | Trend, not absolute | - | - | - | - | - | NOT TESTED - see soak run. The Chrome leak found earlier this round (61 per suite run, now 0) was measured rather than soaked | | |
+| Soak run | Longest practical duration | - | - | y | - | - | PARTIAL (L) - 45 minutes, 45 samples, nothing flagged, against the running installation with its real Chrome. Not 24 hours, and the agents were idle throughout (0 jobs, 0 actions), so it soaks the runtime at rest rather than under work. Recorded rather than rounded up | | |
+| Resource leaks | Trend, not absolute | - | - | y | - | - | PASS (L) - the trend is flat over 45 samples: worker memory 2576MB to 2607MB, Chrome 25 processes to 25, browser tabs 4 throughout with all four roles present, database connections 6 to 6, zero idle-in-transaction, zero stale snapshots, zero errors in any 15-minute window. A leak shows as a line that only goes up, and none of these does | | |
 | Token/cost path | Fast path vs deep path | - | y | - | - | - | PASS (I) - `integration/spending.test.ts`: calls a day and a month are counted and enforced, the cost cap is checked after them, and a cost cap that cannot be enforced says so instead of reading 0.00 for ever | | |
 | Secret scan | Nothing committed | y | - | - | - | - | PASS - nothing key-shaped in tracked files | - | 12f04a1 |
 | Log audit | Sentinel never appears | y | y | - | - | - | PASS - sentinel absent from every column, trace, redactor | - | 12f04a1 |
@@ -218,6 +218,55 @@ a build anybody else can use.
 
 The scratch database was created for this and holds nothing real.
 
+## Three frozen runs
+
+Source frozen at `0e2bfc2`. Three consecutive full runs, nothing changed between
+them but this document.
+
+| Run | Files | Tests | Failures | Duration |
+|---|---|---|---|---|
+| 1 | 147 passed | 1543 passed | 0 | 1013s |
+| 2 | 146 passed, 1 skipped | 1537 passed, 6 skipped | 0 | 966s |
+| 3 | 147 passed | 1543 passed | 0 | 1022s |
+
+The six skipped in run 2 are `import.test.ts`, the AI4CZ importer, which skips
+itself when the legacy database is not reachable. It ran in runs 1 and 3, so the
+difference is the legacy directory's availability at that moment rather than
+anything in this build. That is exactly the flake a three-run freeze is for, and
+it is in a test that declines to run rather than in one that fails.
+
+Each run leaves **zero** Chrome processes behind, which is the check that
+matters most here: the leak found earlier this round was invisible in a single
+green run and only showed as the next run being slower.
+
+Two honest notes. Run 1 started one commit earlier than the freeze point; the
+diff between them is this file and `CONTINUATION_STATE.md` and no code, so the
+tree under test was byte-identical. And the only working-tree change during the
+three runs was this document, which vitest never reads.
+
+## The soak
+
+45 minutes, 45 samples at one-minute intervals, against the running installation
+with its real Chrome. Nothing flagged.
+
+| | first | last |
+|---|---|---|
+| Worker memory | 2576MB | 2607MB |
+| Chrome processes (machine-wide) | 25 | 25 |
+| Browser tabs | 4 | 4 |
+| Database connections | 6 | 6 |
+| Idle in transaction | 0 | 0 |
+| Stale browser snapshots | 0 | 0 |
+| Errors in the last 15 minutes | 0 | 0 |
+
+All four tab roles were present in every sample. A leak shows as a line that
+only goes up; none of these does, and the 31MB between first and last is inside
+the noise the run itself shows (2484 low, 2967 high).
+
+**What this does not prove.** The agents did no work: zero jobs and zero actions
+across the whole run. This is the runtime at rest, which is the easy case. A
+day under real traffic is a different test and has not been run.
+
 ## Not tested, and not claimed
 
 Rewritten at the end of this round. Each entry says what is missing and what it
@@ -244,8 +293,10 @@ would take, because a list of gaps that quietly goes stale is worse than no list
 - **The provider matrix.** Only the providers already configured were exercised.
   OpenAI, Anthropic, DeepSeek, Ollama and a generic OpenAI-compatible endpoint
   were not each connected and failure-tested against a live endpoint.
-- **A 24-hour soak.** The harness is proved and the longest run completed in
-  this session is recorded in the final report.
+- **A 24-hour soak, and a soak under load.** The longest run completed is 45
+  minutes, and the agents were idle for all of it: 0 jobs, 0 actions. Nothing
+  was flagged and every trend is flat, which is worth having, but a runtime at
+  rest is the easy case. What is untested is a day of real traffic.
 
 ### Closed since this list was first written
 
