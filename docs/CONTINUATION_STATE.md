@@ -5,7 +5,7 @@ whenever the execution state materially changes.
 
 ## Canonical source
 
-- Path: `C:\Users\ta0as\OneDrive\Desktop\XBAM`
+- Path: this checkout
 - Branch: `main`
 - Current commit: `1773282`
 - Unpushed commits: 41 (deliberate; the release state is not coherent yet)
@@ -29,7 +29,7 @@ against 55432 and never touch `xbam` itself.
 
 ## Golden runtime
 
-- Path: `C:\Users\ta0as\ai17z-test`
+- Path: `~/ai17z-test`
 - Commit it is running: `f768553`
 - Schema: its own checkout has 47 migrations; the database also carries
   0048-0050 from the mistake above. Harmless: all three are additive, and the
@@ -38,7 +38,7 @@ against 55432 and never touch `xbam` itself.
 - Agent: Ava, account `@ai17zos`, ACTIVE
 - **DO NOT MODIFY DIRECTLY. DO NOT PROMOTE YET.**
 
-Its native worker executes `C:\Users\ta0as\ai17z-test` source, verified: that
+Its native worker executes `~/ai17z-test` source, verified: that
 checkout has no `packages/browser/src/watchdog.ts` and zero references to
 `superviseSession`. Restarting it therefore runs the old code and applies none
 of the XBAM fixes. The isolation model is intact.

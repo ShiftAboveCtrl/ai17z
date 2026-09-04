@@ -240,7 +240,7 @@ reason: a debug port reachable from the network is a signed-in browser anyone
 can drive.
 
 **A stored profile path is not trusted across machines.** The containerised
-worker writes `/app/...`, which on Windows becomes `C:pp\...` — a second,
+worker writes `/app/...`, which on Windows becomes `C:\app\...` — a second,
 empty profile with none of the session in it. `resolveProfileDir` derives the
 path locally from the account id.
 
