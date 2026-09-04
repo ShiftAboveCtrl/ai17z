@@ -37,3 +37,4 @@ export * from './liveStatus';
 export * from './evidenceClass';
 export * from './followUp';
 export * from './playground';
+export * from './portableAgent';
