@@ -91,15 +91,33 @@ export async function claimBestIdea(agentId: string): Promise<IdeaRow | null> {
   );
 }
 
-export async function resolveIdea(id: string, status: 'used' | 'discarded' | 'unused', jobId?: string | null): Promise<void> {
-  await query(
+/**
+ * Change an idea's status, within one agent.
+ *
+ * The agent is part of the key rather than something a caller checks first.
+ * An id on its own is a guess anybody can make, and a route that had already
+ * confirmed the caller owns *an* agent went on to update an idea by id alone --
+ * so any signed-in owner could discard a stranger's backlog. Scoping the write
+ * means the query cannot reach the row at all, whatever the route forgets.
+ *
+ * Returns whether it matched, so a caller can answer 404 rather than pretend.
+ */
+export async function resolveIdea(
+  agentId: string,
+  id: string,
+  status: 'used' | 'discarded' | 'unused',
+  jobId?: string | null,
+): Promise<boolean> {
+  const rows = await query(
     `UPDATE content_ideas
-        SET status = $2, used_job_id = $3,
-            used_at = CASE WHEN $2 = 'used' THEN now() ELSE NULL END,
+        SET status = $3, used_job_id = $4,
+            used_at = CASE WHEN $3 = 'used' THEN now() ELSE NULL END,
             updated_at = now()
-      WHERE id = $1`,
-    [id, status, jobId ?? null],
+      WHERE id = $1 AND agent_id = $2
+      RETURNING id`,
+    [id, agentId, status, jobId ?? null],
   );
+  return rows.length > 0;
 }
 
 /** Stops the same thought being captured twice from two conversations. */

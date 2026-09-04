@@ -118,10 +118,10 @@ export async function nextPost(agentId: string): Promise<ContentBrief | null> {
 }
 
 /** Puts an idea back when a post was not made after all. */
-export async function releaseIdea(id: string): Promise<void> {
-  await contentRepo.resolveIdea(id, 'unused');
+export async function releaseIdea(agentId: string, id: string): Promise<void> {
+  await contentRepo.resolveIdea(agentId, id, 'unused');
 }
 
-export async function markIdeaUsed(id: string, jobId: string | null): Promise<void> {
-  await contentRepo.resolveIdea(id, 'used', jobId);
+export async function markIdeaUsed(agentId: string, id: string, jobId: string | null): Promise<void> {
+  await contentRepo.resolveIdea(agentId, id, 'used', jobId);
 }
