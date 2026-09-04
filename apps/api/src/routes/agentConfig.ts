@@ -57,7 +57,11 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
       const draft = parseBody(PersonaDraft, request);
-      const version = await agentsRepo.savePersonaVersion(agent.id, draft, user.id);
+      // `?autosave=1` says this came from typing rather than from somebody
+      // pressing save, so consecutive ones collapse into a single version
+      // instead of leaving forty behind for one afternoon of editing.
+      const autosave = (request.query as { autosave?: string } | undefined)?.autosave === '1';
+      const version = await agentsRepo.savePersonaVersion(agent.id, draft, user.id, { autosave });
       await ops.audit({
         actorUserId: user.id,
         action: 'persona.saved',

@@ -204,16 +204,122 @@ export async function listPersonaVersions(agentId: string): Promise<PersonaVersi
   return mapRows<PersonaVersion>(rows);
 }
 
-/** Every persona edit creates a new version and repoints the agent at it. */
+/** The fields that decide whether two drafts are the same persona. */
+const PERSONA_FIELDS = [
+  'identityKind',
+  'displayName',
+  'biography',
+  'personality',
+  'tone',
+  'styleGuidelines',
+  'styleExamples',
+  'topics',
+  'languagePolicy',
+  'responseLength',
+  'prohibitedBehaviors',
+  'customInstructions',
+] as const;
+
+/**
+ * Whether a draft says anything different from the version already active.
+ *
+ * The change note is deliberately not compared: it describes the edit, not the
+ * agent, and treating a different note as a different persona would make every
+ * save a change.
+ */
+export function personaDiffers(draft: PersonaDraft, active: PersonaVersion | null): boolean {
+  if (!active) return true;
+  return PERSONA_FIELDS.some((field) => JSON.stringify(draft[field]) !== JSON.stringify(active[field]));
+}
+
+/** Written into the change note so consecutive autosaves can be recognised. */
+export const AUTOSAVE_NOTE = 'autosave';
+
+/** Consecutive autosaves inside this window collapse into one version. */
+const AUTOSAVE_COLLAPSE_MS = 10 * 60_000;
+
+export interface SavePersonaOptions {
+  /**
+   * Whether this came from autosave rather than from somebody pressing save.
+   *
+   * An autosave that lands on top of a recent autosave replaces it instead of
+   * stacking. Without that, a few minutes of typing leaves forty versions and
+   * the history stops being able to answer the only question anybody asks of
+   * it: when did this actually change.
+   */
+  autosave?: boolean;
+}
+
+/**
+ * Save a persona, creating a version only when there is something to record.
+ *
+ * Three outcomes, in order:
+ *
+ *   nothing differs        -- the active version is returned untouched, so
+ *                             opening a screen and pressing save is free
+ *   an autosave on top of
+ *   a recent autosave      -- that version is rewritten in place
+ *   anything else          -- a new version, which is the ordinary case
+ */
 export async function savePersonaVersion(
   agentId: string,
   draft: PersonaDraft,
   createdBy: string | null,
+  options: SavePersonaOptions = {},
 ): Promise<PersonaVersion> {
   return withTransaction(async (tx) => {
     const persona = await tx.one<{ id: string }>('SELECT id FROM personas WHERE agent_id = $1', [agentId]);
     if (!persona) throw new NotFoundError('Persona');
-    const version = await insertPersonaVersion(tx, persona.id, agentId, draft, createdBy);
+
+    const activeRow = await tx.one(
+      `SELECT pv.* FROM persona_versions pv
+         JOIN agents a ON a.persona_version_id = pv.id
+        WHERE a.id = $1`,
+      [agentId],
+    );
+    const active = activeRow ? (mapRow<PersonaVersion>(activeRow) as PersonaVersion) : null;
+
+    // Nothing to record. Pressing save on an unchanged screen is not an edit.
+    if (active && !personaDiffers(draft, active)) return active;
+
+    if (options.autosave && active && (active.changeNote ?? '') === AUTOSAVE_NOTE) {
+      const age = Date.now() - Date.parse(active.createdAt as unknown as string);
+      if (Number.isFinite(age) && age < AUTOSAVE_COLLAPSE_MS) {
+        const rewritten = await tx.one(
+          `UPDATE persona_versions SET
+             identity_kind = $2, display_name = $3, biography = $4, personality = $5, tone = $6,
+             style_guidelines = $7, style_examples = $8::jsonb, topics = $9::jsonb, language_policy = $10,
+             response_length = $11, prohibited_behaviors = $12::jsonb, custom_instructions = $13,
+             created_at = now()
+           WHERE id = $1
+           RETURNING *`,
+          [
+            active.id,
+            draft.identityKind,
+            draft.displayName,
+            draft.biography,
+            draft.personality,
+            draft.tone,
+            draft.styleGuidelines,
+            JSON.stringify(draft.styleExamples),
+            JSON.stringify(draft.topics),
+            draft.languagePolicy,
+            draft.responseLength,
+            JSON.stringify(draft.prohibitedBehaviors),
+            draft.customInstructions,
+          ],
+        );
+        return mapRow<PersonaVersion>(rewritten) as PersonaVersion;
+      }
+    }
+
+    const version = await insertPersonaVersion(
+      tx,
+      persona.id,
+      agentId,
+      options.autosave ? { ...draft, changeNote: AUTOSAVE_NOTE } : draft,
+      createdBy,
+    );
     await tx.query('UPDATE agents SET persona_version_id = $2, updated_at = now() WHERE id = $1', [
       agentId,
       version.id,

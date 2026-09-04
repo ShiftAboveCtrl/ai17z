@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import type { PersonaVersion } from '@xbam/shared/contracts';
 import { PERSONA_LIMITS } from '@xbam/shared/contracts';
 import { ApiError, put } from '@app/lib/api';
-import { Field, SavedTick, Spinner } from '@app/components/ui';
+import { Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
+import { describeSaveState, useAutosave, useAutosaveEnabled } from '@app/lib/autosave';
 import { PersonaSources } from '@app/components/PersonaSources';
 import { Section } from './Section';
 
@@ -60,6 +61,43 @@ export function IdentitySection({
 
   const set = <K extends keyof PersonaVersion>(key: K, value: PersonaVersion[K]) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
+
+  const [autosaveOn, setAutosaveOn] = useAutosaveEnabled();
+
+  /** Everything a save sends, so autosave and the button cannot diverge. */
+  const payload = (current: PersonaVersion) => ({
+    identityKind: current.identityKind,
+    displayName: current.displayName,
+    biography: current.biography,
+    personality: current.personality,
+    tone: current.tone,
+    styleGuidelines: current.styleGuidelines,
+    styleExamples: current.styleExamples,
+    topics: current.topics,
+    languagePolicy: current.languagePolicy,
+    responseLength: current.responseLength,
+    prohibitedBehaviors: current.prohibitedBehaviors,
+    customInstructions: current.customInstructions,
+    changeNote: 'edited in the identity section',
+  });
+
+  // Compared as the payload, not as the version record.
+  //
+  // A PersonaVersion carries id, version and createdAt, and the server assigns
+  // fresh ones on every save. Comparing whole records means the editor can
+  // never match what it just sent, so it saves again, and again, and the label
+  // sits on "Saving" for ever while the requests all succeed.
+  const auto = useAutosave({
+    draft: draft ? payload(draft) : null,
+    saved: persona ? payload(persona) : null,
+    enabled: autosaveOn && draft !== null,
+    save: async (current) => {
+      if (!current) return;
+      // Marked as autosave so consecutive ones collapse into one version
+      // rather than leaving a version per pause in typing.
+      await put(`/api/agents/${agentId}/persona?autosave=1`, current);
+    },
+  });
 
   const save = async () => {
     setBusy(true);
@@ -197,9 +235,25 @@ export function IdentitySection({
       <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-ink-line pt-6">
         <button type="button" className="btn-primary" onClick={() => void save()} disabled={busy}>
           {busy && <Spinner />}
-          Save as version {draft.version + 1}
+          Save
         </button>
         <SavedTick visible={saved} />
+        <Toggle
+          checked={autosaveOn}
+          onChange={setAutosaveOn}
+          label="Auto save"
+          description="Saves a moment after you stop typing. Consecutive autosaves become one version, not one each."
+        />
+        {/*
+          Never optimistic. "Saved" appears only once the server has said so,
+          because somebody who closes a tab on a false "Saved" loses the work.
+        */}
+        {autosaveOn && auto.state !== 'idle' && (
+          <span className={`text-[12px] ${auto.state === 'failed' ? 'text-signal-fail' : 'text-bone-faint'}`}>
+            {describeSaveState(auto.state)}
+            {auto.error ? `: ${auto.error}` : ''}
+          </span>
+        )}
         <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">Currently v{draft.version}</span>
         {error && <p className="w-full text-sm text-signal-fail">{error}</p>}
       </div>
