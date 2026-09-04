@@ -127,7 +127,13 @@ export async function getDecryptedApiKey(id: string): Promise<string | null> {
 
 const MODEL_CONFIG_COLUMNS = `
   mc.id, mc.agent_id, mc.role, mc.provider_credential_id, mc.model, mc.parameters,
-  pc.provider, pc.label AS provider_label`;
+  pc.provider, pc.label AS provider_label,
+  -- What the provider said it offers, when it was last asked. Carried so a
+  -- model an agent is pointed at can be checked against it: an agent set to a
+  -- model the provider has retired looks entirely healthy and fails every
+  -- generation, and nothing else in the system would notice.
+  pc.available_models AS provider_models,
+  pc.last_status AS provider_status`;
 
 export async function listModelConfigs(agentId: string): Promise<ModelConfig[]> {
   const rows = await query(

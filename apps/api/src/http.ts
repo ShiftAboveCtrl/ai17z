@@ -6,6 +6,44 @@ import { users as usersRepo, type UserRow } from '@xbam/database';
 
 const log = createLogger('api');
 
+/** A field name a person would recognise, from a Zod path. */
+function fieldLabel(path: (string | number)[]): string {
+  const name = path.filter((p) => typeof p === 'string').join(' ') || 'A field';
+  return name
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+/**
+ * One sentence a person can act on, from whatever Zod complained about.
+ *
+ * Length is spelled out because it is the common case and the one nobody can
+ * diagnose by eye: the difference between 2,000 and 2,341 characters is not
+ * something anybody can see in a text box.
+ */
+function describeIssues(issues: z.ZodIssue[]): string {
+  const first = issues[0];
+  if (!first) return 'That could not be saved.';
+
+  if (first.code === 'too_big' && typeof first.maximum === 'number' && first.type === 'string') {
+    const received = (first as { received?: unknown }).received;
+    const actual = typeof received === 'number' ? received : null;
+    const over = actual !== null ? actual - first.maximum : null;
+    return (
+      `${fieldLabel(first.path)} is too long. ` +
+      (actual !== null ? `It is ${actual.toLocaleString()} characters and the most allowed is ${first.maximum.toLocaleString()}. ` : `The most allowed is ${first.maximum.toLocaleString()}. `) +
+      (over !== null && over > 0 ? `Remove at least ${over.toLocaleString()}.` : '')
+    ).trim();
+  }
+
+  if (first.code === 'too_small' && first.minimum === 1) {
+    return `${fieldLabel(first.path)} cannot be empty.`;
+  }
+
+  const rest = issues.length > 1 ? ` (and ${issues.length - 1} other problem${issues.length === 2 ? '' : 's'})` : '';
+  return `${fieldLabel(first.path)}: ${first.message}${rest}`;
+}
+
 export function ok<T>(reply: FastifyReply, data: T, status = 200): FastifyReply {
   const body: ApiResponse<T> = { ok: true, data };
   return reply.status(status).send(body);
@@ -24,7 +62,11 @@ export function fail(reply: FastifyReply, error: unknown): FastifyReply {
       ok: false,
       error: {
         code: 'VALIDATION_FAILED',
-        message: 'The request body did not match the expected shape.',
+        // Name the field and the overage. "The request body did not match the
+        // expected shape" is true and useless: somebody who wrote a long
+        // personality and pressed save learns nothing from it, and has no way
+        // to find out which of eleven fields was too long or by how much.
+        message: describeIssues(error.issues),
         details: error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
       },
     });
@@ -51,7 +93,32 @@ export function handler<T>(fn: (request: FastifyRequest, reply: FastifyReply) =>
 }
 
 export function parseBody<S extends ZodTypeAny>(schema: S, request: FastifyRequest): z.infer<S> {
-  return schema.parse(request.body ?? {});
+  const input = request.body ?? {};
+  const result = schema.safeParse(input);
+  if (result.success) return result.data;
+  // Zod says what the maximum was but not what was sent, and "too long" without
+  // a number is not something anybody can act on. The value is right here, so
+  // the actual length is measured and carried on the issue.
+  throw withActualSizes(result.error, input);
+}
+
+/** Records how long each offending string actually was. */
+function withActualSizes(error: z.ZodError, input: unknown): z.ZodError {
+  for (const issue of error.issues) {
+    if (issue.code !== 'too_big') continue;
+    const value = valueAt(input, issue.path);
+    if (typeof value === 'string') (issue as { received?: number }).received = value.length;
+  }
+  return error;
+}
+
+function valueAt(input: unknown, path: (string | number)[]): unknown {
+  let current: unknown = input;
+  for (const key of path) {
+    if (current === null || typeof current !== 'object') return undefined;
+    current = (current as Record<string | number, unknown>)[key];
+  }
+  return current;
 }
 
 export function parseQuery<S extends ZodTypeAny>(schema: S, request: FastifyRequest): z.infer<S> {

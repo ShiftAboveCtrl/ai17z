@@ -4,6 +4,7 @@ import { ApiError, del, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { ModelConfig, ProviderCredential } from '@app/lib/types';
 import { EmptyState, Field, Modal, Spinner } from '@app/components/ui';
+import { staleModel } from '@xbam/shared/contracts';
 import { IndexedRow, Section } from './Section';
 
 /**
@@ -182,13 +183,18 @@ export function IntelligenceSection({
         <div className="border-b border-ink-line">
           {ROLES.map((entry, i) => {
             const config = models.find((m) => m.role === entry.role);
+            // A model the provider has retired reads as healthy on every screen
+            // and fails every generation. Said on the row, where somebody is
+            // already looking at their models, rather than in a log.
+            const stale = config ? staleModel(config) : null;
             return (
               <IndexedRow
                 key={entry.role}
                 index={i + 1}
                 label={entry.label}
                 title={config ? config.model : 'Not set'}
-                meta={config ? `${config.providerLabel} · ${config.provider}` : entry.hint}
+                meta={stale ?? (config ? `${config.providerLabel} · ${config.provider}` : entry.hint)}
+                status={stale ? <span className="chip border-signal-fail/40 text-signal-fail">unavailable</span> : undefined}
                 onClick={() => openEditor(entry.role)}
               />
             );

@@ -153,8 +153,32 @@ export const ModelConfig = z.object({
   providerLabel: z.string(),
   model: z.string(),
   parameters: z.record(z.unknown()),
+  /**
+   * What the provider said it offers when it was last tested.
+   *
+   * Carried so `model` can be checked against it. An agent pointed at a model
+   * the provider has retired reads as entirely healthy on every screen and
+   * fails every generation, and nothing else in the system notices.
+   *
+   * Empty means the provider publishes no list, which is not evidence the
+   * model is missing.
+   */
+  providerModels: z.array(z.string()).default([]),
+  providerStatus: z.string().nullable().default(null),
 });
 export type ModelConfig = z.infer<typeof ModelConfig>;
+
+/**
+ * Whether an agent's chosen model is still one its provider offers.
+ *
+ * Null when there is nothing to say: no list to check against, which is the
+ * ordinary case for providers that do not publish one.
+ */
+export function staleModel(config: Pick<ModelConfig, 'model' | 'providerModels' | 'providerLabel'>): string | null {
+  if (config.providerModels.length === 0) return null;
+  if (config.providerModels.includes(config.model)) return null;
+  return `${config.providerLabel} no longer offers "${config.model}". This agent cannot generate with it.`;
+}
 
 export const ModelParameters = z.object({
   temperature: z.number().min(0).max(2).optional(),

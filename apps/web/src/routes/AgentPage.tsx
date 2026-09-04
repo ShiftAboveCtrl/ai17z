@@ -1,12 +1,12 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronDown, Copy, ExternalLink, Play, Square, Trash2 } from 'lucide-react';
-import { ApiError, del, post } from '@app/lib/api';
+import { ChevronDown, Copy, ExternalLink, Pencil, Play, Square, Trash2 } from 'lucide-react';
+import { ApiError, del, patch, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AgentDetail } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { AgentGlyph } from '@app/components/AgentGlyph';
-import { ErrorPanel, Loading, Modal, Spinner, StatusDot } from '@app/components/ui';
+import { ErrorPanel, Field, Loading, Modal, Spinner, StatusDot } from '@app/components/ui';
 import { FadeIn } from '@app/components/motion';
 import { IdentitySection } from './sections/IdentitySection';
 import { AccountsSection } from './sections/AccountsSection';
@@ -50,6 +50,24 @@ export function AgentPage() {
   const [mode] = useViewMode();
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  const rename = async () => {
+    const name = (renaming ?? '').trim();
+    if (!name) {
+      setRenameError('An agent needs a name.');
+      return;
+    }
+    setRenameError(null);
+    try {
+      await patch(`/api/agents/${agentId}`, { name });
+      setRenaming(null);
+      reload();
+    } catch (e) {
+      setRenameError(e instanceof ApiError ? e.message : 'That name could not be saved.');
+    }
+  };
   const [actionError, setActionError] = useState<string | null>(null);
   const [blockers, setBlockers] = useState<{ what: string; fix: string }[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -246,6 +264,16 @@ export function AgentPage() {
             <Link className="btn-quiet" to="/activity">
               Activity
             </Link>
+            {/*
+              Renaming is a display change and stays one: the agent id is the
+              identity, accounts hang off it, and a browser profile is derived
+              from the account rather than from any name. Not an advanced
+              operation, so it is here in both views.
+            */}
+            <button type="button" className="btn-quiet" onClick={() => setRenaming(data.agent.name)} disabled={busy}>
+              <Pencil className="h-3.5 w-3.5" aria-hidden />
+              Rename
+            </button>
             {mode === 'advanced' && (
               <button type="button" className="btn-quiet" onClick={() => void duplicate()} disabled={busy}>
                 <Copy className="h-3.5 w-3.5" aria-hidden />
@@ -301,6 +329,40 @@ export function AgentPage() {
 
         {mode === 'advanced' && <ChevronDown className="mt-16 h-5 w-5 animate-bounce text-bone-faint/60" aria-hidden />}
       </section>
+
+      <Modal open={renaming !== null} onClose={() => setRenaming(null)} title="Rename this agent">
+        <div className="space-y-5">
+          <Field
+            label="Name"
+            htmlFor="agent-name"
+            hint="What you call it. Not what it calls itself to other people, which is the display name on its identity."
+          >
+            <input
+              id="agent-name"
+              className="field"
+              value={renaming ?? ''}
+              maxLength={120}
+              onChange={(e) => setRenaming(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void rename();
+              }}
+            />
+          </Field>
+          <p className="text-[12px] text-bone-faint">
+            {(renaming ?? '').length} / 120. Nothing else changes: its history, accounts and memory all belong to the
+            agent rather than to its name.
+          </p>
+          {renameError && <p className="text-sm text-signal-fail">{renameError}</p>}
+          <div className="flex items-center gap-3">
+            <button type="button" className="btn-primary" onClick={() => void rename()} disabled={!(renaming ?? '').trim()}>
+              Save
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => setRenaming(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {mode === 'easy' && (
         <div className="mx-auto max-w-3xl px-6 pb-8 sm:px-10">
