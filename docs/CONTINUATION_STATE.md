@@ -7,8 +7,8 @@ whenever the execution state materially changes.
 
 - Path: this checkout
 - Branch: `main`
-- Current commit: `337bad8` plus the version work
-- Unpushed commits: 45 (deliberate; the release state is not coherent yet)
+- Current commit: `5a9acb6`
+- Unpushed commits: 52 (deliberate; the release state is not coherent yet)
 
 ### Ports: this checkout owns the defaults
 
@@ -176,7 +176,9 @@ It launches real Chrome. A run that passed everything used to leave sixty-one
 Chrome processes behind, and several runs of that is what made the suite take
 forty minutes instead of ten and then fail with "a Chrome is holding this
 account's profile" -- the leak from one run being the flakiness of the next.
-Fixed; a passing run now leaves none.
+Fixed; a passing run now leaves none, and the full suite is back to ten minutes
+from forty -- which is the proof that the leak was the cause rather than
+contention, since nothing else changed.
 
 If a run is ever killed, clear its browsers before the next one:
 `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object
@@ -199,7 +201,7 @@ kill by that filter; nothing else matches it.
 
 ## Test baseline
 
-- Last full run at `337bad8`: 1283 passed, 120 files, 0 failed
+- Last full run at `5a9acb6`: 1300 passed, 123 files, 0 failed, in 595s
 - Typecheck: clean (verify by exit code, never by grepping for "error TS" —
   tsc colourises between the words)
 - Command: `npm test` (the .env default is now the right database)
