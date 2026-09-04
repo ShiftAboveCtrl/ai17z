@@ -55,7 +55,8 @@ describe('acting on another owner\u2019s rows', () => {
     const mine = await createFixture();
     const theirs = await createFixture();
     await stancesRepo.recordPrediction({ agentId: theirs.agentId, claim: 'It will rain.' });
-    const [prediction] = await stancesRepo.listPredictions(theirs.agentId);
+    const predictions = (await stancesRepo.listPredictions(theirs.agentId)) as { id: string; outcome: string | null }[];
+    const [prediction] = predictions;
     const auth = await signIn(mine.ownerEmail);
 
     const response = await app.inject({
@@ -66,14 +67,16 @@ describe('acting on another owner\u2019s rows', () => {
     });
 
     expect(response.statusCode).toBe(404);
-    expect((await stancesRepo.listPredictions(theirs.agentId))[0]!.outcome).not.toBe('WRONG');
+    const after = (await stancesRepo.listPredictions(theirs.agentId)) as { outcome: string | null }[];
+    expect(after[0]!.outcome).not.toBe('WRONG');
   });
 
   it('cannot close a commitment belonging to somebody else', async () => {
     const mine = await createFixture();
     const theirs = await createFixture();
     await stancesRepo.recordCommitment({ agentId: theirs.agentId, promise: 'I will follow up.' });
-    const [commitment] = await stancesRepo.listCommitments(theirs.agentId);
+    const commitments = (await stancesRepo.listCommitments(theirs.agentId)) as { id: string }[];
+    const [commitment] = commitments;
     const auth = await signIn(mine.ownerEmail);
 
     const response = await app.inject({
