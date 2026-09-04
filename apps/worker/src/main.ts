@@ -5,11 +5,12 @@ import {
   browserTasks,
   closePool,
   content,
+  knowledge,
   pingDatabase,
   workers as workersRepo,
 } from '@xbam/database';
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
-import { bootstrapRuntime, runJob, sweepNotifications } from '@xbam/runtime';
+import { bootstrapRuntime, indexSource, runJob, sweepNotifications } from '@xbam/runtime';
 import { activeSessionAccountIds, closeAllSessions, sessionIdentity, sessionTabs } from '@xbam/browser';
 import { ChannelPoller } from './poller';
 import { SignInWatcher } from './signIn';
@@ -96,6 +97,22 @@ async function main(): Promise<void> {
       if (ideas.released > 0 || ideas.discarded > 0 || ideas.used > 0) log.info('reconciled content ideas', { ...ideas });
     } catch (error) {
       log.warn('content idea sweep failed', { message: errorMessage(error) });
+    }
+    try {
+      // Knowledge sources whose refresh has come round. The claim moves the
+      // stamp forward in the same statement, so two workers cannot re-read one
+      // source and a restart does not refresh everything at once.
+      for (const source of await knowledge.claimDueForRefresh()) {
+        const result = await indexSource(source);
+        log.info('re-read a knowledge source', {
+          source: source.name,
+          unchanged: result.unchanged ?? false,
+          chunks: result.chunks,
+          error: result.error,
+        });
+      }
+    } catch (error) {
+      log.warn('knowledge refresh failed', { message: errorMessage(error) });
     }
     try {
       // What the owner needs to know about the installation itself: an account

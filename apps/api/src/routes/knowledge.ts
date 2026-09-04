@@ -21,10 +21,17 @@ async function ownedSource(sourceId: string, user: UserRow) {
 
 const CreateSource = z.object({
   name: z.string().trim().min(1).max(120),
-  kind: z.enum(['PATH', 'TEXT']),
-  /** A folder for PATH, the text itself for TEXT. */
+  kind: z.enum(['PATH', 'TEXT', 'URL']),
+  /** A folder for PATH, the text itself for TEXT, one address for URL. */
   location: z.string().max(200_000),
   include: z.array(z.string().max(20)).max(20).default([]),
+  /**
+   * How often to read it again, in minutes. Null means only when asked.
+   *
+   * Fifteen minutes is the floor and there is no default: a source that
+   * re-reads on its own is one nobody remembers agreeing to.
+   */
+  refreshIntervalMinutes: z.number().int().min(15).max(60 * 24 * 30).nullable().default(null),
 });
 
 const UpdateSource = z.object({
@@ -32,6 +39,7 @@ const UpdateSource = z.object({
   location: z.string().max(200_000).optional(),
   include: z.array(z.string().max(20)).max(20).optional(),
   enabled: z.boolean().optional(),
+  refreshIntervalMinutes: z.number().int().min(15).max(60 * 24 * 30).nullable().optional(),
 });
 
 /**
@@ -80,6 +88,7 @@ export async function knowledgeRoutes(app: FastifyInstance): Promise<void> {
         kind: body.kind,
         location: body.location,
         include: body.include,
+        refreshIntervalMinutes: body.refreshIntervalMinutes,
       });
 
       // Read it immediately. A source that exists but has never been read is a
@@ -100,6 +109,13 @@ export async function knowledgeRoutes(app: FastifyInstance): Promise<void> {
       // A changed folder or filter is a different source, so re-read it rather
       // than leaving yesterday's chunks answering for today's configuration.
       const changedWhatItReads = body.location !== undefined || body.include !== undefined;
+      // Changing the schedule starts it from now rather than leaving a stamp
+      // set under the old interval, which could be a month away.
+      if (body.refreshIntervalMinutes !== undefined) {
+        await knowledgeRepo.updateSource(source.id, {
+          nextRefreshAt: body.refreshIntervalMinutes === null ? null : new Date().toISOString(),
+        });
+      }
       const report = changedWhatItReads && updated.enabled ? await indexSource(updated) : null;
       return { source: await knowledgeRepo.getSource(source.id), report };
     }),

@@ -21,6 +21,7 @@ import type { KnowledgeSourceRecord } from '@xbam/database';
 import {
   chunkDocument,
   collectDocuments,
+  fetchPage,
   looksLikeSecret,
   revisionFromModified,
   type Chunk,
@@ -82,6 +83,14 @@ export interface IndexReport {
   refused: RefusedFile[];
   /** Chunks refused for carrying something that looked like a secret. */
   withheld: { path: string; reason: string }[];
+  /**
+   * The page had not changed since the last read, so nothing was rewritten.
+   *
+   * Distinct from "read nothing": one means the source is current, the other
+   * means it is broken, and a screen that shows them the same way sends
+   * somebody looking for a fault that is not there.
+   */
+  unchanged?: boolean;
   error: string | null;
 }
 
@@ -155,6 +164,9 @@ export async function indexSource(source: KnowledgeSourceRecord, options: IndexO
   if (source.kind === 'TEXT') {
     return indexText(source, report, options);
   }
+  if (source.kind === 'URL') {
+    return indexUrl(source, report, options);
+  }
   if (!source.location) {
     report.error = 'This source has no folder to read.';
     await knowledgeRepo.updateSource(source.id, { lastError: report.error });
@@ -187,6 +199,56 @@ export async function indexSource(source: KnowledgeSourceRecord, options: IndexO
     chunks.push(...produced);
   }
 
+  return writeChunks(source, chunks, report, options);
+}
+
+/**
+ * Reads the one page this source names.
+ *
+ * No links are followed, ever. A page that has not changed since the last read
+ * writes nothing: rewriting identical chunks churns memory rows and gains no
+ * reading, and the revision hash is what makes that checkable rather than
+ * assumed.
+ */
+async function indexUrl(
+  source: KnowledgeSourceRecord,
+  report: IndexReport,
+  options: IndexOptions,
+): Promise<IndexReport> {
+  if (!source.location) {
+    report.error = 'This source has no address to read.';
+    await knowledgeRepo.updateSource(source.id, { lastError: report.error });
+    return report;
+  }
+
+  const page = await fetchPage(source.location);
+  if (page.refusal) {
+    // A whole sentence somebody can act on, not "fetch failed". Recorded so the
+    // screen shows why a source stopped working, which is the difference
+    // between a knowledge source and a folder that silently taught nothing.
+    report.error = page.refusal;
+    report.refused = [{ path: source.location, reason: page.refusal }];
+    await knowledgeRepo.updateSource(source.id, { lastError: page.refusal });
+    return report;
+  }
+
+  report.revision = page.contentHash.slice(0, 12);
+  if (source.revision === report.revision) {
+    // Unchanged. Recorded as a successful read so the screen can say when it
+    // last checked, which is a different fact from when it last changed.
+    await knowledgeRepo.updateSource(source.id, { indexedAt: new Date().toISOString(), lastError: null });
+    report.documents = 1;
+    report.chunks = source.chunkCount;
+    report.unchanged = true;
+    return report;
+  }
+
+  const chunks = chunkDocument(page.text, {
+    path: page.title || source.location,
+    revision: report.revision,
+    modifiedAt: page.fetchedAt,
+  });
+  report.documents = chunks.length > 0 ? 1 : 0;
   return writeChunks(source, chunks, report, options);
 }
 
