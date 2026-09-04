@@ -297,8 +297,19 @@ export async function closeChrome(
   // Ask Chrome to quit first. This matters beyond politeness: cookies and
   // local storage are flushed on a clean shutdown, so force-killing a browser
   // somebody just signed in with can lose the session that was the whole point.
+  const startedAt = Date.now();
+  const remaining = () => Math.max(0, timeoutMs - (Date.now() - startedAt));
+
   const graceful = await requestBrowserClose(launched.cdpUrl).catch(() => false);
-  if (graceful && (await waitForCdpGone(launched.cdpUrl, Math.min(timeoutMs, 10_000)))) return true;
+  if (graceful && (await waitForCdpGone(launched.cdpUrl, Math.min(timeoutMs, 10_000)))) {
+    // The port going quiet is not the profile being free. Chrome stops
+    // answering CDP while its renderers are still exiting, and they hold the
+    // lock -- so a caller that relaunches on the strength of the port alone
+    // meets "a Chrome is holding this account's profile", which is exactly what
+    // a real run hit on a loaded machine: closed cleanly, reported closed,
+    // and the next launch refused.
+    return waitForProfileFree(launched.profileDir, remaining());
+  }
 
   if (launched.pid) {
     if (process.platform === 'win32') {
@@ -323,9 +334,38 @@ export async function closeChrome(
       }
     }
   }
-  const gone = await waitForCdpGone(launched.cdpUrl, timeoutMs);
+  const gone = await waitForCdpGone(launched.cdpUrl, remaining());
   if (!gone) log.warn('the browser is still answering after being told to close', { pid: launched.pid });
-  return gone;
+  return gone && (await waitForProfileFree(launched.profileDir, remaining()));
+}
+
+/**
+ * Waits until nothing is holding the profile directory.
+ *
+ * Checked rather than assumed, because "closed" is what the caller acts on and
+ * the next thing it usually does is launch again. Looking for a holder is
+ * expensive on Windows -- it enumerates every Chrome process, which is slow
+ * precisely when a lot of Chrome is open -- so this is a short backoff rather
+ * than a poll, and the first check usually answers immediately.
+ */
+async function waitForProfileFree(profileDir: string | null | undefined, timeoutMs: number): Promise<boolean> {
+  if (!profileDir) return true;
+
+  let waitMs = 250;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const holder = await chromeHoldingProfile(profileDir).catch(() => null);
+    if (!holder) return true;
+    if (Date.now() + waitMs >= deadline) {
+      log.warn('the profile is still held after the browser stopped answering', {
+        profileDir,
+        pid: holder.pid,
+      });
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    waitMs = Math.min(2_000, waitMs * 2);
+  }
 }
 
 /** Sends the CDP command that asks the browser to shut down cleanly. */
