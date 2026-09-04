@@ -6,7 +6,7 @@ import { mapRow, mapRows } from '../mapper';
 const COLUMNS = `
   id, agent_id, scope, memory_type, account_id, conversation_id, remote_user_id, remote_handle,
   content, summary, importance, confidence, pinned, source_event_id, source_job_id,
-  created_at, updated_at, last_accessed_at, expires_at`;
+  created_at, updated_at, last_accessed_at, expires_at, knowledge_source_id, origin`;
 
 export interface WriteMemoryInput {
   agentId: string;
@@ -24,6 +24,10 @@ export interface WriteMemoryInput {
   sourceEventId?: string | null;
   sourceJobId?: string | null;
   expiresAt?: string | null;
+  /** The knowledge source that taught this, when it came from one. */
+  knowledgeSourceId?: string | null;
+  /** Where in that source: { path, heading, revision, modifiedAt }. */
+  origin?: Record<string, unknown> | null;
 }
 
 /**
@@ -39,6 +43,10 @@ export function scopeKeyFor(input: WriteMemoryInput): string {
       return `user:${(input.remoteHandle ?? input.remoteUserId ?? 'unknown').toLowerCase()}`;
     case 'ACCOUNT':
       return `account:${input.accountId ?? 'none'}`;
+    // Per source, so two sources teaching the same sentence are two facts and
+    // a refresh of one cannot collide with the other's chunks.
+    case 'KNOWLEDGE':
+      return input.knowledgeSourceId ? `knowledge:${input.knowledgeSourceId}` : 'knowledge';
     default:
       return input.scope.toLowerCase();
   }
@@ -46,6 +54,19 @@ export function scopeKeyFor(input: WriteMemoryInput): string {
 
 function normalizeForHash(content: string): string {
   return content.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/**
+ * The content hash the dedupe index is built on.
+ *
+ * Exported because anything that needs to say "these are the rows I just wrote"
+ * has to agree with this exactly. A second implementation that skipped the
+ * lowercasing meant a knowledge refresh computed different hashes from the ones
+ * it had stored, so its prune step deleted every chunk it had written a moment
+ * earlier and the source indexed to nothing.
+ */
+export function memoryContentHash(content: string): string {
+  return sha256Hex(normalizeForHash(content));
 }
 
 export interface WriteMemoryResult {
@@ -56,7 +77,7 @@ export interface WriteMemoryResult {
 /** Idempotent write: identical content in the same bucket updates rather than duplicates. */
 export async function writeMemory(input: WriteMemoryInput, executor?: Tx): Promise<WriteMemoryResult> {
   const scopeKey = scopeKeyFor(input);
-  const contentHash = sha256Hex(normalizeForHash(input.content));
+  const contentHash = memoryContentHash(input.content);
   const params = [
     input.agentId,
     input.scope,
@@ -75,15 +96,20 @@ export async function writeMemory(input: WriteMemoryInput, executor?: Tx): Promi
     contentHash,
     scopeKey,
     input.expiresAt ?? null,
+    input.knowledgeSourceId ?? null,
+    input.origin ? JSON.stringify(input.origin) : null,
   ];
   const sql = `
     INSERT INTO memories (agent_id, scope, memory_type, account_id, conversation_id, remote_user_id,
       remote_handle, content, summary, importance, confidence, pinned, source_event_id, source_job_id,
-      content_hash, scope_key, expires_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      content_hash, scope_key, expires_at, knowledge_source_id, origin)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
     ON CONFLICT (agent_id, scope, scope_key, content_hash) DO UPDATE
       SET importance = greatest(memories.importance, excluded.importance),
           summary = coalesce(excluded.summary, memories.summary),
+          -- A re-read of the same text under a new revision updates where it
+          -- came from, so an answer cites the version now installed.
+          origin = coalesce(excluded.origin, memories.origin),
           updated_at = now()
     RETURNING ${COLUMNS}, (xmax = 0) AS inserted`;
   const row = executor ? await executor.one(sql, params) : await queryOne(sql, params);

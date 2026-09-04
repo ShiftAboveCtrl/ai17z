@@ -106,6 +106,7 @@ describe('assemblePrompt', () => {
           summary: null,
           importance: 0.8,
           reason: 'same remote user @alice',
+          origin: null,
           score: 0.8,
           rank: 1,
           createdAt: null,
