@@ -172,9 +172,16 @@ None. Working tree clean at `67d562b`.
 
 ## Running the suite
 
-It launches real Chrome. On a machine already running an installation and a dev
-stack, the full run takes 20-40 minutes rather than 10. Stop the dev stack
-before a release run and expect the wait.
+It launches real Chrome. A run that passed everything used to leave sixty-one
+Chrome processes behind, and several runs of that is what made the suite take
+forty minutes instead of ten and then fail with "a Chrome is holding this
+account's profile" -- the leak from one run being the flakiness of the next.
+Fixed; a passing run now leaves none.
+
+If a run is ever killed, clear its browsers before the next one:
+`Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object
+{ $_.CommandLine -like '*ai17z-chrome-test*' }` is the filter, and nothing else
+on the machine matches it.
 
 Two things that look like a hang and are not:
 
