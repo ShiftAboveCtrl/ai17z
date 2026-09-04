@@ -12,6 +12,7 @@ import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
 import { startLoop } from './loop';
+import { superviseSession } from '@xbam/browser';
 
 loadEnv();
 const log = createLogger('worker');
@@ -96,6 +97,15 @@ async function main(): Promise<void> {
   const publishTabs = async () => {
     const live = new Set(activeSessionAccountIds());
     for (const accountId of live) {
+      // Ask before reporting. Publishing the cached tab map says a tab is
+      // READY because a handle exists, and a renderer killed for memory leaves
+      // exactly that: an open tab that answers nothing. The probe is a trivial
+      // evaluation per tab, and anything that fails it is rebuilt here rather
+      // than discovered when a mention goes unanswered for four hours.
+      const verdict = await superviseSession(accountId).catch(() => null);
+      if (verdict && !verdict.usable) {
+        log.warn('browser is not usable', { accountId, detail: verdict.detail, remedy: verdict.remedy });
+      }
       await accountsRepo.recordBrowserTabs(accountId, sessionTabs(accountId)).catch(() => undefined);
       // Identity alongside the tabs, from the same live session. Recording it
       // only on browser tasks left the account page naming a pid and a port
