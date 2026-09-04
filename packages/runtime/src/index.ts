@@ -34,3 +34,4 @@ export * from './knowledge';
 // that already says @xbam/runtime has to change.
 export { toolReadiness, preflightEnabling, withToolAllowed, collectDiagnostics } from '@xbam/tools';
 export * from './liveStatus';
+export * from './evidenceClass';

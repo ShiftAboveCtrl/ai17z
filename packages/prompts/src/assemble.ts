@@ -41,6 +41,15 @@ export interface AssembleInput {
   memoryCharBudget: number;
   /** What the job is going to do. A post is written differently from a reply. */
   actionType?: 'REPLY' | 'POST' | string;
+  /**
+   * What this answer rests on, worked out from what was actually gathered.
+   *
+   * Only one thing is done with it here, and it is the thing that matters: when
+   * nothing was found, the model is told so. A model with no evidence writes
+   * exactly as confidently as one with plenty, and that is the sentence that
+   * gets somebody a wrong answer stated as fact.
+   */
+  evidence?: { evidence: string; reason: string; shouldAdmitUncertainty: boolean };
 }
 
 export interface AssembledPrompt {
@@ -88,6 +97,23 @@ function renderTranscript(thread: ContextMessage[], agentName: string): string {
     })
     .filter((line) => line.length > 3)
     .join('\n');
+}
+
+/**
+ * A sentence about how well-founded this answer is, when it is not.
+ *
+ * Deliberately says nothing when there is evidence: a note on every message
+ * would be read past by the model within a few layers, and the one case worth
+ * spending that on is the one where there is nothing behind the answer at all.
+ */
+function renderEvidenceNote(evidence: AssembleInput['evidence']): string {
+  if (!evidence?.shouldAdmitUncertainty) return '';
+  return [
+    'EVIDENCE',
+    evidence.reason,
+    'Say plainly that you do not know, or that you could not check. Do not fill the gap with something that sounds right.',
+    '',
+  ].join('\n');
 }
 
 /**
@@ -243,6 +269,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     parentText: context.parentText ?? '',
     parentAttachments: renderParentAttachments(parentInventory, mediaContext?.onParentPost ?? false),
     researchBlock: renderResearchBlock(research),
+    evidenceNote: renderEvidenceNote(input.evidence),
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
     incomingText: context.incomingText,
     toolsBlock: bulletList(input.toolDescriptions),
