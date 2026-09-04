@@ -22,6 +22,7 @@ ended at §101. They are outstanding as scope, not as work.
 | 101 | Content queue | DONE | Four stages -- Ideas, Drafts, Scheduled, Posted -- verified in the running app: each renders its own list and its own empty state, with counts from the same request. Drafts and Posted are read from jobs and actions rather than a second table, because a post already runs the ten pipeline steps and the job is the record. |
 
 | 102 | Follow-up / commitment memory | DONE | `commitments.test.ts` covers the lifecycle the brief names -- created, survives a restart, becomes due, produces a job, completes -- plus cancellation, a duplicate producing one follow-up rather than two, and giving up after three attempts instead of retrying for ever. |
+| 103 | Observation / learning review | DONE | Read across memory, relationships, stances, entities and commitments rather than from a store of its own. Verified live: a memory shows with its provenance and confidence, forgetting it removes it, and a kind that is a record rather than an opinion refuses with the reason.
 
 ## Gaps left open deliberately
 

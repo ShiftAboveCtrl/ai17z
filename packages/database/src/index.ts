@@ -26,6 +26,7 @@ export * as workers from './repositories/workers';
 export * as radar from './repositories/radar';
 export * as mentions from './repositories/mentions';
 export * as inbox from './repositories/inbox';
+export * as learned from './repositories/learned';
 export * as media from './repositories/media';
 export * as relationships from './repositories/relationships';
 export * as stances from './repositories/stances';
