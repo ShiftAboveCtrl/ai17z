@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { query } from '@xbam/database';
-import { tryMessage } from '@xbam/runtime';
+import { compareModels, tryMessage } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -74,5 +74,43 @@ describe('trying an agent out', () => {
 
   it('refuses clearly for an agent that does not exist', async () => {
     await expect(tryMessage({ agentId: '00000000-0000-0000-0000-000000000000', message: 'hi' })).rejects.toThrow();
+  });
+});
+
+/**
+ * The demonstration of the idea the product rests on: the model is where the
+ * intelligence comes from, and AI17Z is what makes the answer sound like the
+ * same agent whichever model wrote it. Seeing that requires the raw answer
+ * beside the final one, for more than one provider at a time.
+ */
+describe('comparing models', () => {
+  it('runs the same message through each role', async () => {
+    const fixture = await createFixture();
+    const entries = await compareModels({ agentId: fixture.agentId, message: 'what do you make of this?', roles: ['primary'] });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.result?.raw.length).toBeGreaterThan(0);
+  });
+
+  it('records a failure instead of throwing it', async () => {
+    // One provider out of credit must not blank a comparison the others
+    // answered, which is exactly when the comparison is most informative.
+    const fixture = await createFixture();
+    const entries = await compareModels({
+      agentId: fixture.agentId,
+      message: 'hello',
+      roles: ['primary', 'fallback_2'],
+    });
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]!.result, 'the configured role should still answer').toBeTruthy();
+    const unconfigured = entries[1]!;
+    expect(unconfigured.result === null || unconfigured.failed !== null).toBe(true);
+  });
+
+  it('creates no job and no action, like the single run', async () => {
+    const fixture = await createFixture();
+    const before = await counts();
+    await compareModels({ agentId: fixture.agentId, message: 'hello', roles: ['primary'] });
+    expect(await counts()).toEqual(before);
   });
 });

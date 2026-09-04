@@ -17,8 +17,8 @@ import {
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   collectDiagnostics,
+  compareModels,
   describeDuplicateScope,
-  duplicateAgent,
   exportAgent,
   importAgent,
   liveStatus,
@@ -655,28 +655,6 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  app.post(
-    '/api/agents/:id/duplicate',
-    handler(async (request) => {
-      const user = await requireUser(request);
-      const agent = await ownedAgent(params(request).id!, user);
-      const body = parseBody(
-        z.object({
-          name: z.string().trim().min(1).max(200),
-          scope: z.enum(['PERSONA_ONLY', 'PERSONA_AND_MODELS', 'EVERYTHING']),
-        }),
-        request,
-      );
-      return duplicateAgent({
-        agentId: agent.id,
-        ownerId: user.id,
-        name: body.name,
-        scope: body.scope,
-        createdBy: user.id,
-      });
-    }),
-  );
-
   // Trying the agent out without anybody seeing it.
   //
   // There is no job and no action on this path, which is the safety rather than
@@ -704,6 +682,27 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         persona: (body.persona ?? null) as never,
         ...(body.role ? { role: body.role as never } : {}),
       });
+    }),
+  );
+
+  // The same message through several models at once.
+  //
+  // Each runs independently and a failure is recorded rather than thrown: one
+  // provider out of credit must not blank a comparison the others answered.
+  app.post(
+    '/api/agents/:id/compare',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(
+        z.object({
+          message: z.string().trim().min(1).max(2_000),
+          fromHandle: z.string().max(80).nullable().optional(),
+          roles: z.array(z.string().max(40)).min(1).max(5),
+        }),
+        request,
+      );
+      return { entries: await compareModels({ agentId: agent.id, message: body.message, fromHandle: body.fromHandle ?? null, roles: body.roles as never }) };
     }),
   );
 

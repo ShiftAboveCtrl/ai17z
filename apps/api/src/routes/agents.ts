@@ -17,7 +17,7 @@ import {
   pipelines as pipelinesRepo,
   providers as providersRepo,
 } from '@xbam/database';
-import { ensureAgentPipeline } from '@xbam/runtime';
+import { duplicateAgent, ensureAgentPipeline } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 import type { UserRow } from '@xbam/database';
 
@@ -145,54 +145,42 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  /** Duplicating an agent copies its configuration, never its memory or history. */
+  /**
+   * Duplicating an agent copies its configuration, never its memory or history.
+   *
+   * Goes out through the portable document and back in, rather than copying
+   * rows: copying inside an installation is where every secret is closest to
+   * hand, so it is made to pass through the same narrow shape as an export,
+   * which has nowhere to put one.
+   *
+   * The scope is optional and defaults to everything, so anything that called
+   * this before behaves exactly as it did.
+   */
   app.post(
     '/api/agents/:id/duplicate',
     handler(async (request) => {
       const user = await requireUser(request);
       const source = await ownedAgent(params(request).id!, user);
-      const body = parseBody(z.object({ name: z.string().trim().min(1).max(120).optional() }), request);
-      const persona = await agentsRepo.getActivePersona(source.id);
-      const policy = await agentsRepo.getActivePolicy(source.id);
-      if (!persona) throw new NotFoundError('Source persona');
+      const body = parseBody(
+        z.object({
+          name: z.string().trim().min(1).max(120).optional(),
+          scope: z.enum(['PERSONA_ONLY', 'PERSONA_AND_MODELS', 'EVERYTHING']).default('EVERYTHING'),
+        }),
+        request,
+      );
 
-      const name = body.name ?? `${source.name} copy`;
-      const copy = await agentsRepo.createAgent({
+      const report = await duplicateAgent({
+        agentId: source.id,
         ownerId: user.id,
-        name,
-        slug: slugify(name),
-        description: source.description,
-        avatarUrl: source.avatarUrl,
-        avatarMode: source.avatarMode,
-        persona: PersonaDraft.parse({ ...persona, displayName: persona.displayName, changeNote: `duplicated from ${source.slug}` }),
-        policy: PolicyConfig.parse(policy?.config ?? {}),
+        name: body.name ?? `${source.name} copy`,
+        scope: body.scope,
         createdBy: user.id,
       });
-      const sourcePipeline = await pipelinesRepo.getActivePipeline(source.id);
-      if (sourcePipeline) {
-        await pipelinesRepo.savePipelineVersion(
-          copy.id,
-          PipelineDraft.parse({
-            name: sourcePipeline.name,
-            nodes: sourcePipeline.nodes,
-            edges: sourcePipeline.edges,
-            changeNote: `duplicated from ${source.slug}`,
-          }),
-          user.id,
-        );
-      } else {
-        await ensureAgentPipeline(copy.id);
-      }
-      for (const model of await providersRepo.listModelConfigs(source.id)) {
-        await providersRepo.setModelConfig({
-          agentId: copy.id,
-          role: model.role,
-          providerCredentialId: model.providerCredentialId,
-          model: model.model,
-          parameters: model.parameters,
-        });
-      }
-      return copy;
+
+      const copy = await agentsRepo.getAgent(report.agentId);
+      await ensureAgentPipeline(report.agentId);
+      // The agent itself, as before, with what could not be carried alongside.
+      return { ...copy, notes: report.notes };
     }),
   );
 }
