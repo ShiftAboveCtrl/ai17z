@@ -16,6 +16,7 @@ const ActivityPage = lazy(() => import('@app/routes/ActivityPage').then((m) => (
 const InboxPage = lazy(() => import('@app/routes/InboxPage').then((m) => ({ default: m.InboxPage })));
 const JobPage = lazy(() => import('@app/routes/JobPage').then((m) => ({ default: m.JobPage })));
 const SettingsPage = lazy(() => import('@app/routes/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const HealthPage = lazy(() => import('@app/routes/HealthPage').then((m) => ({ default: m.HealthPage })));
 
 export function App() {
   const { user, loading, error } = useSession();
@@ -60,6 +61,7 @@ export function App() {
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/jobs/:jobId" element={<JobPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/health" element={<HealthPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

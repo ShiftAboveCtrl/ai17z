@@ -82,7 +82,7 @@ export async function accountNeedsUser(input: {
     title: `@${input.handle} needs you to finish signing in`,
     body: `${input.detail} The browser window is open and nothing has been typed into it. AI17Z never answers a security challenge itself.`,
     actionLabel: 'Open accounts',
-    actionHref: '/accounts',
+    actionHref: '/settings#accounts',
     data: { challengeKind: input.challengeKind ?? 'unknown' },
     dedupeKey: notificationKey.accountNeedsUser(input.accountId),
   });
@@ -101,7 +101,7 @@ export async function accountSignedOut(input: {
     title: `@${input.handle} is signed out`,
     body: `${input.detail} Nothing will be read or sent on this account until it is signed in again.`,
     actionLabel: 'Open accounts',
-    actionHref: '/accounts',
+    actionHref: '/settings#accounts',
     dedupeKey: notificationKey.accountSignedOut(input.accountId),
   });
 }
@@ -157,7 +157,7 @@ export async function providerFailing(input: {
     title: `${input.label} is refusing calls`,
     body: `${input.provider} said: ${input.detail}`,
     actionLabel: 'Open providers',
-    actionHref: '/providers',
+    actionHref: '/settings#providers',
     dedupeKey: notificationKey.providerFailing(input.credentialId),
   });
 }

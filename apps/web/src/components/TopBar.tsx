@@ -50,6 +50,9 @@ export function TopBar() {
           <NavLink to="/activity" className={link}>
             Activity
           </NavLink>
+          <NavLink to="/health" className={link}>
+            Health
+          </NavLink>
           <NavLink to="/settings" className={link}>
             Settings
           </NavLink>
@@ -87,6 +90,9 @@ export function TopBar() {
         </NavLink>
         <NavLink to="/activity" className={link}>
           Activity
+        </NavLink>
+        <NavLink to="/health" className={link}>
+          Health
         </NavLink>
         <NavLink to="/settings" className={link}>
           Settings
