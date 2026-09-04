@@ -251,6 +251,58 @@ export async function selectAccountMemories(q: ScopedQuery): Promise<MemoryRecor
  * design: pinned first, then full-text rank, then importance. Vector search can be
  * added later without changing this contract.
  */
+/**
+ * Drop query terms that match most of what this agent knows.
+ *
+ * The query is an OR of every keyword, ranked by ts_rank, so a term that
+ * appears everywhere competes on equal footing with the one that actually
+ * identifies the answer. Asked "can I use Ollama?", the keywords are "use" and
+ * "ollama": the first is in half the documentation, the second is in one
+ * paragraph, and a chunk repeating "use" outranked the paragraph that answers
+ * the question.
+ *
+ * So a term matching more than a third of the rows is discarded as carrying no
+ * signal -- which is document frequency, the same idea as a stopword list
+ * except measured against this agent's own corpus rather than guessed at in
+ * advance. "Memory" is a stopword in a corpus about memory and a strong term
+ * everywhere else, and no fixed list can know that.
+ *
+ * Every term is kept when there is too little to measure, or when the filter
+ * would leave nothing: a weak query beats no query.
+ */
+interface TermWeight {
+  term: string;
+  /** How many of this agent's memories in this scope contain it. */
+  hits: number;
+}
+
+/**
+ * How common each query term is in what this agent already knows.
+ *
+ * The ranking underneath is ts_rank over an OR of every keyword, and ts_rank
+ * rewards how often a term appears in a chunk without any sense of how common
+ * that term is across the corpus. Asked "can I use Ollama?", the keywords are
+ * "use" and "ollama": a passage repeating "use" five times outranked the one
+ * paragraph in the documentation that names Ollama, and the answer came back
+ * about Docker sign-in.
+ *
+ * Measuring rather than guessing matters here. A fixed stopword list cannot
+ * know that "memory" carries no signal in a corpus about memory and plenty of
+ * it everywhere else.
+ */
+async function termWeights(agentId: string, scope: MemoryScope, terms: string[]): Promise<TermWeight[]> {
+  const rows = await query<{ term: string; hits: string }>(
+    `SELECT t.term,
+            count(m.id) FILTER (WHERE to_tsvector('simple', m.content) @@ to_tsquery('simple', t.term)) AS hits
+       FROM unnest($3::text[]) AS t(term)
+       LEFT JOIN memories m ON m.agent_id = $1 AND m.scope = $2
+      GROUP BY t.term`,
+    [agentId, scope, terms],
+  );
+  const weights = new Map(rows.map((r) => [r.term, Number(r.hits)]));
+  return terms.map((term) => ({ term, hits: weights.get(term) ?? 0 }));
+}
+
 export async function selectRelevantMemories(scope: MemoryScope, q: ScopedQuery): Promise<MemoryRecord[]> {
   const terms = (q.keywords ?? []).filter(Boolean);
   if (terms.length === 0) {
@@ -263,17 +315,27 @@ export async function selectRelevantMemories(scope: MemoryScope, q: ScopedQuery)
       ),
     );
   }
-  const tsquery = terms.map((t) => t.replace(/[^\p{L}\p{N}_]/gu, '')).filter(Boolean).join(' | ');
+  const cleaned = terms.map((t) => t.replace(/[^\p{L}\p{N}_]/gu, '')).filter(Boolean);
+  const tsquery = cleaned.join(' | ') || 'xbam_no_match';
+
+  // The rarest term the question used, which is nearly always the one that
+  // identifies the answer. It decides the order before frequency gets a say,
+  // so one mention of "ollama" beats five mentions of "use".
+  const weights = cleaned.length > 1 ? await termWeights(q.agentId, scope, cleaned) : [];
+  const rarest = weights.filter((w) => w.hits > 0).sort((a, b) => a.hits - b.hits)[0]?.term ?? null;
+
   return mapRows<MemoryRecord>(
     await query(
       `SELECT ${COLUMNS},
-              ts_rank(to_tsvector('simple', content), to_tsquery('simple', $3)) AS rank
+              ts_rank(to_tsvector('simple', content), to_tsquery('simple', $3)) AS rank,
+              ($5::text IS NOT NULL
+                AND to_tsvector('simple', content) @@ to_tsquery('simple', $5)) AS names_it
          FROM memories
         WHERE agent_id = $1 AND scope = $2 ${LIVE}
           AND (pinned OR to_tsvector('simple', content) @@ to_tsquery('simple', $3))
-        ORDER BY pinned DESC, rank DESC, importance DESC, created_at DESC
+        ORDER BY pinned DESC, names_it DESC, rank DESC, importance DESC, created_at DESC
         LIMIT $4`,
-      [q.agentId, scope, tsquery || 'xbam_no_match', q.limit],
+      [q.agentId, scope, tsquery, q.limit, rarest],
     ),
   );
 }

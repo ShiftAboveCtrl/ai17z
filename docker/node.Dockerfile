@@ -35,6 +35,17 @@ COPY package.json package-lock.json tsconfig.json tsconfig.base.json ./
 COPY migrations ./migrations
 COPY packages ./packages
 COPY apps/api ./apps/api
+
+# The documentation ships with the application.
+#
+# An agent can be taught from a folder, and the folder an AI17Z agent most
+# obviously needs is this project's own documentation -- that is what lets it
+# answer "how do I install this" and "does Ubuntu work in this release" from the
+# version actually running rather than from whatever its model absorbed months
+# ago. Left out of the image, the built-in source finds an empty directory in
+# every Docker installation, which is most of them.
+COPY docs ./docs
+COPY README.md CONTRIBUTING.md SECURITY.md ./
 COPY tools ./tools
 
 RUN mkdir -p /data/storage && chown -R node:node /data /app
