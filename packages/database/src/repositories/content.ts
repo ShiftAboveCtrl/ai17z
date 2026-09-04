@@ -19,6 +19,12 @@ export interface IdeaRow {
   attempts: number;
   /** Why the last attempt produced nothing, in words. */
   lastError: string;
+  /**
+   * The score after ageing, which is what actually decides what gets posted.
+   * Shown to the owner because a list ordered differently from the queue is a
+   * list that answers a question nobody asked.
+   */
+  effectiveScore: number;
 }
 
 export async function addIdea(input: {
@@ -48,39 +54,6 @@ export async function addIdea(input: {
   return mapRow<IdeaRow>(row) as IdeaRow;
 }
 
-export async function listIdeas(agentId: string, status?: string, limit = 50): Promise<IdeaRow[]> {
-  const clauses = ['agent_id = $1'];
-  const params: unknown[] = [agentId];
-  if (status) {
-    params.push(status);
-    clauses.push(`status = $${params.length}`);
-  }
-  params.push(limit);
-  return mapRows<IdeaRow>(
-    await query(
-      `SELECT * FROM content_ideas WHERE ${clauses.join(' AND ')}
-        ORDER BY status = 'unused' DESC, score DESC, created_at DESC LIMIT $${params.length}`,
-      params,
-    ),
-  );
-}
-
-export async function counts(agentId: string): Promise<Record<string, number>> {
-  const rows = await query<{ status: string; n: number }>(
-    'SELECT status, count(*)::int AS n FROM content_ideas WHERE agent_id = $1 GROUP BY status',
-    [agentId],
-  );
-  const result: Record<string, number> = { unused: 0, drafting: 0, used: 0, discarded: 0 };
-  for (const row of rows) result[row.status] = row.n;
-  return result;
-}
-
-/**
- * The best unused idea.
- *
- * Claimed by moving it to drafting in the same statement, so two scheduled
- * posts cannot pick up the same thought.
- */
 /**
  * How many points a harvested idea loses per day.
  *
@@ -108,6 +81,43 @@ const EFFECTIVE_SCORE = `CASE WHEN source = 'you' THEN score
        ELSE greatest(0, score - (extract(epoch FROM (now() - created_at)) / 86400) * ${DECAY_PER_DAY})
   END`;
 
+export async function listIdeas(agentId: string, status?: string, limit = 50): Promise<IdeaRow[]> {
+  const clauses = ['agent_id = $1'];
+  const params: unknown[] = [agentId];
+  if (status) {
+    params.push(status);
+    clauses.push(`status = $${params.length}`);
+  }
+  params.push(limit);
+  return mapRows<IdeaRow>(
+    await query(
+      `SELECT *, round((${EFFECTIVE_SCORE})::numeric)::int AS effective_score
+         FROM content_ideas WHERE ${clauses.join(' AND ')}
+        -- The order the agent will actually take them in. Ordering this list by
+        -- the raw score showed the owner a queue that was not the queue.
+        ORDER BY status = 'unused' DESC, (${EFFECTIVE_SCORE}) DESC, created_at DESC
+        LIMIT $${params.length}`,
+      params,
+    ),
+  );
+}
+
+export async function counts(agentId: string): Promise<Record<string, number>> {
+  const rows = await query<{ status: string; n: number }>(
+    'SELECT status, count(*)::int AS n FROM content_ideas WHERE agent_id = $1 GROUP BY status',
+    [agentId],
+  );
+  const result: Record<string, number> = { unused: 0, drafting: 0, used: 0, discarded: 0 };
+  for (const row of rows) result[row.status] = row.n;
+  return result;
+}
+
+/**
+ * The best unused idea.
+ *
+ * Claimed by moving it to drafting in the same statement, so two scheduled
+ * posts cannot pick up the same thought.
+ */
 export async function claimBestIdea(agentId: string): Promise<IdeaRow | null> {
   return mapRow<IdeaRow>(
     await queryOne(

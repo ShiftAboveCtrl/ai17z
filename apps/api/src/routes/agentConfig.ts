@@ -559,10 +559,16 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
       const q = request.query as { status?: string };
-      return {
-        counts: await contentRepo.counts(agent.id),
-        items: await contentRepo.listIdeas(agent.id, q.status, 60),
-      };
+      // The schedule travels with the backlog because they answer one question
+      // together. "Why has it not posted?" is either "posting is off", "it is
+      // not due yet", or "there was nothing worth saying" -- and the last one
+      // is only credible next to the list it looked at.
+      const [counts, items, schedule] = await Promise.all([
+        contentRepo.counts(agent.id),
+        contentRepo.listIdeas(agent.id, q.status, 60),
+        postingRepo.getSchedule(agent.id),
+      ]);
+      return { counts, items, schedule };
     }),
   );
 
