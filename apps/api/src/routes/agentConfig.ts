@@ -17,6 +17,10 @@ import {
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   collectDiagnostics,
+  describeDuplicateScope,
+  duplicateAgent,
+  exportAgent,
+  importAgent,
   liveStatus,
   preflightEnabling,
   toolReadiness,
@@ -603,6 +607,73 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         request,
       );
       return contentRepo.addIdea({ agentId: agent.id, ...body, source: 'you' });
+    }),
+  );
+
+  // An agent written down, so it can be moved.
+  app.get(
+    '/api/agents/:id/export',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      return exportAgent(agent.id);
+    }),
+  );
+
+  // Read one in, always as a new agent. A document that could claim an existing
+  // agent's id would let a shared file overwrite somebody's work, which is why
+  // it carries no id at all.
+  app.post(
+    '/api/agents/import',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(
+        z.object({ document: z.unknown(), name: z.string().trim().max(200).optional() }),
+        request,
+      );
+      return importAgent({
+        ownerId: user.id,
+        document: body.document,
+        ...(body.name ? { name: body.name } : {}),
+        createdBy: user.id,
+      });
+    }),
+  );
+
+  // What a copy will and will not bring, before anybody presses the button.
+  app.get(
+    '/api/agents/:id/duplicate',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      await ownedAgent(params(request).id!, user);
+      return {
+        scopes: (['PERSONA_ONLY', 'PERSONA_AND_MODELS', 'EVERYTHING'] as const).map((scope) => ({
+          scope,
+          ...describeDuplicateScope(scope),
+        })),
+      };
+    }),
+  );
+
+  app.post(
+    '/api/agents/:id/duplicate',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(
+        z.object({
+          name: z.string().trim().min(1).max(200),
+          scope: z.enum(['PERSONA_ONLY', 'PERSONA_AND_MODELS', 'EVERYTHING']),
+        }),
+        request,
+      );
+      return duplicateAgent({
+        agentId: agent.id,
+        ownerId: user.id,
+        name: body.name,
+        scope: body.scope,
+        createdBy: user.id,
+      });
     }),
   );
 
