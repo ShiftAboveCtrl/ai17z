@@ -40,6 +40,7 @@ import { loadThreadContext, observeEntities, recordNarratives } from './arcs';
 import { harvestIdeas, markIdeaUsed } from './content';
 import { research, whatToResearch } from './research';
 import { planLookups } from './plan';
+import { classifyEvidence } from './evidenceClass';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -247,6 +248,31 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
 
   const memories = await memoriesRepo.listRetrievals(bundle.job.id);
   const enabledTools = await ops.listAgentTools(bundle.agent.id);
+
+  // What this answer will actually rest on, worked out before anything is
+  // written. Derived from what was gathered rather than asked of the model:
+  // a model asked how well-founded its own answer is gives the answer it would
+  // like to be true.
+  const research = (context?.meta as { research?: { findings?: { kind: string }[]; failed?: unknown[] } } | undefined)
+    ?.research;
+  const findings = research?.findings ?? [];
+  const evidence = classifyEvidence({
+    hasConversationContext: Boolean(context?.parentText?.trim()) || (context?.thread.length ?? 0) > 0,
+    projectPassages: memories.filter((m) => m.scope === 'KNOWLEDGE').length,
+    webFindings: findings.filter((f) => f.kind !== 'token').length,
+    marketFindings: findings.filter((f) => f.kind === 'token').length,
+    memories: memories.filter((m) => m.scope !== 'KNOWLEDGE').length,
+    failedLookups: research?.failed?.length ?? 0,
+  });
+
+  await observability.emitTrace({
+    jobId: bundle.job.id,
+    agentId: bundle.agent.id,
+    type: 'PROMPT_ASSEMBLED',
+    // The category, never the reasoning that produced the answer.
+    message: `Evidence: ${evidence.evidence.toLowerCase().replace(/_/g, ' ')}. ${evidence.reason}`,
+    data: { evidence: evidence.evidence, shouldAdmitUncertainty: evidence.shouldAdmitUncertainty },
+  });
   const toolKeys = enabledTools
     .filter((t) => t.enabled && bundle.policy.tools.allowed.includes(t.key))
     .map((t) => t.key);
@@ -263,6 +289,7 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     toolDescriptions: describeTools(toolKeys),
     memoryCharBudget: bundle.policy.memory.retrieval.totalCharBudget,
     actionType: bundle.job.actionType,
+    evidence,
   });
 
   await observability.emitTrace({
