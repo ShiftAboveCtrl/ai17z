@@ -230,7 +230,7 @@ describe('the posting schedule', () => {
     // Put the idea back as if a crash had released it, then try again. The
     // idempotency key is anchored to the idea, so the second attempt finds the
     // job that already exists rather than posting the same thought twice.
-    await content.resolveIdea(idea.id, 'unused');
+    await content.resolveIdea(idea.agentId, idea.id, 'unused');
     const second = await originatePost({ agentId: fixture.agentId, accountId });
     expect(second.posted).toBe(false);
     expect(second.jobId).toBe(first.jobId);

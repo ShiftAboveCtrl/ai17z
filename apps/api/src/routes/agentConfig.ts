@@ -451,12 +451,13 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     '/api/agents/:id/predictions/:predictionId',
     handler(async (request) => {
       const user = await requireUser(request);
-      await ownedAgent(params(request).id!, user);
+      const agent = await ownedAgent(params(request).id!, user);
       const body = parseBody(
         z.object({ outcome: z.enum(['CORRECT', 'WRONG', 'UNRESOLVABLE']), note: z.string().max(1_000).default('') }),
         request,
       );
-      await stancesRepo.resolvePrediction(params(request).predictionId!, body.outcome, body.note);
+      const resolved = await stancesRepo.resolvePrediction(agent.id, params(request).predictionId!, body.outcome, body.note);
+      if (!resolved) throw new NotFoundError('Prediction');
       return { resolved: true };
     }),
   );
@@ -465,9 +466,10 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     '/api/agents/:id/commitments/:commitmentId',
     handler(async (request) => {
       const user = await requireUser(request);
-      await ownedAgent(params(request).id!, user);
+      const agent = await ownedAgent(params(request).id!, user);
       const body = parseBody(z.object({ status: z.enum(['DONE', 'DROPPED']) }), request);
-      await stancesRepo.resolveCommitment(params(request).commitmentId!, body.status);
+      const resolved = await stancesRepo.resolveCommitment(agent.id, params(request).commitmentId!, body.status);
+      if (!resolved) throw new NotFoundError('Commitment');
       return { resolved: true };
     }),
   );
@@ -586,9 +588,10 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     '/api/agents/:id/ideas/:ideaId',
     handler(async (request) => {
       const user = await requireUser(request);
-      await ownedAgent(params(request).id!, user);
+      const agent = await ownedAgent(params(request).id!, user);
       const body = parseBody(z.object({ status: z.enum(['unused', 'used', 'discarded']) }), request);
-      await contentRepo.resolveIdea(params(request).ideaId!, body.status);
+      const changed = await contentRepo.resolveIdea(agent.id, params(request).ideaId!, body.status);
+      if (!changed) throw new NotFoundError('Idea');
       return { status: body.status };
     }),
   );
