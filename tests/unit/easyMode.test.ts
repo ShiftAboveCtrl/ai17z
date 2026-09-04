@@ -193,7 +193,7 @@ describe('Easy Mode leaves advanced settings alone', () => {
       identity: { ...DEFAULT_POLICY.identity, disclosure: 'ALWAYS', representedEntity: 'Acme' },
       output: { ...DEFAULT_POLICY.output, maxCharacters: 180, bannedPhrases: ['as an AI'] },
       rate: { ...DEFAULT_POLICY.rate, maxActionsPerHour: 4 },
-      tools: { allowed: ['web.search'] },
+      tools: { ...DEFAULT_POLICY.tools, allowed: ['web.search'] },
     };
     const result = toPolicy(setup, advanced);
 
@@ -293,7 +293,7 @@ describe('reading an agent back into Easy Mode', () => {
       ...DEFAULT_POLICY,
       content: { ...DEFAULT_POLICY.content, blockedRemoteHandles: ['spammer'] },
       output: { ...DEFAULT_POLICY.output, bannedPhrases: ['as an AI'] },
-      tools: { allowed: ['web.search'] },
+      tools: { ...DEFAULT_POLICY.tools, allowed: ['web.search'] },
       rate: { ...DEFAULT_POLICY.rate, workingHours: { enabled: true, timezone: 'UTC', startHour: 9, endHour: 17 } },
     };
     const notes = view({ policy: advanced }).beyondEasyMode.join(' ');

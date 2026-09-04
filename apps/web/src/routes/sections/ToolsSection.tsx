@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { PolicyConfig } from '@xbam/shared/contracts';
 import type { AgentTool } from '@app/lib/types';
 import { ApiError, post, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
@@ -20,12 +21,14 @@ export function ToolsSection({
   agentId,
   tools,
   allowedKeys,
+  policy,
   onChanged,
 }: {
   index: number;
   agentId: string;
   tools: AgentTool[];
   allowedKeys: string[];
+  policy: PolicyConfig | null;
   onChanged: () => void;
 }) {
   const [editing, setEditing] = useState<AgentTool | null>(null);
@@ -34,6 +37,32 @@ export function ToolsSection({
   const [error, setError] = useState<string | null>(null);
   const [granting, setGranting] = useState<string | null>(null);
   const [grantError, setGrantError] = useState<string | null>(null);
+  const [lookupBusy, setLookupBusy] = useState<string | null>(null);
+
+  /**
+   * Turning one lookup source off.
+   *
+   * Written as a policy change rather than a tool row because that is what it
+   * is: research is not a tool the model chooses, it is a step the runtime
+   * decides to take. A source that is off is still reported to the model as a
+   * gap, so the agent says it does not know rather than inventing an answer.
+   */
+  const setLookupSource = async (source: 'web' | 'market', enabled: boolean) => {
+    if (!policy) return;
+    setLookupBusy(source);
+    setGrantError(null);
+    try {
+      await put(`/api/agents/${agentId}/policy`, {
+        config: { ...policy, tools: { ...policy.tools, research: { ...policy.tools.research, [source]: enabled } } },
+        changeNote: `${enabled ? 'allowed' : 'stopped'} ${source === 'web' ? 'web search' : 'market lookups'}`,
+      });
+      onChanged();
+    } catch (e) {
+      setGrantError(e instanceof ApiError ? e.message : 'That could not be saved.');
+    } finally {
+      setLookupBusy(null);
+    }
+  };
 
   // Why each tool will or will not run, worked out by the API rather than
   // re-derived here and phrased differently.
@@ -150,6 +179,65 @@ export function ToolsSection({
       ))}
 
       {grantError && <p className="mt-4 text-sm text-signal-fail">{grantError}</p>}
+
+      {/*
+        Looking things up is not a tool the model chooses. It is a step the
+        runtime takes when the question depends on something current, which is
+        why it has its own switches here rather than a row in the list above.
+      */}
+      {policy && (
+        <div className="mt-10 border-t border-ink-line pt-8">
+          <p className="eyebrow">Looking things up</p>
+          <h4 className="mt-2 text-base font-light text-bone">Where it may check before answering</h4>
+          <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
+            An agent asked about a post from an hour ago cannot answer from a training set, and one asked anyway
+            invents something. These are on because of that. Switching one off does not make the agent guess: it is
+            told the answer was not looked up, and says it does not know.
+          </p>
+
+          <div className="mt-5 space-y-3">
+            {(
+              [
+                ['web', 'Search the web', 'Through the browser it is already running, for anything that changes by the day.'],
+                ['market', 'Look up market data', 'For a contract address or a ticker. The price of a token, and which token it is.'],
+              ] as const
+            ).map(([source, label, hint]) => {
+              const on = policy.tools.research[source];
+              return (
+                <button
+                  key={source}
+                  type="button"
+                  role="switch"
+                  aria-checked={on}
+                  aria-label={label}
+                  disabled={lookupBusy === source}
+                  onClick={() => void setLookupSource(source, !on)}
+                  className="flex w-full items-start gap-3 rounded-lg border border-ink-line px-3 py-2.5 text-left transition-colors hover:border-bone-faint disabled:opacity-50"
+                >
+                  <span
+                    className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${
+                      on ? 'border-signal-calm/60 bg-signal-calm/25 text-signal-calm' : 'border-ink-line'
+                    }`}
+                    aria-hidden
+                  >
+                    {on ? '✓' : ''}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] text-bone">{label}</span>
+                    <span className="mt-0.5 block text-xs leading-relaxed text-bone-faint">{hint}</span>
+                  </span>
+                  {lookupBusy === source && <Spinner />}
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="mt-4 max-w-2xl text-xs leading-relaxed text-bone-faint">
+            How many lookups one message may cause is a limit rather than a switch, and lives with the other limits
+            under Policies.
+          </p>
+        </div>
+      )}
 
       <p className="mt-6 max-w-2xl text-xs leading-relaxed text-bone-faint">
         A tool must be switched on here and permitted by this agent policy before the model is told it exists. Anything

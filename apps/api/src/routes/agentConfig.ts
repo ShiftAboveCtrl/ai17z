@@ -20,6 +20,9 @@ import {
   compareModels,
   describeDuplicateScope,
   describeSpending,
+  applyProfile,
+  describeProfile,
+  profileOf,
   exportAgent,
   importAgent,
   liveStatus,
@@ -278,9 +281,19 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
+      const grants = await capabilitiesRepo.grantsForAgent(agent.id);
       return {
         vocabulary: CAPABILITIES,
-        grants: Object.fromEntries(await capabilitiesRepo.grantsForAgent(agent.id)),
+        grants: Object.fromEntries(grants),
+        // The same grants said as one word each, so a screen can offer four
+        // choices instead of nine boxes without a second source of truth.
+        profiles: Object.fromEntries(
+          [...grants.entries()].map(([accountId, held]) => [accountId, profileOf(held)]),
+        ),
+        catalogue: (['MONITOR_ONLY', 'REPLIES_ONLY', 'REPLIES_AND_POSTS', 'EVERYTHING'] as const).map((name) => ({
+          name,
+          ...describeProfile(name),
+        })),
       };
     }),
   );
@@ -304,6 +317,43 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         data: { accountId, capabilities: granted },
       });
       return { accountId, capabilities: granted };
+    }),
+  );
+
+  /**
+   * Sets what an agent may do through one account, as a named profile.
+   *
+   * Writes capabilities and nothing else. Deliberately: the things a profile
+   * does not name are the things somebody spent time on, and a switch that
+   * resets them is a switch nobody can use twice.
+   */
+  app.put(
+    '/api/agents/:id/accounts/:accountId/profile',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const accountId = params(request).accountId!;
+      const account = await accountsRepo.getAccount(accountId);
+      if (!account || account.ownerId !== user.id) throw new NotFoundError('Account');
+      const body = parseBody(
+        z.object({ profile: z.enum(['MONITOR_ONLY', 'REPLIES_ONLY', 'REPLIES_AND_POSTS', 'EVERYTHING']) }),
+        request,
+      );
+
+      const applied = await applyProfile({
+        agentId: agent.id,
+        accountId,
+        profile: body.profile,
+        grantedBy: user.id,
+      });
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'agent.permission-profile.set',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { accountId, ...applied },
+      });
+      return { accountId, ...applied };
     }),
   );
 

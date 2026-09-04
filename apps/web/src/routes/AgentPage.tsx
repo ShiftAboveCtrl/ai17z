@@ -418,6 +418,7 @@ export function AgentPage() {
           agentId={agent.id}
           tools={tools}
           allowedKeys={policy?.config.tools.allowed ?? []}
+          policy={policy?.config ?? null}
           onChanged={reload}
         />
         <PoliciesSection

@@ -245,6 +245,29 @@ export type MemoryPolicy = z.infer<typeof MemoryPolicy>;
 export const ToolPolicy = z.object({
   /** Tool keys this agent may call. Empty means no tools. */
   allowed: z.array(z.string().max(120)).max(200).default([]),
+  /**
+   * Where an agent may look things up, by source.
+   *
+   * Separate switches rather than one, because they fail differently and people
+   * want them off for different reasons. An agent that keeps quoting prices at
+   * people needs the market source off and the web left alone; one that keeps
+   * repeating something it read needs the opposite.
+   *
+   * On by default: looking something up is what stops an agent inventing an
+   * answer about a post from an hour ago. Off is a decision somebody makes.
+   *
+   * The cap in `budget.maxResearchCallsPerEvent` is a different question. It
+   * says how much; these say from where. A cap of zero silences everything and
+   * is the blunt version of turning both of these off.
+   */
+  research: z
+    .object({
+      /** The open web, through the browser already running. */
+      web: z.boolean().default(true),
+      /** Market data for a contract address or a ticker. */
+      market: z.boolean().default(true),
+    })
+    .default({}),
 });
 export type ToolPolicy = z.infer<typeof ToolPolicy>;
 

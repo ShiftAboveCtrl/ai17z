@@ -782,6 +782,15 @@ export interface ResearchOptions {
    * it could not check rather than inventing the answer.
    */
   budgetMs?: number;
+  /**
+   * Which sources this agent may use, from `policy.tools.research`.
+   *
+   * A source that is off is skipped and said to be off, rather than dropped
+   * silently: the model is told the answer was not looked up, so it says it
+   * does not know instead of inventing one. A gap the owner created on purpose
+   * is still a gap.
+   */
+  sources?: { web?: boolean; market?: boolean };
 }
 
 /** Long enough for two searches on a slow day, short enough to still be a reply. */
@@ -816,12 +825,27 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
   const deadline = Date.now() + budgetMs;
   const remaining = () => deadline - Date.now();
 
+  const webAllowed = options.sources?.web ?? true;
+  const marketAllowed = options.sources?.market ?? true;
+
   for (const lookup of lookups) {
     // Whatever is left when the budget runs out is reported as a gap rather
     // than waited for. The prompt already tells the model to say it could not
     // check, which is a better answer than one that arrives an hour late.
     if (remaining() <= 0) {
       failed.push({ query: lookup.query, reason: 'There was not enough time to look this up.' });
+      continue;
+    }
+
+    const allowed = lookup.kind === 'token' ? marketAllowed : webAllowed;
+    if (!allowed) {
+      failed.push({
+        query: lookup.query,
+        reason:
+          lookup.kind === 'token'
+            ? 'This agent is not set up to look up market data.'
+            : 'This agent is not set up to search the web.',
+      });
       continue;
     }
 

@@ -6,9 +6,20 @@ import { SavedTick, Spinner } from './ui';
 
 type Capability = string;
 
+interface ProfileChoice {
+  name: string;
+  label: string;
+  summary: string;
+  grants: string[];
+  leaves: string[];
+}
+
 interface CapabilityData {
   vocabulary: Capability[];
   grants: Record<string, Capability[]>;
+  /** What the grants on each account currently amount to, in one word. */
+  profiles: Record<string, string>;
+  catalogue: ProfileChoice[];
 }
 
 /** What each capability actually permits, in the second person. */
@@ -47,6 +58,7 @@ export function CapabilitiesPanel({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (data) setDraft([...(data.grants[accountId] ?? [])]);
@@ -81,6 +93,24 @@ export function CapabilitiesPanel({
   const muted = !draft.includes(actionType) && actionType !== 'NONE';
   const cannotRead = !draft.includes('READ');
 
+  const profile = data.profiles?.[accountId] ?? 'CUSTOM';
+  const chosen = data.catalogue?.find((entry) => entry.name === profile) ?? null;
+
+  const setProfile = async (name: string) => {
+    setBusy(true);
+    setSaveError(null);
+    try {
+      await put(`/api/agents/${agentId}/accounts/${accountId}/profile`, { profile: name });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2400);
+      reload();
+    } catch (e) {
+      setSaveError(e instanceof ApiError ? e.message : 'That could not be saved.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4 rounded-lg border border-ink-line bg-ink-panel/60 p-4">
       <div className="flex items-baseline justify-between gap-3">
@@ -93,7 +123,65 @@ export function CapabilitiesPanel({
         already queued.
       </p>
 
-      <ul className="space-y-1">
+      {/*
+        Four answers before nine boxes. Choosing one writes permissions and
+        nothing else: it never re-enables a tool, widens what triggers the
+        agent, or changes whether replies are held for review.
+      */}
+      {data.catalogue && (
+        <div className="space-y-2">
+          {data.catalogue.map((entry) => {
+            const on = entry.name === profile;
+            return (
+              <button
+                key={entry.name}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                disabled={busy}
+                onClick={() => void setProfile(entry.name)}
+                className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                  on ? 'border-signal-calm/50 bg-signal-calm/[0.07]' : 'border-ink-line hover:border-bone-faint'
+                } disabled:opacity-50`}
+              >
+                <span
+                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${on ? 'bg-signal-calm' : 'bg-ink-line'}`}
+                  aria-hidden
+                />
+                <span className="min-w-0">
+                  <span className="block text-[13px] text-bone">{entry.label}</span>
+                  <span className="mt-0.5 block text-xs leading-relaxed text-bone-faint">{entry.summary}</span>
+                </span>
+              </button>
+            );
+          })}
+
+          {profile === 'CUSTOM' && (
+            <p className="text-xs leading-relaxed text-bone-faint">
+              These permissions do not match any of the above. That is fine, and choosing one will replace them.
+            </p>
+          )}
+
+          {/* What it will not touch, said before the button is pressed rather
+              than discovered afterwards. */}
+          {chosen && (
+            <p className="text-xs leading-relaxed text-bone-faint">
+              Leaves alone: {chosen.leaves.join('. ')}.
+            </p>
+          )}
+        </div>
+      )}
+
+      <button
+        type="button"
+        className="btn-quiet px-2 py-1 text-[11px]"
+        onClick={() => setExpanded((was) => !was)}
+        aria-expanded={expanded}
+      >
+        {expanded ? 'Hide individual permissions' : 'Set individual permissions'}
+      </button>
+
+      <ul className={expanded ? 'space-y-1' : 'hidden'}>
         {data.vocabulary.map((capability) => {
           const on = draft.includes(capability);
           return (
@@ -133,7 +221,7 @@ export function CapabilitiesPanel({
         })}
       </ul>
 
-      {(muted || cannotRead) && (
+      {expanded && (muted || cannotRead) && (
         <p className="flex items-start gap-2 rounded-lg border border-signal-wait/40 bg-signal-wait/[0.06] px-3 py-2.5 text-xs leading-relaxed text-bone-dim">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-signal-wait" aria-hidden />
           <span>
@@ -146,14 +234,15 @@ export function CapabilitiesPanel({
 
       {saveError && <p className="text-sm text-signal-fail">{saveError}</p>}
 
-      <div className="flex items-center gap-3">
+      <div className={expanded ? 'flex items-center gap-3' : 'hidden'}>
         <button type="button" className="btn-ghost" onClick={() => void save()} disabled={busy || !dirty}>
           {busy && <Spinner className="h-3.5 w-3.5" />}
           Save permissions
         </button>
-        <SavedTick visible={saved} />
         {dirty && !busy && <span className="text-xs text-bone-faint">unsaved</span>}
       </div>
+
+      <SavedTick visible={saved} />
     </div>
   );
 }
