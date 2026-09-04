@@ -262,8 +262,29 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         outcome.skipped.push({ agentId: agent.id, reason: `agent is ${agent.state}` });
         continue;
       }
-      if (!link.triggerEventTypes.includes(event.type)) {
-        outcome.skipped.push({ agentId: agent.id, reason: `not triggered by ${event.type}` });
+      const policyRow = policiesById.get(agent.id) ?? null;
+      const policy = PolicyConfig.parse(policyRow?.config ?? {});
+
+      // Turning outreach on is the whole decision. Requiring KEYWORD_MATCH to
+      // be added to the link as well would be a second setting that has to
+      // agree with the first, in another screen -- which is exactly how
+      // `reply_search` and `own_threads` came to find replies for months and
+      // have every one of them dropped here with "not triggered by REPLY".
+      //
+      // So the policy is the single source of truth for this one type, and
+      // nothing needs to be kept in sync with it.
+      const triggered =
+        link.triggerEventTypes.includes(event.type) ||
+        (event.type === 'KEYWORD_MATCH' && policy.outreach.enabled);
+
+      if (!triggered) {
+        outcome.skipped.push({
+          agentId: agent.id,
+          reason:
+            event.type === 'KEYWORD_MATCH'
+              ? 'found by watching, and this agent does not approach people unprompted'
+              : `not triggered by ${event.type}`,
+        });
         continue;
       }
 
@@ -283,8 +304,6 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         }
       }
 
-      const policyRow = policiesById.get(agent.id) ?? null;
-      const policy = PolicyConfig.parse(policyRow?.config ?? {});
       const mode = policy.automation.mode;
 
       // OFF does no work at all, not even for a manual trigger.
