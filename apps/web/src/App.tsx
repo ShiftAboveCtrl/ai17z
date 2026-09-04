@@ -13,6 +13,7 @@ const EasySetup = lazy(() => import('@app/routes/EasySetup').then((m) => ({ defa
 const CreateAgent = lazy(() => import('@app/routes/CreateAgent').then((m) => ({ default: m.CreateAgent })));
 const AgentPage = lazy(() => import('@app/routes/AgentPage').then((m) => ({ default: m.AgentPage })));
 const ActivityPage = lazy(() => import('@app/routes/ActivityPage').then((m) => ({ default: m.ActivityPage })));
+const InboxPage = lazy(() => import('@app/routes/InboxPage').then((m) => ({ default: m.InboxPage })));
 const JobPage = lazy(() => import('@app/routes/JobPage').then((m) => ({ default: m.JobPage })));
 const SettingsPage = lazy(() => import('@app/routes/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 
@@ -55,6 +56,7 @@ export function App() {
           <Route path="/agents/new" element={<EasySetup />} />
           <Route path="/agents/new/advanced" element={<CreateAgent />} />
           <Route path="/agents/:agentId" element={<AgentPage />} />
+          <Route path="/inbox" element={<InboxPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/jobs/:jobId" element={<JobPage />} />
           <Route path="/settings" element={<SettingsPage />} />
