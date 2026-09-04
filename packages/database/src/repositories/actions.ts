@@ -256,3 +256,50 @@ export async function countRecentRepliesToHandle(
   );
   return row?.count ?? 0;
 }
+
+/**
+ * Unprompted approaches this agent has actually made.
+ *
+ * Counted from what was published, not from what was decided or drafted: a
+ * dry run said nothing to anybody, and a job that was cancelled approached
+ * nobody. The same rule as stances and relationships, and for the same reason.
+ *
+ * An approach is identified by the event that produced it -- KEYWORD_MATCH is
+ * what the radar assigns to a post found by watching rather than by being
+ * addressed -- so this needs no column of its own and cannot drift from what
+ * the engagement step calls unprompted.
+ */
+export async function approachesSince(agentId: string, sinceIso: string): Promise<number> {
+  const row = await queryOne<{ n: number }>(
+    `SELECT count(*)::int AS n
+       FROM actions a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN events e ON e.id = j.event_id
+      WHERE a.agent_id = $1
+        AND a.dry_run = false
+        AND a.status = 'EXECUTED'
+        AND e.type = 'KEYWORD_MATCH'
+        AND a.executed_at >= $2`,
+    [agentId, sinceIso],
+  );
+  return row?.n ?? 0;
+}
+
+/** When this agent last approached a given person unasked, if it ever has. */
+export async function lastApproachTo(agentId: string, handle: string): Promise<string | null> {
+  const row = await queryOne<{ executed_at: string }>(
+    `SELECT a.executed_at
+       FROM actions a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN events e ON e.id = j.event_id
+      WHERE a.agent_id = $1
+        AND a.dry_run = false
+        AND a.status = 'EXECUTED'
+        AND e.type = 'KEYWORD_MATCH'
+        AND lower(e.remote_author_handle) = lower($2)
+      ORDER BY a.executed_at DESC
+      LIMIT 1`,
+    [agentId, handle.replace(/^@+/, '')],
+  );
+  return row?.executed_at ?? null;
+}
