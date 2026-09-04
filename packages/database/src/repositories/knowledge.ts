@@ -8,7 +8,7 @@
 import { query, queryOne, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
-export type KnowledgeSourceKind = 'UPLOAD' | 'PATH' | 'TEXT';
+export type KnowledgeSourceKind = 'UPLOAD' | 'PATH' | 'TEXT' | 'URL';
 
 export interface KnowledgeSourceRecord {
   id: string;
@@ -24,13 +24,17 @@ export interface KnowledgeSourceRecord {
   documentCount: number;
   chunkCount: number;
   lastError: string | null;
+  /** Null means this source is only re-read when somebody asks. */
+  refreshIntervalMinutes: number | null;
+  nextRefreshAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 const COLUMNS = `
   id, agent_id, name, kind, location, include, revision, enabled,
-  indexed_at, document_count, chunk_count, last_error, created_at, updated_at`;
+  indexed_at, document_count, chunk_count, last_error,
+  refresh_interval_minutes, next_refresh_at, created_at, updated_at`;
 
 export interface CreateKnowledgeSourceInput {
   agentId: string;
@@ -38,14 +42,22 @@ export interface CreateKnowledgeSourceInput {
   kind: KnowledgeSourceKind;
   location?: string | null;
   include?: string[];
+  refreshIntervalMinutes?: number | null;
 }
 
 export async function createSource(input: CreateKnowledgeSourceInput): Promise<KnowledgeSourceRecord> {
   const row = await queryOne(
-    `INSERT INTO knowledge_sources (agent_id, name, kind, location, include)
-     VALUES ($1,$2,$3,$4,$5)
+    `INSERT INTO knowledge_sources (agent_id, name, kind, location, include, refresh_interval_minutes, next_refresh_at)
+     VALUES ($1,$2,$3,$4,$5,$6, CASE WHEN $6::int IS NULL THEN NULL ELSE now() END)
      RETURNING ${COLUMNS}`,
-    [input.agentId, input.name.trim(), input.kind, input.location ?? null, input.include ?? []],
+    [
+      input.agentId,
+      input.name.trim(),
+      input.kind,
+      input.location ?? null,
+      input.include ?? [],
+      input.refreshIntervalMinutes ?? null,
+    ],
   );
   return mapRow<KnowledgeSourceRecord>(row)!;
 }
@@ -80,6 +92,8 @@ export interface UpdateKnowledgeSourceInput {
   chunkCount?: number;
   /** Explicit null clears a previous failure; undefined leaves it alone. */
   lastError?: string | null;
+  refreshIntervalMinutes?: number | null;
+  nextRefreshAt?: string | null;
 }
 
 export async function updateSource(id: string, input: UpdateKnowledgeSourceInput): Promise<KnowledgeSourceRecord> {
@@ -99,6 +113,8 @@ export async function updateSource(id: string, input: UpdateKnowledgeSourceInput
   if (input.documentCount !== undefined) set('document_count', input.documentCount);
   if (input.chunkCount !== undefined) set('chunk_count', input.chunkCount);
   if (input.lastError !== undefined) set('last_error', input.lastError);
+  if (input.refreshIntervalMinutes !== undefined) set('refresh_interval_minutes', input.refreshIntervalMinutes);
+  if (input.nextRefreshAt !== undefined) set('next_refresh_at', input.nextRefreshAt);
 
   if (sets.length === 0) return (await getSource(id))!;
 
@@ -107,6 +123,35 @@ export async function updateSource(id: string, input: UpdateKnowledgeSourceInput
     params,
   );
   return mapRow<KnowledgeSourceRecord>(row)!;
+}
+
+/**
+ * Sources whose refresh has come round, claimed as they are read.
+ *
+ * `next_refresh_at` moves forward in the same statement that selects the row,
+ * which is what stops two workers re-reading one source and stops a restart
+ * refreshing everything at once. The same shape as the account poller, and for
+ * the same reasons.
+ */
+export async function claimDueForRefresh(limit = 5): Promise<KnowledgeSourceRecord[]> {
+  return mapRows<KnowledgeSourceRecord>(
+    await query(
+      `UPDATE knowledge_sources
+          SET next_refresh_at = now() + (refresh_interval_minutes * interval '1 minute')
+        WHERE id IN (
+          SELECT id FROM knowledge_sources
+           WHERE enabled
+             AND refresh_interval_minutes IS NOT NULL
+             AND next_refresh_at IS NOT NULL
+             AND next_refresh_at <= now()
+           ORDER BY next_refresh_at
+           FOR UPDATE SKIP LOCKED
+           LIMIT $1
+        )
+        RETURNING ${COLUMNS}`,
+      [limit],
+    ),
+  );
 }
 
 export async function deleteSource(id: string): Promise<void> {

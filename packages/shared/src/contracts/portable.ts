@@ -32,11 +32,12 @@ export const PORTABLE_AGENT_VERSION = 1;
  * A PATH is meaningless on another machine and is exported anyway, because the
  * alternative -- dropping it -- loses the fact that the agent had documentation
  * at all. The importer says the path does not exist here rather than pretending
- * the source was never configured.
+ * the source was never configured. A URL travels perfectly well, being the same
+ * page wherever it is read from.
  */
 export const PortableKnowledgeSource = z.object({
   name: z.string().max(200),
-  kind: z.enum(['UPLOAD', 'PATH', 'TEXT']),
+  kind: z.enum(['UPLOAD', 'PATH', 'TEXT', 'URL']),
   location: z.string().max(2_000).nullable().default(null),
   include: z.array(z.string().max(200)).max(50).default([]),
   enabled: z.boolean().default(true),
