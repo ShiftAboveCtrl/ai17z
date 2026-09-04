@@ -90,7 +90,7 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Research node | Uses RESEARCH tab only | y | - | - | - | - | PASS (A) - `unit/visionAndResearchRouting.test.ts`: the search runs under the RESEARCH role and that path never names ACTION | | |
 | Multi-account | Two accounts, no mixing | - | y | - | - | - | PASS (I) - `integration/isolation.test.ts`: an event reaches only its account and only its agent, in both directions, with two simultaneous events kept apart and each account given its own profile directory | | |
 | Multi-account concurrency | Independent, serialised per account | - | y | - | - | - | PASS (I) - `integration/isolation.test.ts`: the lock is account-scoped, so a second worker on one account is refused while another account proceeds at the same time | | |
-| Profile lock | Two launches, no corruption | - | y | - | - | - | PARTIAL (I) - `integration/isolation.test.ts` proves the account lease refuses a second holder and that two installations sharing a profile root stay apart. Two real Chromes racing for one profile directory is still untested | | |
+| Profile lock | Two launches, no corruption | - | y | y | - | - | PASS (I+L) - `integration/isolation.test.ts` proves the account lease refuses a second holder and that two installations sharing a profile root stay apart. Observed live: two AI17Z installations running at once, each with its own real Chrome on its own debug port (8825 and 10335), its own profile directory, and a different signed-in account. Neither browser can reach the other's profile because the path is derived from the account id under the instance root | | |
 | Account disabled mid-job | No remote side effect | - | y | - | y | - | PASS (I+F) - `integration/capabilities.test.ts`: revoking READ stops reading entirely, and a grant revoked after a job is queued fails that job permanently rather than retrying into a refusal | | |
 | Agent paused mid-job | Documented, consistent | - | y | - | - | - | PASS (I) - `integration/autonomy.test.ts` and `killSwitch.test.ts`: a paused agent creates no job, an in-flight one waits rather than giving up, and the live status says the agent cannot work and why | | |
 | Capability revocation | Permanent stop | - | y | - | y | - | PASS - burst of 8, 3 workers, none sent | - | 8941449 |
@@ -176,6 +176,47 @@ Carried in from the session immediately before, each with a regression test: a
 pooled query inside a transaction deadlocking the pool (ce85b49), a NUL byte in
 a mention crashing ingest (8941449), a Chrome outliving its record becoming
 invisible (7a4eecb), and test databases leaking (f62c3e3).
+
+## Two installations at once
+
+Run live, 2026-09-04, both healthy at the same moment.
+
+| | XBAM (this repository) | ai17z-test (the golden runtime) |
+|---|---|---|
+| API | 8787 | 8887 |
+| Web | 5173 | 8090 |
+| Postgres | 55432 | 55532 |
+| Chrome CDP | 8825 | 10335 |
+| Account | @ShiftAboveCtrl | @ai17zos |
+| Profile | `XBAM/storage/browser-profiles/e02a851b-...` | `ai17z-test/storage/browser-profiles/ai17z-test/bc20c555-...` |
+
+Both report `healthy` with their own database, their own browser and their own
+signed-in account. The two Chromes are separate processes with different
+`webSocketDebuggerUrl` values and different `--user-data-dir` paths, which is
+what makes them unable to reach each other's session: the path is derived from
+the account id under the instance root rather than stored, so a profile cannot
+be shared by accident.
+
+This is evidence for **two installations**, not for two accounts inside one.
+That row is still open and says so.
+
+## The clean install
+
+Run 2026-09-04, from a fresh clone rather than the working tree, because the
+working tree has been running for weeks and a build that only works there is not
+a build anybody else can use.
+
+1. `git clone` into an empty directory.
+2. `npm ci` -- 369 packages, 18s, no errors.
+3. `npm run typecheck` -- **failed**, on a test fake missing a required field.
+   The working tree failed the same way and nobody had run it since the file was
+   added. Fixed in `4086f1d`; this is what the check is for.
+4. An empty database, `npm run migrate` -- 55 applied, 0 skipped, no drift.
+   `migrate:status` agrees.
+5. `npx vitest run tests/unit` from the clone -- 80 files, 949 tests, all
+   passing, proving the tests do not depend on anything in the working tree.
+
+The scratch database was created for this and holds nothing real.
 
 ## Not tested, and not claimed
 
