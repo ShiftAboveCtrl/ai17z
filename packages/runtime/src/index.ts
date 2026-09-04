@@ -29,4 +29,7 @@ export * from './plan';
 export * from './evidence';
 export * from './token';
 export * from './knowledge';
-export * from './toolReadiness';
+// Both live in @xbam/tools now, because the diagnostics tool has to reach
+// them and packages/tools cannot import from here. Re-exported so nothing
+// that already says @xbam/runtime has to change.
+export { toolReadiness, preflightEnabling, withToolAllowed, collectDiagnostics } from '@xbam/tools';

@@ -4,6 +4,7 @@ import type { ToolDefinition } from './contract';
 import { timeNowTool } from './builtin/timeNow';
 import { memorySearchTool } from './builtin/memorySearch';
 import { httpFetchTool } from './builtin/httpFetch';
+import { selfDiagnosticsTool } from './builtin/selfDiagnostics';
 
 const log = createLogger('tools');
 
@@ -11,6 +12,7 @@ const TOOLS: ToolDefinition<never>[] = [
   timeNowTool as ToolDefinition<never>,
   memorySearchTool as ToolDefinition<never>,
   httpFetchTool as ToolDefinition<never>,
+  selfDiagnosticsTool as ToolDefinition<never>,
 ];
 
 export function listToolDefinitions(): ToolDefinition<never>[] {

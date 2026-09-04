@@ -5,6 +5,7 @@ import {
   PersonaDraft,
   PipelineDraft,
   PolicyConfig,
+  SELF_DIAGNOSTICS_TOOL,
   SetModelConfigInput,
   UpdateAgentInput,
 } from '@xbam/shared/contracts';
@@ -59,7 +60,16 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         displayName: input.name,
         ...(input.persona ?? {}),
       });
-      const policy = PolicyConfig.parse(input.policy ?? {});
+      // An agent that cannot describe its own runtime can only guess when
+      // somebody asks why it is quiet, and a model guessing about
+      // infrastructure invents a confident wrong answer. So a new agent is
+      // permitted to read its own status -- but only when its owner supplied no
+      // policy, because a policy somebody wrote is a decision and is stored
+      // exactly as given.
+      const supplied = PolicyConfig.parse(input.policy ?? {});
+      const policy = input.policy
+        ? supplied
+        : { ...supplied, tools: { ...supplied.tools, allowed: [...supplied.tools.allowed, SELF_DIAGNOSTICS_TOOL] } };
       const agent = await agentsRepo.createAgent({
         ownerId: user.id,
         name: input.name,

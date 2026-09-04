@@ -16,3 +16,4 @@ export * from './voice';
 export * from './domain';
 export * from './runtime';
 export * from './api';
+export * from './diagnostics';
