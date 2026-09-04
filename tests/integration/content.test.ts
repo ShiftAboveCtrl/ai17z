@@ -26,15 +26,19 @@ describe('where ideas come from', () => {
     expect(captured[0]!.sourceHandle).toBe('alice');
   });
 
-  it('captures a position worth stating on its own', async () => {
+  it('captures a position the agent keeps coming back to', async () => {
     const fixture = await createFixture();
-    await stances.assert({
+    const position = {
       agentId: fixture.agentId,
       subject: 'Project Q',
-      position: 'NEGATIVE',
+      position: 'NEGATIVE' as const,
       summary: 'The distribution schedule is the weak point.',
       confidence: 0.8,
-    });
+    };
+    // Twice, because a position stated once in passing is an answer rather than
+    // something worth saying to everybody.
+    await stances.assert({ ...position, evidence: { excerpt: 'The schedule is the weak point.' } });
+    await stances.assert({ ...position, evidence: { excerpt: 'Still the schedule, still the weak point.' } });
 
     const captured = await harvestIdeas({
       agentId: fixture.agentId,
@@ -45,6 +49,30 @@ describe('where ideas come from', () => {
       handle: 'bob',
     });
     expect(captured.some((idea) => idea.kind === 'opinion')).toBe(true);
+  });
+
+  it('does not broadcast a position it has taken once, in passing', async () => {
+    // A real backlog's worst entry was "Say more about No DMs", made from a
+    // single operational sentence about not having DMs open. Once is an answer.
+    const fixture = await createFixture();
+    await stances.assert({
+      agentId: fixture.agentId,
+      subject: 'Project Q',
+      position: 'NEGATIVE',
+      summary: 'The distribution schedule is the weak point.',
+      confidence: 0.8,
+      evidence: { excerpt: 'The schedule is the weak point.' },
+    });
+
+    const captured = await harvestIdeas({
+      agentId: fixture.agentId,
+      jobId: null,
+      incoming: 'what do you make of it',
+      outgoing:
+        'Project Q has the same problem it had in March. The distribution schedule is still the weak point and nothing announced changes that.',
+      handle: 'bob',
+    });
+    expect(captured.some((idea) => idea.kind === 'opinion')).toBe(false);
   });
 
   it('captures nothing from an ordinary exchange', async () => {

@@ -26,15 +26,21 @@ async function statusOf(id: string): Promise<{ status: string; attempts: number;
 
 /** A job in a chosen terminal state, so the reconciler has something to ask. */
 async function jobFor(fixture: Awaited<ReturnType<typeof createFixture>>, status: string, lastError = ''): Promise<string> {
+  // The account the fixture linked, so the rows are shaped like real ones
+  // rather than relying on the columns being nullable.
+  const accounts = await query<{ id: string }>('SELECT account_id AS id FROM agent_accounts WHERE agent_id = $1 LIMIT 1', [
+    fixture.agentId,
+  ]);
+  const accountId = accounts[0]?.id ?? null;
   const events = await query<{ id: string }>(
     `INSERT INTO events (account_id, channel, type, remote_event_id, text, occurred_at)
      VALUES ($1, 'MOCK', 'SCHEDULED_TRIGGER', $2, 'brief', now()) RETURNING id`,
-    [fixture.accountId, `post-test-${Math.random()}`],
+    [accountId, `post-test-${Math.random()}`],
   );
   const jobs = await query<{ id: string }>(
     `INSERT INTO jobs (event_id, agent_id, account_id, channel, action_type, idempotency_key, status, last_error)
      VALUES ($1, $2, $3, 'MOCK', 'POST', $4, $5, $6) RETURNING id`,
-    [events[0]!.id, fixture.agentId, fixture.accountId, `key-${Math.random()}`, status, lastError],
+    [events[0]!.id, fixture.agentId, accountId, `key-${Math.random()}`, status, lastError],
   );
   return jobs[0]!.id;
 }

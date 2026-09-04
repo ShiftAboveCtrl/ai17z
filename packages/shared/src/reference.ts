@@ -127,3 +127,75 @@ export function textStandsAlone(text: string): boolean {
   if (refersToSomethingElse(text)) return false;
   return spokenPart(text).split(/\s+/).filter(Boolean).length >= 8;
 }
+
+/**
+ * Strips the parts of a message that are addressing rather than saying.
+ *
+ * A mention carries the handle it was aimed at and whatever line breaks the
+ * client inserted. Keeping them means the same question asked twice never
+ * compares equal, and a note-to-self reads as a screenshot of somebody's tweet.
+ */
+export function spokenQuestion(text: string): string {
+  return text
+    .replace(/@[A-Za-z0-9_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Anything that identifies the same question asked twice, however it was typed. */
+export function questionKey(text: string): string {
+  return spokenQuestion(text).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Asking the agent for its view on something else.
+ *
+ * "How do you weigh throughput against finality" contains "you" and is not a
+ * question about the agent -- the agent is who is being asked, not what is
+ * being asked about. Checked first, because these read the same to a pattern
+ * that only looks for the word.
+ */
+const ASKS_YOUR_VIEW =
+  /\b(?:do|would|did|can|could)\s+(?:you|u)\s+(?:think|reckon|see|make|say|feel about|view|rate)\b|\bhow\s+do\s+(?:you|u)\b|\bwhat\s+do\s+(?:you|u)\s+(?:think|make|reckon|see)\b/i;
+
+/**
+ * Asking about the agent itself: its state, its plans, or its things.
+ *
+ * The possessive is the strongest signal -- "your website", "your purpose",
+ * "your terminal page" are all the account's own business. The rest are the
+ * copular and future forms: "how are you", "are you going to", "when are you
+ * gonna", "do you have".
+ */
+const ASKS_ABOUT_YOU =
+  /\byour\s+[a-z]/i.source +
+  '|' +
+  /\b(?:how|what|who|where|when|why)\s+(?:are|is|was|were|will|do|does|did)\s+(?:you|u)\b/i.source +
+  '|' +
+  /\b(?:are|is|was|were|will|have|has|do|does|did|can|could|would|should)\s+(?:you|u)\b/i.source;
+
+const ABOUT_YOU = new RegExp(ASKS_ABOUT_YOU, 'i');
+
+/**
+ * True when a question is aimed at the agent itself.
+ *
+ * "How are you feeling?", "why is your website link broken?", "when are you
+ * gonna get a listing?" are conversation, and support, and small talk. They are
+ * not topics other people were also wondering about, so they are not the
+ * material for a post the agent writes of its own accord -- which is what the
+ * idea backlog is for.
+ *
+ * A real backlog made the case: of twenty-seven captured ideas, every one that
+ * survived the standing-alone check and still read badly was a question
+ * somebody had asked the account about the account.
+ *
+ * Only questions. A sentence that merely contains "you" is a statement, and
+ * statements are not what this decides.
+ */
+export function asksAboutTheAgent(text: string): boolean {
+  const spoken = spokenQuestion(text);
+  if (!ASKS(spoken)) return false;
+  if (!/\b(?:you|your|yours|u|ur)\b/i.test(spoken)) return false;
+  // Being asked for a view on something is not being asked about yourself.
+  if (ASKS_YOUR_VIEW.test(spoken)) return false;
+  return ABOUT_YOU.test(spoken);
+}

@@ -1,4 +1,4 @@
-import { createLogger } from '@xbam/shared';
+import { asksAboutTheAgent, createLogger, spokenQuestion, textStandsAlone } from '@xbam/shared';
 import { content as contentRepo, stances as stancesRepo, type IdeaRow } from '@xbam/database';
 
 const log = createLogger('content');
@@ -18,6 +18,38 @@ const log = createLogger('content');
 
 /** A question somebody asked that the agent could not answer at the time. */
 const UNANSWERED = /\?\s*$/;
+
+/**
+ * How many times a position has to have been taken before it is worth stating
+ * on its own.
+ *
+ * Once, in passing, in a reply, is not a position -- it is an answer. Reading a
+ * real backlog, the worst idea in it was "Say more about No DMs", produced from
+ * a single operational sentence about not having DMs open. Two pieces of
+ * evidence is the difference between something the agent keeps coming back to
+ * and something it said once.
+ */
+const STANCE_EVIDENCE_FOR_A_POST = 2;
+
+/**
+ * Whether a question somebody asked could be the subject of a post.
+ *
+ * Two rules, both learned from a real backlog of twenty-seven captured ideas of
+ * which eighteen could never have become a post:
+ *
+ *   it has to stand on its own -- "what's your thoughts on this?" and "Is the
+ *   dex paid?" were captured verbatim, and neither means anything away from the
+ *   thread it was asked in
+ *
+ *   it has to be about something rather than about the agent -- "how are you
+ *   feeling?", "why is your website link broken?", "when are you gonna get a
+ *   listing?" are conversation and support, not topics anybody else was
+ *   wondering about
+ */
+function couldBeAPost(question: string): boolean {
+  if (!textStandsAlone(question)) return false;
+  return !asksAboutTheAgent(question);
+}
 
 export interface HarvestInput {
   agentId: string;
@@ -56,21 +88,34 @@ export async function harvestIdeas(input: HarvestInput): Promise<IdeaRow[]> {
     );
   };
 
-  // A question the agent answered well is a question other people have too.
-  if (UNANSWERED.test(input.incoming.trim()) && input.outgoing.length > 60) {
+  // A question the agent answered well is a question other people have too --
+  // provided it is a question at all away from the thread it was asked in, and
+  // provided it is about something rather than about the agent.
+  //
+  // The handle it was addressed to and the line breaks the client inserted are
+  // stripped, because an idea is a note to self and not a screenshot of
+  // somebody's tweet. It also made the duplicate check useless: the same
+  // question asked twice never compared equal.
+  const question = spokenQuestion(input.incoming);
+  if (UNANSWERED.test(question) && input.outgoing.length > 60 && couldBeAPost(question)) {
     await add(
       'educational',
-      `Somebody asked: ${input.incoming.trim().slice(0, 200)}`,
+      `Somebody asked: ${question.slice(0, 200)}`,
       // Worth saying again, but not urgent.
       60,
     );
   }
 
   // A position stated in a reply is worth stating on its own, where more than
-  // one person will see it.
+  // one person will see it -- once it is actually a position. Said once, in
+  // passing, it is an answer.
   const stance = await stancesRepo.relevantTo(input.agentId, input.outgoing, 1);
-  if (stance.length > 0 && Number(stance[0]!.confidence) >= 0.6 && input.outgoing.length > 80) {
-    await add('opinion', `Say more about ${stance[0]!.subject}: ${stance[0]!.summary}`, 70);
+  const held = stance[0];
+  if (held && Number(held.confidence) >= 0.6 && input.outgoing.length > 80) {
+    const evidence = await stancesRepo.countEvidence(held.id);
+    if (evidence >= STANCE_EVIDENCE_FOR_A_POST) {
+      await add('opinion', `Say more about ${held.subject}: ${held.summary}`, 70);
+    }
   }
 
   if (captured.length > 0) {
