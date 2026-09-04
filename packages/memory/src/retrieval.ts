@@ -19,6 +19,20 @@ export interface RetrievalOutcome {
   terms: string[];
 }
 
+/** The document a knowledge chunk came from, when it is one. */
+function originOf(memory: MemoryRecord): RetrievedMemory['origin'] {
+  const raw = (memory as MemoryRecord & { origin?: unknown }).origin;
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value : null);
+  return {
+    path: text(o.path),
+    heading: text(o.heading),
+    revision: text(o.revision),
+    sourceName: text(o.sourceName),
+  };
+}
+
 function score(memory: MemoryRecord): number {
   return memory.pinned ? 1 : Math.max(0, Math.min(1, memory.importance));
 }
@@ -87,7 +101,26 @@ export async function retrieveMemories(request: RetrievalRequest): Promise<Retri
   }
 
   const deduped = uniqueBy(collected, (entry) => entry.memory.id);
-  const memories: RetrievedMemory[] = deduped.map((entry, index) => ({
+
+  // Documents outrank remembered conversation.
+  //
+  // A knowledge chunk is the product's own documentation at a known revision;
+  // an episodic memory is what somebody said about it once. When they disagree
+  // -- "Ubuntu is not supported" said in March, against a page that says it is
+  // verified in the version now installed -- the document is the one that is
+  // still true, and the model reads what it is given in order.
+  //
+  // Ordering only. Nothing is discarded, so an agent can still say its
+  // recollection differs from the documentation, which is a better answer than
+  // either alone.
+  const ordered = [...deduped].sort((a, b) => {
+    const rank = (scope: MemoryScope) => (scope === 'KNOWLEDGE' ? 0 : scope === 'EPISODIC' ? 2 : 1);
+    const byScope = rank(a.memory.scope) - rank(b.memory.scope);
+    if (byScope !== 0) return byScope;
+    return score(b.memory) - score(a.memory);
+  });
+
+  const memories: RetrievedMemory[] = ordered.map((entry, index) => ({
     memoryId: entry.memory.id,
     scope: entry.memory.scope,
     memoryType: entry.memory.memoryType,
@@ -98,6 +131,7 @@ export async function retrieveMemories(request: RetrievalRequest): Promise<Retri
     score: score(entry.memory),
     rank: index + 1,
     createdAt: entry.memory.createdAt,
+    origin: originOf(entry.memory),
   }));
 
   await memoriesRepo.touchAccessed(memories.map((m) => m.memoryId));
