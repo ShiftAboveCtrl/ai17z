@@ -3,7 +3,7 @@ import { AutomationMode, DisclosureMode } from './enums';
 import { MediaPolicy } from './multimodal';
 import { RelationshipVoice } from './relationship';
 import { StancePolicy } from './stance';
-import { EngagementPolicy, ToneMirroring } from './engagement';
+import { EngagementPolicy, OutreachPolicy, ToneMirroring } from './engagement';
 import { VoicePolicy } from './voice';
 
 export const IdentityPolicy = z.object({
@@ -213,6 +213,8 @@ export const PolicyConfig = z.object({
   stance: StancePolicy.default({}),
   /** Whether to answer at all, and how much of the incoming tone to take on. */
   engagement: EngagementPolicy.default({}),
+  /** Speaking first, under a post nobody addressed to the agent. */
+  outreach: OutreachPolicy.default({}),
   tone: ToneMirroring.default({}),
   /** How the agent's own way of writing is enforced, whatever model wrote it. */
   voice: VoicePolicy.default({}),

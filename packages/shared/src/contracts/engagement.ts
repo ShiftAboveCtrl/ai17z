@@ -65,6 +65,59 @@ export const EngagementPolicy = z.object({
 });
 export type EngagementPolicy = z.infer<typeof EngagementPolicy>;
 
+/**
+ * Approaching somebody who did not ask.
+ *
+ * Everything else in the engagement policy is about answering. This is about
+ * speaking first, under a post the agent went looking for -- through a watched
+ * account or a watched keyword -- and it is a different act with a different
+ * failure mode. Answering badly is awkward; approaching badly is what people
+ * mean when they say an account is a bot.
+ *
+ * So it is off by default, held to a higher bar than a reply, capped per day,
+ * and rests between approaches to the same person. None of those are the same
+ * question as "how selective is it about mentions", which is why they are not
+ * folded into the numbers above.
+ */
+export const OutreachPolicy = z.object({
+  /**
+   * Off unless somebody turns it on. A watched source with this off still
+   * collects what it finds; it simply never speaks under any of it.
+   */
+  enabled: z.boolean().default(false),
+  /**
+   * The bar an unprompted approach has to clear. Higher than
+   * `minimumReplyValue` by default, and required to be: butting in on a
+   * stranger is worth doing only when there is clearly something to say.
+   */
+  minimumValue: z.number().int().min(0).max(100).default(65),
+  /**
+   * Whether the post has to be about something the agent follows.
+   *
+   * A keyword monitor can match on one word in a post about something else
+   * entirely, and an agent that replies to those reads as a bot however well
+   * it writes.
+   */
+  requireTopicMatch: z.boolean().default(true),
+  /** How many people it may approach in a day. Nothing to do with replies. */
+  maxPerDay: z.number().int().min(0).max(200).default(5),
+  /**
+   * How long before approaching the same person again.
+   *
+   * Days rather than hours, because two unprompted approaches in one afternoon
+   * is the behaviour, not the rate.
+   */
+  cooldownDaysPerAuthor: z.number().int().min(0).max(90).default(7),
+  /**
+   * Whether an approach goes out on its own or is shown to a person first.
+   *
+   * REVIEW by default. The first thing anybody wants to see before letting an
+   * agent speak to strangers unprompted is what it would have said.
+   */
+  mode: z.enum(['REVIEW', 'AUTONOMOUS']).default('REVIEW'),
+});
+export type OutreachPolicy = z.infer<typeof OutreachPolicy>;
+
 /** One thing that pushed the score up or down, in words. */
 export const ValueFactor = z.object({
   label: z.string(),

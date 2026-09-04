@@ -1092,10 +1092,41 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
     .map((h) => h.replace(/^@+/, '').toLowerCase());
   const directlyAddressed = selfHandles.some((self) => text.toLowerCase().includes(`@${self}`));
 
+  // Found by watching rather than sent to the agent. KEYWORD_MATCH is what the
+  // radar reconciler assigns to a post discovered through a watched account or
+  // keyword, and speaking under one of those is speaking first to a stranger --
+  // a different act from answering, held to its own bar.
+  //
+  // A thread the agent is already in is not this: it is a conversation it is
+  // part of, whatever the event type says, so an outbound message anywhere in
+  // the thread settles it.
+  const alreadyInThread = (context?.thread ?? []).some((m) => m.role === 'OUTBOUND');
+  const unprompted = bundle.event.type === 'KEYWORD_MATCH' && !directlyAddressed && !alreadyInThread;
+
+  // The two limits that are about rate rather than about worth, checked here
+  // rather than in the heuristic because reaching one is a reason not to speak,
+  // not a score. And recorded as a decision rather than a failure: a cap that
+  // has been reached is not something to retry an hour later, because by then
+  // the post is old and approaching it is stranger than not.
+  const outreachLimit = unprompted && policy.outreach.enabled ? await outreachHeadroom(bundle, handle) : null;
+  if (outreachLimit) {
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'ENGAGEMENT_DECIDED',
+      level: 'info',
+      message: `ignore: ${outreachLimit}`,
+      data: { decision: 'IGNORE', unprompted: true, limit: true },
+    });
+    return 'ignore';
+  }
+
   const verdict = decideEngagement({
     topics: bundle.persona.topics,
     text,
     directlyAddressed,
+    unprompted,
+    outreach: policy.outreach,
     relationship,
     threadDepth: context?.thread.length ?? 0,
     recentRepliesToPerson: await recentRepliesTo(bundle.agent.id, handle),
@@ -1113,7 +1144,15 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
     type: 'ENGAGEMENT_DECIDED',
     level: verdict.decision === 'IGNORE' ? 'warn' : 'info',
     message: `${verdict.decision.toLowerCase()} (${verdict.value}/100): ${verdict.reason}`,
-    data: { decision: verdict.decision, value: verdict.value, factors: verdict.factors, strategy: policy.engagement.strategy },
+    data: {
+      decision: verdict.decision,
+      value: verdict.value,
+      factors: verdict.factors,
+      strategy: policy.engagement.strategy,
+      // Which set of rules decided, because the two have different thresholds
+      // and a verdict is unreadable without knowing which one it came from.
+      unprompted,
+    },
   });
 
   if (context) {
@@ -1125,6 +1164,37 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
   if (verdict.decision === 'IGNORE') return 'ignore';
   if (verdict.decision === 'REVIEW') return 'review';
   return 'engage';
+}
+
+/**
+ * Whether an unprompted approach is allowed to happen at all right now.
+ *
+ * Returns the reason it is not, or null when there is room. Both limits are
+ * counted from what was actually published: a dry run approached nobody, and a
+ * draft that was never sent is not an approach.
+ */
+async function outreachHeadroom(bundle: JobBundle, handle: string | null): Promise<string | null> {
+  const { outreach } = bundle.policy;
+
+  if (outreach.maxPerDay === 0) return 'This agent is not set to approach anybody unprompted.';
+  const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const today = await actionsRepo.approachesSince(bundle.agent.id, since);
+  if (today >= outreach.maxPerDay) {
+    return `Already approached ${today} ${today === 1 ? 'person' : 'people'} unprompted today, which is the limit.`;
+  }
+
+  if (handle && outreach.cooldownDaysPerAuthor > 0) {
+    const last = await actionsRepo.lastApproachTo(bundle.agent.id, handle);
+    if (last) {
+      const days = (Date.now() - Date.parse(last)) / 86_400_000;
+      if (Number.isFinite(days) && days < outreach.cooldownDaysPerAuthor) {
+        const waitDays = Math.ceil(outreach.cooldownDaysPerAuthor - days);
+        return `Already approached @${handle.replace(/^@+/, '')} unprompted in the last ${outreach.cooldownDaysPerAuthor} days. ${waitDays} to go.`;
+      }
+    }
+  }
+
+  return null;
 }
 
 /**

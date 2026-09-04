@@ -3,6 +3,7 @@ import type {
   EngagementPolicy,
   EngagementVerdict,
   IntentDecision,
+  OutreachPolicy,
   RelationshipContext,
   ResponseIntent,
   ValueFactor,
@@ -133,7 +134,19 @@ export interface ReplyValueInput {
    * mentioned. A question mark is not content.
    */
   hasParent?: boolean;
+  /**
+   * True when nobody addressed this to the agent and the agent went looking:
+   * a post found through a watched account or a watched keyword.
+   *
+   * Separate from `directlyAddressed`, which is about the text. A reply in a
+   * thread the agent is already in is not addressed to it either, and is still
+   * a conversation it is part of. This is about speaking first to a stranger,
+   * which is a different act with a different failure mode.
+   */
+  unprompted?: boolean;
   policy: EngagementPolicy;
+  /** Only consulted when `unprompted`. */
+  outreach?: OutreachPolicy;
 }
 
 /**
@@ -271,6 +284,41 @@ export function decideEngagement(input: ReplyValueInput): EngagementVerdict {
   const { value, factors } = replyValue(input);
   const worst = [...factors].sort((a, b) => a.delta - b.delta)[0];
   const best = [...factors].sort((a, b) => b.delta - a.delta)[0];
+
+  // Speaking first is not answering, and the strategies are all about
+  // answering. ALWAYS_REPLY means "anything that mentions the agent gets an
+  // answer"; applied to a keyword monitor it means replying to every post that
+  // happens to contain a word, which is a spam machine with a good persona.
+  // QUESTIONS_ONLY is the same trap: any question anywhere gets an approach.
+  if (input.unprompted) {
+    const outreach = input.outreach;
+    if (!outreach?.enabled) {
+      return {
+        decision: 'IGNORE',
+        value,
+        reason: 'Nobody asked, and this agent does not approach people unprompted.',
+        factors,
+      };
+    }
+    if (value < outreach.minimumValue) {
+      return {
+        decision: 'IGNORE',
+        value,
+        reason: `Not worth speaking up unasked (${worst?.label ?? 'low value'}). An approach has to clear ${outreach.minimumValue}, not ${input.policy.minimumReplyValue}.`,
+        factors,
+      };
+    }
+    // Worth saying something. Whether it goes out or is shown to a person first
+    // is the owner's decision, and REVIEW is the default for exactly this.
+    return outreach.mode === 'AUTONOMOUS'
+      ? { decision: 'ENGAGE', value, reason: best?.label ?? 'Worth speaking up about.', factors }
+      : {
+          decision: 'REVIEW',
+          value,
+          reason: 'Worth speaking up about, but this agent shows an unprompted approach to a person first.',
+          factors,
+        };
+  }
 
   switch (input.policy.strategy) {
     case 'ALWAYS_REPLY':
