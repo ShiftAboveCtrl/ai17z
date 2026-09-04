@@ -15,9 +15,10 @@ function fakeTab(role: TabRole): TabState {
     page: { isClosed: () => false, url: () => `https://x.com/${role.toLowerCase()}` } as never,
     busy: false,
     lastUsedAt: 0,
+    lastError: null,
     openedAt: Date.now(),
     queue: Promise.resolve(),
-  } as TabState;
+  };
 }
 
 /** Something that takes a turn and records the order it ran in. */

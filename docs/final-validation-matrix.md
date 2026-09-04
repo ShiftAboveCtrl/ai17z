@@ -179,17 +179,35 @@ invisible (7a4eecb), and test databases leaking (f62c3e3).
 
 ## Not tested, and not claimed
 
-- **Multi-account.** One X account was available. Profile paths are per-account
-  by construction, but two signed-in accounts were never run side by side.
+Rewritten at the end of this round. Each entry says what is missing and what it
+would take, because a list of gaps that quietly goes stale is worse than no list.
+
 - **Real sign-in, end to end.** Needs a person to type a password, and by design
-  AI17Z stops at the first challenge rather than answering one.
-- **Vision.** Media is exposed to the prompt and described as an explicit gap.
-  No vision model is wired.
-- **Original posting, live.** The scheduler path runs as a dry run; nothing
-  unprompted has been published.
-- **Provider matrix.** Only the providers already configured were exercised.
+  AI17Z stops at the first challenge rather than answering one. What *is* tested:
+  the watcher only looks at settled states, stops the moment a person is asked
+  for something, and `authObservation.test.ts` fails if any code path clicks,
+  fills or dismisses on an auth page.
+- **Vision.** No vision model is configured anywhere, so nothing has read an
+  image. The routing is tested -- the vision role is asked for by name and never
+  falls back -- and an unread image is an explicit gap in the prompt. What is
+  untested is a real model reading a real picture.
+- **A real remote action.** `tools/scenarios/run.mts --live` is the path that
+  publishes and it was not run this round. Everything up to the send is covered.
+- **Chrome restart, full system restart, cold start.** Each needs the running
+  browser stopped, and the session in it belongs to the owner. Killing it to
+  prove it survives is a poor trade when a failed graceful close is exactly the
+  case that loses the session.
+- **Two signed-in accounts side by side.** One X account was available. Profile
+  paths are per-account by construction and the account lease is tested; two
+  real browsers racing for one profile directory is not.
+- **The provider matrix.** Only the providers already configured were exercised.
   OpenAI, Anthropic, DeepSeek, Ollama and a generic OpenAI-compatible endpoint
-  were not each connected and failure-tested.
-- **Quiet hours and rate ceilings against a real clock.**
-- **24-hour soak.** The harness exists and is proved. The longest run completed
-  in this session is recorded in the final report.
+  were not each connected and failure-tested against a live endpoint.
+- **A 24-hour soak.** The harness is proved and the longest run completed in
+  this session is recorded in the final report.
+
+### Closed since this list was first written
+
+Multi-account isolation, quiet hours and rate ceilings against the clock, and
+the scheduler paths now have integration coverage rather than a note here. The
+matrix rows cite the tests.
