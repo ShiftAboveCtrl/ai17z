@@ -39,9 +39,21 @@ ended at §101. They are outstanding as scope, not as work.
 These are the parts of a VERIFIED row that are genuinely missing. They are small
 and named rather than folded into a claim that the section is finished.
 
-- **§94** Websites are not a knowledge source kind. `PATH`, `UPLOAD` and `TEXT`
-  are. Fetching a site means deciding about robots, rate, revisit and what
-  counts as the same page, and none of that is decided.
+- **§94** *Closed.* `URL` is a source kind, with every one of those decisions
+  made the narrow way. **One page, the one you named, and no links followed
+  ever** -- that is the answer to "what counts as the same page" and to "how
+  deep", and it is not a limitation waiting to be lifted: an owner can read one
+  page and be responsible for it, and nobody can do that for a crawl. Somebody
+  who wants five pages adds five sources and can see all five. robots.txt is
+  honoured, and unreachable is treated as permission because failing closed
+  would make a network blip look like the site saying no. Refresh is a schedule
+  the owner sets with a fifteen-minute floor, off by default, and an unchanged
+  page writes nothing. JavaScript is not run, and a page that renders itself is
+  refused with what to do rather than indexed empty -- the same silent failure
+  as a scanned PDF in a different costume. Private and loopback addresses are
+  refused, 169.254.169.254 included. `tests/unit/webPage.test.ts` (26 cases,
+  nothing touching the network) and a fifth enum row in
+  `statusConstraints.test.ts`. Verified live against two real public pages.
 - **§94** *Closed.* PDFs are read, through `pdfjs-dist` (Apache-2.0, no
   dependencies, no native canvas). The case that mattered is the silent one: a
   PDF that is pictures of words opens cleanly, parses every page, and yields

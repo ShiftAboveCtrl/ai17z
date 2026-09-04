@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ACCOUNT_STATUSES, PIPELINE_NODE_KINDS, PROVIDER_KINDS, TRACE_EVENT_TYPES } from '@xbam/shared/contracts';
-import { accounts as accountsRepo, observability, pipelines, providers, users } from '@xbam/database';
+import { accounts as accountsRepo, knowledge, observability, pipelines, providers, users } from '@xbam/database';
 import { ingestNormalizedEvent } from '@xbam/runtime';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -130,6 +130,57 @@ describe('every provider kind the code offers is one the database accepts', () =
         label: 'nope',
         availableModels: [],
         defaultModel: null,
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+/**
+ * A fifth enum with a CHECK behind it, added when websites became a source.
+ *
+ * The same trap as the other four: growing the list in TypeScript passes every
+ * unit test and fails at the database, in production, on the one path nobody
+ * exercised.
+ */
+describe('every knowledge source kind the code can create is one the database accepts', () => {
+  const KINDS = ['UPLOAD', 'PATH', 'TEXT', 'URL'] as const;
+
+  it('accepts all of them', async () => {
+    const fixture = await createFixture();
+    for (const kind of KINDS) {
+      const source = await knowledge.createSource({
+        agentId: fixture.agentId,
+        name: `${kind}-${uniqueSuffix()}`,
+        kind,
+        location: kind === 'URL' ? 'https://example.com/docs' : '/tmp/docs',
+      });
+      expect(source.kind, `the database refused a ${kind} source`).toBe(kind);
+    }
+  });
+
+  it('still refuses a kind that is not in the contract', async () => {
+    const fixture = await createFixture();
+    await expect(
+      knowledge.createSource({
+        agentId: fixture.agentId,
+        name: `bogus-${uniqueSuffix()}`,
+        kind: 'CRAWL' as never,
+        location: 'https://example.com',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses a refresh interval too short to be a schedule', async () => {
+    // Fifteen minutes is the floor. Anything under it is a poller wearing a
+    // knowledge source's clothes.
+    const fixture = await createFixture();
+    await expect(
+      knowledge.createSource({
+        agentId: fixture.agentId,
+        name: `fast-${uniqueSuffix()}`,
+        kind: 'URL',
+        location: 'https://example.com/docs',
+        refreshIntervalMinutes: 1,
       }),
     ).rejects.toThrow();
   });

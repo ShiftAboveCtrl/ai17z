@@ -85,7 +85,7 @@ export async function exportAgent(agentId: string): Promise<PortableAgent> {
     ),
     knowledge: knowledge.map((source: { name: string; kind: string; location: string | null; include?: string[]; enabled: boolean }) => ({
       name: source.name,
-      kind: source.kind as 'UPLOAD' | 'PATH' | 'TEXT',
+      kind: source.kind as 'UPLOAD' | 'PATH' | 'TEXT' | 'URL',
       location: source.location,
       include: source.include ?? [],
       enabled: source.enabled,

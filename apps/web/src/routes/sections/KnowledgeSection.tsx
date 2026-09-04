@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookOpen, FolderOpen, RefreshCw, Trash2, FileText, ShieldAlert } from 'lucide-react';
+import { BookOpen, FolderOpen, Globe, RefreshCw, Trash2, FileText, ShieldAlert } from 'lucide-react';
 import { ApiError, del, patch, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
@@ -9,7 +9,8 @@ import { Section } from './Section';
 interface KnowledgeSource {
   id: string;
   name: string;
-  kind: 'UPLOAD' | 'PATH' | 'TEXT';
+  kind: 'UPLOAD' | 'PATH' | 'TEXT' | 'URL';
+  refreshIntervalMinutes: number | null;
   location: string | null;
   revision: string | null;
   enabled: boolean;
@@ -53,7 +54,10 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
   const view = useResource<KnowledgeView>(`/api/agents/${agentId}/knowledge`);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
-  const [kind, setKind] = useState<'PATH' | 'TEXT'>('PATH');
+  const [kind, setKind] = useState<'PATH' | 'TEXT' | 'URL'>('PATH');
+  // Null means only when asked. Never automatic by default: a source that
+  // re-reads on its own is one nobody remembers agreeing to.
+  const [refreshMinutes, setRefreshMinutes] = useState<string>('');
   const [location, setLocation] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +78,7 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
     }
   };
 
-  const create = (payload: { name: string; kind: 'PATH' | 'TEXT'; location: string }) =>
+  const create = (payload: { name: string; kind: 'PATH' | 'TEXT' | 'URL'; location: string; refreshIntervalMinutes?: number | null }) =>
     run('create', async () => {
       const response = (await post(`/api/agents/${agentId}/knowledge`, payload)) as {
         source: KnowledgeSource;
@@ -110,11 +114,24 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    {source.kind === 'PATH' ? <FolderOpen className="h-4 w-4 shrink-0" /> : <FileText className="h-4 w-4 shrink-0" />}
+                    {source.kind === 'PATH' ? (
+                      <FolderOpen className="h-4 w-4 shrink-0" />
+                    ) : source.kind === 'URL' ? (
+                      <Globe className="h-4 w-4 shrink-0" />
+                    ) : (
+                      <FileText className="h-4 w-4 shrink-0" />
+                    )}
                     <span className="font-medium">{source.name}</span>
                   </div>
-                  {source.kind === 'PATH' && (
+                  {(source.kind === 'PATH' || source.kind === 'URL') && (
                     <p className="mt-1 break-words font-mono text-[11px] text-bone-faint">{source.location}</p>
+                  )}
+                  {source.kind === 'URL' && (
+                    <p className="mt-1 text-[11px] text-bone-faint">
+                      {source.refreshIntervalMinutes
+                        ? `Re-read every ${source.refreshIntervalMinutes} minutes. This page only, no links followed.`
+                        : 'Only re-read when you ask. This page only, no links followed.'}
+                    </p>
                   )}
                   <p className="mt-2 text-sm text-bone-dim">
                     {source.indexedAt ? (
@@ -214,8 +231,14 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
           </Field>
 
           <Field label="Where is it?" htmlFor="k-kind">
-            <select id="k-kind" className="field" value={kind} onChange={(e) => setKind(e.target.value as 'PATH' | 'TEXT')}>
+            <select
+              id="k-kind"
+              className="field"
+              value={kind}
+              onChange={(e) => setKind(e.target.value as 'PATH' | 'TEXT' | 'URL')}
+            >
               <option value="PATH">A folder on this machine</option>
+              <option value="URL">A page on the web</option>
               <option value="TEXT">I will paste it in</option>
             </select>
           </Field>
@@ -238,6 +261,44 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                 placeholder={view.data?.roots?.[0] ?? '/path/to/docs'}
               />
             </Field>
+          ) : kind === 'URL' ? (
+            <>
+              <Field
+                label="Address"
+                htmlFor="k-url"
+                hint="This page and nothing else. Links on it are never followed, so add a source per page you want read."
+              >
+                <input
+                  id="k-url"
+                  className="field font-mono text-[13px]"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="https://example.com/docs/getting-started"
+                />
+              </Field>
+              <Field
+                label="Read it again"
+                htmlFor="k-refresh"
+                hint="A page that has not changed writes nothing, so a schedule costs little. You can always read it now by hand."
+              >
+                <select
+                  id="k-refresh"
+                  className="field"
+                  value={refreshMinutes}
+                  onChange={(e) => setRefreshMinutes(e.target.value)}
+                >
+                  <option value="">Only when I ask</option>
+                  <option value="60">Every hour</option>
+                  <option value="1440">Every day</option>
+                  <option value="10080">Every week</option>
+                </select>
+              </Field>
+              <p className="text-[12px] leading-relaxed text-bone-faint">
+                AI17Z reads the page as it is served and does not run its JavaScript. A site that builds itself in the
+                browser will say so rather than being added empty. If the site asks automated readers to stay out in
+                its robots.txt, that is respected.
+              </p>
+            </>
           ) : (
             <Field label="The text" htmlFor="k-text" hint="Headings help: each section becomes something the agent can find on its own.">
               <textarea id="k-text" rows={10} className="field resize-y" value={location} onChange={(e) => setLocation(e.target.value)} />
@@ -249,7 +310,14 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
               type="button"
               className="btn-primary"
               disabled={busy !== null || !name.trim() || !location.trim()}
-              onClick={() => void create({ name: name.trim(), kind, location: location.trim() })}
+              onClick={() =>
+                void create({
+                  name: name.trim(),
+                  kind,
+                  location: location.trim(),
+                  refreshIntervalMinutes: kind === 'URL' && refreshMinutes ? Number(refreshMinutes) : null,
+                })
+              }
             >
               {busy === 'create' && <Spinner />}
               Read it now
