@@ -2,6 +2,7 @@ import type { Agent, PersonaDraft, PersonaVersion, PolicyConfig } from '@xbam/sh
 import { PolicyConfig as PolicyConfigSchema } from '@xbam/shared/contracts';
 import { DEFAULT_POLICY, NotFoundError, sameContent, slugify } from '@xbam/shared';
 import { query, queryOne, withTransaction, type Tx } from '../pool';
+
 import { mapRow, mapRows } from '../mapper';
 
 const AGENT_COLUMNS = `
@@ -129,7 +130,7 @@ export async function createAgent(input: CreateAgentRecord): Promise<Agent> {
     const policy = await tx.one<{ id: string }>('INSERT INTO policies (agent_id) VALUES ($1) RETURNING id', [agentId]);
 
     const personaVersion = await insertPersonaVersion(tx, persona!.id, agentId, input.persona, input.createdBy ?? null);
-    const policyVersion = await insertPolicyVersion(
+const policyVersion = await insertPolicyVersion(
       tx,
       policy!.id,
       input.policy ?? DEFAULT_POLICY,
