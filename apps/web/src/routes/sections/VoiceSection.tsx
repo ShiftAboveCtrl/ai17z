@@ -64,7 +64,15 @@ function Habit({ label, rate }: { label: string; rate: number }) {
  * a label each model reads differently, "median 54 characters, questions 8%" is
  * a target that does not move when the model behind it changes.
  */
-export function VoiceSection({ index, agentId }: { index: number; agentId: string }) {
+export function VoiceSection({
+  index,
+  agentId,
+  compact,
+}: {
+  index: number;
+  agentId: string;
+  compact?: boolean;
+}) {
   const { data, loading, reload } = useResource<VoiceData>(`/api/agents/${agentId}/voice`);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +110,7 @@ export function VoiceSection({ index, agentId }: { index: number; agentId: strin
 
   return (
     <Section
+      compact={compact}
       id="voice"
       index={index}
       eyebrow="Voice"

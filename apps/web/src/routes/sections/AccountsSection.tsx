@@ -15,11 +15,13 @@ export function AccountsSection({
   agentId,
   accounts,
   onChanged,
+  compact,
 }: {
   index: number;
   agentId: string;
   accounts: AgentAccountRow[];
   onChanged: () => void;
+  compact?: boolean;
 }) {
   const [openAccountId, setOpenAccountId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -58,6 +60,7 @@ export function AccountsSection({
 
   return (
     <Section
+      compact={compact}
       id="accounts"
       index={index}
       eyebrow="Accounts"

@@ -46,11 +46,13 @@ export function IntelligenceSection({
   agentId,
   models,
   onChanged,
+  compact,
 }: {
   index: number;
   agentId: string;
   models: ModelConfig[];
   onChanged: () => void;
+  compact?: boolean;
 }) {
   const providers = useResource<{ items: ProviderCredential[] }>('/api/providers');
   const [editing, setEditing] = useState<(typeof ROLES)[number]['role'] | null>(null);
@@ -125,6 +127,7 @@ export function IntelligenceSection({
 
   return (
     <Section
+      compact={compact}
       id="intelligence"
       index={index}
       eyebrow="Intelligence"

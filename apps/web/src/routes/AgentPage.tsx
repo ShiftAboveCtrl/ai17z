@@ -304,7 +304,7 @@ export function AgentPage() {
 
       {mode === 'easy' && (
         <div className="mx-auto max-w-3xl px-6 pb-8 sm:px-10">
-          <EasyAgentView agent={data} />
+          <EasyAgentView agent={data} onChanged={reload} />
         </div>
       )}
 
