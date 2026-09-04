@@ -166,12 +166,17 @@ Invoke-Native npm @('run', 'migrate') 'Migrations failed. The database is unchan
 
 # Wait for the API rather than assuming: the first start pulls images and
 # compiles, and "it is not up yet" reads exactly like "it is broken".
+# The port the API is actually published on, not the one it listens on inside
+# the container. Hardcoding 8787 here made an installation on any other port
+# report 'The API did not answer within 90 seconds' while the API was up and
+# healthy the whole time -- the same mistake the Open line above already had.
+$apiPort = Get-EnvPort 'AI17Z_API_PORT' '8787'
 Write-Step 'Waiting for the API...'
 $deadline = (Get-Date).AddSeconds(90)
 $ready = $false
 while ((Get-Date) -lt $deadline) {
   try {
-    $response = Invoke-WebRequest -Uri 'http://localhost:8787/api/health/live' -TimeoutSec 2 -UseBasicParsing
+    $response = Invoke-WebRequest -Uri "http://localhost:$apiPort/api/health/live" -TimeoutSec 2 -UseBasicParsing
     if ($response.StatusCode -eq 200) { $ready = $true; break }
   } catch {
     Start-Sleep -Milliseconds 800
