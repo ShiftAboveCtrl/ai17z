@@ -12,6 +12,7 @@ export function Section({
   heading,
   lede,
   children,
+  compact,
 }: {
   id: string;
   index: number;
@@ -19,7 +20,30 @@ export function Section({
   heading: string;
   lede?: string;
   children: ReactNode;
+  /**
+   * The same section, without the editorial chrome.
+   *
+   * Easy Mode shows several of these on one screen, where a full-width
+   * animated heading per section would be absurd. It is the presentation that
+   * changes and nothing else: the body, its state and every request it makes
+   * are the same component, which is what stops Easy and Advanced drifting
+   * into two applications that configure the same agent differently.
+   */
+  compact?: boolean;
 }) {
+  if (compact) {
+    return (
+      <section id={id} className="scroll-mt-28">
+        <div className="mb-4">
+          <p className="eyebrow">{eyebrow}</p>
+          <h3 className="mt-2 text-lg font-light text-bone">{heading}</h3>
+          {lede && <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">{lede}</p>}
+        </div>
+        {children}
+      </section>
+    );
+  }
+
   return (
     <section id={id} className="scroll-mt-28 border-t border-ink-line py-20 sm:py-28">
       <div className="mb-12 sm:mb-16">
