@@ -1,3 +1,10 @@
+/**
+ * @release-check-fixtures
+ *
+ * Every key, address and home folder below is invented, and has to look real:
+ * this is the test for the check that finds them. The marker tells that check
+ * the same thing when it reads this file.
+ */
 import { describe, expect, it } from 'vitest';
 import {
   checkRelease,
