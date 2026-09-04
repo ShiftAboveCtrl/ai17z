@@ -43,6 +43,8 @@ export const IngestOptionsSchema = z
     onlyAgentId: z.string().uuid().optional(),
     /** Overrides the policy default for this event. */
     dryRun: z.boolean().optional(),
+    /** Record the event and stop. See `recordOnly` on IngestOptions. */
+    recordOnly: z.boolean().optional(),
   })
   .strict();
 
@@ -53,6 +55,18 @@ export interface IngestOptions {
   onlyAgentId?: string;
   /** Overrides the policy default for this event. */
   dryRun?: boolean;
+  /**
+   * Record the event and consider no agent at all.
+   *
+   * For a monitor the owner is watching for context rather than to act on. The
+   * post is kept -- it is real, it happened, and the agent may need it later to
+   * know what a conversation is about -- but nothing is queued from it.
+   *
+   * Before this, a source with mayTrigger off discarded its candidates outright
+   * while counting them as "context only", so watching an account for context
+   * produced no context, no event, and no record that anything had been seen.
+   */
+  recordOnly?: boolean;
 }
 
 /** Agent states that may receive work. PAUSED and ERROR agents stay idle. */
@@ -146,7 +160,11 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
       : options.event.remoteAuthorDisplayName,
   };
 
-  const links = options.onlyAgentId
+  // Watched for context, not to act on. The event is still recorded, because
+  // it happened and the agent may need it later to know what a thread is about.
+  const links = options.recordOnly
+    ? []
+    : options.onlyAgentId
     ? [{ agentId: options.onlyAgentId, triggerEventTypes: [event.type], actionType: 'REPLY' as ActionType }]
     : accountId
       ? (await accountsRepo.listAccountAgents(accountId)).map((link) => ({

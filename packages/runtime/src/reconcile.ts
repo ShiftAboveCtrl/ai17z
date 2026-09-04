@@ -43,9 +43,35 @@ export interface ReconcileResult {
 }
 
 /** Candidates carry a loose event type; only real ones survive. */
+/**
+ * What the monitors call a thing, translated into what the runtime calls it.
+ *
+ * The tracked_account and tracked_keyword monitors both call
+ * `harvest(ctx, 'POST', ...)`, and 'POST' is not one of EVENT_TYPES. The old
+ * fallback turned every one of them into a MENTION -- an event claiming
+ * somebody had addressed the agent when nobody had. MENTION is in the default
+ * trigger set, so watching an account quietly meant replying to everything it
+ * posted, and the inbox, which selects mentions by type, filled with strangers.
+ */
+const MONITOR_WORDS: Record<string, EventType> = {
+  // Found by watching rather than by being addressed. The enum's word for it.
+  POST: 'KEYWORD_MATCH',
+  QUOTE: 'KEYWORD_MATCH',
+};
+
 function eventType(candidate: RadarCandidate): EventType {
   const claimed = candidate.eventType.toUpperCase();
-  return (EVENT_TYPES as readonly string[]).includes(claimed) ? (claimed as EventType) : 'MENTION';
+  if ((EVENT_TYPES as readonly string[]).includes(claimed)) return claimed as EventType;
+
+  const translated = MONITOR_WORDS[claimed];
+  if (translated) return translated;
+
+  // Anything else is a monitor this build does not know about. Recorded, so it
+  // is not lost, but as a discovery rather than as a mention: an unrecognised
+  // word must never be able to claim the agent was addressed, because that is
+  // the one type that acts on its own.
+  log.warn('monitor reported an event type this build does not know', { claimed });
+  return 'KEYWORD_MATCH';
 }
 
 function toEvent(candidate: RadarCandidate): NormalizedEvent {
@@ -90,12 +116,19 @@ export async function reconcileCandidates(input: ReconcileInput): Promise<Reconc
   }
 
   for (const candidate of unique.values()) {
-    if (!input.mayTrigger) {
-      result.contextOnly += 1;
-      continue;
-    }
-
-    const outcome = await ingestNormalizedEvent({ accountId: input.accountId, event: toEvent(candidate) });
+    // A source the owner is watching for context rather than to act on. The
+    // post is still recorded -- it happened, and the agent may need it later to
+    // know what a conversation is about -- but no agent is considered.
+    //
+    // This used to `continue` here, discarding the candidate outright while
+    // counting it as "context only". Watching an account for context produced
+    // no context, no event, and no record that anything had been seen.
+    const recordOnly = !input.mayTrigger;
+    const outcome = await ingestNormalizedEvent({
+      accountId: input.accountId,
+      event: toEvent(candidate),
+      recordOnly,
+    });
 
     // Recorded whether or not the event is new: knowing that a source keeps
     // finding things another source already found is how you tell which
@@ -106,16 +139,18 @@ export async function reconcileCandidates(input: ReconcileInput): Promise<Reconc
       sourceKind: input.sourceKind,
     });
 
-    if (outcome.eventCreated) result.created += 1;
+    if (recordOnly) result.contextOnly += 1;
+    else if (outcome.eventCreated) result.created += 1;
     else result.corroborated += 1;
     result.outcomes.push(outcome);
   }
 
-  if (result.created > 0 || result.corroborated > 0) {
+  if (result.created > 0 || result.corroborated > 0 || result.contextOnly > 0) {
     log.info('reconciled radar candidates', {
       source: input.sourceKind,
       created: result.created,
       corroborated: result.corroborated,
+      contextOnly: result.contextOnly,
     });
   }
   return result;
