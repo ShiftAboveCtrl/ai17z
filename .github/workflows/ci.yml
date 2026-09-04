@@ -58,6 +58,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # What a stranger receives when they clone this. Nothing else looks at the
+      # repository that way: a secret pasted into a file, somebody's home folder
+      # in a documented path, a control character a shell escape left behind in
+      # a regex, or a .env that got tracked are all invisible to a typecheck and
+      # to a test, and two of them have already shipped from here.
+      - name: Release check
+        run: npm run release:check
+
       # Browsers for the tests that drive a synthetic page. These prove nothing
       # about Google Chrome and do not claim to -- the real-Chrome suite skips
       # loudly rather than passing where Chrome is absent.

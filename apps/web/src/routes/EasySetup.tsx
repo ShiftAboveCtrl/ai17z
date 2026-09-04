@@ -983,7 +983,7 @@ function ConnectAI({
   const visionCandidates = useMemo(
     () =>
       (providers.find((p) => p.provider === draft.providerKind)?.availableModels ?? []).filter((m) =>
-        /vision|vl|multimodal|omni|sonnet|gpt-4o|gemini/i.test(m),
+        /vision|vl\b|multimodal|omni|sonnet|gpt-4o|gemini/i.test(m),
       ),
     [providers, draft.providerKind],
   );
