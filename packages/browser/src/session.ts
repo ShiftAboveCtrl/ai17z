@@ -110,7 +110,7 @@ async function openOnce(config: SessionConfig): Promise<Entry> {
 }
 
 export function browserEnabled(): boolean {
-  return envBool('XBAM_BROWSER_ENABLED', true);
+  return envBool('AI17Z_BROWSER_ENABLED', true);
 }
 
 async function loadPlaywright() {

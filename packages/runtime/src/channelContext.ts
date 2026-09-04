@@ -7,7 +7,7 @@ import { defaultProfileDir } from '@xbam/browser';
 import type { ChannelContext } from '@xbam/channels';
 
 export function storageDir(): string {
-  return resolve(envString('XBAM_STORAGE_DIR', './storage'));
+  return resolve(envString('AI17Z_STORAGE_DIR', './storage'));
 }
 
 /** Builds the adapter context for an account, including its browser session config. */
