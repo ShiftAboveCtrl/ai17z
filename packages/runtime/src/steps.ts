@@ -37,7 +37,7 @@ import {
 import { chooseIntent, decideEngagement, readTemperature, recentRepliesTo } from './engagement';
 import { compileForJob } from './voice';
 import { loadThreadContext, observeEntities, recordNarratives } from './arcs';
-import { harvestIdeas } from './content';
+import { harvestIdeas, markIdeaUsed } from './content';
 import { research, whatToResearch } from './research';
 import { planLookups } from './plan';
 import type { JobBundle } from './loadJob';
@@ -642,6 +642,14 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       // can be offered again.
       const callbackId = (context?.meta as { callbackId?: string } | undefined)?.callbackId;
       if (callbackId) await relationshipsRepo.markCallbackUsed(callbackId).catch(() => undefined);
+    }
+
+    // A post that went out spends the idea it came from, immediately, so the
+    // backlog and the history are right without waiting for a sweep. The
+    // reconciler covers the case where this line never runs.
+    if (result.status !== 'DRY_RUN') {
+      const ideaId = (context?.meta as { ideaId?: string } | undefined)?.ideaId;
+      if (ideaId) await markIdeaUsed(bundle.agent.id, ideaId, job.id).catch(() => undefined);
     }
 
     // Whether this exchange left something worth saying on its own later.

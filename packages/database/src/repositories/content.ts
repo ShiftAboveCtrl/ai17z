@@ -13,6 +13,12 @@ export interface IdeaRow {
   status: string;
   usedAt: string | null;
   createdAt: string;
+  /** The job currently drafting it, or the one that last tried. */
+  jobId: string | null;
+  /** How many times a post from this idea was attempted and not published. */
+  attempts: number;
+  /** Why the last attempt produced nothing, in words. */
+  lastError: string;
 }
 
 export async function addIdea(input: {
@@ -75,6 +81,33 @@ export async function counts(agentId: string): Promise<Record<string, number>> {
  * Claimed by moving it to drafting in the same statement, so two scheduled
  * posts cannot pick up the same thought.
  */
+/**
+ * How many points a harvested idea loses per day.
+ *
+ * An idea comes from something that happened, so it is worth less the further
+ * that thing recedes: "somebody asked about the launch" is a good post the same
+ * week and an odd one a month later. Five a day means a 60 turns into a 30 in
+ * under a week, which is roughly how long a conversation stays current.
+ *
+ * Nothing an owner typed decays. That is a decision, not an observation, and it
+ * waits until it is used.
+ */
+const DECAY_PER_DAY = 5;
+
+/**
+ * How long a harvested idea stays in the backlog at all.
+ *
+ * Past this it is set aside rather than left to sit at a score that will never
+ * win. Fourteen days is after decay has taken any realistic score below the
+ * floor, so this is a tidy-up rather than a second, competing rule.
+ */
+export const IDEA_SHELF_LIFE_DAYS = 14;
+
+/** The decayed score, as SQL, for ordering and for showing the owner. */
+const EFFECTIVE_SCORE = `CASE WHEN source = 'you' THEN score
+       ELSE greatest(0, score - (extract(epoch FROM (now() - created_at)) / 86400) * ${DECAY_PER_DAY})
+  END`;
+
 export async function claimBestIdea(agentId: string): Promise<IdeaRow | null> {
   return mapRow<IdeaRow>(
     await queryOne(
@@ -82,7 +115,11 @@ export async function claimBestIdea(agentId: string): Promise<IdeaRow | null> {
         WHERE id = (
           SELECT id FROM content_ideas
            WHERE agent_id = $1 AND status = 'unused'
-           ORDER BY score DESC, created_at
+           -- Newest first among equals. The old ordering was created_at
+           -- ascending, so an agent worked through its backlog oldest thought
+           -- first and the very first thing it ever posted was the stalest
+           -- thing it had.
+           ORDER BY (${EFFECTIVE_SCORE}) DESC, created_at DESC
            LIMIT 1 FOR UPDATE SKIP LOCKED
         )
         RETURNING *`,
@@ -129,4 +166,113 @@ export async function similarExists(agentId: string, summary: string): Promise<b
     [agentId, summary.slice(0, 500)],
   );
   return (row?.n ?? 0) > 0;
+}
+
+
+/** Records which job took an idea, so the reconciler can ask that job how it went. */
+export async function attachJob(agentId: string, ideaId: string, jobId: string): Promise<void> {
+  await query('UPDATE content_ideas SET job_id = $3, updated_at = now() WHERE id = $1 AND agent_id = $2', [
+    ideaId,
+    agentId,
+    jobId,
+  ]);
+}
+
+export interface IdeaReconciliation {
+  /** Put back in the backlog, because nothing was published from them. */
+  released: number;
+  /** Given up on after too many attempts, so they stop blocking the queue. */
+  discarded: number;
+  /** Confirmed used, where the job published but the learn step did not record it. */
+  used: number;
+}
+
+/**
+ * Brings claimed ideas back into line with what their job actually did.
+ *
+ * `claimBestIdea` marks an idea 'drafting' and, before this existed, nothing
+ * ever marked it anything else. A post that hit a validator refusal, a revoked
+ * capability, a person pressing stop, or a worker that died left its idea
+ * 'drafting' for ever -- invisible to the next claim and to the owner. Every
+ * failure quietly spent one idea, and an agent whose backlog had drained that
+ * way reported "nothing in the idea backlog was worth posting", which was false.
+ *
+ * A reconciler rather than a hook on each ending, because there are five
+ * endings and the one that matters most -- the worker died -- has no code
+ * running to hook. Each claimed idea names its job; this asks that job.
+ *
+ * `staleMs` covers the gap between claiming an idea and creating its job. Only
+ * a crash lands there, so it needs to be longer than that window and nothing
+ * else.
+ */
+export async function reconcileDrafting(staleMs = 10 * 60_000, maxAttempts = 3): Promise<IdeaReconciliation> {
+  const seconds = Math.max(1, Math.round(staleMs / 1000));
+
+  // Published. Normally the learn step has already done this; a job that
+  // executed and then failed to record it would otherwise hold the idea open.
+  const used = await query(
+    `UPDATE content_ideas i SET status = 'used', used_job_id = i.job_id, used_at = now(), updated_at = now()
+       FROM jobs j
+      WHERE i.status = 'drafting' AND i.job_id = j.id AND j.status = 'EXECUTED'
+      RETURNING i.id`,
+  );
+
+  // A rehearsal said nothing, so it costs the idea nothing. Not an attempt.
+  const rehearsed = await query(
+    `UPDATE content_ideas i SET status = 'unused', job_id = NULL, updated_at = now()
+       FROM jobs j
+      WHERE i.status = 'drafting' AND i.job_id = j.id AND j.status = 'DRY_RUN_COMPLETED'
+      RETURNING i.id`,
+  );
+
+  // Ended without publishing. Charge one attempt and say why.
+  const failed = await query<{ id: string; attempts: number }>(
+    `UPDATE content_ideas i
+        SET attempts = i.attempts + 1,
+            last_error = coalesce(nullif(j.last_error, ''), j.error_class, 'The post did not go out.'),
+            status = 'unused', job_id = NULL, updated_at = now()
+       FROM jobs j
+      WHERE i.status = 'drafting' AND i.job_id = j.id
+        AND j.status IN ('PERMANENT_FAILURE', 'CANCELLED')
+      RETURNING i.id, i.attempts`,
+  );
+
+  // Claimed, then the worker died before it could create the job. There is no
+  // job to ask, so age is the only signal -- and only a crash lands here.
+  const stranded = await query(
+    `UPDATE content_ideas SET status = 'unused', updated_at = now()
+      WHERE status = 'drafting' AND job_id IS NULL
+        AND updated_at < now() - make_interval(secs => $1)
+      RETURNING id`,
+    [seconds],
+  );
+
+  // An idea that cannot be published keeps winning the claim -- the scheduler
+  // takes the highest score every time -- so it would block everything behind
+  // it for ever. After enough tries it is set aside, with its reason kept.
+  const discarded = await query(
+    `UPDATE content_ideas SET status = 'discarded', updated_at = now()
+      WHERE status = 'unused' AND attempts >= $1
+      RETURNING id`,
+    [maxAttempts],
+  );
+
+  // And harvested ideas nobody used before they stopped being current. An
+  // owner's own idea never expires: that is a decision waiting its turn.
+  const expired = await query(
+    `UPDATE content_ideas
+        SET status = 'discarded',
+            last_error = 'Nobody used it while it was still current.',
+            updated_at = now()
+      WHERE status = 'unused' AND source <> 'you'
+        AND created_at < now() - make_interval(days => $1)
+      RETURNING id`,
+    [IDEA_SHELF_LIFE_DAYS],
+  );
+
+  return {
+    released: rehearsed.length + failed.length + stranded.length,
+    discarded: discarded.length + expired.length,
+    used: used.length,
+  };
 }
