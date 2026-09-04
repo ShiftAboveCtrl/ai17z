@@ -300,6 +300,24 @@ export function decideEngagement(input: ReplyValueInput): EngagementVerdict {
         factors,
       };
     }
+    // A watched keyword matches on one word, often in a post about something
+    // else entirely -- which is how a crypto account ends up replying to a
+    // stranger's football post. Off-topic already costs 30 points, but a
+    // deduction can be outweighed and this is a rule rather than a weight.
+    //
+    // Only a rule when there is something to check against: an agent with no
+    // topics has not said what it follows, and refusing everything would be
+    // reading that silence as "nothing".
+    const topics = input.topics ?? [];
+    if (outreach.requireTopicMatch && topics.length > 0 && !touchesTopics(input.text, topics)) {
+      return {
+        decision: 'IGNORE',
+        value,
+        reason: 'Nobody asked, and this is not about anything this agent follows.',
+        factors,
+      };
+    }
+
     if (value < outreach.minimumValue) {
       return {
         decision: 'IGNORE',
