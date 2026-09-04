@@ -28,6 +28,7 @@ import {
   liveStatus,
   preflightEnabling,
   toolReadiness,
+  toolSupply,
   tryMessage,
   withToolAllowed,
 } from '@xbam/runtime';
@@ -961,7 +962,13 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       // out "enabled but blocked" for itself and phrase it badly.
       return {
         items,
-        readiness: items.map((tool) => toolReadiness({ key: tool.key, name: tool.name, enabled: tool.enabled }, allowed)),
+        readiness: items.map((tool) => ({
+          ...toolReadiness({ key: tool.key, name: tool.name, enabled: tool.enabled }, allowed),
+          // What is actually behind it. "Ready" says the two switches are on;
+          // this says whether anything uses it, which is a different question
+          // and the one that was never answered.
+          ...toolSupply(tool.key),
+        })),
       };
     }),
   );
@@ -995,7 +1002,13 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const allowed = await allowedTools(agent.id);
       return {
         items,
-        readiness: items.map((tool) => toolReadiness({ key: tool.key, name: tool.name, enabled: tool.enabled }, allowed)),
+        readiness: items.map((tool) => ({
+          ...toolReadiness({ key: tool.key, name: tool.name, enabled: tool.enabled }, allowed),
+          // What is actually behind it. "Ready" says the two switches are on;
+          // this says whether anything uses it, which is a different question
+          // and the one that was never answered.
+          ...toolSupply(tool.key),
+        })),
       };
     }),
   );
