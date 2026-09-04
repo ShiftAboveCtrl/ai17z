@@ -7,8 +7,8 @@ whenever the execution state materially changes.
 
 - Path: `C:\Users\ta0as\OneDrive\Desktop\XBAM`
 - Branch: `main`
-- Current commit: `d6bec7f`
-- Unpushed commits: 33 (deliberate; the release state is not coherent yet)
+- Current commit: `1773282`
+- Unpushed commits: 41 (deliberate; the release state is not coherent yet)
 
 ### Ports: this checkout owns the defaults
 
@@ -77,9 +77,16 @@ recovery, watchdog, tab reconciliation
 
 ## Current exact task
 
-§59-70 is done. Begin §76-91: supervisor, desktop launcher, tray, restart,
-installer, updates, release flow. §82 (code signing) is user-blocked on a
-certificate; everything around it is not.
+§76-91 in progress. Done so far: the worker component in health, the supervisor
+(process supervision plus a heartbeat watchdog), restart, update, and a
+launcher with a Start Menu entry.
+
+Left in §76-91: the release flow -- version stamping, checksums, tags, and a
+release-cleanliness check. No tray application; the Start Menu launcher covers
+what a tray would have, and a tray needs a native shell nothing else here
+requires. §82 (code signing) stays user-blocked on a certificate.
+
+Then §92-113, then §114+.
 
 What §59-70 came to, for the record. The posting pipeline itself was already
 complete and correct end to end; everything broken sat either side of it:
@@ -134,6 +141,11 @@ None. Working tree clean at `67d562b`.
   policy alone decides whether KEYWORD_MATCH triggers; nothing is kept in sync.
 - A setting nothing reads is a capability the product does not have. Check for
   a code path before shipping a control.
+- A process being alive is not a worker running. `tsx watch` kept a dead
+  worker's process up; the heartbeat is the only thing that tells them apart.
+- Never hardcode a port in a script. Three separate instances so far: the start
+  script's readiness poll, its Open line, and a doctor remedy.
+- Ask whether an operation can succeed before stopping anything for it.
 
 ## Known defects still open
 
@@ -148,8 +160,7 @@ None. Working tree clean at `67d562b`.
 
 ## Test baseline
 
-- Last full run at `7379b11`: 1241 passed, 117 files, 0 failed (plus 12 in
-  outreach.test.ts since)
+- Last full run at `8c5c87d`: 1265 passed, 0 failed
 - Typecheck: clean (verify by exit code, never by grepping for "error TS" —
   tsc colourises between the words)
 - Command: `npm test` (the .env default is now the right database)
