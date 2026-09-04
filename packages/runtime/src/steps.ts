@@ -47,6 +47,8 @@ import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
 
+import { capResearch } from './spending';
+
 const log = createLogger('steps');
 
 /** Rebuilds the NormalizedEvent shape the adapter expects from the stored row. */
@@ -1473,7 +1475,20 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
     links,
     deterministic: byRules,
   });
-  const lookups = plan.lookups;
+  // The owner's cap on how many lookups one message may cause.
+  //
+  // Applied after the plan rather than inside it: whoever decided what was
+  // worth looking up put the most important first, so trimming the tail keeps
+  // the best of a plan that was too ambitious rather than discarding it.
+  const researchCap = bundle.policy.budget.maxResearchCallsPerEvent;
+  const lookups = capResearch(plan.lookups, researchCap);
+  if (plan.lookups.length > lookups.length) {
+    log.info('trimmed the research plan to the configured limit', {
+      jobId: job.id,
+      planned: plan.lookups.length,
+      allowed: researchCap,
+    });
+  }
 
   // The answer is in the picture and the agent cannot see pictures.
   //

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_POLICY, EasySetup, type PolicyConfig } from '@xbam/shared/contracts';
+import { DEFAULT_POLICY, EasySetup, PolicyConfig } from '@xbam/shared/contracts';
 import { postIntervalSeconds, readEasyView, toCadence, toPersona, toPolicy, toRadarSourceKinds } from '@xbam/runtime';
 
 /**
@@ -351,5 +351,37 @@ describe('reading an agent back into Easy Mode', () => {
     expect(notes).not.toContain('Japanese');
     expect(notes).toContain('Custom instructions');
     expect(notes).toContain('prohibited behaviour');
+  });
+});
+
+/**
+ * An Easy Mode save must never overwrite a setting it does not show. Spending
+ * ceilings have no Easy control, so they must survive a round trip and be
+ * reported rather than silently kept.
+ */
+describe('spending ceilings set in Advanced', () => {
+  it('survive an Easy Mode save', () => {
+    const before = PolicyConfig.parse({
+      ...DEFAULT_POLICY,
+      budget: { ...DEFAULT_POLICY.budget, maxModelCallsPerDay: 40, maxCostUsdPerDay: 2.5 },
+    });
+    const after = toPolicy(setup, before);
+    expect(after.budget.maxModelCallsPerDay).toBe(40);
+    expect(after.budget.maxCostUsdPerDay).toBe(2.5);
+  });
+
+  it('are named rather than quietly kept', () => {
+    const policy = PolicyConfig.parse({
+      ...DEFAULT_POLICY,
+      budget: { ...DEFAULT_POLICY.budget, maxCostUsdPerDay: 2.5 },
+    });
+    const view = readEasyView({
+      persona: toPersona(setup),
+      policy,
+      postIntervalSeconds: null,
+      radarSourceKinds: toRadarSourceKinds(setup),
+    });
+    expect(view.exact).toBe(false);
+    expect(view.beyondEasyMode.join(' ')).toContain('2.5 USD a day');
   });
 });

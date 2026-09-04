@@ -39,3 +39,4 @@ export * from './followUp';
 export * from './playground';
 export * from './portableAgent';
 export * from './killSwitch';
+export * from './spending';

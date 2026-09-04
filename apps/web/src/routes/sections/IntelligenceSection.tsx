@@ -62,6 +62,8 @@ export function IntelligenceSection({
   const [temperature, setTemperature] = useState('');
   const [maxTokens, setMaxTokens] = useState('');
   const [maxRetries, setMaxRetries] = useState('');
+  const [priceIn, setPriceIn] = useState('');
+  const [priceOut, setPriceOut] = useState('');
   const [reasoning, setReasoning] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +75,8 @@ export function IntelligenceSection({
     setTemperature(existing?.parameters.temperature != null ? String(existing.parameters.temperature) : '');
     setMaxTokens(existing?.parameters.maxTokens != null ? String(existing.parameters.maxTokens) : '');
     setMaxRetries(existing?.parameters.maxRetries != null ? String(existing.parameters.maxRetries) : '');
+    setPriceIn(existing?.parameters.costPer1kPromptUsd != null ? String(existing.parameters.costPer1kPromptUsd) : '');
+    setPriceOut(existing?.parameters.costPer1kCompletionUsd != null ? String(existing.parameters.costPer1kCompletionUsd) : '');
     setReasoning(typeof existing?.parameters.reasoningEffort === 'string' ? existing.parameters.reasoningEffort : '');
     setError(null);
     setEditing(role);
@@ -88,6 +92,10 @@ export function IntelligenceSection({
       if (maxTokens.trim()) parameters.maxTokens = Number(maxTokens);
       if (maxRetries.trim()) parameters.maxRetries = Number(maxRetries);
       if (reasoning) parameters.reasoningEffort = reasoning;
+      // Prices are what make a spending limit enforceable. Without them a
+      // call is recorded with no cost and a USD cap can never fire.
+      if (priceIn.trim()) parameters.costPer1kPromptUsd = Number(priceIn);
+      if (priceOut.trim()) parameters.costPer1kCompletionUsd = Number(priceOut);
       await put(`/api/agents/${agentId}/models`, { role: editing, providerCredentialId: providerId, model: model.trim(), parameters });
       setEditing(null);
       onChanged();
@@ -234,6 +242,19 @@ export function IntelligenceSection({
               <input id="mmax" className="field" inputMode="numeric" value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder={editing === 'vision' ? '1500' : '300'} />
             </Field>
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field
+              label="Price per 1k input tokens"
+              htmlFor="mpricein"
+              hint="In USD, as the provider lists it. Leave blank and calls are not costed."
+            >
+              <input id="mpricein" className="field" inputMode="decimal" value={priceIn} onChange={(e) => setPriceIn(e.target.value)} placeholder="0.003" />
+            </Field>
+            <Field label="Price per 1k output tokens" htmlFor="mpriceout" hint="Usually the higher of the two.">
+              <input id="mpriceout" className="field" inputMode="decimal" value={priceOut} onChange={(e) => setPriceOut(e.target.value)} placeholder="0.015" />
+            </Field>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <Field label="Attempts" htmlFor="mretry" hint="Tries against this provider before the fallback takes over.">
               <input id="mretry" className="field" inputMode="numeric" value={maxRetries} onChange={(e) => setMaxRetries(e.target.value)} placeholder="2" />

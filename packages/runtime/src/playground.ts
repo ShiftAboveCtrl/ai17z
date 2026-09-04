@@ -15,10 +15,11 @@
  * on this path at all.
  */
 import type { ModelRole, PersonaVersion, PolicyConfig } from '@xbam/shared/contracts';
-import { createLogger } from '@xbam/shared';
+import { PipelineError, createLogger } from '@xbam/shared';
 import { agents as agentsRepo, prompts as promptsRepo } from '@xbam/database';
 import { assemblePrompt } from '@xbam/prompts';
 import { generate } from '@xbam/models';
+import { checkBudget } from './policyGate';
 import { validateOutput } from './validator';
 import { compileForJob } from './voice';
 
@@ -110,6 +111,12 @@ export async function tryMessage(request: PlaygroundRequest): Promise<Playground
     memoryCharBudget: policy.memory.retrieval.totalCharBudget,
     actionType: 'REPLY',
   });
+
+  // The playground spends real money at a real provider, so it is subject to the
+  // same budget as everything else. Skipping it here would make "try it a few
+  // times" the one way to walk past a limit somebody set deliberately.
+  const budget = await checkBudget(agent.id, policy);
+  if (!budget.allow) throw PipelineError.permanent(budget.reason ?? 'budget', budget.message ?? 'Over budget.');
 
   const generated = await generate({
     agentId: agent.id,

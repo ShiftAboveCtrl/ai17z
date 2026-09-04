@@ -88,6 +88,24 @@ export async function getModelCall(id: string): Promise<ModelCallRecord | null> 
   return mapRow<ModelCallRecord>(await queryOne(`SELECT ${MODEL_CALL_COLUMNS} FROM model_calls WHERE id = $1`, [id]));
 }
 
+/**
+ * How many of this agent's calls today carried a price at all.
+ *
+ * A cost is recorded only where somebody configured what the model charges, so
+ * a USD limit set against models with no rates is a limit that can never fire.
+ * This is what lets the screen say so instead of showing 0.00 of 5.00 forever.
+ */
+export async function costCoverage(agentId: string): Promise<{ calls: number; priced: number }> {
+  const row = await queryOne<{ calls: number; priced: number }>(
+    `SELECT count(*)::int AS calls,
+            count(estimated_cost_usd)::int AS priced
+       FROM model_calls
+      WHERE agent_id = $1 AND created_at > date_trunc('day', now())`,
+    [agentId],
+  );
+  return { calls: Number(row?.calls ?? 0), priced: Number(row?.priced ?? 0) };
+}
+
 export async function spendToday(agentId: string): Promise<number> {
   const row = await queryOne<{ total: number | null }>(
     `SELECT coalesce(sum(estimated_cost_usd), 0) AS total FROM model_calls
@@ -140,4 +158,14 @@ export async function listAgentTrace(agentId: string, limit = 100): Promise<Trac
       [agentId, limit],
     ),
   );
+}
+
+/** How many model calls this agent has made since a moment. */
+export async function callsSince(agentId: string, since: 'day' | 'month'): Promise<number> {
+  const row = await queryOne<{ n: number }>(
+    `SELECT count(*)::int AS n FROM model_calls
+      WHERE agent_id = $1 AND created_at > date_trunc($2, now())`,
+    [agentId, since],
+  );
+  return row?.n ?? 0;
 }

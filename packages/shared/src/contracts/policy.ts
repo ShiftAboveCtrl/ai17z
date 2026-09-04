@@ -171,8 +171,36 @@ export const SafetyPolicy = z.object({
 });
 export type SafetyPolicy = z.infer<typeof SafetyPolicy>;
 
+/**
+ * What an agent may spend, in the units that can actually be measured.
+ *
+ * The money cap came first and cannot fire on its own: of 137 real model calls
+ * in a live installation, not one carried a cost, because most providers do not
+ * return one and AI17Z will not invent pricing. A limit that silently never
+ * applies is worse than no limit, because somebody sets it and stops worrying.
+ *
+ * So the counts are the real control and the money cap is the optional extra
+ * that works when a provider reports enough to compute it. Requests are always
+ * countable; dollars are not.
+ */
 export const BudgetPolicy = z.object({
   maxModelCallsPerJob: z.number().int().min(1).max(50).default(4),
+  /** Across everything this agent does. Null means no limit. */
+  maxModelCallsPerDay: z.number().int().min(1).max(100_000).nullable().default(null),
+  maxModelCallsPerMonth: z.number().int().min(1).max(1_000_000).nullable().default(null),
+  /**
+   * How many lookups one incoming message may cause.
+   *
+   * Separate from the model call cap because research is the slow, expensive
+   * path -- it averaged 636 seconds before it was bounded -- and an agent that
+   * answers one question with nine searches is wrong in a different way from
+   * one that thinks too hard.
+   */
+  maxResearchCallsPerEvent: z.number().int().min(0).max(20).default(3),
+  /**
+   * Only applies where a provider reports enough to compute a cost. Left null
+   * by default rather than set to a number that would never be reached.
+   */
   maxCostUsdPerDay: z.number().min(0).max(10_000).nullable().default(null),
 });
 export type BudgetPolicy = z.infer<typeof BudgetPolicy>;

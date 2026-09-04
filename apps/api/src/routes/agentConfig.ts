@@ -19,6 +19,7 @@ import {
   collectDiagnostics,
   compareModels,
   describeDuplicateScope,
+  describeSpending,
   exportAgent,
   importAgent,
   liveStatus,
@@ -113,6 +114,23 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         data: { version: version.version, automation: body.config.automation.mode },
       });
       return version;
+    }),
+  );
+
+  /**
+   * What this agent has spent and whether each limit on it can fire.
+   *
+   * Read-only. The limits themselves are policy and are saved with the rest of
+   * it, so there is no second place to change them and no chance of the two
+   * disagreeing.
+   */
+  app.get(
+    '/api/agents/:id/spending',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const policy = await agentsRepo.getActivePolicy(agent.id);
+      return await describeSpending(agent.id, PolicyConfig.parse(policy?.config ?? {}));
     }),
   );
 

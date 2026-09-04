@@ -333,6 +333,12 @@ export function readEasyView(input: EasyViewInput): EasyView {
   if (policy.output.bannedPhrases.length > 0) {
     beyond.push(`${policy.output.bannedPhrases.length} banned phrase(s) are set.`);
   }
+  if (policy.budget.maxModelCallsPerDay !== null || policy.budget.maxModelCallsPerMonth !== null) {
+    beyond.push('A ceiling on model calls a day or a month is set. Easy Mode does not show it and will not change it.');
+  }
+  if (policy.budget.maxCostUsdPerDay !== null) {
+    beyond.push(`A spending limit of ${policy.budget.maxCostUsdPerDay} USD a day is set. Easy Mode does not show it.`);
+  }
   if (policy.tools.allowed.length > 0) beyond.push(`${policy.tools.allowed.length} tool(s) are enabled.`);
   if (persona.styleExamples.length > 50) {
     beyond.push(`${persona.styleExamples.length} style examples exist; Easy Mode shows the first 50.`);
