@@ -14,7 +14,7 @@ import {
   SetModelConfigInput,
   IN_FLIGHT_JOB_STATUSES,
 } from '@xbam/shared/contracts';
-import { ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import { collectDiagnostics, liveStatus, preflightEnabling, toolReadiness, withToolAllowed } from '@xbam/runtime';
 import {
   accounts as accountsRepo,
@@ -30,6 +30,8 @@ import {
   pipelines as pipelinesRepo,
   providers as providersRepo,
   type UserRow,
+  learned as learnedRepo,
+  memories as memoriesRepo,
   query,
 } from '@xbam/database';
 import { compileForJob, fingerprintFor, refreshFingerprint, validateGraph } from '@xbam/runtime';
@@ -594,6 +596,66 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         request,
       );
       return contentRepo.addIdea({ agentId: agent.id, ...body, source: 'you' });
+    }),
+  );
+
+  // Everything the agent has learned, and where each piece came from.
+  //
+  // Read across memory, relationships, stances, entities and commitments rather
+  // than from a store of its own: each is already written by the part of the
+  // runtime that owns it, and a parallel copy would drift.
+  app.get(
+    '/api/agents/:id/learned',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      return { items: await learnedRepo.whatItLearned(agent.id) };
+    }),
+  );
+
+  // Forgetting one thing.
+  //
+  // Delegated to each store's own delete rather than a generic one: a stance
+  // and a memory are not the same row and must not be removed by the same
+  // statement, and every one of these is already scoped by agent in its SQL.
+  app.delete(
+    '/api/agents/:id/learned/:kind/:itemId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const kind = String(params(request).kind ?? '').toUpperCase();
+      const itemId = params(request).itemId!;
+
+      const removed = await (async () => {
+        switch (kind) {
+          case 'MEMORY': {
+            const memory = await memoriesRepo.getMemory(itemId);
+            if (!memory || memory.agentId !== agent.id) return false;
+            await memoriesRepo.deleteMemory(memory.id);
+            return true;
+          }
+          case 'COMMITMENT':
+            return stancesRepo.resolveCommitment(agent.id, itemId, 'CANCELLED');
+          case 'STANCE': {
+            const stance = await stancesRepo.get(itemId);
+            if (!stance || stance.agentId !== agent.id) return false;
+            await stancesRepo.update(stance.id, { status: 'RETIRED' });
+            return true;
+          }
+          default:
+            throw new BadRequestError(
+              // "a entity" reads as a bug in the sentence itself, which is a
+              // poor advertisement for a message about correctness.
+              `There is no way to forget ${/^[AEIOU]/.test(kind) ? 'an' : 'a'} ${kind.toLowerCase()} on its own. ` +
+                'Relationships and entities are ' +
+                'records of what happened rather than opinions, and are removed with the conversation they came from.',
+            );
+        }
+      })();
+
+      if (!removed) throw new NotFoundError('That');
+      await ops.audit({ actorUserId: user.id, action: 'learned.forgotten', entityType: kind.toLowerCase(), entityId: itemId });
+      return { forgotten: true };
     }),
   );
 
