@@ -1,4 +1,5 @@
 import { createLogger, errorMessage, refersToSomethingElse } from '@xbam/shared';
+import { describeToken, mergeReferences, parseTokenReference, resolveToken } from './token';
 
 const log = createLogger('research');
 
@@ -758,18 +759,50 @@ function describeAge(createdAtMs: number): string {
 /** Supplied by the caller, because searching needs a browser and this is pure. */
 export type SearchFn = (query: string) => Promise<Finding[]>;
 
-export async function research(
-  lookups: Lookup[],
-  options: { search?: SearchFn } = {},
-): Promise<ResearchResult> {
+export interface ResearchOptions {
+  search?: SearchFn;
+  /**
+   * Everything the conversation said about which token is meant: the mention,
+   * the post above it, the quoted post.
+   *
+   * A ticker on its own is not an identity, and the chain is usually mentioned
+   * a post earlier than the ticker is.
+   */
+  tokenContext?: string;
+  /** Addresses this agent was given, which settle a question about its own token. */
+  knownAddresses?: readonly string[];
+}
+
+export async function research(lookups: Lookup[], options: ResearchOptions = {}): Promise<ResearchResult> {
   const findings: Finding[] = [];
   const failed: { query: string; reason: string }[] = [];
 
   for (const lookup of lookups) {
     if (lookup.kind === 'token') {
-      const found = await lookupToken(lookup.query);
-      if (found) findings.push(found);
-      else failed.push({ query: lookup.query, reason: 'No liquid pair found for that token.' });
+      // Resolve rather than look up: what came back has to be the token that
+      // was meant, and "several tokens use this ticker" is a real answer.
+      const reference = mergeReferences(
+        parseTokenReference(lookup.query),
+        parseTokenReference(options.tokenContext ?? ''),
+      );
+      const resolution = await resolveToken(reference, { knownAddresses: options.knownAddresses });
+
+      if (resolution.status === 'NOT_FOUND') {
+        failed.push({ query: lookup.query, reason: resolution.how });
+        continue;
+      }
+      findings.push({
+        kind: 'token',
+        query: lookup.query,
+        source: 'DexScreener',
+        title:
+          resolution.status === 'AMBIGUOUS'
+            ? `${lookup.query}: more than one token`
+            : `${resolution.facts!.name}${resolution.facts!.symbol ? ` $${resolution.facts!.symbol}` : ''}`,
+        summary: describeToken(resolution),
+        url: resolution.facts?.url ?? null,
+        retrievedAt: new Date().toISOString(),
+      });
       continue;
     }
 
