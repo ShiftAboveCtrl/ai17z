@@ -1,6 +1,7 @@
 import { PipelineError } from '@xbam/shared';
 import type { ProviderKind } from '@xbam/shared/contracts';
 import { postJson } from '../http';
+import { verdictFromError, verdictFromModels } from '../providerState';
 import type { ProviderAdapter, ProviderHealth, ProviderRequest, ProviderResponse } from '../types';
 import type { ChatMessage } from '@xbam/shared/contracts';
 
@@ -134,9 +135,14 @@ export function createOpenAiCompatibleAdapter(
           timeoutMs: Math.min(request.timeoutMs, 15_000),
         });
         const models = (data.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id));
-        return { ok: true, detail: `${models.length} models available`, models };
+        const verdict = verdictFromModels(label, models);
+        return { ok: true, detail: verdict.detail, models, verdict };
       } catch (error) {
-        return { ok: false, detail: (error as Error).message };
+        // The status was known and then discarded here, which is why a rejected
+        // key, an outage and a rate limit all reached the interface as the same
+        // red dot. They need different things done about them.
+        const verdict = verdictFromError(error, label);
+        return { ok: false, detail: verdict.detail, models: [], verdict };
       }
     },
   };
