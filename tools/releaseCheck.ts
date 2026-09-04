@@ -60,10 +60,10 @@ const SECRET_SHAPES: { pattern: RegExp; problem: string }[] = [
 const ASSIGNED_SECRET = /^\s*(?:export\s+)?([A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*)\s*=\s*(.+)$/;
 
 /**
- * A file that says, in itself, that its credentials are invented.
+ * A file that says, in itself, that its sensitive-looking content is invented.
  *
  * Test fixtures for a secret detector have to contain things shaped like
- * secrets. The alternative -- exempting every test file -- is worse, because a
+ * secrets, and fixtures for an address detector have to contain addresses. The alternative -- exempting every test file -- is worse, because a
  * real key committed to a test is still a real key. The marker is explicit,
  * greppable, and belongs to the file rather than to this list.
  */
@@ -111,6 +111,9 @@ export function findSecrets(file: FileToCheck): Finding[] {
  * an instruction that cannot work for the reader.
  */
 export function findPersonalDetails(file: FileToCheck): Finding[] {
+  // A file that declares its data invented covers this too: a test for an
+  // address detector has to contain an address that looks real.
+  if (file.content.includes(FIXTURE_MARKER)) return [];
   const findings: Finding[] = [];
   const lines = file.content.split(/\r?\n/);
   // Not the generic ones. C:\Users\Public names nobody, and the placeholders
