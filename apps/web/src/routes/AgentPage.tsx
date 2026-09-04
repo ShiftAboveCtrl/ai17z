@@ -12,6 +12,7 @@ import { IdentitySection } from './sections/IdentitySection';
 import { AccountsSection } from './sections/AccountsSection';
 import { IntelligenceSection } from './sections/IntelligenceSection';
 import { MemorySection } from './sections/MemorySection';
+import { KnowledgeSection } from './sections/KnowledgeSection';
 import { RelationshipsSection } from './sections/RelationshipsSection';
 import { BeliefsSection } from './sections/BeliefsSection';
 import { VoiceSection } from './sections/VoiceSection';
@@ -34,6 +35,7 @@ const SECTIONS = [
   ['relationships', 'Relationships'],
   ['beliefs', 'Beliefs'],
   ['memory', 'Memory'],
+  ['knowledge', 'Knowledge'],
   ['pipeline', 'Pipeline'],
   ['tools', 'Tools'],
   ['policies', 'Policies'],
@@ -336,27 +338,28 @@ export function AgentPage() {
         <RelationshipsSection index={5} agentId={agent.id} />
         <BeliefsSection index={6} agentId={agent.id} />
         <MemorySection index={7} agentId={agent.id} counts={memoryCounts} />
+        <KnowledgeSection index={8} agentId={agent.id} />
         <PipelineSection
-          index={8}
+          index={9}
           pipeline={pipeline}
           triggerLabel={channel ? `When someone mentions ${agent.name}.` : `When ${agent.name} receives an event.`}
         />
         <ToolsSection
-          index={9}
+          index={10}
           agentId={agent.id}
           tools={tools}
           allowedKeys={policy?.config.tools.allowed ?? []}
           onChanged={reload}
         />
         <PoliciesSection
-          index={10}
+          index={11}
           agentId={agent.id}
           policy={policy?.config ?? null}
           version={policy?.version ?? 1}
           onSaved={reload}
         />
-        <BehaviourSection index={11} agentId={agent.id} />
-        <ActivitySection index={12} agentId={agent.id} />
+        <BehaviourSection index={12} agentId={agent.id} />
+        <ActivitySection index={13} agentId={agent.id} />
       </div>
       </>
       )}
