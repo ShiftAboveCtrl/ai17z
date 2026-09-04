@@ -13,10 +13,18 @@
  * nobody here has heard of yet.
  */
 import { readdir, readFile, stat } from 'node:fs/promises';
+import { readPdfText } from './pdfText';
 import { join, relative, resolve, sep, extname, basename } from 'node:path';
 
-/** What a document has to be to be read at all. */
-export const DOCUMENT_EXTENSIONS = ['.md', '.markdown', '.mdx', '.txt', '.rst', '.adoc'] as const;
+/**
+ * What a document has to be to be read at all.
+ *
+ * `.pdf` is here because that is where documentation actually lives -- a
+ * whitepaper, a spec, a datasheet. It is read through `pdfText.ts` rather than
+ * as UTF-8, and a PDF that is pictures of words is refused with a reason rather
+ * than indexed as an empty document that quietly teaches nothing.
+ */
+export const DOCUMENT_EXTENSIONS = ['.md', '.markdown', '.mdx', '.txt', '.rst', '.adoc', '.pdf'] as const;
 
 /**
  * Refused whatever the include-list says.
@@ -54,6 +62,15 @@ const SKIPPED_DIRECTORIES = new Set([
 
 /** Bigger than any prose document, and a sign of something generated. */
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * PDFs get more room, because they carry their own fonts and images.
+ *
+ * A twenty-page paper is routinely three megabytes of file and forty thousand
+ * characters of text, and refusing it under the prose limit would refuse the
+ * format for the wrong reason.
+ */
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
 
 export interface SourceFile {
   /** Absolute path on the machine doing the reading. */
@@ -176,15 +193,35 @@ export async function collectDocuments(root: string, options: CollectOptions = {
 
       const info = await stat(full).catch(() => null);
       if (!info) continue;
-      if (info.size > MAX_FILE_BYTES) {
-        refused.push({ path: shown, reason: `larger than ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB` });
+      const isPdf = extname(entry.name).toLowerCase() === '.pdf';
+      const sizeLimit = isPdf ? MAX_PDF_BYTES : MAX_FILE_BYTES;
+      if (info.size > sizeLimit) {
+        refused.push({ path: shown, reason: `larger than ${Math.round(sizeLimit / 1024 / 1024)}MB` });
         continue;
       }
 
-      const text = await readFile(full, 'utf8').catch(() => null);
-      if (text === null) {
-        refused.push({ path: shown, reason: 'could not be read as text' });
-        continue;
+      let text: string | null;
+      if (isPdf) {
+        const bytes = await readFile(full).catch(() => null);
+        if (bytes === null) {
+          refused.push({ path: shown, reason: 'could not be read' });
+          continue;
+        }
+        const extracted = await readPdfText(new Uint8Array(bytes));
+        if (extracted.refusal) {
+          // Named rather than skipped. A folder of scanned PDFs indexing to
+          // nothing in silence is how somebody believes their agent has read
+          // documentation it has never seen.
+          refused.push({ path: shown, reason: extracted.refusal });
+          continue;
+        }
+        text = extracted.text;
+      } else {
+        text = await readFile(full, 'utf8').catch(() => null);
+        if (text === null) {
+          refused.push({ path: shown, reason: 'could not be read as text' });
+          continue;
+        }
       }
       if (!text.trim()) continue;
 
