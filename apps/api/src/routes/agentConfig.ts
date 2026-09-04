@@ -15,7 +15,14 @@ import {
   IN_FLIGHT_JOB_STATUSES,
 } from '@xbam/shared/contracts';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
-import { collectDiagnostics, liveStatus, preflightEnabling, toolReadiness, withToolAllowed } from '@xbam/runtime';
+import {
+  collectDiagnostics,
+  liveStatus,
+  preflightEnabling,
+  toolReadiness,
+  tryMessage,
+  withToolAllowed,
+} from '@xbam/runtime';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -596,6 +603,36 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         request,
       );
       return contentRepo.addIdea({ agentId: agent.id, ...body, source: 'you' });
+    }),
+  );
+
+  // Trying the agent out without anybody seeing it.
+  //
+  // There is no job and no action on this path, which is the safety rather than
+  // a flag on one: every remote call in this system is made by an action
+  // belonging to a job, so the code that reaches X is not reachable from here.
+  app.post(
+    '/api/agents/:id/playground',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(
+        z.object({
+          message: z.string().trim().min(1).max(2_000),
+          fromHandle: z.string().max(80).nullable().optional(),
+          persona: z.record(z.unknown()).nullable().optional(),
+          role: z.string().max(40).optional(),
+        }),
+        request,
+      );
+
+      return tryMessage({
+        agentId: agent.id,
+        message: body.message,
+        fromHandle: body.fromHandle ?? null,
+        persona: (body.persona ?? null) as never,
+        ...(body.role ? { role: body.role as never } : {}),
+      });
     }),
   );
 
