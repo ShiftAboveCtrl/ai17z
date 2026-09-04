@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RESTART_POLICY, decideRestart } from '@xbam/shared';
+import { DEFAULT_RESTART_POLICY, HEARTBEAT_GRACE_MS, decideRestart, heartbeatIsStale } from '@xbam/shared';
 
 /**
  * The native worker is the only process that can drive a browser, and it ran
@@ -82,5 +82,45 @@ describe('deciding whether to start it again', () => {
     const decision = decideRestart({ ranForMs: DEFAULT_RESTART_POLICY.tooQuickMs + 1, code: 1 }, 4);
     expect(decision.restart).toBe(true);
     expect(decision.quickFailures).toBe(0);
+  });
+});
+
+/**
+ * A process being alive is not the same as a worker running.
+ *
+ * The failure that actually happened was quieter than a crash: a
+ * `setInterval(() => void tick())` with a `try/finally` and no `catch` raised an
+ * unhandled rejection, the worker stopped doing anything, and `tsx watch` kept
+ * the process up. Nothing exited, so nothing restarted, and the only sign was
+ * an agent that had gone quiet.
+ */
+describe('noticing a worker that is up but doing nothing', () => {
+  const presentWithinMs = 90_000;
+
+  it('sees a worker that has stopped checking in', () => {
+    expect(
+      heartbeatIsStale({ ranForMs: 30 * 60_000, lastSeenMs: 5 * 60_000, presentWithinMs }),
+    ).toBe(true);
+  });
+
+  it('leaves a worker that is checking in alone', () => {
+    expect(heartbeatIsStale({ ranForMs: 30 * 60_000, lastSeenMs: 20_000, presentWithinMs })).toBe(false);
+  });
+
+  it('gives a worker time to start before expecting anything', () => {
+    // Killing a worker that is still connecting is worse than no supervisor.
+    expect(heartbeatIsStale({ ranForMs: 5_000, lastSeenMs: 5_000, presentWithinMs })).toBe(false);
+    expect(heartbeatIsStale({ ranForMs: HEARTBEAT_GRACE_MS - 1, lastSeenMs: 10 * 60_000, presentWithinMs })).toBe(false);
+  });
+
+  it('treats "no answer" as no evidence, not as a dead worker', () => {
+    // A database that cannot be reached answers nothing, and killing a worker
+    // over an unanswered question is how a blip becomes an outage.
+    expect(heartbeatIsStale({ ranForMs: 60 * 60_000, lastSeenMs: null, presentWithinMs })).toBe(false);
+  });
+
+  it('does not fire exactly on the boundary', () => {
+    expect(heartbeatIsStale({ ranForMs: 30 * 60_000, lastSeenMs: presentWithinMs, presentWithinMs })).toBe(false);
+    expect(heartbeatIsStale({ ranForMs: 30 * 60_000, lastSeenMs: presentWithinMs + 1, presentWithinMs })).toBe(true);
   });
 });

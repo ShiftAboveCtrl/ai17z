@@ -113,3 +113,9 @@ export async function toolAvailability(): Promise<Record<string, { available: bo
   }
   return merged;
 }
+
+/** When one worker last said it was alive, or null if it never has. */
+export async function lastSeen(id: string): Promise<string | null> {
+  const row = await queryOne<{ last_seen_at: string }>('SELECT last_seen_at FROM workers WHERE id = $1', [id]);
+  return row?.last_seen_at ?? null;
+}

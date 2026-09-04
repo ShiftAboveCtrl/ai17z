@@ -115,3 +115,38 @@ export function decideRestart(
     quickFailures: failures,
   };
 }
+
+/**
+ * How long after starting before a missing heartbeat means anything.
+ *
+ * The worker announces itself once before its loop begins, so this only has to
+ * cover connecting to the database and bootstrapping. Generous on purpose: a
+ * supervisor that kills a worker still starting up is worse than no supervisor.
+ */
+export const HEARTBEAT_GRACE_MS = 90_000;
+
+/**
+ * Whether a running worker has stopped being alive in the way that matters.
+ *
+ * Exiting is the easy failure. The one that actually happened was quieter: a
+ * `setInterval(() => void tick())` with a `try/finally` and no `catch` raised an
+ * unhandled rejection, the worker stopped doing anything, and `tsx watch` kept
+ * the process up -- so nothing exited, nothing restarted, and the only sign was
+ * an agent that had gone quiet. A process being alive is not the same as a
+ * worker running, and the heartbeat is the difference.
+ *
+ * `lastSeenMs` is null when nothing is known, which is not evidence of anything:
+ * a database that cannot be reached answers nothing, and killing a worker over
+ * an unanswered question is how a blip becomes an outage.
+ */
+export function heartbeatIsStale(input: {
+  ranForMs: number;
+  lastSeenMs: number | null;
+  presentWithinMs: number;
+  graceMs?: number;
+}): boolean {
+  const grace = input.graceMs ?? HEARTBEAT_GRACE_MS;
+  if (input.ranForMs < grace) return false;
+  if (input.lastSeenMs === null) return false;
+  return input.lastSeenMs > input.presentWithinMs;
+}

@@ -22,7 +22,9 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decideRestart, type RunOutcome } from '@xbam/shared';
+import { hostname } from 'node:os';
+import { decideRestart, heartbeatIsStale, loadEnv, type RunOutcome } from '@xbam/shared';
+import { workers as workersRepo, WORKER_PRESENT_SECONDS } from '@xbam/database';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const logPath = join(root, 'storage', 'native-worker.log');
@@ -84,6 +86,29 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 
 const workerArgs = process.argv.slice(2);
 
+loadEnv();
+
+/**
+ * The worker's identity, chosen here so the supervisor can ask after it.
+ *
+ * The worker would otherwise pick its own (hostname-pid), which changes on
+ * every restart and which nothing out here could look up.
+ */
+const workerId = process.env.AI17Z_WORKER_ID || `supervised-${hostname()}-${process.pid}`;
+process.env.AI17Z_WORKER_ID = workerId;
+
+/** How long since this worker last said it was alive, or null if unknown. */
+async function sinceLastHeartbeat(): Promise<number | null> {
+  try {
+    const seen = await workersRepo.lastSeen(workerId);
+    return seen ? Date.now() - Date.parse(seen) : null;
+  } catch {
+    // A database that cannot be reached answers nothing, and killing a worker
+    // over an unanswered question is how a blip becomes an outage.
+    return null;
+  }
+}
+
 /** Runs the worker once, resolving with how it ended. */
 function runOnce(): Promise<RunOutcome> {
   return new Promise<RunOutcome>((resolve) => {
@@ -100,12 +125,38 @@ function runOnce(): Promise<RunOutcome> {
       },
     );
 
+    // A process being alive is not the same as a worker running. The failure
+    // that actually happened was an unhandled rejection under `tsx watch`: the
+    // worker stopped doing anything and the process stayed up, so nothing
+    // exited and nothing restarted. The heartbeat is the only thing that can
+    // tell the two apart.
+    const pulse = setInterval(() => {
+      void (async () => {
+        if (!child?.pid) return;
+        const lastSeenMs = await sinceLastHeartbeat();
+        if (
+          heartbeatIsStale({
+            ranForMs: Date.now() - startedAt,
+            lastSeenMs,
+            presentWithinMs: WORKER_PRESENT_SECONDS * 1000,
+          })
+        ) {
+          say(
+            `the worker process is alive but has not checked in for ${Math.round((lastSeenMs ?? 0) / 1000)}s. Restarting it.`,
+          );
+          killTree(child.pid);
+        }
+      })();
+    }, 30_000);
+
     child.on('exit', (code) => {
+      clearInterval(pulse);
       child = null;
       resolve({ ranForMs: Date.now() - startedAt, code });
     });
 
     child.on('error', (error) => {
+      clearInterval(pulse);
       child = null;
       say(`could not start the worker: ${error.message}`);
       // Treated as an immediate failure, which is what it is, so the same
