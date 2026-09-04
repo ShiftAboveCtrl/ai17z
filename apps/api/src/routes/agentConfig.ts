@@ -375,7 +375,12 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       return {
         items: await stancesRepo.listActive(agent.id),
         predictions: await stancesRepo.listPredictions(agent.id, 'OPEN', 20),
-        commitments: await stancesRepo.listCommitments(agent.id, 'OPEN', 20),
+        // Everything still live: OPEN is waiting for its moment, DUE is being
+        // followed up on right now. Showing only OPEN hid the ones in flight.
+        commitments: [
+          ...(await stancesRepo.listCommitments(agent.id, 'OPEN', 20)),
+          ...(await stancesRepo.listCommitments(agent.id, 'DUE', 20)),
+        ],
       };
     }),
   );
@@ -469,7 +474,7 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
-      const body = parseBody(z.object({ status: z.enum(['DONE', 'DROPPED']) }), request);
+      const body = parseBody(z.object({ status: z.enum(['COMPLETED', 'CANCELLED']) }), request);
       const resolved = await stancesRepo.resolveCommitment(agent.id, params(request).commitmentId!, body.status);
       if (!resolved) throw new NotFoundError('Commitment');
       return { resolved: true };

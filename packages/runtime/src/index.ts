@@ -35,3 +35,4 @@ export * from './knowledge';
 export { toolReadiness, preflightEnabling, withToolAllowed, collectDiagnostics } from '@xbam/tools';
 export * from './liveStatus';
 export * from './evidenceClass';
+export * from './followUp';

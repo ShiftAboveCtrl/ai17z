@@ -272,6 +272,26 @@ export async function resolvePrediction(agentId: string, id: string, outcome: st
 
 // ── Commitments ─────────────────────────────────────────────────────────────
 
+/** A promise the agent made, and what has become of it. */
+export interface CommitmentRow {
+  id: string;
+  agentId: string;
+  promise: string;
+  recipientHandle: string | null;
+  status: 'OPEN' | 'DUE' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
+  confidence: number;
+  dueAt: string | null;
+  jobId: string | null;
+  followupJobId: string | null;
+  conversationId: string | null;
+  sourceEventId: string | null;
+  remoteUrl: string | null;
+  attempts: number;
+  outcome: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
 export async function recordCommitment(input: {
   agentId: string;
   promise: string;
@@ -281,10 +301,15 @@ export async function recordCommitment(input: {
   dueAt?: string | null;
   jobId?: string | null;
   remoteUrl?: string | null;
-}): Promise<void> {
-  await query(
-    `INSERT INTO commitments (agent_id, promise, recipient_handle, relationship_id, confidence, due_at, job_id, remote_url)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+  conversationId?: string | null;
+  sourceEventId?: string | null;
+}): Promise<string | null> {
+  const row = await queryOne<{ id: string }>(
+    `INSERT INTO commitments
+       (agent_id, promise, recipient_handle, relationship_id, confidence, due_at, job_id, remote_url,
+        conversation_id, source_event_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     RETURNING id`,
     [
       input.agentId,
       input.promise.slice(0, 1_000),
@@ -294,7 +319,56 @@ export async function recordCommitment(input: {
       input.dueAt ?? null,
       input.jobId ?? null,
       input.remoteUrl ?? null,
+      input.conversationId ?? null,
+      input.sourceEventId ?? null,
     ],
+  );
+  return row?.id ?? null;
+}
+
+/**
+ * Commitments that have come due, claimed one at a time.
+ *
+ * `FOR UPDATE SKIP LOCKED` and moving the row to DUE in the same statement, for
+ * the same reason the poller does it: two workers arriving together must not
+ * both follow up on one promise, and the claim is the only thing that can
+ * guarantee that.
+ */
+export async function claimDueCommitments(limit: number): Promise<CommitmentRow[]> {
+  return mapRows<CommitmentRow>(
+    await query(
+      `UPDATE commitments SET status = 'DUE', attempts = attempts + 1, updated_at = now()
+        WHERE id IN (
+          SELECT id FROM commitments
+           WHERE status = 'OPEN' AND due_at IS NOT NULL AND due_at <= now()
+           ORDER BY due_at
+           LIMIT $1 FOR UPDATE SKIP LOCKED
+        )
+        RETURNING *`,
+      [limit],
+    ),
+  );
+}
+
+/** How a commitment ended, with the reason kept for the owner. */
+export async function settleCommitment(input: {
+  id: string;
+  status: 'OPEN' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
+  outcome: string;
+  followupJobId?: string | null;
+  /** Only when putting it back, so a retry is not immediate. */
+  dueAt?: string | null;
+}): Promise<void> {
+  await query(
+    `UPDATE commitments
+        SET status = $2,
+            outcome = $3,
+            followup_job_id = coalesce($4, followup_job_id),
+            due_at = CASE WHEN $2 = 'OPEN' THEN $5 ELSE due_at END,
+            resolved_at = CASE WHEN $2 IN ('COMPLETED','CANCELLED','FAILED') THEN now() ELSE NULL END,
+            updated_at = now()
+      WHERE id = $1`,
+    [input.id, input.status, input.outcome.slice(0, 500), input.followupJobId ?? null, input.dueAt ?? null],
   );
 }
 
@@ -320,9 +394,13 @@ export async function openCommitmentsTo(agentId: string, handle: string, limit =
 }
 
 /** Scoped to the agent, for the reason spelled out on `resolveIdea`. */
-export async function resolveCommitment(agentId: string, id: string, status: 'DONE' | 'DROPPED'): Promise<boolean> {
+export async function resolveCommitment(
+  agentId: string,
+  id: string,
+  status: 'COMPLETED' | 'CANCELLED',
+): Promise<boolean> {
   const rows = await query(
-    'UPDATE commitments SET status = $3, resolved_at = now() WHERE id = $1 AND agent_id = $2 RETURNING id',
+    'UPDATE commitments SET status = $3, resolved_at = now(), updated_at = now() WHERE id = $1 AND agent_id = $2 RETURNING id',
     [id, agentId, status],
   );
   return rows.length > 0;

@@ -40,6 +40,12 @@ interface Commitment {
   promise: string;
   recipientHandle: string | null;
   createdAt: string;
+  /** OPEN is waiting its turn; DUE is being followed up on now. */
+  status: string;
+  /** When it will be revisited. Null when it cannot be. */
+  dueAt: string | null;
+  attempts: number;
+  outcome: string;
 }
 
 const POSITION_WORDS: Record<Position, string> = {
@@ -135,16 +141,28 @@ export function BeliefsSection({ index, agentId }: { index: number; agentId: str
             {data?.commitments.map((commitment) => (
               <li key={commitment.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-ink-line px-3.5 py-3">
                 <span className="min-w-0 flex-1 text-sm text-bone-dim">
-                  {commitment.promise}
+                  <span className="break-words">{commitment.promise}</span>
                   {commitment.recipientHandle && (
                     <span className="ml-1.5 font-mono text-[11px] text-bone-faint">to @{commitment.recipientHandle}</span>
                   )}
+                  {/* Whether this is actually tracked. A promise with no date is
+                      one nothing will revisit, and saying so is the difference
+                      between a record and a reassurance. */}
+                  <span className="mt-1 block text-[11px] text-bone-faint">
+                    {commitment.status === 'DUE'
+                      ? 'Being followed up on now.'
+                      : commitment.dueAt
+                        ? `Will be revisited ${timeAgo(commitment.dueAt)}.`
+                        : 'Not scheduled: this agent cannot follow up, so nothing will revisit it.'}
+                    {commitment.attempts > 0 && ` Tried ${commitment.attempts} time${commitment.attempts === 1 ? '' : 's'}.`}
+                    {commitment.outcome && ` ${commitment.outcome}`}
+                  </span>
                 </span>
                 <button
                   type="button"
                   className="btn-quiet text-xs"
                   onClick={() =>
-                    void post(`/api/agents/${agentId}/commitments/${commitment.id}`, { status: 'DONE' }).then(reload)
+                    void post(`/api/agents/${agentId}/commitments/${commitment.id}`, { status: 'COMPLETED' }).then(reload)
                   }
                 >
                   Done
@@ -153,7 +171,7 @@ export function BeliefsSection({ index, agentId }: { index: number; agentId: str
                   type="button"
                   className="btn-quiet text-xs"
                   onClick={() =>
-                    void post(`/api/agents/${agentId}/commitments/${commitment.id}`, { status: 'DROPPED' }).then(reload)
+                    void post(`/api/agents/${agentId}/commitments/${commitment.id}`, { status: 'CANCELLED' }).then(reload)
                   }
                 >
                   Drop

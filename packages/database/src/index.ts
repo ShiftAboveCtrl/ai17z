@@ -54,6 +54,7 @@ export type { BrowserTaskRow, BrowserTaskKind } from './repositories/browserTask
 export type { AccountLease } from './repositories/accountLease';
 export type { PersonaSourceRow, PersonaSourceItemRow, PersonaTraitRow, TraitWithEvidence } from './repositories/personaSources';
 export type { CadenceVersionRow, DueAccount } from './repositories/cadences';
+export type { CommitmentRow } from './repositories/stances';
 export type { WorkerRow } from './repositories/workers';
 // How long a worker may be silent before it is treated as gone. Health and the
 // browser-session freshness check both measure against it, so there is one.
