@@ -7,8 +7,8 @@ whenever the execution state materially changes.
 
 - Path: `C:\Users\ta0as\OneDrive\Desktop\XBAM`
 - Branch: `main`
-- Current commit: `8d2ea2f`
-- Unpushed commits: 27 (deliberate; the release state is not coherent yet)
+- Current commit: `d6bec7f`
+- Unpushed commits: 33 (deliberate; the release state is not coherent yet)
 
 ### Ports: this checkout owns the defaults
 
@@ -77,17 +77,24 @@ recovery, watchdog, tab reconciliation
 
 ## Current exact task
 
-§59-70 in progress. The posting pipeline itself was already complete and correct
-end to end; what was broken sat either side of it.
+§59-70 is done. Begin §76-91: supervisor, desktop launcher, tray, restart,
+installer, updates, release flow. §82 (code signing) is user-blocked on a
+certificate; everything around it is not.
 
-Done: the idea lifecycle (a claimed idea now comes back), idea ageing and shelf
-life, and the harvester, which was capturing questions that could never have
-become a post -- eighteen of twenty-seven in a real backlog.
+What §59-70 came to, for the record. The posting pipeline itself was already
+complete and correct end to end; everything broken sat either side of it:
 
-Next, in order: the owner-facing Idea Queue screen (the ideas API exists and
-nothing in the web app calls it), then Outreach -- target lists, discovery,
-relevance before promotion, cooldowns, dedupe, limits, review and autonomous
-modes. None of Outreach exists yet.
+- the idea lifecycle -- a claimed idea had no way back, so every failure
+  silently spent one and the agent went quiet claiming an empty backlog
+- idea ageing and a shelf life, since the claim took the oldest thought first
+- the harvester, which captured questions that could never have become a post:
+  eighteen of twenty-seven in a real backlog
+- the Content screen, which did not exist
+- radar typing 'POST' as MENTION, so watching an account meant replying to
+  everything it posted as though addressed
+- context-only sources discarding what they found instead of keeping it
+- outreach as a first-class decision with its own bar, cap, cooldown and
+  review mode, rather than inheriting "answers every mention\"
 
 ## Uncommitted work
 
@@ -121,6 +128,12 @@ None. Working tree clean at `67d562b`.
   before the bare package name. `packageExports.test.ts` enforces both.
 - A claimed content idea must have a way back. Five endings, and the one that
   matters has no code running to hook, so it is reconciled rather than hooked.
+- Speaking first is not answering. Every engagement strategy is written about
+  mentions, so applying one to a watched keyword makes a spam machine.
+- One switch, never two that have to agree in different screens. The outreach
+  policy alone decides whether KEYWORD_MATCH triggers; nothing is kept in sync.
+- A setting nothing reads is a capability the product does not have. Check for
+  a code path before shipping a control.
 
 ## Known defects still open
 
@@ -135,7 +148,8 @@ None. Working tree clean at `67d562b`.
 
 ## Test baseline
 
-- Last full run at `8d2ea2f`: 1222 passed, 114 files, 0 failed
+- Last full run at `7379b11`: 1241 passed, 117 files, 0 failed (plus 12 in
+  outreach.test.ts since)
 - Typecheck: clean (verify by exit code, never by grepping for "error TS" —
   tsc colourises between the words)
 - Command: `npm test` (the .env default is now the right database)
