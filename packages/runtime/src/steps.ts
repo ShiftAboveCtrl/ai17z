@@ -1561,6 +1561,7 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
     search,
     tokenContext,
     knownAddresses: bundle.policy.output.verifiedAddresses,
+    sources: bundle.policy.tools.research,
   });
 
   await jobsRepo.updateJob(job.id, {
