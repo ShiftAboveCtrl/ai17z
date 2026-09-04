@@ -21,9 +21,9 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 |---|---|---|---|---|---|---|---|---|---|
 | Build & typecheck | Repo typechecks and builds | y | - | - | - | - | PASS - 0 TS errors, web build ok | no lint script exists | - |
 | Test suite counts | Counts are what is claimed | y | y | - | - | - | PASS - 387 unit + 307 integration + 18 e2e, counted | report omitted e2e | - |
-| Migrations (fresh) | Fresh DB reaches latest schema | - | - | - | - | - | NOT TESTED | | |
-| Migrations (existing copy) | Real data survives migration | - | - | - | - | - | NOT TESTED | | |
-| Provider encryption | Sealed keys still decrypt | - | - | - | - | - | NOT TESTED | | |
+| Migrations (fresh) | Fresh DB reaches latest schema | - | y | - | - | - | PASS - 50 applied, 0 skipped, no drift, on an empty database | | |
+| Migrations (existing copy) | Real data survives migration | - | y | - | - | - | PASS - running installation dumped, restored, rolled back to 0047, upgraded to 0050; every count identical, no drift | | |
+| Provider encryption | Sealed keys still decrypt | - | y | - | - | - | PASS - the real sealed credential opens after the upgrade, under the installation's own master key | | |
 | Idempotency — event | One event per remote id | - | y | - | - | - | PASS - 50 concurrent to 1 event, 50 fulfilled | - | 09aca7d |
 | Idempotency — job | One job per event/action/agent | - | y | - | - | - | PASS - 1 job, 1 caller reports created | - | 09aca7d |
 | Idempotency — action | One remote action per key | - | y | - | - | - | PASS - 10 workers to 1 CLAIMED, 9 refused | - | 09aca7d |
@@ -33,10 +33,10 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Job leases | Claim/heartbeat/expire/resume | - | y | - | y | y | PASS - claim/expiry/resume; busy lease untouched | - | 09aca7d |
 | Kill at every pipeline stage | Resumes at prior settled state | - | y | - | y | y | PASS - all 5 commit points; 20 nodes map onto 5 | - | 09aca7d |
 | Pipeline graph validity | Invalid graphs fail clearly | - | - | - | - | - | NOT TESTED | | |
-| Version pinning | In-flight job keeps its versions | - | - | - | - | - | NOT TESTED | | |
+| Version pinning | In-flight job keeps its versions | - | y | - | - | - | PASS (I) - a running job stays pinned to the graph version it started on, so a graph edit mid-flight does not change it | | |
 | Provider CRUD | Add/edit/replace/delete | - | - | - | - | - | NOT TESTED | | |
-| Provider failures | 401/403/404/429/500/timeout | - | - | - | - | - | NOT TESTED | | |
-| Model fallback | Order respected, trace accurate | - | - | - | - | - | NOT TESTED | | |
+| Provider failures | 401/403/404/429/500/timeout | y | y | - | y | - | PASS (A+I+F) - 401/403 the owner's key, 429 a rate limit and not a misconfiguration, 5xx the provider's outage; retried, escalated to review, or stopped permanently by class. xAI answers 400 for a bad key and is read from the body | providers disagree on the status for a rejected key | 41-47 |
+| Model fallback | Order respected, trace accurate | - | y | - | - | - | PASS (I) - falls back to the next configured model and keeps every attempt on record | | |
 | Easy Mode setup | Fresh user completes setup | - | - | y | y | - | PASS - 8 steps; Start refuses with readable blockers | route moved, e2e stale | a75da55 |
 | Easy ↔ Advanced | One config system, no split brain | - | - | y | - | - | PASS - both directions read the same document | - | a75da55 |
 | Easy Mode errors | Written for normal users | - | - | - | - | - | NOT TESTED | | |
@@ -44,22 +44,22 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | UI route walk | No dead controls | - | - | y | - | - | PARTIAL - 18 e2e cover the main routes | - | - |
 | "Your agents" clipping | Regression-tested at 5 widths | - | y | y | - | - | PASS - 5 widths plus 100/125/150% zoom | - | 42bdb1e |
 | Responsive matrix | 390/834/1280/1440/2200 | - | - | y | - | - | PASS - after fixing a 390px overflow | grid item min-width auto | 42bdb1e |
-| Accessibility / input | Keyboard, focus, labels | - | - | - | - | - | NOT TESTED | | |
+| Accessibility / input | Keyboard, focus, labels | y | - | y | - | - | PASS - audited in the running app: 26 inputs, 0 without an accessible name (was 10), every label click focuses its control, one h1, main/nav/header landmarks, focus never suppressed. No skip link, which is noted rather than claimed | Field rendered a label it never associated with anything | (this round) |
 | Real Chrome identity | Two independent signals | - | - | y | - | - | PASS - chrome.exe; binary and CDP both Chrome 151.0.7922.175 | - | - |
 | Chrome restart | Session survives | - | - | - | - | - | NOT TESTED | | |
 | Browser record loss | Recovers, does not duplicate | - | - | y | y | y | PASS - finds holder, replaces it, keeps the session | record loss stranded a live Chrome | 7a4eecb |
 | Browser task races | No watcher misreads a launch | - | - | - | - | - | NOT TESTED | | |
 | Four tab roles | All four exist and are used | - | - | y | - | - | PASS - all four tracked; ACTION/RESEARCH on demand | - | - |
-| Tab adoption | 5 restarts → still 4 tabs | - | - | - | - | - | NOT TESTED | | |
-| Tab closure recovery | Only the closed one returns | - | - | - | - | - | NOT TESTED | | |
+| Tab adoption | 5 restarts → still 4 tabs | y | - | - | - | y | PASS (A) - 20 unclean restarts keep the count flat, and the real 15-tab profile recovers. Pure reconciler only; says nothing about a real Chrome | one abandoned tab per unclean restart, 15 found live | ca188ce, 67d562b |
+| Tab closure recovery | Only the closed one returns | y | - | - | - | - | PASS (A) - a closed role is recreated alone; sign-in, challenge and composer tabs are never claimed or closed | | ca188ce |
 | Tab interference | Roles do not navigate each other | - | - | - | - | - | NOT TESTED | | |
 | Tab serialisation | Same role queues, others concurrent | - | - | - | - | - | NOT TESTED | | |
 | Tab health staleness | Stale is never HEALTHY | - | - | y | y | - | PASS - soak flags a CONNECTED account going stale | - | 7d98241 |
 | Real sign-in | End to end, stops at challenge | - | - | - | - | - | NOT TESTED | | |
 | Sign-in timeout | No infinite spinner | - | - | - | - | - | NOT TESTED | | |
 | Radar — each monitor | Six kinds, enable/disable | - | - | - | - | - | NOT TESTED | | |
-| Radar — duplication | One event, many discoveries | - | - | - | - | - | NOT TESTED | | |
-| Radar — failure isolation | One source degrades alone | - | - | - | - | - | NOT TESTED | | |
+| Radar — duplication | One event, many discoveries | - | y | - | - | - | PASS (I) - one event and one job however many sources found it, against real Postgres | watched posts were typed MENTION | 7f9242b |
+| Radar — failure isolation | One source degrades alone | - | y | - | y | - | PASS (I+F) - a source starts unknown, becomes healthy on a poll, degrades once and only fails after repeated failure; one failing source does not stop the others, and health is per source rather than per account | | |
 | Radar — cursor recovery | Catches up without flooding | - | - | - | - | - | NOT TESTED | | |
 | Context resolution | 13 nested cases | - | - | - | - | - | NOT TESTED | | |
 | Action vs context target | Never replies to an ancestor | - | - | - | - | - | NOT TESTED | | |
@@ -134,6 +134,27 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Pool stress | No deadlock, no exhaustion | - | y | - | y | - | PASS - 50 concurrent, no deadlock | pooled read inside a transaction | ce85b49 |
 | Clean shutdown | Leases and session safe | - | - | - | - | - | NOT TESTED | | |
 
+## The existing-database upgrade, in full
+
+Run 2026-09-04, on a copy and never on the original.
+
+1. `pg_dump` of the running installation (read-only): 1 agent, 147 events,
+   143 jobs, 89 actions, 174 memories, 29 content ideas, 1 sealed credential.
+2. Restored into a scratch database on the development server. Counts identical.
+3. Rolled back to `0047_reply_triggers.sql` -- the schema the previous release
+   left behind -- by undoing exactly what 0048, 0049 and 0050 create, so the
+   upgrade under test is a real one rather than a no-op.
+4. `npm run migrate`: 3 applied, 47 skipped, no drift.
+5. Every count identical afterwards, and `migrate:status` reports 50 applied
+   with nothing pending or drifted.
+6. The sealed provider credential still opens under the installation's own
+   master key. This is the failure that would otherwise be silent: the schema
+   migrates, every row is present, and the first thing the agent tries to do
+   fails because the key it needs can no longer be decrypted.
+
+The copy and the dump were deleted afterwards. Both held real conversation
+content and a sealed key.
+
 ## Defects found this round
 
 | # | Defect | How reproduced | Root cause | Fix | Commit |
@@ -144,6 +165,10 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | 4 | Soak counted every Chrome on the machine | First soak run | 1,982 Chrome processes belonging to the owner's own browsing | Ask CDP for our own targets; machine-wide kept as unflagged context | 7d98241 |
 | 5 | Soak flagged a disconnected account | First soak run | A disconnected account is supposed to publish nothing | Only a CONNECTED account can contradict itself | 7d98241 |
 | 6 | Test drain stopped early | `recoveryChaos` | `drainAgentJobs` claimed globally then filtered, locking jobs it would not run | `agentId` filter inside the claim statement | 09aca7d |
+| 7 | `closeChrome` reported closed while the profile was still locked | Full suite on a loaded machine: "the profile persists between launches" failed with the product's own message, `A Chrome (pid 91968) is holding this account's profile` | The graceful path returned as soon as the CDP port stopped answering. Chrome stops answering while its renderers are still exiting, and they hold the lock. The force-kill path comments on exactly this hazard; the graceful path did not check | Wait for nothing to be holding the profile before reporting closed, on both paths | (this round) |
+| 8 | Every `Field` rendered a label associated with nothing | Accessibility audit of the running app: 10 inputs with no accessible name on Policies alone | `htmlFor` was optional and most callers did not pass it, so the label was text above a control rather than a label for it. Invisible unless you use a screen reader or click a label | `useId` in the component: a single control takes the id, anything else is a `role="group"` named by the label | (this round) |
+| 9 | Watched posts were recorded as mentions | `outreachDiscovery` | Both tracked monitors call `harvest(ctx, 'POST', ...)` and 'POST' is not an EventType, so the fallback made it MENTION -- which is in the default trigger set | Map monitor words explicitly; an unknown one lands on KEYWORD_MATCH and is logged, never on the type that acts on its own | 7f9242b |
+| 10 | A claimed content idea never came back | Reading the code against a real backlog of 27 | `markIdeaUsed` had no callers, so a published post never recorded which idea it came from and every failure spent one silently | A reconciler that asks the idea's job how it went | 417ae01 |
 
 Carried in from the session immediately before, each with a regression test: a
 pooled query inside a transaction deadlocking the pool (ce85b49), a NUL byte in

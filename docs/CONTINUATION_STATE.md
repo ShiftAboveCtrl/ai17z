@@ -7,8 +7,8 @@ whenever the execution state materially changes.
 
 - Path: this checkout
 - Branch: `main`
-- Current commit: `1773282`
-- Unpushed commits: 41 (deliberate; the release state is not coherent yet)
+- Current commit: `337bad8` plus the version work
+- Unpushed commits: 45 (deliberate; the release state is not coherent yet)
 
 ### Ports: this checkout owns the defaults
 
@@ -65,8 +65,8 @@ recovery, watchdog, tab reconciliation
 
 ## Partial sections
 
-- **§115** migrations: 49 apply cleanly to an empty database. The representative
-  existing-database upgrade has NOT been done and is required before promotion.
+None. §115 is done -- see "The existing-database upgrade, in full" in
+`docs/final-validation-matrix.md`.
 
 ## Remaining sections
 
@@ -77,16 +77,20 @@ recovery, watchdog, tab reconciliation
 
 ## Current exact task
 
-§76-91 in progress. Done so far: the worker component in health, the supervisor
-(process supervision plus a heartbeat watchdog), restart, update, and a
-launcher with a Start Menu entry.
+§76-91 is done except code signing. Begin §92-113.
 
-Left in §76-91: the release flow -- version stamping, checksums, tags, and a
-release-cleanliness check. No tray application; the Start Menu launcher covers
-what a tray would have, and a tray needs a native shell nothing else here
-requires. §82 (code signing) stays user-blocked on a certificate.
+What it came to: the worker component in health (a stack with a dead worker
+reported healthy on every component it had), the supervisor with a heartbeat
+watchdog (a process being alive is not a worker running), restart, update,
+a launcher with a Start Menu entry, the release-cleanliness check, and a
+version an installation can actually report.
 
-Then §92-113, then §114+.
+No tray application. The Start Menu launcher covers what a tray would have, and
+a tray needs a native shell nothing else here requires. No checksums or release
+artefacts either: installation is a git clone, so there is no artefact to
+checksum -- `npm run release:check` is what guards a publish instead.
+
+§82 (code signing) stays user-blocked on a certificate.
 
 What §59-70 came to, for the record. The posting pipeline itself was already
 complete and correct end to end; everything broken sat either side of it:
@@ -146,6 +150,11 @@ None. Working tree clean at `67d562b`.
 - Never hardcode a port in a script. Three separate instances so far: the start
   script's readiness poll, its Open line, and a doctor remedy.
 - Ask whether an operation can succeed before stopping anything for it.
+- A control character in source is almost always a shell escape that was
+  interpreted. It compiles, runs, matches nothing, and reads correctly. Five in
+  one afternoon; `npm run release:check` is what catches them now.
+- Never write a file through a shell heredoc when it contains a regex. Use the
+  Write tool, or repair afterwards and verify.
 
 ## Known defects still open
 
@@ -156,11 +165,34 @@ None. Working tree clean at `67d562b`.
 
 - Latest: `0050_content_idea_lifecycle.sql`
 - Empty database: 50 applied, 0 skipped, no drift
-- Existing-database upgrade: NOT YET RUN
+- Existing-database upgrade: DONE 2026-09-04, on a copy of the running
+  installation. Rolled back to 0047, upgraded to 0050, every row count
+  identical, no drift, and the sealed provider credential still opens. The copy
+  and its dump were deleted; both held real content and a sealed key.
+
+## Running the suite
+
+It launches real Chrome. On a machine already running an installation and a dev
+stack, the full run takes 20-40 minutes rather than 10. Stop the dev stack
+before a release run and expect the wait.
+
+Two things that look like a hang and are not:
+
+- `npm test | tail` shows nothing until the very end, because tail buffers.
+  Redirect to a file and watch it instead.
+- The main vitest process sits near zero CPU throughout. Its forks do the work,
+  so that reading says nothing about progress.
+
+Both together are convincing enough that a healthy run was killed on this
+evidence once. The reliable signal is whether the log file is still growing.
+
+Killing a run leaves its Chrome processes behind. They are identifiable by their
+profile path (`ai17z-chrome-test-*` under the temp directory) and are safe to
+kill by that filter; nothing else matches it.
 
 ## Test baseline
 
-- Last full run at `8c5c87d`: 1265 passed, 0 failed
+- Last full run at `337bad8`: 1283 passed, 120 files, 0 failed
 - Typecheck: clean (verify by exit code, never by grepping for "error TS" —
   tsc colourises between the words)
 - Command: `npm test` (the .env default is now the right database)
@@ -175,6 +207,13 @@ None. Working tree clean at `67d562b`.
 
 ## Golden-runtime promotion status
 
-NOT STARTED. Requires, in order: representative database upgrade proven on a
-copy, release-candidate validation, three frozen-source runs on one commit,
-release cleanliness check, backup of the real `ai17z-test`, then promotion.
+Requires, in order:
+
+1. ~~representative database upgrade proven on a copy~~ DONE
+2. ~~release cleanliness check~~ DONE (`npm run release:check`, in CI)
+3. release-candidate validation -- the NOT TESTED rows in the validation matrix
+4. three frozen-source runs on one commit
+5. backup of the real installation
+6. promotion
+
+Still NOT STARTED from 3 onwards.
