@@ -36,3 +36,4 @@ export { toolReadiness, preflightEnabling, withToolAllowed, collectDiagnostics }
 export * from './liveStatus';
 export * from './evidenceClass';
 export * from './followUp';
+export * from './playground';

@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z, type ZodTypeAny } from 'zod';
-import { UnauthorizedError, XbamError, createLogger } from '@xbam/shared';
+import { PipelineError, UnauthorizedError, XbamError, createLogger } from '@xbam/shared';
 import type { ApiResponse } from '@xbam/shared/contracts';
 import { users as usersRepo, type UserRow } from '@xbam/database';
 
@@ -55,6 +55,22 @@ export function fail(reply: FastifyReply, error: unknown): FastifyReply {
     return reply.status(error.status).send({
       ok: false,
       error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) },
+    });
+  }
+  // A pipeline error already carries a class and a sentence written for a
+  // person -- "this agent has no usable model configured, add a provider and
+  // set a primary model" -- and turning that into "something went wrong" throws
+  // away the only useful part. Which is what happened the first time anything
+  // in the runtime was called straight from a route.
+  //
+  // PERMANENT is the caller's problem to fix, so 409. RETRYABLE and
+  // REVIEW_REQUIRED are the system's, so 503: try again, nothing is wrong with
+  // what you asked.
+  if (error instanceof PipelineError) {
+    const status = error.errorClass === 'PERMANENT' ? 409 : 503;
+    return reply.status(status).send({
+      ok: false,
+      error: { code: error.reason.toUpperCase(), message: error.message },
     });
   }
   if (error instanceof z.ZodError) {
