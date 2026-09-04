@@ -54,6 +54,9 @@ export type { AccountLease } from './repositories/accountLease';
 export type { PersonaSourceRow, PersonaSourceItemRow, PersonaTraitRow, TraitWithEvidence } from './repositories/personaSources';
 export type { CadenceVersionRow, DueAccount } from './repositories/cadences';
 export type { WorkerRow } from './repositories/workers';
+// How long a worker may be silent before it is treated as gone. Health and the
+// browser-session freshness check both measure against it, so there is one.
+export { WORKER_PRESENT_SECONDS } from './repositories/workers';
 export type { RadarSourceRow, DiscoveryRow } from './repositories/radar';
 export type { EventMediaRow, EventQuoteRow, EventLinkRow } from './repositories/media';
 export type { RelationshipRow, CallbackRow } from './repositories/relationships';

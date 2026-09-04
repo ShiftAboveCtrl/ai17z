@@ -350,3 +350,21 @@ export async function clearBrowserSession(accountId: string): Promise<void> {
     [accountId],
   );
 }
+
+/**
+ * Whether any account has a browser a worker is still reporting on.
+ *
+ * The worker republishes its tab snapshot every ten seconds because the API
+ * owns no browsers and cannot ask. A snapshot older than the presence window
+ * describes a browser that has closed, so age is the whole test -- the contents
+ * of a stale snapshot say nothing about now.
+ */
+export async function anyFreshBrowserSession(withinSeconds: number): Promise<boolean> {
+  const row = await queryOne<{ n: number }>(
+    `SELECT count(*)::int AS n FROM browser_sessions
+      WHERE tabs_updated_at > now() - ($1::int * interval '1 second')
+        AND jsonb_array_length(coalesce(tabs, '[]'::jsonb)) > 0`,
+    [withinSeconds],
+  );
+  return (row?.n ?? 0) > 0;
+}
