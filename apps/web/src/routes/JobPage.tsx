@@ -6,6 +6,7 @@ import { usePolling, useResource } from '@app/lib/hooks';
 import type { JobDetail } from '@app/lib/types';
 import { clockTime, humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { ErrorPanel, Loading, Spinner, StatusDot } from '@app/components/ui';
+import { ConversationView } from '@app/components/ConversationView';
 import { FadeIn } from '@app/components/motion';
 
 const LEVEL_TONE: Record<string, string> = {
@@ -149,6 +150,17 @@ export function JobPage() {
           {actionError && <p className="mt-3 text-sm text-signal-fail">{actionError}</p>}
         </section>
       )}
+
+      {/* The chain first, because "did it understand where it was" is the
+          question a nested mention makes hard to answer, and the panels below
+          are the detail behind it. */}
+      <div className="mt-14">
+        <ConversationView
+          context={job.resolvedContext as never}
+          retrievals={retrievals as never}
+          reply={job.validatedOutput ?? job.generatedOutput ?? null}
+        />
+      </div>
 
       <ContextPanel job={job} retrievals={retrievals} />
 
