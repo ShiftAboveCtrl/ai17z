@@ -5,15 +5,14 @@ when the answers change.
 
 ## Licences
 
-372 installed packages:
+367 installed packages:
 
 | Licence | Count |
 | --- | --- |
-| MIT | 305 |
-| ISC | 23 |
-| Apache-2.0 | 13 |
-| BlueOak-1.0.0 | 7 |
-| BSD-3-Clause | 6 |
+| MIT | 307 |
+| ISC | 21 |
+| Apache-2.0 | 14 |
+| BSD-3-Clause | 7 |
 | CC-BY-4.0 | 1 |
 | 0BSD | 1 |
 | Declares nothing | 16 |
@@ -26,6 +25,18 @@ Nothing was copied from AI4CZ or AI4YI into this repository. `tools/import-ai4cz
 reads an AI4CZ SQLite database and writes AI17Z rows; it contains no code taken
 from that project. twscrape is invoked as an external command line and is not
 bundled, so its licence does not attach to this tree.
+
+## Dependencies added deliberately
+
+**`pdfjs-dist` (Apache-2.0, no dependencies).** Documentation lives in PDFs, and
+a knowledge source pointed at a folder of them used to index nothing and say
+nothing. Chosen over `pdf-parse`, which is the same licence but pulls
+`@napi-rs/canvas` -- a native binary, needed only for rendering. Nothing here
+renders; reading a text layer does not need a canvas, and a local-first
+application already shipping a browser does not need a second one.
+
+It is loaded lazily and its absence is handled: a build without it refuses PDFs
+with a sentence rather than failing to start.
 
 ## Vulnerabilities
 

@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@xbam/shared": "*", "@xbam/database": "*" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@xbam/database": "*",
+    "@xbam/shared": "*",
+    "pdfjs-dist": "6.3.289"
+  }
 }

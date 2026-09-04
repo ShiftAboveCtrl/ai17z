@@ -42,7 +42,15 @@ and named rather than folded into a claim that the section is finished.
 - **§94** Websites are not a knowledge source kind. `PATH`, `UPLOAD` and `TEXT`
   are. Fetching a site means deciding about robots, rate, revisit and what
   counts as the same page, and none of that is decided.
-- **§94** PDFs are not read. `DOCUMENT_EXTENSIONS` is Markdown and text only.
+- **§94** *Closed.* PDFs are read, through `pdfjs-dist` (Apache-2.0, no
+  dependencies, no native canvas). The case that mattered is the silent one: a
+  PDF that is pictures of words opens cleanly, parses every page, and yields
+  nothing, so indexing it quietly is how somebody believes their agent has read
+  documentation it has never seen. It is refused by name with what to do about
+  it. A corrupt PDF is reported and the rest of the folder still indexes.
+  `tests/unit/pdfText.test.ts` runs against four real PDFs built as fixtures:
+  one with prose, one that is a drawn rectangle, one carrying only page
+  numbers, and one that is not a PDF at all.
 - **§95** *Closed, and the premise was wrong.* No tool shows when it was last
   used successfully because **no tool has ever been used**: there is no
   tool-call loop in AI17Z. Nothing parses a tool call out of a model's answer,
