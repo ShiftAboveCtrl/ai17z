@@ -40,3 +40,4 @@ export * from './playground';
 export * from './portableAgent';
 export * from './killSwitch';
 export * from './spending';
+export * from './notify';
