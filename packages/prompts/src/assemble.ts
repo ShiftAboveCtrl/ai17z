@@ -50,6 +50,11 @@ export interface AssembleInput {
    * gets somebody a wrong answer stated as fact.
    */
   evidence?: { evidence: string; reason: string; shouldAdmitUncertainty: boolean };
+  /**
+   * What this installation is and how it is doing, for an agent in support
+   * mode. Absent for every other agent, which is most of them.
+   */
+  support?: { subject: string; version: string; runtime: string | null };
 }
 
 export interface AssembledPrompt {
@@ -97,6 +102,30 @@ function renderTranscript(thread: ContextMessage[], agentName: string): string {
     })
     .filter((line) => line.length > 3)
     .join('\n');
+}
+
+/**
+ * What this installation is, for an agent that is meant to help with it.
+ *
+ * The version first, because almost every support answer depends on it and
+ * almost nobody volunteers it. Then what the runtime is actually doing, which
+ * is the difference between "have you checked your configuration" and "your
+ * notifications monitor has been failing for eleven minutes".
+ *
+ * The last line is the one that keeps this honest. An agent holding a live
+ * diagnostic will happily generalise from it to everybody's installation, and
+ * "AI17Z has a broken notifications monitor" is a different and much worse
+ * statement than "mine does".
+ */
+function renderSupportBlock(support: AssembleInput['support']): string {
+  if (!support) return '';
+  const lines = [`You can help people with ${support.subject}.`, `This installation is running ${support.version}.`];
+  if (support.runtime) {
+    lines.push('', 'Its current state:', support.runtime);
+    lines.push('', 'That describes this installation only. Do not present it as how the software behaves for anybody else.');
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 /**
@@ -270,6 +299,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     parentAttachments: renderParentAttachments(parentInventory, mediaContext?.onParentPost ?? false),
     researchBlock: renderResearchBlock(research),
     evidenceNote: renderEvidenceNote(input.evidence),
+    supportBlock: renderSupportBlock(input.support),
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
     incomingText: context.incomingText,
     toolsBlock: bulletList(input.toolDescriptions),

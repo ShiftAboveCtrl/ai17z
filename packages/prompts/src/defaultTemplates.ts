@@ -162,7 +162,8 @@ Say plainly that you cannot see it rather than guessing what it shows.
 {{/parentText}}{{#researchBlock}}LOOKED UP JUST NOW
 {{researchBlock}}
 
-{{/researchBlock}}{{#evidenceNote}}{{evidenceNote}}
+{{/researchBlock}}{{#supportBlock}}{{supportBlock}}
+{{/supportBlock}}{{#evidenceNote}}{{evidenceNote}}
 {{/evidenceNote}}FROM
 {{authorHandle}}
 
