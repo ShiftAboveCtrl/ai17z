@@ -103,3 +103,25 @@ export async function resetSchema(): Promise<void> {
   }
   await getPool().query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
 }
+
+/**
+ * Where a database command is about to write, with no credentials in it.
+ *
+ * Printed before anything is applied, because the target comes from an
+ * environment file that is edited rarely and read every time. A checkout whose
+ * DATABASE_URL still pointed at a running installation applied three unreleased
+ * migrations to it, and the output said "Applied 3 migration(s)" without ever
+ * naming the database -- so there was nothing to notice.
+ */
+export function describeTarget(url = process.env.DATABASE_URL ?? ''): string {
+  if (!url) return 'no DATABASE_URL set';
+  try {
+    const parsed = new URL(url);
+    const database = parsed.pathname.replace(/^\//, '') || '(default)';
+    // Never the username or password: this string is printed and logged.
+    return `${parsed.hostname}:${parsed.port || '5432'}/${database}`;
+  } catch {
+    // A malformed URL is worth saying so about rather than guessing at.
+    return 'an unreadable DATABASE_URL';
+  }
+}
