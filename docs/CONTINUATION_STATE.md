@@ -7,14 +7,34 @@ whenever the execution state materially changes.
 
 - Path: `C:\Users\ta0as\OneDrive\Desktop\XBAM`
 - Branch: `main`
-- Current commit: `67d562b`
-- Unpushed commits: 20 (deliberate; the release state is not coherent yet)
+- Current commit: `8d2ea2f`
+- Unpushed commits: 27 (deliberate; the release state is not coherent yet)
+
+### Ports: this checkout owns the defaults
+
+| | Postgres | API | Web |
+| --- | --- | --- | --- |
+| XBAM (development) | 55432 | 8787 | 5173 |
+| ai17z-test (running installation) | 55532 | 8887 | 8090 |
+
+The installation was moved off the defaults on 2026-09-04 so the two can never
+collide. Before that, `npm run migrate` from this checkout read a DATABASE_URL
+pointing at 55432 and applied three unreleased migrations to the live system
+while reporting only "Applied 3 migration(s)". The CLI now prints
+`host:port/database` before it does anything.
+
+There is no third database. The ad-hoc scratch container on 55460 is gone;
+tests derive their own per-process database from DATABASE_URL, so they run
+against 55432 and never touch `xbam` itself.
 
 ## Golden runtime
 
 - Path: `C:\Users\ta0as\ai17z-test`
 - Commit it is running: `f768553`
-- Schema: `0047_reply_triggers.sql`
+- Schema: its own checkout has 47 migrations; the database also carries
+  0048-0050 from the mistake above. Harmless: all three are additive, and the
+  migrator iterates over files, so applied rows without a file are ignored.
+- Ports: 55532 / 8887 / 8090. Open it at http://localhost:8090
 - Agent: Ava, account `@ai17zos`, ACTIVE
 - **DO NOT MODIFY DIRECTLY. DO NOT PROMOTE YET.**
 
@@ -27,13 +47,11 @@ Known condition, not yet fixed there: its Chrome holds ~15 pages, twelve of them
 the same `x.com/home` timeline, which is the accumulation the reconciliation work
 in XBAM fixes. It arrives with the controlled promotion, not before.
 
-## Scratch instance (disposable, safe to destroy)
+## Development database
 
-- Database `ui_scratch` on `localhost:55460` (container `ai17z-testdb`)
-- API on 8799, web on 5199, started from XBAM with
-  `XBAM_API_PORT=8799 XBAM_BROWSER_ENABLED=0`
-- Owner `scratch@example.test`, agents "Scratch Agent" and "Second Agent"
-- Test database for the suite: `postgres://xbam:xbam@localhost:55460/xbam`
+- `postgres://xbam:xbam@localhost:55432/xbam`, container `xbam-postgres-1`,
+  brought up with `npm run db:up`. This is the .env default, so no command
+  needs an override any more.
 
 ## Completed sections
 
@@ -59,10 +77,17 @@ recovery, watchdog, tab reconciliation
 
 ## Current exact task
 
-Begin §59-70. Start with the posting pipeline: idea → relevance → draft →
-persona/voice → policy → cadence → execute → verify → history. Preserve every
-existing dry-run and idempotency protection. Then the owner-facing idea queue,
-then Outreach.
+§59-70 in progress. The posting pipeline itself was already complete and correct
+end to end; what was broken sat either side of it.
+
+Done: the idea lifecycle (a claimed idea now comes back), idea ageing and shelf
+life, and the harvester, which was capturing questions that could never have
+become a post -- eighteen of twenty-seven in a real backlog.
+
+Next, in order: the owner-facing Idea Queue screen (the ideas API exists and
+nothing in the web app calls it), then Outreach -- target lists, discovery,
+relevance before promotion, cooldowns, dedupe, limits, review and autonomous
+modes. None of Outreach exists yet.
 
 ## Uncommitted work
 
@@ -87,27 +112,33 @@ None. Working tree clean at `67d562b`.
 - Research is bounded to 60s total across all lookups. Unbounded it averaged
   636s and reached 7,985s against 5.3s for generation.
 - An Easy Mode save must never reset a field only Advanced can set.
+- Compare configuration by content, never by `JSON.stringify`. A document read
+  back from jsonb has its keys in a different order, so a literal comparison
+  reports a change on every save. `sameContent` in `@xbam/shared`.
+- Owning an agent is not permission to write a row id. Scope a sub-resource
+  write by agent in the SQL, not in the route.
+- Adding a package `exports` subpath needs a matching vitest alias, listed
+  before the bare package name. `packageExports.test.ts` enforces both.
+- A claimed content idea must have a way back. Five endings, and the one that
+  matters has no code running to hook, so it is reconciled rather than hooked.
 
 ## Known defects still open
 
-- An Easy Mode save with no changes still creates a persona version through the
-  Easy route. The Advanced route no longer does. Same fix, not yet applied to
-  `routes/easy.ts`.
 - Browser-pane screenshots return black frames in this environment. Verify
   through the DOM instead; it is more precise anyway.
 
 ## Migrations
 
-- Latest: `0049_xai_provider.sql`
-- Empty database: 49 applied, 0 skipped, no drift
+- Latest: `0050_content_idea_lifecycle.sql`
+- Empty database: 50 applied, 0 skipped, no drift
 - Existing-database upgrade: NOT YET RUN
 
 ## Test baseline
 
-- Last full run at `67d562b`: 1182 passed, 108 files, 0 failed
+- Last full run at `8d2ea2f`: 1222 passed, 114 files, 0 failed
 - Typecheck: clean (verify by exit code, never by grepping for "error TS" —
   tsc colourises between the words)
-- Command: `DATABASE_URL="postgres://xbam:xbam@localhost:55460/xbam" npm test`
+- Command: `npm test` (the .env default is now the right database)
 
 ## User-blocked items
 
