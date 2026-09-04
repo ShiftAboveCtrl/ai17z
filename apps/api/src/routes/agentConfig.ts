@@ -14,6 +14,7 @@ import {
   SetModelConfigInput,
 } from '@xbam/shared/contracts';
 import { ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
+import { preflightEnabling, toolReadiness, withToolAllowed } from '@xbam/runtime';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -604,12 +605,39 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // ── Tools ─────────────────────────────────────────────────────────────────
+
+  /** The tool allowlist on the agent's active policy. */
+  const allowedTools = async (agentId: string): Promise<string[]> => {
+    const row = await agentsRepo.getActivePolicy(agentId);
+    return PolicyConfig.parse(row?.config ?? {}).tools.allowed;
+  };
+
   app.get(
     '/api/agents/:id/tools',
     handler(async (request) => {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
-      return { items: await ops.listAgentTools(agent.id) };
+      const items = await ops.listAgentTools(agent.id);
+      const allowed = await allowedTools(agent.id);
+      // The verdict travels with the tool, so an interface never has to work
+      // out "enabled but blocked" for itself and phrase it badly.
+      return {
+        items,
+        readiness: items.map((tool) => toolReadiness({ key: tool.key, name: tool.name, enabled: tool.enabled }, allowed)),
+      };
+    }),
+  );
+
+  app.get(
+    '/api/agents/:id/tools/:key/preflight',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const key = params(request).key!;
+      const tool = (await ops.listAgentTools(agent.id)).find((t) => t.key === key);
+      if (!tool) throw new NotFoundError('Tool');
+      // Asked before the switch, rather than discovered mid-conversation.
+      return preflightEnabling({ key, name: tool.name, enabled: true }, await allowedTools(agent.id));
     }),
   );
 
@@ -622,8 +650,52 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         z.object({ enabled: z.boolean(), config: z.record(z.unknown()).default({}) }),
         request,
       );
-      await ops.setAgentTool({ agentId: agent.id, toolKey: params(request).key!, enabled: body.enabled, config: body.config });
-      return { items: await ops.listAgentTools(agent.id) };
+      const key = params(request).key!;
+      await ops.setAgentTool({ agentId: agent.id, toolKey: key, enabled: body.enabled, config: body.config });
+
+      const items = await ops.listAgentTools(agent.id);
+      const allowed = await allowedTools(agent.id);
+      return {
+        items,
+        readiness: items.map((tool) => toolReadiness({ key: tool.key, name: tool.name, enabled: tool.enabled }, allowed)),
+      };
+    }),
+  );
+
+  app.post(
+    '/api/agents/:id/tools/:key/allow',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const key = params(request).key!;
+
+      const known = await ops.listAgentTools(agent.id);
+      if (!known.some((t) => t.key === key)) throw new NotFoundError('Tool');
+
+      // One tool onto the allowlist, and nothing else touched. A quick fix that
+      // permits every tool to make one work is not a fix.
+      const row = await agentsRepo.getActivePolicy(agent.id);
+      const config = PolicyConfig.parse(row?.config ?? {});
+      const next = {
+        ...config,
+        tools: { ...config.tools, allowed: withToolAllowed(config.tools.allowed, key) },
+      };
+      await agentsRepo.savePolicyVersion(agent.id, next, `allowed the ${key} tool`, user.id);
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'policy.tool.allowed',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { tool: key },
+      });
+
+      const items = await ops.listAgentTools(agent.id);
+      return {
+        items,
+        readiness: items.map((tool) =>
+          toolReadiness({ key: tool.key, name: tool.name, enabled: tool.enabled }, next.tools.allowed),
+        ),
+      };
     }),
   );
 }

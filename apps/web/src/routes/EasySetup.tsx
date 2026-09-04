@@ -48,6 +48,10 @@ const PROVIDERS: { kind: ProviderCredential['provider']; label: string; needsKey
   { kind: 'openai', label: 'OpenAI', needsKey: true, hint: '' },
   { kind: 'anthropic', label: 'Claude', needsKey: true, hint: '' },
   { kind: 'deepseek', label: 'DeepSeek', needsKey: true, hint: '' },
+  // Named "xAI" rather than "Grok": Grok is the model, xAI is where the key
+  // comes from, and somebody holding a SuperGrok subscription needs to know
+  // this is not that.
+  { kind: 'xai', label: 'xAI (Grok)', needsKey: true, hint: 'An API key from the xAI console. A SuperGrok subscription is not one.' },
   { kind: 'ollama', label: 'Ollama', needsKey: false, hint: 'Runs on this machine. No key needed.' },
 ];
 
