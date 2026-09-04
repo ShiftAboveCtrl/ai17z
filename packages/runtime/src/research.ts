@@ -771,13 +771,60 @@ export interface ResearchOptions {
   tokenContext?: string;
   /** Addresses this agent was given, which settle a question about its own token. */
   knownAddresses?: readonly string[];
+  /**
+   * How long the whole step may take.
+   *
+   * Measured against a real agent: when research runs at all it averages ten
+   * minutes and has taken two hours, while generating the reply takes five
+   * seconds. Nobody is served by a reply that arrives an hour after the
+   * question because a search engine was slow -- and a lookup that could not
+   * finish is already a thing this system reports honestly, so the model says
+   * it could not check rather than inventing the answer.
+   */
+  budgetMs?: number;
+}
+
+/** Long enough for two searches on a slow day, short enough to still be a reply. */
+const DEFAULT_RESEARCH_BUDGET_MS = 60_000;
+
+/**
+ * Give up on a promise that outlives its budget.
+ *
+ * The underlying work is not cancelled -- a browser navigation cannot be -- but
+ * nothing waits on it any more, and the reply goes out saying the lookup did
+ * not finish.
+ */
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('The lookup took too long and was abandoned.')), Math.max(0, ms));
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function research(lookups: Lookup[], options: ResearchOptions = {}): Promise<ResearchResult> {
   const findings: Finding[] = [];
   const failed: { query: string; reason: string }[] = [];
 
+  const budgetMs = options.budgetMs ?? DEFAULT_RESEARCH_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
+  const remaining = () => deadline - Date.now();
+
   for (const lookup of lookups) {
+    // Whatever is left when the budget runs out is reported as a gap rather
+    // than waited for. The prompt already tells the model to say it could not
+    // check, which is a better answer than one that arrives an hour late.
+    if (remaining() <= 0) {
+      failed.push({ query: lookup.query, reason: 'There was not enough time to look this up.' });
+      continue;
+    }
+
     if (lookup.kind === 'token') {
       // Resolve rather than look up: what came back has to be the token that
       // was meant, and "several tokens use this ticker" is a real answer.
@@ -785,7 +832,10 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
         parseTokenReference(lookup.query),
         parseTokenReference(options.tokenContext ?? ''),
       );
-      const resolution = await resolveToken(reference, { knownAddresses: options.knownAddresses });
+      const resolution = await resolveToken(reference, {
+        knownAddresses: options.knownAddresses,
+        timeoutMs: Math.min(8_000, Math.max(1_000, remaining())),
+      });
 
       if (resolution.status === 'NOT_FOUND') {
         failed.push({ query: lookup.query, reason: resolution.how });
@@ -811,7 +861,10 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
       continue;
     }
     try {
-      const results = await options.search(lookup.query);
+      // The search itself has its own internal timeouts, but they add up across
+      // page loads, fallbacks and waiting for a browser tab. This is the one
+      // that bounds the whole thing.
+      const results = await withDeadline(options.search(lookup.query), remaining());
       if (results.length > 0) findings.push(...results);
       else failed.push({ query: lookup.query, reason: 'The search returned nothing usable.' });
     } catch (error) {
