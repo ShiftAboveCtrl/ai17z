@@ -28,7 +28,7 @@ export async function buildServer(): Promise<FastifyInstance> {
     trustProxy: false,
   });
 
-  const origins = envString('XBAM_CORS_ORIGINS', 'http://localhost:5173,http://localhost:8080')
+  const origins = envString('AI17Z_CORS_ORIGINS', 'http://localhost:5173,http://localhost:8080')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);

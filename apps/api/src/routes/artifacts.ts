@@ -7,7 +7,7 @@ import { ops } from '@xbam/database';
 import { handler, params, requireUser } from '../http';
 
 function storageRoot(): string {
-  return resolve(envString('XBAM_STORAGE_DIR', './storage'));
+  return resolve(envString('AI17Z_STORAGE_DIR', './storage'));
 }
 
 /**

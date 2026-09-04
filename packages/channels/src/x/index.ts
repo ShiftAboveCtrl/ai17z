@@ -84,7 +84,7 @@ async function withSession<T>(
       cdpUrl: ctx.session?.cdpUrl ?? null,
       engine: ctx.session?.engine ?? 'GOOGLE_CHROME',
       channel: ctx.session?.channel ?? null,
-      headless: envBool('XBAM_BROWSER_HEADLESS', false),
+      headless: envBool('AI17Z_BROWSER_HEADLESS', false),
     },
     role,
   );

@@ -16,9 +16,9 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         system: {
           // Whether a master key is configured, never the key itself.
           masterKeyConfigured: Boolean(process.env.XBAM_MASTER_KEY),
-          browserEnabled: envBool('XBAM_BROWSER_ENABLED', true),
-          browserHeadless: envBool('XBAM_BROWSER_HEADLESS', false),
-          storageDir: envString('XBAM_STORAGE_DIR', './storage'),
+          browserEnabled: envBool('AI17Z_BROWSER_ENABLED', true),
+          browserHeadless: envBool('AI17Z_BROWSER_HEADLESS', false),
+          storageDir: envString('AI17Z_STORAGE_DIR', './storage'),
           nodeVersion: process.version,
         },
       };

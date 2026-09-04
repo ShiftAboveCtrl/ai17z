@@ -29,9 +29,9 @@ export function getPool(): pg.Pool {
   }
   pool = new pg.Pool({
     connectionString,
-    max: envInt('XBAM_DB_POOL_MAX', 10),
+    max: envInt('AI17Z_DB_POOL_MAX', 10),
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: envInt('XBAM_DB_CONNECT_TIMEOUT_MS', 10_000),
+    connectionTimeoutMillis: envInt('AI17Z_DB_CONNECT_TIMEOUT_MS', 10_000),
   });
   pool.on('error', (err) => log.error('idle client error', { message: err.message }));
   return pool;

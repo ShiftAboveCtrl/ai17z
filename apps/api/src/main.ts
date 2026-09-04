@@ -15,15 +15,15 @@ async function main(): Promise<void> {
   }
 
   // In Docker the API owns migrations so a fresh stack comes up ready to use.
-  if (envBool('XBAM_RUN_MIGRATIONS', false)) {
+  if (envBool('AI17Z_RUN_MIGRATIONS', false)) {
     const result = await migrate();
     log.info('migrations checked', { applied: result.applied.length });
   }
   await bootstrapRuntime();
 
   const app = await buildServer();
-  const port = envInt('XBAM_API_PORT', 8787);
-  const host = envString('XBAM_API_HOST', '0.0.0.0');
+  const port = envInt('AI17Z_API_PORT', 8787);
+  const host = envString('AI17Z_API_HOST', '0.0.0.0');
   await app.listen({ port, host });
   log.info('api listening', { url: `http://localhost:${port}` });
 

@@ -33,7 +33,7 @@ const SIGN_IN_WINDOW_MS = envInt('AI17Z_SIGNIN_WINDOW_MS', 15 * 60_000);
 export class BrowserTaskRunner {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
-  private readonly intervalMs = envInt('XBAM_BROWSER_TASK_POLL_MS', 2_000);
+  private readonly intervalMs = envInt('AI17Z_BROWSER_TASK_POLL_MS', 2_000);
 
   constructor(readonly workerId: string) {}
 
