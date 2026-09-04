@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { sameContent } from '@xbam/shared/util';
 
 /**
  * Saving while somebody types, without lying to them about it.
@@ -76,7 +77,12 @@ export interface AutosaveResult {
   saveNow: () => Promise<void>;
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+// Content, not key order. `saved` is what the server echoed back, and a
+// document that has been through the database returns with its keys in a
+// different order than the form built them in -- so a literal string
+// comparison says there are unsaved changes for ever, and the editor autosaves
+// the same unchanged draft on every keystroke.
+const same = (a: unknown, b: unknown) => sameContent(a, b);
 
 export function useAutosave<T>(options: AutosaveOptions<T>): AutosaveResult {
   const { draft, saved, enabled, save, delayMs = 1_500 } = options;

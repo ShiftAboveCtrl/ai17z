@@ -15,7 +15,10 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      // Longest first: these are matched in order, so a bare '@xbam/shared'
+      // above a subpath would swallow it.
       '@xbam/shared/contracts': r('./packages/shared/src/contracts/index.ts'),
+      '@xbam/shared/util': r('./packages/shared/src/util.ts'),
       '@xbam/shared': r('./packages/shared/src/index.ts'),
       '@xbam/database': r('./packages/database/src/index.ts'),
       '@xbam/jobs': r('./packages/jobs/src/index.ts'),
