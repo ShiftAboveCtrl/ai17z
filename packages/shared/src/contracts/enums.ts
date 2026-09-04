@@ -420,6 +420,8 @@ export const TRACE_EVENT_TYPES = [
   'ACTION_COMPLETED',
   'ACTION_FAILED',
   'ACTION_SKIPPED_DUPLICATE',
+  /** Refused at the last gate, by the global pause. Not a failure of the job. */
+  'ACTION_BLOCKED',
   'DRY_RUN_STOPPED',
   'MEMORY_WRITTEN',
   'JOB_RETRY_SCHEDULED',

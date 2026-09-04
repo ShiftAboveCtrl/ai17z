@@ -158,3 +158,52 @@ export async function tryMessage(request: PlaygroundRequest): Promise<Playground
       : validated.violations.map((v) => v.message).join(' ') || 'The validator refused this answer.',
   };
 }
+
+export interface ComparisonEntry {
+  role: string;
+  /** Present when this one worked. */
+  result: PlaygroundResult | null;
+  /** Present when it did not, in words. */
+  failed: string | null;
+}
+
+/**
+ * The same message through several models, side by side.
+ *
+ * This is the demonstration of the idea the whole product rests on: the model
+ * is where the intelligence comes from, and AI17Z is what makes the answer
+ * sound like the same agent whichever model wrote it. Showing the raw answer
+ * beside the final one, for two providers at once, is the only way to see that
+ * rather than be told it.
+ *
+ * Every provider is run independently and a failure is recorded rather than
+ * thrown. One provider being out of credit must not blank a comparison that
+ * three others answered -- that would make the feature useless exactly when it
+ * is most informative.
+ */
+export async function compareModels(input: {
+  agentId: string;
+  message: string;
+  fromHandle?: string | null;
+  roles: ModelRole[];
+}): Promise<ComparisonEntry[]> {
+  const runs = await Promise.all(
+    input.roles.map(async (role): Promise<ComparisonEntry> => {
+      try {
+        return {
+          role,
+          result: await tryMessage({
+            agentId: input.agentId,
+            message: input.message,
+            fromHandle: input.fromHandle ?? null,
+            role,
+          }),
+          failed: null,
+        };
+      } catch (error) {
+        return { role, result: null, failed: error instanceof Error ? error.message : String(error) };
+      }
+    }),
+  );
+  return runs;
+}

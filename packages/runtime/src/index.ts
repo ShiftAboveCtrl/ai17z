@@ -38,3 +38,4 @@ export * from './evidenceClass';
 export * from './followUp';
 export * from './playground';
 export * from './portableAgent';
+export * from './killSwitch';
