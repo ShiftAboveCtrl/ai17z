@@ -40,7 +40,8 @@
     "import:ai4cz": "tsx tools/import-ai4cz/src/cli.ts",
     "browser:cdp": "powershell -ExecutionPolicy Bypass -File scripts/launch-chrome-cdp.ps1",
     "soak": "tsx tools/soak.mts",
-    "worker:supervised": "tsx scripts/supervise-worker.mts"
+    "worker:supervised": "tsx scripts/supervise-worker.mts",
+    "release:check": "tsx tools/release-check.mts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -1,3 +1,10 @@
+/**
+ * @release-check-fixtures
+ *
+ * The credentials below are invented, and have to look real: this exercises
+ * the check that refuses to index a file holding a secret. The marker is what
+ * tells the release check the same thing.
+ */
 import { mkdtemp, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';

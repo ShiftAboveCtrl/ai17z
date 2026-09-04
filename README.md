@@ -63,8 +63,8 @@ costs less.
 > `node_modules` with a symlink, and a syncing folder refuses those while it is
 > reconciling, so the install dies several minutes in with `EBUSY: resource busy
 > or locked, symlink`. On Windows your Desktop is inside OneDrive by default,
-> which makes this the most likely way a first install fails. `C:\devi17z` or
-> `%USERPROFILE%i17z` are both fine. The installer checks and stops rather than
+> which makes this the most likely way a first install fails. `C:\dev\ai17z` or
+> `%USERPROFILE%\ai17z` are both fine. The installer checks and stops rather than
 > letting you find out the slow way.
 
 One line, in PowerShell, in a folder you can write to:
