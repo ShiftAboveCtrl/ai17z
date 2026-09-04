@@ -264,7 +264,16 @@ if ($NoBrowser) {
         if (Test-Path $shim) { $npm = $shim }
       }
 
-      $process = Start-Process -FilePath $npm -ArgumentList 'run', 'dev:worker' `
+      # Supervised rather than bare. The native worker is the only process that
+      # can drive a real browser, and started directly it had nothing watching
+      # it: when it died the agent stopped, with no restart and, until health
+      # learned about workers, no sign either.
+      #
+      # The supervisor restarts a worker that had been running and then failed,
+      # and deliberately gives up on one that cannot start at all -- five
+      # attempts in, the problem is the configuration and another thousand
+      # identical failures say nothing the first one did not.
+      $process = Start-Process -FilePath $npm -ArgumentList 'run', 'worker:supervised' `
         -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput $WorkerLog -RedirectStandardError "$WorkerLog.err"
       $process.Id | Set-Content $PidFile -Encoding utf8
