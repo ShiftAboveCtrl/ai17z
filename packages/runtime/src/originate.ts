@@ -3,6 +3,7 @@ import { createLogger, sha256Hex } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
+  content as contentRepo,
   events as eventsRepo,
   jobs as jobsRepo,
   observability,
@@ -139,6 +140,10 @@ export async function originatePost(input: {
     await releaseIdea(agent.id, brief.idea.id);
     return { posted: false, reason: 'A job for this idea already exists.', jobId: outcome.job.id };
   }
+
+  // The idea names the job that took it, so the reconciler can ask that job how
+  // it went rather than guessing from an age.
+  await contentRepo.attachJob(agent.id, brief.idea.id, outcome.job.id);
 
   await observability.emitTrace({
     jobId: outcome.job.id,

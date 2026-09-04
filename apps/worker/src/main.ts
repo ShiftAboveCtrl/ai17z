@@ -1,6 +1,13 @@
 import { hostname } from 'node:os';
 import { createLogger, envInt, envString, errorMessage, loadEnv } from '@xbam/shared';
-import { accounts as accountsRepo, browserTasks, closePool, pingDatabase, workers as workersRepo } from '@xbam/database';
+import {
+  accounts as accountsRepo,
+  browserTasks,
+  closePool,
+  content,
+  pingDatabase,
+  workers as workersRepo,
+} from '@xbam/database';
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import { bootstrapRuntime, runJob } from '@xbam/runtime';
 import { activeSessionAccountIds, closeAllSessions, sessionIdentity, sessionTabs } from '@xbam/browser';
@@ -80,6 +87,15 @@ async function main(): Promise<void> {
       if (freed.abandoned > 0 || freed.unclaimed > 0) log.info('freed stuck browser tasks', freed);
     } catch (error) {
       log.warn('browser task sweep failed', { message: errorMessage(error) });
+    }
+    try {
+      // The same shape of problem one table over: an idea is claimed before a
+      // post is drafted, and every way that draft can end without publishing
+      // used to leave the idea claimed for ever.
+      const ideas = await content.reconcileDrafting();
+      if (ideas.released > 0 || ideas.discarded > 0 || ideas.used > 0) log.info('reconciled content ideas', { ...ideas });
+    } catch (error) {
+      log.warn('content idea sweep failed', { message: errorMessage(error) });
     }
   };
   await sweep();
