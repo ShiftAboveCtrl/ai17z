@@ -1370,7 +1370,24 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
       }
     : undefined;
 
-  const result = await research(lookups, { search });
+  // Which token was meant is usually settled a post earlier than the ticker
+  // appears: somebody says "everything on Solana pumped" and then asks about
+  // "$DOG". The quoted post counts too, and so does our own knowledge of which
+  // addresses this agent was given, which is what decides a question about its
+  // own token rather than a lookalike using the same three letters.
+  const tokenContext = [
+    context.incomingText,
+    parentIsOwn ? null : context.parentText,
+    context.conversation?.quote?.text,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const result = await research(lookups, {
+    search,
+    tokenContext,
+    knownAddresses: bundle.policy.output.verifiedAddresses,
+  });
 
   await jobsRepo.updateJob(job.id, {
     resolvedContext: { ...context, meta: { ...context.meta, research: result } },
