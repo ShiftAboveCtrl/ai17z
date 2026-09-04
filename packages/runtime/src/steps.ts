@@ -42,6 +42,7 @@ import { research, whatToResearch } from './research';
 import { planLookups } from './plan';
 import { classifyEvidence } from './evidenceClass';
 import { DEFAULT_FOLLOW_UP_MS, canFollowUp } from './followUp';
+import { remoteActionsAllowed } from './killSwitch';
 import type { JobBundle } from './loadJob';
 import { validateOutput } from './validator';
 import { checkActionRate, checkAudience, checkBudget } from './policyGate';
@@ -642,6 +643,32 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     data: { actionId: action.id, targetRef, dryRun: job.dryRun },
   });
   const ctx = await adapterContext(bundle);
+
+  // The global pause, checked here and not earlier.
+  //
+  // This is the last moment before anything leaves the machine, and the race
+  // the switch exists for is precisely a job that was already validated when
+  // somebody pressed stop. A check at the top of the pipeline would leave a
+  // window of exactly the length of the pipeline, which is the window that
+  // matters. A dry run is exempt because it reaches nobody.
+  if (!job.dryRun) {
+    const gate = await remoteActionsAllowed();
+    if (!gate.allowed) {
+      await observability
+        .emitTrace({
+          jobId: job.id,
+          agentId: bundle.agent.id,
+          type: 'ACTION_BLOCKED',
+          level: 'warn',
+          message: gate.reason,
+          data: { actionId: action.id, reason: 'paused_globally' },
+        })
+        .catch(() => undefined);
+      // Retryable, not permanent: releasing the pause should let this go out,
+      // and a job stopped by a person is not a job that failed.
+      throw PipelineError.retryable('paused_globally', gate.reason, { retryAfterMs: 60_000 });
+    }
+  }
 
   try {
     const result = await adapter.executeAction(ctx, {

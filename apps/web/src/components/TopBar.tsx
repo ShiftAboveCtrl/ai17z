@@ -1,4 +1,5 @@
 import { Link, NavLink, useLocation } from 'react-router-dom';
+import { PauseAll } from '@app/components/PauseAll';
 import { useEffect, useState } from 'react';
 import { LogOut, Plus } from 'lucide-react';
 import { useViewMode, type ViewMode } from '@app/lib/viewMode';
@@ -37,6 +38,7 @@ export function TopBar() {
           AI17Z
         </Link>
 
+        <PauseAll />
         <div className="hidden items-center gap-6 sm:flex">
           <NavLink to="/" end className={link}>
             Agents
