@@ -162,6 +162,103 @@ export function PoliciesSection({
         </div>
       </div>
 
+      {/*
+        Speaking first, which is a different act from answering and has a
+        different failure mode. Everything above is about what the agent does
+        when somebody comes to it; this is about it going to them.
+      */}
+      <div className="mt-10 border-t border-ink-line pt-8">
+        <p className="eyebrow">Approaching people</p>
+        <h4 className="mt-2 text-base font-light text-bone">Speaking first, under a post nobody sent it</h4>
+        <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
+          Watched accounts and watched topics are set up on the account itself. This decides whether anything is ever
+          said under what they find. Answering somebody badly is awkward; approaching a stranger badly is what people
+          mean when they call an account a bot, so it is held to a higher bar than a reply and shown to you first
+          unless you say otherwise.
+        </p>
+
+        <div className="mt-6 grid gap-8 lg:grid-cols-2">
+          <div className="space-y-6">
+            <Toggle
+              checked={draft.outreach.enabled}
+              onChange={(v) => patch((n) => void (n.outreach.enabled = v))}
+              label="Approach people unprompted"
+              description="Off means watched sources still collect what they find, and the agent never speaks under any of it."
+            />
+
+            {draft.outreach.enabled && (
+              <>
+                <Field label="Before it goes out" hint="What you see before an unprompted approach is published.">
+                  <div className="space-y-2">
+                    {(['REVIEW', 'AUTONOMOUS'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => patch((n) => void (n.outreach.mode = mode))}
+                        className={`block w-full rounded-lg border px-3.5 py-2.5 text-left text-sm transition-colors ${draft.outreach.mode === mode ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone' : 'border-ink-line text-bone-dim hover:border-bone-faint'}`}
+                      >
+                        {mode === 'REVIEW' ? 'Show me each one first' : 'Send them without asking me'}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+
+                <Toggle
+                  checked={draft.outreach.requireTopicMatch}
+                  onChange={(v) => patch((n) => void (n.outreach.requireTopicMatch = v))}
+                  label="Only about things it follows"
+                  description="A watched keyword matches on one word, often in a post about something else entirely."
+                />
+              </>
+            )}
+          </div>
+
+          {draft.outreach.enabled && (
+            <div className="space-y-6">
+              <Field
+                label="Worth speaking up about"
+                hint={`Out of 100. A reply only has to clear ${draft.engagement.minimumReplyValue}; butting in should be worth more than that.`}
+              >
+                <input
+                  type="number"
+                  className="field"
+                  value={draft.outreach.minimumValue}
+                  onChange={(e) => patch((n) => void (n.outreach.minimumValue = Number(e.target.value) || 0))}
+                />
+              </Field>
+
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="People a day" hint="Nothing to do with how many replies it sends.">
+                  <input
+                    type="number"
+                    className="field"
+                    value={draft.outreach.maxPerDay}
+                    onChange={(e) => patch((n) => void (n.outreach.maxPerDay = Number(e.target.value) || 0))}
+                  />
+                </Field>
+                <Field label="Days before the same person again">
+                  <input
+                    type="number"
+                    className="field"
+                    value={draft.outreach.cooldownDaysPerAuthor}
+                    onChange={(e) => patch((n) => void (n.outreach.cooldownDaysPerAuthor = Number(e.target.value) || 0))}
+                  />
+                </Field>
+              </div>
+
+              {draft.outreach.minimumValue <= draft.engagement.minimumReplyValue && (
+                // Not blocked, because it is a legitimate choice. Said out loud,
+                // because it is almost never the one somebody meant to make.
+                <p className="break-words text-[13px] text-amber-300">
+                  This is the same bar as a reply, or lower. The agent will approach strangers as readily as it answers
+                  the people who asked it something.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-ink-line pt-6">
         <button type="button" className="btn-primary" onClick={() => void save()} disabled={busy}>
           {busy && <Spinner />}

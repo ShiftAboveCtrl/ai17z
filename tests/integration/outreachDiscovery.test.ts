@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RadarCandidate } from '@xbam/shared/contracts';
-import { accounts as accountsRepo, query } from '@xbam/database';
+import { accounts as accountsRepo, agents as agentsRepo, query } from '@xbam/database';
 import { reconcileCandidates } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -157,5 +157,63 @@ describe('watching a source for context rather than to act on', () => {
       [remoteId],
     );
     expect(found.map((row) => row.source_kind)).toContain('tracked_account');
+  });
+});
+
+/**
+ * One switch, not two that have to agree.
+ *
+ * `reply_search` and `own_threads` found replies for months and had every one
+ * dropped at ingest with "not triggered by REPLY", because the monitor and the
+ * account link were separate settings in separate screens. Outreach must not
+ * repeat it: turning it on is the whole decision, and nothing has to be kept in
+ * sync with it.
+ */
+describe('turning outreach on', () => {
+  const setOutreach = async (agentId: string, enabled: boolean) => {
+    const active = await agentsRepo.getActivePolicy(agentId);
+    await agentsRepo.savePolicyVersion(
+      agentId,
+      { ...active!.config, outreach: { ...active!.config.outreach, enabled } },
+      'test',
+      null,
+    );
+  };
+
+  it('lets a watched post reach the agent without touching the account link', async () => {
+    const fixture = await createFixture();
+    const account = await linkedAccount(fixture.ownerId, fixture.agentId);
+    await setOutreach(fixture.agentId, true);
+    const remoteId = `14${Date.now()}`.slice(0, 19);
+
+    const result = await reconcileCandidates({
+      accountId: account.id,
+      sourceId: null,
+      sourceKind: 'tracked_keyword',
+      candidates: [watchedPost(remoteId)],
+      mayTrigger: true,
+    });
+
+    // The link is still triggered by MENTION and REPLY only, and was never edited.
+    const [link] = await accountsRepo.listAccountAgents(account.id);
+    expect(link!.triggerEventTypes).not.toContain('KEYWORD_MATCH');
+    expect(result.outcomes[0]!.jobs.length).toBe(1);
+  });
+
+  it('says why in words when it is off, rather than naming an event type', async () => {
+    const fixture = await createFixture();
+    const account = await linkedAccount(fixture.ownerId, fixture.agentId);
+    const remoteId = `13${Date.now()}`.slice(0, 19);
+
+    const result = await reconcileCandidates({
+      accountId: account.id,
+      sourceId: null,
+      sourceKind: 'tracked_keyword',
+      candidates: [watchedPost(remoteId)],
+      mayTrigger: true,
+    });
+
+    expect(result.outcomes[0]!.jobs.length).toBe(0);
+    expect(result.outcomes[0]!.skipped[0]!.reason).toContain('unprompted');
   });
 });
