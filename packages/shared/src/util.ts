@@ -79,3 +79,34 @@ export function keywords(text: string, limit = 12): string[] {
 export function assertNever(value: never, context: string): never {
   throw new Error(`Unhandled case in ${context}: ${JSON.stringify(value)}`);
 }
+
+/**
+ * A JSON string whose object keys are in a fixed order, for comparing two
+ * values by content.
+ *
+ * `JSON.stringify` preserves insertion order, so two objects that say exactly
+ * the same thing compare unequal when their keys were built in a different
+ * order. A configuration document that has been through Postgres comes back in
+ * whatever order the column produced, which is not the order the code that
+ * built it used: an emoji block written as `{ use, allowed, maxPerMessage }`
+ * read back as `{ use, maxPerMessage, allowed }` and every save looked like an
+ * edit.
+ *
+ * Array order is preserved, because in a list order is content.
+ */
+export function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    // undefined is absent rather than present-and-empty, exactly as
+    // JSON.stringify treats it, so an optional field left unset compares equal
+    // to one never written.
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(',')}}`;
+}
+
+/** Whether two values say the same thing, whatever order their keys are in. */
+export function sameContent(a: unknown, b: unknown): boolean {
+  return stableJson(a) === stableJson(b);
+}
