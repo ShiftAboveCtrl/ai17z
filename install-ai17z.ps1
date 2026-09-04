@@ -24,7 +24,7 @@
   work.
 #>
 [CmdletBinding()]
-param([switch] $SkipInstall, [switch] $Start, [switch] $AllowSyncedFolder)
+param([switch] $SkipInstall, [switch] $Start, [switch] $AllowSyncedFolder, [switch] $NoShortcut)
 
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
@@ -189,6 +189,33 @@ if ($SkipInstall) {
   Write-Done 'Dependencies installed.'
 }
 
+# -- Something to click ------------------------------------------------------
+#
+# A Start Menu entry rather than a desktop one: a desktop littered by every
+# tool somebody tried is its own small unkindness, and the Start Menu is where
+# Windows users look for a program by name.
+#
+# It points at launch-ai17z.ps1 rather than at start-ai17z.ps1, because
+# somebody double-clicking an icon wants the app open, not a console that
+# finishes and leaves them to find the address themselves.
+if (-not $NoShortcut) {
+  try {
+    $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    $linkPath = Join-Path $startMenu "AI17Z ($folder).lnk"
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut($linkPath)
+    $link.TargetPath = (Get-Command powershell).Source
+    $link.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $PSScriptRoot 'launch-ai17z.ps1')`""
+    $link.WorkingDirectory = $PSScriptRoot
+    $link.Description = 'Start AI17Z and open it'
+    $link.Save()
+    Write-Done "Added 'AI17Z ($folder)' to the Start Menu."
+  } catch {
+    # Never a reason to fail an install. The scripts work without it.
+    Write-Warn 'Could not add a Start Menu shortcut. Everything else is fine; use the scripts below.'
+  }
+}
+
 Write-Host ''
 Write-Host '  Setup finished.' -ForegroundColor Green
 Write-Host ''
@@ -202,6 +229,7 @@ if ($Start) {
 }
 
 Write-Host '  Next:' -ForegroundColor White
+Write-Host '    .\launch-ai17z.ps1    start it and open it' -ForegroundColor Gray
 Write-Host '    .\start-ai17z.ps1     start everything' -ForegroundColor Gray
 Write-Host '    .\doctor-ai17z.ps1    check it over' -ForegroundColor Gray
 Write-Host ''
