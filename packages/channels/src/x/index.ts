@@ -285,9 +285,23 @@ export const xAdapter: ChannelAdapter = {
       return await withSession(ctx, 'ACTION', async ({ page }) => {
         await goto(page, X_URLS.home);
         const authed = await isAuthenticated(page);
-        return authed
-          ? { status: 'healthy' as const, detail: 'Session is signed in.', authenticated: true }
-          : { status: 'degraded' as const, detail: 'Browser reachable but the X session is signed out.', authenticated: false };
+        if (!authed) {
+          return {
+            status: 'degraded' as const,
+            detail: 'Browser reachable but the X session is signed out.',
+            authenticated: false,
+          };
+        }
+        // Which account, not just whether. Reading it costs one attribute and
+        // it is the difference between a health check that proves the agent can
+        // work and one that proves a browser is open.
+        const handle = await observeAuthPage(page).then((o) => o.handle ?? null).catch(() => null);
+        return {
+          status: 'healthy' as const,
+          detail: handle ? `Signed in as @${handle}.` : 'Session is signed in.',
+          authenticated: true,
+          handle,
+        };
       });
     } catch (error) {
       return { status: 'offline', detail: errorMessage(error), authenticated: false };

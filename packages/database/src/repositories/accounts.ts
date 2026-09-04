@@ -117,6 +117,14 @@ export async function createAccount(input: {
 export async function updateAccount(
   id: string,
   patch: Partial<{
+    /**
+     * The account's own handle.
+     *
+     * Written when a health check reads who the session is actually signed in
+     * as and this account has never had one. Not something a person edits: the
+     * browser is the authority on which account it is.
+     */
+    handle: string;
     displayName: string;
     remoteAccountId: string | null;
     status: Account['status'];
@@ -139,6 +147,7 @@ export async function updateAccount(
     params.push(value);
     sets.push(fragment.replace('$?', `$${params.length}`));
   };
+  if (patch.handle !== undefined) push('handle = $?', patch.handle);
   if (patch.displayName !== undefined) push('display_name = $?', patch.displayName);
   if (patch.remoteAccountId !== undefined) push('remote_account_id = $?', patch.remoteAccountId);
   if (patch.status !== undefined) push('status = $?', patch.status);

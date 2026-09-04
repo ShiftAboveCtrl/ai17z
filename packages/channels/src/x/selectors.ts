@@ -19,6 +19,18 @@ export const X_URLS = {
 export const SEL = {
   /** Present only when a session is authenticated. */
   loggedIn: '[data-testid="SideNav_AccountSwitcher_Button"], [data-testid="AppTabBar_Home_Link"]',
+  /**
+   * Where the signed-in handle actually is.
+   *
+   * It used to be in the account switcher's aria-label. It is not any more --
+   * that label now reads "Account menu" and carries no handle at all, which was
+   * found by reading a live signed-in session rather than by anything failing:
+   * the health check reported "signed in" and simply never knew as whom.
+   *
+   * The profile link's href is `/handle`, which is the same fact in the place X
+   * currently keeps it.
+   */
+  profileLink: '[data-testid="AppTabBar_Profile_Link"]',
   loginForm: '[data-testid="loginButton"], input[autocomplete="username"]',
   tweetArticle: 'article[data-testid="tweet"]',
   userName: '[data-testid="User-Name"]',
