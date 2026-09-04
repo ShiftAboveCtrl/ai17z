@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { PersonaVersion } from '@xbam/shared/contracts';
+import { PERSONA_LIMITS } from '@xbam/shared/contracts';
 import { ApiError, put } from '@app/lib/api';
 import { Field, SavedTick, Spinner } from '@app/components/ui';
 import { PersonaSources } from '@app/components/PersonaSources';
@@ -7,6 +8,26 @@ import { Section } from './Section';
 
 const IDENTITY_KINDS = ['DISCLOSED_AI', 'FICTIONAL', 'INSPIRED_BY', 'BRAND', 'REAL_PERSON_AUTHORIZED'] as const;
 const LENGTHS = ['TERSE', 'SHORT', 'MEDIUM', 'LONG', 'ADAPTIVE'] as const;
+
+/**
+ * How much room is left, from the same numbers the API enforces.
+ *
+ * Imported rather than repeated: a counter that disagrees with the rule which
+ * rejects the save is worse than no counter, because it is confidently wrong.
+ * Quiet until it matters, so eleven fields do not each shout a number.
+ */
+function Counter({ value, limit }: { value: string; limit: number }) {
+  const used = value.length;
+  const near = used > limit * 0.9;
+  const over = used > limit;
+  if (!near) return null;
+  return (
+    <p className={`mt-1 text-[11px] ${over ? 'text-signal-fail' : 'text-signal-wait'}`}>
+      {used.toLocaleString()} / {limit.toLocaleString()}
+      {over ? ` — remove at least ${(used - limit).toLocaleString()} to save` : ''}
+    </p>
+  );
+}
 
 /** Editing a persona always cuts a new version; nothing is overwritten in place. */
 export function IdentitySection({
@@ -95,9 +116,11 @@ export function IdentitySection({
           </Field>
           <Field label="Personality" htmlFor="personality">
             <textarea id="personality" rows={4} className="field resize-y" value={draft.personality} onChange={(e) => set('personality', e.target.value)} />
+            <Counter value={draft.personality} limit={PERSONA_LIMITS.personality} />
           </Field>
           <Field label="Tone" htmlFor="tone">
             <input id="tone" className="field" value={draft.tone} onChange={(e) => set('tone', e.target.value)} />
+            <Counter value={draft.tone} limit={PERSONA_LIMITS.tone} />
           </Field>
           <Field label="Response length" htmlFor="responseLength">
             <select id="responseLength" className="field capitalize" value={draft.responseLength} onChange={(e) => set('responseLength', e.target.value as PersonaVersion['responseLength'])}>
@@ -113,6 +136,7 @@ export function IdentitySection({
         <div className="space-y-6">
           <Field label="Biography" htmlFor="biography" hint="Background facts, injected as the persona layer of every prompt.">
             <textarea id="biography" rows={7} className="field resize-y" value={draft.biography} onChange={(e) => set('biography', e.target.value)} />
+            <Counter value={draft.biography} limit={PERSONA_LIMITS.biography} />
           </Field>
           <Field label="Topics" htmlFor="topics" hint="Comma separated.">
             <input id="topics" className="field" value={draft.topics.join(', ')} onChange={(e) => set('topics', e.target.value.split(',').map((t) => t.trim()).filter(Boolean))} />
@@ -148,6 +172,7 @@ export function IdentitySection({
             value={draft.styleGuidelines}
             onChange={(e) => set('styleGuidelines', e.target.value)}
           />
+          <Counter value={draft.styleGuidelines} limit={PERSONA_LIMITS.styleGuidelines} />
         </Field>
         <Field
           label="Additional instructions"
@@ -161,6 +186,7 @@ export function IdentitySection({
             value={draft.customInstructions}
             onChange={(e) => set('customInstructions', e.target.value)}
           />
+          <Counter value={draft.customInstructions} limit={PERSONA_LIMITS.customInstructions} />
         </Field>
       </div>
 
