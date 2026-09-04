@@ -134,6 +134,21 @@ with a master key generated for your installation. It never overwrites an
 existing `.env`, because that file holds the key your stored provider
 credentials are encrypted with.
 
+## Opening it
+
+```powershell
+.\launch-ai17z.ps1
+```
+
+```bash
+./launch-ai17z.sh
+```
+
+Starts everything and opens the app. The Windows installer adds this to the
+Start Menu, so there is something to click; `-NoShortcut` skips that. It reads
+the port from your own `.env`, so a machine running two installations opens the
+right one.
+
 ## If something is wrong
 
 ```powershell
