@@ -1,6 +1,7 @@
 import type { ChatMessage, ModelParameters, ModelRole, PromptLayer } from '@xbam/shared/contracts';
 import { PipelineError, createLogger, errorMessage, isPipelineError } from '@xbam/shared';
 import { observability, providers as providersRepo } from '@xbam/database';
+import { checkModelStillOffered, verdictFromModels, type ProviderVerdict } from './providerState';
 import { getAdapter } from './registry';
 
 const log = createLogger('model-gateway');
@@ -224,6 +225,8 @@ export interface ConnectionTestResult {
   latencyMs: number;
   provider: string;
   defaultModel: string | null;
+  /** What happened, named, with what to do about it. */
+  verdict: ProviderVerdict;
 }
 
 /** Used by the Test Connection button. Never returns or logs the key itself. */
@@ -239,6 +242,13 @@ export async function testProviderConnection(providerCredentialId: string): Prom
       latencyMs: 0,
       provider: credential.provider,
       defaultModel: credential.defaultModel,
+      verdict: {
+        state: 'NOT_CONFIGURED',
+        detail: `${credential.label} has no API key yet.`,
+        fix: 'Add the key from this provider and test again.',
+        models: [],
+        transient: false,
+      },
     };
   }
   const startedAt = Date.now();
@@ -253,12 +263,31 @@ export async function testProviderConnection(providerCredentialId: string): Prom
     touchChecked: true,
     ...(health.ok && health.models?.length ? { availableModels: health.models.slice(0, 500) } : {}),
   });
+  const models = health.models ?? [];
+  const reported =
+    health.verdict ??
+    (health.ok
+      ? verdictFromModels(credential.label, models)
+      : {
+          state: 'UNAVAILABLE' as const,
+          detail: health.detail,
+          fix: 'Test again. If it persists, check the base URL and the key.',
+          models: [],
+          transient: true,
+        });
+
+  // A provider that answers while the agent is pointed at a model it no longer
+  // offers is the expensive quiet failure: every screen reads connected and
+  // every generation fails. Reported as its own state rather than as success.
+  const stale = checkModelStillOffered(credential.label, credential.defaultModel, models);
+
   return {
-    ok: health.ok,
-    detail: health.detail,
-    models: health.models ?? [],
+    ok: health.ok && !stale,
+    detail: (stale ?? reported).detail,
+    models,
     latencyMs,
     provider: credential.provider,
     defaultModel: credential.defaultModel,
+    verdict: stale ?? reported,
   };
 }
