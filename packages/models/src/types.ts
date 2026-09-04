@@ -1,3 +1,4 @@
+import type { ProviderVerdict } from './providerState';
 import type { ChatMessage, ModelParameters, ProviderKind } from '@xbam/shared/contracts';
 
 export interface ProviderRequest {
@@ -23,6 +24,13 @@ export interface ProviderHealth {
   ok: boolean;
   detail: string;
   models?: string[];
+  /**
+   * What specifically happened, when the adapter can tell.
+   *
+   * Optional so an adapter that has nothing more to say than yes or no stays
+   * valid; the gateway falls back to deriving one.
+   */
+  verdict?: ProviderVerdict;
 }
 
 /**

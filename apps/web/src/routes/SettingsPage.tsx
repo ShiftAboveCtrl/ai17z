@@ -11,6 +11,27 @@ import { SessionPanel } from '@app/components/SessionPanel';
 
 const HEALTH_TONE = { healthy: 'live', degraded: 'wait', offline: 'fail', unknown: 'idle' } as const;
 
+interface ProviderVerdict {
+  state: 'NOT_CONFIGURED' | 'TESTING' | 'CONNECTED' | 'INVALID_CREDENTIALS' | 'RATE_LIMITED' | 'UNAVAILABLE' | 'NO_MODEL_LIST' | 'MODEL_UNAVAILABLE';
+  detail: string;
+  fix: string | null;
+  models: string[];
+  transient: boolean;
+}
+
+/** Colour by what it means, not by pass and fail. */
+const TONE: Record<ProviderVerdict['state'], string> = {
+  CONNECTED: 'text-signal-live',
+  NO_MODEL_LIST: 'text-bone-dim',
+  TESTING: 'text-bone-dim',
+  NOT_CONFIGURED: 'text-bone-faint',
+  // Not the owner's mistake, and it clears on its own.
+  RATE_LIMITED: 'text-signal-wait',
+  UNAVAILABLE: 'text-signal-wait',
+  INVALID_CREDENTIALS: 'text-signal-fail',
+  MODEL_UNAVAILABLE: 'text-signal-fail',
+};
+
 export function SettingsPage() {
   const { user } = useSession();
   const providers = useResource<{ items: ProviderCredential[] }>('/api/providers');
@@ -27,7 +48,9 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, { ok: boolean; detail: string; latencyMs: number; models: number }>>({});
+  const [results, setResults] = useState<
+    Record<string, { ok: boolean; detail: string; latencyMs: number; models: number; verdict?: ProviderVerdict }>
+  >({});
   const [openAccount, setOpenAccount] = useState<string | null>(null);
 
   const testElapsed = useElapsed(Boolean(testing));
@@ -163,13 +186,25 @@ export function SettingsPage() {
                   <Trash2 className="h-3.5 w-3.5" aria-hidden />
                 </button>
                 {results[provider.id] && (
-                  <p
-                    className={`w-full font-mono text-[11px] ${results[provider.id]!.ok ? 'text-signal-live' : 'text-signal-fail'}`}
-                  >
-                    {results[provider.id]!.ok
-                      ? `connected · ${results[provider.id]!.latencyMs}ms · ${results[provider.id]!.models} models`
-                      : results[provider.id]!.detail}
-                  </p>
+                  <div className="w-full">
+                    {/*
+                      One word for every failure was the problem. A rejected key,
+                      an outage, a rate limit and a retired model need different
+                      things done, and only one of them is the owner's fault.
+                    */}
+                    <p className={`font-mono text-[11px] ${TONE[results[provider.id]!.verdict?.state ?? (results[provider.id]!.ok ? 'CONNECTED' : 'UNAVAILABLE')]}`}>
+                      {(results[provider.id]!.verdict?.state ?? (results[provider.id]!.ok ? 'CONNECTED' : 'UNAVAILABLE'))
+                        .toLowerCase()
+                        .replace(/_/g, ' ')}
+                      {results[provider.id]!.ok ? ` · ${results[provider.id]!.latencyMs}ms` : ''}
+                    </p>
+                    <p className="mt-1 text-[12px] text-bone-dim">
+                      {results[provider.id]!.verdict?.detail ?? results[provider.id]!.detail}
+                    </p>
+                    {results[provider.id]!.verdict?.fix && (
+                      <p className="mt-1 text-[12px] text-bone-faint">{results[provider.id]!.verdict!.fix}</p>
+                    )}
+                  </div>
                 )}
               </li>
             ))}
