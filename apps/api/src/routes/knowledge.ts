@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import { agents as agentsRepo, knowledge as knowledgeRepo, type UserRow } from '@xbam/database';
-import { indexSource, allowedRoots } from '@xbam/runtime';
+import { indexSource, allowedRoots, builtInSources } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAgent(agentId: string, user: UserRow) {
@@ -55,6 +55,9 @@ export async function knowledgeRoutes(app: FastifyInstance): Promise<void> {
         // So the interface can say "this installation can read here" before
         // somebody types a path it will refuse.
         roots: allowedRoots(),
+        // Documentation shipped with this installation, offered as a source
+        // somebody can attach in one step. An ordinary source once created.
+        available: await builtInSources(),
       };
     }),
   );

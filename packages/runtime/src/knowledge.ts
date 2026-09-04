@@ -13,6 +13,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { createLogger, errorMessage, envString } from '@xbam/shared';
 import { knowledge as knowledgeRepo, memories as memoriesRepo } from '@xbam/database';
 import { memoryContentHash } from '@xbam/database';
@@ -28,6 +29,48 @@ import {
 
 const run = promisify(execFile);
 const log = createLogger('knowledge');
+
+/**
+ * Sources this installation can offer without being told where anything is.
+ *
+ * A convenience over the general mechanism, never a mode. What comes back is an
+ * ordinary source that happens to point at documentation shipped alongside the
+ * application, and an owner can rename it, disable it, or delete it exactly like
+ * one they attached themselves. Building it the other way round -- an "AI17Z
+ * expert" switch with the project's docs wired behind it -- would make teaching
+ * an agent about anything else the special case.
+ *
+ * Offered only when the documents are actually there. An installation that
+ * shipped without them should show nothing rather than a source that indexes to
+ * zero and looks broken.
+ */
+export interface BuiltInSource {
+  name: string;
+  kind: 'PATH';
+  location: string;
+  /** What an agent gains by being taught this, in the owner's words. */
+  describes: string;
+}
+
+export async function builtInSources(): Promise<BuiltInSource[]> {
+  const root = process.cwd();
+  const docs = resolve(root, 'docs');
+  const readable = await stat(docs)
+    .then((info) => info.isDirectory())
+    .catch(() => false);
+  if (!readable) return [];
+
+  return [
+    {
+      name: 'AI17Z documentation',
+      kind: 'PATH',
+      location: docs,
+      describes:
+        'Installation, browsers, providers, memory, voice, tools, posting, Easy and Advanced mode, ' +
+        'and the limitations of the version installed here.',
+    },
+  ];
+}
 
 export interface IndexReport {
   sourceId: string;
