@@ -7,8 +7,9 @@ whenever the execution state materially changes.
 
 - Path: this checkout
 - Branch: `main`
-- Current commit: `5a9acb6`
-- Unpushed commits: 52 (deliberate; the release state is not coherent yet)
+- Current commit: `19abf47`
+- Unpushed commits: everything on `main` (deliberate; nothing is pushed until
+  the promotion decision is made)
 
 ### Ports: this checkout owns the defaults
 
@@ -65,19 +66,22 @@ recovery, watchdog, tab reconciliation
 
 ## Partial sections
 
-None. §115 is done -- see "The existing-database upgrade, in full" in
-`docs/final-validation-matrix.md`.
+None.
 
 ## Remaining sections
 
-- §59-70 posting, content brain, idea queue, Outreach
-- §76-91 supervisor, desktop launcher, tray, installer, updates, release flow
-- §92-113 remaining ultimate-agent features
-- §114+ final validation, three frozen runs, promotion
+None outstanding as build work. §59-70, §76-91 (except code signing) and
+§92-113 are all done and recorded in `docs/ultimate-agent-ledger.md`. The two
+gaps that ledger had left open deliberately (§94 PDFs and websites, §95 tool
+last-use) are closed, and closing §95 found something worth reading below.
+
+§114+ is what remains: the validation matrix is worked, the clean install and
+the two-installation check are done, the frozen runs are in progress, and the
+promotion is the last step and needs a decision rather than more work.
 
 ## Current exact task
 
-§76-91 is done except code signing. Begin §92-113.
+Frozen runs, then the promotion decision. See "Golden-runtime promotion status".
 
 What it came to: the worker component in health (a stack with a dead worker
 reported healthy on every component it had), the supervisor with a heartbeat
@@ -109,7 +113,7 @@ complete and correct end to end; everything broken sat either side of it:
 
 ## Uncommitted work
 
-None. Working tree clean at `67d562b`.
+None. Working tree clean at `19abf47`.
 
 ## Important discovered invariants
 
@@ -156,6 +160,24 @@ None. Working tree clean at `67d562b`.
 - Never write a file through a shell heredoc when it contains a regex. Use the
   Write tool, or repair afterwards and verify.
 
+- A prompt must never offer a capability nothing implements. `TOOLS AVAILABLE`
+  listed every enabled tool and no tool-call loop exists, so a model was told it
+  could check things it could not and answered as though it had. Tools now
+  contribute facts rather than offers.
+- A silent success is worse than a loud failure, and it has several costumes: a
+  scanned PDF that parses to nothing, a web page that renders in the browser, a
+  spending limit measured against a number that is always zero. Each is now a
+  refusal with a sentence somebody can act on.
+- Derive a named profile from the underlying rows rather than storing it. A
+  stored one drifts the moment somebody edits a single permission; a derived one
+  reports CUSTOM, which is true.
+- A feature switch must write only what its name says. A profile applied as a
+  bundle of settings carries defaults for everything it does not name and
+  silently restores them.
+- Run typecheck before committing, not just the tests. A test fake missing a
+  required field passed vitest and failed tsc, and the failure sat in the
+  repository until a clean clone caught it.
+
 ## Known defects still open
 
 - Browser-pane screenshots return black frames in this environment. Verify
@@ -163,8 +185,9 @@ None. Working tree clean at `67d562b`.
 
 ## Migrations
 
-- Latest: `0050_content_idea_lifecycle.sql`
-- Empty database: 50 applied, 0 skipped, no drift
+- Latest: `0055_knowledge_url_sources.sql`
+- Empty database: 55 applied, 0 skipped, no drift, verified from a fresh clone
+  rather than the working tree
 - Existing-database upgrade: DONE 2026-09-04, on a copy of the running
   installation. Rolled back to 0047, upgraded to 0050, every row count
   identical, no drift, and the sealed provider credential still opens. The copy
@@ -201,7 +224,12 @@ kill by that filter; nothing else matches it.
 
 ## Test baseline
 
-- Last full run at `5a9acb6`: 1300 passed, 123 files, 0 failed, in 595s
+- Last full run at `19abf47`: **1517 passed, 143 files, 0 failed**, 6 skipped
+  in one file (`import.test.ts`, which skips loudly without an AI4CZ database).
+  845s, slower than the 595s baseline only because a soak and a clean install
+  were running on the same machine.
+- `realChrome.test.ts` ran all 18 of its tests against a real Chrome rather
+  than skipping, and the run left **zero** Chrome processes behind.
 - Typecheck: clean (verify by exit code, never by grepping for "error TS" —
   tsc colourises between the words)
 - Command: `npm test` (the .env default is now the right database)
@@ -216,13 +244,32 @@ kill by that filter; nothing else matches it.
 
 ## Golden-runtime promotion status
 
-Requires, in order:
-
 1. ~~representative database upgrade proven on a copy~~ DONE
 2. ~~release cleanliness check~~ DONE (`npm run release:check`, in CI)
-3. release-candidate validation -- the NOT TESTED rows in the validation matrix
-4. three frozen-source runs on one commit
-5. backup of the real installation
-6. promotion
+3. ~~release-candidate validation~~ DONE. 71 matrix rows that read NOT TESTED
+   now cite the test that proves them; eight remain untested and each says what
+   it would take. Nothing is marked PASS on inspection alone.
+4. three frozen-source runs on one commit -- IN PROGRESS at `19abf47`
+5. ~~backup of the real installation~~ DONE. `pg_dump -Fc` of the golden
+   runtime to `~/ai17z-test-backups/`, restored into a scratch database and
+   compared: 1 agent, 156 events, 152 jobs, 94 actions, 185 memories, 1 sealed
+   credential, all identical. The scratch database was dropped afterwards.
+   (The sealed credential was checked for presence and integrity through the
+   dump, not decrypted: that needs the golden runtime's own master key, and
+   there is no reason for this checkout to hold it.)
+6. promotion -- **needs a decision, not more work.** See below.
 
-Still NOT STARTED from 3 onwards.
+### Why promotion is a decision
+
+Promoting means the golden runtime stops running `f768553` and starts running
+this code, which requires restarting its worker, which may close the Chrome that
+holds `@ai17zos`'s signed-in session.
+
+"Chrome restart -- session survives" is one of the eight rows still marked NOT
+TESTED, and it is untested for a reason: the only way to test it is to stop a
+browser somebody is signed into, and a failed graceful close is exactly the case
+that loses the session. AI17Z never signs in by itself, so recovering means a
+person signing in again.
+
+The backup covers the data. It does not cover the session. That asymmetry is the
+whole reason this step is a decision rather than a step.
