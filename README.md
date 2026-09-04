@@ -162,6 +162,43 @@ that fixes each one.
 Data survives. `-Volumes` / `--volumes` deletes the database, every stored
 provider key and every browser session, and asks for the word DELETE first.
 
+## Restarting
+
+```powershell
+.\restart-ai17z.ps1
+```
+
+```bash
+./restart-ai17z.sh
+```
+
+Your signed-in Chrome survives a restart: AI17Z spawns the browser rather than
+letting the automation library launch it, so stopping AI17Z does not close a
+window you are signed in to, and starting again reattaches to the tabs already
+open instead of opening more. `-KeepStack` / `--keep-stack` restarts only the
+worker and leaves the containers alone, which is faster and enough for anything
+that is not a container change.
+
+## Updating
+
+```powershell
+.\update-ai17z.ps1 -Check
+.\update-ai17z.ps1
+```
+
+```bash
+./update-ai17z.sh --check
+./update-ai17z.sh
+```
+
+`-Check` / `--check` says what an update would bring and changes nothing: the
+commits, and any database migrations, which are the part that cannot be undone.
+
+Your data and your `.env` are never touched. It refuses to run over uncommitted
+changes rather than discarding them, and it works out whether the update can be
+applied *before* stopping anything, so a checkout it cannot update is left
+running rather than left down.
+
 ---
 
 ## Quick start with Docker
