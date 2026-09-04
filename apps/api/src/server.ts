@@ -14,6 +14,7 @@ import { sessionRoutes } from './routes/sessions';
 import { jobRoutes } from './routes/jobs';
 import { mockRoutes } from './routes/mock';
 import { memoryRoutes } from './routes/memories';
+import { knowledgeRoutes } from './routes/knowledge';
 import { personaRoutes } from './routes/persona';
 import { artifactRoutes } from './routes/artifacts';
 import { settingsRoutes } from './routes/settings';
@@ -59,6 +60,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(jobRoutes);
   await app.register(mockRoutes);
   await app.register(memoryRoutes);
+  await app.register(knowledgeRoutes);
   await app.register(personaRoutes);
   await app.register(artifactRoutes);
   await app.register(settingsRoutes);
