@@ -12,6 +12,9 @@ const ADAPTERS: Record<ProviderKind, ProviderAdapter> = {
     'x-title': 'XBAM',
   }),
   deepseek: createOpenAiCompatibleAdapter('deepseek', 'https://api.deepseek.com/v1', 'DeepSeek'),
+  // Verified against docs.x.ai: POST /v1/chat/completions, Bearer key, the
+  // OpenAI request and response shape. No separate adapter needed.
+  xai: createOpenAiCompatibleAdapter('xai', 'https://api.x.ai/v1', 'xAI'),
   openai_compatible: createOpenAiCompatibleAdapter('openai_compatible', '', 'OpenAI-compatible endpoint'),
   anthropic: anthropicAdapter,
   ollama: ollamaAdapter,

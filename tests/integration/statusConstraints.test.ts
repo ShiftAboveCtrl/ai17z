@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_STATUSES, PIPELINE_NODE_KINDS, TRACE_EVENT_TYPES } from '@xbam/shared/contracts';
-import { accounts as accountsRepo, observability, pipelines } from '@xbam/database';
+import { ACCOUNT_STATUSES, PIPELINE_NODE_KINDS, PROVIDER_KINDS, TRACE_EVENT_TYPES } from '@xbam/shared/contracts';
+import { accounts as accountsRepo, observability, pipelines, providers, users } from '@xbam/database';
 import { ingestNormalizedEvent } from '@xbam/runtime';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -86,5 +86,51 @@ describe('every pipeline node kind the code can produce is one the database acce
       null,
     );
     expect(saved.nodes.map((n) => n.kind).sort()).toEqual([...PIPELINE_NODE_KINDS].sort());
+  });
+});
+
+/**
+ * Provider kinds have a CHECK too, and this file did not cover them.
+ *
+ * The same trap the account statuses fell into: adding a provider to the
+ * contract and forgetting the constraint passes every unit test and fails at
+ * the database the first time somebody saves a key for it, which is the worst
+ * possible moment to find out.
+ */
+describe('every provider kind the code offers is one the database accepts', () => {
+  it('saves a credential for each kind in the contract', async () => {
+    const owner = await users.createOwner({
+      email: `providers-${uniqueSuffix()}@example.test`,
+      password: 'test-password-1234',
+      displayName: 'Provider owner',
+    });
+
+    for (const kind of PROVIDER_KINDS) {
+      const created = await providers.createProvider({
+        ownerId: owner.id,
+        provider: kind,
+        label: `${kind}-${uniqueSuffix()}`,
+        availableModels: [],
+        defaultModel: null,
+      });
+      expect(created.provider, `the database refused the ${kind} provider`).toBe(kind);
+    }
+  });
+
+  it('still refuses a provider that is not in the contract', async () => {
+    const owner = await users.createOwner({
+      email: `providers-${uniqueSuffix()}@example.test`,
+      password: 'test-password-1234',
+      displayName: 'Provider owner',
+    });
+    await expect(
+      providers.createProvider({
+        ownerId: owner.id,
+        provider: 'not_a_provider' as never,
+        label: 'nope',
+        availableModels: [],
+        defaultModel: null,
+      }),
+    ).rejects.toThrow();
   });
 });

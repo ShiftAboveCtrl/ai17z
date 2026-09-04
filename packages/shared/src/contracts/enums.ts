@@ -299,6 +299,7 @@ export const PROVIDER_KINDS = [
   'anthropic',
   'openrouter',
   'deepseek',
+  'xai',
   'ollama',
   'openai_compatible',
   'mock',

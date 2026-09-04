@@ -17,7 +17,7 @@ describe('provider registry', () => {
   it('offers the providers the product promises', () => {
     const kinds = listAdapters().map((a) => a.kind).sort();
     expect(kinds).toEqual(
-      ['anthropic', 'deepseek', 'mock', 'ollama', 'openai', 'openai_compatible', 'openrouter'].sort(),
+      ['anthropic', 'deepseek', 'mock', 'ollama', 'openai', 'openai_compatible', 'openrouter', 'xai'].sort(),
     );
   });
 
