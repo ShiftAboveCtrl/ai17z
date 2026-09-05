@@ -193,10 +193,20 @@ async function main(): Promise<void> {
     [
       'ci',
       '--omit=dev',
-      // pdfjs-dist lists @napi-rs/canvas as optional and only needs it to
-      // *render* a PDF. AI17Z reads the text layer and never renders, so this
-      // drops a 37MB native binary the product cannot reach.
-      '--omit=optional',
+      // No `--omit=optional`, however tempting the 37MB it saves.
+      //
+      // npm installs exactly one platform package out of an optional set, and
+      // that is how esbuild ships its binary -- so omitting optional
+      // dependencies removes `@esbuild/win32-x64`, and with it every `tsx`
+      // process an installed copy runs: the migration on every start, and the
+      // native worker that is the only thing able to drive real Chrome.
+      //
+      // It shipped anyway because the failure is invisible on a developer's
+      // machine, where esbuild's postinstall fetches the binary over the
+      // network and leaves a `downloaded-` copy of it inside esbuild's own lib
+      // directory. The clean build runner got no such file, so the package that
+      // installs is not the package that was tested. The unwanted 37MB is
+      // removed by name below.
       // Only what the *host* runs, which is the native worker and the tools
       // around it. Everything else runs in a container that installs its own
       // dependencies. Without this scoping the installer carries 130MB of
@@ -222,6 +232,12 @@ async function main(): Promise<void> {
       },
     },
   );
+
+  // pdfjs-dist lists @napi-rs/canvas as optional and needs it only to *render*
+  // a PDF. AI17Z reads the text layer and never renders, so this is 37MB the
+  // product cannot reach. Removed by name rather than by category, because the
+  // category also holds the thing that makes TypeScript run.
+  await rm(join(stageDir, 'node_modules', '@napi-rs'), { recursive: true, force: true });
 
   // Proof, rather than an exit code.
   //
@@ -296,6 +312,30 @@ async function main(): Promise<void> {
     throw new Error(
       `the staged application is missing paths its own Dockerfiles copy:\n  ${[...new Set(uncopied)].join('\n  ')}\n` +
         'It would install and then fail to build its images on first launch.',
+    );
+  }
+
+  // TypeScript actually runs.
+  //
+  // Every entry point an installed copy has goes through `tsx`: the migration
+  // on every start, the API, the worker, and the supervised native worker that
+  // drives real Chrome. None of them is a file this script could check for --
+  // `tsx` and `esbuild` were both present and correct in a package where
+  // nothing could run, because the *binary* esbuild shells out to was missing.
+  //
+  // So this executes a transform rather than looking for a path. It is the only
+  // check here that would have caught it.
+  try {
+    const { stdout } = await run(
+      'node',
+      [join(stageDir, 'node_modules', 'tsx', 'dist', 'cli.mjs'), '-e', 'const n: number = 1; console.log(`tsx ok ${n}`)'],
+      { cwd: stageDir, maxBuffer: 8 * 1024 * 1024 },
+    );
+    if (!stdout.includes('tsx ok 1')) throw new Error(`tsx ran but printed: ${stdout.trim()}`);
+  } catch (error) {
+    throw new Error(
+      'the staged application cannot run TypeScript, so it would install and then fail on its ' +
+        `first migration and never start a native worker:\n  ${(error as Error).message}`,
     );
   }
 

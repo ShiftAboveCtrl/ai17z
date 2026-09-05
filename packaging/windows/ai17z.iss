@@ -114,6 +114,10 @@ Filename: "{app}\AI17Z.cmd"; Description: "Start AI17Z now"; Flags: postinstall 
 Type: filesandordirs; Name: "{app}\node_modules"
 Type: filesandordirs; Name: "{app}\apps"
 Type: filesandordirs; Name: "{app}\packages"
+; Written by WriteSettings rather than installed from [Files], so Setup does not
+; know about it and an uninstall left the program directory behind holding one
+; orphaned file.
+Type: files; Name: "{app}\data-location.txt"
 
 [Code]
 { ---------------------------------------------------------------------------
