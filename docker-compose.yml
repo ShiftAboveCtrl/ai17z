@@ -54,6 +54,15 @@ services:
       # handed the container an empty key and the first thing anybody does --
       # storing a provider API key -- failed with "AI17Z_MASTER_KEY is not set".
       AI17Z_MASTER_KEY: ${AI17Z_MASTER_KEY:-${XBAM_MASTER_KEY:-}}
+      # Which release this is. A container has no BUILD_INFO.json and no
+      # repository, and package.json says 0.1.0 through every candidate, so
+      # without this the update check compares 0.1.0 against v0.1.0-rc.4 and
+      # cannot tell which is newer. The launcher reads it off the stamp.
+      AI17Z_VERSION: ${AI17Z_VERSION:-}
+      # Whether this came from the Windows package, which decides whether the
+      # update screen offers an installer or `update-ai17z.ps1`. Only the API
+      # answers that route, so only the API needs it.
+      AI17Z_INSTALLED: ${AI17Z_INSTALLED:-}
       XBAM_API_PORT: "8787"
       XBAM_API_HOST: 0.0.0.0
       AI17Z_CORS_ORIGINS: ${AI17Z_CORS_ORIGINS:-${XBAM_CORS_ORIGINS:-http://localhost:8080}}
@@ -90,6 +99,11 @@ services:
       # handed the container an empty key and the first thing anybody does --
       # storing a provider API key -- failed with "AI17Z_MASTER_KEY is not set".
       AI17Z_MASTER_KEY: ${AI17Z_MASTER_KEY:-${XBAM_MASTER_KEY:-}}
+      # Which release this is. A container has no BUILD_INFO.json and no
+      # repository, and package.json says 0.1.0 through every candidate, so
+      # without this the update check compares 0.1.0 against v0.1.0-rc.4 and
+      # cannot tell which is newer. The launcher reads it off the stamp.
+      AI17Z_VERSION: ${AI17Z_VERSION:-}
       XBAM_STORAGE_DIR: /data/storage
       XBAM_BROWSER_PROFILE_DIR: /data/browser-profiles
       AI17Z_BROWSER_ENABLED: ${AI17Z_BROWSER_ENABLED:-${XBAM_BROWSER_ENABLED:-1}}

@@ -40,6 +40,25 @@ AI17Z talks to services **you** configure, using credentials **you** supply:
 Each of these is off until you configure it. What is sent is what that feature
 needs to do its job, and the Activity screen shows what was sent and when.
 
+There is one request AI17Z makes that you did not configure, and this is it:
+
+- **The update check.** At most once every six hours, AI17Z asks GitHub's public
+  API which versions of AI17Z have been released. The request carries a
+  `User-Agent` of `AI17Z` and nothing else -- no identifier, no version, no
+  agent, no account, nothing about you. It is an ordinary anonymous read of a
+  public page, and GitHub learns from it exactly what it learns from anybody
+  visiting the releases page: that some address asked.
+
+  Nothing is downloaded and nothing is installed. The answer becomes a line on
+  the Version panel in Settings, with the release notes, a link, and two ways to
+  say no: **Skip this version**, which never mentions that one again, and the
+  toggle, which stops the check entirely. Off means no request is made at all --
+  not a request whose answer is hidden.
+
+  **AI17Z never updates itself.** There is no updater process, no scheduled
+  restart, and no code path that replaces a running installation. Taking an
+  update is you running an installer.
+
 ## Credentials
 
 Provider API keys and other secrets are encrypted with AES-256-GCM under a

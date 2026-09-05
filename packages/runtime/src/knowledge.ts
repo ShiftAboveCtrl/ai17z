@@ -71,7 +71,7 @@ export async function builtInSources(): Promise<BuiltInSource[]> {
       // read something it has not, so this list and that folder move together.
       describes:
         'Installing and running it, browsers, providers, memory, voice, tools, posting, ' +
-        'capabilities, Easy and Advanced mode, and the limitations of the version installed here.',
+        'capabilities, Easy and Advanced mode, updates, and the limitations of the version installed here.',
     },
   ];
 }

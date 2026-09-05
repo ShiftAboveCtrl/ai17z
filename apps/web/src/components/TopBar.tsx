@@ -1,6 +1,7 @@
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { Notifications } from '@app/components/Notifications';
 import { PauseAll } from '@app/components/PauseAll';
+import { UpdateBadge } from '@app/components/UpdateBadge';
 import { useEffect, useState } from 'react';
 import { LogOut, Plus } from 'lucide-react';
 import { useViewMode, type ViewMode } from '@app/lib/viewMode';
@@ -59,6 +60,7 @@ export function TopBar() {
         </div>
 
         <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
+          <UpdateBadge />
           <Notifications />
           {/*
             Below `sm` this moves down to the navigation strip. Seven controls
