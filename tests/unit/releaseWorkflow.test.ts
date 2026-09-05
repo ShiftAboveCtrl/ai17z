@@ -296,3 +296,44 @@ describe('the SmartScreen documentation is not out of date', () => {
     expect(docs[0]).toMatch(/will not ask you to disable/i);
   });
 });
+
+/**
+ * The release notes are the changelog the application shows.
+ *
+ * `UpdatePanel` renders the release body, so whatever this step writes is what
+ * somebody reads when deciding whether to take an update. It described what
+ * AI17Z is and how to install it -- true, and no help at all to somebody
+ * already running it who wants to know what is different.
+ *
+ * The trap underneath is that a shallow checkout makes this fail silently: one
+ * commit, no tags, and `git log previous..this` is empty rather than wrong.
+ */
+describe('the release notes say what changed', () => {
+  it('lists the commits since the previous tag', () => {
+    expect(workflow).toContain('What changed since');
+    expect(workflow).toMatch(/git log --no-merges --format='- %s' "\$PREV\.\.\$TAG"/);
+  });
+
+  it('finds the previous tag rather than being told one', () => {
+    // `git describe --tags --abbrev=0 <tag>^` is the previous tag reachable
+    // from this one, which stays right when a release is skipped or deleted.
+    expect(workflow).toContain('git describe --tags --abbrev=0 "$TAG^"');
+  });
+
+  it('checks out the history the changelog needs', () => {
+    // Three checkouts, and only the publishing one needs history. Without
+    // fetch-depth 0 there is one commit and no tags, so the changelog would be
+    // empty and nothing would say so.
+    expect(workflow).toContain('fetch-depth: 0');
+    const publish = workflow.slice(workflow.indexOf('publish the release'));
+    const checkout = publish.indexOf('actions/checkout@v4');
+    expect(checkout, 'the publish job no longer checks out').toBeGreaterThan(-1);
+    expect(publish.slice(checkout, checkout + 400)).toContain('fetch-depth: 0');
+  });
+
+  it('says nothing rather than something wrong when there is no tag', () => {
+    // A workflow_dispatch build has no tag to compare against, and a changelog
+    // invented from whatever HEAD happens to be would be worse than none.
+    expect(workflow).toContain('git rev-parse -q --verify "refs/tags/$TAG"');
+  });
+});

@@ -320,6 +320,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history, so the release notes can say what changed.
+          # A shallow checkout has one commit and no tags, and `git log
+          # previous..this` is then empty rather than wrong, which is the
+          # kind of quiet that ships a changelog saying nothing.
+          fetch-depth: 0
 
       - name: Refuse to publish unsigned when signing was required
         run: |
@@ -354,6 +360,19 @@ jobs:
           {
             echo "## AI17Z $VERSION — Windows installer"
             echo
+            # What changed, taken from the commits between the last tag and this
+            # one. This is the section the in-app update screen shows, so it is
+            # the only part of these notes that answers "should I take this?".
+            TAG="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+            if [ -n "$TAG" ] && git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+              if [ -n "$PREV" ]; then
+                echo "### What changed since $PREV"
+                echo
+                git log --no-merges --format='- %s' "$PREV..$TAG"
+                echo
+              fi
+            fi
             if [ "$SIGNED" = "no" ]; then
               echo "> **This installer is unsigned** while AI17Z's open-source"
               echo "> [SignPath Foundation](https://signpath.org) code-signing application is pending."
