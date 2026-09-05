@@ -25,6 +25,11 @@ import {
   profileOf,
   exportAgent,
   importAgent,
+  inspectPackage,
+  packAgent,
+  packageFilename,
+  serialisePackage,
+  unpackAgent,
   liveStatus,
   preflightEnabling,
   toolReadiness,
@@ -706,6 +711,82 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         ...(body.name ? { name: body.name } : {}),
         createdBy: user.id,
       });
+    }),
+  );
+
+  /**
+   * The agent as a file.
+   *
+   * SHARE is configuration and is safe to hand to anybody. MOVE adds what the
+   * agent has learned, for carrying your own agent to your own new machine.
+   * Neither carries a credential, a session or a browser profile -- the shapes
+   * have nowhere to put one.
+   */
+  app.get(
+    '/api/agents/:id/package',
+    handler(async (request, reply) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const mode = ((request.query ?? {}) as { mode?: string }).mode === 'MOVE' ? 'MOVE' : 'SHARE';
+
+      const pkg = await packAgent(agent.id, mode);
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'agent.exported',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { mode, memories: pkg.learned?.memories.length ?? 0, avatar: pkg.avatar !== null },
+      });
+
+      reply.header('content-type', 'application/json; charset=utf-8');
+      reply.header('content-disposition', `attachment; filename="${packageFilename(agent.name, mode)}"`);
+      // Never cached: a package is a point-in-time copy of an agent, and a
+      // stale one downloaded from a cache is a silently older agent.
+      reply.header('cache-control', 'no-store');
+      return reply.send(serialisePackage(pkg));
+    }),
+  );
+
+  /**
+   * Looking inside without creating anything.
+   *
+   * The whole point of a portable agent is that somebody can be handed one, and
+   * being handed something is exactly when you want to look before opening it.
+   * Every count here is taken from the parsed document rather than from a field
+   * the file supplied.
+   */
+  app.post(
+    '/api/agents/package/inspect',
+    handler(async (request) => {
+      await requireUser(request);
+      const body = request.body;
+      const raw = typeof body === 'string' ? body : Buffer.isBuffer(body) ? body : JSON.stringify(body);
+      // Never throws for a bad package: an unreadable file is something to be
+      // told about, not an error to handle.
+      return inspectPackage(raw);
+    }),
+  );
+
+  app.post(
+    '/api/agents/package/import',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = request.body;
+      const raw = typeof body === 'string' ? body : Buffer.isBuffer(body) ? body : JSON.stringify(body);
+
+      const result = await unpackAgent({
+        ownerId: user.id,
+        raw,
+        createdBy: user.id,
+      });
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'agent.imported',
+        entityType: 'agent',
+        entityId: result.agentId,
+        data: { memories: result.imported.memories, avatar: result.imported.avatar, skipped: result.skipped.length },
+      });
+      return result;
     }),
   );
 

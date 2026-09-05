@@ -18,3 +18,4 @@ export * from './runtime';
 export * from './api';
 export * from './diagnostics';
 export * from './portable';
+export * from './portablePackage';
