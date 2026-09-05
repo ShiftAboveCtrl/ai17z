@@ -63,11 +63,11 @@ test('edits the persona and cuts a new version', async ({ page }) => {
   await signIn(page);
   await openAgent(page, AGENT_NAME);
 
-  // Identity and policies both offer a version button, so scope to the section.
+  // Several sections have a Save, so scope to this one. The button used to say
+  // "save as version" and the section used to show "currently vN"; autosave
+  // replaced both, and this test went on asserting against the old wording.
   const identity = page.locator('#identity');
   await identity.scrollIntoViewIfNeeded();
-  const version = identity.getByText(/currently v\d+/i);
-  const before = await version.innerText();
 
   await page.locator('#personality').fill('Edited by the end-to-end suite.');
   // The two that were sent on every save without being editable anywhere. A
@@ -75,11 +75,12 @@ test('edits the persona and cuts a new version', async ({ page }) => {
   // it could even show them.
   await page.locator('#styleGuidelines').fill('One sentence, then stop.');
   await page.locator('#customInstructions').fill('The address is ADDR-E2E-1234.');
-  await identity.getByRole('button', { name: /save as version/i }).click();
+  await identity.getByRole('button', { name: /^save$/i }).click();
 
-  await expect(identity.getByText('saved')).toBeVisible({ timeout: 20_000 });
-  await expect(version).not.toHaveText(before, { timeout: 20_000 });
-
+  // Deliberately not asserting on the "saved" tick. It clears itself after
+  // 2.4 seconds, so a test that waits for it is racing a toast. The reload
+  // below is the assertion that matters anyway: the form used to report saving
+  // these two fields before it could even show them.
   await page.reload();
   await page.locator('#identity').waitFor({ timeout: 30_000 });
   await expect(page.locator('#styleGuidelines')).toHaveValue('One sentence, then stop.');
