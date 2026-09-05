@@ -236,11 +236,14 @@ kill by that filter; nothing else matches it.
 
 ## User-blocked items
 
-- **§82 code signing.** Needs an OV or EV certificate the user purchases
-  (DigiCert or Sectigo, roughly $200-600/year; EV carries SmartScreen
-  reputation immediately, OV earns it). Everything around it — installer,
-  deterministic packaging, checksums, signing hooks, timestamping, release
-  workflow, documentation — is buildable without it and is not blocked.
+- **Code signing.** No longer blocked on a purchase. SignPath Foundation signs
+  qualifying open-source projects for free, and Microsoft's own code-signing
+  page lists it. See `docs/CODE_SIGNING_POLICY.md`.
+
+  The earlier note here said an EV certificate carries SmartScreen reputation
+  immediately. **That is wrong and was wrong when written.** Microsoft removed
+  that behaviour in 2024: an EV-signed file builds reputation exactly as an
+  OV-signed one does. Paying the EV premium to skip SmartScreen buys nothing.
 
 ## Golden-runtime promotion status
 

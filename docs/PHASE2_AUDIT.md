@@ -144,9 +144,19 @@ administrators may use it to accelerate trust for managed deployments; it is not
 a consumer reputation mechanism. Conflating the two is the mistake the brief
 warns about, and the documentation this phase writes keeps them apart.
 
-One further fact worth carrying: on Windows 11, **Smart App Control** can
-supersede SmartScreen and will block unsigned executables outright regardless of
-reputation. That raises the value of signing beyond warning-avoidance.
+One further fact worth carrying, stated more carefully than it was in the first
+draft of this document. On Windows 11, **Smart App Control** can supersede
+SmartScreen application reputation. Microsoft's wording is that it uses app
+intelligence to decide whether software is trusted, and that a trusted signature
+is one of the paths to that; software it cannot establish as trusted can be
+blocked, and its checks apply to all executables rather than only downloaded
+ones.
+
+The earlier draft said it "blocks unsigned executables outright regardless of
+reputation". That is broader than Microsoft claims, and overstating a security
+control is the same error as understating one. The conclusion is unchanged and
+does not need the overstatement: a trusted signature matters for more than
+avoiding a warning.
 
 ### Microsoft Store: free, and probably not for us
 

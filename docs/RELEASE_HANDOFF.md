@@ -133,6 +133,7 @@ there is nothing to checksum.
 
 ## Still user-blocked
 
-**Code signing.** Needs an OV or EV certificate you purchase (DigiCert or
-Sectigo, roughly $200–600/year; EV carries SmartScreen reputation immediately,
-OV earns it). Everything around it is built and is not blocked.
+**Code signing.** Superseded. This said an EV certificate carries SmartScreen
+reputation immediately; Microsoft removed that behaviour in 2024, so it was
+wrong. Signing is now free through SignPath Foundation for open-source projects.
+See `docs/CODE_SIGNING_POLICY.md`.
