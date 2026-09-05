@@ -46,10 +46,10 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Responsive matrix | 390/834/1280/1440/2200 | - | - | y | - | - | PASS - after fixing a 390px overflow | grid item min-width auto | 42bdb1e |
 | Accessibility / input | Keyboard, focus, labels | y | - | y | - | - | PASS - audited in the running app: 26 inputs, 0 without an accessible name (was 10), every label click focuses its control, one h1, main/nav/header landmarks, focus never suppressed. No skip link, which is noted rather than claimed | Field rendered a label it never associated with anything | (this round) |
 | Real Chrome identity | Two independent signals | - | - | y | - | - | PASS - chrome.exe; binary and CDP both Chrome 151.0.7922.175 | - | - |
-| Chrome restart | Session survives | - | - | - | - | - | NOT TESTED - needs a real Chrome killed and restarted with a live session | | |
+| Chrome restart | Session survives | - | - | y | y | y | PASS (L+F+R) - on the development account @ShiftAboveCtrl, never on the golden runtime. Graceful shutdown through the product's own SHUTDOWN_BROWSER task took all 13 Chrome processes down and closed the port. The worker reopened Chrome on the same profile by itself, and the X session survived: handle read from the live DOM as ShiftAboveCtrl, composer present, no login form, no login wall on any of the three restored pages | | |
 | Browser record loss | Recovers, does not duplicate | - | - | y | y | y | PASS - finds holder, replaces it, keeps the session | record loss stranded a live Chrome | 7a4eecb |
 | Browser task races | No watcher misreads a launch | - | y | - | y | y | PASS (I+F+R) - `integration/browserTasks.test.ts`: an unstarted task is superseded rather than refused, a live lease blocks a second, an expired one is taken over, the sweep distinguishes abandoned from never-claimed, and the owner can always cancel | | |
-| Four tab roles | All four exist and are used | - | - | y | - | - | PASS - all four tracked; ACTION/RESEARCH on demand | - | - |
+| Four tab roles | All four exist and are used | y | - | y | - | - | PASS (A+L) - all four exercised on the live account: ACTION, MENTIONS and NOTIFICATIONS adopted across a worker restart, and RESEARCH opened on demand by a real web lookup that returned results. RESEARCH shows MISSING when idle by design, which is why it is opened rather than kept | - | - |
 | Tab adoption | 5 restarts → still 4 tabs | y | - | - | - | y | PASS (A) - 20 unclean restarts keep the count flat, and the real 15-tab profile recovers. Pure reconciler only; says nothing about a real Chrome | one abandoned tab per unclean restart, 15 found live | ca188ce, 67d562b |
 | Tab closure recovery | Only the closed one returns | y | - | - | - | - | PASS (A) - a closed role is recreated alone; sign-in, challenge and composer tabs are never claimed or closed | | ca188ce |
 | Tab interference | Roles do not navigate each other | y | - | - | - | - | PASS (A) - `unit/visionAndResearchRouting.test.ts` proves the web search runs on RESEARCH and never names ACTION; `unit/tabReconciliation.test.ts` proves a monitor never claims the sign-in or composer tab | | |
@@ -77,8 +77,8 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Engagement decision | Engage/ignore/review | - | y | - | - | - | PASS (I) - `integration/engagement.test.ts`: all three wired outcomes, with a decision not to reply ending the job as CANCELLED carrying its reasons rather than as a failure | | |
 | Approval UI | Edit, approve, reject | - | - | y | - | - | PASS - e2e edits, approves, asserts edited text sent | report called it untested | dc631d9 |
 | Approval restart | Survives all four restarts | - | y | - | - | y | PASS (I+R) - `integration/approval.test.ts` and `recoveryChaos.test.ts`: a held job survives, executes the edited text once, and a lease that has not expired is left alone | | |
-| Real action pipeline | Verified target, read back | - | - | - | - | - | NOT TESTED - the live path is exercised by `tools/scenarios/run.mts --live`, which was not run this round | | |
-| Composer edge cases | Typeahead, re-render, slow | - | - | - | - | - | NOT TESTED - needs a real composer with the typeahead open | | |
+| Real action pipeline | Verified target, read back | - | - | y | - | - | PASS (L) - one controlled post from the development account through the whole pipeline, after the Chrome restart. dry_run false, EXECUTED, remote id 2096044484601479496 at x.com/ShiftAboveCtrl/status/2096044484601479496, and read back off X byte-identical rather than trusting the job record. Held at the approval gate first and released deliberately. The agent was restored to DRAFT and unlinked afterwards | | |
+| Composer edge cases | Typeahead, re-render, slow | - | - | y | - | - | PARTIAL (L) - the composer's ordinary path is proven live: the controlled post was written and submitted through it on a restarted browser. The defended edge cases -- the @-mention typeahead swallowing pointer events, a slow re-render, a composer that does not close -- are conditions the code guards against and cannot be produced on demand, so they stay unproven rather than manufactured | | |
 | Ambiguous submission | Looks before retrying | - | y | - | y | - | PASS (I+F) - `integration/actionCloseout.test.ts`: a composer that does not close is looked at before anything is retried, because retrying an accepted reply posts twice | | |
 | Read-back normalisation | Mentions, URLs, emoji, breaks | y | - | - | - | - | PASS (A) - `unit/ownReplyMatch.test.ts`: mentions, URLs, emoji and line breaks all normalise, so a reply X rendered differently is still recognised as the one that was sent | | |
 | Original posting | Scheduler publishes once | - | y | - | - | - | PASS (I) - `integration/posting.test.ts`: one POST job from the best idea, silence recorded with its reason when the backlog is empty, and refusals when the agent is inactive, monitor-only or has no account | | |
@@ -87,7 +87,7 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Vision | Real vision model | - | - | - | - | - | NOT TESTED - needs a real vision model and a real image | | |
 | Vision routing | Separate vision role | y | - | - | - | - | PASS (A) - `unit/visionAndResearchRouting.test.ts`: the vision role is asked for by name, nothing near it falls back to primary, and the gateway honours a single requested role rather than walking the chain | | |
 | Vision failure | Never hallucinates media | y | - | - | y | - | PASS (A+F) - `unit/multimodal.test.ts`: an unread image is an explicit gap the prompt states, and `unit/evidenceNote.test.ts` proves the model is told to admit it rather than describing what it did not see | | |
-| Research node | Uses RESEARCH tab only | y | - | - | - | - | PASS (A) - `unit/visionAndResearchRouting.test.ts`: the search runs under the RESEARCH role and that path never names ACTION | | |
+| Research node | Uses RESEARCH tab only | y | - | y | - | - | PASS (A+L) - `unit/visionAndResearchRouting.test.ts` proves the search runs under the RESEARCH role and never names ACTION; confirmed live, where a lookup opened RESEARCH as the fourth page and returned an answer without disturbing the other three | | |
 | Multi-account | Two accounts, no mixing | - | y | - | - | - | PASS (I) - `integration/isolation.test.ts`: an event reaches only its account and only its agent, in both directions, with two simultaneous events kept apart and each account given its own profile directory | | |
 | Multi-account concurrency | Independent, serialised per account | - | y | - | - | - | PASS (I) - `integration/isolation.test.ts`: the lock is account-scoped, so a second worker on one account is refused while another account proceeds at the same time | | |
 | Profile lock | Two launches, no corruption | - | y | y | - | - | PASS (I+L) - `integration/isolation.test.ts` proves the account lease refuses a second holder and that two installations sharing a profile root stay apart. Observed live: two AI17Z installations running at once, each with its own real Chrome on its own debug port (8825 and 10335), its own profile directory, and a different signed-in account. Neither browser can reach the other's profile because the path is derived from the account id under the instance root | | |
@@ -99,10 +99,10 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Burst handling | 50 mentions, bounded | - | y | - | y | - | PASS (I+F) - `integration/safetyUnderLoad.test.ts` and `stress.test.ts`: a burst is bounded, an identical second action to one target is refused, and none of a burst is sent once permission is gone | | |
 | Postgres restart | Recovers, no corruption | - | - | y | y | y | PASS - counts identical, both workers recovered | native worker died silently | 43bbe69 |
 | API restart | Chrome survives | - | - | y | - | y | PASS (L+R) - restarted the API against the running installation. A new server process (24s old, pid 88400 under the same watcher) came up, and Chrome was untouched: the same browser instance, byte-identical webSocketDebuggerUrl, and the health check still reading x @ShiftAboveCtrl healthy. The API owns no browsers, and this is the evidence for it | | |
-| Native worker restart | Reattaches, adopts tabs | y | - | - | - | y | PARTIAL (A+R) - `unit/tabReconciliation.test.ts` proves 20 unclean restarts keep the tab count flat and the real 15-tab profile recovers. A real worker restarting against a real Chrome is still untested | | |
+| Native worker restart | Reattaches, adopts tabs | y | - | y | - | y | PASS (A+L+R) - the worker was stopped and restarted while Chrome stayed up. It attached to the Chrome already open (pid 49852 unchanged, same profile) rather than spawning one, and reconciled roles exactly: adopted ACTION, MENTIONS and NOTIFICATIONS, opened only RESEARCH, left nothing orphaned. No duplicate tabs. Authentication survived, health returned to healthy on every component, and the radar polled successfully afterwards | | |
 | Container worker restart | Leases recover | - | y | - | y | y | PASS (I+F+R) - `integration/recoveryChaos.test.ts`: an expired lease returns the job to the settled state before its step and it resumes rather than restarting; a live lease is left alone | | |
-| Full system restart | Scripts bring it all back | - | - | - | - | - | NOT TESTED - needs the scripts run against a live installation | | |
-| Cold start | From no processes at all | - | - | - | - | - | NOT TESTED - needs a machine with no AI17Z processes | | |
+| Full system restart | Scripts bring it all back | - | - | y | - | y | PASS (L+R) - on the development installation. Chrome closed gracefully first, then all ten node processes stopped, leaving nothing listening on 8787, 5173 or either debug port. `npm run dev` brought the API, web and worker back, the worker spawned Chrome on the same profile, and every health component returned to healthy. Exercises the dev arrangement rather than the Docker start script, which is a different deployment path and is still unexercised | | |
+| Cold start | From no processes at all | - | - | y | - | y | PASS (L) - the same run started from genuinely nothing: no node process, no listener, no Chrome. The X session survived it, read from the live DOM as @ShiftAboveCtrl with the composer present and no login form | | |
 | Startup failure UX | Explains what failed | y | y | - | y | - | PASS (A+I+F) - `unit/supervisor.test.ts` gives up when it plainly cannot start and says why; `integration/secretHandling.test.ts` proves a missing, short or wrong master key refuses loudly in a fresh process rather than starting broken | | |
 | Soak harness | `npm run soak` exists and reports | - | - | y | - | - | PASS - npm run soak; flags trends, writes JSON | counted all machine Chrome | 7d98241 |
 | Soak run | Longest practical duration | - | - | y | - | - | PARTIAL (L) - 45 minutes, 45 samples, nothing flagged, against the running installation with its real Chrome. Not 24 hours, and the agents were idle throughout (0 jobs, 0 actions), so it soaks the runtime at rest rather than under work. Recorded rather than rounded up | | |
@@ -217,6 +217,78 @@ a build anybody else can use.
    passing, proving the tests do not depend on anything in the working tree.
 
 The scratch database was created for this and holds nothing real.
+
+## The browser restart tests
+
+Run on the **development account @ShiftAboveCtrl**, never on the golden runtime.
+This is the risk the golden runtime should not be the first place to meet.
+
+### Test 1 - worker restart, Chrome left running
+
+| | before | after |
+|---|---|---|
+| Chrome pid | 49852 | 49852, the same process |
+| Chrome processes on the profile | 13 | 13 |
+| Tabs | ACTION, MENTIONS, NOTIFICATIONS | the same three, no duplicates |
+| Signed in as | @ShiftAboveCtrl | @ShiftAboveCtrl |
+
+Stopping the worker did not touch Chrome at all. While it was down the health
+endpoint went **offline** and said why: "Nothing has checked in for 90 seconds.
+Jobs will queue", with the browser degraded because no worker was reporting on
+it, and the account itself still healthy. `tsx watch` did not restart the dead
+worker, which is the reason the supervisor exists.
+
+The new worker attached rather than launched:
+
+```
+chrome  attaching to the Chrome already open for this profile  pid 49852
+browser real browser attached  GOOGLE_CHROME  Chrome/152.0.7977.77  pid 49852
+browser-tabs adopted the tabs already open
+        adopted: [ACTION, MENTIONS, NOTIFICATIONS]  toOpen: [RESEARCH]  left: []
+```
+
+**A worker upgrade does not need to touch the authenticated Chrome.** That is
+the finding that decides how promotion should be done.
+
+### Test 2 - actual Chrome restart
+
+Graceful shutdown through the product's own `SHUTDOWN_BROWSER` task took all 13
+processes down and closed the port. The worker then reopened Chrome on the same
+profile by itself, on a fresh port.
+
+**The X session survived.** Read from the live DOM after the restart: handle
+`ShiftAboveCtrl`, composer present, no login form, and no login wall on any of
+the three restored pages, each rendering real content. No restore obstruction.
+Both identity signals still agree: the executable is Google Chrome and CDP
+reports Chrome/152.0.7977.77.
+
+All four roles were then exercised: three adopted, and RESEARCH opened by a real
+web lookup that returned results without disturbing the others.
+
+### The controlled real action
+
+One post, through the whole pipeline, on the browser that had just been
+restarted. The model was set to `mock-fixed:` so the published text was chosen
+rather than generated, and the job held at the approval gate and was released
+deliberately.
+
+```
+job    EXECUTED, dry_run false
+action EXECUTED, remote id 2096044484601479496
+       https://x.com/ShiftAboveCtrl/status/2096044484601479496
+```
+
+Read back off X afterwards rather than trusting the job record: the text on the
+page is byte-identical to the text sent. The agent was restored to DRAFT and
+unlinked, its policy returned to review-with-dry-runs, and the temporary radar
+source removed.
+
+### Full stop and cold start
+
+Everything stopped -- Chrome gracefully first, then all ten node processes,
+leaving nothing listening. Started again from nothing: the API, web and worker
+came back, the worker spawned Chrome on the same profile, every health component
+returned to healthy, and the session survived that too.
 
 ## Three frozen runs
 
