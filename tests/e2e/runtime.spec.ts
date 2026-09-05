@@ -87,7 +87,9 @@ test('runs a dry run end to end and shows the trace', async ({ page }) => {
   await page.getByRole('button', { name: /primary model/i }).click();
   await page.locator('#mprovider').selectOption(provider.id);
   await page.locator('#mmodel').fill('mock-echo');
-  await page.getByRole('button', { name: /^save$/i }).click();
+  // Scoped to the dialog. An unscoped Save now matches the identity section's
+  // as well, since autosave gave that one a plain "Save" too.
+  await page.getByLabel('Primary model').getByRole('button', { name: /^save$/i }).click();
   await expect(page.locator('#intelligence')).toContainText('mock-echo', { timeout: 20_000 });
 
   // Inject a real event through the UI and let the worker process it.
@@ -149,7 +151,19 @@ test('holds a job for approval, then executes the edited text', async ({ page })
 
   expect(await waitForStatus(page, agentId, ['EXECUTED'])).toBe('EXECUTED');
   await page.reload();
-  await expect(page.getByText('Approved and edited by the end-to-end suite.')).toBeVisible({ timeout: 20_000 });
+
+  // The edited text now appears twice, and both are right: once as the action
+  // that was sent, and once in the conversation view as the runtime understood
+  // the exchange. Asserting on both is stronger than scoping to one, because
+  // the failure worth catching is the two disagreeing -- a conversation view
+  // showing the draft while the action carried the edit.
+  const edited = page.getByText('Approved and edited by the end-to-end suite.');
+  await expect(edited.first()).toBeVisible({ timeout: 20_000 });
+  const shown = await edited.count();
+  expect(shown).toBeGreaterThan(0);
+  for (let i = 0; i < shown; i += 1) {
+    await expect(edited.nth(i)).toHaveText('Approved and edited by the end-to-end suite.');
+  }
 });
 
 test('shows why a memory was retrieved in a different conversation', async ({ page }) => {

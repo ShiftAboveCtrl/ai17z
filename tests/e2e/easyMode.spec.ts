@@ -116,16 +116,18 @@ test('a change made in Advanced comes back through Easy', async ({ page }) => {
   await page.getByRole('heading', { name: AGENT_NAME, exact: true }).first().click();
   await page.locator('#identity').waitFor({ timeout: 20_000 });
 
-  // Scoped to the identity section: policies and cadence have their own
-  // "save as version" buttons, and an unscoped match cuts a version of the
-  // wrong document.
+  // Scoped to the identity section: other sections have their own Save, and an
+  // unscoped match saves the wrong document. The button used to say "save as
+  // version" and the section used to show "currently vN"; autosave replaced
+  // both wordings.
   const identity = page.locator('#identity');
   const personality = identity.locator('#personality');
   await personality.fill('Changed from the advanced screen.');
 
-  const before = Number((await identity.getByText(/currently v\d+/i).innerText()).replace(/\D/g, ''));
-  await identity.getByRole('button', { name: /save as version/i }).click();
-  await expect(identity.getByText(new RegExp(`currently v${before + 1}`, 'i'))).toBeVisible({ timeout: 20_000 });
+  await identity.getByRole('button', { name: /^save$/i }).click();
+  // Not the "saved" tick, which clears after 2.4 seconds. What this test is
+  // about is whether Easy reads the same document, and the reload below asks
+  // that question directly.
 
   // Back to Easy. The simplified view has to be reading the same document, not
   // a copy it kept.
