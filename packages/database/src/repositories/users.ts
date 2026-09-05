@@ -1,5 +1,5 @@
 import { hashPassword, hashToken, newId, randomToken, verifyPassword } from '@xbam/shared';
-import { query, queryOne } from '../pool';
+import { query, queryOne, withTransaction } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
 export interface UserRow {
@@ -90,6 +90,34 @@ export async function resolveSession(token: string): Promise<UserRow | null> {
 
 export async function revokeSession(token: string): Promise<void> {
   await query('DELETE FROM sessions WHERE token_hash = $1', [hashToken(token)]);
+}
+
+/**
+ * Replaces a password and signs every session out.
+ *
+ * For host-local recovery only, and the two halves are one operation on
+ * purpose. A password change that left old sessions alive would mean somebody
+ * who already had a browser tab open kept their access, which is exactly the
+ * situation a reset usually exists to end.
+ *
+ * Deliberately narrow: it touches `users` and `sessions` and nothing else. The
+ * master key, sealed provider credentials, browser profiles, agents, memories
+ * and knowledge are all untouched, because forgetting a password is not a
+ * reason to lose any of them.
+ *
+ * Returns how many sessions were ended, so the caller can say so.
+ */
+export async function resetPassword(userId: string, newPassword: string): Promise<{ sessionsEnded: number }> {
+  return withTransaction(async (tx) => {
+    const updated = await tx.query('UPDATE users SET password_hash = $2 WHERE id = $1 RETURNING id', [
+      userId,
+      hashPassword(newPassword),
+    ]);
+    if (updated.rows.length === 0) throw new Error('That user no longer exists.');
+
+    const ended = await tx.query('DELETE FROM sessions WHERE user_id = $1 RETURNING id', [userId]);
+    return { sessionsEnded: ended.rows.length };
+  });
 }
 
 export async function purgeExpiredSessions(): Promise<number> {
