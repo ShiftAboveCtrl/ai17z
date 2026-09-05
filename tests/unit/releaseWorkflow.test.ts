@@ -247,9 +247,24 @@ describe('what SignPath will read', () => {
  * reputation immediately; Microsoft removed that behaviour in 2024.
  */
 describe('the SmartScreen documentation is not out of date', () => {
-  const docs = ['docs/WINDOWS_TRUST.md', 'docs/CONTINUATION_STATE.md', 'docs/RELEASE_HANDOFF.md'].map((p) =>
-    readFileSync(resolve(root, p), 'utf8'),
-  );
+  // The published ones, plus whichever internal notes are present. The internal
+  // docs are not in the repository -- they live in a gitignored directory -- so
+  // they are checked when they exist and skipped when somebody is working from
+  // a clean clone.
+  const paths = [
+    'docs/WINDOWS_TRUST.md',
+    'docs/internal/CONTINUATION_STATE.md',
+    'docs/internal/RELEASE_HANDOFF.md',
+  ];
+  const docs = paths
+    .map((p) => {
+      try {
+        return readFileSync(resolve(root, p), 'utf8');
+      } catch {
+        return null;
+      }
+    })
+    .filter((text): text is string => text !== null);
 
   it('never claims EV grants immediate reputation', () => {
     for (const doc of docs) {
