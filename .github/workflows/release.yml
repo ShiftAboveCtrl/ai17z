@@ -64,7 +64,10 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgres://xbam:xbam@localhost:55432/xbam
-      AI17Z_MASTER_KEY: ${{ secrets.CI_MASTER_KEY || 'ZGV2LW9ubHktMzItYnl0ZS10ZXN0LWtleS0xMjM0NTY3OA==' }}
+      # The same throwaway key CI uses, not a second one. It must decode to
+      # exactly 32 bytes; the first value here decoded to 34 and every test
+      # touching a sealed credential failed with a message that said so.
+      AI17Z_MASTER_KEY: dGVzdC1vbmx5LW1hc3Rlci1rZXktMzItYnl0ZXMhISE=
     steps:
       - uses: actions/checkout@v4
 
