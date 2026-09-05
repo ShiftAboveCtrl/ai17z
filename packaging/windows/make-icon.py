@@ -17,6 +17,11 @@ near-black icon on a near-black bar is a hole. So the ground is light and the
 mark is dark -- the opposite of the app's own interface, and the right way round
 for where the icon is seen.
 
+**It must not look like something else.** The first attempt put a coloured band
+along the bottom, which turned a light tile with a big number into a calendar.
+Shape is read before glyphs are, so it would have been misread at a glance
+forever. The colour moved into the numerals.
+
 **The numerals are drawn, not typed.** No font dependency, no hinting surprises,
 and full control of stroke weight at every size: the strokes thicken as the
 canvas shrinks, because a stroke that looks refined at 256 disappears at 16.
@@ -89,20 +94,16 @@ def render(size: int) -> Image.Image:
     radius = int(s * 0.22)
     rounded_rect(d, [0, 0, s - 1, s - 1], radius, BONE)
 
-    # A band of accent along the bottom, which is what makes it identifiable as
-    # a shape rather than as "a light square" when the numerals stop resolving.
-    band_top = int(s * 0.775)
-    band = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    bd = ImageDraw.Draw(band)
-    rounded_rect(bd, [0, 0, s - 1, s - 1], radius, ACCENT)
-    mask = Image.new("L", (s, s), 0)
-    ImageDraw.Draw(mask).rectangle([0, band_top, s, s], fill=255)
-    img.paste(band, (0, 0), mask)
-
-    # A hairline above the band, in the deeper accent. Reads as a considered
-    # edge at large sizes and simply vanishes at small ones, which is fine.
-    if size >= 48:
-        d.rectangle([0, band_top, s, band_top + max(1, int(s * 0.006))], fill=ACCENT_DEEP)
+    # No band along the bottom.
+    #
+    # The first version had one, and a light tile with a coloured strip under a
+    # large number is a calendar. Every phone has that icon and people read the
+    # shape before they read the glyphs, so it would have been mistaken at a
+    # glance for the rest of its life.
+    #
+    # The colour goes into the numerals instead: the 1 in ink, the 7 in the
+    # deeper accent. That is distinctive, survives 16 pixels, and cannot be
+    # confused with anything else on a taskbar.
 
     # Numerals. Heavier as the canvas shrinks: 0.115 of the width at 256 would
     # be a single pale pixel at 16.
@@ -114,8 +115,13 @@ def render(size: int) -> Image.Image:
         weight_ratio = 0.115
 
     weight = s * weight_ratio
-    height = s * 0.40
-    top = s * 0.235
+    # Smaller relative to the tile at 16 and 24. The strokes have to thicken as
+    # the canvas shrinks, and thick strokes at full height leave the numerals
+    # touching the edges with the counters closing up.
+    height = s * (0.38 if size <= 24 else 0.44)
+    # Optically centred rather than measured: the numerals have a flat top and a
+    # flat bottom, so mathematical centring reads as slightly low. A hair above.
+    top = (s - height) / 2 - s * 0.015
 
     seven_w = s * 0.245
     one_w = weight * 2.9
@@ -124,7 +130,7 @@ def render(size: int) -> Image.Image:
     left = (s - total) / 2
 
     draw_one(d, left, top, height, weight, INK)
-    draw_seven(d, left + one_w + gap, top, height, weight, INK, seven_w)
+    draw_seven(d, left + one_w + gap, top, height, weight, ACCENT_DEEP, seven_w)
 
     return img.resize((size, size), Image.LANCZOS)
 
