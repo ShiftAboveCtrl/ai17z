@@ -244,34 +244,32 @@ kill by that filter; nothing else matches it.
 
 ## Golden-runtime promotion status
 
-1. ~~representative database upgrade proven on a copy~~ DONE
-2. ~~release cleanliness check~~ DONE (`npm run release:check`, in CI)
-3. ~~release-candidate validation~~ DONE. 71 matrix rows that read NOT TESTED
-   now cite the test that proves them; eight remain untested and each says what
-   it would take. Nothing is marked PASS on inspection alone.
-4. ~~three frozen-source runs on one commit~~ DONE at `0e2bfc2`. Three
-   consecutive full runs, 0 failures each, 0 Chrome processes left behind by
-   any of them. See "Three frozen runs" in the validation matrix
-5. ~~backup of the real installation~~ DONE. `pg_dump -Fc` of the golden
-   runtime to `~/ai17z-test-backups/`, restored into a scratch database and
-   compared: 1 agent, 156 events, 152 jobs, 94 actions, 185 memories, 1 sealed
-   credential, all identical. The scratch database was dropped afterwards.
-   (The sealed credential was checked for presence and integrity through the
-   dump, not decrypted: that needs the golden runtime's own master key, and
-   there is no reason for this checkout to hold it.)
-6. promotion -- **needs a decision, not more work.** See below.
+**PROMOTED 2026-09-05.** The golden runtime runs `b149342`. `@ai17zOS` is signed
+in and its Chrome was never restarted (pid 4568, port 10335, untouched
+throughout). Ava is ACTIVE and AUTONOMOUS, permitted to reply and not to post,
+exactly as before. All four radar monitors are polling X and succeeding.
 
-### Why promotion is a decision
+The route mattered: a worker restart reattaches to the Chrome already open, so
+the containers were rebuilt and restarted and the native worker was restarted by
+its watcher, while the browser holding the session was left alone. That was
+proven on the development account first.
 
-Promoting means the golden runtime stops running `f768553` and starts running
-this code, which requires restarting its worker, which may close the Chrome that
-holds `@ai17zos`'s signed-in session.
+Backups are at `~/ai17z-test-backups/`. The pre-promotion one was restored into
+a scratch database and compared row for row before anything changed. The golden
+checkout's three uncommitted hotfixes are at `stash@{0}` there, superseded by
+this build but recoverable.
 
-"Chrome restart -- session survives" is one of the eight rows still marked NOT
-TESTED, and it is untested for a reason: the only way to test it is to stop a
-browser somebody is signed into, and a failed graceful close is exactly the case
-that loses the session. AI17Z never signs in by itself, so recovering means a
-person signing in again.
+## Golden runtime, as it now stands
 
-The backup covers the data. It does not cover the session. That asymmetry is the
-whole reason this step is a decision rather than a step.
+- Path: `~/ai17z-test`, commit `b149342`
+- Ports: 55532 / 8887 / 8090. Open it at http://localhost:8090
+- Chrome: pid 4568, CDP 10335, profile under `ai17z-test/storage/browser-profiles/ai17z-test/bc20c555-...`
+- Agent: Ava, `@ai17zos`, ACTIVE, AUTONOMOUS, replies only
+- Ten jobs are waiting on a person. They were waiting before promotion too.
+- It has a vision model configured (`deepseek-v4-flash-vision-exp`), which has
+  never had an image through it.
+
+**It is no longer a separate golden runtime in the sense it was.** It runs the
+same commit as this checkout. The isolation that mattered during development is
+spent; what protects it now is the backup and the fact that it is a different
+database on different ports.

@@ -84,7 +84,7 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Original posting | Scheduler publishes once | - | y | - | - | - | PASS (I) - `integration/posting.test.ts`: one POST job from the best idea, silence recorded with its reason when the backlog is empty, and refusals when the agent is inactive, monitor-only or has no account | | |
 | Scheduler duplication | One job per due timestamp | - | y | - | - | - | PASS (I) - `integration/posting.test.ts`: a due schedule is claimed once and moved on in the same statement, which is what stops two workers posting for one appointment | | |
 | Scheduler restart | No duplicate, no missed | - | y | - | - | y | PASS (I+R) - `integration/postingWiring.test.ts`: it does not fire the moment it is switched on, keeps its appointment when an unrelated setting is saved, moves it when the rhythm changes, and clears it when posting is turned off | | |
-| Vision | Real vision model | - | - | - | - | - | NOT TESTED - needs a real vision model and a real image | | |
+| Vision | Real vision model | y | - | - | y | - | NOT TESTED - and the earlier reason was wrong. The golden runtime does have a vision model configured (deepseek-v4-flash-vision-exp), so it is not that nothing could read an image. What has not happened is a real image going through it in this session, which needs a mention carrying one. The routing is proven by test and the unread-image gap is proven; a model actually reading a picture is not | | |
 | Vision routing | Separate vision role | y | - | - | - | - | PASS (A) - `unit/visionAndResearchRouting.test.ts`: the vision role is asked for by name, nothing near it falls back to primary, and the gateway honours a single requested role rather than walking the chain | | |
 | Vision failure | Never hallucinates media | y | - | - | y | - | PASS (A+F) - `unit/multimodal.test.ts`: an unread image is an explicit gap the prompt states, and `unit/evidenceNote.test.ts` proves the model is told to admit it rather than describing what it did not see | | |
 | Research node | Uses RESEARCH tab only | y | - | y | - | - | PASS (A+L) - `unit/visionAndResearchRouting.test.ts` proves the search runs under the RESEARCH role and never names ACTION; confirmed live, where a lookup opened RESEARCH as the fourth page and returned an answer without disturbing the other three | | |
@@ -217,6 +217,71 @@ a build anybody else can use.
    passing, proving the tests do not depend on anything in the working tree.
 
 The scratch database was created for this and holds nothing real.
+
+## The promotion
+
+Run 2026-09-05. The golden runtime moved from `f768553` to `b149342`.
+
+**Chrome was never restarted.** Test 1 had shown that a worker can be restarted
+and will reattach to the Chrome already open, so promotion took that route: the
+containers were rebuilt and restarted, the native worker was restarted by its own
+watcher when the source changed, and pid 4568 on port 10335 was left alone
+throughout. `@ai17zOS` was still signed in afterwards, read from the live DOM.
+
+Before anything changed: a fresh `pg_dump` to `~/ai17z-test-backups/`, health
+confirmed healthy, the commit recorded, Chrome's pid, port and profile recorded,
+and Ava paused. Nothing was in flight; the ten jobs waiting were waiting on a
+person, which is where they still are.
+
+The golden checkout had three uncommitted local hotfixes -- crash-restore
+suppression flags in two places and a hardcoded port in the start script. All
+three are fixed properly in this build, so they were stashed rather than
+discarded and are recoverable at `stash@{0}`.
+
+Migrations: 5 applied (0051 to 0055), 50 skipped, no drift. Every row count
+identical afterwards: 1 agent, 156 events, 152 jobs, 94 actions, 185 memories,
+42 relationships, 29 content ideas, 1 sealed credential.
+
+### What promotion found
+
+Two defects, both in the diagnostics, both the same shape, and both invisible
+until real data was in front of them.
+
+**Every working tab reported degraded.** The worker publishes `READY`, `BUSY`,
+`MISSING` or `FAILED`; the grader compared against `HEALTHY`, which the worker
+has never produced. So a browser doing exactly the right thing showed four
+faults, and a role that had not been needed yet showed as failing.
+
+**"Never read, never wrote, never sent" was always a lie.** The query asked for
+`model_calls.finished_at`, which does not exist, and matched `status = 'OK'`,
+which nothing writes. It threw, a catch turned that into three nulls, and every
+agent has always reported having done nothing -- the three most prominent
+numbers on the health page.
+
+Both fixed, both with regression tests, both promoted. Golden now reads all four
+tabs HEALTHY, all four radar sources HEALTHY, and Ava's real timestamps.
+
+### The controlled action, and what it actually proved
+
+Ava was asked to post one thing from her own backlog. It failed **permanently**,
+correctly: *"This agent is not permitted to POST through @ai17zos. Grant it on
+the account, then run the job again."* She is a reply agent and posting is off
+for her. Asked again, the idempotency key -- anchored to the idea -- refused a
+duplicate, and the reconciler released the claimed idea back to the backlog.
+
+That is three real behaviours confirmed on the promoted build against real data:
+the capability gate, idempotency, and the idea lifecycle. What it is not is a
+published post from Ava. Getting one would have meant granting a permission her
+owner deliberately withheld, or editing her backlog, and forcing a demonstration
+is not a demonstration.
+
+The publish path itself was proven end to end an hour earlier on
+@ShiftAboveCtrl. What remains unproven for Ava specifically is her own send, and
+the honest way to close it is for somebody to approve one of the ten replies
+already waiting, which is a decision about answering a real person.
+
+She was restored exactly: ACTIVE, AUTONOMOUS, permitted to reply and not to
+post. All four radar monitors are polling X and succeeding on the new build.
 
 ## The browser restart tests
 

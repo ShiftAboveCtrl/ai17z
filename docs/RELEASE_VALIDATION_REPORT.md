@@ -1,9 +1,11 @@
 # AI17Z — release validation report
 
-Written at the end of the validation round. Frozen source: `0e2bfc2`.
+Written across the validation round and finished after promotion.
 
-This is the document to read before deciding whether to promote. It says what is
-proven, what is not, and what the one remaining decision costs if it goes wrong.
+**The golden runtime has been promoted.** It runs `b149342`, `@ai17zOS` is still
+signed in, and its Chrome was never restarted. The sections below are in the
+order they happened; the promotion is at the end, and it is where the two most
+interesting defects were found.
 
 ---
 
@@ -13,9 +15,10 @@ Every section of build work is finished, including the two gaps the feature
 ledger had deliberately left open. The full suite passes: 147 files, 1543 tests,
 zero failures, three consecutive times on frozen source, leaving zero browser
 processes behind each time. A clean install from a fresh clone works. A
-45-minute soak flagged nothing. The golden runtime is backed up and the backup
-has been restored and compared. The only step left is promotion, and it is a
-decision rather than a task, for the reason in the last section.
+45-minute soak flagged nothing. The browser restart risk was closed on the
+development account rather than the golden one, and it turned out that a worker
+upgrade need not touch the authenticated Chrome at all -- which is the route
+promotion then took. One row remains untested, and it says why.
 
 ---
 
@@ -183,28 +186,65 @@ Six rows, each with the reason:
 
 ---
 
-## The promotion decision
+## The promotion
 
-Everything promotion requires is done: the database upgrade proven on a copy,
-the release-cleanliness check, the matrix, three frozen runs, and a backup of
-the golden runtime that has been restored into a scratch database and compared
-row for row — 1 agent, 156 events, 152 jobs, 94 actions, 185 memories, 1 sealed
-credential, all identical.
+The golden runtime moved from `f768553` to `b149342`, and **its Chrome was never
+restarted**. Test 1 on the development account had shown a worker reattaches to
+the Chrome already open, so promotion took that route: rebuild and restart the
+containers, let the watcher restart the native worker, leave pid 4568 alone.
+`@ai17zOS` was still signed in afterwards, read from the live DOM.
 
-Promoting means the golden runtime stops running `f768553` and starts running
-this code. That requires restarting its worker, which may close the Chrome
-holding `@ai17zos`'s signed-in session.
+Backup taken first and verified by restoring it. Migrations: 5 applied, no
+drift, every row count identical afterwards. Three uncommitted hotfixes on the
+golden checkout were stashed rather than discarded; all three are fixed properly
+in this build.
 
-**"Chrome restart — session survives" is one of the rows still marked NOT
-TESTED, and it is untested for a reason.** The only way to test it is to stop a
-browser somebody is signed into, and a failed graceful close is exactly the case
-that loses the session. AI17Z never signs in by itself, so recovering means a
-person signing in again.
+### What promotion found
 
-The backup covers the data. It does not cover the session. That asymmetry is why
-this is a decision and not a step, and it is the user's to make.
+Two defects in the diagnostics, the same shape, both invisible until real data
+was in front of them.
 
-If the answer is yes, the sequence is: stop the golden runtime's worker
-gracefully, confirm its Chrome is still holding the session, update the checkout,
-run migrations, restart, and check the health endpoint reads `x @ai17zos
-healthy`. The backup is at `~/ai17z-test-backups/`.
+**Every working tab reported degraded.** The worker publishes READY, BUSY,
+MISSING or FAILED; the grader compared against HEALTHY, which the worker has
+never produced. A browser doing exactly the right thing showed four faults.
+
+**"Never read, never wrote, never sent" was always a lie.** The query asked for a
+column that does not exist and a status nothing writes, threw, and a catch turned
+that into three nulls. Those are the three most prominent numbers on the health
+page, and they have never once been true.
+
+Both fixed with regression tests, both promoted. Golden now reads all four tabs
+healthy, all four radar sources healthy, and Ava's real timestamps.
+
+The pattern is worth naming: **compare against the vocabulary the writer
+actually produces, and never let a catch turn a broken query into a plausible
+answer.** Both rules were already written down in this codebase. Both were
+broken in the same file.
+
+### The controlled action
+
+Ava was asked to post from her own backlog and refused permanently, correctly:
+she is a reply agent and is not permitted to post. Asked again, idempotency
+refused a duplicate and the reconciler released the idea. Three real behaviours
+confirmed on the promoted build against real data.
+
+What that is not is a published post from Ava. Getting one would have meant
+granting a permission her owner withheld or editing her backlog. The publish
+path itself was proven an hour earlier on @ShiftAboveCtrl, read back off X. The
+honest way to close Ava's own send is for somebody to approve one of the ten
+replies already waiting, which is a decision about answering a real person and
+not mine to make.
+
+She was restored exactly as found and all four monitors are polling X on the new
+build.
+
+## What is still not proven
+
+**Vision.** One row. Golden does have a vision model configured
+(`deepseek-v4-flash-vision-exp`), so the earlier claim that none existed
+anywhere was wrong. What has not happened is a real image going through it,
+which needs a mention carrying one.
+
+Five rows are PARTIAL and each says which half is missing: real sign-in through
+to a challenge, a soak under load, trace accuracy in the UI, empty-versus-large
+data, and the composer's defended edge cases.
