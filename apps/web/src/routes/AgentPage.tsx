@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronDown, Copy, ExternalLink, Package, Pencil, Play, Square, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, Package, Pencil, Play, Square, Trash2 } from 'lucide-react';
 import { ApiError, del, patch, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AgentDetail } from '@app/lib/types';
@@ -199,14 +199,14 @@ export function AgentPage() {
       */}
       <section
         className={`relative mx-auto flex max-w-page flex-col items-center px-6 text-center sm:px-10 ${
-          mode === 'easy' ? 'pb-10 pt-28 sm:pt-32' : 'min-h-[86vh] justify-center pt-32'
+          mode === 'easy' ? 'pb-10 pt-28 sm:pt-32' : 'pb-10 pt-28 sm:pt-32'
         }`}
       >
         <FadeIn>
           <Suspense fallback={<AgentGlyph agentId={agent.id} name={agent.name} imageUrl={agent.avatarUrl} size="xl" />}>
             <div
               className={`overflow-hidden rounded-3xl border border-ink-line ${
-                mode === 'easy' ? 'h-28 w-28 sm:h-32 sm:w-32' : 'h-56 w-56 sm:h-72 sm:w-72'
+                mode === 'easy' ? 'h-28 w-28 sm:h-32 sm:w-32' : 'h-32 w-32 sm:h-40 sm:w-40'
               }`}
             >
               <AgentPortrait agentId={agent.id} name={agent.name} imageUrl={agent.avatarUrl} className="h-full w-full" />
@@ -219,7 +219,7 @@ export function AgentPage() {
             className={`font-display font-light tracking-monument text-bone ${
               mode === 'easy'
                 ? 'mt-5 text-[10vw] leading-[1] sm:text-[3.4vw]'
-                : 'mt-10 text-[15vw] leading-[0.86] sm:text-[7vw]'
+                : 'mt-5 text-[11vw] leading-[1] sm:text-[3.8vw]'
             }`}
           >
             {agent.name}
@@ -227,7 +227,7 @@ export function AgentPage() {
         </FadeIn>
 
         <FadeIn delay={0.2}>
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
             <LiveStatus agentId={agent.id} fallback={{ tone: toneFor(agent.state), label: humanStatus(agent.state) }} />
             {channel && (
               <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-bone-faint">
@@ -343,7 +343,6 @@ export function AgentPage() {
           </p>
         )}
 
-        {mode === 'advanced' && <ChevronDown className="mt-16 h-5 w-5 animate-bounce text-bone-faint/60" aria-hidden />}
       </section>
 
       <Modal open={packaging} onClose={() => setPackaging(false)} title="Move this agent" wide>

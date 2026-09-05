@@ -150,7 +150,7 @@ export function IntelligenceSection({
       lede="Providers are adapters. Swapping one changes nothing about the persona, the memory, or the pipeline, and every attempt is recorded whether it succeeded or not."
     >
       {(providers.data?.items.length ?? 0) > 0 && !hasVision && (
-        <div className="mb-8 rounded-2xl border border-signal-wait/30 bg-signal-wait/[0.06] p-5">
+        <div className="mb-5 rounded-2xl border border-signal-wait/30 bg-signal-wait/[0.06] p-5">
           <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-signal-wait">Cannot read images</p>
           <p className="mt-2 break-words text-sm leading-relaxed text-bone-dim">
             No vision model is set, so an image on a post is described to this agent as something it could not see. It
@@ -170,7 +170,7 @@ export function IntelligenceSection({
       )}
 
       {(providers.data?.items.length ?? 0) > 0 && !hasClassifier && (
-        <div className="mb-8 rounded-2xl border border-ink-line p-5">
+        <div className="mb-5 rounded-2xl border border-ink-line p-5">
           <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-bone-faint">Deciding without help</p>
           <p className="mt-2 break-words text-sm leading-relaxed text-bone-dim">
             No classifier model is set. What to look up before replying is decided by rules alone, which is reliable for

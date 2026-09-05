@@ -214,7 +214,7 @@ export function ToolsSection({
         why it has its own switches here rather than a row in the list above.
       */}
       {policy && (
-        <div className="mt-10 border-t border-ink-line pt-8">
+        <div className="mt-6 border-t border-ink-line pt-8">
           <p className="eyebrow">Looking things up</p>
           <h4 className="mt-2 text-base font-light text-bone">Where it may check before answering</h4>
           <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">

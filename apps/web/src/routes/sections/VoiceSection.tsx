@@ -132,7 +132,7 @@ export function VoiceSection({
         />
       ) : (
         <>
-          <div className="grid gap-6 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-3">
               <p className="eyebrow">Length</p>
               <div className="flex items-baseline gap-2">
@@ -158,7 +158,7 @@ export function VoiceSection({
           </div>
 
           {fingerprint.characteristicWords.length > 0 && (
-            <div className="mt-8">
+            <div className="mt-5">
               <p className="eyebrow mb-3">Words it actually uses</p>
               <div className="flex flex-wrap gap-1.5">
                 {fingerprint.characteristicWords.slice(0, 20).map((word) => (
@@ -170,7 +170,7 @@ export function VoiceSection({
             </div>
           )}
 
-          <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-ink-line pt-5">
+          <div className="mt-5 flex flex-wrap items-center gap-4 border-t border-ink-line pt-5">
             <p className="font-mono text-[10px] text-bone-faint">
               {fingerprint.sampleCount} samples
               {data?.sources.length ? ` from ${data.sources.join(' and ')}` : ''}
@@ -197,7 +197,7 @@ export function VoiceSection({
         </>
       )}
 
-      <div className="mt-10 border-t border-ink-line pt-8">
+      <div className="mt-6 border-t border-ink-line pt-8">
         <p className="eyebrow mb-3">Try something</p>
         <p className="mb-4 max-w-xl text-sm leading-relaxed text-bone-dim">
           Paste anything and see what the gate would do with it, without publishing. This is the same path a real

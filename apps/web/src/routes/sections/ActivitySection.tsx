@@ -60,7 +60,7 @@ export function ActivitySection({ index, agentId }: { index: number; agentId: st
       heading="What it has done."
       lede="Every inbound event becomes a durable job with a complete trace. Open one to see exactly why it produced what it produced."
     >
-      <div className="mb-8 flex flex-wrap gap-3">
+      <div className="mb-5 flex flex-wrap gap-3">
         <button type="button" className="btn-ghost" onClick={() => setInjecting(true)}>
           <Send className="h-3.5 w-3.5" aria-hidden />
           Inject a test event

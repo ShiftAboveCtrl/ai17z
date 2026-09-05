@@ -54,7 +54,13 @@ export function PipelineSection({
       heading={triggerLabel}
       lede={`${pipeline.name} · version ${pipeline.version}. Each stage settles its own state before the next begins, so a restart resumes rather than restarts.`}
     >
-      <ol className="mx-auto max-w-lg space-y-2">
+      {/*
+        A sequence, so it stays one column -- but a wider and shorter one. Each
+        node was a card two lines tall with its outgoing edges listed beneath,
+        about 300px per stage and ten stages, which made this the tallest thing
+        on the page at nearly half air.
+      */}
+      <ol className="mx-auto max-w-2xl space-y-1.5">
         {pipeline.nodes.map((n) => {
           const out = pipeline.edges.filter((e) => e.from === n.key);
           return (
@@ -62,15 +68,15 @@ export function PipelineSection({
               <button
                 type="button"
                 onClick={() => setSelected(n.key)}
-                className="w-full rounded-xl border border-ink-line bg-ink-raised/40 px-5 py-4 text-left transition-colors hover:border-signal-calm/40 hover:bg-signal-calm/[0.04]"
+                className="flex w-full flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-lg border border-ink-line bg-ink-raised/40 px-4 py-2.5 text-left transition-colors hover:border-signal-calm/40 hover:bg-signal-calm/[0.04]"
               >
                 <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-bone-faint">
                   {n.kind.replace(/_/g, ' ')}
                 </span>
-                <span className="mt-1 block text-lg font-light text-bone">{n.label}</span>
+                <span className="text-[15px] font-light text-bone">{n.label}</span>
               </button>
               {out.length > 0 && (
-                <ul className="mt-1 space-y-1 pl-6">
+                <ul className="mt-0.5 space-y-0.5 pl-5">
                   {out.map((edge) => (
                     <li key={`${edge.from}-${edge.branch}`} className="flex items-center gap-2">
                       <ArrowDown className="h-3.5 w-3.5 shrink-0 text-bone-faint/50" aria-hidden />

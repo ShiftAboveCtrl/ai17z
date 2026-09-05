@@ -2,8 +2,18 @@ import type { ReactNode } from 'react';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 
 /**
- * One domain per section, introduced by a monumental heading. Configuration is
- * revealed progressively rather than presented as a settings wall.
+ * One domain per section.
+ *
+ * This began as an editorial layout -- 112px of padding either side, a heading
+ * at 4.2vw, a 16-unit gap before anything you could touch. That reads well in a
+ * screenshot and badly in use: sixteen of these stacked made the agent page
+ * twenty-four screens tall, of which roughly nine were padding and headings.
+ * Somebody adjusting a policy scrolled past a magazine to get to a checkbox.
+ *
+ * A tool is scanned and operated, not read top to bottom, so the density is now
+ * an operating one. The character is kept -- the numbered eyebrow, the gradient
+ * heading, the rule between sections -- at a size that leaves room for the
+ * thing the section is actually for.
  */
 export function Section({
   id,
@@ -45,21 +55,21 @@ export function Section({
   }
 
   return (
-    <section id={id} className="scroll-mt-28 border-t border-ink-line py-20 sm:py-28">
-      <div className="mb-12 sm:mb-16">
+    <section id={id} className="scroll-mt-24 border-t border-ink-line py-7 sm:py-14">
+      <div className="mb-6 sm:mb-8">
         <FadeIn>
-          <p className="eyebrow mb-6">
+          <p className="eyebrow mb-2">
             {String(index).padStart(2, '0')} — {eyebrow}
           </p>
         </FadeIn>
         <AnimatedText
           as="h2"
           text={heading}
-          className="monument text-[11vw] leading-[0.86] sm:text-[5.2vw] lg:text-[4.2vw]"
+          className="monument text-[7vw] leading-[1.05] sm:text-[2.4rem] lg:text-[2.6rem]"
         />
         {lede && (
           <FadeIn delay={0.2}>
-            <p className="mt-6 max-w-2xl text-[15px] font-light leading-relaxed text-bone-dim">{lede}</p>
+            <p className="mt-2 max-w-2xl text-[14px] font-light leading-relaxed text-bone-dim">{lede}</p>
           </FadeIn>
         )}
       </div>
@@ -93,18 +103,18 @@ export function IndexedRow({
         <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-bone-faint">{label}</span>
         <span className="ml-auto">{status}</span>
       </div>
-      <p className="mt-3 text-2xl font-light tracking-tight text-bone sm:text-3xl">{title}</p>
-      {meta && <p className="mt-2 text-sm text-bone-dim">{meta}</p>}
+      <p className="mt-1.5 text-lg font-light tracking-tight text-bone sm:text-xl">{title}</p>
+      {meta && <p className="mt-1 text-[13px] leading-relaxed text-bone-dim">{meta}</p>}
       {children}
     </>
   );
 
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className="block w-full border-t border-ink-line py-7 text-left transition-colors hover:bg-white/[0.015]">
+      <button type="button" onClick={onClick} className="block w-full border-t border-ink-line py-4 text-left transition-colors hover:bg-white/[0.015]">
         {inner}
       </button>
     );
   }
-  return <div className="border-t border-ink-line py-7">{inner}</div>;
+  return <div className="border-t border-ink-line py-4">{inner}</div>;
 }

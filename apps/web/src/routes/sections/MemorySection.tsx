@@ -90,7 +90,7 @@ export function MemorySection({
     >
       <div className="mb-12">
         <p className="text-[16vw] font-light leading-none tracking-monument text-bone sm:text-[7vw]">{compactNumber(total)}</p>
-        <div className="mt-8 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-ink-line bg-ink-line sm:grid-cols-3 lg:grid-cols-6">
+        <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-ink-line bg-ink-line sm:grid-cols-3 lg:grid-cols-6">
           {MEMORY_SCOPES.map((s) => {
             const active = scope === s;
             return (
