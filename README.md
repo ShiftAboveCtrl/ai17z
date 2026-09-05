@@ -9,9 +9,6 @@ point it at a model, connect an account, and turn it on. The runtime underneath
 is deliberately boring — Postgres, a job table, typed contracts — so that the
 interesting part is the agent, not the plumbing.
 
-AI17Z is the successor to a working system. It keeps that system's
-best ideas, replaces its architecture, and imports its history as one agent.
-
 ---
 
 ## What it does
