@@ -355,6 +355,18 @@ leaving nothing listening. Started again from nothing: the API, web and worker
 came back, the worker spawned Chrome on the same profile, every health component
 returned to healthy, and the session survived that too.
 
+## The run after promotion
+
+The three frozen runs were at `0e2bfc2`. Promotion then found two defects, and
+fixing them moved the source, so the suite was run again at `b149342`:
+
+**149 files, 1556 tests, 0 failures, 653s, and zero Chrome processes left
+behind.** Thirteen tests more than the frozen runs, which are the regressions
+for the two defects promotion found.
+
+The frozen-run evidence below still stands for what it covered; this is the
+evidence for what actually shipped.
+
 ## Three frozen runs
 
 Source frozen at `0e2bfc2`. Three consecutive full runs, nothing changed between
