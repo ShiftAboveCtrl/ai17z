@@ -8,6 +8,7 @@ import { timeAgo } from '@app/lib/format';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { EmptyState, ErrorPanel, Field, Modal, Spinner, StatusDot } from '@app/components/ui';
 import { SessionPanel } from '@app/components/SessionPanel';
+import { TelegramPanel } from '@app/components/TelegramPanel';
 
 const HEALTH_TONE = { healthy: 'live', degraded: 'wait', offline: 'fail', unknown: 'idle' } as const;
 
@@ -236,6 +237,11 @@ export function SettingsPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section id="notifications" className="border-t border-ink-line py-12">
+        <p className="eyebrow mb-6">Telling you about it</p>
+        <TelegramPanel />
       </section>
 
       <Modal open={adding} onClose={() => setAdding(false)} title="Add a model provider">

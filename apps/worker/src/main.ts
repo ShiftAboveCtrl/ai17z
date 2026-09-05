@@ -10,7 +10,15 @@ import {
   workers as workersRepo,
 } from '@xbam/database';
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
-import { bootstrapRuntime, indexSource, runJob, sweepNotifications } from '@xbam/runtime';
+import {
+  bootstrapRuntime,
+  deliverNotifications,
+  indexSource,
+  installTelegramTransport,
+  runJob,
+  sweepNotifications,
+  telegramHeartbeat,
+} from '@xbam/runtime';
 import { activeSessionAccountIds, closeAllSessions, sessionIdentity, sessionTabs } from '@xbam/browser';
 import { ChannelPoller } from './poller';
 import { SignInWatcher } from './signIn';
@@ -31,6 +39,9 @@ async function main(): Promise<void> {
   log.info('database connected', { detail: ping.detail });
 
   await bootstrapRuntime();
+  // The list of things that can message the owner, registered once and in
+  // one place, so it is something a person can read rather than discover.
+  installTelegramTransport();
 
   const workerId = envString('AI17Z_WORKER_ID', `${hostname()}-${process.pid}`);
 
@@ -122,6 +133,17 @@ async function main(): Promise<void> {
       await sweepNotifications();
     } catch (error) {
       log.warn('notification sweep failed', { message: errorMessage(error) });
+    }
+    try {
+      // Getting them out of the building, which is a separate step from
+      // deciding they were worth saying. It runs after the sweep so anything
+      // raised a moment ago goes out on this pass rather than the next, and
+      // outside it so a slow HTTPS call cannot hold the sweep open.
+      const sent = await deliverNotifications();
+      if (sent.delivered > 0 || sent.failed > 0) log.info('delivered notifications', sent);
+      await telegramHeartbeat();
+    } catch (error) {
+      log.warn('notification delivery failed', { message: errorMessage(error) });
     }
   };
   await sweep();
