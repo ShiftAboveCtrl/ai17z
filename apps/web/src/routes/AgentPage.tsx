@@ -1,12 +1,13 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronDown, Copy, ExternalLink, Pencil, Play, Square, Trash2 } from 'lucide-react';
+import { ChevronDown, Copy, ExternalLink, Package, Pencil, Play, Square, Trash2 } from 'lucide-react';
 import { ApiError, del, patch, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AgentDetail } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { ErrorPanel, Field, Loading, Modal, Spinner, StatusDot } from '@app/components/ui';
+import { AgentPackagePanel } from '@app/components/AgentPackagePanel';
 import { LiveStatus } from '@app/components/LiveStatus';
 import { FadeIn } from '@app/components/motion';
 import { IdentitySection } from './sections/IdentitySection';
@@ -57,6 +58,7 @@ export function AgentPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [packaging, setPackaging] = useState(false);
 
   const rename = async () => {
     const name = (renaming ?? '').trim();
@@ -286,6 +288,15 @@ export function AgentPage() {
               </button>
             )}
             {/*
+              Offered in both views. Moving an agent to a new machine is not an
+              advanced operation, and neither is being handed one -- an agent
+              made in Easy Mode is exactly the kind somebody wants to send.
+            */}
+            <button type="button" className="btn-quiet" onClick={() => setPackaging(true)}>
+              <Package className="h-3.5 w-3.5" aria-hidden />
+              Export
+            </button>
+            {/*
               Delete is not an advanced operation.
               
               It sat behind the Advanced switch with Duplicate, which meant an
@@ -334,6 +345,10 @@ export function AgentPage() {
 
         {mode === 'advanced' && <ChevronDown className="mt-16 h-5 w-5 animate-bounce text-bone-faint/60" aria-hidden />}
       </section>
+
+      <Modal open={packaging} onClose={() => setPackaging(false)} title="Move this agent" wide>
+        <AgentPackagePanel agentId={agent.id} onImported={() => setPackaging(false)} />
+      </Modal>
 
       <Modal open={renaming !== null} onClose={() => setRenaming(null)} title="Rename this agent">
         <div className="space-y-5">
