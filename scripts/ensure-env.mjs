@@ -21,12 +21,29 @@
  * has a non-empty one, for the same reason.
  */
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const envPath = join(root, '.env');
+
+/**
+ * Where the environment file goes.
+ *
+ * An installed AI17Z keeps it with the owner's data rather than beside the
+ * program, because the program directory is replaced on every upgrade and this
+ * file holds the master key every provider credential is sealed with. The
+ * launcher says where via AI17Z_ENV_FILE.
+ *
+ * Without this, running `npm run migrate` on an installed copy created a
+ * *second* .env in the program directory with a *different* master key --
+ * beside the one the launcher had already made. Two keys, and only one of them
+ * can read what the other sealed.
+ *
+ * A clone has no launcher and no data directory, so it falls back to the .env
+ * beside the repository, which is what a developer expects.
+ */
+const envPath = process.env.AI17Z_ENV_FILE || process.env.XBAM_ENV_FILE || join(root, '.env');
 const examplePath = join(root, '.env.example');
 
 const KEY = 'AI17Z_MASTER_KEY';
@@ -65,6 +82,8 @@ if (!existsSync(envPath)) {
     process.exit(1);
   }
   const created = setValue(readFileSync(examplePath, 'utf8'), KEY, freshKey());
+  // The data directory may not exist yet on a first run.
+  mkdirSync(dirname(envPath), { recursive: true });
   writeFileSync(envPath, created, 'utf8');
   console.log('  Created .env with a master key generated for this installation.');
   console.log('  Back it up: losing it makes every stored provider credential unreadable.');

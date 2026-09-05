@@ -79,7 +79,29 @@ const INCLUDE = [
   'update-ai17z.ps1',
   'docker-compose.yml',
   'docker',
+  // Two files, named rather than the whole `scripts/` directory: the rest of it
+  // is maintainer tooling -- rewriting commit history, setting the repository
+  // URL -- which has no business on somebody's machine.
+  //
+  // `ensure-env.mjs` runs from the `premigrate` hook, so every `npm run migrate`
+  // needs it, and the installed app runs exactly that on every start.
+  // `supervise-worker.mts` is `npm run worker:supervised`, which is how the
+  // native worker is kept alive.
+  'scripts/ensure-env.mjs',
+  'scripts/supervise-worker.mts',
 ];
+
+/**
+ * The npm scripts an installed copy can actually run.
+ *
+ * Used to prove the files they reference are in the package. This list exists
+ * because `.env.example` and `scripts/ensure-env.mjs` were both missing from
+ * two separate releases, and both failed the same way: the install succeeded,
+ * the containers came up, and the first `npm run migrate` died on a path
+ * nobody could be expected to find. A check that names the entry points is the
+ * only thing that catches the whole class.
+ */
+const SHIPPED_SCRIPTS = ['migrate', 'migrate:status', 'start:api', 'start:worker', 'worker:supervised'];
 
 /** Never shipped, even when it sits inside something that is. */
 const EXCLUDE_NAMES = new Set([
@@ -203,6 +225,30 @@ async function main(): Promise<void> {
           'It would install and then fail to start.',
       );
     }
+  }
+
+  // Everything the scripts an installed copy runs will reach for, including the
+  // `pre` hooks npm runs on their behalf. Two releases shipped without a file
+  // one of these needed, and both times the failure surfaced on somebody
+  // else's machine as a module-not-found for a path that only exists here.
+  const staged = JSON.parse(await readFile(join(stageDir, 'package.json'), 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  const missing: string[] = [];
+  for (const name of SHIPPED_SCRIPTS) {
+    for (const script of [staged.scripts[`pre${name}`], staged.scripts[name], staged.scripts[`post${name}`]]) {
+      if (!script) continue;
+      for (const referenced of script.match(/[\w./-]+\.(?:mjs|mts|ts|cjs|js)/g) ?? []) {
+        if (referenced.startsWith('-') || existsSync(join(stageDir, referenced))) continue;
+        missing.push(`${referenced} (npm run ${name})`);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `the staged application is missing files its own npm scripts run:\n  ${missing.join('\n  ')}\n` +
+        'It would install, start its containers, and then fail on the first migration.',
+    );
   }
 
   // A stamp the running application can report, so "which version is this?" is
