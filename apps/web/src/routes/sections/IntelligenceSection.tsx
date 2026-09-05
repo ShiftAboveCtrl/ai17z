@@ -17,9 +17,10 @@ import { IndexedRow, Section } from './Section';
  * for future classification steps" while three code paths were already asking
  * for it, so anyone reading this screen would reasonably leave it empty.
  *
- * A role that nothing asks for does not belong here. These four are read by
- * `mediaResolve`, `plan`, `arcs` and `voice`; the rest of MODEL_ROLES is not
- * wired to anything yet and would be a promise rather than a setting.
+ * A role that nothing asks for does not belong here. These are read by
+ * `mediaResolve`, `plan`, `arcs`, `voice` and `xIntelligence`; the rest of
+ * MODEL_ROLES is not wired to anything yet and would be a promise rather than
+ * a setting.
  */
 const ROLES = [
   { role: 'primary', label: 'Primary model', hint: 'Tried first for every generation.' },
@@ -39,6 +40,11 @@ const ROLES = [
     role: 'voice_rewrite',
     label: 'Voice rewrite',
     hint: 'Optional second pass that pulls a draft back towards the agent\'s own voice.',
+  },
+  {
+    role: 'research',
+    label: 'Research',
+    hint: 'Searches X’s own index during the call, which a browser cannot reach. Needs a provider that can do it — xAI can. Billed per search, and off until Tools allows it.',
   },
 ] as const;
 

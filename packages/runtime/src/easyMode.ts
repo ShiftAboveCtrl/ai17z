@@ -340,6 +340,14 @@ export function readEasyView(input: EasyViewInput): EasyView {
     beyond.push(`A spending limit of ${policy.budget.maxCostUsdPerDay} USD a day is set. Easy Mode does not show it.`);
   }
   if (policy.tools.allowed.length > 0) beyond.push(`${policy.tools.allowed.length} tool(s) are enabled.`);
+  if (policy.tools.research.xIntelligence) {
+    // Said rather than hidden, because it is the one lookup source that costs
+    // money per use. Somebody who opens Easy Mode should not be unable to find
+    // out why their provider bill is going up.
+    beyond.push(
+      'Searching X through the model provider is on. It is billed per search, and Easy Mode does not show or change it.',
+    );
+  }
   if (persona.styleExamples.length > 50) {
     beyond.push(`${persona.styleExamples.length} style examples exist; Easy Mode shows the first 50.`);
   }

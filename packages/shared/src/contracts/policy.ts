@@ -266,6 +266,20 @@ export const ToolPolicy = z.object({
       web: z.boolean().default(true),
       /** Market data for a contract address or a ticker. */
       market: z.boolean().default(true),
+      /**
+       * Search run by the model provider itself, reaching X's own index.
+       *
+       * Off by default, and deliberately: it spends the owner's key on every
+       * lookup, and unlike the browser and the market API it cannot be tried
+       * for free. Turning it on is a decision about money, so it is made once,
+       * on purpose, rather than inherited from a default.
+       *
+       * It needs a `research` model role pointing at a provider that can do
+       * this. Without one the flag reports itself unavailable rather than
+       * falling back to an ordinary model call, which would answer confidently
+       * having searched nothing.
+       */
+      xIntelligence: z.boolean().default(false),
     })
     .default({}),
 });

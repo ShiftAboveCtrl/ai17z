@@ -71,6 +71,39 @@ async function dropFinished(client: pg.Client): Promise<void> {
 }
 
 /**
+ * One connection to the test database, held open and never used.
+ *
+ * `dropFinished` treats "no connections" as "finished", and that is wrong for
+ * one window it cannot otherwise see: `closePool` runs between test files, so
+ * between one file ending and the next querying, a database a run still owns
+ * has nobody connected to it. Another run sweeping at that moment drops it, and
+ * the next file fails with `database "xbam_test_118_ca884a" does not exist` --
+ * naming nothing that would lead anybody here.
+ *
+ * The advisory lock cannot help: the run being robbed is not in setup and holds
+ * no lock. So ownership is asserted the way the sweep already reads it, by
+ * having a connection. This one exists only to be counted.
+ *
+ * Unreferenced, so it never keeps the process alive at the end of a run.
+ */
+let ownershipClaim: pg.Client | null = null;
+
+async function holdOwnership(name: string): Promise<void> {
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const stream = (client as unknown as { connection?: { stream?: { unref?: () => void } } }).connection?.stream;
+  stream?.unref?.();
+  ownershipClaim = client;
+  void name;
+}
+
+/** Lets go, for a test that needs the database to look abandoned. */
+export async function releaseOwnership(): Promise<void> {
+  await ownershipClaim?.end().catch(() => undefined);
+  ownershipClaim = null;
+}
+
+/**
  * The mutex.
  *
  * Any number, as long as every run picks the same one. Taken on a connection to
@@ -102,6 +135,7 @@ export async function setupTestDatabase(): Promise<void> {
     // Inside the lock: this is the connection that makes the new database
     // visibly in use, and until it exists the database looks abandoned.
     await migrate();
+    await holdOwnership(name);
   } finally {
     await admin.query('SELECT pg_advisory_unlock($1)', [SETUP_LOCK]).catch(() => undefined);
     await admin.end().catch(() => undefined);
