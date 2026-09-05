@@ -34,6 +34,19 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
 
+# The environment file, which is also where the compose project name comes from.
+#
+# docker-compose.yml says `name: ${AI17Z_INSTANCE:-xbam}`, so a compose command
+# run without this resolves that to the default and acts on a different project
+# than the one that was started. Stopping would report success and leave the
+# containers running.
+$EnvFile = $env:AI17Z_ENV_FILE
+if (-not $EnvFile) { $EnvFile = $env:XBAM_ENV_FILE }
+if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot '.env' }
+$ComposeEnv = @()
+if (Test-Path $EnvFile) { $ComposeEnv = @('--env-file', $EnvFile) }
+
+
 function Invoke-Native {
   param([Parameter(Mandatory)] [string] $Exe, [string[]] $Arguments = @(), [string] $FailureMessage)
   $previous = $ErrorActionPreference
@@ -150,7 +163,7 @@ Write-Step 'Installing dependencies...'
 Invoke-Native npm @('install', '--no-audit', '--no-fund') 'npm install failed. The output above says why.' | Out-Null
 
 Write-Step 'Rebuilding the containers...'
-Invoke-Native docker @('compose', 'build', 'api', 'web', 'worker') 'The image build failed. The output above says why.' | Out-Null
+Invoke-Native docker (@('compose') + $ComposeEnv + @('build', 'api', 'web', 'worker')) 'The image build failed. The output above says why.' | Out-Null
 
 if ($SkipStart) {
   Write-Host ''

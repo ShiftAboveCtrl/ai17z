@@ -31,6 +31,23 @@ Set-Location -Path $PSScriptRoot
 $WorkerLog = Join-Path $PSScriptRoot 'storage\native-worker.log'
 $PidFile   = Join-Path $PSScriptRoot 'storage\native-worker.pid'
 
+# Where the environment file lives.
+#
+# An installed AI17Z keeps it with the owner's data, because the program
+# directory is replaced on every upgrade and this file holds the master key
+# every provider credential is sealed with. The launcher says where, via
+# AI17Z_ENV_FILE. A clone has no launcher and no data directory, so it falls
+# back to the .env beside this script, which is what a developer expects.
+$EnvFile = $env:AI17Z_ENV_FILE
+if (-not $EnvFile) { $EnvFile = $env:XBAM_ENV_FILE }
+if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot '.env' }
+
+# docker compose reads .env from the compose file's directory unless told
+# otherwise, so every compose call has to carry this. Without it the containers
+# would get a different configuration from the rest of the application, and the
+# ports the installer wrote would apply to half the system.
+$ComposeEnv = @('--env-file', $EnvFile)
+
 # Docker writes its progress to stderr. Under Windows PowerShell with
 # ErrorActionPreference = Stop, that is promoted to a terminating error even
 # when the command succeeded, so native commands are run with the preference
@@ -87,8 +104,8 @@ if (-not $dockerUp) {
 # "Bind for 127.0.0.1:55433 failed: port is already allocated" from a daemon,
 # which tells somebody running a second installation nothing they can act on.
 function Get-EnvPort($Key, $Default) {
-  if (Test-Path '.env') {
-    foreach ($line in Get-Content '.env') {
+  if (Test-Path $EnvFile) {
+    foreach ($line in Get-Content $EnvFile) {
       if ($line -match "^\s*$([regex]::Escape($Key))\s*=\s*(.+)$") { $value = $matches[1].Trim() }
     }
   }
@@ -101,7 +118,7 @@ function Test-PortTaken($Port) {
 }
 
 $ourContainers = @()
-try { $ourContainers = @(docker compose ps --format '{{.Name}}' 2>$null) } catch { }
+try { $ourContainers = @(docker compose @ComposeEnv ps --format '{{.Name}}' 2>$null) } catch { }
 $alreadyOurs = $ourContainers.Count -gt 0
 
 if (-not $alreadyOurs) {
@@ -142,14 +159,54 @@ if ($dbUrl -and $dbUrl -match '^postgres(ql)?://[^/]*@(localhost|127\.0\.0\.1):(
   }
 }
 
-if (-not (Test-Path '.env')) {
-  Write-Warn 'No .env found. Creating one from .env.example with a fresh master key.'
-  Copy-Item '.env.example' '.env'
+if (-not (Test-Path $EnvFile)) {
+  # An older installation kept its environment file beside the program. Move it
+  # rather than leaving two to diverge, and rather than generating a second
+  # master key that cannot read the credentials sealed with the first.
+  $legacy = Join-Path $PSScriptRoot '.env'
+  if (($legacy -ne $EnvFile) -and (Test-Path $legacy)) {
+    Write-Warn "Moving your existing .env to $EnvFile so an upgrade cannot replace it."
+    $parent = Split-Path -Parent $EnvFile
+    if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    Move-Item -LiteralPath $legacy -Destination $EnvFile
+  }
+}
+
+if (-not (Test-Path $EnvFile)) {
+  $template = Join-Path $PSScriptRoot '.env.example'
+  if (-not (Test-Path $template)) {
+    # This was the installed copy's first-run failure: the template was not in
+    # the package, so the very first thing a new install did was crash naming a
+    # file nobody could be expected to find.
+    Stop-WithReason `
+      'AI17Z has no .env and no .env.example to build one from.' `
+      "Expected the template at:`n    $template`n  This installation looks incomplete. Reinstalling AI17Z will restore it."
+  }
+
+  Write-Warn "No environment file yet. Creating one at $EnvFile with a fresh master key."
+  $parent = Split-Path -Parent $EnvFile
+  if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+  Copy-Item $template $EnvFile
+
   # The master key seals every provider API key. Generating one here means a
   # first run works; losing it later means those keys cannot be decrypted.
-  $key = [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
-  (Get-Content '.env') -replace '^AI17Z_MASTER_KEY=.*$', "AI17Z_MASTER_KEY=$key" | Set-Content '.env' -Encoding utf8
-  Write-Warn "A master key was written to .env. Back that file up: without it, stored API keys are unreadable."
+  #
+  # From the cryptographic RNG rather than Get-Random, which is seeded and is
+  # not meant for anything that has to be unguessable.
+  $bytes = New-Object 'System.Byte[]' 32
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+  $key = [Convert]::ToBase64String($bytes)
+
+  # Read and write the bytes explicitly rather than through Get-Content and
+  # Set-Content. On Windows PowerShell 5.1 those default to the system codepage
+  # for reading and add a BOM when writing, which turns the template's box-
+  # drawing comments into mojibake and puts three bytes in front of the first
+  # line. Both are cosmetic until something parses the file strictly.
+  $utf8 = New-Object System.Text.UTF8Encoding($false)
+  $text = [System.IO.File]::ReadAllText($EnvFile, $utf8)
+  $text = [regex]::Replace($text, '(?m)^AI17Z_MASTER_KEY=.*$', "AI17Z_MASTER_KEY=$key")
+  [System.IO.File]::WriteAllText($EnvFile, $text, $utf8)
+  Write-Warn "A master key was written to $EnvFile. Back that file up: without it, stored API keys are unreadable."
 }
 
 # -- The stack ---------------------------------------------------------------
@@ -158,11 +215,11 @@ if ($Rebuild) {
   # Stamped into the images, because a container has no git and otherwise
   # cannot say which source it is running.
   $env:AI17Z_BUILD_COMMIT = (git rev-parse --short=12 HEAD 2>$null)
-  Invoke-Native docker @('compose', 'build', 'api', 'web', 'worker') 'The image build failed. The output above says why.' | Out-Null
+  Invoke-Native docker (@('compose') + $ComposeEnv + @('build', 'api', 'web', 'worker')) 'The image build failed. The output above says why.' | Out-Null
 }
 
 Write-Step 'Starting Postgres, API, worker and web...'
-Invoke-Native docker @('compose', 'up', '-d') 'docker compose could not start the stack. The output above says why.' | Out-Null
+Invoke-Native docker (@('compose') + $ComposeEnv + @('up', '-d')) 'docker compose could not start the stack. The output above says why.' | Out-Null
 
 Write-Step 'Applying migrations...'
 Invoke-Native npm @('run', 'migrate') 'Migrations failed. The database is unchanged; the output above says why.' | Out-Null

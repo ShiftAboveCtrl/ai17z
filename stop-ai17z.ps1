@@ -23,6 +23,19 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
 
+# The environment file, which is also where the compose project name comes from.
+#
+# docker-compose.yml says `name: ${AI17Z_INSTANCE:-xbam}`, so a compose command
+# run without this resolves that to the default and acts on a different project
+# than the one that was started. Stopping would report success and leave the
+# containers running.
+$EnvFile = $env:AI17Z_ENV_FILE
+if (-not $EnvFile) { $EnvFile = $env:XBAM_ENV_FILE }
+if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot '.env' }
+$ComposeEnv = @()
+if (Test-Path $EnvFile) { $ComposeEnv = @('--env-file', $EnvFile) }
+
+
 $PidFile = Join-Path $PSScriptRoot 'storage\native-worker.pid'
 
 # Docker writes its progress to stderr. Under Windows PowerShell with
@@ -99,16 +112,16 @@ if ($KeepStack) {
   $answer = Read-Host '  Type DELETE to confirm'
   if ($answer -ceq 'DELETE') {
     Write-Step 'Stopping and removing volumes...'
-    Invoke-Native docker @('compose', 'down', '-v') | Out-Null
+    Invoke-Native docker (@('compose') + $ComposeEnv + @('down', '-v')) | Out-Null
     Write-Done 'Stopped. All data removed.'
   } else {
     Write-Warn 'Nothing was deleted. Stopping normally instead.'
-    Invoke-Native docker @('compose', 'down') | Out-Null
+    Invoke-Native docker (@('compose') + $ComposeEnv + @('down')) | Out-Null
     Write-Done 'Stopped. Data kept.'
   }
 } else {
   Write-Step 'Stopping the stack...'
-  Invoke-Native docker @('compose', 'down') | Out-Null
+  Invoke-Native docker (@('compose') + $ComposeEnv + @('down')) | Out-Null
   Write-Done 'Stopped. Data kept; start again with .\start-ai17z.ps1'
 }
 
