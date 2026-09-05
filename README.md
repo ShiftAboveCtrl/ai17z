@@ -454,14 +454,28 @@ npm run typecheck
 
 ## Documentation
 
+Installing and running it:
+
 - [Installing on Windows](docs/WINDOWS_INSTALL.md)
 - [Uninstalling, and removing your data](docs/WINDOWS_UNINSTALL.md)
 - [Why Windows warns about the download](docs/WINDOWS_TRUST.md)
 - [Privacy: what leaves your machine](docs/PRIVACY.md)
 - [Code signing policy](docs/CODE_SIGNING_POLICY.md)
+- [Local setup](docs/operations/LOCAL_SETUP.md) · [Docker](docs/operations/DOCKER.md) · [Driving a real browser](docs/operations/BROWSER_SESSIONS.md)
 
-Every screen in AI17Z explains itself, and the code carries its reasoning in
-comments. Start with `README.md`, then read the source.
+How it works:
+
+- [Engineering notes](docs/ENGINEERING.md) — the invariants, and what broke to produce each one
+- [Architecture overview](docs/architecture/OVERVIEW.md) · [Data model](docs/architecture/DATA_MODEL.md) · [Jobs and the runtime](docs/architecture/JOBS.md)
+- [Memory](docs/architecture/MEMORY.md) · [Channels](docs/architecture/CHANNELS.md) · [Models](docs/architecture/MODELS.md) · [Pipelines](docs/architecture/PIPELINES.md)
+- [The social layer: identity, relationships, voice](docs/architecture/SOCIAL.md)
+- [Cadence: when an account is read and may act](docs/architecture/CADENCE.md) · [Capabilities](docs/architecture/CAPABILITIES.md)
+- [Connecting an account and security challenges](docs/architecture/SIGN_IN.md) · [Persona sources](docs/architecture/PERSONA_SOURCES.md)
+- [Searching X itself](docs/architecture/X_INTELLIGENCE.md) · [Owner notifications](docs/architecture/NOTIFICATIONS.md) · [Agent packages](docs/architecture/AGENT_PACKAGES.md)
+- [Security](docs/architecture/SECURITY.md) · [Easy Mode](docs/architecture/EASY_MODE.md)
+
+AI17Z can also read these itself: attach `docs/` as a knowledge source and an
+agent can answer questions about the version you are running.
 
 ## License
 
