@@ -49,7 +49,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # The version this project says it needs.
+          #
+          # This said 20 while package.json said ">=22", every Dockerfile built
+          # on node:22, and the release workflow validated on 22. So CI was the
+          # only thing testing a runtime nobody ships, and it was the only thing
+          # failing. Four places have to agree, and a test now says so.
+          node-version: '22'
           cache: npm
 
       - name: Install
