@@ -54,7 +54,7 @@ describe('which bucket something belongs in', () => {
       item({ text: 'why?' }),
       item({ type: 'REPLY' }),
       item(),
-    ].map((i) => ({ ...i, eventId: '', agentId: null, agentName: null, authorHandle: null, url: null, occurredAt: null, ingestedAt: '', jobId: null, jobStatus: null, errorClass: null, replyText: null, replyUrl: null, repliedAt: null }));
+    ].map((i) => ({ ...i, eventId: '', agentId: null, agentName: null, authorHandle: null, url: null, occurredAt: null, ingestedAt: '', jobId: null, jobStatus: null, errorClass: null, draftText: null, replyText: null, replyUrl: null, repliedAt: null }));
 
     const counts = inbox.countBuckets(items);
     expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(items.length);
