@@ -42,3 +42,6 @@ export * from './killSwitch';
 export * from './spending';
 export * from './notify';
 export * from './permissionProfiles';
+export * from './notifyTransport';
+export * from './telegramApi';
+export * from './telegram';

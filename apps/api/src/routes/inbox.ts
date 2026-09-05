@@ -1,6 +1,20 @@
 import type { FastifyInstance } from 'fastify';
-import { inbox as inboxRepo, notifications as notificationsRepo } from '@xbam/database';
-import { DEFAULT_MUTE_MS, notificationSummary, pauseState, setPauseAll } from '@xbam/runtime';
+import { inbox as inboxRepo, notifications as notificationsRepo, ops } from '@xbam/database';
+import {
+  DEFAULT_MUTE_MS,
+  CATEGORY_DESCRIPTIONS,
+  CATEGORY_LABELS,
+  TELEGRAM_CATEGORIES,
+  connectTelegram,
+  disconnectTelegram,
+  notificationSummary,
+  pairTelegram,
+  pauseState,
+  setPauseAll,
+  telegramStatus,
+  testTelegram,
+  updateTelegramPreferences,
+} from '@xbam/runtime';
 import { z } from 'zod';
 import { parseBody } from '../http';
 import { handler, params, requireUser } from '../http';
@@ -92,6 +106,102 @@ export async function registerInboxRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => {
       const user = await requireUser(request);
       return { cleared: await notificationsRepo.acknowledgeAll(user.email ?? user.id) };
+    }),
+  );
+
+  /**
+   * Telegram, as somewhere to be told when nobody is at the machine.
+   *
+   * Every route here is behind `requireUser`, and none of them returns the bot
+   * token. It goes in once, sealed under the master key on the way, and the
+   * only thing that ever reads it again is the transport that sends a message.
+   */
+  app.get(
+    '/api/notifications/telegram',
+    handler(async (request) => {
+      await requireUser(request);
+      return {
+        ...(await telegramStatus()),
+        // Sent with the status so the screen does not need its own copy of the
+        // category list, which would then be able to disagree with the routing.
+        catalogue: TELEGRAM_CATEGORIES.map((id) => ({
+          id,
+          label: CATEGORY_LABELS[id],
+          description: CATEGORY_DESCRIPTIONS[id],
+        })),
+      };
+    }),
+  );
+
+  app.post(
+    '/api/notifications/telegram',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(z.object({ token: z.string().min(1) }), request);
+      const status = await connectTelegram(body.token);
+      // Recorded because adding a way for the installation to talk to the
+      // outside is a security event. The bot's username, never its token.
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'notifications.telegram.connected',
+        entityType: 'setting',
+        entityId: 'notifications.telegram',
+        data: { bot: status.botUsername },
+      });
+      return status;
+    }),
+  );
+
+  app.post(
+    '/api/notifications/telegram/pair',
+    handler(async (request) => {
+      await requireUser(request);
+      return pairTelegram();
+    }),
+  );
+
+  app.post(
+    '/api/notifications/telegram/test',
+    handler(async (request) => {
+      await requireUser(request);
+      await testTelegram();
+      return { sent: true };
+    }),
+  );
+
+  app.put(
+    '/api/notifications/telegram',
+    handler(async (request) => {
+      await requireUser(request);
+      const body = parseBody(
+        z.object({
+          enabled: z.boolean().optional(),
+          categories: z.record(z.enum(TELEGRAM_CATEGORIES), z.boolean()).optional(),
+          minSeverity: z.enum(['INFO', 'WARNING', 'CRITICAL']).optional(),
+          // A ceiling rather than a schedule, and zero means none. Twelve hours
+          // is as sparse as it can be and still catch an overnight stop.
+          heartbeatHours: z.number().int().min(0).max(24).optional(),
+        }),
+        request,
+      );
+      return updateTelegramPreferences(body);
+    }),
+  );
+
+  app.delete(
+    '/api/notifications/telegram',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const before = await telegramStatus();
+      const status = await disconnectTelegram();
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'notifications.telegram.disconnected',
+        entityType: 'setting',
+        entityId: 'notifications.telegram',
+        data: { bot: before.botUsername },
+      });
+      return status;
     }),
   );
 }
