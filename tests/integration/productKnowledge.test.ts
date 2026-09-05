@@ -60,12 +60,8 @@ describe('an agent taught from the documentation shipped with it', () => {
 
     const report = await indexSource(source, { roots: [repoRoot] });
     expect(report.error).toBeNull();
-    // Five: the Windows install and uninstall pages, the trust page, privacy
-    // and the code signing policy. It was twenty-odd until the architecture
-    // notes were taken out of the repository -- see the note above the
-    // question list for what that cost.
-    expect(report.documents).toBeGreaterThanOrEqual(5);
-    expect(report.chunks).toBeGreaterThan(20);
+    expect(report.documents).toBeGreaterThan(15);
+    expect(report.chunks).toBeGreaterThan(80);
     // Nothing it read looked like a credential. If this ever fires, something
     // went into the documentation that should not be there.
     expect(report.withheld).toEqual([]);
@@ -81,27 +77,23 @@ describe('an agent taught from the documentation shipped with it', () => {
   });
 
   /**
-   * What the shipped documentation can answer.
+   * The questions people actually ask about this product.
    *
-   * This list used to be ten questions and is now six. The architecture notes
-   * -- memory, Easy Mode, posting, capabilities, the social layer -- were
-   * removed from the repository, and with them went the agent's ability to
-   * answer four of the questions people most often ask about it:
-   *
-   *     what is Easy Mode?        how does memory work?
-   *     how does posting work?    why is my tool blocked?
-   *
-   * Nothing is broken; the feature has less to read. Putting `docs/architecture`
-   * and `docs/operations` back restores all four, and this list should grow
-   * again if that happens. Recorded here rather than in a commit message
-   * because this file is where somebody would notice.
+   * These went from ten to six and back to ten when the architecture notes left
+   * the repository and returned. That is the measure of what `docs/` being
+   * complete is worth: four of the ten most common questions are answerable
+   * only from those files, and an agent without them says it does not know.
    */
   it.each([
     ['how do I install AI17Z on Windows?', /install/i],
     ['why does it use real Chrome?', /chrome/i],
     ['how does mention search work?', /mention|search|radar/i],
+    ['what is Easy Mode?', /easy mode/i],
     ['can I use Ollama?', /ollama|provider|model/i],
     ['where are API keys stored?', /key|secret|encrypt/i],
+    ['why is my tool blocked?', /polic|capabilit|tool/i],
+    ['how does memory work?', /memory|scope|retriev/i],
+    ['how does posting work?', /post/i],
     ['what happens when a job fails?', /job|retry|fail/i],
   ])('retrieves something relevant for %j', async (question, expected) => {
     const agentId = await taughtAgent();
