@@ -139,20 +139,48 @@ jobs:
         env:
           AI17Z_VERSION: ${{ steps.version.outputs.version }}
 
+      - name: Check the staged application is really there
+        shell: pwsh
+        run: |
+          # Inno fails with "no files found" when the stage is empty, which
+          # reads like a compiler problem and is not one. Fail here instead,
+          # saying what is actually wrong.
+          $stage = 'build\windows\app'
+          if (-not (Test-Path $stage)) { throw "Nothing was staged at $stage" }
+          $count = (Get-ChildItem $stage -Recurse -File | Measure-Object).Count
+          "staged files: $count"
+          if ($count -lt 100) { throw "Only $count files staged, which is not a complete application." }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          # Installed deliberately rather than assumed. Hoping the runner image
+          # carried it produced a 47-second failure whose only message was that
+          # the compiler was missing.
+          $paths = @(
+            (Join-Path $env:ProgramFiles 'Inno Setup 6'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6'),
+            (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6')
+          )
+          function Find-Iscc { $paths | ForEach-Object { Join-Path $_ 'ISCC.exe' } | Where-Object { Test-Path $_ } | Select-Object -First 1 }
+
+          $iscc = Find-Iscc
+          if (-not $iscc) {
+            'Inno Setup is not on this image; installing it.'
+            choco install innosetup --no-progress --yes --no-color
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed with $LASTEXITCODE" }
+            $iscc = Find-Iscc
+          }
+          # Say where it looked. "Not available" on its own is not actionable.
+          if (-not $iscc) { throw "ISCC.exe not found after installing. Looked in: $($paths -join '; ')" }
+
+          "ISCC: $iscc"
+          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Compile the installer
         shell: pwsh
         run: |
-          # Inno Setup is preinstalled on the windows-latest image. Resolve it
-          # rather than assuming a path, because the image moves.
-          $iscc = Get-ChildItem -Path 'C:\Program Files (x86)','C:\Program Files' -Filter 'ISCC.exe' -Recurse -Depth 3 -ErrorAction SilentlyContinue |
-                  Select-Object -First 1 -ExpandProperty FullName
-          if (-not $iscc) {
-            choco install innosetup --no-progress -y
-            $iscc = Get-ChildItem -Path 'C:\Program Files (x86)','C:\Program Files' -Filter 'ISCC.exe' -Recurse -Depth 3 -ErrorAction SilentlyContinue |
-                    Select-Object -First 1 -ExpandProperty FullName
-          }
-          if (-not $iscc) { throw 'Inno Setup is not available on this runner.' }
-          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" packaging\windows\ai17z.iss
+          & "$env:ISCC" "/DAppVersion=${{ steps.version.outputs.version }}" packaging\windows\ai17z.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with $LASTEXITCODE" }
 
       - name: Check the metadata SignPath requires
