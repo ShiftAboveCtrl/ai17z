@@ -94,6 +94,19 @@ describe('the installer carries the metadata SignPath requires', () => {
     expect(workflow).toContain('Check the metadata SignPath requires');
     expect(workflow).toContain('Wrong product name');
   });
+
+  it('trims the version resource before comparing it', () => {
+    // Windows pads version-resource strings: ProductName comes back as "AI17Z"
+    // followed by 55 spaces, so an exact comparison fails on a file that is
+    // perfectly correct. This failed the build after the compile had succeeded.
+    const comparisons = workflow.match(/\$info\.ProductName[^\n]*/g) ?? [];
+    expect(comparisons.length).toBeGreaterThan(0);
+    for (const line of comparisons) {
+      expect(line, 'an untrimmed ProductName comparison').not.toMatch(/\$info\.ProductName\s+-(ne|eq)\s/);
+    }
+    expect(workflow).toContain('.ProductName.Trim()');
+    expect(workflow).toContain('.ProductVersion.Trim()');
+  });
 });
 
 /**

@@ -36,6 +36,16 @@ export async function artifactRoutes(app: FastifyInstance): Promise<void> {
       reply.header('content-type', artifact.mimeType);
       reply.header('content-length', String(info.size));
       reply.header('cache-control', 'private, max-age=3600');
+      // This route serves bytes somebody uploaded, so the stored type is the
+      // only type it may be treated as. Without nosniff a browser is free to
+      // decide a file looks like HTML and run it -- on the origin holding the
+      // session. The stored type is itself read from the file's own bytes at
+      // upload, never from what the client said it was sending.
+      reply.header('x-content-type-options', 'nosniff');
+      // Belt and braces: nothing served here may execute or embed anything,
+      // and it is never a frame.
+      reply.header('content-security-policy', "default-src 'none'; sandbox");
+      reply.header('content-disposition', 'inline');
       return reply.send(createReadStream(absolute));
     }),
   );
