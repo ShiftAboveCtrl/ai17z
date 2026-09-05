@@ -66,9 +66,15 @@ export async function builtInSources(): Promise<BuiltInSource[]> {
       name: 'AI17Z documentation',
       kind: 'PATH',
       location: docs,
+      // What is actually in docs/, and nothing more.
+      //
+      // This used to promise memory, voice, tools, posting and Easy Mode,
+      // because the architecture notes were shipped alongside. They are not any
+      // more, and a source that advertises what it cannot answer produces an
+      // agent that confidently says it has read something it has not.
       describes:
-        'Installation, browsers, providers, memory, voice, tools, posting, Easy and Advanced mode, ' +
-        'and the limitations of the version installed here.',
+        'Installing and uninstalling on Windows, why Windows warns about the download, ' +
+        'what leaves your machine, and how releases are signed.',
     },
   ];
 }
