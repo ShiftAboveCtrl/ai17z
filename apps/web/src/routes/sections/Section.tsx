@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { AnimatedText, FadeIn } from '@app/components/motion';
+import { Explain } from '@app/components/Explain';
 
 /**
  * One domain per section.
@@ -21,6 +22,7 @@ export function Section({
   eyebrow,
   heading,
   lede,
+  explain,
   children,
   compact,
 }: {
@@ -29,6 +31,14 @@ export function Section({
   eyebrow: string;
   heading: string;
   lede?: string;
+  /**
+   * Plain language for somebody who does not yet know the vocabulary.
+   *
+   * Separate from the lede on purpose. The lede says what this section is; this
+   * says what it means for you and what happens if you leave it alone, which is
+   * the question people are actually asking when they stop and frown.
+   */
+  explain?: ReactNode;
   children: ReactNode;
   /**
    * The same section, without the editorial chrome.
@@ -48,6 +58,7 @@ export function Section({
           <p className="eyebrow">{eyebrow}</p>
           <h3 className="mt-2 text-lg font-light text-bone">{heading}</h3>
           {lede && <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">{lede}</p>}
+          {explain && <Explain label={heading} className="mt-2">{explain}</Explain>}
         </div>
         {children}
       </section>
@@ -70,6 +81,13 @@ export function Section({
         {lede && (
           <FadeIn delay={0.2}>
             <p className="mt-2 max-w-2xl text-[14px] font-light leading-relaxed text-bone-dim">{lede}</p>
+          </FadeIn>
+        )}
+        {explain && (
+          <FadeIn delay={0.2}>
+            <Explain label={heading} className="mt-2.5">
+              {explain}
+            </Explain>
           </FadeIn>
         )}
       </div>

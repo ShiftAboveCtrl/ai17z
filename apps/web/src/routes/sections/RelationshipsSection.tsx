@@ -69,6 +69,12 @@ export function RelationshipsSection({ index, agentId }: { index: number; agentI
       eyebrow="Relationships"
       heading="Who it knows."
       lede="Built from conversations that actually happened. Somebody who mentions the agent repeatedly without ever being answered is not a regular."
+      explain={
+        <>
+          <p><strong>People the agent has actually spoken to</strong>, and what happened between them.</p>
+          <p>Built only from what was really published: a draft you rejected and a message nobody answered do not count as having met somebody. It records the exchange, never anything sensitive it might guess about a person.</p>
+        </>
+      }
     >
       {loading && !data ? (
         <Spinner />

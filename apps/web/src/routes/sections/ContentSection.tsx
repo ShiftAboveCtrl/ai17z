@@ -172,6 +172,12 @@ export function ContentSection({ index, agentId }: { index: number; agentId: str
       eyebrow="Content"
       heading="What it might say next"
       lede="An agent posts from things that actually happened, never from a blank page. When its schedule comes due it looks here; an empty list means it says nothing, which is the right outcome rather than a gap to fill."
+      explain={
+        <>
+          <p><strong>Things the agent might post of its own accord</strong>, rather than in reply to somebody.</p>
+          <p>It collects ideas from what it reads and what it has been taught. A schedule is a ceiling, not a timetable: when nothing is worth saying it stays quiet, and records that it chose to.</p>
+        </>
+      }
     >
       {view.loading && <Spinner />}
 

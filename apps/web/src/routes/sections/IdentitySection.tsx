@@ -140,6 +140,13 @@ export function IdentitySection({
       eyebrow="Identity"
       heading={`Who is ${draft.displayName || agentName}?`}
       lede="Everything the model is told about itself lives here, as versioned data. Saving creates a new persona version, and every generation records which one it used."
+      explain={
+        <>
+          <p><strong>Who the agent is when it talks to people.</strong> Its name, what it is like, what it cares about, and examples of things it might say.</p>
+          <p>The examples matter more than the adjectives. A model copies an example far more reliably than it interprets a word like &ldquo;witty&rdquo;, so two or three real lines you would be happy to have posted are worth more than a paragraph of description.</p>
+          <p>Leave it and the agent still works. It will just sound like nobody in particular.</p>
+        </>
+      }
     >
       {/*
         The face, first, because it is the part of an identity somebody looks

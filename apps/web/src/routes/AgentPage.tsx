@@ -457,6 +457,7 @@ export function AgentPage() {
               agent={agent}
               accounts={accounts}
               models={models}
+              stats={stats}
               onGo={(next) => {
                 setArea(next as AreaId);
                 window.scrollTo({ top: 0, behavior: 'smooth' });

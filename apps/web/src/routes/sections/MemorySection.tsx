@@ -87,6 +87,12 @@ export function MemorySection({
       eyebrow="Memory"
       heading="What it remembers."
       lede="Six scopes, written by explicit policy and retrieved by explicit rules. Every generation records which memories it used and why."
+      explain={
+        <>
+          <p><strong>What the agent remembers between conversations</strong>, so somebody who spoke to it last week is not a stranger this week.</p>
+          <p>It remembers facts about people it has talked to, what was said in a thread, and what it has been taught. It is not a transcript: things fade unless they keep proving useful.</p>
+        </>
+      }
     >
       <div className="mb-12">
         <p className="text-[16vw] font-light leading-none tracking-monument text-bone sm:text-[7vw]">{compactNumber(total)}</p>
@@ -137,6 +143,16 @@ export function MemorySection({
         <EmptyState
           title={query || scope ? 'Nothing matches that.' : 'No memories yet.'}
           detail={query || scope ? 'Try a different scope or search term.' : 'Memories appear as the agent works, or you can write one yourself.'}
+          action={
+            // Only when the list is genuinely empty. Offering "write one" to
+            // somebody whose search matched nothing answers a question they
+            // did not ask.
+            query || scope ? undefined : (
+              <button type="button" className="btn-ghost" onClick={() => setAdding(true)}>
+                Write one yourself
+              </button>
+            )
+          }
         />
       ) : (
         <ul className="divide-y divide-ink-line border-y border-ink-line">

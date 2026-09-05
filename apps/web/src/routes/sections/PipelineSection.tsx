@@ -53,6 +53,12 @@ export function PipelineSection({
       eyebrow="Pipeline"
       heading={triggerLabel}
       lede={`${pipeline.name} · version ${pipeline.version}. Each stage settles its own state before the next begins, so a restart resumes rather than restarts.`}
+      explain={
+        <>
+          <p><strong>The steps between somebody mentioning you and a reply going out.</strong> Read for interest, not for editing.</p>
+          <p>Each step finishes and saves before the next begins, which is why closing your laptop mid-reply resumes where it stopped instead of starting again or sending twice.</p>
+        </>
+      }
     >
       {/*
         A sequence, so it stays one column -- but a wider and shorter one. Each

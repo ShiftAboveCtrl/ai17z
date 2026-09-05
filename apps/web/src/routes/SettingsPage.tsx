@@ -7,6 +7,7 @@ import type { AccountRow, HealthReportView, ProviderCredential, ProviderKindInfo
 import { timeAgo } from '@app/lib/format';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { EmptyState, ErrorPanel, Field, Modal, Spinner, StatusDot } from '@app/components/ui';
+import { Explain } from '@app/components/Explain';
 import { SessionPanel } from '@app/components/SessionPanel';
 import { TelegramPanel } from '@app/components/TelegramPanel';
 
@@ -111,16 +112,20 @@ export function SettingsPage() {
   };
 
   return (
-    <main className="mx-auto max-w-page px-6 pb-32 pt-32 sm:px-10 sm:pt-44">
+    <main className="mx-auto max-w-page px-6 pb-24 pt-24 sm:px-10 sm:pt-28">
       <header className="mb-16">
         <FadeIn>
-          <p className="eyebrow mb-6">{user?.email}</p>
+          <p className="eyebrow mb-2">{user?.email}</p>
         </FadeIn>
-        <AnimatedText as="h1" text="Settings" className="monument text-[16vw] leading-[0.84] sm:text-[9vw] lg:text-[6.5vw]" />
+        <AnimatedText as="h1" text="Settings" className="monument text-[12vw] leading-[0.95] sm:text-[4.4vw] lg:text-[3.2rem]" />
+        <Explain label="this page" className="mt-3">
+          <p><strong>The things that belong to this installation rather than to one agent.</strong> Your AI provider keys, the accounts you have connected, and how you get told when something needs you.</p>
+          <p>Provider keys are encrypted before they are stored and are never shown again, not even here. If you lose the encryption key, the keys have to be entered again.</p>
+        </Explain>
       </header>
 
       <section id="system" className="border-t border-ink-line py-12">
-        <p className="eyebrow mb-6">System</p>
+        <p className="eyebrow mb-2">System</p>
         {health.data ? (
           <ul className="divide-y divide-ink-line border-y border-ink-line">
             {health.data.components.map((component) => (
@@ -214,7 +219,7 @@ export function SettingsPage() {
       </section>
 
       <section id="accounts" className="border-t border-ink-line py-12">
-        <p className="eyebrow mb-6">Accounts</p>
+        <p className="eyebrow mb-2">Accounts</p>
         {accounts.data?.items.length === 0 ? (
           <EmptyState title="No accounts connected." detail="Accounts are created from an agent, then managed here." />
         ) : (
@@ -240,7 +245,7 @@ export function SettingsPage() {
       </section>
 
       <section id="notifications" className="border-t border-ink-line py-12">
-        <p className="eyebrow mb-6">Telling you about it</p>
+        <p className="eyebrow mb-2">Telling you about it</p>
         <TelegramPanel />
       </section>
 

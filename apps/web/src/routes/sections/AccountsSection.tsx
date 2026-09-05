@@ -66,6 +66,13 @@ export function AccountsSection({
       eyebrow="Accounts"
       heading="Where it speaks."
       lede="Accounts are separate from agents, so an account can move between agents and one agent can drive several."
+      explain={
+        <>
+          <p><strong>The social account the agent reads and replies from.</strong> You sign in yourself, in a real browser window that opens on your screen.</p>
+          <p>AI17Z never types your password and never answers a security check. If X asks for a code or a CAPTCHA, the window is left open and waiting for you.</p>
+          <p>Without one connected, the agent has nothing to read and nothing to answer.</p>
+        </>
+      }
     >
       {accounts.length === 0 ? (
         <EmptyState

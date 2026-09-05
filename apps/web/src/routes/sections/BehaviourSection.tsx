@@ -45,6 +45,12 @@ export function BehaviourSection({ index, agentId }: { index: number; agentId: s
       eyebrow="Behaviour"
       heading="What it has been doing."
       lede="Counted from what actually happened, not from a running tally. Nothing here is an engagement metric: an agent optimised for replies per hour is a worse agent."
+      explain={
+        <>
+          <p><strong>How it decides whether to answer at all</strong>, and how much of the other person's tone to take on.</p>
+          <p>Not replying is a real answer here, with its reasons recorded. Hostility is met by stepping back rather than matching it, which is how an agent avoids ending up in an argument on your behalf.</p>
+        </>
+      }
     >
       <div className="mb-6 flex gap-2">
         {[1, 7, 30].map((option) => (

@@ -5,6 +5,7 @@ import { post } from '@app/lib/api';
 import type { JobSummary, MentionRow, MentionState } from '@app/lib/types';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { EmptyState, ErrorPanel, Loading } from '@app/components/ui';
+import { Explain } from '@app/components/Explain';
 import { JobCard } from '@app/components/JobCard';
 import { MentionCard } from '@app/components/MentionCard';
 
@@ -127,10 +128,10 @@ export function ActivityPage() {
   };
 
   return (
-    <main className="mx-auto max-w-page px-6 pb-32 pt-32 sm:px-10 sm:pt-44">
-      <header className="mb-14">
+    <main className="mx-auto max-w-page px-6 pb-24 pt-24 sm:px-10 sm:pt-28">
+      <header className="mb-8">
         <FadeIn>
-          <p className="eyebrow mb-6">
+          <p className="eyebrow mb-2">
             {view === 'inbox'
               ? mentions.data
                 ? `${replied} answered · ${unanswered} left alone`
@@ -141,7 +142,12 @@ export function ActivityPage() {
             {needsReview > 0 ? ` · ${needsReview} waiting for you` : ''}
           </p>
         </FadeIn>
-        <AnimatedText as="h1" text="Activity" className="monument text-[16vw] leading-[0.84] sm:text-[9vw] lg:text-[6.5vw]" />
+        <AnimatedText as="h1" text="Activity" className="monument text-[12vw] leading-[0.95] sm:text-[4.4vw] lg:text-[3.2rem]" />
+        <Explain label="this page" className="mt-3">
+          <p><strong>Everything your agents have done, and everything they decided not to do.</strong></p>
+          <p>Every incoming message becomes a job with a full record of its reasoning: what it read, what it looked up, what it wrote, and whether it was sent. Opening one shows all of it.</p>
+          <p>This is the place to look when a reply was not what you expected. Deciding to stay quiet is recorded here too, with its reasons.</p>
+        </Explain>
       </header>
 
       <div className="mb-8 flex flex-wrap items-center gap-2">

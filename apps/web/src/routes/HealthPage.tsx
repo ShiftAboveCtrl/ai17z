@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, CircleSlash, HelpCircle, MinusCircle } fro
 import { get } from '@app/lib/api';
 import { usePolling, useResource } from '@app/lib/hooks';
 import { EmptyState, RetryablePanel, Working } from '@app/components/ui';
+import { Explain } from '@app/components/Explain';
 import { useEffect, useState } from 'react';
 
 type HealthState = 'HEALTHY' | 'DEGRADED' | 'FAILING' | 'OFF' | 'UNKNOWN';
@@ -154,7 +155,17 @@ export function HealthPage() {
   return (
     <div className="mx-auto max-w-page px-6 py-24 sm:px-10">
       <p className="eyebrow">Health</p>
-      <h1 className="mt-3 text-4xl font-light tracking-tight text-bone sm:text-5xl">Is it working.</h1>
+      <h1 className="mt-2 text-3xl font-light tracking-tight text-bone sm:text-4xl">Is it working.</h1>
+      <Explain label="this page" className="mt-3">
+        <p>
+          <strong>Whether the parts AI17Z depends on are running.</strong> The database, the background
+          worker, your browser, and each provider you have configured.
+        </p>
+        <p>
+          Optional parts can be missing without anything being broken. Anything marked as a failure is
+          stopping work right now, and says what to do about it.
+        </p>
+      </Explain>
       <p className="mt-4 max-w-2xl text-sm leading-relaxed text-bone-faint">
         Every part each agent depends on, and when it last succeeded rather than when it last ran. A poller failing
         every thirty seconds for two hours ran a moment ago and worked two hours ago, and only the second number

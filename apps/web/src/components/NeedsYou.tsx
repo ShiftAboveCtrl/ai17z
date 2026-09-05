@@ -1,47 +1,74 @@
-import { Link } from 'react-router-dom';
 import { AlertTriangle, Check } from 'lucide-react';
-import type { Agent, AgentAccountRow, ModelConfig } from '@app/lib/types';
+import type { Agent, AgentAccountRow, AgentStats, ModelConfig } from '@app/lib/types';
 
 /**
  * What to do next, in the order it matters.
  *
- * The problem this solves is not that AI17Z fails to explain itself -- almost
- * every screen does. It is that the explanations are spread across fifteen
- * places, and somebody who has just made their first agent has no idea which of
- * them applies to them right now. They are told what a vision model is, on a
- * screen they have not opened, about a problem they do not yet know they have.
+ * This is two things wearing one name, because they are the same question asked
+ * at different moments.
  *
- * So this answers one question on the page people land on: is anything stopping
- * this agent working, and what do I press. Three rules keep it honest:
+ * **Before an agent has ever worked**, it is a path. Somebody who has just made
+ * their first agent does not need a list of everything that could be wrong;
+ * they need the next step, and a sense that there are three of them and not
+ * thirty. So the steps are numbered, the finished ones are ticked, and exactly
+ * one is live. Nothing else competes with it -- an agent with no account is not
+ * also told it has no vision model, because that is true of every new agent and
+ * saying it now is noise on top of the thing that actually matters.
  *
- *   - **Only what is actually true now.** Nothing speculative, nothing that
- *     might matter later. A list that cries wolf gets scrolled past.
- *   - **Blockers before warnings.** An agent with no model cannot run at all;
- *     an agent with no vision model runs and admits it cannot see pictures.
- *     Sorting those together would bury the one that matters.
+ * **Once it is running**, it is a list of what is wrong, blockers first, and
+ * usually empty.
+ *
+ * The rules that hold in both:
+ *
+ *   - **Only what is true now.** A list that cries wolf gets scrolled past.
  *   - **Every item goes somewhere.** A problem with no button is a complaint.
- *
- * When there is nothing, it says so in one line and gets out of the way. An
- * empty checklist that still occupies half a screen is furniture.
+ *   - **Nothing wrong is one line**, not an empty checklist occupying a screen.
  */
 
-interface Item {
-  /** Blockers stop the agent working at all. Warnings narrow what it can do. */
+interface Step {
+  title: string;
+  detail: string;
+  done: boolean;
+  action: { label: string; area: string };
+}
+
+interface Problem {
   kind: 'blocker' | 'warning';
   title: string;
   detail: string;
-  action: { label: string; area?: string; to?: string };
+  action: { label: string; area: string };
 }
 
-function build(agent: Agent, accounts: AgentAccountRow[], models: ModelConfig[]): Item[] {
-  const items: Item[] = [];
+/** The three things an agent cannot work without, in the order you would do them. */
+function setupPath(agent: Agent, accounts: AgentAccountRow[], models: ModelConfig[]): Step[] {
+  return [
+    {
+      title: 'Connect an account',
+      detail: 'The account it reads and replies from. A browser window opens and you sign in yourself.',
+      done: accounts.length > 0,
+      action: { label: 'Connect', area: 'reach' },
+    },
+    {
+      title: 'Choose a model',
+      detail: 'What it thinks with. You bring your own provider key, and it is stored encrypted.',
+      done: models.some((m) => m.role === 'primary'),
+      action: { label: 'Choose', area: 'reach' },
+    },
+    {
+      title: 'Start it',
+      detail: 'Nothing is read and no browser opens until you do. You can stop it again at any time.',
+      done: agent.state === 'ACTIVE',
+      action: { label: 'Start', area: 'overview' },
+    },
+  ];
+}
 
-  const connected = accounts.filter((a) => a.status === 'CONNECTED');
-  const needsUser = accounts.filter((a) => a.status === 'CHALLENGE_REQUIRES_USER');
+function problems(agent: Agent, accounts: AgentAccountRow[], models: ModelConfig[]): Problem[] {
+  const items: Problem[] = [];
 
   // First, because AI17Z never answers a security challenge and nothing at all
   // happens on that account until a person does.
-  for (const account of needsUser) {
+  for (const account of accounts.filter((a) => a.status === 'CHALLENGE_REQUIRES_USER')) {
     items.push({
       kind: 'blocker',
       title: `@${account.handle} is waiting for you`,
@@ -51,14 +78,8 @@ function build(agent: Agent, accounts: AgentAccountRow[], models: ModelConfig[])
     });
   }
 
-  if (accounts.length === 0) {
-    items.push({
-      kind: 'blocker',
-      title: 'No account connected',
-      detail: 'There is nothing for this agent to read or reply to until you connect one.',
-      action: { label: 'Connect an account', area: 'reach' },
-    });
-  } else if (connected.length === 0 && needsUser.length === 0) {
+  const connected = accounts.filter((a) => a.status === 'CONNECTED');
+  if (accounts.length > 0 && connected.length === 0 && items.length === 0) {
     items.push({
       kind: 'blocker',
       title: 'No account is signed in',
@@ -67,23 +88,11 @@ function build(agent: Agent, accounts: AgentAccountRow[], models: ModelConfig[])
     });
   }
 
-  if (!models.some((m) => m.role === 'primary')) {
-    items.push({
-      kind: 'blocker',
-      title: 'No model chosen',
-      detail: 'This is what the agent thinks with. Without one it cannot write anything at all.',
-      action: { label: 'Choose a model', area: 'reach' },
-    });
-  }
-
-  // Only worth saying once the agent could otherwise run. Telling somebody
-  // their stopped agent is stopped, while it also has no model and no account,
-  // is three complaints about one unfinished setup.
-  if (agent.state !== 'ACTIVE' && items.length === 0) {
+  if (agent.state !== 'ACTIVE') {
     items.push({
       kind: 'blocker',
       title: 'The agent is stopped',
-      detail: 'Everything is configured. Nothing is read and no browser is open until you start it.',
+      detail: 'Nothing is read and no browser is open until you start it.',
       action: { label: 'Start it', area: 'overview' },
     });
   }
@@ -105,16 +114,72 @@ export function NeedsYou({
   agent,
   accounts,
   models,
+  stats,
   onGo,
 }: {
   agent: Agent;
   accounts: AgentAccountRow[];
   models: ModelConfig[];
+  stats?: AgentStats;
   onGo?: (area: string) => void;
 }) {
-  const items = build(agent, accounts, models);
-  const blockers = items.filter((i) => i.kind === 'blocker');
+  const steps = setupPath(agent, accounts, models);
+  const remaining = steps.filter((s) => !s.done);
 
+  // Still being set up: anything essential missing, or it has never done a
+  // thing. An agent that has replied to somebody is past this even if it is
+  // stopped right now.
+  const neverRun = (stats?.jobsTotal ?? 0) === 0 && !stats?.lastActivityAt;
+  if (remaining.length > 0 && (neverRun || remaining.length > 1)) {
+    const next = steps.findIndex((s) => !s.done);
+    return (
+      <div className="mt-6">
+        <p className="eyebrow mb-3">
+          Set this agent up &middot; {steps.length - remaining.length} of {steps.length} done
+        </p>
+        <ol className="divide-y divide-ink-line overflow-hidden rounded-xl border border-ink-line">
+          {steps.map((step, index) => {
+            const current = index === next;
+            return (
+              <li
+                key={step.title}
+                className={`flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-3.5 ${
+                  step.done ? 'opacity-55' : current ? '' : 'opacity-45'
+                }`}
+              >
+                <span
+                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border font-mono text-[10px] ${
+                    step.done
+                      ? 'border-signal-live/50 text-signal-live'
+                      : current
+                        ? 'border-signal-calm/60 text-signal-calm'
+                        : 'border-ink-line text-bone-faint'
+                  }`}
+                >
+                  {step.done ? <Check className="h-3 w-3" aria-hidden /> : index + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm ${step.done ? 'text-bone-dim line-through decoration-bone-faint/40' : 'text-bone'}`}>
+                    {step.title}
+                  </p>
+                  {/* Only the step you are on explains itself. Three
+                      paragraphs of instructions for three steps is a wall. */}
+                  {current && <p className="mt-1 max-w-prose text-[13px] leading-relaxed text-bone-faint">{step.detail}</p>}
+                </div>
+                {current && (
+                  <button type="button" className="btn-primary shrink-0" onClick={() => onGo?.(step.action.area)}>
+                    {step.action.label}
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    );
+  }
+
+  const items = problems(agent, accounts, models);
   if (items.length === 0) {
     return (
       <div className="mt-6 flex items-center gap-2.5 rounded-xl border border-signal-live/25 bg-signal-live/[0.05] px-4 py-3">
@@ -124,11 +189,10 @@ export function NeedsYou({
     );
   }
 
+  const blockers = items.filter((i) => i.kind === 'blocker');
   return (
     <div className="mt-6">
-      <p className="eyebrow mb-3">
-        {blockers.length > 0 ? 'Before this can work' : 'Worth knowing'}
-      </p>
+      <p className="eyebrow mb-3">{blockers.length > 0 ? 'Before this can work' : 'Worth knowing'}</p>
       <ul className="divide-y divide-ink-line overflow-hidden rounded-xl border border-ink-line">
         {items.map((item) => (
           <li key={item.title} className="flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-3.5">
@@ -140,15 +204,9 @@ export function NeedsYou({
               <p className="text-sm text-bone">{item.title}</p>
               <p className="mt-1 max-w-prose text-[13px] leading-relaxed text-bone-faint">{item.detail}</p>
             </div>
-            {item.action.to ? (
-              <Link className="btn-quiet shrink-0" to={item.action.to}>
-                {item.action.label}
-              </Link>
-            ) : (
-              <button type="button" className="btn-quiet shrink-0" onClick={() => onGo?.(item.action.area ?? 'overview')}>
-                {item.action.label}
-              </button>
-            )}
+            <button type="button" className="btn-quiet shrink-0" onClick={() => onGo?.(item.action.area)}>
+              {item.action.label}
+            </button>
           </li>
         ))}
       </ul>
