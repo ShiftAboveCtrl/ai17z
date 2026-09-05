@@ -55,7 +55,41 @@ costs less.
 
 ---
 
-## Install
+## Download
+
+**Windows installer:** [`AI17Z-Setup-<version>.exe`](https://github.com/ShiftAboveCtrl/ai17z/releases)
+from the releases page. Verify it against `SHA256SUMS.txt` published beside it.
+
+See [Installing on Windows](docs/WINDOWS_INSTALL.md) and
+[Uninstalling](docs/WINDOWS_UNINSTALL.md).
+
+It needs Node.js 20+, Docker Desktop and Google Chrome, which it does not
+install for you. It checks for them and says what is missing.
+
+### Code signing policy
+
+AI17Z's Windows installer is currently **unsigned**, while our
+[SignPath Foundation](https://signpath.org) application is pending. Windows will
+warn you, and you should treat every unsigned download that way. Check the
+SHA-256 against the release page before running it.
+
+We will never ask you to disable SmartScreen, Smart App Control or your
+antivirus. See [Windows trust and SmartScreen](docs/WINDOWS_TRUST.md) for what
+those warnings mean and what is actually true about them.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io),
+certificate by [SignPath Foundation](https://signpath.org).
+
+Full policy: [docs/CODE_SIGNING_POLICY.md](docs/CODE_SIGNING_POLICY.md).
+
+### Privacy
+
+AI17Z collects nothing and has no servers. It talks only to the services you
+configure, with the credentials you supply. See [docs/PRIVACY.md](docs/PRIVACY.md).
+
+---
+
+## Install from source
 
 ### Windows
 

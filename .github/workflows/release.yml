@@ -1,0 +1,358 @@
+# Builds, signs and publishes the AI17Z Windows installer.
+#
+# Two lanes, and which one runs is explicit rather than inferred:
+#
+#   SIGNING_REQUIRED = true   the artifact must come back signed, and the
+#                             release fails if it does not
+#   SIGNING_REQUIRED = false  a clearly labelled unsigned build, used while the
+#                             SignPath Foundation application is pending
+#
+# The important property is that these never blur into each other. A workflow
+# that expected a signature, did not get one, and published anyway would be
+# worse than one that never signed at all: it would attach our name to an
+# artifact nobody checked.
+#
+# Everything SignPath-specific arrives after approval and lives in repository
+# secrets and variables. Nothing here contains a credential.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v'
+        required: true
+        type: string
+      prerelease:
+        description: 'Publish as a prerelease'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The gate. A release must not be the first place anybody discovers the tests
+  # are red, so this runs the same checks CI does before anything is packaged.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: typecheck, tests, release check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: xbam
+          POSTGRES_PASSWORD: xbam
+          POSTGRES_DB: xbam
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://xbam:xbam@localhost:55432/xbam
+      AI17Z_MASTER_KEY: ${{ secrets.CI_MASTER_KEY || 'ZGV2LW9ubHktMzItYnl0ZS10ZXN0LWtleS0xMjM0NTY3OA==' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Release check
+        run: npm run release:check
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Migrate
+        run: npm run migrate
+
+      - name: Tests
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  # The installer. Built on a GitHub-hosted runner from the tagged commit, which
+  # is what SignPath verifies the origin of. Nothing is built on a maintainer's
+  # machine and uploaded.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build the Windows installer
+    needs: validate
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $v = '${{ inputs.version }}'
+          } else {
+            $v = '${{ github.ref_name }}' -replace '^v', ''
+          }
+          if (-not $v) { throw 'No version could be determined.' }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "AI17Z $v"
+
+      - name: Install
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - name: Stage the application
+        run: npm run package:windows
+        env:
+          AI17Z_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Compile the installer
+        shell: pwsh
+        run: |
+          # Inno Setup is preinstalled on the windows-latest image. Resolve it
+          # rather than assuming a path, because the image moves.
+          $iscc = Get-ChildItem -Path 'C:\Program Files (x86)','C:\Program Files' -Filter 'ISCC.exe' -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+                  Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y
+            $iscc = Get-ChildItem -Path 'C:\Program Files (x86)','C:\Program Files' -Filter 'ISCC.exe' -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+                    Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $iscc) { throw 'Inno Setup is not available on this runner.' }
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" packaging\windows\ai17z.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with $LASTEXITCODE" }
+
+      - name: Check the metadata SignPath requires
+        shell: pwsh
+        run: |
+          $exe = "build\windows\AI17Z-Setup-${{ steps.version.outputs.version }}.exe"
+          if (-not (Test-Path $exe)) { throw "The installer was not produced: $exe" }
+          $info = (Get-Item $exe).VersionInfo
+          "ProductName    : $($info.ProductName)"
+          "ProductVersion : $($info.ProductVersion)"
+          if ($info.ProductName -ne 'AI17Z') { throw "Wrong product name: $($info.ProductName)" }
+          if ($info.ProductVersion -notlike '${{ steps.version.outputs.version }}*') {
+            throw "Wrong product version: $($info.ProductVersion)"
+          }
+
+      - name: Upload the unsigned installer
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: build/windows/AI17Z-Setup-${{ steps.version.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Signing. Skipped entirely while the application is pending; the moment
+  # SIGNING_REQUIRED is set to true and the SignPath values exist, this runs and
+  # the release will not publish without it.
+  # ---------------------------------------------------------------------------
+  sign:
+    name: sign with SignPath
+    needs: build
+    if: vars.SIGNING_REQUIRED == 'true'
+    runs-on: windows-latest
+    outputs:
+      signed: ${{ steps.result.outputs.signed }}
+    steps:
+      - name: Refuse to proceed without the SignPath settings
+        shell: pwsh
+        run: |
+          # Named individually, because "signing failed" is not something anybody
+          # can act on and "SIGNPATH_PROJECT_SLUG is not set" is.
+          $missing = @()
+          if (-not '${{ secrets.SIGNPATH_API_TOKEN }}')       { $missing += 'secret SIGNPATH_API_TOKEN' }
+          if (-not '${{ vars.SIGNPATH_ORGANIZATION_ID }}')    { $missing += 'variable SIGNPATH_ORGANIZATION_ID' }
+          if (-not '${{ vars.SIGNPATH_PROJECT_SLUG }}')       { $missing += 'variable SIGNPATH_PROJECT_SLUG' }
+          if (-not '${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}'){ $missing += 'variable SIGNPATH_SIGNING_POLICY_SLUG' }
+          if ($missing.Count -gt 0) {
+            throw "SIGNING_REQUIRED is true but these are not configured: $($missing -join ', ')"
+          }
+
+      - name: Submit the signing request
+        id: signpath
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ needs.build.outputs.artifact-id }}
+          # Waits for a person to approve in SignPath. Nothing is signed by a
+          # push alone.
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Verify the signature on what came back
+        id: result
+        shell: pwsh
+        run: |
+          # SignPath reporting success is not the same as the file we are about
+          # to publish being correctly signed. Check the file itself.
+          $exe = Get-ChildItem signed -Filter 'AI17Z-Setup-*.exe' -Recurse | Select-Object -First 1
+          if (-not $exe) { throw 'SignPath returned no installer.' }
+
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          "Status      : $($sig.Status)"
+          "Signer      : $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "Signature is not valid: $($sig.Status)" }
+
+          $info = $exe.VersionInfo
+          if ($info.ProductName -ne 'AI17Z') { throw "Signed the wrong product: $($info.ProductName)" }
+          if ($info.ProductVersion -notlike '${{ needs.build.outputs.version }}*') {
+            throw "Signed the wrong version: $($info.ProductVersion)"
+          }
+
+          # signtool as a second opinion, when the image has it.
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Filter 'signtool.exe' -Recurse -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -like '*x64*' } | Select-Object -First 1
+          if ($signtool) {
+            & $signtool.FullName verify /pa /v $exe.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool verify failed with $LASTEXITCODE" }
+          }
+
+          "signed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload the signed installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-installer
+          path: signed/**/AI17Z-Setup-*.exe
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Publish. Refuses to run if signing was required and did not succeed.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: publish the release
+    needs: [build, sign]
+    # `always()` so this still runs when `sign` was skipped, and the guard below
+    # is what decides whether that was legitimate.
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to publish unsigned when signing was required
+        run: |
+          set -euo pipefail
+          REQUIRED="${{ vars.SIGNING_REQUIRED }}"
+          SIGN_RESULT="${{ needs.sign.result }}"
+          if [ "$REQUIRED" = "true" ] && [ "$SIGN_RESULT" != "success" ]; then
+            echo "SIGNING_REQUIRED is true and signing did not succeed (result: $SIGN_RESULT)."
+            echo "Refusing to publish an unsigned installer as if it were signed."
+            exit 1
+          fi
+          echo "signing required: ${REQUIRED:-false}, signing result: ${SIGN_RESULT:-skipped}"
+
+      - name: Download the installer
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ vars.SIGNING_REQUIRED == 'true' && 'signed-installer' || 'unsigned-installer' }}
+          path: dist
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          find . -name 'AI17Z-Setup-*.exe' -exec cp {} . \; 2>/dev/null || true
+          sha256sum AI17Z-Setup-*.exe | tee SHA256SUMS.txt
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.build.outputs.version }}"
+          SIGNED="${{ vars.SIGNING_REQUIRED == 'true' && 'yes' || 'no' }}"
+          {
+            echo "## AI17Z $VERSION — Windows installer"
+            echo
+            if [ "$SIGNED" = "no" ]; then
+              echo "> **This installer is unsigned** while AI17Z's open-source"
+              echo "> [SignPath Foundation](https://signpath.org) code-signing application is pending."
+              echo "> Windows will warn you. Verify the SHA-256 below against this page before running it."
+              echo ">"
+              echo "> We will not ask you to disable SmartScreen, Smart App Control or your antivirus."
+              echo "> See [Windows trust and SmartScreen](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_TRUST.md)."
+            else
+              echo "Free code signing provided by [SignPath.io](https://about.signpath.io),"
+              echo "certificate by [SignPath Foundation](https://signpath.org)."
+            fi
+            echo
+            echo "### What AI17Z is"
+            echo
+            echo "A local-first platform for running autonomous agents on X. An agent is an"
+            echo "identity, a memory, a model, a policy, and the channels it may act on. Everything"
+            echo "runs on your machine: your data, your credentials, your browser session."
+            echo
+            echo "### Before you install"
+            echo
+            echo "AI17Z does not install other software for you. You need **Node.js 20+**,"
+            echo "**Docker Desktop** and **Google Chrome**. The installer checks and says what is"
+            echo "missing."
+            echo
+            echo "### Installing"
+            echo
+            echo "Per-user, no administrator rights. Program in \`%LOCALAPPDATA%\\Programs\\AI17Z\`,"
+            echo "your data in \`%LOCALAPPDATA%\\AI17Z\`. Upgrading replaces the program and never"
+            echo "touches your data."
+            echo
+            echo "- [Installing on Windows](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_INSTALL.md)"
+            echo "- [Uninstalling](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_UNINSTALL.md)"
+            echo "- [Code signing policy](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/CODE_SIGNING_POLICY.md)"
+            echo "- [Privacy](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/PRIVACY.md)"
+            echo
+            echo "### Verify your download"
+            echo
+            echo '```powershell'
+            echo "Get-FileHash .\\AI17Z-Setup-$VERSION.exe -Algorithm SHA256"
+            echo '```'
+            echo
+            echo "\`\`\`"
+            cat dist/SHA256SUMS.txt
+            echo "\`\`\`"
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.build.outputs.version) }}
+          name: AI17Z ${{ needs.build.outputs.version }}
+          body_path: release-notes.md
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || vars.SIGNING_REQUIRED != 'true' }}
+          files: |
+            dist/AI17Z-Setup-*.exe
+            dist/SHA256SUMS.txt
+            docs/RELEASE_VALIDATION_REPORT.md
