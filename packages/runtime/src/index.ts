@@ -45,3 +45,4 @@ export * from './permissionProfiles';
 export * from './notifyTransport';
 export * from './telegramApi';
 export * from './telegram';
+export * from './avatar';

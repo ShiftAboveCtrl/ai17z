@@ -50,6 +50,14 @@ async function adminClient(): Promise<pg.Client> {
  *
  * Done at the start rather than the end for the same reason -- the run that
  * made the mess is exactly the one that cannot clean it up.
+ *
+ * The subtlety is the window. A database that has just been created and not yet
+ * connected to *also* has no connections, so a second run sweeping at that
+ * moment deletes a database the first run is about to migrate into. The error
+ * lands later and elsewhere -- `database "xbam_test_150_e0d460" does not exist`
+ * from four unrelated suites -- and names nothing that would lead anybody here.
+ * The advisory lock below closes that window, so this only ever sees databases
+ * whose owner has finished with them.
  */
 async function dropFinished(client: pg.Client): Promise<void> {
   const { rows } = await client.query<{ datname: string }>(
@@ -62,6 +70,15 @@ async function dropFinished(client: pg.Client): Promise<void> {
   }
 }
 
+/**
+ * The mutex.
+ *
+ * Any number, as long as every run picks the same one. Taken on a connection to
+ * the *base* database, which every run shares, so it is a lock across runs
+ * rather than one within a database that does not exist yet.
+ */
+const SETUP_LOCK = 8_417_231;
+
 export async function setupTestDatabase(): Promise<void> {
   if (owned) return;
 
@@ -70,18 +87,25 @@ export async function setupTestDatabase(): Promise<void> {
 
   const admin = await adminClient();
   try {
+    // Held across the sweep, the create, and the first connection -- because
+    // the gap between creating a database and connecting to it is exactly when
+    // another run's sweep would decide it is finished with.
+    await admin.query('SELECT pg_advisory_lock($1)', [SETUP_LOCK]);
     await dropFinished(admin).catch(() => undefined);
     await admin.query(`CREATE DATABASE "${name}"`);
+    owned = name;
+
+    process.env.DATABASE_URL = base.replace(/\/[^/?]+(\?|$)/, `/${name}$1`);
+    if (!process.env.XBAM_MASTER_KEY) {
+      process.env.XBAM_MASTER_KEY = randomBytes(32).toString('base64');
+    }
+    // Inside the lock: this is the connection that makes the new database
+    // visibly in use, and until it exists the database looks abandoned.
+    await migrate();
   } finally {
+    await admin.query('SELECT pg_advisory_unlock($1)', [SETUP_LOCK]).catch(() => undefined);
     await admin.end().catch(() => undefined);
   }
-  owned = name;
-
-  process.env.DATABASE_URL = base.replace(/\/[^/?]+(\?|$)/, `/${name}$1`);
-  if (!process.env.XBAM_MASTER_KEY) {
-    process.env.XBAM_MASTER_KEY = randomBytes(32).toString('base64');
-  }
-  await migrate();
 }
 
 /**
