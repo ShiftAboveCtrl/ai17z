@@ -41,6 +41,7 @@
     "browser:cdp": "powershell -ExecutionPolicy Bypass -File scripts/launch-chrome-cdp.ps1",
     "soak": "tsx tools/soak.mts",
     "package:windows": "tsx tools/package-windows.mts",
+    "owner:password": "tsx tools/owner-password.mts",
     "worker:supervised": "tsx scripts/supervise-worker.mts",
     "release:check": "tsx tools/release-check.mts"
   },
