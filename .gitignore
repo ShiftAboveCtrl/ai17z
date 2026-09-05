@@ -35,3 +35,7 @@ accounts.db
 
 # Repository backups. Never publishable: a bundle is the whole history.
 *.bundle
+
+# Windows packaging output. The staged app and the installer are build
+# products; the release workflow produces them from source.
+build/windows/
