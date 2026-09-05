@@ -25,6 +25,20 @@
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
+; A release tag like v0.1.0-rc.1 is a perfectly good product version and an
+; invalid VersionInfoVersion: Windows requires that field to be four numbers,
+; and Inno refuses the whole script over it. That failure costs a one-second
+; error at the end of an eight-minute build, and it only appears on the tags
+; that matter -- 0.1.0 compiles, 0.1.0-rc.1 does not. So the numeric part is
+; derived once, here, and the full string still reaches the file properties
+; through the *TextVersion directives, which take free text.
+#define NumericVersion Pos("-", AppVersion) > 0 ? Copy(AppVersion, 1, Pos("-", AppVersion) - 1) : AppVersion
+; Where the staged application was assembled. Matches AI17Z_STAGE_DIR in
+; tools/package-windows.mts, which exists because npm cannot create the
+; workspace symlinks inside a folder OneDrive is syncing.
+#ifndef StageDir
+  #define StageDir "..\..\build\windows\app"
+#endif
 
 [Setup]
 AppId={{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}
@@ -50,9 +64,13 @@ UninstallDisplayName={#AppName} {#AppVersion}
 UninstallDisplayIcon={app}\packaging\windows\ai17z.ico
 ; SignPath requires signed binaries to carry product and version attributes,
 ; and they are what a person sees in the file properties either way.
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#NumericVersion}
 VersionInfoProductName={#AppName}
-VersionInfoProductVersion={#AppVersion}
+VersionInfoProductVersion={#NumericVersion}
+; What a person actually reads in the file properties, and what the release
+; workflow checks: the version they downloaded, prerelease suffix and all.
+VersionInfoTextVersion={#AppVersion}
+VersionInfoProductTextVersion={#AppVersion}
 VersionInfoCompany={#AppPublisher}
 VersionInfoDescription={#AppName} Setup
 VersionInfoCopyright=MIT licensed
@@ -65,7 +83,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "..\..\build\windows\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "ai17z.ico"; DestDir: "{app}\packaging\windows"; Flags: ignoreversion
 Source: "AI17Z.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Uninstall-Data.ps1"; DestDir: "{app}\packaging\windows"; Flags: ignoreversion

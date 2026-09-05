@@ -32,7 +32,20 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const stageDir = resolve(root, 'build', 'windows', 'app');
+
+/**
+ * Where the application is assembled.
+ *
+ * Overridable because the last phase of `npm ci` creates the workspace
+ * symlinks, and OneDrive, Dropbox and every other sync client refuses to let
+ * anything create a symlink inside a folder it is syncing. The install fails
+ * with `EBUSY ... symlink`, which names neither the sync client nor the
+ * directory as the problem. A developer whose checkout lives in OneDrive --
+ * this one does -- can point the staging somewhere else and get on with it.
+ */
+const stageDir = process.env.AI17Z_STAGE_DIR
+  ? resolve(process.env.AI17Z_STAGE_DIR)
+  : resolve(root, 'build', 'windows', 'app');
 
 /**
  * What the application needs at run time.
@@ -112,7 +125,7 @@ async function main(): Promise<void> {
   const version = process.env.AI17Z_VERSION?.replace(/^v/, '') || pkg.version;
 
   console.log(`AI17Z ${version}: staging the Windows application`);
-  await rm(resolve(root, 'build', 'windows'), { recursive: true, force: true });
+  await rm(stageDir, { recursive: true, force: true });
   await mkdir(stageDir, { recursive: true });
 
   for (const entry of INCLUDE) {
@@ -165,6 +178,22 @@ async function main(): Promise<void> {
       },
     },
   );
+
+  // Proof, rather than an exit code.
+  //
+  // `npm ci` reports success having installed nothing more than once -- a
+  // workspace filter that matched no package, a lockfile that was copied but
+  // not read. What ships then is 350 source files that cannot start, and the
+  // first person to find out is whoever installed it. These are the two
+  // packages the host process actually loads on the first line of its startup.
+  for (const proof of ['node_modules/fastify', 'node_modules/pg']) {
+    if (!existsSync(join(stageDir, proof))) {
+      throw new Error(
+        `dependencies were not installed: ${proof} is missing from the staged application. ` +
+          'It would install and then fail to start.',
+      );
+    }
+  }
 
   // A stamp the running application can report, so "which version is this?" is
   // answerable on a machine with no git.
