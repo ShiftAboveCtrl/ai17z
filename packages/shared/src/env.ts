@@ -11,6 +11,27 @@ let loaded = false;
 export function loadEnv(startDir = process.cwd()): void {
   if (loaded) return;
   loaded = true;
+
+  /**
+   * An explicit path wins over searching for one.
+   *
+   * An installed AI17Z keeps its environment file with the owner's data rather
+   * than beside the program, because the program directory is replaced on every
+   * upgrade and that file holds the master key every provider credential is
+   * sealed with. The launcher sets AI17Z_ENV_FILE to say where it went.
+   *
+   * This used to be ignored entirely: the launcher set the variable, nothing
+   * read it, and the search below quietly found the copy in the program
+   * directory instead. Everything worked, and the key was in the one place the
+   * uninstaller promises it is not.
+   */
+  const explicit = process.env.AI17Z_ENV_FILE ?? process.env.XBAM_ENV_FILE;
+  if (explicit && existsSync(explicit)) {
+    applyEnvFile(readFileSync(explicit, 'utf8'));
+    applyBrandCompatibility();
+    return;
+  }
+
   let dir = resolve(startDir);
   for (let i = 0; i < 8; i += 1) {
     const candidate = resolve(dir, '.env');

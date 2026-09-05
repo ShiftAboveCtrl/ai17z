@@ -55,11 +55,29 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
   if (Test-Path $compose) {
     # `stop`, never `down -v`: the database is the owner's and removing it is a
     # separate, explicit decision the uninstaller asks about on its own.
+    # The env file decides the compose project name: docker-compose.yml says
+    # `name: ${AI17Z_INSTANCE:-xbam}`. Without it, this stops a project that was
+    # never started and leaves the owner's containers running after they
+    # uninstalled.
+    $envFile = Join-Path $root 'data-location.txt'
+    $composeEnv = @()
+    if (Test-Path $envFile) {
+      $dataDir = (Get-Content $envFile -First 1).Trim()
+      if ($dataDir) {
+        $candidate = Join-Path $dataDir '.env'
+        if (Test-Path $candidate) { $composeEnv = @('--env-file', $candidate) }
+      }
+    }
+    if ($composeEnv.Count -eq 0) {
+      $beside = Join-Path $root '.env'
+      if (Test-Path $beside) { $composeEnv = @('--env-file', $beside) }
+    }
+
     $job = Start-Job -ScriptBlock {
-      param($dir)
+      param($dir, $envArgs)
       Set-Location $dir
-      & docker compose stop 2>$null
-    } -ArgumentList $root
+      & docker compose @envArgs stop 2>$null
+    } -ArgumentList $root, $composeEnv
 
     if (Wait-Job $job -Timeout $TimeoutSeconds) { Receive-Job $job | Out-Null }
     else { Stop-Job $job }

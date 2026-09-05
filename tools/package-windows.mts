@@ -57,6 +57,9 @@ const stageDir = process.env.AI17Z_STAGE_DIR
 const INCLUDE = [
   'package.json',
   'package-lock.json',
+  // The template the first run builds its .env from. Without it, a fresh
+  // installation's first act is to crash on a missing file.
+  '.env.example',
   'apps/api',
   'apps/worker',
   // Sources, not build output. The web image is built from these by
@@ -103,6 +106,13 @@ async function copyFiltered(from: string, to: string): Promise<void> {
       if (EXCLUDE_NAMES.has(name)) return false;
       // A stray environment file anywhere in the tree is a master key in an
       // installer. Refused by name wherever it appears.
+      //
+      // Except the template, which is the one file here with no secret in it by
+      // definition -- its master key line is empty, it is committed to a public
+      // repository, and the installed copy cannot start its first run without
+      // it. Leaving it out was the installed build's very first failure: it
+      // crashed on `Copy-Item '.env.example'` naming a path nobody could find.
+      if (name.toLowerCase() === '.env.example') return true;
       if (/^\.env(\..*)?$/i.test(name)) return false;
       if (name.endsWith('.tsbuildinfo')) return false;
       return true;
