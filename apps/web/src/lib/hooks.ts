@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, get } from './api';
+import { ApiError, fetchImageObjectUrl, get } from './api';
 
 /** Respects the OS setting and re-evaluates if the user changes it mid-session. */
 export function useReducedMotion(): boolean {
@@ -91,4 +91,54 @@ export function useElapsed(active: boolean): number {
     return () => clearInterval(timer);
   }, [active]);
   return seconds;
+}
+
+/**
+ * An image URL a plain `<img>` can use.
+ *
+ * Anything AI17Z stores itself lives behind the authenticated artifact route,
+ * which an `<img src>` cannot reach -- it sends no Authorization header. This
+ * fetches it properly and hands back an object URL; an external portrait URL
+ * passes straight through untouched.
+ *
+ * The object URL is revoked when it is replaced or the component goes away.
+ * Without that, changing a picture a few times leaks the old blobs for as long
+ * as the tab is open.
+ */
+export function useAuthedImage(url: string | null | undefined): string | null {
+  const [resolved, setResolved] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!url) {
+      setResolved(null);
+      return;
+    }
+    if (!url.startsWith('/api/')) {
+      setResolved(url);
+      return;
+    }
+
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    void fetchImageObjectUrl(url)
+      .then((next) => {
+        if (cancelled) {
+          // Arrived after the component moved on. Release it rather than
+          // holding a blob nothing will ever draw.
+          URL.revokeObjectURL(next);
+          return;
+        }
+        objectUrl = next;
+        setResolved(next);
+      })
+      // A missing picture is a missing picture. The glyph takes over.
+      .catch(() => setResolved(null));
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url]);
+
+  return resolved;
 }

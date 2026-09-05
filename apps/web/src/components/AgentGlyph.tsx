@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useReducedMotion } from '@app/lib/hooks';
+import { useAuthedImage, useReducedMotion } from '@app/lib/hooks';
 
 /** Deterministic hue from an id, so an agent always looks like itself. */
 function hueFor(seed: string): number {
@@ -41,6 +41,10 @@ export function AgentGlyph({
   const [broken, setBroken] = useState(false);
   const reduced = useReducedMotion();
   const hue = useMemo(() => hueFor(agentId || name), [agentId, name]);
+  // A portrait AI17Z stores is behind the authenticated artifact route, which
+  // an <img> cannot reach on its own. Resolved here rather than at each of the
+  // six call sites, so every place an agent appears gets it without knowing.
+  const resolved = useAuthedImage(imageUrl);
 
   const dimensions = {
     sm: 'h-10 w-10 text-xs',
@@ -59,7 +63,7 @@ export function AgentGlyph({
     setTilt({ x: -py * 13, y: px * 13 });
   };
 
-  const showImage = Boolean(imageUrl) && !broken;
+  const showImage = Boolean(resolved) && !broken;
 
   return (
     <div
@@ -81,7 +85,7 @@ export function AgentGlyph({
       >
         {showImage ? (
           <img
-            src={imageUrl!}
+            src={resolved!}
             alt=""
             onError={() => setBroken(true)}
             className="h-full w-full object-cover"
