@@ -8,3 +8,4 @@ export * from './util';
 export * from './reference';
 export * from './supervisor';
 export * from './version';
+export * from './image';

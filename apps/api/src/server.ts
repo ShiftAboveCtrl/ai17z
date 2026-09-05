@@ -39,6 +39,20 @@ export async function buildServer(): Promise<FastifyInstance> {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
+  /**
+   * Image uploads arrive as raw bytes, not as a multipart form.
+   *
+   * A profile picture is one file with no fields beside it, so a multipart
+   * parser would be a dependency earning nothing. The declared type only
+   * decides that the body reaches the route unparsed -- what the file actually
+   * is gets read out of its own bytes, because a content-type header is a claim.
+   */
+  app.addContentTypeParser(
+    ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/octet-stream'],
+    { parseAs: 'buffer' },
+    (_request, body, done) => done(null, body),
+  );
+
   // One error shape for the whole API, including routing and parse errors.
   app.setErrorHandler((error, _request, reply) => fail(reply, error));
   app.setNotFoundHandler((request, reply) =>

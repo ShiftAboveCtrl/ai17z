@@ -200,11 +200,18 @@ jobs:
           $exe = "build\windows\AI17Z-Setup-${{ steps.version.outputs.version }}.exe"
           if (-not (Test-Path $exe)) { throw "The installer was not produced: $exe" }
           $info = (Get-Item $exe).VersionInfo
-          "ProductName    : $($info.ProductName)"
-          "ProductVersion : $($info.ProductVersion)"
-          if ($info.ProductName -ne 'AI17Z') { throw "Wrong product name: $($info.ProductName)" }
-          if ($info.ProductVersion -notlike '${{ steps.version.outputs.version }}*') {
-            throw "Wrong product version: $($info.ProductVersion)"
+          # Windows pads version-resource strings, so ProductName comes back as
+          # "AI17Z" followed by 55 spaces and an exact comparison fails on a
+          # file that is perfectly correct. Trim before comparing, and print the
+          # length so the next surprise here is one line of output away.
+          $name = $info.ProductName.Trim()
+          $productVersion = $info.ProductVersion.Trim()
+          "ProductName    : '$name' (raw length $($info.ProductName.Length))"
+          "ProductVersion : '$productVersion'"
+          "FileVersion    : '$($info.FileVersion.Trim())'"
+          if ($name -ne 'AI17Z') { throw "Wrong product name: '$name'" }
+          if ($productVersion -ne '${{ steps.version.outputs.version }}') {
+            throw "Wrong product version: '$productVersion' (expected '${{ steps.version.outputs.version }}')"
           }
 
       - name: Upload the unsigned installer
@@ -272,9 +279,16 @@ jobs:
           if ($sig.Status -ne 'Valid') { throw "Signature is not valid: $($sig.Status)" }
 
           $info = $exe.VersionInfo
-          if ($info.ProductName -ne 'AI17Z') { throw "Signed the wrong product: $($info.ProductName)" }
-          if ($info.ProductVersion -notlike '${{ needs.build.outputs.version }}*') {
-            throw "Signed the wrong version: $($info.ProductVersion)"
+          # Trimmed, for the same reason as in the build job: the version
+          # resource is space-padded and an exact comparison fails on a correct
+          # file.
+          $name = $info.ProductName.Trim()
+          $productVersion = $info.ProductVersion.Trim()
+          "ProductName : '$name'"
+          "Version     : '$productVersion'"
+          if ($name -ne 'AI17Z') { throw "Signed the wrong product: '$name'" }
+          if ($productVersion -ne '${{ needs.build.outputs.version }}') {
+            throw "Signed the wrong version: '$productVersion' (expected '${{ needs.build.outputs.version }}')"
           }
 
           # signtool as a second opinion, when the image has it.

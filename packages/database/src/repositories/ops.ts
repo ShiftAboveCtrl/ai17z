@@ -70,6 +70,17 @@ export async function createArtifact(input: {
   return mapRow<ArtifactRow>(row) as ArtifactRow;
 }
 
+/**
+ * Removes the row for an artifact that has been replaced.
+ *
+ * Returns it, so the caller can delete the file it points at. The row goes
+ * first: a row with no file is a broken image, and a file with no row is bytes
+ * nothing can reach, and only one of those is recoverable.
+ */
+export async function deleteArtifact(id: string): Promise<ArtifactRow | null> {
+  return mapRow<ArtifactRow>(await queryOne('DELETE FROM artifacts WHERE id = $1 RETURNING *', [id]));
+}
+
 export async function getArtifact(id: string): Promise<ArtifactRow | null> {
   return mapRow<ArtifactRow>(await queryOne('SELECT * FROM artifacts WHERE id = $1', [id]));
 }

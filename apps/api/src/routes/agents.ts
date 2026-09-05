@@ -9,7 +9,7 @@ import {
   SetModelConfigInput,
   UpdateAgentInput,
 } from '@xbam/shared/contracts';
-import { ForbiddenError, NotFoundError, slugify } from '@xbam/shared';
+import { BadRequestError, ForbiddenError, NotFoundError, slugify } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -17,7 +17,15 @@ import {
   pipelines as pipelinesRepo,
   providers as providersRepo,
 } from '@xbam/database';
-import { duplicateAgent, ensureAgentPipeline } from '@xbam/runtime';
+import {
+  MAX_AVATAR_BYTES,
+  MAX_AVATAR_EDGE,
+  MIN_AVATAR_EDGE,
+  clearAgentAvatar,
+  duplicateAgent,
+  ensureAgentPipeline,
+  setAgentAvatar,
+} from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 import type { UserRow } from '@xbam/database';
 
@@ -131,6 +139,75 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         data: { fields: Object.keys(patch) },
       });
       return updated;
+    }),
+  );
+
+  /**
+   * The agent's picture.
+   *
+   * Raw bytes in the body rather than a form: one file, no fields beside it.
+   *
+   * This is the AI17Z agent's likeness and nothing else. It does not touch the
+   * connected X account's profile picture, and there is no code path here that
+   * could -- changing a public identity because somebody edited a local admin
+   * screen is a surprise nobody can undo.
+   */
+  app.post(
+    '/api/agents/:id/avatar',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+
+      const body = request.body;
+      if (!Buffer.isBuffer(body)) {
+        throw new BadRequestError(
+          'Send the image itself as the request body, with its content-type -- image/png, image/jpeg, image/gif or image/webp.',
+        );
+      }
+
+      const result = await setAgentAvatar(agent.id, body);
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'agent.avatar.changed',
+        entityType: 'agent',
+        entityId: agent.id,
+        // What it was, never the image. And explicitly: only here.
+        data: { bytes: result.bytes, mime: result.mime, dimensions: `${result.width}x${result.height}`, scope: 'ai17z-only' },
+      });
+      return result;
+    }),
+  );
+
+  app.delete(
+    '/api/agents/:id/avatar',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      await clearAgentAvatar(agent.id);
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'agent.avatar.removed',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { scope: 'ai17z-only' },
+      });
+      // The generated mark takes over. An agent with no picture is a supported
+      // state, not a gap to be filled.
+      return { removed: true };
+    }),
+  );
+
+  /** What the upload screen needs to say before somebody picks a file. */
+  app.get(
+    '/api/agents/:id/avatar/limits',
+    handler(async (request) => {
+      await requireUser(request);
+      return {
+        maxBytes: MAX_AVATAR_BYTES,
+        minEdge: MIN_AVATAR_EDGE,
+        maxEdge: MAX_AVATAR_EDGE,
+        accepted: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+      };
     }),
   );
 
