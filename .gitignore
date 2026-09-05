@@ -46,4 +46,8 @@ build/windows/
 # analysis. They are how this gets built and they are not the product, so they
 # stay on the machine that builds it. One directory rather than a list of
 # filenames, so the names themselves are not published either.
-docs/internal/
+#
+# Outside docs/ deliberately. AI17Z ships a knowledge source pointed at docs/,
+# so anything under it is something an agent can be taught and can then repeat
+# out loud. Internal notes must not be one keystroke away from being quoted.
+internal/
