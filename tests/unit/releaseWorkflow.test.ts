@@ -88,13 +88,82 @@ describe('the installer carries the metadata SignPath requires', () => {
     // the compiler command line cannot disagree with the file.
     expect(iss).toMatch(/#define AppName "AI17Z"/);
     expect(iss).toMatch(/VersionInfoProductName=\{#AppName\}/);
-    expect(iss).toMatch(/VersionInfoProductVersion=\{#AppVersion\}/);
-    expect(iss).toMatch(/VersionInfoVersion=\{#AppVersion\}/);
   });
 
   it('is checked in CI rather than assumed', () => {
     expect(workflow).toContain('Check the metadata SignPath requires');
     expect(workflow).toContain('Wrong product name');
+  });
+});
+
+/**
+ * The trap that cost a release.
+ *
+ * `VersionInfoVersion` is a Windows version resource and has to be numbers.
+ * `v0.1.0` compiles; `v0.1.0-rc.1` makes Inno refuse the whole script, one
+ * second into the step, at the end of an eight-minute build -- and every tag
+ * worth making a release candidate of has a suffix. So the numeric part is
+ * derived, and the string a person reads goes through the Text directives,
+ * which take free text.
+ */
+describe('a prerelease tag still compiles', () => {
+  it('derives a numeric version rather than using the tag', () => {
+    expect(iss).toContain('#define NumericVersion');
+    expect(iss).toMatch(/VersionInfoVersion=\{#NumericVersion\}/);
+    expect(iss).toMatch(/VersionInfoProductVersion=\{#NumericVersion\}/);
+  });
+
+  it('never hands the raw tag to a numeric directive', () => {
+    for (const directive of ['VersionInfoVersion', 'VersionInfoProductVersion']) {
+      expect(iss, `${directive} would reject a prerelease tag`).not.toContain(`${directive}={#AppVersion}`);
+    }
+  });
+
+  it('still shows the full version in the file properties', () => {
+    // What the release workflow checks, and what somebody reading the
+    // properties of a downloaded file needs to see.
+    expect(iss).toMatch(/VersionInfoTextVersion=\{#AppVersion\}/);
+    expect(iss).toMatch(/VersionInfoProductTextVersion=\{#AppVersion\}/);
+  });
+
+  it('cuts at the first dash, which is where a suffix starts', () => {
+    // Mirrors the ISPP expression: everything before the first "-", or the
+    // whole string when there is none. Pinned so a rewrite has to stay correct
+    // for the shapes that actually get tagged.
+    const numeric = (version: string) => (version.includes('-') ? version.slice(0, version.indexOf('-')) : version);
+    expect(numeric('0.1.0-rc.1')).toBe('0.1.0');
+    expect(numeric('1.2.3')).toBe('1.2.3');
+    expect(numeric('2.0.0-beta.4')).toBe('2.0.0');
+    expect(iss).toContain('Pos("-", AppVersion)');
+  });
+});
+
+/**
+ * The second half of the same failure.
+ *
+ * The build staged 359 source files and no dependencies, and the check in front
+ * of it -- "at least 100 files" -- passed. An installer built from that
+ * installs happily and then cannot start, and the first person to discover it
+ * is whoever downloaded it.
+ */
+describe('the build refuses to ship an application with no dependencies', () => {
+  const packager = readFileSync(resolve(root, 'tools/package-windows.mts'), 'utf8');
+
+  it('names packages the host process actually loads', () => {
+    for (const proof of ['fastify', 'pg']) {
+      expect(packager, `${proof} is not proved present`).toContain(`node_modules/${proof}`);
+    }
+    expect(packager).toMatch(/would install and then fail to start|install and then fail to start/i);
+  });
+
+  it('checks the same thing in CI, where a person reads the failure', () => {
+    expect(workflow).toContain('node_modules\\fastify');
+    expect(workflow).toContain('has no dependencies');
+  });
+
+  it('does not rest on a file count', () => {
+    // The sources alone clear any threshold worth setting.
+    expect(workflow).not.toMatch(/\$count -lt 100/);
   });
 });
 
