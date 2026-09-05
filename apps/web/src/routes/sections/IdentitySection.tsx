@@ -5,6 +5,7 @@ import { ApiError, put } from '@app/lib/api';
 import { Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
 import { describeSaveState, useAutosave, useAutosaveEnabled } from '@app/lib/autosave';
 import { PersonaSources } from '@app/components/PersonaSources';
+import { AvatarEditor } from '@app/components/AvatarEditor';
 import { Section } from './Section';
 
 const IDENTITY_KINDS = ['DISCLOSED_AI', 'FICTIONAL', 'INSPIRED_BY', 'BRAND', 'REAL_PERSON_AUTHORIZED'] as const;
@@ -35,12 +36,14 @@ export function IdentitySection({
   index,
   agentId,
   agentName,
+  avatarUrl,
   persona,
   onSaved,
 }: {
   index: number;
   agentId: string;
   agentName: string;
+  avatarUrl: string | null;
   persona: PersonaVersion | null;
   onSaved: () => void;
 }) {
@@ -138,6 +141,20 @@ export function IdentitySection({
       heading={`Who is ${draft.displayName || agentName}?`}
       lede="Everything the model is told about itself lives here, as versioned data. Saving creates a new persona version, and every generation records which one it used."
     >
+      {/*
+        The face, first, because it is the part of an identity somebody looks
+        at rather than reads -- and because it was the one thing here that
+        could be set once and never changed.
+      */}
+      <div className="mb-10 border-b border-ink-line pb-10">
+        <AvatarEditor
+          agentId={agentId}
+          name={draft.displayName || agentName}
+          avatarUrl={avatarUrl}
+          onChanged={onSaved}
+        />
+      </div>
+
       <div className="grid gap-8 lg:grid-cols-2">
         <div className="space-y-6">
           <Field label="Display name" htmlFor="displayName">

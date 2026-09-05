@@ -110,3 +110,66 @@ export async function artifactObjectUrl(artifactId: string): Promise<string> {
   if (!response.ok) throw new ApiError('NOT_FOUND', 'That screenshot is no longer available.', response.status);
   return URL.createObjectURL(await response.blob());
 }
+
+/**
+ * Sends a file as the request body, rather than as JSON.
+ *
+ * A profile picture is one file with no fields beside it, so there is no form
+ * to build and no multipart parser on the other end. The browser sets nothing
+ * for us here: the content-type has to say what the file is, because Fastify
+ * decides from it whether to hand the route raw bytes.
+ */
+export async function postFile<T>(path: string, file: Blob): Promise<T> {
+  const token = getToken();
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': file.type || 'application/octet-stream',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: file,
+    });
+  } catch {
+    throw new ApiError('NETWORK', 'Could not reach the AI17Z API. Check that the api service is running.', 0);
+  }
+
+  if (response.status === 401) {
+    setToken(null);
+    throw new ApiError('UNAUTHORIZED', 'Your session expired. Sign in again.', 401);
+  }
+
+  const text = await response.text();
+  let payload: ApiResponse<T> | null = null;
+  try {
+    payload = text ? (JSON.parse(text) as ApiResponse<T>) : null;
+  } catch {
+    throw new ApiError('INTERNAL', `The API returned an unreadable response (${response.status}).`, response.status);
+  }
+  if (!payload) throw new ApiError('INTERNAL', 'The API returned an empty response.', response.status);
+  if (!payload.ok) throw new ApiError(payload.error.code, payload.error.message, response.status, payload.error.details);
+  return payload.data;
+}
+
+/**
+ * Fetches an image the API will only hand over to a signed-in caller.
+ *
+ * An `<img src>` sends no Authorization header, so anything stored behind
+ * `/api/artifacts` cannot simply be pointed at. The alternatives were worse: a
+ * token in the URL puts a credential in browser history and server logs, and an
+ * unguessable public path is a password that never expires. So it is fetched
+ * like any other request and turned into an object URL.
+ *
+ * Returns the URL unchanged when it is somebody else's -- an agent configured
+ * with an external portrait still just loads it.
+ */
+export async function fetchImageObjectUrl(path: string): Promise<string> {
+  if (!path.startsWith('/api/')) return path;
+  const token = getToken();
+  const response = await fetch(`${BASE}${path}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) throw new ApiError('NOT_FOUND', 'That image could not be loaded.', response.status);
+  return URL.createObjectURL(await response.blob());
+}

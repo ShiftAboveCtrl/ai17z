@@ -2,7 +2,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useTexture } from '@react-three/drei';
 import { Suspense, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useReducedMotion } from '@app/lib/hooks';
+import { useAuthedImage, useReducedMotion } from '@app/lib/hooks';
 import { AgentGlyph } from './AgentGlyph';
 
 /**
@@ -118,6 +118,9 @@ export function AgentPortrait({
   className?: string;
 }) {
   const reduced = useReducedMotion();
+  // useTexture loads the URL itself and sends no Authorization header, so a
+  // portrait AI17Z stores has to be resolved before it gets here.
+  const resolved = useAuthedImage(imageUrl);
 
   return (
     <div className={className} aria-hidden>
@@ -128,8 +131,8 @@ export function AgentPortrait({
         camera={{ position: [0, 0, 2.4], fov: 45 }}
       >
         <Suspense fallback={<PortraitPlane texture={null} reduced={reduced} />}>
-          {imageUrl ? (
-            <TexturedPlane imageUrl={imageUrl} reduced={reduced} />
+          {resolved ? (
+            <TexturedPlane imageUrl={resolved} reduced={reduced} />
           ) : (
             <PortraitPlane texture={null} reduced={reduced} />
           )}

@@ -398,7 +398,14 @@ export function AgentPage() {
       </nav>
 
       <div className="mx-auto max-w-page px-6 sm:px-10">
-        <IdentitySection index={1} agentId={agent.id} agentName={agent.name} persona={persona} onSaved={reload} />
+        <IdentitySection
+          index={1}
+          agentId={agent.id}
+          agentName={agent.name}
+          avatarUrl={agent.avatarUrl}
+          persona={persona}
+          onSaved={reload}
+        />
         <VoiceSection index={2} agentId={agent.id} />
         <AccountsSection index={3} agentId={agent.id} accounts={accounts} onChanged={reload} />
         <IntelligenceSection index={4} agentId={agent.id} models={models} onChanged={reload} />
