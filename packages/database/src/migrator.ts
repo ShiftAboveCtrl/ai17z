@@ -62,12 +62,64 @@ export interface MigrateResult {
  * files whose contents changed are reported as drift rather than re-run: editing
  * a shipped migration is a mistake, and silently ignoring it hides schema skew.
  */
+/**
+ * One migrator at a time, across processes.
+ *
+ * An installed AI17Z starts two of them within a second of each other: the API
+ * container migrates on boot because `XBAM_RUN_MIGRATIONS` is set, and the
+ * launcher migrates because a native worker needs the schema too. On a database
+ * that already has the schema they both no-op and nobody notices. On a *new*
+ * one they race through the same list and collide inside Postgres's own
+ * catalogue -- `duplicate key value violates unique constraint
+ * "pg_type_typname_nsp_index"` is two `CREATE TYPE`s for one name arriving
+ * together -- and whichever loses reports a failed migration.
+ *
+ * Which made it the first thing a new installation did: fail. Running it again
+ * worked, because by then the schema was there, and that is exactly the shape
+ * of bug that survives testing.
+ *
+ * A session advisory lock rather than a row or a table: it belongs to the
+ * connection, so a migrator that is killed releases it, and there is nothing to
+ * clean up after a crash. The number is arbitrary and must only avoid the other
+ * advisory locks in this database -- `tests/support/db.ts` holds 8417231.
+ */
+const MIGRATION_LOCK = 8_417_232;
+
 export async function migrate(dir = migrationsDir()): Promise<MigrateResult> {
-  await ensureMigrationsTable();
   const files = loadMigrations(dir);
-  const applied = new Map((await appliedMigrations()).map((m) => [m.name, m.checksum]));
   const result: MigrateResult = { applied: [], skipped: [], drifted: [] };
 
+  const lock = await getPool().connect();
+  try {
+    // Tried first, so that waiting can be said out loud. A migration that
+    // pauses for thirty seconds with no explanation looks like a hang.
+    const { rows } = await lock.query<{ got: boolean }>('SELECT pg_try_advisory_lock($1) AS got', [MIGRATION_LOCK]);
+    if (!rows[0]?.got) {
+      log.info('another migrator holds the lock, waiting for it to finish');
+      await lock.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK]);
+    }
+
+    // Both of these inside the lock. `CREATE TABLE IF NOT EXISTS` races in the
+    // catalogue exactly like `CREATE TYPE` does, so the table that records
+    // migrations could not be created concurrently either.
+    await ensureMigrationsTable();
+
+    // Read after the lock, never before: whoever waited has to see what the
+    // winner applied, or it will apply all of it a second time.
+    const applied = new Map((await appliedMigrations()).map((m) => [m.name, m.checksum]));
+
+    return await applyPending(files, applied, result);
+  } finally {
+    await lock.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK]).catch(() => undefined);
+    lock.release();
+  }
+}
+
+async function applyPending(
+  files: MigrationFile[],
+  applied: Map<string, string>,
+  result: MigrateResult,
+): Promise<MigrateResult> {
   for (const file of files) {
     const existing = applied.get(file.name);
     if (existing) {
