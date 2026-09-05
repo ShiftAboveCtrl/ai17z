@@ -87,6 +87,12 @@ export function BeliefsSection({ index, agentId }: { index: number; agentId: str
       eyebrow="Beliefs"
       heading="What it thinks."
       lede="Positions the agent has taken, and what they rest on. Changing its mind is allowed; changing it by accident is what this prevents."
+      explain={
+        <>
+          <p><strong>Positions the agent has taken in public</strong>, so it does not contradict itself next week.</p>
+          <p>Changing its mind is allowed and is recorded as a change rather than an overwrite, which is what lets it say it used to think otherwise. Only a straight reversal of something it stated firmly counts as a conflict.</p>
+        </>
+      }
     >
       {loading && !data ? (
         <Spinner />

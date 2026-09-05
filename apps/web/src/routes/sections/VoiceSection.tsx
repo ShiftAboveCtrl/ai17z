@@ -116,6 +116,12 @@ export function VoiceSection({
       eyebrow="Voice"
       heading="How it writes."
       lede="Measured from what the agent actually publishes, so the same identity survives a change of model. The model decides what is worth saying; this decides how it is said."
+      explain={
+        <>
+          <p><strong>The rules about how it writes, rather than what it writes about.</strong> Length, punctuation, emoji, whether it uses your capitalisation habits.</p>
+          <p>These are applied to the finished text, not asked for in the prompt. A model told to use few emoji forgets by the third paragraph; surplus ones are simply removed instead.</p>
+        </>
+      }
     >
       {loading && !data ? (
         <Spinner />

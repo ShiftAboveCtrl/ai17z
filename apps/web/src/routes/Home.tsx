@@ -6,6 +6,7 @@ import { compactNumber, humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { AnimatedText, FadeIn, MagneticElement } from '@app/components/motion';
 import { EmptyState, ErrorPanel, Loading, StatusDot } from '@app/components/ui';
+import { Explain } from '@app/components/Explain';
 
 /**
  * The agents are the interface.
@@ -37,10 +38,10 @@ export function Home() {
   const [lead, ...rest] = agents;
 
   return (
-    <main className="mx-auto max-w-page px-6 pb-32 pt-32 sm:px-10 sm:pt-44">
-      <header className="mb-16 sm:mb-24">
+    <main className="mx-auto max-w-page px-6 pb-24 pt-24 sm:px-10 sm:pt-28">
+      <header className="mb-8">
         <FadeIn>
-          <p className="eyebrow mb-6">
+          <p className="eyebrow mb-2">
             {agents.length === 0
               ? 'Nothing running yet'
               : `${agents.length} agent${agents.length === 1 ? '' : 's'}`}
@@ -49,8 +50,13 @@ export function Home() {
         <AnimatedText
           as="h1"
           text="Your agents"
-          className="monument text-[16vw] leading-[0.84] sm:text-[10vw] lg:text-[7.5vw]"
+          className="monument text-[12vw] leading-[0.95] sm:text-[4.4vw] lg:text-[3.2rem]"
         />
+        <Explain label="this page" className="mt-3">
+          <p><strong>An agent is one identity that reads and replies on your behalf.</strong> It has a personality, an account to speak from, a model to think with, and rules it cannot break.</p>
+          <p>You can have several. They do not share anything: separate memories, separate accounts, separate limits.</p>
+          <p>Everything runs on this computer. Nothing is sent anywhere except to the AI provider you chose and the account you connected.</p>
+        </Explain>
       </header>
 
       {agents.length === 0 ? (

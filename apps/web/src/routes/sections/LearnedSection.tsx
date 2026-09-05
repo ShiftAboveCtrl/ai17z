@@ -80,6 +80,12 @@ export function LearnedSection({ index, agentId }: { index: number; agentId: str
       eyebrow="Learned"
       heading="What it has picked up"
       lede="Everything this agent has learned, and where each piece came from. This is the whole of it: there is no other memory behind this screen."
+      explain={
+        <>
+          <p><strong>Patterns the agent has picked up on its own</strong>, from what it has read and how conversations went.</p>
+          <p>Nothing here was configured. It is shown so you can see what it has concluded, and disagree.</p>
+        </>
+      }
     >
       {view.loading && <Spinner />}
 

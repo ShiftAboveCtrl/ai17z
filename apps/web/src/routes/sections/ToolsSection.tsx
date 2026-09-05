@@ -122,6 +122,12 @@ export function ToolsSection({
       eyebrow="Tools"
       heading="What it can reach."
       lede="Tools are opt-in per agent, and a tool that can reach the network stays inert until you give it an explicit host allowlist."
+      explain={
+        <>
+          <p><strong>Things the agent can do besides write.</strong> Fetch a page, look something up, run a check.</p>
+          <p>Everything is off until you turn it on, and anything that can reach the internet stays inert until you list which sites specifically. On is not the same as used: a tool nothing calls says so on its row rather than sitting there looking ready.</p>
+        </>
+      }
     >
       <div className="border-b border-ink-line">
         {tools.map((tool, i) => {

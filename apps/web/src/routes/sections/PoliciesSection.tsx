@@ -90,6 +90,13 @@ export function PoliciesSection({
       eyebrow="Policies"
       heading="What it may do."
       lede="Policy is evaluated between generation and action, and pinned to each job when it starts. Changing it never alters what an in-flight job was allowed to do."
+      explain={
+        <>
+          <p><strong>The rules the agent cannot break</strong>, whatever it decides in the moment. How often it may post, how much it may spend, what it must never say, whether it may claim to be human.</p>
+          <p>These are checked after the text is written and before anything is sent, so a model having an off day cannot talk its way past them.</p>
+          <p>The defaults are cautious. You can loosen them; nothing loosens itself.</p>
+        </>
+      }
     >
       <div className="grid gap-10 lg:grid-cols-2">
         <div className="space-y-4">

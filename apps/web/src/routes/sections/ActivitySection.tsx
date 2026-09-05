@@ -59,6 +59,12 @@ export function ActivitySection({ index, agentId }: { index: number; agentId: st
       eyebrow="Activity"
       heading="What it has done."
       lede="Every inbound event becomes a durable job with a complete trace. Open one to see exactly why it produced what it produced."
+      explain={
+        <>
+          <p><strong>Everything the agent has done</strong>, including the times it decided to do nothing.</p>
+          <p>Every attempt is here whether it worked or not, with what it was thinking at each step. This is where to look when a reply was not what you expected.</p>
+        </>
+      }
     >
       <div className="mb-5 flex flex-wrap gap-3">
         <button type="button" className="btn-ghost" onClick={() => setInjecting(true)}>

@@ -24,7 +24,7 @@ export function TopBar() {
   }, []);
 
   const link = ({ isActive }: { isActive: boolean }) =>
-    `font-mono text-[11px] uppercase tracking-[0.18em] transition-colors ${
+    `whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.18em] transition-colors ${
       isActive ? 'text-bone' : 'text-bone-faint hover:text-bone-dim'
     }`;
 
@@ -58,9 +58,17 @@ export function TopBar() {
           </NavLink>
         </div>
 
-        <div className="ml-auto flex items-center gap-2 sm:gap-3">
+        <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
           <Notifications />
-          <ModeSwitch mode={mode} onChange={setMode} />
+          {/*
+            Below `sm` this moves down to the navigation strip. Seven controls
+            in one row overflowed a 375px screen by 78 pixels, and the switch is
+            a preference rather than navigation -- it is the one that can wait a
+            row without anybody losing their place.
+          */}
+          <div className="hidden sm:block">
+            <ModeSwitch mode={mode} onChange={setMode} />
+          </div>
           {pathname !== '/agents/new' && (
             <Link to="/agents/new" className="btn-ghost px-3 py-2 text-xs sm:px-4">
               <Plus className="h-3.5 w-3.5" aria-hidden />
@@ -80,8 +88,15 @@ export function TopBar() {
         </div>
       </nav>
 
-      {/* Mobile navigation sits under the bar rather than behind a menu button. */}
-      <div className="flex items-center gap-5 border-t border-ink-line/60 px-5 py-2.5 sm:hidden">
+      {/*
+        Mobile navigation sits under the bar rather than behind a menu button.
+
+        A scroller, because five destinations and the detail switch do not fit
+        375 pixels at any type size worth reading. The destinations come first
+        and are all visible; the switch is at the end, which is the right way
+        round -- it is a preference somebody sets once, not somewhere they go.
+      */}
+      <div className="scroll-x flex items-center gap-5 border-t border-ink-line/60 px-5 py-2.5 sm:hidden">
         <NavLink to="/" end className={link}>
           Agents
         </NavLink>
@@ -97,6 +112,9 @@ export function TopBar() {
         <NavLink to="/settings" className={link}>
           Settings
         </NavLink>
+        <div className="ml-auto shrink-0 pl-3">
+          <ModeSwitch mode={mode} onChange={setMode} />
+        </div>
       </div>
     </header>
   );

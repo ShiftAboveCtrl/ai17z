@@ -148,6 +148,12 @@ export function IntelligenceSection({
       eyebrow="Intelligence"
       heading="What it thinks with."
       lede="Providers are adapters. Swapping one changes nothing about the persona, the memory, or the pipeline, and every attempt is recorded whether it succeeded or not."
+      explain={
+        <>
+          <p><strong>The AI models the agent uses, and your key for each.</strong> You bring your own account with a provider; AI17Z stores the key encrypted and never sends it anywhere else.</p>
+          <p>Roles exist because the jobs are different. The main one writes replies. A cheap fast one decides what needs looking up. A vision one reads pictures, and without it the agent will honestly say it could not see an image rather than guessing at it.</p>
+        </>
+      }
     >
       {(providers.data?.items.length ?? 0) > 0 && !hasVision && (
         <div className="mb-5 rounded-2xl border border-signal-wait/30 bg-signal-wait/[0.06] p-5">

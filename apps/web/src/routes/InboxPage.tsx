@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { usePolling, useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
 import { EmptyState, ErrorPanel, Loading, StatusDot } from '@app/components/ui';
+import { Explain } from '@app/components/Explain';
 import { ReviewQueue } from '@app/components/ReviewQueue';
 
 type Bucket = 'NEEDS_REVIEW' | 'QUESTIONS' | 'MENTIONS' | 'REPLIES' | 'OUTREACH' | 'ERRORS';
@@ -80,6 +81,17 @@ export function InboxPage() {
     <div className="mx-auto w-full max-w-5xl px-6 py-12">
       <p className="eyebrow">Inbox</p>
       <h1 className="mt-2 text-2xl font-light text-bone">What needs you</h1>
+      <Explain label="this page" className="mt-3">
+        <p>
+          <strong>Messages your agents have seen, and what they did about each one.</strong>
+        </p>
+        <p>
+          Anything under <strong>Needs you</strong> is a reply the agent has written and is holding until
+          you say yes. You can read it here and decide without opening anything: J and K move, A sends, R
+          discards.
+        </p>
+        <p>Everything else is a record. Nothing there is waiting on you.</p>
+      </Explain>
       <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
         Across every agent you have. This is not the activity log: it lists the things you might act on, and the two
         that need you come first even when they are empty.

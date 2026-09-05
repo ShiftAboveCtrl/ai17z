@@ -97,6 +97,12 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
       eyebrow="Knowledge"
       heading="What this agent has read"
       lede="Point it at documents and it can answer from them. Anything it reads is quoted as something it looked up, never as something it knows, and what a source stops saying it stops saying too."
+      explain={
+        <>
+          <p><strong>Documents you give the agent to read.</strong> A folder, a file, a web page, or text you paste. It quotes from them rather than from a training set.</p>
+          <p>Every answer that uses one records which document and which version it came from, so you can check where a claim came from instead of taking its word.</p>
+        </>
+      }
     >
       {view.loading && <Spinner />}
 
@@ -104,6 +110,11 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
         <EmptyState
           title="This agent has not been given anything to read"
           detail="Attach a folder of documents, or paste in the facts it should know. It will read them now, and again whenever you ask."
+          action={
+            <button type="button" className="btn-ghost" onClick={() => setAdding(true)}>
+              Add something to read
+            </button>
+          }
         />
       )}
 
