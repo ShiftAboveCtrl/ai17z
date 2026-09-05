@@ -147,9 +147,20 @@ jobs:
           # saying what is actually wrong.
           $stage = 'build\windows\app'
           if (-not (Test-Path $stage)) { throw "Nothing was staged at $stage" }
-          $count = (Get-ChildItem $stage -Recurse -File | Measure-Object).Count
-          "staged files: $count"
-          if ($count -lt 100) { throw "Only $count files staged, which is not a complete application." }
+          $files = Get-ChildItem $stage -Recurse -File -ErrorAction SilentlyContinue
+          $mb = [math]::Round((($files | Measure-Object Length -Sum).Sum) / 1MB, 1)
+          "staged files: $($files.Count)  size: ${mb}MB"
+
+          # A file count is not evidence. The sources alone are ~360 files and
+          # sail past any threshold worth setting, so this counted a stage with
+          # no dependencies in it as complete -- an installer that installs and
+          # then cannot start. Name the things the host process loads instead.
+          foreach ($proof in @('node_modules\fastify', 'node_modules\pg', 'node_modules\@xbam')) {
+            if (-not (Test-Path (Join-Path $stage $proof))) {
+              throw "The staged application has no dependencies: $proof is missing. It would install and fail to start."
+            }
+          }
+          if ($mb -lt 40) { throw "Only ${mb}MB staged; a complete application is around 75MB." }
 
       - name: Install Inno Setup
         shell: pwsh
