@@ -193,7 +193,7 @@ function RelationshipModal({
 
   return (
     <Modal open onClose={onClose} title={`@${person.handle}`} wide>
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="grid grid-cols-3 gap-3 rounded-lg border border-ink-line px-3.5 py-3">
           <Stat label="Familiarity" value={person.familiarity.toLowerCase()} hint={person.familiarityPinned ? 'pinned by you' : undefined} />
           <Stat label="Exchanges" value={String(exchanges)} hint={`${person.inboundCount} in, ${person.outboundCount} out`} />

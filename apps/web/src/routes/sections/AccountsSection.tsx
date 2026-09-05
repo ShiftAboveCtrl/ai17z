@@ -93,7 +93,7 @@ export function AccountsSection({
         </div>
       )}
 
-      <div className="mt-8 flex flex-wrap gap-3">
+      <div className="mt-5 flex flex-wrap gap-3">
         <button type="button" className="btn-ghost" onClick={() => setAdding(true)}>
           Connect another account
         </button>

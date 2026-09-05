@@ -92,7 +92,7 @@ export function PoliciesSection({
       lede="Policy is evaluated between generation and action, and pinned to each job when it starts. Changing it never alters what an in-flight job was allowed to do."
     >
       <div className="grid gap-10 lg:grid-cols-2">
-        <div className="space-y-6">
+        <div className="space-y-4">
           <Field label="Automation" hint="Review mode holds every message for a person before anything is sent.">
             <div className="space-y-2">
               {MODES.map((mode) => (
@@ -146,7 +146,7 @@ export function PoliciesSection({
           </Field>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Max characters">
               <input type="number" className="field" value={draft.output.maxCharacters} onChange={(e) => patch((n) => void (n.output.maxCharacters = Number(e.target.value) || 280))} />
@@ -198,7 +198,7 @@ export function PoliciesSection({
         set to, because a limit nobody can see themselves approaching is one
         they only find out about when a job stops.
       */}
-      <div className="mt-10 border-t border-ink-line pt-8">
+      <div className="mt-6 border-t border-ink-line pt-8">
         <p className="eyebrow">Spending</p>
         <h4 className="mt-2 text-base font-light text-bone">What it may spend</h4>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
@@ -267,7 +267,7 @@ export function PoliciesSection({
         it stays that way: everybody's agent becoming a support bot for AI17Z is
         a persona leak, not a feature.
       */}
-      <div className="mt-10 border-t border-ink-line pt-8">
+      <div className="mt-6 border-t border-ink-line pt-8">
         <p className="eyebrow">Support</p>
         <h4 className="mt-2 text-base font-light text-bone">Helping people with the software it runs on</h4>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
@@ -277,8 +277,8 @@ export function PoliciesSection({
           failing for eleven minutes&rdquo; instead of &ldquo;have you checked your configuration&rdquo;.
         </p>
 
-        <div className="mt-6 grid gap-8 lg:grid-cols-2">
-          <div className="space-y-6">
+        <div className="mt-6 grid gap-5 lg:grid-cols-2">
+          <div className="space-y-4">
             <Toggle
               checked={draft.support.enabled}
               onChange={(v) => patch((n) => void (n.support.enabled = v))}
@@ -296,7 +296,7 @@ export function PoliciesSection({
           </div>
 
           {draft.support.enabled && (
-            <div className="space-y-6">
+            <div className="space-y-4">
               <Field label="What it supports" hint="Named, so this works for something other than AI17Z without a fork.">
                 <input
                   className="field"
@@ -315,7 +315,7 @@ export function PoliciesSection({
         different failure mode. Everything above is about what the agent does
         when somebody comes to it; this is about it going to them.
       */}
-      <div className="mt-10 border-t border-ink-line pt-8">
+      <div className="mt-6 border-t border-ink-line pt-8">
         <p className="eyebrow">Approaching people</p>
         <h4 className="mt-2 text-base font-light text-bone">Speaking first, under a post nobody sent it</h4>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
@@ -325,8 +325,8 @@ export function PoliciesSection({
           unless you say otherwise.
         </p>
 
-        <div className="mt-6 grid gap-8 lg:grid-cols-2">
-          <div className="space-y-6">
+        <div className="mt-6 grid gap-5 lg:grid-cols-2">
+          <div className="space-y-4">
             <Toggle
               checked={draft.outreach.enabled}
               onChange={(v) => patch((n) => void (n.outreach.enabled = v))}
@@ -362,7 +362,7 @@ export function PoliciesSection({
           </div>
 
           {draft.outreach.enabled && (
-            <div className="space-y-6">
+            <div className="space-y-4">
               <Field
                 label="Worth speaking up about"
                 hint={`Out of 100. A reply only has to clear ${draft.engagement.minimumReplyValue}; butting in should be worth more than that.`}
@@ -407,7 +407,7 @@ export function PoliciesSection({
         </div>
       </div>
 
-      <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-ink-line pt-6">
+      <div className="mt-5 flex flex-wrap items-center gap-4 border-t border-ink-line pt-6">
         <button type="button" className="btn-primary" onClick={() => void save()} disabled={busy}>
           {busy && <Spinner />}
           Save as version {version + 1}

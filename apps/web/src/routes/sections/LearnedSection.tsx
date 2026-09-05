@@ -84,7 +84,7 @@ export function LearnedSection({ index, agentId }: { index: number; agentId: str
       {view.loading && <Spinner />}
 
       {view.data && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
             {(['ALL', ...kinds] as (Kind | 'ALL')[]).map((key) => (
               <button

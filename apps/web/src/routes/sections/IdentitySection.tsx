@@ -146,7 +146,7 @@ export function IdentitySection({
         at rather than reads -- and because it was the one thing here that
         could be set once and never changed.
       */}
-      <div className="mb-10 border-b border-ink-line pb-10">
+      <div className="mb-6 border-b border-ink-line pb-10">
         <AvatarEditor
           agentId={agentId}
           name={draft.displayName || agentName}
@@ -155,8 +155,8 @@ export function IdentitySection({
         />
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-2">
-        <div className="space-y-6">
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-4">
           <Field label="Display name" htmlFor="displayName">
             <input id="displayName" className="field" value={draft.displayName} onChange={(e) => set('displayName', e.target.value)} />
           </Field>
@@ -188,7 +188,7 @@ export function IdentitySection({
           </Field>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-4">
           <Field label="Biography" htmlFor="biography" hint="Background facts, injected as the persona layer of every prompt.">
             <textarea id="biography" rows={7} className="field resize-y" value={draft.biography} onChange={(e) => set('biography', e.target.value)} />
             <Counter value={draft.biography} limit={PERSONA_LIMITS.biography} />
@@ -214,7 +214,7 @@ export function IdentitySection({
         rendered into every prompt, so an agent could carry rules nobody could
         read or change from here.
       */}
-      <div className="mt-6 space-y-6">
+      <div className="mt-6 space-y-4">
         <Field
           label="Style guidelines"
           htmlFor="styleGuidelines"
@@ -245,11 +245,11 @@ export function IdentitySection({
         </Field>
       </div>
 
-      <div className="mt-10">
+      <div className="mt-6">
         <PersonaSources agentId={agentId} onApplied={onSaved} />
       </div>
 
-      <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-ink-line pt-6">
+      <div className="mt-5 flex flex-wrap items-center gap-4 border-t border-ink-line pt-6">
         <button type="button" className="btn-primary" onClick={() => void save()} disabled={busy}>
           {busy && <Spinner />}
           Save

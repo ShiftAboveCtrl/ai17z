@@ -176,7 +176,7 @@ export function ContentSection({ index, agentId }: { index: number; agentId: str
       {view.loading && <Spinner />}
 
       {data && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           <div className="rounded-lg border border-bone/10 bg-black/20 p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <div>

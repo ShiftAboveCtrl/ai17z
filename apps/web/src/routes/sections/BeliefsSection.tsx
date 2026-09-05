@@ -135,7 +135,7 @@ export function BeliefsSection({ index, agentId }: { index: number; agentId: str
       )}
 
       {(data?.commitments.length ?? 0) > 0 && (
-        <div className="mt-8">
+        <div className="mt-5">
           <p className="eyebrow mb-3">It said it would</p>
           <ul className="space-y-2">
             {data?.commitments.map((commitment) => (
@@ -183,7 +183,7 @@ export function BeliefsSection({ index, agentId }: { index: number; agentId: str
       )}
 
       {(data?.predictions.length ?? 0) > 0 && (
-        <div className="mt-8">
+        <div className="mt-5">
           <p className="eyebrow mb-3">It predicted</p>
           <ul className="space-y-2">
             {data?.predictions.map((prediction) => (
@@ -216,7 +216,7 @@ export function BeliefsSection({ index, agentId }: { index: number; agentId: str
         </div>
       )}
 
-      <div className="mt-8">
+      <div className="mt-5">
         <button type="button" className="btn-ghost" onClick={() => setAdding(true)}>
           <Plus className="h-3.5 w-3.5" aria-hidden />
           Write a position
@@ -256,7 +256,7 @@ function StanceModal({
 
   return (
     <Modal open onClose={onClose} title={stance.subject} wide>
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div>
           <p className={`font-mono text-[11px] uppercase tracking-[0.16em] ${POSITION_TONE[stance.position]}`}>
             {POSITION_WORDS[stance.position]} · confidence {Math.round(Number(stance.confidence) * 100)}%
