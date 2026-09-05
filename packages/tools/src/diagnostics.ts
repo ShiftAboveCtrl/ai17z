@@ -143,6 +143,41 @@ async function modelHealth(agentId: string): Promise<AgentDiagnostics['models']>
 }
 
 /**
+ * What a published tab state means for somebody reading a health screen.
+ *
+ * The vocabulary the worker publishes is `READY | BUSY | MISSING | FAILED`,
+ * from `TabHealth` in `@xbam/browser`. This used to compare against 'HEALTHY',
+ * which the worker has never produced, so **every working tab was graded
+ * DEGRADED** and every role that had not been needed yet was graded FAILING.
+ * A screen that reports a healthy browser as degraded teaches people to ignore
+ * the screen, which is the opposite of what it is for.
+ *
+ * MISSING is `OFF`, not a failure. Tabs are opened on demand and RESEARCH
+ * spends most of its life closed; calling that broken would mean an agent doing
+ * exactly the right thing always shows a fault.
+ */
+function gradeTab(state: string | undefined, lastError: string | null): { state: HealthState; detail: string } {
+  switch (state) {
+    case 'READY':
+      return { state: 'HEALTHY', detail: 'Open and answering.' };
+    case 'BUSY':
+      // Busy is working. It means something is using the tab right now.
+      return { state: 'HEALTHY', detail: 'In use right now.' };
+    case 'MISSING':
+      return { state: 'OFF', detail: 'Not open. This role is opened when it is needed.' };
+    case 'FAILED':
+      return {
+        state: 'FAILING',
+        // The classification and the sentence the browser layer wrote, never a
+        // raw stack.
+        detail: lastError ? `Failed: ${lastError.slice(0, 200)}` : 'Failed, with no reason recorded.',
+      };
+    default:
+      return { state: 'UNKNOWN', detail: `Reported as ${String(state ?? 'nothing').toLowerCase()}.` };
+  }
+}
+
+/**
  * The four tabs, from what the worker last published.
  *
  * The API owns no browsers, so a snapshot is all there is -- and one nobody has
@@ -173,17 +208,19 @@ async function browserHealth(accountId: string | null): Promise<ComponentHealth[
       ];
     }
 
-    const tabs = Array.isArray(row.tabs) ? (row.tabs as { role?: string; state?: string }[]) : [];
-    return tabs.map((tab) => ({
-      name: `${tab.role ?? 'Tab'} tab`,
-      state: (tab.state === 'HEALTHY' ? 'HEALTHY' : tab.state === 'MISSING' ? 'FAILING' : 'DEGRADED') as HealthState,
-      detail:
-        tab.state === 'HEALTHY'
-          ? 'Open and answering.'
-          : `Reported as ${String(tab.state ?? 'unknown').toLowerCase()}.`,
-      lastSucceededAt: row.tabs_updated_at,
-      failingForMinutes: tab.state === 'HEALTHY' ? null : staleMinutes,
-    }));
+    const tabs = Array.isArray(row.tabs)
+      ? (row.tabs as { role?: string; state?: string; lastError?: string | null }[])
+      : [];
+    return tabs.map((tab) => {
+      const { state, detail } = gradeTab(tab.state, tab.lastError ?? null);
+      return {
+        name: `${tab.role ?? 'Tab'} tab`,
+        state,
+        detail,
+        lastSucceededAt: row.tabs_updated_at,
+        failingForMinutes: state === 'FAILING' ? staleMinutes : null,
+      };
+    });
   } catch {
     return [unknown('Browser', 'Could not be checked.')];
   }
