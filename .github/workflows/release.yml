@@ -372,17 +372,25 @@ jobs:
             echo "identity, a memory, a model, a policy, and the channels it may act on. Everything"
             echo "runs on your machine: your data, your credentials, your browser session."
             echo
-            echo "### Before you install"
+            echo "### What it needs"
             echo
-            echo "AI17Z does not install other software for you. You need **Node.js 20+**,"
-            echo "**Docker Desktop** and **Google Chrome**. The installer checks and says what is"
-            echo "missing."
+            echo "**Node.js 22 or newer**, **Docker Desktop** and **Google Chrome**."
+            echo
+            echo "The installer checks for all three and offers to install any that are"
+            echo "missing, through winget, which is Microsoft's own package manager and part"
+            echo "of Windows. It never downloads an installer of its own, and it asks first:"
+            echo "tick nothing and nothing is installed."
             echo
             echo "### Installing"
             echo
-            echo "Per-user, no administrator rights. Program in \`%LOCALAPPDATA%\\Programs\\AI17Z\`,"
-            echo "your data in \`%LOCALAPPDATA%\\AI17Z\`. Upgrading replaces the program and never"
-            echo "touches your data."
+            echo "Per-user, no administrator rights for AI17Z itself. You choose where the"
+            echo "program goes, where your data goes, and which ports it uses. The defaults"
+            echo "are \`%LOCALAPPDATA%\\Programs\\AI17Z\` for the program and"
+            echo "\`%LOCALAPPDATA%\\AI17Z\` for your data."
+            echo
+            echo "Your data is kept apart from the program on purpose: upgrading replaces"
+            echo "the program and never touches your data, and the uninstaller asks before"
+            echo "removing it."
             echo
             echo "- [Installing on Windows](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_INSTALL.md)"
             echo "- [Uninstalling](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_UNINSTALL.md)"
