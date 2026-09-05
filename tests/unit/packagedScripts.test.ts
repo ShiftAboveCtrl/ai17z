@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -90,5 +90,61 @@ describe('only the scripts an installed copy needs are shipped', () => {
     for (const never of ['strip-tool-attribution', 'set-repo-url', 'agent-report']) {
       expect(packager, `${never} would be installed on somebody's machine`).not.toContain(never);
     }
+  });
+});
+
+/**
+ * The images are built on the machine that installed AI17Z.
+ *
+ * There is no registry and no prebuilt image: the installed copy runs
+ * `docker compose build` from its own directory on first launch, exactly as a
+ * clone does. So every path a Dockerfile `COPY`s has to be in the package, and
+ * four were not -- `docs`, `tools`, `CONTRIBUTING.md`, `SECURITY.md`.
+ *
+ * It went unnoticed through three releases for a reason worth keeping: the
+ * installed copy shared a Docker project name with a developer checkout, so
+ * compose found images that checkout had already built and skipped the build
+ * entirely. Giving each installation its own project name is what surfaced it,
+ * as "/docs: not found" and no stack at all.
+ *
+ * This reads the Dockerfiles rather than listing anything, so a new `COPY`
+ * fails here the moment it is written.
+ */
+describe('everything the images are built from is in the package', () => {
+  const included = [...packager.matchAll(/^\s*'([^']+)',$/gm)]
+    .map((m) => m[1]!)
+    .filter((entry) => !entry.startsWith('node_modules/'));
+
+  const copies = readdirSync(resolve(root, 'docker'))
+    .filter((name) => name.endsWith('.Dockerfile'))
+    .flatMap((name) => {
+      const text = readFileSync(resolve(root, 'docker', name), 'utf8');
+      return text
+        .split(/\r?\n/)
+        .map((line) => line.match(/^\s*COPY\s+(.*)$/))
+        .filter((match): match is RegExpMatchArray => Boolean(match))
+        // `--from=` copies out of an earlier build stage, not out of the
+        // package, so there is nothing here for it to be missing.
+        .filter((match) => !match[1]!.includes('--from='))
+        .flatMap((match) => match[1]!.trim().split(/\s+/).slice(0, -1))
+        .map((source) => ({ source, dockerfile: name }));
+    });
+
+  it('finds the copies to check, so this test cannot pass by finding none', () => {
+    expect(copies.length).toBeGreaterThan(20);
+    expect(included).toContain('packages');
+  });
+
+  it.each([...new Set(copies.map((c) => `${c.source} (${c.dockerfile})`))])('%s is staged', (label) => {
+    const source = label.slice(0, label.indexOf(' ('));
+    const covered = included.some((entry) => source === entry || source.startsWith(`${entry}/`));
+    expect(covered, `${source} is copied into an image and never packaged`).toBe(true);
+  });
+
+  it('checks this at build time too, not only here', () => {
+    // A test proves the list is right today. The packager proves the staged
+    // directory is right, which is the thing that actually ships.
+    expect(packager).toContain('missing paths its own Dockerfiles copy');
+    expect(packager).toContain("dockerfile.endsWith('.Dockerfile')");
   });
 });

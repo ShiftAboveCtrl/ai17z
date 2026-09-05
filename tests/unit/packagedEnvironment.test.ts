@@ -126,3 +126,120 @@ describe('every compose command carries the environment file', () => {
     expect(text).toContain('--env-file');
   });
 });
+
+/**
+ * "Does the file exist" was the wrong question.
+ *
+ * The installer writes the ports somebody chose into the data directory's
+ * `.env` before the launcher ever runs, so the file existed with three lines in
+ * it. The launcher saw a file, decided there was nothing to do, and the
+ * installation ran with no DATABASE_URL and no master key -- which surfaces
+ * later and somewhere else, as a migration failing to connect to a database
+ * nobody told it about.
+ *
+ * So the file is completed rather than created: every key the template defines
+ * is filled in when missing, and anything already there is left exactly as it
+ * was, because somebody who edited their .env did so on purpose.
+ */
+describe('the environment file is completed, not merely present', () => {
+  it('reads the template whether or not the file already exists', () => {
+    // The template load sits outside the `if (-not (Test-Path $EnvFile))`
+    // block, which now does one thing only: move an older file into place.
+    const legacy = start.indexOf('if (-not (Test-Path $EnvFile)) {');
+    const template = start.indexOf("$template = Join-Path $PSScriptRoot '.env.example'");
+    expect(template, 'the template is no longer loaded').toBeGreaterThan(-1);
+    expect(start.slice(legacy, template)).toContain('Move-Item');
+    expect(start.slice(legacy, template)).not.toContain('SaveStringToFile');
+  });
+
+  it('fills in each missing key rather than replacing the file', () => {
+    expect(start).toContain('$added = @()');
+    expect(start).toMatch(/if \(\$have\.ContainsKey\(\$key\)\) \{ continue \}/);
+    // Appended to what is there. A rewrite would discard the ports.
+    expect(start).toContain('$existing = $existing + $additions.ToString()');
+  });
+
+  it('decides the master key on the file contents, not the file existing', () => {
+    expect(start).toMatch(/\$current -notmatch '\(\?m\)\^\[ \\t\]\*\(AI17Z\|XBAM\)_MASTER_KEY/);
+  });
+
+  it('does not let a key with no value read as a key', () => {
+    // .NET's \s matches a newline, so `^\s*KEY\s*=\s*\S` was satisfied by
+    // "AI17Z_MASTER_KEY=" running on into the first character of the next
+    // line. The template ships that key empty, so this was every fresh
+    // installation: no key generated, and the first provider credential
+    // somebody stored failing much later with "AI17Z_MASTER_KEY is not set".
+    for (const pattern of start.match(/'\(\?m\)[^']+'/g) ?? []) {
+      expect(pattern, 'a multiline pattern that can cross lines').not.toMatch(/\\s\*/);
+    }
+  });
+
+  it('completes the configuration before checking it', () => {
+    // The port check reads the file. Running it first meant reading defaults
+    // for everything the installer had not written, and -- worse -- asking
+    // Docker about a project name that was not yet decided.
+    expect(start.indexOf('$template = Join-Path')).toBeLessThan(start.indexOf('# -- Ports'));
+  });
+});
+
+/**
+ * One installation, one Docker project.
+ *
+ * `docker-compose.yml` reads `name: ${AI17Z_INSTANCE:-xbam}`, and every copy
+ * left that unset. An installed AI17Z and a developer's checkout on one machine
+ * were therefore the same project: `docker compose up` from the installed copy
+ * adopted the checkout's containers, republished them on the installer's ports,
+ * and pointed both at a single database volume. Docker had no reason to object;
+ * from its side that is an ordinary recreate.
+ *
+ * Two guards, because they catch it at different moments: a copy that has never
+ * had a database takes a name of its own, and any copy that finds containers
+ * another directory started stops instead of taking them over.
+ */
+describe('one installation cannot adopt another one', () => {
+  it('names the project after the data directory', () => {
+    expect(start).toContain('AI17Z_INSTANCE=$instance');
+    expect(start).toContain('Split-Path -Leaf $dataDir');
+    // Docker will not take an uppercase project name.
+    expect(start).toContain('.ToLowerInvariant()');
+  });
+
+  it('only does so where there is nothing to orphan', () => {
+    // Renaming the project of a working installation points it at an empty
+    // volume, which looks exactly like losing everything. A missing
+    // DATABASE_URL is what says this copy has never had a database.
+    expect(start).toContain('$hadDatabaseUrl = $have.ContainsKey(\'DATABASE_URL\')');
+    expect(start).toContain('if ((-not $hadDatabaseUrl)');
+  });
+
+  it('leaves a clone alone', () => {
+    // A developer's checkout keeps the default name, which is what its volumes
+    // are already called.
+    const block = start.slice(start.indexOf('# One installation, one Docker project.'));
+    expect(block.slice(0, block.indexOf('Write-Warn'))).toContain('$PSScriptRoot.TrimEnd');
+  });
+
+  it('refuses containers a different directory started', () => {
+    expect(start).toContain('com.docker.compose.project.working_dir');
+    const guard = start.slice(start.indexOf('com.docker.compose.project.working_dir'));
+    expect(guard.slice(0, 900)).toContain('Stop-WithReason');
+    // And says what to do about it, in both directions.
+    expect(guard.slice(0, 1400)).toContain('AI17Z_INSTANCE=');
+  });
+
+  it('asks docker for the label in a way Windows can carry', () => {
+    // A double quote inside a native command's argument does not survive
+    // Windows PowerShell's argument passing. `--format '{{index .Config.Labels
+    // "..."}}'` reached docker broken, printed an empty line, and the guard
+    // concluded the containers were this copy's own -- silently, which is the
+    // worst thing a check like this can be.
+    const format = start.match(/docker inspect \$ourContainers\[0\] --format '([^']*)'/);
+    expect(format, 'the inspect call moved').not.toBeNull();
+    expect(format![1], 'a quoted template does not survive the shell').not.toContain('"');
+  });
+
+  it('warns that a new name is a new database', () => {
+    // The one thing somebody must know before taking that advice.
+    expect(start).toMatch(/new name means a new, empty database/);
+  });
+});
