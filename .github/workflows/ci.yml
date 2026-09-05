@@ -97,10 +97,30 @@ jobs:
           # Deliberately narrow. A scanner that cries wolf gets switched off.
           patterns='sk-[a-zA-Z0-9]{20,}|sk-ant-[a-zA-Z0-9-]{20,}|ghp_[a-zA-Z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
           if git grep -nIE "$patterns" -- . ':!*.lock' ':!package-lock.json' > /tmp/hits 2>/dev/null; then
-            echo "Something key-shaped is committed:"
-            # Locations only. The value itself is never printed.
-            cut -d: -f1,2 /tmp/hits
-            exit 1
+            # Files that carry the fixture marker are the tests *for* this
+            # check: they contain deliberately fake keys to prove the detector
+            # detects. `npm run release:check` has always honoured the marker;
+            # this grep did not, so the two disagreed and the one that ran in CI
+            # failed on the tests proving the other one works.
+            #
+            # One rule, honoured in both places. A scanner that cries wolf on
+            # its own fixtures gets switched off, which is the failure mode
+            # worth avoiding here.
+            : > /tmp/real-hits
+            while IFS= read -r hit; do
+              file="${hit%%:*}"
+              if ! grep -q '@release-check-fixtures' "$file" 2>/dev/null; then
+                echo "$hit" >> /tmp/real-hits
+              fi
+            done < /tmp/hits
+
+            if [ -s /tmp/real-hits ]; then
+              echo "Something key-shaped is committed:"
+              # Locations only. The value itself is never printed.
+              cut -d: -f1,2 /tmp/real-hits
+              exit 1
+            fi
+            echo "Only test fixtures matched, which is what they are for."
           fi
           echo "No key-shaped strings in the tree."
 
