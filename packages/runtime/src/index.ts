@@ -48,3 +48,4 @@ export * from './telegram';
 export * from './avatar';
 export * from './xIntelligence';
 export * from './agentPackage';
+export * from './updates';

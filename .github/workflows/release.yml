@@ -392,6 +392,13 @@ jobs:
             echo "the program and never touches your data, and the uninstaller asks before"
             echo "removing it."
             echo
+            echo "### Updates"
+            echo
+            echo "AI17Z checks GitHub for new versions and shows you the release notes on the"
+            echo "Version panel in Settings. **It never updates itself.** You can skip a version,"
+            echo "ignore it entirely, or turn the check off, in which case no request is made at"
+            echo "all. Taking an update means running the new installer over your existing copy."
+            echo
             echo "- [Installing on Windows](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_INSTALL.md)"
             echo "- [Uninstalling](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_UNINSTALL.md)"
             echo "- [Code signing policy](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/CODE_SIGNING_POLICY.md)"

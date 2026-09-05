@@ -10,6 +10,7 @@ import { EmptyState, ErrorPanel, Field, Modal, Spinner, StatusDot } from '@app/c
 import { Explain } from '@app/components/Explain';
 import { SessionPanel } from '@app/components/SessionPanel';
 import { TelegramPanel } from '@app/components/TelegramPanel';
+import { UpdatePanel } from '@app/components/UpdatePanel';
 
 const HEALTH_TONE = { healthy: 'live', degraded: 'wait', offline: 'fail', unknown: 'idle' } as const;
 
@@ -123,6 +124,11 @@ export function SettingsPage() {
           <p>Provider keys are encrypted before they are stored and are never shown again, not even here. If you lose the encryption key, the keys have to be entered again.</p>
         </Explain>
       </header>
+
+      <section id="version" className="border-t border-ink-line py-12">
+        <p className="eyebrow mb-2">Version</p>
+        <UpdatePanel />
+      </section>
 
       <section id="system" className="border-t border-ink-line py-12">
         <p className="eyebrow mb-2">System</p>

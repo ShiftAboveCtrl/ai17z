@@ -69,9 +69,17 @@ provider and connect an X account when you are ready.
 
 ## Upgrading
 
+AI17Z tells you when there is a newer version. **Settings → Version** shows what
+changed, with a link to download the installer.
+
 Run the newer installer over the top. It replaces the program directory and
 **never touches `%LOCALAPPDATA%\AI17Z`**, so your agents, memories, knowledge,
 saved browser sessions and encryption key all survive.
+
+**Nothing updates itself.** There is no updater, nothing restarts on its own,
+and an update you ignore stays ignored. You can skip a version so it is never
+mentioned again, or turn the check off entirely — off means no request is made
+at all. See [Privacy](PRIVACY.md).
 
 ## If you forget your password
 
