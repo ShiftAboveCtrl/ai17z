@@ -1,3 +1,4 @@
+There is a token for this project, the only CA is 0x16CB7cBb26295b60DF7f4B3B39a99a9A3c585E81
 # AI17Z
 
 A local-first platform for building and running autonomous agents.
@@ -8,7 +9,7 @@ point it at a model, connect an account, and turn it on. The runtime underneath
 is deliberately boring — Postgres, a job table, typed contracts — so that the
 interesting part is the agent, not the plumbing.
 
-AI17Z is the successor to a working system called AI4CZ. It keeps that system's
+AI17Z is the successor to a working system. It keeps that system's
 best ideas, replaces its architecture, and imports its history as one agent.
 
 ---
@@ -431,23 +432,6 @@ DATABASE_URL=postgres://xbam:xbam@localhost:55450/xbam
 dial, so it has to move with `POSTGRES_PORT`. The start script refuses if the two
 disagree rather than letting one installation migrate another's database.
 
-## Importing AI4CZ
-
-```bash
-npm run import:ai4cz -- --dry-run    # read and report, write nothing
-npm run import:ai4cz                 # import for real
-```
-
-Set `AI4CZ_LEGACY_DIR` in `.env` first. The legacy project is opened read-only
-and is never modified. The importer is idempotent: running it twice imports
-nothing the second time.
-
-It brings across the persona, the voice corpus, the conversation history, and
-the ledgers that stop the agent replying to a year-old backlog. It does **not**
-bring across API keys, cookies, browser sessions, or the instruction telling the
-model never to admit what it is. See
-[`docs/legacy-ai4cz/MIGRATION.md`](docs/legacy-ai4cz/MIGRATION.md).
-
 ---
 
 ## Layout
@@ -459,7 +443,7 @@ apps/web        the interface
 packages/       shared contracts, database, runtime, memory, prompts,
                 models, channels, browser, jobs, tools
 migrations/     numbered SQL, applied in order
-tools/          the AI4CZ importer, visual validation
+tools/          the importer, visual validation
 docs/           architecture, operations, migration
 ```
 
@@ -497,7 +481,6 @@ description, and what to be honest about in an announcement.
 - [Local setup](docs/operations/LOCAL_SETUP.md)
 - [Docker](docs/operations/DOCKER.md)
 - [Driving a real browser](docs/operations/BROWSER_SESSIONS.md)
-- [AI4CZ migration](docs/legacy-ai4cz/MIGRATION.md)
 
 ## License
 
