@@ -8,6 +8,7 @@ import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { ErrorPanel, Field, Loading, Modal, Spinner, StatusDot } from '@app/components/ui';
 import { AgentPackagePanel } from '@app/components/AgentPackagePanel';
+import { NeedsYou } from '@app/components/NeedsYou';
 import { LiveStatus } from '@app/components/LiveStatus';
 import { FadeIn } from '@app/components/motion';
 import { IdentitySection } from './sections/IdentitySection';
@@ -31,28 +32,44 @@ import { EasyAgentView } from './EasyAgentView';
 // Three.js loads only once an agent page is actually open.
 const AgentPortrait = lazy(() => import('@app/components/AgentPortrait').then((m) => ({ default: m.AgentPortrait })));
 
-const SECTIONS = [
-  ['identity', 'Identity'],
-  ['voice', 'Voice'],
-  ['accounts', 'Accounts'],
-  ['intelligence', 'Intelligence'],
-  ['relationships', 'Relationships'],
-  ['beliefs', 'Beliefs'],
-  ['memory', 'Memory'],
-  ['knowledge', 'Knowledge'],
-  ['content', 'Content'],
-  ['learned', 'Learned'],
-  ['pipeline', 'Pipeline'],
-  ['tools', 'Tools'],
-  ['policies', 'Policies'],
-  ['behaviour', 'Behaviour'],
-  ['activity', 'Activity'],
+/**
+ * Five places, not fifteen sections.
+ *
+ * Everything an agent has was on one page, in a flat list of fifteen headings
+ * with a fifteen-item nav above it. That is a filing cabinet with the drawers
+ * removed: every setting equally prominent, nothing grouped by what you came to
+ * do, and no way to look at an agent without also looking at its pipeline.
+ *
+ * So the page has areas now. You land on what the agent is doing, and go
+ * somewhere specific when you want to change something. Each area is small
+ * enough to read, and named for the question it answers rather than for the
+ * subsystem behind it -- "Reach" rather than "Accounts, Intelligence, Tools".
+ *
+ * Old links still work: `#policies` selects the area holding that section and
+ * scrolls to it, so nothing anybody bookmarked or linked breaks.
+ */
+const AREAS = [
+  { id: 'overview', label: 'Overview', blurb: 'How it is doing, and anything that needs you.', sections: ['activity'] },
+  { id: 'character', label: 'Character', blurb: 'Who it is, and how it writes.', sections: ['identity', 'voice', 'beliefs'] },
+  { id: 'reach', label: 'Reach', blurb: 'Where it speaks, what it thinks with, what it can use.', sections: ['accounts', 'intelligence', 'tools'] },
+  { id: 'memory', label: 'Memory', blurb: 'What it knows, and who it knows.', sections: ['memory', 'knowledge', 'relationships', 'learned'] },
+  { id: 'behaviour', label: 'Behaviour', blurb: 'What it does on its own, and what it is allowed to do.', sections: ['content', 'behaviour', 'policies', 'pipeline'] },
 ] as const;
+
+type AreaId = (typeof AREAS)[number]['id'];
+
+/** Which area holds a section, so an old `#anchor` still lands somewhere. */
+const AREA_OF_SECTION: Record<string, AreaId> = Object.fromEntries(
+  AREAS.flatMap((area) => area.sections.map((section) => [section, area.id])),
+) as Record<string, AreaId>;
 
 export function AgentPage() {
   const { agentId = '' } = useParams();
   const { data, error, loading, reload } = useResource<AgentDetail>(agentId ? `/api/agents/${agentId}` : null);
-  const [active, setActive] = useState<string>('identity');
+  const [area, setArea] = useState<AreaId>(() => {
+    const hash = window.location.hash.replace('#', '');
+    return AREA_OF_SECTION[hash] ?? 'overview';
+  });
   const [mode] = useViewMode();
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -80,23 +97,30 @@ export function AgentPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   // Highlights whichever section currently owns the viewport.
+  // An old link like `#policies` names a section, not an area. Select the area
+  // that holds it, then let the browser scroll to it once it has rendered.
   useEffect(() => {
-    if (!data || mode !== 'advanced') return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-        if (visible[0]?.target.id) setActive(visible[0].target.id);
-      },
-      { rootMargin: '-18% 0px -72% 0px', threshold: [0, 0.25, 0.6] },
-    );
-    for (const [id] of SECTIONS) {
-      const node = document.getElementById(id);
-      if (node) observer.observe(node);
-    }
-    return () => observer.disconnect();
-  }, [data, mode]);
+    const jump = () => {
+      const id = window.location.hash.replace('#', '');
+      const next = AREA_OF_SECTION[id];
+      if (!next) return;
+      setArea(next);
+      window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 60);
+    };
+    window.addEventListener('hashchange', jump);
+    return () => window.removeEventListener('hashchange', jump);
+  }, []);
+
+  // The same thing on a cold load. Opening a bookmarked `#policies` directly
+  // means the browser tries to scroll to an element React has not rendered yet,
+  // finds nothing, and leaves you at the top of an area you did not ask for.
+  useEffect(() => {
+    if (!data) return;
+    const id = window.location.hash.replace('#', '');
+    if (!id || !AREA_OF_SECTION[id]) return;
+    const timer = window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 120);
+    return () => window.clearTimeout(timer);
+  }, [data]);
 
   if (loading && !data) return <Loading label="Loading agent" />;
   if (error) {
@@ -393,18 +417,30 @@ export function AgentPage() {
       <>
       <nav className="sticky top-[3.75rem] z-30 border-y border-ink-line bg-ink/90 backdrop-blur-md sm:top-[3.5rem]">
         <div className="scroll-x mx-auto max-w-page px-6 sm:px-10">
-          <ul className="flex gap-6 py-3">
-            {SECTIONS.map(([id, label]) => (
-              <li key={id}>
-                <a
-                  href={`#${id}`}
-                  className={`whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.18em] transition-colors ${
-                    active === id ? 'text-bone' : 'text-bone-faint hover:text-bone-dim'
+          <ul className="flex gap-0.5 py-2 sm:gap-1">
+            {AREAS.map((entry) => (
+              <li key={entry.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setArea(entry.id);
+                    // Back to the top of the area rather than wherever the last
+                    // one left the page. Landing halfway down a screen you have
+                    // never seen is disorienting.
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  aria-current={area === entry.id ? 'page' : undefined}
+                  // Sized so all five fit a 375px phone without a scroller.
+                  // A tab you have to swipe sideways to discover is a tab most
+                  // people never find.
+                  className={`whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[12px] transition-colors sm:px-3 sm:text-[13px] ${
+                    area === entry.id
+                      ? 'bg-white/[0.06] text-bone'
+                      : 'text-bone-faint hover:bg-white/[0.03] hover:text-bone-dim'
                   }`}
-                  aria-current={active === id ? 'true' : undefined}
                 >
-                  {label}
-                </a>
+                  {entry.label}
+                </button>
               </li>
             ))}
           </ul>
@@ -412,45 +448,81 @@ export function AgentPage() {
       </nav>
 
       <div className="mx-auto max-w-page px-6 sm:px-10">
-        <IdentitySection
-          index={1}
-          agentId={agent.id}
-          agentName={agent.name}
-          avatarUrl={agent.avatarUrl}
-          persona={persona}
-          onSaved={reload}
-        />
-        <VoiceSection index={2} agentId={agent.id} />
-        <AccountsSection index={3} agentId={agent.id} accounts={accounts} onChanged={reload} />
-        <IntelligenceSection index={4} agentId={agent.id} models={models} onChanged={reload} />
-        <RelationshipsSection index={5} agentId={agent.id} />
-        <BeliefsSection index={6} agentId={agent.id} />
-        <MemorySection index={7} agentId={agent.id} counts={memoryCounts} />
-        <KnowledgeSection index={8} agentId={agent.id} />
-        <ContentSection index={9} agentId={agent.id} />
-        <LearnedSection index={10} agentId={agent.id} />
-        <PipelineSection
-          index={11}
-          pipeline={pipeline}
-          triggerLabel={channel ? `When someone mentions ${agent.name}.` : `When ${agent.name} receives an event.`}
-        />
-        <ToolsSection
-          index={12}
-          agentId={agent.id}
-          tools={tools}
-          allowedKeys={policy?.config.tools.allowed ?? []}
-          policy={policy?.config ?? null}
-          onChanged={reload}
-        />
-        <PoliciesSection
-          index={13}
-          agentId={agent.id}
-          policy={policy?.config ?? null}
-          version={policy?.version ?? 1}
-          onSaved={reload}
-        />
-        <BehaviourSection index={14} agentId={agent.id} />
-        <ActivitySection index={15} agentId={agent.id} />
+        {/* What this area is for, in the words somebody would use to ask. */}
+        <p className="pt-6 text-[13px] text-bone-faint">{AREAS.find((a) => a.id === area)?.blurb}</p>
+
+        {area === 'overview' && (
+          <>
+            <NeedsYou
+              agent={agent}
+              accounts={accounts}
+              models={models}
+              onGo={(next) => {
+                setArea(next as AreaId);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            />
+            <ActivitySection index={1} agentId={agent.id} />
+          </>
+        )}
+
+        {area === 'character' && (
+          <>
+            <IdentitySection
+              index={1}
+              agentId={agent.id}
+              agentName={agent.name}
+              avatarUrl={agent.avatarUrl}
+              persona={persona}
+              onSaved={reload}
+            />
+            <VoiceSection index={2} agentId={agent.id} />
+            <BeliefsSection index={3} agentId={agent.id} />
+          </>
+        )}
+
+        {area === 'reach' && (
+          <>
+            <AccountsSection index={1} agentId={agent.id} accounts={accounts} onChanged={reload} />
+            <IntelligenceSection index={2} agentId={agent.id} models={models} onChanged={reload} />
+            <ToolsSection
+              index={3}
+              agentId={agent.id}
+              tools={tools}
+              allowedKeys={policy?.config.tools.allowed ?? []}
+              policy={policy?.config ?? null}
+              onChanged={reload}
+            />
+          </>
+        )}
+
+        {area === 'memory' && (
+          <>
+            <MemorySection index={1} agentId={agent.id} counts={memoryCounts} />
+            <KnowledgeSection index={2} agentId={agent.id} />
+            <RelationshipsSection index={3} agentId={agent.id} />
+            <LearnedSection index={4} agentId={agent.id} />
+          </>
+        )}
+
+        {area === 'behaviour' && (
+          <>
+            <ContentSection index={1} agentId={agent.id} />
+            <BehaviourSection index={2} agentId={agent.id} />
+            <PoliciesSection
+              index={3}
+              agentId={agent.id}
+              policy={policy?.config ?? null}
+              version={policy?.version ?? 1}
+              onSaved={reload}
+            />
+            <PipelineSection
+              index={4}
+              pipeline={pipeline}
+              triggerLabel={channel ? `When someone mentions ${agent.name}.` : `When ${agent.name} receives an event.`}
+            />
+          </>
+        )}
       </div>
       </>
       )}
