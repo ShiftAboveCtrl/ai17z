@@ -144,6 +144,66 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * Deciding on several at once.
+   *
+   * Forty things held for review is forty page visits, and the reading takes a
+   * second while the navigation takes ten. This exists so the inbox can act on
+   * a selection.
+   *
+   * What it deliberately is *not* is a faster path. Every job goes through the
+   * same `approveJob` as the single route: ownership is checked per job, the
+   * policy is re-validated per job, and anything the policy forbids outright is
+   * refused however many were selected. A bulk action that skipped those would
+   * be a way to publish forty things nobody checked.
+   *
+   * Partial success is the normal outcome and is reported per job. Answering
+   * "38 of 40" with a single boolean would be a lie about the two.
+   */
+  app.post(
+    '/api/jobs/decide-many',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(
+        z.object({
+          decision: z.enum(['approve', 'reject']),
+          // Capped: a bulk action over hundreds is a sign somebody meant a
+          // filter, and forty is already more than anyone reads in one sitting.
+          jobIds: z.array(z.string().uuid()).min(1).max(50),
+          note: z.string().max(1_000).optional(),
+        }),
+        request,
+      );
+
+      const results: { jobId: string; ok: boolean; error: string | null }[] = [];
+      for (const jobId of body.jobIds) {
+        try {
+          const job = await jobsRepo.requireJob(jobId);
+          await ownedAgent(job.agentId, user);
+          if (body.decision === 'approve') {
+            await approveJob({ jobId: job.id, decidedBy: user.id, ...(body.note ? { note: body.note } : {}) });
+          } else {
+            await rejectJob({ jobId: job.id, decidedBy: user.id, ...(body.note ? { note: body.note } : {}) });
+          }
+          results.push({ jobId, ok: true, error: null });
+        } catch (error) {
+          // One refusal must not abandon the rest, and must not be silent.
+          results.push({ jobId, ok: false, error: error instanceof Error ? error.message : 'That job could not be decided.' });
+        }
+      }
+
+      await ops.audit({
+        actorUserId: user.id,
+        action: `job.${body.decision}.bulk`,
+        entityType: 'job',
+        entityId: null,
+        data: { requested: body.jobIds.length, succeeded: results.filter((r) => r.ok).length },
+      });
+
+      return { decided: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok), results };
+    }),
+  );
+
   app.post(
     '/api/jobs/:id/retry',
     handler(async (request) => {

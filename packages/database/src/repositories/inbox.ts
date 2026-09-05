@@ -47,6 +47,15 @@ export interface InboxItem {
   jobStatus: string | null;
   /** What went wrong, when something did. The class, never a raw message. */
   errorClass: string | null;
+  /**
+   * What it is proposing to say, while it is still waiting on a person.
+   *
+   * Carried so the inbox can show the draft in the row rather than making
+   * somebody open a job page per item. With forty of them held for review, the
+   * round trip *is* the problem: the reading takes a second and the navigation
+   * takes ten.
+   */
+  draftText: string | null;
   /** What the agent said, when it said anything. */
   replyText: string | null;
   replyUrl: string | null;
@@ -85,7 +94,8 @@ export function bucketOf(item: Pick<InboxItem, 'state' | 'type' | 'text'>): Inbo
 export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxItem[]> {
   const rows = await query(
     `WITH latest_job AS (
-       SELECT DISTINCT ON (event_id) event_id, id, status, agent_id, error_class
+       SELECT DISTINCT ON (event_id) event_id, id, status, agent_id, error_class,
+              validated_output, generated_output
          FROM jobs
         ORDER BY event_id, created_at DESC
      )
@@ -101,6 +111,13 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
             j.id                    AS job_id,
             j.status                AS job_status,
             j.error_class,
+            -- The validated text when there is one, because that is what would
+            -- actually be sent; the raw generation only until the validator has
+            -- run. Null unless the job is genuinely waiting on a person, so an
+            -- old draft from a finished job never shows as pending.
+            CASE WHEN j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED')
+                 THEN COALESCE(j.validated_output, j.generated_output)
+            END                     AS draft_text,
             a.payload ->> 'text'    AS reply_text,
             a.remote_action_url     AS reply_url,
             a.executed_at           AS replied_at

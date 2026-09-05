@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { usePolling, useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
 import { EmptyState, ErrorPanel, Loading, StatusDot } from '@app/components/ui';
+import { ReviewQueue } from '@app/components/ReviewQueue';
 
 type Bucket = 'NEEDS_REVIEW' | 'QUESTIONS' | 'MENTIONS' | 'REPLIES' | 'OUTREACH' | 'ERRORS';
 
@@ -18,6 +19,7 @@ interface InboxItem {
   state: string;
   jobId: string | null;
   errorClass: string | null;
+  draftText: string | null;
   replyText: string | null;
   replyUrl: string | null;
   repliedAt: string | null;
@@ -105,8 +107,18 @@ export function InboxPage() {
 
       <p className="mt-4 text-[13px] text-bone-faint">{LEDE[bucket]}</p>
 
+      {/*
+        Deciding, rather than a list of links to places where deciding happens.
+        Only in the bucket that has a decision in it: the others are a record.
+      */}
+      {bucket === 'NEEDS_REVIEW' && items.length > 0 && (
+        <div className="mt-6">
+          <ReviewQueue items={items} onDecided={() => view.reload()} />
+        </div>
+      )}
+
       <div className="mt-6 space-y-2">
-        {items.length === 0 ? (
+        {bucket === 'NEEDS_REVIEW' && items.length > 0 ? null : items.length === 0 ? (
           <EmptyState
             title={bucket === 'NEEDS_REVIEW' ? 'Nothing is waiting on you' : 'Nothing here'}
             detail={
