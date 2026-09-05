@@ -321,6 +321,12 @@ export const MODEL_ROLES = [
   'critic',
   /** Rewrites a draft into the agent's voice. */
   'voice_rewrite',
+  /**
+   * Searches on the provider's own side, during the call, and answers with
+   * citations. Separate from the primary because it is a different bill and a
+   * different provider: only some can do it at all.
+   */
+  'research',
 ] as const;
 export const ModelRole = enumOf(MODEL_ROLES).schema;
 export type ModelRole = (typeof MODEL_ROLES)[number];

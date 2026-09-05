@@ -50,14 +50,15 @@ export function ToolsSection({
    * decides to take. A source that is off is still reported to the model as a
    * gap, so the agent says it does not know rather than inventing an answer.
    */
-  const setLookupSource = async (source: 'web' | 'market', enabled: boolean) => {
+  const setLookupSource = async (source: 'web' | 'market' | 'xIntelligence', enabled: boolean) => {
     if (!policy) return;
     setLookupBusy(source);
     setGrantError(null);
+    const named = { web: 'web search', market: 'market lookups', xIntelligence: 'searching X itself' }[source];
     try {
       await put(`/api/agents/${agentId}/policy`, {
         config: { ...policy, tools: { ...policy.tools, research: { ...policy.tools.research, [source]: enabled } } },
-        changeNote: `${enabled ? 'allowed' : 'stopped'} ${source === 'web' ? 'web search' : 'market lookups'}`,
+        changeNote: `${enabled ? 'allowed' : 'stopped'} ${named}`,
       });
       onChanged();
     } catch (e) {
@@ -218,8 +219,9 @@ export function ToolsSection({
           <h4 className="mt-2 text-base font-light text-bone">Where it may check before answering</h4>
           <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
             An agent asked about a post from an hour ago cannot answer from a training set, and one asked anyway
-            invents something. These are on because of that. Switching one off does not make the agent guess: it is
-            told the answer was not looked up, and says it does not know.
+            invents something. The first two are on because of that. Switching one off does not make the agent guess:
+            it is told the answer was not looked up, and says it does not know. The third is off because it spends
+            money on your own provider key every time it runs.
           </p>
 
           <div className="mt-5 space-y-3">
@@ -227,6 +229,11 @@ export function ToolsSection({
               [
                 ['web', 'Search the web', 'Through the browser it is already running, for anything that changes by the day.'],
                 ['market', 'Look up market data', 'For a contract address or a ticker. The price of a token, and which token it is.'],
+                [
+                  'xIntelligence',
+                  'Search X itself',
+                  'Asks the provider to search X’s own index during the call — the one source a browser cannot reach. Costs money on every lookup, needs a Research model under Intelligence, and is off until you turn it on.',
+                ],
               ] as const
             ).map(([source, label, hint]) => {
               const on = policy.tools.research[source];

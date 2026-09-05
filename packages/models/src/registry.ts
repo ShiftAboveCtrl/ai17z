@@ -4,6 +4,7 @@ import { anthropicAdapter } from './providers/anthropic';
 import { ollamaAdapter } from './providers/ollama';
 import { mockAdapter } from './providers/mock';
 import { createOpenAiCompatibleAdapter } from './providers/openaiCompatible';
+import { xaiAdapter } from './providers/xai';
 import type { ProviderAdapter } from './types';
 
 const ADAPTERS: Record<ProviderKind, ProviderAdapter> = {
@@ -12,9 +13,10 @@ const ADAPTERS: Record<ProviderKind, ProviderAdapter> = {
     'x-title': 'XBAM',
   }),
   deepseek: createOpenAiCompatibleAdapter('deepseek', 'https://api.deepseek.com/v1', 'DeepSeek'),
-  // Verified against docs.x.ai: POST /v1/chat/completions, Bearer key, the
-  // OpenAI request and response shape. No separate adapter needed.
-  xai: createOpenAiCompatibleAdapter('xai', 'https://api.x.ai/v1', 'xAI'),
+  // Generation is the OpenAI chat-completions shape, verified against
+  // docs.x.ai. The separate adapter exists for the half that is not shared:
+  // search xAI runs on its own side, during the call, with citations.
+  xai: xaiAdapter,
   openai_compatible: createOpenAiCompatibleAdapter('openai_compatible', '', 'OpenAI-compatible endpoint'),
   anthropic: anthropicAdapter,
   ollama: ollamaAdapter,

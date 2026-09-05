@@ -38,6 +38,7 @@ import { chooseIntent, decideEngagement, readTemperature, recentRepliesTo } from
 import { compileForJob } from './voice';
 import { loadThreadContext, observeEntities, recordNarratives } from './arcs';
 import { harvestIdeas, markIdeaUsed } from './content';
+import { researchModelFor, searchWithProvider, whyUnavailable } from './xIntelligence';
 import { research, whatToResearch } from './research';
 import { planLookups } from './plan';
 import { classifyEvidence } from './evidenceClass';
@@ -1574,6 +1575,53 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
     knownAddresses: bundle.policy.output.verifiedAddresses,
     sources: bundle.policy.tools.research,
   });
+
+  // Search the provider runs on its own side, reaching X's own index.
+  //
+  // After the ordinary lookups rather than instead of them: this is the source
+  // the browser cannot reach, not a replacement for the ones it can. It runs at
+  // most once per event whatever the plan asked for, because each call is
+  // billed on the owner's key and one question about the conversation is what
+  // this is actually good at -- a query per lookup would multiply the bill to
+  // answer the same thing.
+  if (bundle.policy.tools.research.xIntelligence) {
+    const configured = await researchModelFor(bundle.agent.id);
+    if (!configured) {
+      // Said, not skipped. A source the owner switched on and that never runs
+      // is worse than one they left off, because they think it is working.
+      const why = await whyUnavailable(bundle.agent.id);
+      result.failed.push({ query: lookups[0]!.query, reason: why ?? 'Provider-side search is not available.' });
+    } else {
+      const provider = await searchWithProvider({
+        credentialId: configured.credentialId,
+        model: configured.model,
+        // The conversation's own question, so the model derives its own
+        // queries -- which is the thing it is better at than our rules.
+        question: lookups.map((l) => l.query).join('\n'),
+        tools: { xSearch: {} },
+      });
+      result.findings.push(...provider.findings);
+      result.failed.push(...provider.failed);
+
+      await observability.emitTrace({
+        jobId: job.id,
+        agentId: bundle.agent.id,
+        type: 'RESEARCH_DONE',
+        // A search that was asked for and did not run is a warning, because the
+        // reply is about to be written without it.
+        level: provider.usage.xSearch + provider.usage.webSearch > 0 ? 'info' : 'warn',
+        message: provider.note,
+        data: {
+          provider: 'server-side',
+          model: configured.model,
+          // The counts the provider bills on, which is the only evidence a
+          // search happened. Its prose is not.
+          usage: provider.usage,
+          findings: provider.findings.length,
+        },
+      });
+    }
+  }
 
   await jobsRepo.updateJob(job.id, {
     resolvedContext: { ...context, meta: { ...context.meta, research: result } },

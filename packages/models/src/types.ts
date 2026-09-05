@@ -1,4 +1,5 @@
 import type { ProviderVerdict } from './providerState';
+import type { ServerSideSearchRequest, ServerSideSearchResult } from './serverSideTools';
 import type { ChatMessage, ModelParameters, ProviderKind } from '@xbam/shared/contracts';
 
 export interface ProviderRequest {
@@ -45,4 +46,13 @@ export interface ProviderAdapter {
   readonly requiresApiKey: boolean;
   generate(request: ProviderRequest): Promise<ProviderResponse>;
   health(request: Omit<ProviderRequest, 'messages' | 'parameters' | 'model'> & { model?: string }): Promise<ProviderHealth>;
+  /**
+   * Search run by the provider during the call, answering with citations.
+   *
+   * Optional, and absent on every adapter that cannot do it -- which is the
+   * point. A provider without this offers no degraded version: asking an
+   * ordinary model to "search X" gets a confident answer and no search, so the
+   * capability is either present or the feature is reported unavailable.
+   */
+  searchWithServerSideTools?(request: ServerSideSearchRequest): Promise<ServerSideSearchResult>;
 }
