@@ -48,6 +48,16 @@ describe('every place that names a Node version names the same one', () => {
     }
   });
 
+  it('is what the release notes tell people to install', () => {
+    // The notes are the first thing anybody reads, and they said 20 while the
+    // project required 22. Somebody following them would have installed a
+    // runtime this does not support and hit failures nothing explained.
+    const notes = read('.github/workflows/release.yml');
+    const claim = notes.match(/\*\*Node\.js ([\d]+)[^*]*\*\*/);
+    expect(claim, 'the release notes no longer name a Node version').not.toBeNull();
+    expect(claim![1]).toBe(String(REQUIRED_MAJOR));
+  });
+
   it('is what the types are written against', () => {
     // A @types/node from a different major describes APIs the runtime may not
     // have, which typechecks and then fails where it runs.
