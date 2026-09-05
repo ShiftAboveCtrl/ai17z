@@ -140,9 +140,14 @@ no drift, and 949 unit tests passing from the clone.
 ### The matrix
 
 `docs/final-validation-matrix.md`. Seventy-one rows that read NOT TESTED now
-cite the test that proves them and say what it asserts. Six remain untested and
-each says what it would take. Six more are PARTIAL and each says which half is
-missing. Nothing is marked PASS on source inspection alone.
+cite the test that proves them and say what it asserts. **Six remain untested**
+and each says what it would take. **Five are PARTIAL** and each says which half
+is missing. Nothing is marked PASS on source inspection alone.
+
+The six untested: Chrome restart, full system restart, cold start, a real
+remote action, vision, and composer edge cases.
+The five partial: real sign-in, native worker restart, the soak, trace accuracy,
+and empty-versus-large data.
 
 Four rows had nothing behind them and now do: tab serialisation, vision routing,
 the research tab, and failure screenshots.
