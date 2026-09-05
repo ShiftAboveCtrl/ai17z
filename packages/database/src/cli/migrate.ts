@@ -1,5 +1,5 @@
 import { loadEnv, createLogger } from '@xbam/shared';
-import { appliedMigrations, describeTarget, loadMigrations, migrate } from '../migrator';
+import { appliedMigrations, describeTarget, explainFailure, loadMigrations, migrate } from '../migrator';
 import { closePool } from '../pool';
 
 const log = createLogger('migrate-cli');
@@ -44,7 +44,7 @@ main()
   .then(() => closePool())
   .then(() => process.exit(0))
   .catch(async (error) => {
-    process.stderr.write(`${(error as Error).message}\n`);
+    process.stderr.write(`${explainFailure(error)}\n`);
     await closePool().catch(() => undefined);
     process.exit(1);
   });

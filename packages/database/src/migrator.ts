@@ -113,6 +113,51 @@ export async function resetSchema(): Promise<void> {
  * migrations to it, and the output said "Applied 3 migration(s)" without ever
  * naming the database -- so there was nothing to notice.
  */
+/**
+ * Why a migration failed, in words, always.
+ *
+ * Node's connect throws an `AggregateError` when it has tried several addresses
+ * -- ::1 and 127.0.0.1 for `localhost` -- and that error's own `message` is the
+ * empty string. Every refusal is on the causes hanging off it. So a database
+ * that was not running produced an exit code of 1 and a blank line, under a
+ * launcher that had just said "the output above says why".
+ *
+ * Walks whatever it is handed, collects every message it can find, and turns
+ * the one failure people actually hit into an instruction.
+ */
+export function explainFailure(error: unknown, target = describeTarget()): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+
+  const walk = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    const err = value as { message?: string; code?: string; errors?: unknown[]; cause?: unknown };
+    if (err.message) parts.push(err.message);
+    else if (err.code) parts.push(err.code);
+    if (Array.isArray(err.errors)) for (const child of err.errors) walk(child);
+    walk(err.cause);
+  };
+  walk(error);
+
+  const detail = parts.length > 0 ? [...new Set(parts)].join('; ') : String(error);
+
+  if (detail.includes('ECONNREFUSED')) {
+    return (
+      `Cannot reach the database at ${target}: nothing is listening there.\n` +
+      '  Start it with `npm run db:up`, or check that POSTGRES_PORT and DATABASE_URL\n' +
+      '  name the same port in your .env.'
+    );
+  }
+  if (detail.includes('ENOTFOUND') || detail.includes('EAI_AGAIN')) {
+    return `Cannot reach the database at ${target}: that host name does not resolve.`;
+  }
+  if (detail.includes('password authentication failed')) {
+    return `The database at ${target} refused these credentials. Check POSTGRES_USER and POSTGRES_PASSWORD against DATABASE_URL.`;
+  }
+  return detail;
+}
+
 export function describeTarget(url = process.env.DATABASE_URL ?? ''): string {
   if (!url) return 'no DATABASE_URL set';
   try {

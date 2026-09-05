@@ -99,6 +99,156 @@ if (-not $dockerUp) {
   Stop-WithReason 'Docker is installed but not running.' 'Start Docker Desktop, wait for the whale to settle, then run this again.'
 }
 
+# -- Configuration -----------------------------------------------------------
+# Completed before it is checked. The installer writes the ports somebody chose
+# into this file, so it exists long before it is usable, and the port check
+# below used to run against whatever three lines were in it.
+
+if (-not (Test-Path $EnvFile)) {
+  # An older installation kept its environment file beside the program. Move it
+  # rather than leaving two to diverge, and rather than generating a second
+  # master key that cannot read the credentials sealed with the first.
+  $legacy = Join-Path $PSScriptRoot '.env'
+  if (($legacy -ne $EnvFile) -and (Test-Path $legacy)) {
+    Write-Warn "Moving your existing .env to $EnvFile so an upgrade cannot replace it."
+    $parent = Split-Path -Parent $EnvFile
+    if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    Move-Item -LiteralPath $legacy -Destination $EnvFile
+  }
+}
+
+# Complete, not merely present.
+#
+# The check used to be "does the file exist", and the installer writes the
+# ports somebody chose into that same file before this ever runs. So the file
+# existed with three lines in it, this decided there was nothing to do, and the
+# installation ran with no DATABASE_URL and no master key -- which fails much
+# later and somewhere else, exactly the class of failure ensure-env.mjs was
+# written to prevent.
+#
+# So every key the template defines is filled in from the template when it is
+# missing, and anything already in the file is left exactly as it is.
+$template = Join-Path $PSScriptRoot '.env.example'
+if (-not (Test-Path $template)) {
+  # This was the installed copy's first-run failure: the template was not in
+  # the package, so the very first thing a new install did was crash naming a
+  # file nobody could be expected to find.
+  Stop-WithReason `
+    'AI17Z has no .env.example to build its configuration from.' `
+    "Expected the template at:`n    $template`n  This installation looks incomplete. Reinstalling AI17Z will restore it."
+}
+
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$parent = Split-Path -Parent $EnvFile
+if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+
+$existing = ''
+if (Test-Path $EnvFile) { $existing = [System.IO.File]::ReadAllText($EnvFile, $utf8) }
+
+# Which keys the file already sets, so nothing already chosen is touched.
+$have = @{}
+foreach ($line in ($existing -split "`r?`n")) {
+  if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') { $have[$matches[1]] = $true }
+}
+
+# Whether this installation has ever had a database, asked before the merge
+# fills the key in. Used further down to decide whether this copy can safely
+# be given its own Docker project name.
+$hadDatabaseUrl = $have.ContainsKey('DATABASE_URL')
+
+# The port already chosen, which the template does not know about.
+$chosenPort = ''
+if ($existing -match '(?m)^[ \t]*POSTGRES_PORT[ \t]*=[ \t]*(\d+)') { $chosenPort = $matches[1] }
+
+$added = @()
+$additions = New-Object System.Text.StringBuilder
+foreach ($line in ([System.IO.File]::ReadAllText($template, $utf8) -split "`r?`n")) {
+  if ($line -notmatch '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') { continue }
+  $key = $matches[1]
+  if ($have.ContainsKey($key)) { continue }
+  # The template's DATABASE_URL carries the default port and the installer has
+  # already written the one somebody picked, so copying the template line
+  # verbatim leaves the two disagreeing -- and the check further down then
+  # refuses to start, correctly, over a conflict this script had just created.
+  # Only ever the port: everything else in that line is the template's.
+  if (($key -eq 'DATABASE_URL') -and $chosenPort) {
+    $line = [regex]::Replace($line, '(?<=@[^/@]*:)\d+(?=/)', $chosenPort)
+  }
+  [void]$additions.AppendLine($line)
+  $added += $key
+  $have[$key] = $true
+}
+
+if ($added.Count -gt 0) {
+  if ($existing -and -not $existing.EndsWith("`n")) { $existing += "`n" }
+  $existing = $existing + $additions.ToString()
+  [System.IO.File]::WriteAllText($EnvFile, $existing, $utf8)
+  Write-Warn "Filled in $($added.Count) missing setting(s) in $EnvFile."
+}
+
+# The master key seals every provider API key. Generating one here means a
+# first run works; losing it later means those keys cannot be decrypted.
+#
+# From the cryptographic RNG rather than Get-Random, which is seeded and is not
+# meant for anything that has to be unguessable.
+# [ \t] rather than \s in every pattern here, because .NET's \s matches a
+# newline. Written the obvious way, "KEY=" at the end of one line ran on into
+# the first character of the next and the file looked like it already had a
+# value. The template ships with AI17Z_MASTER_KEY empty, so that was every
+# fresh installation: no key generated, and the first provider credential
+# somebody stored failing much later with "AI17Z_MASTER_KEY is not set".
+$current = [System.IO.File]::ReadAllText($EnvFile, $utf8)
+if ($current -notmatch '(?m)^[ \t]*(AI17Z|XBAM)_MASTER_KEY[ \t]*=[ \t]*\S') {
+  $bytes = New-Object 'System.Byte[]' 32
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+  $key = [Convert]::ToBase64String($bytes)
+
+  # Read and write the bytes explicitly rather than through Get-Content and
+  # Set-Content. On Windows PowerShell 5.1 those default to the system codepage
+  # for reading and add a BOM when writing, which turns the template's box-
+  # drawing comments into mojibake and puts three bytes in front of the first
+  # line.
+  if ($current -match '(?m)^[ \t]*AI17Z_MASTER_KEY[ \t]*=') {
+    $current = [regex]::Replace($current, '(?m)^[ \t]*AI17Z_MASTER_KEY[ \t]*=.*$', "AI17Z_MASTER_KEY=$key")
+  } else {
+    if ($current -and -not $current.EndsWith("`n")) { $current += "`n" }
+    $current += "AI17Z_MASTER_KEY=$key`n"
+  }
+  [System.IO.File]::WriteAllText($EnvFile, $current, $utf8)
+  Write-Warn "A master key was written to $EnvFile. Back that file up: without it, stored API keys are unreadable."
+}
+
+# One installation, one Docker project.
+#
+# The project name is what Docker derives container and volume names from, and
+# it defaulted to `xbam` in every copy. So an installed AI17Z and a developer's
+# checkout on the same machine were the same project: `docker compose up` from
+# one adopted the other's containers, republished them on its own ports, and
+# ran both against a single database volume. Nothing warned about it, because
+# from Docker's side that is an ordinary recreate.
+#
+# An installed copy therefore names its project after its own data directory.
+#
+# Written only when this installation has never had a database -- the
+# DATABASE_URL that was missing above is what says so -- because renaming the
+# project of a working installation points it at an empty volume, and an
+# installation that comes up as if it were new looks exactly like one that lost
+# everything.
+$dataDir = Split-Path -Parent $EnvFile
+if ((-not $hadDatabaseUrl) -and $dataDir -and ($dataDir.TrimEnd('\') -ine $PSScriptRoot.TrimEnd('\'))) {
+  $current = [System.IO.File]::ReadAllText($EnvFile, $utf8)
+  if ($current -notmatch '(?m)^[ \t]*AI17Z_INSTANCE[ \t]*=[ \t]*\S') {
+    # Docker requires a lowercase name of letters, digits, dashes and
+    # underscores, starting with a letter or digit.
+    $instance = [regex]::Replace((Split-Path -Leaf $dataDir).ToLowerInvariant(), '[^a-z0-9_-]', '-').Trim('-', '_')
+    if (-not $instance) { $instance = 'ai17z' }
+    if ($current -and -not $current.EndsWith("`n")) { $current += "`n" }
+    $current += "AI17Z_INSTANCE=$instance`n"
+    [System.IO.File]::WriteAllText($EnvFile, $current, $utf8)
+    Write-Warn "Docker project name: $instance. This copy of AI17Z cannot share containers with another one."
+  }
+}
+
 # -- Ports -------------------------------------------------------------------
 # Checked before Docker is asked to bind them, because the alternative is
 # "Bind for 127.0.0.1:55433 failed: port is already allocated" from a daemon,
@@ -120,6 +270,42 @@ function Test-PortTaken($Port) {
 $ourContainers = @()
 try { $ourContainers = @(docker compose @ComposeEnv ps --format '{{.Name}}' 2>$null) } catch { }
 $alreadyOurs = $ourContainers.Count -gt 0
+
+# Whose containers those are.
+#
+# `docker compose ps` matches on the project name and nothing else, so
+# containers a different directory created answer to this one as readily as its
+# own. That is how an installed copy came to adopt a developer checkout's
+# database: same default project name, different directory, no complaint from
+# anybody -- and because the containers looked like this copy's own, the port
+# check below was skipped as well, so the one thing that would have noticed the
+# ports moving was the one thing that never ran.
+#
+# Said plainly and stopped, rather than taking them over: recreating another
+# copy's containers on this copy's ports is not something to do by accident.
+if ($alreadyOurs) {
+  $project = Get-EnvPort 'AI17Z_INSTANCE' 'xbam'
+  $startedIn = ''
+  try {
+    # `{{json .Config.Labels}}` rather than `{{index .Config.Labels "..."}}`,
+    # because a double quote inside a native command's argument does not
+    # survive Windows PowerShell's argument passing: docker received a broken
+    # template, printed an empty line, and the guard concluded the containers
+    # were this copy's own. Whichever way that goes it is silent, which is the
+    # worst property a check like this can have.
+    $labels = docker inspect $ourContainers[0] --format '{{json .Config.Labels}}' 2>$null | Select-Object -First 1
+    if ($labels) { $startedIn = ($labels | ConvertFrom-Json).'com.docker.compose.project.working_dir' }
+  } catch { }
+  if ($startedIn -and ($startedIn.Trim().TrimEnd('\') -ine $PSScriptRoot.TrimEnd('\'))) {
+    Stop-WithReason `
+      "Another copy of AI17Z is already running as Docker project '$project'." `
+      ("Its containers were started from:`n    $($startedIn.Trim())`n  This copy is at:`n    $PSScriptRoot`n`n" +
+       "  Starting here would take those containers over and republish them on this copy's`n" +
+       "  ports, with both copies sharing one database.`n`n" +
+       "  Either stop the other copy, or give this one its own name by adding a line to`n    $EnvFile`n    AI17Z_INSTANCE=something-else`n" +
+       "  A new name means a new, empty database: this copy's data lives under its old name.")
+  }
+}
 
 if (-not $alreadyOurs) {
   $wanted = @(
@@ -159,57 +345,30 @@ if ($dbUrl -and $dbUrl -match '^postgres(ql)?://[^/]*@(localhost|127\.0\.0\.1):(
   }
 }
 
-if (-not (Test-Path $EnvFile)) {
-  # An older installation kept its environment file beside the program. Move it
-  # rather than leaving two to diverge, and rather than generating a second
-  # master key that cannot read the credentials sealed with the first.
-  $legacy = Join-Path $PSScriptRoot '.env'
-  if (($legacy -ne $EnvFile) -and (Test-Path $legacy)) {
-    Write-Warn "Moving your existing .env to $EnvFile so an upgrade cannot replace it."
-    $parent = Split-Path -Parent $EnvFile
-    if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    Move-Item -LiteralPath $legacy -Destination $EnvFile
-  }
-}
-
-if (-not (Test-Path $EnvFile)) {
-  $template = Join-Path $PSScriptRoot '.env.example'
-  if (-not (Test-Path $template)) {
-    # This was the installed copy's first-run failure: the template was not in
-    # the package, so the very first thing a new install did was crash naming a
-    # file nobody could be expected to find.
-    Stop-WithReason `
-      'AI17Z has no .env and no .env.example to build one from.' `
-      "Expected the template at:`n    $template`n  This installation looks incomplete. Reinstalling AI17Z will restore it."
-  }
-
-  Write-Warn "No environment file yet. Creating one at $EnvFile with a fresh master key."
-  $parent = Split-Path -Parent $EnvFile
-  if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-  Copy-Item $template $EnvFile
-
-  # The master key seals every provider API key. Generating one here means a
-  # first run works; losing it later means those keys cannot be decrypted.
-  #
-  # From the cryptographic RNG rather than Get-Random, which is seeded and is
-  # not meant for anything that has to be unguessable.
-  $bytes = New-Object 'System.Byte[]' 32
-  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-  $key = [Convert]::ToBase64String($bytes)
-
-  # Read and write the bytes explicitly rather than through Get-Content and
-  # Set-Content. On Windows PowerShell 5.1 those default to the system codepage
-  # for reading and add a BOM when writing, which turns the template's box-
-  # drawing comments into mojibake and puts three bytes in front of the first
-  # line. Both are cosmetic until something parses the file strictly.
-  $utf8 = New-Object System.Text.UTF8Encoding($false)
-  $text = [System.IO.File]::ReadAllText($EnvFile, $utf8)
-  $text = [regex]::Replace($text, '(?m)^AI17Z_MASTER_KEY=.*$', "AI17Z_MASTER_KEY=$key")
-  [System.IO.File]::WriteAllText($EnvFile, $text, $utf8)
-  Write-Warn "A master key was written to $EnvFile. Back that file up: without it, stored API keys are unreadable."
-}
-
 # -- The stack ---------------------------------------------------------------
+
+# Which release this is, handed to the containers.
+#
+# A container has no BUILD_INFO.json and no repository, and package.json says
+# 0.1.0 through every release candidate -- so without this the update check
+# compares 0.1.0 against v0.1.0-rc.4 and cannot say which is newer. The packager
+# writes the stamp; this is the only thing that can pass it on.
+$stamp = Join-Path $PSScriptRoot 'BUILD_INFO.json'
+if (Test-Path $stamp) {
+  try {
+    $version = (Get-Content -Raw $stamp | ConvertFrom-Json).version
+    if ($version) { $env:AI17Z_VERSION = $version }
+    # And that this is an installed copy rather than a checkout, which is what
+    # decides whether the update screen offers an installer to run or
+    # `update-ai17z.ps1`. The stamp exists beside an installed application and
+    # nowhere else.
+    $env:AI17Z_INSTALLED = '1'
+  } catch {
+    # A stamp that cannot be read is not worth stopping a start for: the
+    # version is then reported as the package version, which is only wrong
+    # about release candidates.
+  }
+}
 if ($Rebuild) {
   Write-Step 'Rebuilding images...'
   # Stamped into the images, because a container has no git and otherwise

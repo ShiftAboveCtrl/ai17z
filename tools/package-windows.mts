@@ -79,6 +79,18 @@ const INCLUDE = [
   'update-ai17z.ps1',
   'docker-compose.yml',
   'docker',
+  // Everything the three Dockerfiles copy. The installed copy builds its own
+  // images on first launch -- exactly as a clone does -- so a path missing here
+  // is not a missing feature, it is `docker compose build` failing with
+  // "/docs: not found" and no stack at all.
+  //
+  // `docs` is also the built-in knowledge source an agent can be taught from,
+  // and `tools` holds the AI4CZ importer's workspace manifest, which npm needs
+  // to resolve the workspace at all.
+  'docs',
+  'tools',
+  'CONTRIBUTING.md',
+  'SECURITY.md',
   // Two files, named rather than the whole `scripts/` directory: the rest of it
   // is maintainer tooling -- rewriting commit history, setting the repository
   // URL -- which has no business on somebody's machine.
@@ -248,6 +260,42 @@ async function main(): Promise<void> {
     throw new Error(
       `the staged application is missing files its own npm scripts run:\n  ${missing.join('\n  ')}\n` +
         'It would install, start its containers, and then fail on the first migration.',
+    );
+  }
+
+  // Everything the Dockerfiles build from.
+  //
+  // The images are built on the machine that installed AI17Z, from this
+  // directory, so every path a `COPY` names has to be in it. Three releases
+  // shipped without `docs`, `tools`, `CONTRIBUTING.md` and `SECURITY.md`, and
+  // the failure was invisible in testing for a reason worth recording: the
+  // installed copy shared a Docker project name with a developer checkout, so
+  // compose found images that checkout had already built and never ran a build
+  // at all. Fixing the project name is what exposed this.
+  //
+  // Read out of the Dockerfiles rather than listed here, because a list is a
+  // second place to forget.
+  const uncopied: string[] = [];
+  for (const dockerfile of await readdir(join(root, 'docker'))) {
+    if (!dockerfile.endsWith('.Dockerfile')) continue;
+    const text = await readFile(join(root, 'docker', dockerfile), 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const copy = line.match(/^\s*COPY\s+(.*)$/);
+      // `--from=` copies out of an earlier build stage, not out of this
+      // directory, so there is nothing here for it to be missing.
+      if (!copy || copy[1]!.includes('--from=')) continue;
+      const parts = copy[1]!.trim().split(/\s+/);
+      // The last argument is the destination inside the image.
+      for (const source of parts.slice(0, -1)) {
+        if (existsSync(join(stageDir, source))) continue;
+        uncopied.push(`${source} (docker/${dockerfile})`);
+      }
+    }
+  }
+  if (uncopied.length > 0) {
+    throw new Error(
+      `the staged application is missing paths its own Dockerfiles copy:\n  ${[...new Set(uncopied)].join('\n  ')}\n` +
+        'It would install and then fail to build its images on first launch.',
     );
   }
 
