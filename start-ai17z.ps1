@@ -35,12 +35,26 @@ $PidFile   = Join-Path $PSScriptRoot 'storage\native-worker.pid'
 #
 # An installed AI17Z keeps it with the owner's data, because the program
 # directory is replaced on every upgrade and this file holds the master key
-# every provider credential is sealed with. The launcher says where, via
-# AI17Z_ENV_FILE. A clone has no launcher and no data directory, so it falls
-# back to the .env beside this script, which is what a developer expects.
-$EnvFile = $env:AI17Z_ENV_FILE
-if (-not $EnvFile) { $EnvFile = $env:XBAM_ENV_FILE }
-if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot '.env' }
+# every provider credential is sealed with.
+#
+# AI17Z.cmd sets AI17Z_ENV_FILE before handing over, but the Start Menu runs
+# some of these scripts directly -- "Stop AI17Z" and "AI17Z diagnostics" are
+# shortcuts to powershell.exe, not to AI17Z.cmd -- so the variable is absent
+# exactly when somebody is trying to stop or fix something. `data-location.txt`
+# is what the installer wrote for that case. A clone has neither and keeps the
+# .env beside the script, which is what a developer expects.
+function Resolve-Ai17zEnvFile($Root) {
+  if ($env:AI17Z_ENV_FILE) { return $env:AI17Z_ENV_FILE }
+  if ($env:XBAM_ENV_FILE) { return $env:XBAM_ENV_FILE }
+  $pointer = Join-Path $Root 'data-location.txt'
+  if (Test-Path $pointer) {
+    $dataDir = (Get-Content $pointer -First 1).Trim()
+    if ($dataDir) { return (Join-Path $dataDir '.env') }
+  }
+  return (Join-Path $Root '.env')
+}
+
+$EnvFile = Resolve-Ai17zEnvFile $PSScriptRoot
 
 # docker compose reads .env from the compose file's directory unless told
 # otherwise, so every compose call has to carry this. Without it the containers
@@ -242,6 +256,12 @@ if ((-not $hadDatabaseUrl) -and $dataDir -and ($dataDir.TrimEnd('\') -ine $PSScr
     # underscores, starting with a letter or digit.
     $instance = [regex]::Replace((Split-Path -Leaf $dataDir).ToLowerInvariant(), '[^a-z0-9_-]', '-').Trim('-', '_')
     if (-not $instance) { $instance = 'ai17z' }
+    # Named so it is recognisable in `docker ps`. A data directory called
+    # "data" -- which is what somebody who picks their own folder usually ends
+    # up with -- produced four containers called `data-api-1`, `data-web-1` and
+    # so on, sitting in a list beside everything else on the machine with
+    # nothing to say whose they were.
+    if ($instance -notlike 'ai17z*') { $instance = "ai17z-$instance" }
     if ($current -and -not $current.EndsWith("`n")) { $current += "`n" }
     $current += "AI17Z_INSTANCE=$instance`n"
     [System.IO.File]::WriteAllText($EnvFile, $current, $utf8)

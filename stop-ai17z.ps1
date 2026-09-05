@@ -29,9 +29,26 @@ Set-Location -Path $PSScriptRoot
 # run without this resolves that to the default and acts on a different project
 # than the one that was started. Stopping would report success and leave the
 # containers running.
-$EnvFile = $env:AI17Z_ENV_FILE
-if (-not $EnvFile) { $EnvFile = $env:XBAM_ENV_FILE }
-if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot '.env' }
+# Where the environment file lives.
+#
+# AI17Z.cmd sets AI17Z_ENV_FILE before handing over, but the Start Menu runs
+# some of these scripts directly -- "Stop AI17Z" and "AI17Z diagnostics" are
+# shortcuts to powershell.exe, not to AI17Z.cmd -- so the variable is absent
+# exactly when somebody is trying to stop or fix something. `data-location.txt`
+# is what the installer wrote for that case. A clone has neither and keeps the
+# .env beside the script, which is what a developer expects.
+function Resolve-Ai17zEnvFile($Root) {
+  if ($env:AI17Z_ENV_FILE) { return $env:AI17Z_ENV_FILE }
+  if ($env:XBAM_ENV_FILE) { return $env:XBAM_ENV_FILE }
+  $pointer = Join-Path $Root 'data-location.txt'
+  if (Test-Path $pointer) {
+    $dataDir = (Get-Content $pointer -First 1).Trim()
+    if ($dataDir) { return (Join-Path $dataDir '.env') }
+  }
+  return (Join-Path $Root '.env')
+}
+
+$EnvFile = Resolve-Ai17zEnvFile $PSScriptRoot
 $ComposeEnv = @()
 if (Test-Path $EnvFile) { $ComposeEnv = @('--env-file', $EnvFile) }
 

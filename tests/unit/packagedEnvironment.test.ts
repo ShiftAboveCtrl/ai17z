@@ -76,7 +76,10 @@ describe('the environment file follows the data, not the program', () => {
   });
 
   it('falls back to the script directory, so a clone still works', () => {
-    expect(start).toMatch(/\$EnvFile = Join-Path \$PSScriptRoot '\.env'/);
+    // The last step of Resolve-Ai17zEnvFile. A clone has no launcher, no data
+    // directory and no data-location.txt, and the .env beside the script is
+    // what a developer expects.
+    expect(start).toMatch(/return \(Join-Path \$Root '\.env'\)/);
   });
 
   it('never reads a bare .env by relative path any more', () => {

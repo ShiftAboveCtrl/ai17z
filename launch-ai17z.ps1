@@ -22,8 +22,31 @@ Set-Location -Path $PSScriptRoot
 # The port this installation publishes the web app on, which is not necessarily
 # the default: a machine running two installations moves one of them, and an
 # icon that opens the other one's window is worse than no icon.
+# Where the environment file lives.
+#
+# AI17Z.cmd sets AI17Z_ENV_FILE before handing over, but the Start Menu runs
+# some of these scripts directly -- "Stop AI17Z" and "AI17Z diagnostics" are
+# shortcuts to powershell.exe, not to AI17Z.cmd -- so the variable is absent
+# exactly when somebody is trying to stop or fix something. `data-location.txt`
+# is what the installer wrote for that case. A clone has neither and keeps the
+# .env beside the script, which is what a developer expects.
+function Resolve-Ai17zEnvFile($Root) {
+  if ($env:AI17Z_ENV_FILE) { return $env:AI17Z_ENV_FILE }
+  if ($env:XBAM_ENV_FILE) { return $env:XBAM_ENV_FILE }
+  $pointer = Join-Path $Root 'data-location.txt'
+  if (Test-Path $pointer) {
+    $dataDir = (Get-Content $pointer -First 1).Trim()
+    if ($dataDir) { return (Join-Path $dataDir '.env') }
+  }
+  return (Join-Path $Root '.env')
+}
+
+# Read from the owner's environment file, not from a .env beside this script.
+# An installed copy has none here, so every lookup fell through to its default
+# and this opened http://localhost:8080 for somebody who had chosen 8092 -- the
+# one screen the whole installation exists to reach.
 function Get-EnvValue($Name, $Fallback) {
-  $envFile = Join-Path $PSScriptRoot '.env'
+  $envFile = Resolve-Ai17zEnvFile $PSScriptRoot
   if (Test-Path $envFile) {
     foreach ($line in Get-Content $envFile) {
       if ($line -match "^\s*$Name\s*=\s*(.+?)\s*$") { return $matches[1] }

@@ -148,3 +148,113 @@ describe('everything the images are built from is in the package', () => {
     expect(packager).toContain("dockerfile.endsWith('.Dockerfile')");
   });
 });
+
+/**
+ * The package that installs must be the package that was tested.
+ *
+ * `npm ci --omit=optional` was added to drop a 37MB canvas binary pdfjs never
+ * calls. npm installs exactly one platform package out of an optional set, and
+ * that is how esbuild ships its binary -- so the flag also removed
+ * `@esbuild/win32-x64`, and with it every `tsx` process an installed copy runs:
+ * the migration on every start, and the native worker that is the only thing
+ * able to drive real Chrome.
+ *
+ * It shipped four times because the failure cannot be reproduced on a machine
+ * that has ever installed esbuild: the postinstall fetches the binary over the
+ * network and leaves a `downloaded-` copy of it inside esbuild's own lib
+ * directory, so a developer's stage works and a clean build runner's does not.
+ */
+describe('the package can run TypeScript at all', () => {
+  it('does not omit optional dependencies', () => {
+    expect(packager, 'the flag that removed esbuild is back').not.toContain("'--omit=optional'");
+  });
+
+  it('drops the unwanted native binary by name instead', () => {
+    // By name, not by category: the category also holds the thing that makes
+    // TypeScript run.
+    expect(packager).toContain("'@napi-rs'");
+    expect(packager).toMatch(/rm\(join\(stageDir, 'node_modules', '@napi-rs'\)/);
+  });
+
+  it('proves it by running a transform, not by looking for a file', () => {
+    // `tsx` and `esbuild` were both present and correct in a package where
+    // nothing could run, because the binary esbuild shells out to was missing.
+    // Only executing something catches that.
+    expect(packager).toContain("'tsx', 'dist', 'cli.mjs'");
+    expect(packager).toContain('tsx ok');
+    expect(packager).toContain('cannot run TypeScript');
+  });
+
+  it('every entry point it guards actually needs tsx', () => {
+    // If the scripts stop using tsx this guard is measuring nothing.
+    const usesTsx = ['migrate', 'start:api', 'start:worker', 'worker:supervised'].filter((name) =>
+      pkg.scripts[name]?.includes('tsx'),
+    );
+    expect(usesTsx.length, 'no shipped entry point runs tsx any more').toBeGreaterThan(2);
+  });
+});
+
+/**
+ * The Start Menu runs these scripts directly.
+ *
+ * "Stop AI17Z" and "AI17Z diagnostics" are shortcuts to powershell.exe with a
+ * script path -- not to AI17Z.cmd, which is the only thing that sets
+ * AI17Z_ENV_FILE. So the variable is absent exactly when somebody is trying to
+ * stop or fix something, and every one of these scripts fell back to a `.env`
+ * beside the program, where an installed copy has none.
+ *
+ * What that cost: the diagnostics tool told a healthy installation it was "not
+ * configured" and sent them to a script that is not shipped; the launcher
+ * opened localhost:8080 for somebody who had chosen another port; and "Stop
+ * AI17Z" resolved to compose project `xbam` -- which, now that each
+ * installation names its own project, is somebody else's stack.
+ */
+describe('every shipped script finds the owner environment file', () => {
+  const scripts = ['start-ai17z.ps1', 'stop-ai17z.ps1', 'update-ai17z.ps1', 'launch-ai17z.ps1', 'doctor-ai17z.ps1'];
+  const read = (name: string) => readFileSync(resolve(root, name), 'utf8');
+
+  it.each(scripts)('%s resolves it the same way', (name) => {
+    const text = read(name);
+    expect(text, 'no resolver').toContain('function Resolve-Ai17zEnvFile');
+    expect(text).toContain('$env:AI17Z_ENV_FILE');
+    expect(text).toContain('$env:XBAM_ENV_FILE');
+    // The fallback that makes a Start Menu shortcut work.
+    expect(text, 'does not fall back to data-location.txt').toContain("'data-location.txt'");
+  });
+
+  it.each(scripts)('%s reads no bare .env by relative path', (name) => {
+    const text = read(name);
+    expect(text).not.toMatch(/Test-Path '\.env'/);
+    expect(text).not.toMatch(/Get-Content '\.env'/);
+  });
+
+  it('the diagnostics no longer point at a script that is not shipped', () => {
+    // install-ai17z.ps1 is a developer script and is not in the package, so
+    // "Run .\install-ai17z.ps1" was advice nobody could follow.
+    const doctor = read('doctor-ai17z.ps1');
+    expect(doctor).not.toContain('install-ai17z.ps1');
+    expect(packager).not.toContain("'install-ai17z.ps1'");
+  });
+
+  it('names the file it could not find', () => {
+    // "No .env file yet" is useless when the whole bug is that it looked in the
+    // wrong place.
+    expect(read('doctor-ai17z.ps1')).toContain('No environment file at $EnvFile');
+  });
+});
+
+/**
+ * A Docker project name somebody can recognise.
+ *
+ * The name is taken from the data directory, and somebody who chooses their own
+ * folder usually ends up with one called `data` -- which produced containers
+ * called `data-api-1` and `data-web-1`, sitting in `docker ps` beside
+ * everything else on the machine with nothing to say whose they were.
+ */
+describe('the Docker project is recognisable', () => {
+  it('prefixes anything that does not already say ai17z', () => {
+    const start = readFileSync(resolve(root, 'start-ai17z.ps1'), 'utf8');
+    expect(start).toContain("$instance -notlike 'ai17z*'");
+    expect(start).toContain('$instance = "ai17z-$instance"');
+  });
+});

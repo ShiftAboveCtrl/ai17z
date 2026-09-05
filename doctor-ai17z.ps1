@@ -36,9 +36,30 @@ function Add-Result($Name, $Status, $Detail, $Fix) {
   })
 }
 
+# Where the environment file lives.
+#
+# AI17Z.cmd sets AI17Z_ENV_FILE before handing over, but the Start Menu runs
+# some of these scripts directly -- "Stop AI17Z" and "AI17Z diagnostics" are
+# shortcuts to powershell.exe, not to AI17Z.cmd -- so the variable is absent
+# exactly when somebody is trying to stop or fix something. `data-location.txt`
+# is what the installer wrote for that case. A clone has neither and keeps the
+# .env beside the script, which is what a developer expects.
+function Resolve-Ai17zEnvFile($Root) {
+  if ($env:AI17Z_ENV_FILE) { return $env:AI17Z_ENV_FILE }
+  if ($env:XBAM_ENV_FILE) { return $env:XBAM_ENV_FILE }
+  $pointer = Join-Path $Root 'data-location.txt'
+  if (Test-Path $pointer) {
+    $dataDir = (Get-Content $pointer -First 1).Trim()
+    if ($dataDir) { return (Join-Path $dataDir '.env') }
+  }
+  return (Join-Path $Root '.env')
+}
+
+$EnvFile = Resolve-Ai17zEnvFile $PSScriptRoot
+
 function Get-EnvValue($Key) {
-  if (-not (Test-Path '.env')) { return $null }
-  foreach ($line in Get-Content '.env') {
+  if (-not (Test-Path $EnvFile)) { return $null }
+  foreach ($line in Get-Content $EnvFile) {
     if ($line -match "^\s*$([regex]::Escape($Key))\s*=\s*(.*)$") {
       return $matches[1].Trim().Trim('"')
     }
@@ -70,16 +91,21 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 
 # -- Configuration -----------------------------------------------------------
-if (-not (Test-Path '.env')) {
-  Add-Result 'Configuration' 'NOT CONFIGURED' 'No .env file yet.' 'Run .\install-ai17z.ps1, which creates one with a fresh master key.'
+# Named, because "no .env file yet" is useless without saying which one was
+# looked for. This read the program directory, where an installed copy has no
+# environment file at all -- so the diagnostics tool, the thing somebody opens
+# when they are already stuck, told a perfectly healthy installation it was not
+# configured and sent them to a script that is not even shipped.
+if (-not (Test-Path $EnvFile)) {
+  Add-Result 'Configuration' 'NOT CONFIGURED' "No environment file at $EnvFile." 'Start AI17Z once: it writes this file, with a fresh master key, on its first run.'
 } else {
-  Add-Result 'Configuration' 'PASS' '.env present.' ''
+  Add-Result 'Configuration' 'PASS' "Present at $EnvFile." ''
 }
 
 $masterKey = Get-EnvValue 'AI17Z_MASTER_KEY'
 if (-not $masterKey) { $masterKey = Get-EnvValue 'XBAM_MASTER_KEY' }
 if (-not $masterKey) {
-  Add-Result 'Master key' 'NOT CONFIGURED' 'Not set.' 'Run .\install-ai17z.ps1. Provider keys cannot be stored without one.'
+  Add-Result 'Master key' 'NOT CONFIGURED' 'Not set.' 'Start AI17Z once: it writes one on its first run. Provider keys cannot be stored without it.'
 } else {
   # Length only. The value is never printed, and never logged.
   try {
