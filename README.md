@@ -261,7 +261,8 @@ docker compose up -d
 A containerised worker has no browser and no display, so it takes jobs and
 leaves browser-backed accounts alone. Run a native worker alongside it for
 those — the Windows script above does this for you, and
-[Driving a real browser](docs/operations/BROWSER_SESSIONS.md) covers the rest.
+A containerised worker cannot drive a browser on the host: run the worker on
+the machine that has the browser.
 
 Then open **http://localhost:8080** and create your owner account.
 
@@ -451,33 +452,16 @@ npm test          # unit + integration, against real Postgres
 npm run typecheck
 ```
 
-## Publishing this
-
-If you are forking or releasing your own copy, [Publishing](docs/PUBLISHING.md)
-lists the handful of things that cannot be done in code: the repository URL, the
-description, and what to be honest about in an announcement.
-
----
-
 ## Documentation
 
-- [Engineering notes](docs/ENGINEERING.md) — the invariants, and what broke to produce each one
-- [Architecture overview](docs/architecture/OVERVIEW.md)
-- [Data model](docs/architecture/DATA_MODEL.md)
-- [Jobs and the runtime](docs/architecture/JOBS.md)
-- [Memory](docs/architecture/MEMORY.md)
-- [Channels](docs/architecture/CHANNELS.md)
-- [Models](docs/architecture/MODELS.md)
-- [Pipelines](docs/architecture/PIPELINES.md)
-- [The social layer: identity, relationships, voice](docs/architecture/SOCIAL.md)
-- [Cadence: when an account is read and may act](docs/architecture/CADENCE.md)
-- [Capabilities: what an agent may do](docs/architecture/CAPABILITIES.md)
-- [Connecting an account and security challenges](docs/architecture/SIGN_IN.md)
-- [Persona sources: learning a voice](docs/architecture/PERSONA_SOURCES.md)
-- [Security](docs/architecture/SECURITY.md)
-- [Local setup](docs/operations/LOCAL_SETUP.md)
-- [Docker](docs/operations/DOCKER.md)
-- [Driving a real browser](docs/operations/BROWSER_SESSIONS.md)
+- [Installing on Windows](docs/WINDOWS_INSTALL.md)
+- [Uninstalling, and removing your data](docs/WINDOWS_UNINSTALL.md)
+- [Why Windows warns about the download](docs/WINDOWS_TRUST.md)
+- [Privacy: what leaves your machine](docs/PRIVACY.md)
+- [Code signing policy](docs/CODE_SIGNING_POLICY.md)
+
+Every screen in AI17Z explains itself, and the code carries its reasoning in
+comments. Start with `README.md`, then read the source.
 
 ## License
 

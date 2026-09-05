@@ -39,3 +39,11 @@ accounts.db
 # Windows packaging output. The staged app and the installer are build
 # products; the release workflow produces them from source.
 build/windows/
+
+# Internal working documents.
+#
+# Architecture notes, audits, session state, validation reports and legacy
+# analysis. They are how this gets built and they are not the product, so they
+# stay on the machine that builds it. One directory rather than a list of
+# filenames, so the names themselves are not published either.
+docs/internal/
