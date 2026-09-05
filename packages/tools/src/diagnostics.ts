@@ -15,7 +15,7 @@
  * field.
  */
 import type { AgentDiagnostics, ComponentHealth, FailureSummary, HealthState } from '@xbam/shared/contracts';
-import { nowIso } from '@xbam/shared';
+import { createLogger, errorMessage, nowIso } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -28,6 +28,8 @@ import {
   WORKER_PRESENT_SECONDS,
 } from '@xbam/database';
 import { toolReadiness } from './toolReadiness';
+
+const log = createLogger('diagnostics');
 
 /** Minutes since a moment, or null when there is no moment. */
 function minutesSince(at: string | null | undefined): number | null {
@@ -315,19 +317,36 @@ async function knowledgeHealth(agentId: string): Promise<ComponentHealth[]> {
  * Read from what happened rather than from a counter, for the same reason
  * everything else here is: a counter can be stale and still look confident.
  */
+/**
+ * The three timestamps that answer "is it actually doing anything".
+ *
+ * This asked for `model_calls.finished_at`, which does not exist -- the column
+ * is `completed_at` -- and matched `status = 'OK'`, which the writer never
+ * produces either; it writes COMPLETED or FAILED. So the query threw, the catch
+ * turned that into three nulls, and **every agent has always reported never
+ * read, never wrote, never sent**, including agents in the middle of working.
+ *
+ * Two lessons, both already written down elsewhere in this codebase and both
+ * ignored here: compare against the vocabulary the writer actually produces,
+ * and never let a catch turn a broken query into a plausible answer.
+ */
 async function lastSuccesses(agentId: string): Promise<AgentDiagnostics['lastSuccess']> {
   try {
     const rows = await query<{ poll: string | null; generation: string | null; action: string | null }>(
       `SELECT
          (SELECT max(a.last_polled_at) FROM accounts a
             JOIN agent_accounts aa ON aa.account_id = a.id WHERE aa.agent_id = $1) AS poll,
-         (SELECT max(m.finished_at) FROM model_calls m WHERE m.agent_id = $1 AND m.status = 'OK') AS generation,
+         (SELECT max(m.completed_at) FROM model_calls m
+           WHERE m.agent_id = $1 AND m.status = 'COMPLETED') AS generation,
          (SELECT max(ac.executed_at) FROM actions ac
            WHERE ac.agent_id = $1 AND ac.status = 'EXECUTED' AND ac.dry_run = false) AS action`,
       [agentId],
     );
     return { poll: rows[0]?.poll ?? null, generation: rows[0]?.generation ?? null, action: rows[0]?.action ?? null };
-  } catch {
+  } catch (error) {
+    // Said out loud. Three nulls look exactly like an agent that has never done
+    // anything, which is how this stayed broken.
+    log.error('the last-success timestamps could not be read', { agentId, message: errorMessage(error) });
     return { poll: null, generation: null, action: null };
   }
 }
