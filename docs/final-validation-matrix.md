@@ -41,7 +41,7 @@ Columns: **A** automated (unit), **I** integration (real Postgres), **L** live
 | Easy ↔ Advanced | One config system, no split brain | - | - | y | - | - | PASS - both directions read the same document | - | a75da55 |
 | Easy Mode errors | Written for normal users | - | y | - | - | - | PASS (I) - `integration/validationMessages.test.ts`. Every refusal a person can reach names the setting and what to change; none is a status code | | |
 | Advanced Mode regression | No capability lost | - | - | y | - | - | PASS - all sections present on an Easy-made agent | e2e assumed Advanced | dc631d9 |
-| UI route walk | No dead controls | - | - | y | - | - | PARTIAL - 18 e2e cover the main routes | - | - |
+| UI route walk | No dead controls | - | - | y | - | - | PASS (L) - all 22 e2e pass against a full scratch stack (own database, API, web and worker). Three were stale and one was wrong: two asserted a "save as version" button and a "currently vN" label that autosave replaced, one matched a Save button that had become ambiguous, and one raced a 2.4-second toast. Fixed rather than skipped, and the approval test is now stronger than it was | - | - |
 | "Your agents" clipping | Regression-tested at 5 widths | - | y | y | - | - | PASS - 5 widths plus 100/125/150% zoom | - | 42bdb1e |
 | Responsive matrix | 390/834/1280/1440/2200 | - | - | y | - | - | PASS - after fixing a 390px overflow | grid item min-width auto | 42bdb1e |
 | Accessibility / input | Keyboard, focus, labels | y | - | y | - | - | PASS - audited in the running app: 26 inputs, 0 without an accessible name (was 10), every label click focuses its control, one h1, main/nav/header landmarks, focus never suppressed. No skip link, which is noted rather than claimed | Field rendered a label it never associated with anything | (this round) |
@@ -243,6 +243,37 @@ Two honest notes. Run 1 started one commit earlier than the freeze point; the
 diff between them is this file and `CONTINUATION_STATE.md` and no code, so the
 tree under test was byte-identical. And the only working-tree change during the
 three runs was this document, which vitest never reads.
+
+## The end-to-end suite
+
+22 tests, all passing, against a scratch stack stood up for the purpose: its own
+empty database, its own API, its own web server and its own worker. Torn down
+afterwards, database dropped.
+
+Run first against the development installation, it produced 13 failures with one
+cause, and the product said so itself:
+
+> This installation already has an owner, and owner@ai17z.local is not it. These
+> specs sign in as the owner, so run them against a fresh database, or set
+> AI17Z_E2E_EMAIL and AI17Z_E2E_PASSWORD to an owner that exists.
+
+That is the error message doing its job. Against a fresh database, four real
+problems remained, all in the tests rather than the product:
+
+1. Two specs clicked a **"save as version"** button and read a **"currently vN"**
+   label. Autosave replaced both wordings in an earlier session and the specs
+   were never updated.
+2. One waited for the **"saved" tick**, which clears itself after 2.4 seconds.
+   A test that waits for a toast is racing it. Both now assert the durable
+   thing instead: reload, and check the value came back.
+3. One clicked a Save that had become **ambiguous** — the identity section
+   gained a plain "Save" when autosave landed, so an unscoped match found two.
+   Now scoped to the dialog.
+4. One asserted the approved text was visible, and it now appears **twice**:
+   once as the action that was sent, once in the conversation view added in
+   §99. Both are correct. The test now asserts every occurrence matches, which
+   catches the failure actually worth catching — the conversation view showing
+   the draft while the action carried the edit.
 
 ## The soak
 
