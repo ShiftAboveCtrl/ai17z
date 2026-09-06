@@ -23,6 +23,13 @@
  *   - **One success was called verification.** Nothing here is judged by an
  *     exit code alone: the database is asked how many migrations it has, the
  *     API and the web are fetched, and the diagnostics output is read.
+ *   - **A page that answers is not a page that works.** `GET /` returning 200
+ *     is nginx handing over an `index.html` with an empty div in it, which is
+ *     just as true of an interface that crashes the instant React runs. Beta
+ *     1.0.0 shipped exactly that -- a black screen on every installation --
+ *     past a run of this that said "API and interface both answering". It now
+ *     makes the owner account, signs in through a real headless browser, and
+ *     waits for the agent list to draw.
  *
  * It never touches the registry, the desktop, the Start Menu, or any Docker
  * project but its own. It cannot disturb an installation or a checkout.
@@ -172,6 +179,101 @@ async function get(url: string): Promise<{ status: number; body: string }> {
   }
 }
 
+/**
+ * Sign in and look at the agent list, in a real browser.
+ *
+ * `GET /` returning 200 is nginx handing over an `index.html` with an empty
+ * `<div id="root">` in it. That is true of a working installation and equally
+ * true of one whose interface crashes the moment React runs, which is exactly
+ * what shipped as Beta 1.0.0: a hook below an early return threw during the
+ * second render, React unmounted the whole tree, and every installation showed
+ * a black screen. This gate said "API and interface both answering" while it
+ * did.
+ *
+ * So the check is now the thing a person does on their first minute: make the
+ * owner account, sign in, and see the agent list. It fails on an empty page and
+ * on any uncaught error, because either one is a screen nobody can use.
+ *
+ * Headless Chromium, from the Playwright already pinned for the worker. It
+ * needs no display and no Google Chrome -- unlike a browser session, nothing
+ * here depends on which binary is running, only on whether the JavaScript
+ * survives being executed.
+ */
+async function signInAndLook(label: string, ports: Ports): Promise<void> {
+  const email = 'verify@ai17z.invalid';
+  const password = 'verify-install-password';
+
+  const created = await fetch(`http://localhost:${ports.api}/api/bootstrap/owner`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password, displayName: 'Verify' }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!created.ok) {
+    fail(`${label}: the owner account could not be created`, `${created.status} ${await created.text()}`);
+  }
+
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ headless: true });
+  // Every uncaught error, and every console error, kept with the page rather
+  // than printed -- a failure has to say what broke, and the stack is the only
+  // part of this worth reading.
+  const broke: string[] = [];
+  try {
+    const page = await browser.newPage();
+    page.on('pageerror', (error) => broke.push(`uncaught: ${error.message}`));
+    page.on('console', (message) => {
+      if (message.type() === 'error') broke.push(`console: ${message.text().slice(0, 300)}`);
+    });
+
+    await page.goto(`http://localhost:${ports.web}/`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+
+    // By shape, not by label. A form control's type cannot drift without the
+    // form changing meaning, where an accessible name can be reworded in a
+    // copy edit -- and this failing for a reason that is not a fault costs the
+    // same hour as it not failing at all.
+    await page.locator('input[type="email"]').fill(email);
+    await page.locator('input[type="password"]').fill(password);
+    await page.locator('button[type="submit"]').click();
+
+    // The agent list, by its own words.
+    //
+    // Not `getByRole('heading', { name: 'Your agents' })`: that heading is
+    // animated a word at a time and the words are joined with a non-breaking
+    // space, so its accessible name is `Your agents` and the obvious
+    // selector never matches. Normalising the whole page and looking for the
+    // phrase is both more robust and closer to the question being asked --
+    // did the interface draw itself.
+    await page.waitForFunction(
+      () => /Your\s+agents/.test((document.getElementById('root')?.innerText ?? '').replace(/ /g, ' ')),
+      undefined,
+      { timeout: 30_000 },
+    );
+
+    const rendered = await page.evaluate(() => document.getElementById('root')?.innerText.trim().length ?? 0);
+    if (rendered < 20) {
+      fail(`${label}: the interface signed in and then rendered nothing`, broke.join('
+') || '(no error was logged)');
+    }
+    // React unmounts the tree on a render error, so an empty page and a thrown
+    // error are the same fault seen from two sides. Both are checked, because
+    // an error that leaves something on screen is still a bug that shipped.
+    const uncaught = broke.filter((line) => line.startsWith('uncaught:'));
+    if (uncaught.length > 0) {
+      fail(`${label}: the interface threw while rendering`, uncaught.join('
+'));
+    }
+    say(`${label}: signed in, and the agent list drew itself`);
+  } catch (error) {
+    if (error instanceof Failed) throw error;
+    fail(`${label}: the interface could not be used`, `${(error as Error).message}
+${broke.join('
+')}`);
+  } finally {
+    await browser.close().catch(() => undefined);
+  }
+}
+
 async function migrationsOnDisk(): Promise<number> {
   return (await readdir(join(root, 'migrations'))).filter((f) => f.endsWith('.sql')).length;
 }
@@ -293,6 +395,10 @@ async function attempt(label: string, stage: string): Promise<string> {
     const web = await get(`http://localhost:${ports.web}/`);
     if (web.status !== 200) fail(`${label}: the interface did not answer`, `${web.status} ${web.body}`);
     say(`${label}: API and interface both answering`);
+
+    // Answering is not the same as working. This is the part that would have
+    // caught the black screen.
+    await withTimeout(`${label}: signing in`, 3 * 60_000, signInAndLook(label, ports));
 
     // ---- 4. Start Menu: diagnostics, with no environment -----------------
     const doctor = await shortcut(program, 'doctor-ai17z.ps1');
