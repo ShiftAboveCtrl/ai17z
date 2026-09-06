@@ -365,3 +365,53 @@ describe('nothing waits for a keypress that is not coming', () => {
     expect(launch).toContain('Start-Process $url');
   });
 });
+
+/**
+ * The upgrade case, which is the path where a mistake is worst.
+ *
+ * The program directory is replaced and the data directory is not. An upgrade
+ * that renamed the Docker project, or rewrote the environment file, would come
+ * up against an empty volume -- and an installation that comes back as if it
+ * were new looks exactly like one that lost every agent, memory and credential.
+ *
+ * Proved with a row written before and read after, rather than by counting
+ * tables: a schema can survive while the data behind it does not.
+ */
+describe('upgrading over an installation is checked too', () => {
+  const verify = readFileSync(resolve(root, 'tools/verify-install.mts'), 'utf8');
+
+  it('writes something and reads it back', () => {
+    expect(verify).toContain('verify.marker');
+    expect(verify).toContain('the data did not survive the upgrade');
+  });
+
+  it('checks the master key is still there', () => {
+    // Without it every stored provider credential is unreadable, whether or
+    // not the rows survived.
+    expect(verify).toContain('the upgrade lost the master key');
+  });
+
+  it('checks the Docker project did not move', () => {
+    expect(verify).toContain('the upgrade changed the Docker project');
+    expect(verify).toContain('the project name moved');
+  });
+
+  it('cannot be poisoned by a previous failed run', () => {
+    // The room path is fixed, so the project digest is too, and a failed run
+    // leaves its volume behind. A plain INSERT then aborted the next run on a
+    // duplicate key -- a harness that fails for its own reasons is worse than
+    // no harness, because it teaches you to ignore it.
+    expect(verify).toContain('ON CONFLICT (key) DO UPDATE');
+  });
+
+  it('tears down whether it passed or not', () => {
+    // A failure used to leave a running stack and a native worker behind, and
+    // the next run inherited both and failed on something else entirely.
+    expect(verify).toContain('async function teardown');
+    expect(verify).toMatch(/finally \{\s*\n\s*\/\/ In a finally, because a failure here/);
+  });
+
+  it('kills the native worker, which holds its own log files open', () => {
+    expect(verify).toContain('Stop-Process -Id $_.ProcessId');
+  });
+});
