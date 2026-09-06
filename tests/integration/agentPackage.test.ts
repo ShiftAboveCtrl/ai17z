@@ -20,6 +20,29 @@ import { fixtureBytes } from '../support/imageFixtures';
 installHarness();
 
 /** An agent with enough on it that a round trip has something to prove. */
+/** An agent whose primary model points at a provider with a real key. */
+async function anAgentWithProvider() {
+  const fixture = await createFixture();
+  const apiKey = `sk-travelling-${uniqueSuffix()}`;
+  const label = `Carried ${uniqueSuffix()}`;
+  const credential = await providersRepo.createProvider({
+    ownerId: fixture.ownerId,
+    provider: 'openai',
+    label,
+    apiKey,
+    availableModels: ['gpt-4o'],
+    defaultModel: 'gpt-4o',
+  });
+  await providersRepo.setModelConfig({
+    agentId: fixture.agentId,
+    role: 'primary',
+    providerCredentialId: credential.id,
+    model: 'gpt-4o',
+    parameters: {},
+  });
+  return { ...fixture, apiKey, label, credentialId: credential.id };
+}
+
 async function aFurnishedAgent() {
   const fixture = await createFixture();
   const current = await agentsRepo.getActivePersona(fixture.agentId);
@@ -114,8 +137,17 @@ describe('what a package can never contain', () => {
       };
       walk(parsed);
       for (const banned of NEVER_EXPORTED) {
+        // `credentials` is now a real field: a MOVE can be asked to carry API
+        // keys. Neither of these packages was, so the guarantee is that it is
+        // present and empty -- checked below rather than by its absence.
+        if (banned === 'credentials' || banned === 'credential') continue;
         expect(keys, `${banned} appears as a key in a ${mode} package`).not.toContain(banned);
       }
+      // The guarantee that replaced it, and the stronger one: a package nobody
+      // asked to carry keys carries none, and says so.
+      const pkg = parsed as { credentials: unknown[]; containsCredentials: boolean };
+      expect(pkg.credentials, `a ${mode} package invented credentials`).toEqual([]);
+      expect(pkg.containsCredentials).toBe(false);
     }
   });
 
@@ -370,5 +402,137 @@ describe('across installations', () => {
 
     expect((await agentsRepo.getAgent(agentId))!.name).toBe('A Different Name');
     expect((await agentsRepo.getActivePersona(agentId))!.biography).toContain('short, dry replies');
+  });
+});
+
+/**
+ * Carrying API keys, which is the one thing a package can do that makes the
+ * file itself a secret.
+ *
+ * Moving your own agent to your own machine and then re-typing four keys is a
+ * chore with no security benefit -- the keys were on the first machine and are
+ * going to the second either way. So it is offered, and everything about it is
+ * arranged so nobody does it by accident:
+ *
+ *   - off unless asked for, and refused outright on a SHARE package, which is
+ *     the mode that is meant to be safe to hand to a stranger
+ *   - declared in a field a reader sees before the credentials themselves
+ *   - counted from the document by the inspection, never read from that field
+ *   - named in the filename, because a folder listing is where somebody is
+ *     about to attach it to an email
+ */
+describe('a package that carries API keys', () => {
+  it('carries none unless asked', async () => {
+    const fixture = await anAgentWithProvider();
+    const pkg = await packAgent(fixture.agentId, 'MOVE');
+    expect(pkg.credentials).toEqual([]);
+    expect(pkg.containsCredentials).toBe(false);
+  });
+
+  it('carries the ones its models use when asked', async () => {
+    const fixture = await anAgentWithProvider();
+    const pkg = await packAgent(fixture.agentId, 'MOVE', { includeCredentials: true });
+    expect(pkg.containsCredentials).toBe(true);
+    expect(pkg.credentials).toHaveLength(1);
+    expect(pkg.credentials[0]!.apiKey).toBe(fixture.apiKey);
+    expect(pkg.credentials[0]!.label).toBe(fixture.label);
+  });
+
+  it('refuses on a SHARE package rather than silently dropping them', async () => {
+    // Silently dropping would be worse than refusing: somebody who asked for
+    // their keys and got a file without them finds out at the worst moment.
+    const fixture = await anAgentWithProvider();
+    await expect(packAgent(fixture.agentId, 'SHARE', { includeCredentials: true })).rejects.toThrow(/MOVE/);
+  });
+
+  it('says so in the filename', () => {
+    expect(packageFilename('My Agent', 'MOVE', true)).toContain('SECRET');
+    expect(packageFilename('My Agent', 'MOVE', false)).not.toContain('SECRET');
+  });
+
+  it('is covered by the checksum', async () => {
+    // Adding credentials to what the writer hashes without adding them to what
+    // the reader hashes made every keyed export report itself damaged.
+    const fixture = await anAgentWithProvider();
+    const pkg = await packAgent(fixture.agentId, 'MOVE', { includeCredentials: true });
+    const summary = inspectPackage(JSON.stringify(pkg));
+    expect(summary.checksumOk, 'a sound package reported itself damaged').toBe(true);
+  });
+
+  it('is announced before anybody imports, and counted rather than quoted', async () => {
+    const fixture = await anAgentWithProvider();
+    const pkg = await packAgent(fixture.agentId, 'MOVE', { includeCredentials: true });
+    const summary = inspectPackage(JSON.stringify(pkg));
+    expect(summary.credentials).toBe(1);
+    expect(summary.notes[0], 'the warning is not first').toMatch(/API key/i);
+    expect(summary.notes[0]).toMatch(/password/i);
+  });
+
+  it('does not claim the agent needs keys when it brought them', async () => {
+    const fixture = await anAgentWithProvider();
+    const withKeys = inspectPackage(JSON.stringify(await packAgent(fixture.agentId, 'MOVE', { includeCredentials: true })));
+    expect(withKeys.notes.join(' ')).not.toMatch(/carry no credential/);
+
+    const without = inspectPackage(JSON.stringify(await packAgent(fixture.agentId, 'MOVE')));
+    expect(without.notes.join(' ')).toMatch(/carry no credential/);
+  });
+
+  it('re-seals the key on arrival rather than storing what the file held', async () => {
+    // The file carries it in the clear because it has to cross machines. It
+    // must not stay that way once it lands.
+    const fixture = await anAgentWithProvider();
+    const raw = JSON.stringify(await packAgent(fixture.agentId, 'MOVE', { includeCredentials: true }));
+
+    // A different owner, because that is what "another machine" means here:
+    // importing onto the installation that already has the provider is the
+    // duplicate-label case, which has its own test below.
+    const elsewhere = await createFixture();
+    const result = await unpackAgent({ ownerId: elsewhere.ownerId, raw, createdBy: elsewhere.ownerId, name: 'Imported' });
+    expect(result.imported.credentials).toBe(1);
+
+    const rows = await query<{ id: string; sealed: boolean }>(
+      'select id, sealed_api_key is not null as sealed from provider_credentials order by created_at desc limit 1',
+    );
+    expect(rows[0]!.sealed, 'the key was not sealed on arrival').toBe(true);
+    await expect(providersRepo.getDecryptedApiKey(rows[0]!.id)).resolves.toBe(fixture.apiKey);
+  });
+
+  it('leaves an existing provider of the same name alone, and says so', async () => {
+    // A provider label is unique per owner. Replacing somebody's working
+    // credential with one out of a file is not a decision an import gets to
+    // make, and failing on a database constraint is not an error anybody can
+    // act on.
+    const fixture = await anAgentWithProvider();
+    const raw = JSON.stringify(await packAgent(fixture.agentId, 'MOVE', { includeCredentials: true }));
+
+    const result = await unpackAgent({ ownerId: fixture.ownerId, raw, createdBy: fixture.ownerId, name: 'Second copy' });
+    expect(result.imported.credentials).toBe(0);
+    expect(result.skipped.join(' ')).toMatch(/already here/);
+  });
+
+  it('can be told not to bring them', async () => {
+    const fixture = await anAgentWithProvider();
+    const raw = JSON.stringify(await packAgent(fixture.agentId, 'MOVE', { includeCredentials: true }));
+    const before = (await query<{ n: string }>('select count(*)::text as n from provider_credentials'))[0]!.n;
+
+    const result = await unpackAgent({
+      ownerId: fixture.ownerId,
+      raw,
+      createdBy: fixture.ownerId,
+      name: 'No keys please',
+      includeCredentials: false,
+    });
+    expect(result.imported.credentials).toBe(0);
+    const after = (await query<{ n: string }>('select count(*)::text as n from provider_credentials'))[0]!.n;
+    expect(after).toBe(before);
+  });
+
+  it('refuses a hand-edited package that hides its keys', async () => {
+    // containsCredentials is what a reader checks first, so it is not allowed
+    // to disagree with what the document holds.
+    const fixture = await anAgentWithProvider();
+    const pkg = await packAgent(fixture.agentId, 'MOVE', { includeCredentials: true });
+    const lying = JSON.stringify({ ...pkg, containsCredentials: false });
+    expect(inspectPackage(lying).valid).toBe(false);
   });
 });

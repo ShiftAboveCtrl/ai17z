@@ -35,8 +35,25 @@ import { PortableAgent } from './portable';
  * An agent that inherited a stranger's memories would believe things it was
  * never told.
  *
- * Neither mode carries a credential, a session or a browser profile, in the
- * strongest sense available: the shapes have nowhere to put one.
+ * ## Credentials, which are opt-in and MOVE-only
+ *
+ * Neither mode carries a credential by default, and `SHARE` cannot carry one at
+ * all -- that is what makes it safe to hand to a stranger, and it is enforced
+ * rather than documented: the schema refuses `credentials` unless the mode is
+ * `MOVE`.
+ *
+ * A `MOVE` may include the provider API keys the agent's models refer to,
+ * because moving your own agent to your own machine and then re-typing four
+ * keys is a chore with no security benefit -- the keys were already on the
+ * first machine and are going to the second either way.
+ *
+ * When it does, the file is a secret. It says so in a field nothing has to
+ * infer (`containsCredentials`), the inspection says so before anybody presses
+ * import, and the filename says so too. A package like this must not be
+ * emailed, committed, or put in a shared folder.
+ *
+ * Sessions and browser profiles are still never carried, in either mode. A
+ * signed-in browser is tied to the machine that signed in.
  */
 
 /** Bumped when a change would make an older reader misread a package. */
@@ -104,6 +121,28 @@ export const PortableLearned = z
   .strict();
 export type PortableLearned = z.infer<typeof PortableLearned>;
 
+/**
+ * One provider credential, carried in the clear inside a MOVE package.
+ *
+ * In the clear because the alternative is worse theatre: encrypting it under a
+ * key that also has to travel is not encryption, and encrypting it under the
+ * source machine's master key makes the file useless on the destination, which
+ * is the entire purpose. The protection is that the file is marked, named and
+ * announced as a secret, and that producing one is a deliberate act.
+ *
+ * The label and base URL travel too, so the destination recreates the same
+ * provider rather than a nameless key somebody has to identify.
+ */
+export const PortableCredential = z
+  .object({
+    kind: z.string().min(1).max(40),
+    label: z.string().max(120),
+    baseUrl: z.string().max(500).nullable().default(null),
+    apiKey: z.string().min(1).max(500),
+  })
+  .strict();
+export type PortableCredential = z.infer<typeof PortableCredential>;
+
 export const AgentPackage = z
   .object({
     /** Says what this file is, for anything that opens it without knowing. */
@@ -134,10 +173,33 @@ export const AgentPackage = z
     avatar: PortableAvatar.nullable().default(null),
     /** Present only for MOVE. A SHARE package with this set is refused. */
     learned: PortableLearned.nullable().default(null),
+    /**
+     * Whether this file holds provider API keys.
+     *
+     * A separate boolean rather than "is the array non-empty", so a reader that
+     * has not looked at the credentials still knows to treat the file as a
+     * secret -- and so the answer is in the first few lines rather than at the
+     * end of a long document.
+     */
+    containsCredentials: z.boolean().default(false),
+    /** Present only when the owner asked for them, and only for MOVE. */
+    credentials: z.array(PortableCredential).max(50).default([]),
   })
   // Strict at every level. An unknown field is a refusal rather than something
   // that rides along into an installation nobody inspected.
-  .strict();
+  .strict()
+  // SHARE is the mode that is safe to hand to a stranger, so it is the mode
+  // that cannot carry a key. Checked here rather than remembered by every
+  // caller: a rule enforced by the shape cannot be forgotten by one of them.
+  .refine((pkg) => pkg.mode === 'MOVE' || pkg.credentials.length === 0, {
+    message: 'A SHARE package cannot carry credentials. Export it as MOVE, or without them.',
+    path: ['credentials'],
+  })
+  // And the flag has to tell the truth, in both directions.
+  .refine((pkg) => pkg.containsCredentials === pkg.credentials.length > 0, {
+    message: 'containsCredentials does not match what the package actually holds.',
+    path: ['containsCredentials'],
+  });
 export type AgentPackage = z.infer<typeof AgentPackage>;
 
 /**
@@ -167,6 +229,11 @@ export const AgentPackageSummary = z
       memories: z.number().int(),
     }),
     hasAvatar: z.boolean(),
+    /**
+     * Counted from the parsed document, never read from the file's own flag.
+     * "Does this contain my keys" is exactly the question worth lying about.
+     */
+    credentials: z.number().int().default(0),
     /** Things worth saying out loud before somebody presses import. */
     notes: z.array(z.string()).default([]),
   })
