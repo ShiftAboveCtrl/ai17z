@@ -46,7 +46,14 @@ if not "%EXITCODE%"=="0" (
   echo   AI17Z did not start. The message above says why.
   echo   For a fuller check, use "AI17Z diagnostics" in the Start Menu.
   echo.
-  pause
+  REM Held open so a double-clicked icon does not flash a window and vanish
+  REM with the reason in it.
+  REM
+  REM Not when nobody is there to press a key: `pause` with no console waits
+  REM for ever, and an unattended start that fails then hangs instead of
+  REM failing. AI17Z_NO_BROWSER already means "nobody is watching this", which
+  REM is the same question.
+  if not defined AI17Z_NO_BROWSER if not defined CI pause
 )
 
 endlocal
