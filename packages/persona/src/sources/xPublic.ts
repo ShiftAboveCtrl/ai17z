@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, renameSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { createLogger, envString } from '@xbam/shared';
 import type { CorpusFetchOptions, PersonaSourceAdapter, RawCorpusItem, SourceAvailability } from './contract';
@@ -39,6 +41,41 @@ function commandLine(): { command: string; prefixArgs: string[] } {
 
 const COMMAND = () => commandLine().command;
 
+/**
+ * Where twscrape keeps its own account database.
+ *
+ * It writes `accounts.db` into whatever directory it is run from, and this ran
+ * it from wherever the worker happened to start -- which for an installed copy
+ * is the program directory, the one replaced on every upgrade and emptied by
+ * the uninstaller. A file holding X credentials was being left somewhere that
+ * gets deleted, and turning up in an uninstalled program folder.
+ *
+ * So it is given a directory of its own under the owner's storage, which is
+ * where everything else that has to survive an upgrade already lives. An
+ * existing database is moved there once rather than abandoned: those are
+ * credentials somebody added by hand, and silently starting again with an empty
+ * pool would look exactly like twscrape having broken.
+ */
+function twscrapeHome(): string {
+  const storage = resolve(envString('AI17Z_STORAGE_DIR', './storage'));
+  const home = join(storage, 'twscrape');
+  mkdirSync(home, { recursive: true });
+
+  const legacy = join(process.cwd(), 'accounts.db');
+  const moved = join(home, 'accounts.db');
+  if (existsSync(legacy) && !existsSync(moved)) {
+    try {
+      renameSync(legacy, moved);
+      log.info('moved the twscrape account database out of the program directory', { to: moved });
+    } catch (error) {
+      // Not worth failing a corpus fetch for: twscrape will simply start a new
+      // pool, and the old file is still where it was.
+      log.warn('could not move the twscrape account database', { error: (error as Error).message });
+    }
+  }
+  return home;
+}
+
 interface Invocation {
   stdout: string;
   stderr: string;
@@ -48,6 +85,9 @@ async function invoke(args: string[], timeoutMs = 180_000): Promise<Invocation> 
   const { command, prefixArgs } = commandLine();
   try {
     const { stdout, stderr } = await run(command, [...prefixArgs, ...args], {
+      // Its account database is written into the working directory, so this
+      // decides where those credentials live.
+      cwd: twscrapeHome(),
       timeout: timeoutMs,
       maxBuffer: 64 * 1024 * 1024,
     });
