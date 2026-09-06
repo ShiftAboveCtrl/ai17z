@@ -17,6 +17,14 @@ const ADAPTERS: Record<ProviderKind, ProviderAdapter> = {
   // docs.x.ai. The separate adapter exists for the half that is not shared:
   // search xAI runs on its own side, during the call, with citations.
   xai: xaiAdapter,
+  // Google's OpenAI-compatible endpoint: same Bearer key, same
+  // chat-completions shape, same GET /models. The native
+  // :generateContent API is a different shape and is not used.
+  google: createOpenAiCompatibleAdapter(
+    'google',
+    'https://generativelanguage.googleapis.com/v1beta/openai',
+    'Google Gemini',
+  ),
   openai_compatible: createOpenAiCompatibleAdapter('openai_compatible', '', 'OpenAI-compatible endpoint'),
   anthropic: anthropicAdapter,
   ollama: ollamaAdapter,

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ApiError, del, put } from '@app/lib/api';
+import { ApiError, del, post, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { ModelConfig, ProviderCredential } from '@app/lib/types';
 import { EmptyState, Field, Modal, Spinner } from '@app/components/ui';
+import { RefreshCw } from 'lucide-react';
 import { staleModel } from '@xbam/shared/contracts';
 import { IndexedRow, Section } from './Section';
 
@@ -73,6 +74,12 @@ export function IntelligenceSection({
   const [reasoning, setReasoning] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Typing a model the provider does not list is allowed -- a brand new
+  // release is named before any /models endpoint mentions it -- but it is a
+  // deliberate step rather than the default.
+  const [freeText, setFreeText] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [fetchNote, setFetchNote] = useState<string | null>(null);
 
   const openEditor = (role: (typeof ROLES)[number]['role']) => {
     const existing = models.find((m) => m.role === role);
@@ -85,6 +92,15 @@ export function IntelligenceSection({
     setPriceOut(existing?.parameters.costPer1kCompletionUsd != null ? String(existing.parameters.costPer1kCompletionUsd) : '');
     setReasoning(typeof existing?.parameters.reasoningEffort === 'string' ? existing.parameters.reasoningEffort : '');
     setError(null);
+    setFetchNote(null);
+    // Free text when there is nothing to choose from, or when what is
+    // already saved is not in the list -- otherwise opening the editor would
+    // silently show a different model from the one in use.
+    const credential = providers.data?.items.find(
+      (item) => item.id === (existing?.providerCredentialId ?? providers.data?.items[0]?.id),
+    );
+    const offered = credential?.availableModels ?? [];
+    setFreeText(offered.length === 0 || Boolean(existing?.model && !offered.includes(existing.model)));
     setEditing(role);
   };
 
@@ -109,6 +125,40 @@ export function IntelligenceSection({
       setError(e instanceof ApiError ? e.message : 'That model could not be saved.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * Ask the provider what it offers, now.
+   *
+   * The list is stored on the credential and filled in when the provider is
+   * tested, so a key added and never tested has nothing to choose from -- and
+   * nothing on this screen used to say so, or offer to go and look.
+   */
+  const fetchModels = async () => {
+    if (!providerId) return;
+    setFetching(true);
+    setFetchNote(null);
+    try {
+      const result = await post<{ ok: boolean; detail: string; models: number }>(
+        `/api/providers/${providerId}/test`,
+        {},
+      );
+      await providers.reload();
+      if (result.ok && result.models > 0) {
+        setFetchNote(`${result.models} models offered.`);
+        setFreeText(false);
+      } else {
+        // A provider that answers without a model list is not broken; some
+        // endpoints simply do not have one. Say so rather than looking empty.
+        setFetchNote(result.detail || 'That provider did not return a list of models.');
+        setFreeText(true);
+      }
+    } catch (e) {
+      setFetchNote(e instanceof ApiError ? e.message : 'The provider could not be reached.');
+      setFreeText(true);
+    } finally {
+      setFetching(false);
     }
   };
 
@@ -224,8 +274,25 @@ export function IntelligenceSection({
 
       <Modal open={Boolean(editing)} onClose={() => setEditing(null)} title={ROLES.find((r) => r.role === editing)?.label ?? 'Model'}>
         <div className="space-y-5">
-          <Field label="Provider" htmlFor="mprovider">
-            <select id="mprovider" className="field" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
+          <Field
+            label="Provider"
+            htmlFor="mprovider"
+            hint="These are the keys you have added. AI17Z also supports OpenAI, Claude, Gemini, OpenRouter, xAI and Ollama."
+          >
+            <select
+              id="mprovider"
+              className="field"
+              value={providerId}
+              onChange={(e) => {
+                setProviderId(e.target.value);
+                // A different provider offers different models, so what was
+                // chosen for the last one cannot be carried over.
+                setModel('');
+                setFetchNote(null);
+                const next = providers.data?.items.find((item) => item.id === e.target.value);
+                setFreeText((next?.availableModels.length ?? 0) === 0);
+              }}
+            >
               <option value="">Select a provider</option>
               {providers.data?.items.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -233,14 +300,82 @@ export function IntelligenceSection({
                 </option>
               ))}
             </select>
+            {/*
+              Where the others come from. One key added during setup used to
+              read as "this is the only provider there is", because nothing on
+              this screen mentioned that the list is your keys rather than the
+              catalogue.
+            */}
+            <p className="mt-2 text-xs text-bone-faint">
+              <Link to="/settings#providers" className="underline underline-offset-2 hover:text-bone-dim">
+                Add another provider
+              </Link>{' '}
+              in Settings. Paste a key and AI17Z works out whose it is.
+            </p>
           </Field>
-          <Field label="Model" htmlFor="mmodel" hint={selected?.availableModels.length ? 'Suggestions come from the provider.' : 'Exactly as the provider names it.'}>
-            <input id="mmodel" className="field" list="agent-model-options" value={model} onChange={(e) => setModel(e.target.value)} placeholder={selected?.defaultModel ?? 'model-id'} />
-            <datalist id="agent-model-options">
-              {selected?.availableModels.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
+          {/*
+            A list to choose from when the provider has one, and a box to type in
+            when it does not.
+
+            This was an `<input list=...>`. A datalist is a hint, not a picker:
+            nothing is visible until you click a control most people never find,
+            it offers no way to see what exists, and it never says whether what
+            you typed is real. Choosing a model is the single most consequential
+            thing on this screen -- getting it wrong fails every generation with
+            a message from the provider -- so it is a list.
+          */}
+          <Field
+            label="Model"
+            htmlFor="mmodel"
+            hint={
+              freeText
+                ? 'Exactly as the provider names it.'
+                : `${selected?.availableModels.length ?? 0} offered by ${selected?.label ?? 'this provider'}.`
+            }
+          >
+            {freeText ? (
+              <input
+                id="mmodel"
+                className="field"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder={selected?.defaultModel ?? 'model-id'}
+              />
+            ) : (
+              <select id="mmodel" className="field" value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">Select a model</option>
+                {selected?.availableModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+              <button
+                type="button"
+                className="btn-quiet px-0 text-xs"
+                onClick={() => void fetchModels()}
+                disabled={!providerId || fetching}
+              >
+                {fetching ? <Spinner className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" aria-hidden />}
+                Fetch the list from the provider
+              </button>
+              {/*
+                Always available. A model released this morning is named before
+                any /models endpoint mentions it, and refusing to accept one
+                would make this screen wrong exactly when it matters most.
+              */}
+              <button
+                type="button"
+                className="text-bone-faint underline underline-offset-2 hover:text-bone-dim"
+                onClick={() => setFreeText((on) => !on)}
+              >
+                {freeText ? 'Choose from the list' : 'Type a model name instead'}
+              </button>
+            </div>
+            {fetchNote && <p className="mt-2 break-words text-xs text-bone-faint">{fetchNote}</p>}
           </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Temperature" htmlFor="mtemp">

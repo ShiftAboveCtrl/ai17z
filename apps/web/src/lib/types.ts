@@ -1,3 +1,4 @@
+import type { ProviderKind } from '@xbam/shared/contracts';
 import type {
   Account,
   ActionRecord,
@@ -179,7 +180,14 @@ export interface ChannelInfo {
 }
 
 export interface ProviderKindInfo {
-  kind: string;
+  /**
+   * The kind, not a free string.
+   *
+   * `/api/provider-kinds` returns `adapter.kind` for every registered adapter,
+   * so this is always one of the union -- and typing it as `string` meant
+   * nothing here could be handed to anything that takes a ProviderKind.
+   */
+  kind: ProviderKind;
   defaultBaseUrl: string;
   requiresApiKey: boolean;
 }

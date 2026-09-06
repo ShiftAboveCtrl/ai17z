@@ -19,3 +19,4 @@ export * from './api';
 export * from './diagnostics';
 export * from './portable';
 export * from './portablePackage';
+export * from './providerKeys';

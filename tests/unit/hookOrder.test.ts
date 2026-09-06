@@ -245,3 +245,47 @@ describe('a render error is never a blank screen', () => {
     expect(crash).toContain('window.location.reload()');
   });
 });
+
+/**
+ * An effect that takes focus must not re-run on every render.
+ *
+ * `Modal` focused its dialog at the end of an effect whose dependency list was
+ * `[open, onClose]`. Every caller passes `onClose={() => setThing(null)}` -- a
+ * new function each render -- so the list never compared equal, the effect ran
+ * again after every render, and the render caused by typing a character moved
+ * the caret out of the field and onto the dialog. One character, then click
+ * again. It applied to every form in every modal in the application.
+ *
+ * Measured with the fix in and out, by typing into the model editor and
+ * counting keystrokes that lost the caret: three of three lost with the old
+ * dependency list, none of three with the new one.
+ *
+ * Two rules, because the second is the one that generalises: nothing may call
+ * focus() from an effect that depends on a function prop, and this particular
+ * effect keeps its close handler in a ref.
+ */
+describe('taking focus is a thing you do once', () => {
+  const ui = readFileSync(resolve(webSrc, 'components/ui.tsx'), 'utf8');
+
+  it('focuses the dialog only when it opens', () => {
+    const effect = ui.slice(ui.indexOf('export function Modal'));
+    const deps = effect.match(/\}, \[([^\]]*)\]\);/)?.[1] ?? '';
+    expect(deps.replace(/\s/g, ''), 'the focus effect depends on more than open').toBe('open');
+  });
+
+  it('holds the close handler in a ref instead', () => {
+    // Escape still has to close it, and that must not cost a dependency.
+    expect(ui).toContain('closeRef.current');
+    expect(ui).toMatch(/closeRef\.current = onClose/);
+  });
+
+  it('is the only place in the interface that moves focus', () => {
+    // A second one would have to make the same argument, and would not be
+    // covered by the check above.
+    const callers = tsxFiles(webSrc).filter((file) => {
+      const text = readFileSync(file, 'utf8');
+      return /(?<!\/\/ .*)\.focus\(\)/.test(text.replace(/^\s*\/\/.*$/gm, ''));
+    });
+    expect(callers.map((f) => f.replace(/\\/g, '/').split('/apps/web/src/')[1])).toEqual(['components/ui.tsx']);
+  });
+});

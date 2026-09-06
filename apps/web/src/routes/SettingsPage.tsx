@@ -4,6 +4,7 @@ import { ApiError, del, get, post } from '@app/lib/api';
 import { useElapsed, useResource } from '@app/lib/hooks';
 import { useSession } from '@app/lib/session';
 import type { AccountRow, HealthReportView, ProviderCredential, ProviderKindInfo } from '@app/lib/types';
+import { articleFor, guessProviderFromKey, providerLabel } from '@xbam/shared/contracts';
 import { timeAgo } from '@app/lib/format';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { EmptyState, ErrorPanel, Field, Modal, Spinner, StatusDot } from '@app/components/ui';
@@ -59,6 +60,21 @@ export function SettingsPage() {
   const testElapsed = useElapsed(Boolean(testing));
 
   const selectedKind = kinds.data?.items.find((k) => k.kind === kind);
+
+  // What the pasted key looks like it belongs to.
+  //
+  // A suggestion, never an imposition: it is applied only while the person
+  // has not chosen a provider themselves, and the picker stays exactly as it
+  // was. Prefixes change, private deployments exist, and a wrong guess
+  // nobody can override is worse than no guess at all.
+  const guess = guessProviderFromKey(apiKey);
+  const [kindChosenByHand, setKindChosenByHand] = useState(false);
+  useEffect(() => {
+    if (guess && !kindChosenByHand && guess.kind !== kind) setKind(guess.kind);
+    // Only when the guess changes. Following `kind` here would fight the
+    // person every time they picked something else.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guess?.kind, kindChosenByHand]);
 
   const addProvider = async () => {
     setBusy(true);
@@ -257,11 +273,45 @@ export function SettingsPage() {
 
       <Modal open={adding} onClose={() => setAdding(false)} title="Add a model provider">
         <div className="space-y-5">
-          <Field label="Provider" htmlFor="pkind">
-            <select id="pkind" className="field" value={kind} onChange={(e) => setKind(e.target.value)}>
+          {/*
+            The key first, because it usually answers the question below it.
+          */}
+          <Field
+            label="API key"
+            htmlFor="pkey"
+            hint="Encrypted with your master key before storage, and never returned by the API. Leave blank for Ollama, which needs none."
+          >
+            <input
+              id="pkey"
+              type="password"
+              className="field"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              autoComplete="off"
+              placeholder="sk-..."
+            />
+          </Field>
+          {guess && (
+            <p className="-mt-2 text-xs text-bone-dim">
+              {guess.confidence === 'certain'
+                ? `That is ${articleFor(guess.label)} ${guess.label} key.`
+                : `That looks like ${articleFor(guess.label)} ${guess.label} key.`}{' '}
+              <span className="text-bone-faint">Change it below if it is not.</span>
+            </p>
+          )}
+          <Field label="Provider" htmlFor="pkind" hint="Set from the key where AI17Z can tell. Always yours to change.">
+            <select
+              id="pkind"
+              className="field"
+              value={kind}
+              onChange={(e) => {
+                setKind(e.target.value);
+                setKindChosenByHand(true);
+              }}
+            >
               {kinds.data?.items.map((k) => (
                 <option key={k.kind} value={k.kind}>
-                  {k.kind}
+                  {providerLabel(k.kind)}
                 </option>
               ))}
             </select>
@@ -272,10 +322,10 @@ export function SettingsPage() {
           <Field label="Base URL" htmlFor="pbase" hint={selectedKind ? `Blank uses ${selectedKind.defaultBaseUrl || 'the provider default'}.` : undefined}>
             <input id="pbase" className="field" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={selectedKind?.defaultBaseUrl} />
           </Field>
-          {selectedKind?.requiresApiKey && (
-            <Field label="API key" htmlFor="pkey" hint="Encrypted with your master key before storage, and never returned by the API.">
-              <input id="pkey" type="password" className="field" value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="off" />
-            </Field>
+          {selectedKind && !selectedKind.requiresApiKey && (
+            <p className="text-xs text-bone-faint">
+              {providerLabel(selectedKind.kind)} needs no key. Anything typed above is ignored.
+            </p>
           )}
           {error && <p className="text-sm text-signal-fail">{error}</p>}
           <button type="button" className="btn-primary w-full" onClick={() => void addProvider()} disabled={busy}>
