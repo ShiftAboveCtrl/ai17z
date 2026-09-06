@@ -55,9 +55,9 @@ services:
       # storing a provider API key -- failed with "AI17Z_MASTER_KEY is not set".
       AI17Z_MASTER_KEY: ${AI17Z_MASTER_KEY:-${XBAM_MASTER_KEY:-}}
       # Which release this is. A container has no BUILD_INFO.json and no
-      # repository, and package.json says 0.1.0 through every candidate, so
-      # without this the update check compares 0.1.0 against v0.1.0-rc.4 and
-      # cannot tell which is newer. The launcher reads it off the stamp.
+      # repository, so without this the update check has only whatever
+      # package.json happened to say when the image was built and cannot tell
+      # whether it is newer than the tag. The launcher reads it off the stamp.
       AI17Z_VERSION: ${AI17Z_VERSION:-}
       # Whether this came from the Windows package, which decides whether the
       # update screen offers an installer or `update-ai17z.ps1`. Only the API
@@ -100,9 +100,9 @@ services:
       # storing a provider API key -- failed with "AI17Z_MASTER_KEY is not set".
       AI17Z_MASTER_KEY: ${AI17Z_MASTER_KEY:-${XBAM_MASTER_KEY:-}}
       # Which release this is. A container has no BUILD_INFO.json and no
-      # repository, and package.json says 0.1.0 through every candidate, so
-      # without this the update check compares 0.1.0 against v0.1.0-rc.4 and
-      # cannot tell which is newer. The launcher reads it off the stamp.
+      # repository, so without this the update check has only whatever
+      # package.json happened to say when the image was built and cannot tell
+      # whether it is newer than the tag. The launcher reads it off the stamp.
       AI17Z_VERSION: ${AI17Z_VERSION:-}
       XBAM_STORAGE_DIR: /data/storage
       XBAM_BROWSER_PROFILE_DIR: /data/browser-profiles

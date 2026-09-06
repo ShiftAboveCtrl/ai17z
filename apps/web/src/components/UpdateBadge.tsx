@@ -39,8 +39,8 @@ export function UpdateBadge() {
     <Link
       to="/settings#version"
       className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.14em] text-signal-wait transition-colors hover:text-bone"
-      title={`AI17Z ${state.latest.version} has been released. Nothing updates on its own.`}
-      aria-label={`Version ${state.latest.version} is available`}
+      title={`${state.latest.name} has been released. Nothing updates on its own.`}
+      aria-label={`${state.latest.name} is available`}
     >
       <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden />
       {/*
