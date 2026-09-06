@@ -52,6 +52,7 @@ const PROVIDERS: { kind: ProviderCredential['provider']; label: string; needsKey
   // comes from, and somebody holding a SuperGrok subscription needs to know
   // this is not that.
   { kind: 'xai', label: 'xAI (Grok)', needsKey: true, hint: 'An API key from the xAI console. A SuperGrok subscription is not one.' },
+  { kind: 'google', label: 'Google Gemini', needsKey: true, hint: 'An API key from Google AI Studio.' },
   { kind: 'ollama', label: 'Ollama', needsKey: false, hint: 'Runs on this machine. No key needed.' },
 ];
 

@@ -300,6 +300,7 @@ export const PROVIDER_KINDS = [
   'openrouter',
   'deepseek',
   'xai',
+  'google',
   'ollama',
   'openai_compatible',
   'mock',
