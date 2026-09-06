@@ -5,6 +5,8 @@
  * this is the test for the check that finds them. The marker tells that check
  * the same thing when it reads this file.
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   checkRelease,
@@ -13,6 +15,8 @@ import {
   findPersonalDetails,
   findSecrets,
 } from '../../tools/releaseCheck';
+
+const root = resolve(__dirname, '../..');
 
 const file = (path: string, content: string) => ({ path, content });
 const BACKSPACE = String.fromCharCode(8);
@@ -181,5 +185,52 @@ describe('the whole check', () => {
       ['src/x.ts', '.env'],
     );
     expect(findings.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/**
+ * The release check must not read a binary as source.
+ *
+ * The rule that catches a stray shell escape in source -- a literal control
+ * character -- cannot tell one from an image. Two `.bmp` files for the
+ * installer were committed, read as UTF-8, and produced seventeen findings that
+ * failed the release. `.bmp` was simply not on the extension list.
+ *
+ * It passed locally beforehand for a reason worth recording: the check reads
+ * *tracked* files, and it was run before the new files were staged. So the one
+ * command whose job is to say "safe to publish" was answering about a different
+ * set of files than the one being published.
+ *
+ * Fixed twice over: `.bmp` is on the list, and the bytes are asked directly, so
+ * the next format nobody thought of does not repeat this.
+ */
+describe('the release check knows a binary when it sees one', () => {
+  const source = readFileSync(resolve(root, 'tools/release-check.mts'), 'utf8');
+
+  it('asks the bytes, not only the extension', () => {
+    // An extension list is a promise to have thought of every format, and it
+    // was wrong the first time somebody committed one it did not know.
+    expect(source).toContain('function looksBinary');
+    // A NUL byte in the first few kilobytes is what git uses for the same
+    // question.
+    expect(source).toMatch(/includes\(0\)/);
+  });
+
+  it('skips it before reading it as text', () => {
+    const loop = source.slice(source.indexOf('for (const path of paths)'));
+    expect(loop.indexOf('looksBinary')).toBeLessThan(loop.indexOf("readFileSync(absolute, 'utf8')"));
+  });
+
+  it('still lists the formats it already knew', () => {
+    for (const ext of ['png', 'ico', 'bmp', 'pdf', 'woff2?']) {
+      expect(source, `${ext} is no longer listed`).toContain(ext);
+    }
+  });
+
+  it('reads every binary this repository actually tracks without complaint', () => {
+    // Behaviour, not shape: the files that broke it are in the repository now.
+    for (const art of ['packaging/windows/wizard-small.bmp', 'packaging/windows/wizard-panel.bmp']) {
+      expect(existsSync(resolve(root, art)), `${art} is not committed`).toBe(true);
+    }
   });
 });
