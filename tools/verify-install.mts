@@ -27,7 +27,7 @@
  * It never touches the registry, the desktop, the Start Menu, or any Docker
  * project but its own. It cannot disturb an installation or a checkout.
  *
- * Run: npm run verify:install [-- --twice] [--keep]
+ * Run: npm run verify:install [-- --twice] [--upgrade] [--keep]
  */
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -42,6 +42,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const twice = process.argv.includes('--twice');
 const keep = process.argv.includes('--keep');
+const alsoUpgrade = process.argv.includes('--upgrade');
 
 /** Somewhere no sync client and no existing installation can reach. */
 const ROOM = resolve('C:/ai17z-verify-room');
@@ -116,11 +117,26 @@ async function install(stage: string, program: string, data: string, ports: Port
 
   // Three lines and nothing else, which is what WriteSettings writes and what
   // every launcher after it has to cope with.
-  await writeFile(
-    join(data, '.env'),
-    `AI17Z_WEB_PORT=${ports.web}\r\nAI17Z_API_PORT=${ports.api}\r\nPOSTGRES_PORT=${ports.db}\r\n`,
-    'utf8',
-  );
+  //
+  // And only the keys that are not already there. WriteSettings checks each of
+  // the three and appends the ones missing, so an upgrade leaves the ports,
+  // the master key and the project name exactly as they were. Rewriting the
+  // file here would have made every upgrade look like a fresh install, which
+  // is the one thing an upgrade must never be.
+  const envPath = join(data, '.env');
+  let env = '';
+  try {
+    env = await readFile(envPath, 'utf8');
+  } catch {
+    // No file yet: a first installation.
+  }
+  const has = (key: string) => new RegExp(`^[ \\t]*${key}[ \\t]*=`, 'm').test(env);
+  const additions = [
+    has('AI17Z_WEB_PORT') ? '' : `AI17Z_WEB_PORT=${ports.web}\r\n`,
+    has('AI17Z_API_PORT') ? '' : `AI17Z_API_PORT=${ports.api}\r\n`,
+    has('POSTGRES_PORT') ? '' : `POSTGRES_PORT=${ports.db}\r\n`,
+  ].join('');
+  if (additions) await writeFile(envPath, env + additions, 'utf8');
   await writeFile(join(program, 'data-location.txt'), data, 'utf8');
 }
 
@@ -173,6 +189,47 @@ async function withTimeout<T>(what: string, ms: number, work: Promise<T>): Promi
   }
 }
 
+/**
+ * Start the way a person does: the shim the desktop icon and the Start Menu
+ * both point at, with nothing handed to it.
+ */
+async function start(label: string, program: string, ports: Ports): Promise<string> {
+  say(`${label}: starting through AI17Z.cmd`);
+  const started = await withTimeout(
+    `${label}: AI17Z.cmd never finished`,
+    15 * 60_000,
+    new Promise<{ out: string; code: number }>((done) => {
+      const child = spawn('cmd.exe', ['/c', join(program, 'AI17Z.cmd')], {
+        cwd: program,
+        // AI17Z.cmd sets everything it needs. Nothing is handed to it, because
+        // nothing is handed to it by a shortcut either.
+        env: { ...bareEnvironment(), AI17Z_NO_BROWSER: '1' },
+        // Closed, not inherited. A failing start used to end in `pause`, which
+        // waits for a keypress that is never coming and turns a failure into a
+        // hang -- which is how this harness spent half an hour looking like it
+        // was working.
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      child.stdout.on('data', (d) => (out += String(d)));
+      child.stderr.on('data', (d) => (out += String(d)));
+      // `exit`, not `close`. A successful start leaves the native worker
+      // running, and it outlives cmd.exe holding the same stdout handle -- so
+      // `close`, which waits for every writer to let go, never fires and a
+      // working installation looks like a hang.
+      child.on('exit', (code) => setTimeout(() => done({ out, code: code ?? -1 }), 500));
+    }),
+  );
+
+  if (!/Ready at http:\/\/localhost:/.test(started.out)) {
+    fail(`${label}: the start did not finish`, started.out.split(/\r?\n/).filter(Boolean).slice(-25).join('\n'));
+  }
+  if (!started.out.includes(`localhost:${ports.web}`)) {
+    fail(`${label}: it opened the wrong address`, `expected port ${ports.web}\n${started.out.slice(-400)}`);
+  }
+  return started.out;
+}
+
 async function attempt(label: string, stage: string): Promise<string> {
   const program = join(ROOM, label, 'program');
   const data = join(ROOM, label, 'data');
@@ -204,42 +261,7 @@ async function attempt(label: string, stage: string): Promise<string> {
 
   try {
     // ---- 1. The thing the desktop icon and the Start Menu both point at ----
-    say(`${label}: starting through AI17Z.cmd`);
-    const started = await withTimeout(
-      `${label}: AI17Z.cmd never finished`,
-      15 * 60_000,
-      new Promise<{ out: string; code: number }>((done) => {
-        const child = spawn('cmd.exe', ['/c', join(program, 'AI17Z.cmd')], {
-          cwd: program,
-          // AI17Z.cmd sets everything it needs. Nothing is handed to it,
-          // because nothing is handed to it by a shortcut either.
-          env: { ...bareEnvironment(), AI17Z_NO_BROWSER: '1' },
-          // Closed, not inherited. A failing start used to end in `pause`,
-          // which waits for a keypress that is never coming and turns a
-          // failure into a hang -- which is how this harness spent half an
-          // hour looking like it was working.
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        let out = '';
-        child.stdout.on('data', (d) => (out += String(d)));
-        child.stderr.on('data', (d) => (out += String(d)));
-        // `exit`, not `close`. A successful start leaves the native worker
-        // running, and it outlives cmd.exe holding the same stdout handle -- so
-        // `close`, which waits for every writer to let go, never fires and a
-        // working installation looks like a hang.
-        child.on('exit', (code) => setTimeout(() => done({ out, code: code ?? -1 }), 500));
-      }),
-    );
-
-    if (!/Ready at http:\/\/localhost:/.test(started.out)) {
-      fail(
-        `${label}: the first start did not finish`,
-        started.out.split(/\r?\n/).filter(Boolean).slice(-25).join('\n'),
-      );
-    }
-    if (!started.out.includes(`localhost:${ports.web}`)) {
-      fail(`${label}: it opened the wrong address`, `expected port ${ports.web}\n${started.out.slice(-400)}`);
-    }
+    await start(label, program, ports);
 
     // ---- 2. The database, asked rather than assumed ----------------------
     const expected = await migrationsOnDisk();
@@ -296,13 +318,137 @@ async function attempt(label: string, stage: string): Promise<string> {
   } finally {
     const project = await projectOf();
     if (project) say(`${label}: docker project ${project}`);
-    if (!keep) {
-      if (project) {
-        await run('docker', ['compose', '-p', project, 'down', '-v'], { cwd: program }).catch(() => undefined);
-      }
-      await rm(join(ROOM, label), { recursive: true, force: true }).catch(() => undefined);
-    }
+    await teardown(label);
   }
+}
+
+/**
+ * Installing over an installation that is already there.
+ *
+ * The path where a mistake is worst: the program directory is replaced and the
+ * data directory is not, so an upgrade that renamed the Docker project, or
+ * rewrote the environment file, would come up against an empty volume -- which
+ * looks exactly like losing every agent, memory and credential.
+ *
+ * Proved with a row written before and read after, rather than by counting
+ * tables. A schema can survive while the data behind it does not.
+ */
+async function upgrade(stage: string): Promise<void> {
+  try {
+    await upgradeBody(stage);
+  } finally {
+    // In a finally, because a failure here used to leave a running stack and a
+    // native worker behind -- and since the room path is fixed, the next run
+    // inherited both and failed on something else entirely.
+    await teardown('upgrade');
+  }
+}
+
+/**
+ * Stop and remove whatever a case left, whether it passed or not.
+ *
+ * The project name is read back rather than derived, so this stays right if the
+ * naming rule ever changes.
+ */
+async function teardown(label: string): Promise<void> {
+  if (keep) return;
+  const program = join(ROOM, label, 'program');
+  const data = join(ROOM, label, 'data');
+  try {
+    const text = await readFile(join(data, '.env'), 'utf8');
+    const project = text.match(/^[ \t]*AI17Z_INSTANCE[ \t]*=[ \t]*(\S+)/m)?.[1];
+    if (project) {
+      await run('docker', ['compose', '-p', project, 'down', '-v'], { cwd: program }).catch(() => undefined);
+    }
+  } catch {
+    // No environment file means nothing was ever started.
+  }
+  // The native worker holds its own log files open, so the directory cannot go
+  // until it does.
+  await run('powershell.exe', [
+    '-NoProfile',
+    '-Command',
+    `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${label}\\program*' -and $_.Name -like 'node*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+  ]).catch(() => undefined);
+  await rm(join(ROOM, label), { recursive: true, force: true }).catch(() => undefined);
+}
+
+async function upgradeBody(stage: string): Promise<void> {
+  const label = 'upgrade';
+  const program = join(ROOM, label, 'program');
+  const data = join(ROOM, label, 'data');
+  await rm(join(ROOM, label), { recursive: true, force: true });
+  await mkdir(program, { recursive: true });
+  await mkdir(data, { recursive: true });
+
+  const ports: Ports = { web: await freePort(8500), api: await freePort(8600), db: await freePort(55700) };
+  const marker = `written-before-the-upgrade-${Date.now()}`;
+
+  const projectOf = async (): Promise<string | null> => {
+    try {
+      const text = await readFile(join(data, '.env'), 'utf8');
+      return text.match(/^[ \t]*AI17Z_INSTANCE[ \t]*=[ \t]*(\S+)/m)?.[1] ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const psql = async (sql: string): Promise<string> =>
+    (await compose(program, data, ['exec', '-T', 'postgres', 'psql', '-U', 'xbam', '-d', 'xbam', '-tAc', sql])).trim();
+
+  say(`${label}: installing, starting, and writing something into the database`);
+  await install(stage, program, data, ports);
+  await start(label, program, ports);
+
+  // Overwritten rather than inserted, because a previous *failed* run of this
+  // case leaves its volume behind -- the room path is fixed, so the project
+  // digest is too -- and a stale row would otherwise abort the next run with a
+  // duplicate key. The value carries this run's timestamp, so reading it back
+  // still proves that this run's write is what survived.
+  await psql(
+    `INSERT INTO app_settings (key, value) VALUES ('verify.marker', '"${marker}"') ` +
+      `ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+  );
+  const before = await projectOf();
+  const migrationsBefore = await psql('select count(*) from schema_migrations');
+  await shortcut(program, 'stop-ai17z.ps1');
+
+  say(`${label}: installing again over the top`);
+  // The program directory is replaced on an upgrade and the data directory is
+  // not -- that is the whole property being tested, and it is what the
+  // uninstaller's [UninstallDelete] and the docs both say happens.
+  //
+  // Cleared rather than merged into, for a reason of this harness's own: npm
+  // links every workspace into node_modules, so `node_modules/@xbam/api` is a
+  // symlink to `apps/api`, and copying a tree onto itself follows that link and
+  // recurses into the source. Setup resolves those links when it packs; nothing
+  // here needs to reproduce that to answer the question being asked.
+  await rm(program, { recursive: true, force: true });
+  await mkdir(program, { recursive: true });
+  await install(stage, program, data, ports);
+
+  const envAfter = await readFile(join(data, '.env'), 'utf8');
+  if (!envAfter.includes(`AI17Z_INSTANCE=${before}`)) {
+    fail(`${label}: the upgrade changed the Docker project`, `was ${before}\n${envAfter}`);
+  }
+  if (!/^[ \t]*AI17Z_MASTER_KEY[ \t]*=[ \t]*\S/m.test(envAfter)) {
+    fail(`${label}: the upgrade lost the master key`, 'every stored provider credential would be unreadable');
+  }
+
+  await start(label, program, ports);
+
+  const after = await projectOf();
+  if (after !== before) fail(`${label}: the project name moved`, `${before} -> ${after}`);
+
+  const survived = await psql(`select value->>0 from app_settings where key = 'verify.marker'`);
+  if (!survived.includes(marker)) {
+    fail(`${label}: the data did not survive the upgrade`, `expected ${marker}, database said "${survived}"`);
+  }
+  const migrationsAfter = await psql('select count(*) from schema_migrations');
+  if (migrationsAfter !== migrationsBefore) {
+    fail(`${label}: the migration count changed`, `${migrationsBefore} -> ${migrationsAfter}`);
+  }
+
+  say(`${label}: same project, same database, master key intact`);
 }
 
 async function main(): Promise<void> {
@@ -333,6 +479,9 @@ async function main(): Promise<void> {
   if (projects.length > 1 && new Set(projects).size !== projects.length) {
     fail('two installations share a Docker project', projects.join('\n'));
   }
+
+  // The path where a mistake is worst, and the last one that was untested.
+  if (alsoUpgrade) await upgrade(stage);
 
   if (!keep) await rm(ROOM, { recursive: true, force: true }).catch(() => undefined);
   process.stdout.write('\n  Installed, started, checked and stopped. Nothing else was touched.\n\n');
