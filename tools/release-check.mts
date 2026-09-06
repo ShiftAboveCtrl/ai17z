@@ -11,7 +11,7 @@
  * proves nothing about tomorrow.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkRelease, type FileToCheck } from './releaseCheck';
@@ -25,14 +25,39 @@ const paths = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
 
 /** Anything too big to be source is not read; it is also not what this looks for. */
 const MAX_BYTES = 512 * 1024;
-const BINARY = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|woff2?|ttf|mp4|wasm)$/i;
+const BINARY = /\.(png|jpe?g|gif|webp|bmp|ico|pdf|zip|gz|woff2?|ttf|otf|mp4|wasm|exe|dll)$/i;
+
+/**
+ * Whether a file is binary, asked of the bytes rather than of the name.
+ *
+ * The extension list is a promise to have thought of every format, and it was
+ * wrong the first time somebody committed one it did not know: two `.bmp` files
+ * for the installer were read as UTF-8 and reported seventeen "literal control
+ * character" findings, which failed the release. The rule that catches a stray
+ * shell escape in source cannot tell that from an image.
+ *
+ * A NUL byte in the first few kilobytes is the standard test, and it is what
+ * git itself uses to decide the same question.
+ */
+function looksBinary(absolute: string): boolean {
+  const handle = openSync(absolute, 'r');
+  try {
+    const head = Buffer.alloc(8192);
+    const read = readSync(handle, head, 0, head.length, 0);
+    return head.subarray(0, read).includes(0);
+  } finally {
+    closeSync(handle);
+  }
+}
 
 const files: FileToCheck[] = [];
 for (const path of paths) {
   if (BINARY.test(path)) continue;
   try {
-    if (statSync(join(root, path)).size > MAX_BYTES) continue;
-    files.push({ path, content: readFileSync(join(root, path), 'utf8') });
+    const absolute = join(root, path);
+    if (statSync(absolute).size > MAX_BYTES) continue;
+    if (looksBinary(absolute)) continue;
+    files.push({ path, content: readFileSync(absolute, 'utf8') });
   } catch {
     // A tracked file that cannot be read here is reported by the path rules if
     // it matters, and is not this check's business otherwise.
