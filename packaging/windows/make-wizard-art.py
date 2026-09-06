@@ -23,15 +23,26 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-# The product's own ground and ink.
-INK = (11, 11, 12)
-INK_LIFT = (26, 27, 30)
-EDGE = (146, 152, 161)
+# White ground, black mark.
+#
+# The wizard was themed in the product palette for a while: near-black pages,
+# bone text, silver artwork. It cost more than it bought. A themed edit ignores
+# the background colour it is given but honours the text colour, so the port
+# boxes ended up white with near-white digits; a darkened memo kept its native
+# scrollbar and grew a bright grey gutter; a themed radio drew its caption in
+# the theme colour whatever it was told, so the licence page went dark on dark
+# and had to be removed to stay readable.
+#
+# White is what Windows draws well. The mark carries the identity, and nothing
+# has to be fought for it.
+INK = (255, 255, 255)
+INK_LIFT = (246, 246, 247)
+EDGE = (176, 178, 182)
 SHEEN = [
-    (0.00, (255, 255, 255)),
-    (0.46, (255, 255, 255)),
-    (0.62, (222, 224, 228)),
-    (1.00, (172, 177, 186)),
+    (0.00, (26, 26, 28)),
+    (0.46, (17, 17, 19)),
+    (0.62, (24, 24, 26)),
+    (1.00, (38, 38, 42)),
 ]
 
 # Inno's slots at 100% DPI. Drawn larger and downsampled.
