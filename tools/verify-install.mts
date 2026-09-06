@@ -259,6 +259,10 @@ async function attempt(label: string, stage: string): Promise<string> {
   say(`${label}: web ${ports.web}, api ${ports.api}, database ${ports.db}`);
   await install(stage, program, data, ports);
 
+  // What the installer put there, so anything that appears later is something
+  // running the application wrote.
+  const installed = new Set(await readdir(program));
+
   try {
     // ---- 1. The thing the desktop icon and the Start Menu both point at ----
     await start(label, program, ports);
@@ -314,6 +318,26 @@ async function attempt(label: string, stage: string): Promise<string> {
       fail(`${label}: "Stop AI17Z" left containers running`, after.trim());
     }
     say(`${label}: stop stopped this installation`);
+
+    // ---- 6. Nothing worth keeping was written beside the program ---------
+    //
+    // The program directory is replaced on every upgrade and emptied by the
+    // uninstaller, so anything an installation needs to keep must not be here.
+    // Two things were: the native worker's log and pid, and twscrape's
+    // `accounts.db`, which holds X credentials somebody added by hand. Both
+    // turned up in an uninstalled program folder.
+    //
+    // Compared against what was installed rather than against a list, so
+    // anything new that starts writing here is caught without being named.
+    const stray = (await readdir(program)).filter((name) => !installed.has(name));
+    if (stray.length > 0) {
+      fail(
+        `${label}: running it wrote into the program directory`,
+        `${stray.join(', ')}\nThese are replaced on upgrade and removed on uninstall. They belong under ${data}.`,
+      );
+    }
+    say(`${label}: wrote nothing beside the program`);
+
     return (await projectOf()) ?? fail(`${label}: no Docker project was ever named`, 'AI17Z_INSTANCE is unset');
   } finally {
     const project = await projectOf();

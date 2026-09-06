@@ -246,3 +246,144 @@ describe('one installation cannot adopt another one', () => {
     expect(start).toMatch(/new name means a new, empty database/);
   });
 });
+
+/**
+ * Nothing an installation needs to keep is written beside the program.
+ *
+ * The program directory is replaced on every upgrade and emptied by the
+ * uninstaller. Two things were being written there anyway, and both turned up
+ * in an uninstalled program folder:
+ *
+ *   - `storage/native-worker.log` and `.pid`, so the log somebody was reading
+ *     to find out why their worker died went with the upgrade -- and an open
+ *     handle there was what stopped the directory being removed at all.
+ *   - `accounts.db`, which is twscrape's own account database. It writes it
+ *     into whatever directory it was run from, and it was run from wherever
+ *     the worker happened to start. Those are X credentials somebody added by
+ *     hand.
+ *
+ * Worse than either: `Stop-ForUninstall.ps1` has always looked for the pid
+ * under the *data* directory while the scripts wrote it under the program
+ * directory, so the uninstaller never once found the worker it exists to stop.
+ */
+describe('the program directory holds nothing worth keeping', () => {
+  const read = (name: string) => readFileSync(resolve(root, name), 'utf8');
+
+  it.each(['start-ai17z.ps1', 'stop-ai17z.ps1', 'doctor-ai17z.ps1'])(
+    '%s puts the worker pid beside the data',
+    (name) => {
+      const text = read(name);
+      expect(text, 'still writing under the program directory').not.toMatch(
+        /Join-Path \$PSScriptRoot 'storage\\native-worker/,
+      );
+      // Derived from the environment file, which is the one thing that already
+      // knows which directory this installation keeps its data in.
+      expect(text).toMatch(/Split-Path -Parent \$EnvFile/);
+    },
+  );
+
+  it('all three agree on where it is', () => {
+    // They disagreed for as long as the file existed, which is why nothing
+    // ever found it.
+    const paths = ['start-ai17z.ps1', 'stop-ai17z.ps1', 'doctor-ai17z.ps1'].map((name) =>
+      read(name).includes("Join-Path (Split-Path -Parent $EnvFile) 'storage'"),
+    );
+    expect(paths.every(Boolean), 'one of them derives it differently').toBe(true);
+  });
+
+  it('the uninstaller looks where the data actually is', () => {
+    const stop = read('packaging/windows/Stop-ForUninstall.ps1');
+    // Not %LOCALAPPDATA%\AI17Z, which is only right for somebody who took the
+    // default folder.
+    expect(stop).toContain("'data-location.txt'");
+    expect(stop).not.toMatch(/Join-Path \$env:LOCALAPPDATA 'AI17Z\\storage/);
+  });
+
+  it('twscrape writes its account database under the owner storage', () => {
+    const source = readFileSync(resolve(root, 'packages/persona/src/sources/xPublic.ts'), 'utf8');
+    expect(source).toContain('function twscrapeHome');
+    expect(source).toContain('cwd: twscrapeHome()');
+    expect(source).toContain("envString('AI17Z_STORAGE_DIR'");
+  });
+
+  it('moves an existing account database rather than abandoning it', () => {
+    // Those credentials were added by hand. Silently starting again with an
+    // empty pool looks exactly like twscrape having broken.
+    const source = readFileSync(resolve(root, 'packages/persona/src/sources/xPublic.ts'), 'utf8');
+    expect(source).toContain('renameSync');
+    expect(source).toContain('moved the twscrape account database');
+  });
+});
+
+/**
+ * A relative path in an installed copy resolves against the program directory.
+ *
+ * Which is the one place nothing may be written: it is replaced on every
+ * upgrade and emptied by the uninstaller. The clean-room check now asserts that
+ * running AI17Z adds nothing there, and that one assertion found three separate
+ * bugs, each hidden behind the last:
+ *
+ *   - `supervise-worker.mts` wrote the worker log and its pid under its own
+ *     directory, so the log somebody was told to read to find out why their
+ *     worker died was the first thing an upgrade threw away.
+ *   - The shipped scripts did not export the storage paths, so anything a Start
+ *     Menu shortcut called fell back to a relative default.
+ *   - `doctor-ai17z.ps1` asked the environment file for `XBAM_BROWSER_PROFILE_DIR`
+ *     while the installer writes the `AI17Z_` spelling, fell through to a
+ *     program-directory default, and then created it. `browser-profiles` is
+ *     where a signed-in Chrome session lives.
+ */
+describe('nothing relative resolves against the program directory', () => {
+  const read = (name: string) => readFileSync(resolve(root, name), 'utf8');
+  const shipped = ['start-ai17z.ps1', 'stop-ai17z.ps1', 'update-ai17z.ps1', 'launch-ai17z.ps1', 'doctor-ai17z.ps1'];
+
+  it.each(shipped)('%s exports the data paths a shortcut does not inherit', (name) => {
+    const text = read(name);
+    expect(text, 'no data-path export').toContain('function Set-Ai17zDataPaths');
+    expect(text).toContain('Set-Ai17zDataPaths $');
+    for (const key of ['AI17Z_STORAGE_DIR', 'AI17Z_BROWSER_PROFILE_DIR']) {
+      expect(text, `${key} is not exported`).toContain(`$env:${key}`);
+    }
+  });
+
+  it.each(shipped)('%s leaves a clone alone', (name) => {
+    // In a checkout the data directory *is* the script directory, and the
+    // conventional ./storage layout is what a developer already has.
+    const text = read(name);
+    const block = text.slice(text.indexOf('function Set-Ai17zDataPaths'));
+    expect(block.slice(0, 600)).toContain('-ieq $Root.TrimEnd');
+  });
+
+  it('the supervisor writes its log beside the data', () => {
+    const supervisor = read('scripts/supervise-worker.mts');
+    expect(supervisor).toContain('AI17Z_STORAGE_DIR');
+    expect(supervisor, 'still writing under its own directory').not.toMatch(
+      /join\(root, 'storage', 'native-worker\.log'\)/,
+    );
+  });
+
+  it('the diagnostics ask for both spellings before giving up', () => {
+    // The installer writes AI17Z_BROWSER_PROFILE_DIR; this asked only for the
+    // XBAM_ one, so it always fell through to its fallback.
+    const doctor = read('doctor-ai17z.ps1');
+    expect(doctor).toContain("Get-EnvValue 'AI17Z_BROWSER_PROFILE_DIR'");
+    expect(doctor).toContain("Get-EnvValue 'XBAM_BROWSER_PROFILE_DIR'");
+  });
+
+  it('the diagnostics resolve a relative profile path against the data', () => {
+    const doctor = read('doctor-ai17z.ps1');
+    expect(doctor).toContain('IsPathRooted');
+    expect(doctor).toContain('$dataRoot');
+    expect(doctor, 'still falls back to the program directory').not.toMatch(
+      /\$profileRoot = Join-Path \$PSScriptRoot 'storage/,
+    );
+  });
+
+  it('the clean room asserts the property, not the three instances', () => {
+    // Named instances would have missed the next one. This compares against
+    // what the installer put there.
+    const verify = readFileSync(resolve(root, 'tools/verify-install.mts'), 'utf8');
+    expect(verify).toContain('running it wrote into the program directory');
+    expect(verify).toContain('const installed = new Set(await readdir(program))');
+  });
+});

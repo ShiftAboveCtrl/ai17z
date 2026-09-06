@@ -37,7 +37,19 @@ function Stop-Tree([int] $ProcessId) {
 }
 
 # -- The native worker, which is what holds files under the program directory --
-$pidFile = Join-Path $env:LOCALAPPDATA 'AI17Z\storage\native-worker.pid'
+#
+# Found through data-location.txt rather than assumed to be under
+# %LOCALAPPDATA%\AI17Z. Somebody who chose their own data folder had this
+# looking in a directory that does not exist, so the uninstaller never stopped
+# the one process actually holding files open -- which is the whole reason this
+# script exists.
+$dataDir = Join-Path $env:LOCALAPPDATA 'AI17Z'
+$pointer = Join-Path $root 'data-location.txt'
+if (Test-Path $pointer) {
+  $chosen = (Get-Content $pointer -First 1).Trim()
+  if ($chosen) { $dataDir = $chosen }
+}
+$pidFile = Join-Path $dataDir 'storage\native-worker.pid'
 if (Test-Path $pidFile) {
   $recorded = (Get-Content $pidFile -Raw).Trim()
   if ($recorded -match '^\d+$') { Stop-Tree ([int] $recorded) }

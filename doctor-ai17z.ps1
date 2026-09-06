@@ -55,7 +55,31 @@ function Resolve-Ai17zEnvFile($Root) {
   return (Join-Path $Root '.env')
 }
 
+# The paths AI17Z.cmd exports, for the scripts a shortcut runs directly.
+#
+# The Start Menu runs "AI17Z diagnostics" and "Stop AI17Z" through powershell.exe
+# with a script path, so they inherit none of them -- and anything they call
+# then falls back to a relative default that resolves against the program
+# directory. The diagnostics did exactly that: its browser check created
+# storage\browser-profiles beside the program, in the directory an upgrade
+# replaces and the uninstaller empties. A signed-in browser profile written
+# there would be lost on the next upgrade.
+#
+# Only for an installed copy, and only where nothing is set already: in a clone
+# the data directory *is* the script directory, and the conventional ./storage
+# layout is what a developer already has.
+function Set-Ai17zDataPaths($EnvFile, $Root) {
+  $dataDir = Split-Path -Parent $EnvFile
+  if (-not $dataDir) { return }
+  if ($dataDir.TrimEnd('\') -ieq $Root.TrimEnd('\')) { return }
+  if (-not $env:AI17Z_STORAGE_DIR) { $env:AI17Z_STORAGE_DIR = Join-Path $dataDir 'storage' }
+  if (-not $env:XBAM_STORAGE_DIR) { $env:XBAM_STORAGE_DIR = $env:AI17Z_STORAGE_DIR }
+  if (-not $env:AI17Z_BROWSER_PROFILE_DIR) { $env:AI17Z_BROWSER_PROFILE_DIR = Join-Path $dataDir 'browser-profiles' }
+  if (-not $env:XBAM_BROWSER_PROFILE_DIR) { $env:XBAM_BROWSER_PROFILE_DIR = $env:AI17Z_BROWSER_PROFILE_DIR }
+}
+
 $EnvFile = Resolve-Ai17zEnvFile $PSScriptRoot
+Set-Ai17zDataPaths $EnvFile $PSScriptRoot
 
 function Get-EnvValue($Key) {
   if (-not (Test-Path $EnvFile)) { return $null }
@@ -164,7 +188,7 @@ if (Test-Endpoint "http://localhost:$webPort") {
 # -- Native worker -----------------------------------------------------------
 # Looked for the same way the start script decides, or the two disagree in
 # front of somebody trying to work out whether their installation is healthy.
-$workerPidFile = Join-Path $PSScriptRoot 'storage\native-worker.pid'
+$workerPidFile = Join-Path (Join-Path (Split-Path -Parent $EnvFile) 'storage') 'native-worker.pid'
 $workerAlive = $false
 if (Test-Path $workerPidFile) {
   $wpid = (Get-Content $workerPidFile | Select-Object -First 1).Trim()
@@ -208,8 +232,28 @@ if ($chrome) {
 }
 
 # -- Storage -----------------------------------------------------------------
-$profileRoot = Get-EnvValue 'XBAM_BROWSER_PROFILE_DIR'
-if (-not $profileRoot) { $profileRoot = Join-Path $PSScriptRoot 'storage\browser-profiles' }
+#
+# The process environment first. AI17Z.cmd exports this, and Set-Ai17zDataPaths
+# above exports it for a shortcut that never went through AI17Z.cmd -- which is
+# how the Start Menu runs this script.
+#
+# Three things were wrong with reading it from the file instead. It asked only
+# for the XBAM_ spelling while the installer writes the AI17Z_ one, so it always
+# fell through. The fallback was the program directory. And the template's value
+# is *relative*, so resolving it against this script pointed there too. The
+# result: every run of the diagnostics created storage\browser-profiles beside
+# the program -- the directory an upgrade replaces and the uninstaller empties,
+# which is the last place a signed-in browser profile should live.
+$dataRoot = Split-Path -Parent $EnvFile
+$profileRoot = $env:AI17Z_BROWSER_PROFILE_DIR
+if (-not $profileRoot) { $profileRoot = $env:XBAM_BROWSER_PROFILE_DIR }
+if (-not $profileRoot) { $profileRoot = Get-EnvValue 'AI17Z_BROWSER_PROFILE_DIR' }
+if (-not $profileRoot) { $profileRoot = Get-EnvValue 'XBAM_BROWSER_PROFILE_DIR' }
+if (-not $profileRoot) { $profileRoot = 'storage\browser-profiles' }
+# A relative path belongs to the data directory, never to this script.
+if (-not [System.IO.Path]::IsPathRooted($profileRoot)) {
+  $profileRoot = Join-Path $dataRoot ($profileRoot -replace '^\.[\\/]', '')
+}
 try {
   New-Item -ItemType Directory -Force -Path $profileRoot | Out-Null
   $probe = Join-Path $profileRoot '.doctor-write-probe'

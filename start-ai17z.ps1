@@ -28,9 +28,6 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
 
-$WorkerLog = Join-Path $PSScriptRoot 'storage\native-worker.log'
-$PidFile   = Join-Path $PSScriptRoot 'storage\native-worker.pid'
-
 # Where the environment file lives.
 #
 # An installed AI17Z keeps it with the owner's data, because the program
@@ -54,7 +51,49 @@ function Resolve-Ai17zEnvFile($Root) {
   return (Join-Path $Root '.env')
 }
 
+# The paths AI17Z.cmd exports, for the scripts a shortcut runs directly.
+#
+# The Start Menu runs "AI17Z diagnostics" and "Stop AI17Z" through powershell.exe
+# with a script path, so they inherit none of them -- and anything they call
+# then falls back to a relative default that resolves against the program
+# directory. The diagnostics did exactly that: its browser check created
+# storage\browser-profiles beside the program, in the directory an upgrade
+# replaces and the uninstaller empties. A signed-in browser profile written
+# there would be lost on the next upgrade.
+#
+# Only for an installed copy, and only where nothing is set already: in a clone
+# the data directory *is* the script directory, and the conventional ./storage
+# layout is what a developer already has.
+function Set-Ai17zDataPaths($EnvFile, $Root) {
+  $dataDir = Split-Path -Parent $EnvFile
+  if (-not $dataDir) { return }
+  if ($dataDir.TrimEnd('\') -ieq $Root.TrimEnd('\')) { return }
+  if (-not $env:AI17Z_STORAGE_DIR) { $env:AI17Z_STORAGE_DIR = Join-Path $dataDir 'storage' }
+  if (-not $env:XBAM_STORAGE_DIR) { $env:XBAM_STORAGE_DIR = $env:AI17Z_STORAGE_DIR }
+  if (-not $env:AI17Z_BROWSER_PROFILE_DIR) { $env:AI17Z_BROWSER_PROFILE_DIR = Join-Path $dataDir 'browser-profiles' }
+  if (-not $env:XBAM_BROWSER_PROFILE_DIR) { $env:XBAM_BROWSER_PROFILE_DIR = $env:AI17Z_BROWSER_PROFILE_DIR }
+}
+
 $EnvFile = Resolve-Ai17zEnvFile $PSScriptRoot
+Set-Ai17zDataPaths $EnvFile $PSScriptRoot
+
+# The native worker's log and pid, beside the owner's data rather than beside
+# the program.
+#
+# They were under the program directory, which is replaced on every upgrade and
+# emptied by the uninstaller -- so the log somebody was reading to find out why
+# their worker died went with it, and a file left open there was what stopped
+# the directory being removed at all.
+#
+# Worse, `Stop-ForUninstall.ps1` has always looked for the pid under the *data*
+# directory. The two never agreed, so an uninstall never once found the worker
+# it was trying to stop.
+#
+# Derived from the environment file, which is already the one thing that knows
+# which of the two directories this installation keeps its data in.
+$StorageDir = Join-Path (Split-Path -Parent $EnvFile) 'storage'
+$WorkerLog = Join-Path $StorageDir 'native-worker.log'
+$PidFile   = Join-Path $StorageDir 'native-worker.pid'
 
 # docker compose reads .env from the compose file's directory unless told
 # otherwise, so every compose call has to carry this. Without it the containers

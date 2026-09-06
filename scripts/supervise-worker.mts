@@ -20,17 +20,35 @@
  */
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostname } from 'node:os';
 import { decideRestart, heartbeatIsStale, loadEnv, type RunOutcome } from '@xbam/shared';
 import { workers as workersRepo, WORKER_PRESENT_SECONDS } from '@xbam/database';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const logPath = join(root, 'storage', 'native-worker.log');
-const pidPath = join(root, 'storage', 'supervisor.pid');
 
-mkdirSync(join(root, 'storage'), { recursive: true });
+/**
+ * Where the log and the pid go: beside the owner's data, not beside the program.
+ *
+ * This wrote them under its own directory, which for an installed copy is the
+ * program directory -- replaced on every upgrade and emptied by the
+ * uninstaller. So the log somebody was told to read to find out why their
+ * worker died was the first thing an upgrade threw away, and an open handle to
+ * it was what stopped the directory being removed at all.
+ *
+ * `AI17Z_STORAGE_DIR` is set by AI17Z.cmd from the data directory the owner
+ * chose. A clone has neither, and `./storage` beside the script is what a
+ * developer expects.
+ *
+ * The launcher fixed its own copy of this; the supervisor had a second one, and
+ * a directory that reappeared after the first fix is how it was found.
+ */
+const storageDir = resolve(process.env.AI17Z_STORAGE_DIR ?? process.env.XBAM_STORAGE_DIR ?? join(root, 'storage'));
+const logPath = join(storageDir, 'native-worker.log');
+const pidPath = join(storageDir, 'supervisor.pid');
+
+mkdirSync(storageDir, { recursive: true });
 writeFileSync(pidPath, String(process.pid), 'utf8');
 
 /** One line, to the console and to the log the start script tells people about. */

@@ -41,12 +41,36 @@ function Resolve-Ai17zEnvFile($Root) {
   return (Join-Path $Root '.env')
 }
 
+# The paths AI17Z.cmd exports, for the scripts a shortcut runs directly.
+#
+# The Start Menu runs "AI17Z diagnostics" and "Stop AI17Z" through powershell.exe
+# with a script path, so they inherit none of them -- and anything they call
+# then falls back to a relative default that resolves against the program
+# directory. The diagnostics did exactly that: its browser check created
+# storage\browser-profiles beside the program, in the directory an upgrade
+# replaces and the uninstaller empties. A signed-in browser profile written
+# there would be lost on the next upgrade.
+#
+# Only for an installed copy, and only where nothing is set already: in a clone
+# the data directory *is* the script directory, and the conventional ./storage
+# layout is what a developer already has.
+function Set-Ai17zDataPaths($EnvFile, $Root) {
+  $dataDir = Split-Path -Parent $EnvFile
+  if (-not $dataDir) { return }
+  if ($dataDir.TrimEnd('\') -ieq $Root.TrimEnd('\')) { return }
+  if (-not $env:AI17Z_STORAGE_DIR) { $env:AI17Z_STORAGE_DIR = Join-Path $dataDir 'storage' }
+  if (-not $env:XBAM_STORAGE_DIR) { $env:XBAM_STORAGE_DIR = $env:AI17Z_STORAGE_DIR }
+  if (-not $env:AI17Z_BROWSER_PROFILE_DIR) { $env:AI17Z_BROWSER_PROFILE_DIR = Join-Path $dataDir 'browser-profiles' }
+  if (-not $env:XBAM_BROWSER_PROFILE_DIR) { $env:XBAM_BROWSER_PROFILE_DIR = $env:AI17Z_BROWSER_PROFILE_DIR }
+}
+
 # Read from the owner's environment file, not from a .env beside this script.
 # An installed copy has none here, so every lookup fell through to its default
 # and this opened http://localhost:8080 for somebody who had chosen 8092 -- the
 # one screen the whole installation exists to reach.
 function Get-EnvValue($Name, $Fallback) {
   $envFile = Resolve-Ai17zEnvFile $PSScriptRoot
+  Set-Ai17zDataPaths $envFile $PSScriptRoot
   if (Test-Path $envFile) {
     foreach ($line in Get-Content $envFile) {
       if ($line -match "^\s*$Name\s*=\s*(.+?)\s*$") { return $matches[1] }
