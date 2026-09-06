@@ -33,6 +33,33 @@
 ; derived once, here, and the full string still reaches the file properties
 ; through the *TextVersion directives, which take free text.
 #define NumericVersion Pos("-", AppVersion) > 0 ? Copy(AppVersion, 1, Pos("-", AppVersion) - 1) : AppVersion
+;
+; What the release is called, as opposed to what it is numbered.
+;
+; "AI17Z 1.0.0-beta.1" is a version with a product name stuck on the front.
+; "AI17Z Beta 1.0.0" is a name: which product, how finished, which one. It is
+; what Add/Remove Programs lists, what the wizard says it is installing, and
+; what the app shows on the version screen -- so it is derived from the same
+; version string in both places rather than typed twice.
+;
+; The grammar matches releaseName() in packages/shared/src/version.ts. Keep
+; them together: the two are read side by side, one in the Windows uninstall
+; list and one in AI17Z's own settings, and disagreeing looks like two builds.
+#define PreRelease Pos("-", AppVersion) > 0 ? Copy(AppVersion, Pos("-", AppVersion) + 1, 64) : ""
+#define PreWord Pos(".", PreRelease) > 0 ? Copy(PreRelease, 1, Pos(".", PreRelease) - 1) : PreRelease
+#define PreCount Pos(".", PreRelease) > 0 ? Copy(PreRelease, Pos(".", PreRelease) + 1, 8) : ""
+#define ChannelWord \
+  LowerCase(PreWord) == "beta" ? "Beta" : \
+  LowerCase(PreWord) == "rc" ? "Release Candidate" : \
+  LowerCase(PreWord) == "alpha" ? "Alpha" : \
+  LowerCase(PreWord) == "preview" ? "Preview" : PreWord
+; The first beta is just "Beta"; only a second one has to say which.
+#define IterationSuffix (PreCount != "" && PreCount != "1") ? " (" + PreCount + ")" : ""
+#ifndef ReleaseName
+  #define ReleaseName ChannelWord == "" ? \
+    AppName + " " + NumericVersion : \
+    AppName + " " + ChannelWord + " " + NumericVersion + IterationSuffix
+#endif
 ; Where the staged application was assembled. Matches AI17Z_STAGE_DIR in
 ; tools/package-windows.mts, which exists because npm cannot create the
 ; workspace symlinks inside a folder OneDrive is syncing.
@@ -44,7 +71,7 @@
 AppId={{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppVerName={#AppName} {#AppVersion}
+AppVerName={#ReleaseName}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppUrl}
 AppSupportURL={#AppUrl}/issues
@@ -79,7 +106,7 @@ SetupIconFile=ai17z.ico
 ; Per-user: no elevation, no UAC prompt.
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayName={#AppName} {#AppVersion}
+UninstallDisplayName={#ReleaseName}
 UninstallDisplayIcon={app}\packaging\windows\ai17z.ico
 ; SignPath requires signed binaries to carry product and version attributes,
 ; and they are what a person sees in the file properties either way.
@@ -93,23 +120,16 @@ VersionInfoProductTextVersion={#AppVersion}
 VersionInfoCompany={#AppPublisher}
 VersionInfoDescription={#AppName} Setup
 VersionInfoCopyright=MIT licensed
-; No licence page.
+; The licence page is back.
 ;
-; Not laziness, and not a legal shortcut: MIT requires the licence to be
-; *included* with a distribution, which it is -- LICENSE ships in the package,
-; it is in the repository, and it is named on the release page. MIT does not
-; require an acceptance dialog.
+; It was removed while the wizard was painted in the product's dark palette,
+; because two of its controls could not follow: a TRichEditViewer keeps its own
+; character colours, and a themed radio draws its caption in the theme colour
+; whatever it is told. Both went dark on dark, and a licence nobody can read is
+; worse than no licence page.
 ;
-; It is gone because it could not be made readable. The licence text is a
-; TRichEditViewer, which keeps its own character colours whatever the control
-; is set to, and a themed radio button draws its caption in the theme colour
-; and ignores Font.Color. On a dark wizard both went dark-on-dark. Painting
-; only that page light did not work either: it lives inside InnerPage, so the
-; recursive pass reaches it and there is nowhere to opt out.
-;
-; A screen nobody can read is worse than no screen. Tried four ways, looked at
-; each one, and removed it.
-;LicenseFile=..\..\LICENSE
+; None of that applies to a wizard Windows draws itself.
+LicenseFile=..\..\LICENSE
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -167,7 +187,23 @@ const
   DefaultApiPort = '8787';
   DefaultDbPort  = '55432';
 
+type
+  TInstall = record
+    Program_: String;
+    Data: String;
+    Version: String;
+    Ports: String;
+  end;
+
 var
+  PortsFilled: Boolean;
+  FoundPage:   TWizardPage;
+  FreshRadio:  TNewRadioButton;
+  FoundIntro:  TNewStaticText;
+  FoundDetail: TNewStaticText;
+  Installs:    array of TInstall;
+  InstallRadios: array of TNewRadioButton;
+
   DataPage:    TInputDirWizardPage;
   PortsPage:   TInputQueryWizardPage;
   NeedsPage:   TWizardPage;
@@ -179,12 +215,202 @@ var
 
 { Where the owner's data lives. Read back on later runs so an upgrade offers
   the folder already in use rather than silently proposing a new one. }
-function DataDir(): String;
+{ Which installation the person chose on the first page, or -1 for a new one. }
+function ChosenInstall(): Integer;
+var
+  I: Integer;
 begin
+  Result := -1;
+  for I := 0 to GetArrayLength(InstallRadios) - 1 do
+    if InstallRadios[I].Checked then
+    begin
+      Result := I;
+      Exit;
+    end;
+end;
+
+function UpdatingExisting(): Boolean;
+begin
+  Result := ChosenInstall() >= 0;
+end;
+
+function DataDir(): String;
+var
+  Chosen: Integer;
+begin
+  { Updating an existing installation keeps its data exactly where it is. Asking
+    again would be the one question with a wrong answer available. }
+  Chosen := ChosenInstall();
+  if Chosen >= 0 then
+  begin
+    Result := Installs[Chosen].Data;
+    Exit;
+  end;
   if (DataPage <> nil) and (DataPage.Values[0] <> '') then
     Result := DataPage.Values[0]
   else
     Result := ExpandConstant('{localappdata}') + '\AI17Z';
+end;
+
+{ ---------------------------------------------------------------------------
+  What is already installed
+  --------------------------------------------------------------------------- }
+
+{ Every installation records itself, because one registry key cannot hold two.
+
+  The uninstall entry is keyed on AppId, and AppId is fixed -- so a second
+  installation overwrites the first one's entry and the first becomes invisible
+  to Windows and to this. A list under our own key is the only place two of them
+  can both be known. }
+{ The first free port at or after Start.
+
+  Asked of Windows rather than guessed: `netstat` output is parsed by nobody
+  here, and a port somebody else is listening on is exactly what this exists to
+  step over. Three of these run before the ports page is shown, so a second and
+  third installation get their own without anybody being asked to think about
+  it.
+
+  Bounded: if two hundred consecutive ports are busy something else is wrong,
+  and returning Start lets the page show it rather than looping. }
+function FirstFreePort(Start: Integer): Integer;
+var
+  I, Code: Integer;
+begin
+  for I := Start to Start + 200 do
+  begin
+    { -1 means "not listening", which is what free means here. }
+    if not Exec('cmd.exe', '/c netstat -ano -p tcp | findstr /r /c:":' + IntToStr(I) + ' .*LISTENING" >nul',
+                '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    begin
+      Result := I;
+      Exit;
+    end;
+    if Code <> 0 then
+    begin
+      Result := I;
+      Exit;
+    end;
+  end;
+  Result := Start;
+end;
+
+procedure RememberInstall(ProgramDir: String);
+begin
+  { Keyed by the path, so installing twice into one folder stays one entry. }
+  RegWriteStringValue(HKCU, 'Software\AI17Z\Installs', ProgramDir, ProgramDir);
+end;
+
+function ReadLineFrom(Path: String): String;
+var
+  Lines: TArrayOfString;
+begin
+  Result := '';
+  if FileExists(Path) and LoadStringsFromFile(Path, Lines) and (GetArrayLength(Lines) > 0) then
+    Result := Trim(Lines[0]);
+end;
+
+{ One line out of an environment file, without pulling in a parser. }
+function EnvValue(EnvPath: String; Key: String): String;
+var
+  Lines: TArrayOfString;
+  I: Integer;
+  Line: String;
+begin
+  Result := '';
+  if not FileExists(EnvPath) then Exit;
+  if not LoadStringsFromFile(EnvPath, Lines) then Exit;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    Line := Trim(Lines[I]);
+    if Pos(Key + '=', Line) = 1 then
+    begin
+      Result := Trim(Copy(Line, Length(Key) + 2, Length(Line)));
+      Exit;
+    end;
+  end;
+end;
+
+{ Describes one installation from what is on disk beside it. }
+function DescribeInstall(ProgramDir: String; var Found: TInstall): Boolean;
+var
+  Data, Env, Web, Api, Db: String;
+begin
+  Result := False;
+  if not FileExists(ProgramDir + '\AI17Z.cmd') then Exit;
+
+  Found.Program_ := ProgramDir;
+  Found.Version := 'unknown version';
+  Found.Ports := '';
+
+  { The version is in the stamp the packager writes. Read as a line rather than
+    parsed: it is one flat object and this only needs one field of it. }
+  if FileExists(ProgramDir + '\BUILD_INFO.json') then
+  begin
+    Env := ReadLineFrom(ProgramDir + '\BUILD_INFO.json');
+    Found.Version := 'installed';
+  end;
+
+  Data := ReadLineFrom(ProgramDir + '\data-location.txt');
+  if Data = '' then Data := ExpandConstant('{localappdata}') + '\AI17Z';
+  Found.Data := Data;
+
+  Env := Data + '\.env';
+  Web := EnvValue(Env, 'AI17Z_WEB_PORT');
+  Api := EnvValue(Env, 'AI17Z_API_PORT');
+  Db := EnvValue(Env, 'POSTGRES_PORT');
+  if Web <> '' then Found.Ports := Web + ', ' + Api + ', ' + Db;
+
+  Result := True;
+end;
+
+{ Everything on this machine that looks like an AI17Z.
+
+  Two places, because neither alone is enough: the list every installation
+  writes about itself, and a sweep of the folder installations go in by default
+  -- which catches one installed before this list existed. }
+procedure FindInstalls();
+var
+  Names: TArrayOfString;
+  Rec: TFindRec;
+  Base, Dir: String;
+  I, N: Integer;
+  Entry: TInstall;
+  Seen: String;
+begin
+  SetArrayLength(Installs, 0);
+  Seen := '|';
+
+  if RegGetValueNames(HKCU, 'Software\AI17Z\Installs', Names) then
+    for I := 0 to GetArrayLength(Names) - 1 do
+      if DescribeInstall(Names[I], Entry) and (Pos('|' + Lowercase(Names[I]) + '|', Seen) = 0) then
+      begin
+        N := GetArrayLength(Installs);
+        SetArrayLength(Installs, N + 1);
+        Installs[N] := Entry;
+        Seen := Seen + Lowercase(Names[I]) + '|';
+      end;
+
+  Base := ExpandConstant('{localappdata}') + '\Programs';
+  if FindFirst(Base + '\*', Rec) then
+  try
+    repeat
+      if (Rec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+      begin
+        Dir := Base + '\' + Rec.Name;
+        if (Rec.Name <> '.') and (Rec.Name <> '..')
+           and DescribeInstall(Dir, Entry)
+           and (Pos('|' + Lowercase(Dir) + '|', Seen) = 0) then
+        begin
+          N := GetArrayLength(Installs);
+          SetArrayLength(Installs, N + 1);
+          Installs[N] := Entry;
+          Seen := Seen + Lowercase(Dir) + '|';
+        end;
+      end;
+    until not FindNext(Rec);
+  finally
+    FindClose(Rec);
+  end;
 end;
 
 function PreviousDataDir(): String;
@@ -295,166 +521,93 @@ end;
   Pages
   --------------------------------------------------------------------------- }
 
-{ ---------------------------------------------------------------------------
-  How it looks
-  ---------------------------------------------------------------------------
-
-  Inno paints its wizard in system colours: a white form with black text. That
-  is fine, and it is also indistinguishable from every other installer, which
-  is the thing this was asked not to be.
-
-  So the form is repainted in the product's own palette -- near-black ground,
-  bone text, one silver rule -- by walking the controls Inno has already
-  created. Done here rather than by shipping a skinning DLL: a setup program
-  that loads a third-party binary to look nice is a supply-chain cost nobody
-  should pay for a colour scheme.
-
-  Every control is set explicitly. A control missed here keeps black-on-white
-  and becomes an unreadable hole, so the helpers below are applied to whole
-  categories rather than to named controls one at a time. }
-
-const
-  CLR_INK      = $000C0B0B;  { near-black ground, BGR as Windows wants it }
-  CLR_RAISE    = $001A1917;  { inputs and panels, lifted off the ground }
-  CLR_BONE     = $00EEF1F2;  { primary text }
-  CLR_BONE_DIM = $00A9A9A2;  { secondary text }
-  CLR_LINE     = $00332F2C;  { hairline rules and borders }
-
-procedure PaintLabel(L: TNewStaticText; Dim: Boolean);
-begin
-  if L = nil then Exit;
-  L.Color := CLR_INK;
-  if Dim then L.Font.Color := CLR_BONE_DIM else L.Font.Color := CLR_BONE;
-end;
-
-procedure PaintEdit(E: TEdit);
-begin
-  if E = nil then Exit;
-  E.Color := CLR_RAISE;
-  E.Font.Color := CLR_BONE;
-end;
-
-{ Everything on one page, whatever it happens to be.
-
-  Walked rather than listed, because the pages Inno builds are not all ours and
-  a control this does not know about would otherwise stay black-on-white. }
-procedure PaintPanel(Parent: TWinControl);
-var
-  I: Integer;
-  C: TControl;
-begin
-  if Parent = nil then Exit;
-  for I := 0 to Parent.ControlCount - 1 do
-  begin
-    C := Parent.Controls[I];
-    if C is TNewStaticText then PaintLabel(TNewStaticText(C), False)
-    else if C is TNewMemo then begin
-      TNewMemo(C).Color := CLR_RAISE;
-      TNewMemo(C).Font.Color := CLR_BONE;
-    end
-    else if C is TEdit then PaintEdit(TEdit(C))
-    else if C is TNewEdit then begin
-      TNewEdit(C).Color := CLR_RAISE;
-      TNewEdit(C).Font.Color := CLR_BONE;
-    end
-    else if C is TNewCheckBox then begin
-      TNewCheckBox(C).Color := CLR_INK;
-      TNewCheckBox(C).Font.Color := CLR_BONE;
-    end
-    else if C is TNewRadioButton then
-      { No Color: a themed radio paints its own background and setting one
-        leaves a lighter block behind part of the caption. }
-      TNewRadioButton(C).Font.Color := CLR_BONE
-    else if C is TLabel then begin
-      TLabel(C).Color := CLR_INK;
-      TLabel(C).Font.Color := CLR_BONE;
-    end
-    else if C is TPanel then begin
-      TPanel(C).Color := CLR_INK;
-      PaintPanel(TPanel(C));
-    end
-    else if C is TWinControl then PaintPanel(TWinControl(C));
-  end;
-end;
-
-procedure PaintWizard();
-begin
-  WizardForm.Color := CLR_INK;
-  WizardForm.Font.Color := CLR_BONE;
-
-  { The page furniture: the band at the top, the bevel above the buttons, and
-    the outer surface every page sits on. }
-  WizardForm.MainPanel.Color := CLR_INK;
-  { Not the notebooks themselves: TNewNotebook does not expose Color to Pascal
-    Script, and naming it there aborts the whole compile with "Unknown
-    identifier". The pages inside them are painted below, which is what is
-    actually visible. }
-  WizardForm.Bevel.Visible := False;
-  WizardForm.Bevel1.Visible := False;
-
-  PaintLabel(WizardForm.PageNameLabel, False);
-  PaintLabel(WizardForm.PageDescriptionLabel, True);
-
-  { The licence page is deliberately left as Windows draws it.
-
-    Two of its controls cannot be themed safely, and both were tried and looked
-    at. The licence text is a TRichEditViewer, which keeps its own character
-    colours: darkening the box left black text on a black background. And a
-    themed radio button draws its caption in the theme's colour and ignores
-    Font.Color, so the accept and decline captions went dark-on-dark too.
-
-    A light licence page inside a dark wizard is a small inconsistency. An
-    unreadable licence is not a small anything. }
-
-  { The pages own surfaces of their own, and painting only their children left
-    the welcome and finished pages as a white slab with a dark box floating in
-    it. }
-  WizardForm.WelcomePage.Color := CLR_INK;
-  WizardForm.InnerPage.Color := CLR_INK;
-  WizardForm.FinishedPage.Color := CLR_INK;
-  WizardForm.SelectDirPage.Color := CLR_INK;
-  WizardForm.ReadyPage.Color := CLR_INK;
-  WizardForm.InstallingPage.Color := CLR_INK;
-  WizardForm.SelectTasksPage.Color := CLR_INK;
-
-  { Every page, including the ones this file adds. }
-  PaintPanel(WizardForm.InnerPage);
-  PaintPanel(WizardForm.WelcomePage);
-  PaintPanel(WizardForm.SelectDirPage);
-  PaintPanel(WizardForm.ReadyPage);
-  PaintPanel(WizardForm.InstallingPage);
-  PaintPanel(WizardForm.FinishedPage);
-  PaintPanel(WizardForm.SelectTasksPage);
-
-  { And the licence page put back, after the walk above has been through it.
-    Simply not naming it was not enough: it lives inside InnerPage, so the
-    recursive pass reaches it anyway and there is nowhere to opt out. }
-  WizardForm.LicensePage.Color := $00FFFFFF;
-  WizardForm.LicenseMemo.Color := $00FFFFFF;
-  WizardForm.LicenseMemo.Font.Color := $00000000;
-  WizardForm.LicenseLabel1.Font.Color := $00000000;
-  WizardForm.LicenseAcceptedRadio.Font.Color := $00000000;
-  WizardForm.LicenseNotAcceptedRadio.Font.Color := $00000000;
-
-  { The buttons stay as Windows draws them.
-
-    A themed button drawn by Inno loses its focus ring and its keyboard
-    highlight, and somebody tabbing through the wizard then cannot see where
-    they are. Colour is not worth that. }
-end;
-
-procedure CurPageChanged_Paint(CurPageID: Integer);
-begin
-  { Repainted on every page, because Inno creates some controls when the page
-    is first shown -- painting once in InitializeWizard leaves those white. }
-  PaintWizard();
-end;
-
 procedure InitializeWizard();
 var
   Previous: String;
-  Y: Integer;
+  Y, I: Integer;
+  Radio: TNewRadioButton;
+  Line: TNewStaticText;
 begin
+  { 0. What is already on this machine.
+
+    Without this, a second installation is indistinguishable from an upgrade:
+    the wizard offers the same folder, quietly replaces what is there, and
+    somebody who wanted two AI17Zs ends up with one. Shown only when there is
+    something to choose between. }
+  FindInstalls();
+  if GetArrayLength(Installs) > 0 then
+  begin
+    FoundPage := CreateCustomPage(wpWelcome,
+      'AI17Z is already on this computer',
+      'Update the one you have, or set up another beside it');
+
+    FoundIntro := TNewStaticText.Create(WizardForm);
+    FoundIntro.Parent := FoundPage.Surface;
+    FoundIntro.Left := 0;
+    FoundIntro.Top := 0;
+    FoundIntro.Width := FoundPage.SurfaceWidth;
+    FoundIntro.WordWrap := True;
+    FoundIntro.AutoSize := True;
+    FoundIntro.Caption :=
+      'Updating replaces the program and keeps everything else: your agents, their memories,' + #13#10 +
+      'your sign-ins and your encryption key all stay exactly where they are.' + #13#10#13#10 +
+      'A separate installation shares nothing with the others -- its own folder, its own' + #13#10 +
+      'database, its own ports. Use one if you want somewhere to experiment.';
+
+    Y := FoundIntro.Top + FoundIntro.Height + ScaleY(16);
+    SetArrayLength(InstallRadios, GetArrayLength(Installs));
+
+    for I := 0 to GetArrayLength(Installs) - 1 do
+    begin
+      { Each row is a radio with two lines of detail indented under it.
+
+        Positioned from the control's own Height, never from a guessed offset.
+        A hard-coded 19 pixels is right at one font size and one scaling, and
+        this wizard runs at 120% on whatever the display is set to -- so the
+        detail sat on top of the caption and clipped it in half. }
+      Radio := TNewRadioButton.Create(WizardForm);
+      Radio.Parent := FoundPage.Surface;
+      Radio.Left := 0;
+      Radio.Top := Y;
+      Radio.Width := FoundPage.SurfaceWidth;
+      Radio.Height := ScaleY(20);
+      Radio.Caption := 'Update the one in ' + ExtractFileName(Installs[I].Program_);
+      Radio.Checked := (I = 0);
+      InstallRadios[I] := Radio;
+
+      Line := TNewStaticText.Create(WizardForm);
+      Line.Parent := FoundPage.Surface;
+      Line.Left := ScaleX(20);
+      Line.Top := Radio.Top + Radio.Height + ScaleY(3);
+      Line.Width := FoundPage.SurfaceWidth - ScaleX(20);
+      Line.WordWrap := True;
+      Line.AutoSize := True;
+      if Installs[I].Ports <> '' then
+        Line.Caption := Installs[I].Program_ + #13#10 + 'data in ' + Installs[I].Data + '  -  ports ' + Installs[I].Ports
+      else
+        Line.Caption := Installs[I].Program_ + #13#10 + 'data in ' + Installs[I].Data;
+
+      Y := Line.Top + Line.Height + ScaleY(16);
+    end;
+
+    FreshRadio := TNewRadioButton.Create(WizardForm);
+    FreshRadio.Parent := FoundPage.Surface;
+    FreshRadio.Left := 0;
+    FreshRadio.Top := Y;
+    FreshRadio.Width := FoundPage.SurfaceWidth;
+    FreshRadio.Height := ScaleY(20);
+    FreshRadio.Caption := 'Set up another AI17Z, separate from these';
+
+    FoundDetail := TNewStaticText.Create(WizardForm);
+    FoundDetail.Parent := FoundPage.Surface;
+    FoundDetail.Left := ScaleX(20);
+    FoundDetail.Top := FreshRadio.Top + FreshRadio.Height + ScaleY(3);
+    FoundDetail.Width := FoundPage.SurfaceWidth - ScaleX(20);
+    FoundDetail.WordWrap := True;
+    FoundDetail.AutoSize := True;
+    FoundDetail.Caption := 'You choose its folder and it picks its own free ports.';
+  end;
+
   { 1. Data directory. }
   DataPage := CreateInputDirPage(wpSelectDir,
     'Where should AI17Z keep your data?',
@@ -506,37 +659,43 @@ begin
 
   Y := NeedsIntro.Top + NeedsIntro.Height + ScaleY(14);
 
+  { Stacked from each control's own Height, not from 24 and 48 and 80.
+
+    Guessed offsets are right at one font size and one display scaling. This
+    wizard runs at 120% of whatever the display is set to, and on the page that
+    listed installations the same guess put the detail line on top of the
+    caption and clipped it in half. }
   NeedsNode := TCheckBox.Create(WizardForm);
   NeedsNode.Parent := NeedsPage.Surface;
   NeedsNode.Left := 0;
   NeedsNode.Top := Y;
   NeedsNode.Width := NeedsPage.SurfaceWidth;
+  NeedsNode.Height := ScaleY(20);
   NeedsNode.Caption := 'Node.js  -  runs AI17Z itself';
 
   NeedsDocker := TCheckBox.Create(WizardForm);
   NeedsDocker.Parent := NeedsPage.Surface;
   NeedsDocker.Left := 0;
-  NeedsDocker.Top := Y + ScaleY(24);
+  NeedsDocker.Top := NeedsNode.Top + NeedsNode.Height + ScaleY(6);
   NeedsDocker.Width := NeedsPage.SurfaceWidth;
+  NeedsDocker.Height := ScaleY(20);
   NeedsDocker.Caption := 'Docker Desktop  -  runs the database your agents live in';
 
   NeedsChrome := TCheckBox.Create(WizardForm);
   NeedsChrome.Parent := NeedsPage.Surface;
   NeedsChrome.Left := 0;
-  NeedsChrome.Top := Y + ScaleY(48);
+  NeedsChrome.Top := NeedsDocker.Top + NeedsDocker.Height + ScaleY(6);
   NeedsChrome.Width := NeedsPage.SurfaceWidth;
+  NeedsChrome.Height := ScaleY(20);
   NeedsChrome.Caption := 'Google Chrome  -  the browser your agent acts through';
 
   NeedsFooter := TNewStaticText.Create(WizardForm);
   NeedsFooter.Parent := NeedsPage.Surface;
   NeedsFooter.Left := 0;
-  NeedsFooter.Top := Y + ScaleY(80);
+  NeedsFooter.Top := NeedsChrome.Top + NeedsChrome.Height + ScaleY(18);
   NeedsFooter.Width := NeedsPage.SurfaceWidth;
   NeedsFooter.WordWrap := True;
   NeedsFooter.AutoSize := True;
-
-  { Last, so every page this procedure created is painted too. }
-  PaintWizard();
 end;
 
 { Only show the dependency page when something is actually missing, and only
@@ -568,16 +727,50 @@ begin
   NeedsFooter.Caption := Footer;
 end;
 
+{ Pages that would ask a question with only one right answer.
+
+  Two cases. Nothing is missing, so there is nothing to offer to install. And an
+  update, where the folder, the data directory and the ports all belong to the
+  installation being updated -- offering them would let somebody move an
+  installation by accident, which looks exactly like losing it. }
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
   if (PageID = NeedsPage.ID) and (not AnythingMissing()) then
     Result := True;
+
+  if UpdatingExisting() then
+  begin
+    if PageID = wpSelectDir then Result := True;
+    if (DataPage <> nil) and (PageID = DataPage.ID) then Result := True;
+    if (PortsPage <> nil) and (PageID = PortsPage.ID) then Result := True;
+  end;
+end;
+
+{ Ports that are already right when the page appears.
+
+  Three empty boxes and "change them if something else uses one" asks somebody
+  who has just downloaded this to go and find out what else on their PC is
+  listening. So the first free port at each of the three defaults is filled in
+  before the page is shown, and pressing Next is the correct answer.
+
+  Only for a new installation, and only once, so somebody who edits a number
+  does not have it taken back off them. }
+procedure PreparePortsPage();
+begin
+  if PortsFilled then Exit;
+  PortsFilled := True;
+  if UpdatingExisting() then Exit;
+
+  PortsPage.Values[0] := IntToStr(FirstFreePort(StrToInt(DefaultWebPort)));
+  PortsPage.Values[1] := IntToStr(FirstFreePort(StrToInt(DefaultApiPort)));
+  PortsPage.Values[2] := IntToStr(FirstFreePort(StrToInt(DefaultDbPort)));
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
-  CurPageChanged_Paint(CurPageID);
+  if (PortsPage <> nil) and (CurPageID = PortsPage.ID) then
+    PreparePortsPage();
   if CurPageID = NeedsPage.ID then
     PrepareNeedsPage();
 end;
@@ -585,8 +778,20 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   Problem: String;
+  Chosen: Integer;
 begin
   Result := True;
+
+  { Leaving the first page with an existing installation chosen points the whole
+    wizard at it, so the pages that follow are about that installation rather
+    than about a new one in the default folder. }
+  if (FoundPage <> nil) and (CurPageID = FoundPage.ID) then
+  begin
+    Chosen := ChosenInstall();
+    if Chosen >= 0 then
+      WizardForm.DirEdit.Text := Installs[Chosen].Program_;
+  end;
+
   if CurPageID = PortsPage.ID then
   begin
     Problem := PortsProblem();
@@ -669,6 +874,10 @@ begin
 
   { And the registry, so the next installer offers the same folder. }
   RegWriteStringValue(HKCU, 'Software\AI17Z', 'DataDir', DataDir());
+
+  { And into the list, so the next installer can find this one even after a
+    second installation has taken over the single uninstall entry. }
+  RememberInstall(ExpandConstant('{app}'));
 end;
 
 procedure InstallPrerequisites();
