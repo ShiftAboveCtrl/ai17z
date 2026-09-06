@@ -1,3 +1,16 @@
+/**
+ * @release-check-fixtures
+ *
+ * Every key in this file is invented, and they are written out in full on
+ * purpose: the whole subject is what a real key's prefix looks like, so
+ * disguising them would test something other than the thing that ships.
+ *
+ * They are still key-shaped, so the repository's own secret scan flags them --
+ * correctly, since it cannot tell a fixture from the real thing. This marker is
+ * the sanctioned answer, the same one tests/unit/releaseCheck.test.ts uses for
+ * the same reason. Nothing below is a credential: the bodies are `abcdef...`
+ * and `0123456789abcdef`, which no vendor would ever issue.
+ */
 import { describe, expect, it } from 'vitest';
 import {
   PROVIDER_KINDS,
