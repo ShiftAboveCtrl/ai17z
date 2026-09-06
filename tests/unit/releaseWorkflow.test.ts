@@ -447,3 +447,53 @@ describe('what a release is called, in both places that say it', () => {
     expect(iss).toContain('(PreCount != "" && PreCount != "1")');
   });
 });
+
+/**
+ * The releases page has to agree with the application.
+ *
+ * The workflow fires on every `v*` tag, builds its own installer and publishes
+ * with softprops/action-gh-release -- which *updates* a release that already
+ * exists. So whatever it passes as `name` is the last word, and it was
+ * composing one of its own: `AI17Z 1.0.0-beta.2`, while the installer wrote
+ * "AI17Z Beta 1.0.0 (2)" into Add/Remove Programs and the version screen said
+ * the same. Three places, two answers, and the one people see first was the
+ * odd one out.
+ *
+ * The packager already derives the name from releaseName() and prints it. The
+ * workflow reads that rather than composing a fourth version of the grammar.
+ */
+describe('the release workflow publishes under the derived name', () => {
+  const workflow = readFileSync(resolve(root, '.github/workflows/release.yml'), 'utf8');
+
+  it('carries the name out of the build job', () => {
+    expect(workflow).toContain('release-name: ${{ steps.stage.outputs.release-name }}');
+  });
+
+  it('reads it from the packager rather than composing it again', () => {
+    expect(workflow).toContain("Select-String -Pattern '^AI17Z_RELEASE_NAME=(.+)$'");
+    // And refuses rather than quietly falling back, because a silent fallback
+    // is how it went unnoticed the first time.
+    expect(workflow).toContain('The packager did not print AI17Z_RELEASE_NAME.');
+  });
+
+  it('uses it when publishing', () => {
+    expect(workflow).toContain("name: ${{ needs.build.outputs.release-name || format('AI17Z {0}', needs.build.outputs.version) }}");
+  });
+
+  it('lets written notes win over the generated list of commit subjects', () => {
+    // `- web: a hook below an early return` is a true summary of a release
+    // nobody could open, and no use at all to somebody deciding whether to
+    // download it.
+    expect(workflow).toContain('NOTES="docs/release-notes/$VERSION.md"');
+    expect(workflow).toContain('if [ -f "$NOTES" ]; then');
+    // Appended, never discarded: the commit list is still the honest record.
+    expect(workflow).toMatch(/cat "\$NOTES"; echo; echo '---'/);
+  });
+
+  it('has the notes for the version this repository is on', () => {
+    const version = (JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as { version: string }).version;
+    const notes = resolve(root, `docs/release-notes/${version}.md`);
+    expect(existsSync(notes), `docs/release-notes/${version}.md is missing`).toBe(true);
+    expect(readFileSync(notes, 'utf8').trim().length).toBeGreaterThan(200);
+  });
+});

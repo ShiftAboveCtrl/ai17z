@@ -107,6 +107,14 @@ jobs:
     runs-on: windows-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      # What the release is called, as opposed to what it is numbered.
+      # releaseName() in packages/shared derives it, the packager prints it, and
+      # this carries it to the publish step -- so the name on the releases page
+      # is the same string the installer writes into Add/Remove Programs and the
+      # application shows on its version screen. Composed by hand in three
+      # places, they would differ, and a release that calls itself two things
+      # looks like two releases.
+      release-name: ${{ steps.stage.outputs.release-name }}
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
@@ -135,7 +143,22 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
       - name: Stage the application
-        run: npm run package:windows
+        id: stage
+        shell: pwsh
+        run: |
+          $out = npm run package:windows 2>&1
+          $out | ForEach-Object { $_ }
+          if ($LASTEXITCODE -ne 0) { throw "Staging failed with $LASTEXITCODE" }
+
+          # The packager prints the release name it derived. Read rather than
+          # recomposed here: two implementations of the same grammar is how the
+          # uninstall list and the version screen end up disagreeing.
+          $line = $out | Select-String -Pattern '^AI17Z_RELEASE_NAME=(.+)$' | Select-Object -Last 1
+          if (-not $line) { throw 'The packager did not print AI17Z_RELEASE_NAME.' }
+          $name = $line.Matches[0].Groups[1].Value.Trim()
+          if (-not $name) { throw 'AI17Z_RELEASE_NAME was empty.' }
+          "release-name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "release name: $name"
         env:
           AI17Z_VERSION: ${{ steps.version.outputs.version }}
 
@@ -433,13 +456,29 @@ jobs:
             cat dist/SHA256SUMS.txt
             echo "\`\`\`"
           } > release-notes.md
+
+          # A release worth explaining gets explained.
+          #
+          # The generated body is a list of commit subjects, which answers
+          # "what moved" and never "should I take this". Beta 1.0.0 shipped an
+          # interface that could not be opened at all, and its notes said
+          # `- web: a hook below an early return` -- true, and no use to anybody
+          # deciding whether to download it. So a file checked in beside the
+          # release wins, and the generated list is appended under it rather
+          # than thrown away.
+          NOTES="docs/release-notes/$VERSION.md"
+          if [ -f "$NOTES" ]; then
+            echo "using $NOTES"
+            { cat "$NOTES"; echo; echo '---'; echo; cat release-notes.md; } > combined.md
+            mv combined.md release-notes.md
+          fi
           cat release-notes.md
 
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.build.outputs.version) }}
-          name: AI17Z ${{ needs.build.outputs.version }}
+          name: ${{ needs.build.outputs.release-name || format('AI17Z {0}', needs.build.outputs.version) }}
           body_path: release-notes.md
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || vars.SIGNING_REQUIRED != 'true' }}
           files: |
