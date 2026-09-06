@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { EasySetup, type RadarSourceKind } from '@xbam/shared/contracts';
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
+import { ensureAgentPipeline } from '@xbam/runtime';
 import {
   accounts as accountsRepo,
   browserTasks,
@@ -207,7 +208,15 @@ async function preflight(agentId: string): Promise<Blocker[]> {
     blockers.push({ what: 'This agent has no rules yet.', fix: 'Finish the setup.', where: 'persona' });
   }
   if (!pipeline) {
-    blockers.push({ what: 'This agent has no pipeline.', fix: 'Reopen the agent page, which creates one.', where: null });
+    // The old text said "reopen the agent page, which creates one". Nothing
+    // on that path ever did, so anybody who followed it was sent in a circle
+    // by their own software. Start now creates it, so this only appears if
+    // that failed -- and then it says so rather than giving an instruction.
+    blockers.push({
+      what: 'This agent has no pipeline, and one could not be created.',
+      fix: 'This is a fault in AI17Z rather than something you have missed. Press Start again, and report it if it persists.',
+      where: null,
+    });
   }
 
   const primary = models.find((m) => m.role === 'primary');
@@ -330,6 +339,14 @@ export async function easyStartRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
+      // Agents that arrived without one heal here rather than staying stuck.
+      //
+      // Import creates the stock pipeline now, but that does nothing for an
+      // agent already imported -- and "this agent has no pipeline" is not a
+      // decision anybody can usefully make, it is a row that should exist.
+      // Doing it on start rather than on read keeps GET requests from writing,
+      // and start is exactly when somebody is asking for the agent to work.
+      await ensureAgentPipeline(agent.id);
       const blockers = await preflight(agent.id);
       if (blockers.length > 0) return { started: false, blockers, state: agent.state };
 

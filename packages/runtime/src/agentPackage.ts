@@ -51,6 +51,7 @@ import {
   providers as providersRepo,
   query,
 } from '@xbam/database';
+import { ensureAgentPipeline } from './bootstrap';
 import { exportAgent, importAgent } from './portableAgent';
 import { currentArtifactId, setAgentAvatar } from './avatar';
 import { storageDir } from './channelContext';
@@ -485,6 +486,12 @@ export async function unpackAgent(input: {
       );
     }
   }
+
+  // A package carries no pipeline on purpose -- it is stock, and shipping a
+  // graph would import somebody else's wiring along with their character. So
+  // the stock one is created here. Without it the agent arrives complete in
+  // every other way and cannot be started at all.
+  await ensureAgentPipeline(agentId);
 
   // Providers last, because an agent with no memories is still an agent and a
   // failure here must not cost the rest of the import.
