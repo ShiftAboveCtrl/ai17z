@@ -9,6 +9,7 @@ interface ReleaseInfo {
   version: string;
   tag: string;
   name: string;
+  channel: string | null;
   notes: string;
   url: string;
   installerUrl: string | null;
@@ -18,6 +19,7 @@ interface ReleaseInfo {
 
 export interface UpdateState {
   current: string;
+  currentName: string;
   latest: ReleaseInfo | null;
   updateAvailable: boolean;
   skipped: string | null;
@@ -73,12 +75,19 @@ export function UpdatePanel() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <StatusDot state={state.updateAvailable ? 'wait' : 'live'} />
-        <span className="font-mono text-sm text-bone">v{state.current}</span>
+        {/*
+          The name first and the number after it, in a smaller face. Both are
+          shown because they answer different questions: "AI17Z Beta 1.0.0" is
+          what somebody downloaded, and `1.0.0-beta.1` is what they quote in a bug
+          report.
+        */}
+        <span className="text-sm text-bone">{state.currentName}</span>
+        <span className="font-mono text-xs text-bone-faint">v{state.current}</span>
         <span className="text-sm text-bone-dim">
           {!state.enabled
             ? 'Update checking is off. Nothing is sent anywhere.'
             : state.updateAvailable
-              ? `v${latest?.version} is available.`
+              ? `${latest?.name} is available.`
               : state.error
                 ? 'Could not reach GitHub.'
                 : 'This is the newest version.'}
@@ -108,7 +117,15 @@ export function UpdatePanel() {
         <div className="space-y-4 border border-ink-line bg-ink-raise/40 p-4">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <h3 className="text-base text-bone">{latest.name}</h3>
-            {latest.prerelease && <span className="eyebrow text-signal-wait">release candidate</span>}
+            {/*
+              The channel it is actually on, not the word "release candidate"
+              for everything with a dash in its version. A beta labelled as a
+              candidate reads as more finished than it is.
+            */}
+            {latest.prerelease && (
+              <span className="eyebrow text-signal-wait">{latest.channel ?? 'prerelease'}</span>
+            )}
+            <span className="font-mono text-xs text-bone-faint">v{latest.version}</span>
             <span className="text-xs text-bone-faint">published {timeAgo(latest.publishedAt)}</span>
           </div>
 

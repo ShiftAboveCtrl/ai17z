@@ -21,11 +21,12 @@ import pkg from '../../../package.json' with { type: 'json' };
 /**
  * The released version, which is not the same as the package version.
  *
- * `package.json` says `0.1.0` and stays there through every release candidate,
- * so an installation that asked "is there anything newer than me?" compared
- * `0.1.0` against `v0.1.0-rc.4` and could not tell. The packager stamps the
- * real one into `BUILD_INFO.json`, and compose hands it to the containers,
- * which have neither that file nor a repository.
+ * `package.json` used to sit at `0.1.0` through every candidate, so an
+ * installation that asked "is there anything newer than me?" compared `0.1.0`
+ * against `v0.1.0-rc.4` and could not tell. It now moves with the tag -- but a
+ * built copy still must not depend on that being remembered, so the packager
+ * stamps the real one into `BUILD_INFO.json` and compose hands it to the
+ * containers, which have neither that file nor a repository.
  */
 function releasedVersion(): string {
   const stamped = process.env.AI17Z_VERSION ?? process.env.XBAM_VERSION;
@@ -84,4 +85,69 @@ export function buildVersion(): BuildVersion {
 export function describeVersion(build: BuildVersion = buildVersion()): string {
   if (!build.commit) return `v${build.version} (source unknown)`;
   return `v${build.version} (${build.commit})`;
+}
+
+/**
+ * What a release is called, as opposed to what it is numbered.
+ *
+ * `v0.1.0-rc.8` is correct, sortable, and says nothing to the person who
+ * downloaded it. "AI17Z Beta 1.0.0" says which product, how finished it is, and
+ * which one it is -- in that order, because that is the order somebody looking
+ * at a list of downloads cares about.
+ *
+ * The number stays exactly as semver requires and the tag is still the number:
+ * `compareVersions` decides what is newer, `updates.ts` decides who is shown a
+ * prerelease, and the installer's `VersionInfoVersion` still has to be four
+ * digits Windows will accept. This is a rendering of the version, not a second
+ * version, and nothing downstream may parse it back.
+ *
+ * The iteration is dropped when it is the first, because "AI17Z Beta 1.0.0 (1)"
+ * is a worse name than "AI17Z Beta 1.0.0" and every release cycle starts with
+ * one.
+ */
+export interface ReleaseName {
+  /** The whole thing: `AI17Z Beta 1.0.0`. */
+  title: string;
+  /** Without the product: `Beta 1.0.0`. For a badge with no room. */
+  short: string;
+  /** `Beta`, `Release Candidate`, `Alpha`, or null for a finished release. */
+  channel: string | null;
+  /** `1.0.0`, always three numbers, never a `v`. */
+  number: string;
+  /** Which beta, which candidate. 1 when the tag does not say. */
+  iteration: number;
+}
+
+/**
+ * The words for the prerelease identifiers AI17Z uses.
+ *
+ * Anything not listed is title-cased rather than rejected: a tag nobody planned
+ * for should read a little oddly, not break the screen it appears on.
+ */
+const CHANNEL_WORDS: Record<string, string> = {
+  alpha: 'Alpha',
+  beta: 'Beta',
+  rc: 'Release Candidate',
+  preview: 'Preview',
+};
+
+export function releaseName(version = buildVersion().version): ReleaseName {
+  const [core = '', pre = ''] = version.trim().replace(/^v/, '').split('-', 2);
+
+  // Padded to three, so `1.0` and `1` both render as `1.0.0`. A name that
+  // sometimes has two numbers and sometimes three looks like two products.
+  const numbers = core.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const number = [numbers[0] ?? 0, numbers[1] ?? 0, numbers[2] ?? 0].join('.');
+
+  if (!pre) {
+    return { title: `AI17Z ${number}`, short: number, channel: null, number, iteration: 1 };
+  }
+
+  const [word = '', count = ''] = pre.split('.', 2);
+  const channel = CHANNEL_WORDS[word.toLowerCase()] ?? word.charAt(0).toUpperCase() + word.slice(1);
+  const iteration = Number.parseInt(count, 10) || 1;
+
+  const suffix = iteration > 1 ? ` (${iteration})` : '';
+  const short = `${channel} ${number}${suffix}`;
+  return { title: `AI17Z ${short}`, short, channel, number, iteration };
 }

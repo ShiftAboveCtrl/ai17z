@@ -372,13 +372,17 @@ describe('the installer looks like the product', () => {
     expect(existsSync(resolve(root, 'packaging/windows/make-icon.py'))).toBe(true);
   });
 
-  it('paints the wizard from the product palette', () => {
-    expect(iss).toContain('procedure PaintWizard');
-    expect(iss).toContain('CLR_INK');
-    expect(iss).toContain('CLR_BONE');
-    // Repainted per page, because Inno builds some controls only when a page
-    // is first shown and painting once leaves those white.
-    expect(iss).toContain('CurPageChanged_Paint');
+  it('leaves the wizard itself to Windows', () => {
+    // The artwork is the product's; the form is not. Repainting the wizard in
+    // the product's dark palette was tried and taken out again: a
+    // TRichEditViewer keeps its own character colours, a themed radio draws
+    // its caption in the theme colour whatever it is told, and a themed button
+    // loses the focus ring somebody tabbing through the wizard needs. What
+    // arrived was an installer with unreadable controls, which is a worse
+    // first impression than a plain one.
+    expect(iss).not.toContain('procedure PaintWizard');
+    expect(iss).not.toContain('CurPageChanged_Paint');
+    expect(iss).not.toMatch(/^\s*WizardForm\.[A-Za-z]+\.Color\s*:=/m);
   });
 
   it('never names a control Pascal Script cannot colour', () => {
@@ -389,20 +393,57 @@ describe('the installer looks like the product', () => {
     expect(iss).not.toMatch(/OuterNotebook\.Color/);
   });
 
-  it('leaves the buttons to Windows', () => {
-    // A themed button loses its focus ring, and somebody tabbing through the
-    // wizard then cannot see where they are.
-    expect(iss).toContain('The buttons stay as Windows draws them');
-  });
-
-  it('has no licence page, and says why', () => {
-    // MIT requires the licence to be included, not accepted, and it ships in
-    // the package. It went because it could not be made readable: a
-    // TRichEditViewer keeps its own character colours and a themed radio
-    // ignores Font.Color, so both went dark-on-dark.
-    expect(iss).toMatch(/^;LicenseFile=/m);
-    expect(iss).toContain('MIT requires the licence to be');
+  it('shows the licence, on a page Windows can draw', () => {
+    // MIT requires the licence to be included. It is also the one page that
+    // could not survive theming, so it is the canary: if it is commented out
+    // again, the palette came back with it.
+    expect(iss).toMatch(/^LicenseFile=/m);
     expect(existsSync(resolve(root, 'LICENSE')), 'the licence itself must still ship').toBe(true);
     expect(readFileSync(resolve(root, 'tools/package-windows.mts'), 'utf8')).toContain("'LICENSE'");
+  });
+});
+
+/**
+ * The release name, which the installer derives a second time.
+ *
+ * `releaseName()` in packages/shared/src/version.ts is what AI17Z shows on its
+ * own version screen. The Windows uninstall list is written by the installer
+ * and cannot call it, so ai17z.iss reimplements the same grammar in ISPP. Two
+ * implementations is one more than the rule allows, and this is the price of
+ * it: the words have to be checked against each other, because the failure is
+ * silent -- Add/Remove Programs saying one thing and the app saying another
+ * looks like two builds installed at once.
+ */
+describe('what a release is called, in both places that say it', () => {
+  const iss = readFileSync(resolve(root, 'packaging/windows/ai17z.iss'), 'utf8');
+  const version = readFileSync(resolve(root, 'packages/shared/src/version.ts'), 'utf8');
+
+  it('uses the derived name for what a person reads, and the number for what Windows parses', () => {
+    expect(iss).toMatch(/^AppVerName=\{#ReleaseName\}/m);
+    expect(iss).toMatch(/^UninstallDisplayName=\{#ReleaseName\}/m);
+    // VersionInfoVersion must stay four numbers or Inno refuses the script.
+    expect(iss).toMatch(/^VersionInfoVersion=\{#NumericVersion\}/m);
+    // And the download filename stays the version, because it is a URL: a name
+    // with a space and a bracket in it is not.
+    expect(iss).toMatch(/^OutputBaseFilename=AI17Z-Setup-\{#AppVersion\}/m);
+  });
+
+  it('spells the channels the same way on both sides', () => {
+    for (const [identifier, word] of [
+      ['alpha', 'Alpha'],
+      ['beta', 'Beta'],
+      ['rc', 'Release Candidate'],
+      ['preview', 'Preview'],
+    ] as const) {
+      expect(version, `${identifier} is missing from releaseName()`).toContain(`${identifier}: '${word}'`);
+      expect(iss, `${identifier} is missing from the installer`).toContain(`== "${identifier}" ? "${word}"`);
+    }
+  });
+
+  it('drops the iteration for the first of a cycle on both sides', () => {
+    // "AI17Z Beta 1.0.0 (1)" in one place and "AI17Z Beta 1.0.0" in the other
+    // is exactly the disagreement that reads as two builds.
+    expect(version).toContain("iteration > 1 ? ` (${iteration})` : ''");
+    expect(iss).toContain('(PreCount != "" && PreCount != "1")');
   });
 });

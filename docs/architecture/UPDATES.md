@@ -50,14 +50,43 @@ They are different answers and all three are kept:
 
 ## Which version this is
 
-`package.json` says `0.1.0` and stays there through every release candidate, so
-it cannot answer "am I newer than `v0.1.0-rc.4`?". The real version comes from,
-in order: `AI17Z_VERSION` in the environment, `BUILD_INFO.json` beside the
-application, then the package version.
+The version comes from, in order: `AI17Z_VERSION` in the environment,
+`BUILD_INFO.json` beside the application, then the package version.
 
 The packager stamps `BUILD_INFO.json`; the launcher reads it and passes
 `AI17Z_VERSION` through compose, because a container has neither that file nor a
-repository to ask.
+repository to ask. `package.json` used to sit at `0.1.0` through every
+candidate, which is how an installation ended up unable to answer "am I newer
+than `v0.1.0-rc.4`?" -- it now moves with the tag, but nothing relies on that
+being remembered.
+
+## What it is called
+
+`v1.0.0-beta.1` is the version. **AI17Z Beta 1.0.0** is the name, and it is
+what the version screen, the update card, the wizard and the Windows uninstall
+list all say.
+
+| Tag | Name |
+| --- | --- |
+| `v1.0.0-beta.1` | AI17Z Beta 1.0.0 |
+| `v1.0.0-beta.2` | AI17Z Beta 1.0.0 (2) |
+| `v1.0.0-rc.1` | AI17Z Release Candidate 1.0.0 |
+| `v1.0.0` | AI17Z 1.0.0 |
+
+`releaseName()` in `packages/shared/src/version.ts` is the implementation. The
+first of a cycle drops its number, because "Beta 1.0.0 (1)" is a worse name than
+"Beta 1.0.0" and every cycle starts with one.
+
+The name is a rendering and nothing parses it back. Ordering, the prerelease
+filter, the tag, the installer filename and `VersionInfoVersion` are all the
+number. GitHub defaults a release's title to its tag, so a title that is only
+the tag is treated as no title and rendered; one somebody wrote is left alone.
+
+The installer says the same thing and cannot call the same function, so
+`packaging/windows/ai17z.iss` reimplements the grammar in ISPP.
+`tests/unit/releaseWorkflow.test.ts` checks the two against each other, because
+the failure is silent: Add/Remove Programs saying one thing and the app another
+looks like two builds installed at once.
 
 ## Which button an installation gets
 

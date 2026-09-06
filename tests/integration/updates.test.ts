@@ -78,13 +78,24 @@ describe('finding out whether there is a newer version', () => {
     expect(state.updateAvailable).toBe(false);
   });
 
-  it('never shows a release candidate to somebody on a stable version', async () => {
+  it('never shows a prerelease to somebody on a stable version', async () => {
     // A candidate is not something to be nudged onto. Whoever is running one
     // chose it; whoever is not, did not.
+    //
+    // The current version is passed in rather than taken from this checkout.
+    // It used to be inherited, and the day package.json moved to a beta this
+    // test started asserting the opposite of its own name and passing --
+    // because the installation running it was, by then, on a prerelease.
     serve([release('v9.9.9-rc.1'), release('v0.0.1')]);
-    const state = await updateState({ refresh: true });
-    expect(state.latest?.prerelease ?? false).toBe(false);
-    expect(state.updateAvailable).toBe(false);
+    expect(await fetchLatestRelease('1.0.0')).toMatchObject({ version: '0.0.1', prerelease: false });
+  });
+
+  it('does show one to somebody already on a prerelease', async () => {
+    // The other half, and the reason the filter is conditional at all: an
+    // owner running a beta with no way to hear about the next one is stranded
+    // on it.
+    serve([release('v9.9.9-rc.1'), release('v0.0.1')]);
+    expect(await fetchLatestRelease('1.0.0-beta.1')).toMatchObject({ version: '9.9.9-rc.1' });
   });
 
   it('ignores a draft, which is not published to anybody', async () => {
@@ -201,5 +212,51 @@ describe('how often it asks', () => {
 
     await updateState();
     expect(calls).toHaveLength(2);
+  });
+});
+
+/**
+ * What the release is called.
+ *
+ * The number is what decides anything; the name is what somebody reads. A
+ * heading that says `v1.0.0-beta.2` above the notes has told them nothing they
+ * did not already get from the number beside it, and GitHub defaults a
+ * release's name to exactly that.
+ */
+describe('what a release is called on the screen', () => {
+  it('names this installation, as well as numbering it', async () => {
+    serve([]);
+    const state = await updateState({ refresh: true });
+    expect(state.currentName).toMatch(/^AI17Z /);
+    // The name is a rendering of the number; they cannot disagree.
+    expect(state.currentName).toContain(state.current.replace(/-.*$/, ''));
+  });
+
+  it('renders a name for a release GitHub named after its own tag', async () => {
+    serve([release('v9.9.9-beta.2', { name: 'v9.9.9-beta.2' })]);
+    const state = await updateState({ refresh: true });
+    expect(state.latest?.name).toBe('AI17Z Beta 9.9.9 (2)');
+    expect(state.latest?.channel).toBe('Beta');
+  });
+
+  it('leaves a name somebody actually wrote alone', async () => {
+    serve([release('v9.9.9', { name: 'The one where replies work' })]);
+    const state = await updateState({ refresh: true });
+    expect(state.latest?.name).toBe('The one where replies work');
+  });
+
+  it('renders a name when GitHub gives none at all', async () => {
+    serve([release('v9.9.9', { name: undefined })]);
+    const state = await updateState({ refresh: true });
+    expect(state.latest?.name).toBe('AI17Z 9.9.9');
+    // A finished release has no channel, and the screen must not label it one.
+    expect(state.latest?.channel).toBeNull();
+  });
+
+  it('keeps the tag and the version exactly as they were, for comparing', async () => {
+    serve([release('v9.9.9-rc.3')]);
+    const state = await updateState({ refresh: true });
+    expect(state.latest?.tag).toBe('v9.9.9-rc.3');
+    expect(state.latest?.version).toBe('9.9.9-rc.3');
   });
 });

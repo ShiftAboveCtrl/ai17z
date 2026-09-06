@@ -29,6 +29,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { releaseName } from '@xbam/shared';
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -167,8 +168,12 @@ async function directorySize(dir: string): Promise<number> {
 async function main(): Promise<void> {
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { version: string };
   const version = process.env.AI17Z_VERSION?.replace(/^v/, '') || pkg.version;
+  // What this release is called, printed and stamped so the person publishing
+  // it does not have to compose the GitHub release title by hand and get it
+  // subtly different from what the app and Add/Remove Programs will say.
+  const name = releaseName(version);
 
-  console.log(`AI17Z ${version}: staging the Windows application`);
+  console.log(`${name.title} (${version}): staging the Windows application`);
   await rm(stageDir, { recursive: true, force: true });
   await mkdir(stageDir, { recursive: true });
 
@@ -346,6 +351,9 @@ async function main(): Promise<void> {
     `${JSON.stringify(
       {
         version,
+        // The rendered name, so an installed copy can show it without owning a
+        // second copy of the grammar.
+        name: name.title,
         builtAt: new Date().toISOString(),
         commit: process.env.GITHUB_SHA ?? (await gitCommit()),
         signed: false,
@@ -359,6 +367,9 @@ async function main(): Promise<void> {
   const bytes = await directorySize(stageDir);
   console.log(`staged ${(bytes / 1024 / 1024).toFixed(0)}MB at ${stageDir}`);
   console.log(`AI17Z_VERSION=${version}`);
+  // Copy this into the GitHub release title. The installer derives the same
+  // string for the uninstall list, and the app for its version screen.
+  console.log(`AI17Z_RELEASE_NAME=${name.title}`);
 }
 
 async function gitCommit(): Promise<string> {

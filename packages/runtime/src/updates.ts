@@ -28,7 +28,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ops } from '@xbam/database';
-import { buildVersion, createLogger, errorMessage, nowIso } from '@xbam/shared';
+import { buildVersion, createLogger, errorMessage, nowIso, releaseName } from '@xbam/shared';
 
 const log = createLogger('updates');
 
@@ -56,7 +56,16 @@ export interface ReleaseInfo {
   version: string;
   /** What GitHub calls it, which is what a URL needs. */
   tag: string;
+  /** The readable name: `AI17Z Beta 1.0.0`. */
   name: string;
+  /**
+   * `Beta`, `Release Candidate`, or null for a finished release.
+   *
+   * Derived here rather than in the browser, because the version grammar has
+   * one implementation and `apps/web` cannot import it -- `version.ts` reads
+   * files and runs git.
+   */
+  channel: string | null;
   /** The release notes, as written. Markdown. */
   notes: string;
   url: string;
@@ -69,6 +78,8 @@ export interface ReleaseInfo {
 export interface UpdateState {
   /** What is running here. */
   current: string;
+  /** What that is called: `AI17Z Beta 1.0.0`. The number is still `current`. */
+  currentName: string;
   latest: ReleaseInfo | null;
   /** Newer than this installation, and not one the owner has skipped. */
   updateAvailable: boolean;
@@ -157,11 +168,22 @@ interface GitHubRelease {
 function toRelease(raw: GitHubRelease): ReleaseInfo | null {
   const tag = raw.tag_name?.trim();
   if (!tag) return null;
+  const version = tag.replace(/^v/, '');
   const installer = (raw.assets ?? []).find((asset) => asset.name?.toLowerCase().endsWith('.exe'));
+
+  // GitHub defaults a release's name to its tag, and a heading that reads
+  // `v1.0.0-beta.2` above the notes tells somebody nothing they did not get
+  // from the number beside it. A name that is only the tag is treated as no
+  // name and rendered; a name somebody actually wrote is left alone.
+  const named = releaseName(version);
+  const written = raw.name?.trim();
+  const name = written && written !== tag && written !== version ? written : named.title;
+
   return {
-    version: tag.replace(/^v/, ''),
+    version,
     tag,
-    name: raw.name?.trim() || tag,
+    name,
+    channel: named.channel,
     notes: raw.body?.trim() ?? '',
     url: raw.html_url ?? `https://github.com/${REPOSITORY}/releases/tag/${tag}`,
     installerUrl: installer?.browser_download_url ?? null,
@@ -255,8 +277,20 @@ export async function updateState(options: { refresh?: boolean } = {}): Promise<
   const skipped = await ops.getSetting<string>(SKIPPED_KEY);
   const method = updateMethod();
 
+  const currentName = releaseName(current).title;
+
   if (!enabled) {
-    return { current, latest: null, updateAvailable: false, skipped, enabled, checkedAt: null, error: null, method };
+    return {
+      current,
+      currentName,
+      latest: null,
+      updateAvailable: false,
+      skipped,
+      enabled,
+      checkedAt: null,
+      error: null,
+      method,
+    };
   }
 
   const cached = await ops.getSetting<CachedCheck>(CHECK_KEY);
@@ -282,6 +316,7 @@ export async function updateState(options: { refresh?: boolean } = {}): Promise<
 
   return {
     current,
+    currentName,
     latest,
     updateAvailable: newer && latest.version !== skipped,
     skipped,
