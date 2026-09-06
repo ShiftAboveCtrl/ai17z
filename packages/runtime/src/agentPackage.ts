@@ -40,10 +40,17 @@ import type {
   AgentPackage,
   AgentPackageMode,
   AgentPackageSummary,
+  PortableCredential,
   PortableLearned,
 } from '@xbam/shared/contracts';
 import { BadRequestError, describeVersion, nowIso, sniffImage } from '@xbam/shared';
-import { agents as agentsRepo, memories as memoriesRepo, ops as opsRepo, query } from '@xbam/database';
+import {
+  agents as agentsRepo,
+  memories as memoriesRepo,
+  ops as opsRepo,
+  providers as providersRepo,
+  query,
+} from '@xbam/database';
 import { exportAgent, importAgent } from './portableAgent';
 import { currentArtifactId, setAgentAvatar } from './avatar';
 import { storageDir } from './channelContext';
@@ -71,8 +78,21 @@ export function checksumOf(content: {
   agent: unknown;
   avatar: unknown;
   learned: unknown;
+  credentials?: unknown;
 }): string {
-  return createHash('sha256').update(canonical(content)).digest('hex');
+  // An empty credential list is omitted rather than hashed as `[]`.
+  //
+  // Otherwise adding the field changed the digest of every package that has no
+  // keys in it -- including every package written before the field existed --
+  // and each one would have reported itself damaged the first time a newer
+  // AI17Z opened it. A file somebody exported yesterday has to still open
+  // tomorrow.
+  const credentials = Array.isArray(content.credentials) && content.credentials.length === 0
+    ? undefined
+    : content.credentials;
+  return createHash('sha256')
+    .update(canonical({ agent: content.agent, avatar: content.avatar, learned: content.learned, credentials }))
+    .digest('hex');
 }
 
 /** Stable JSON: object keys sorted, arrays left in order because order is data. */
@@ -86,13 +106,24 @@ function canonical(value: unknown): string {
 }
 
 /** The filename a download is offered under. */
-export function packageFilename(name: string, mode: AgentPackageMode): string {
+export function packageFilename(
+  name: string,
+  mode: AgentPackageMode,
+  containsCredentials = false,
+): string {
   const slug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60);
-  return `${slug || 'agent'}${mode === 'MOVE' ? '-move' : ''}${AGENT_PACKAGE_EXTENSION}`;
+  // A file holding API keys says so in its own name.
+  //
+  // The name is the only part of a file people see in a folder listing, in an
+  // attachment, in a chat window. Somebody about to send this one should have
+  // to notice, and "secrets" in the middle of the filename is harder to miss
+  // than a field inside the JSON.
+  const secrets = containsCredentials ? '-with-keys-SECRET' : '';
+  return `${slug || 'agent'}${mode === 'MOVE' ? '-move' : ''}${secrets}${AGENT_PACKAGE_EXTENSION}`;
 }
 
 /** Reads the agent's stored portrait back out, so the face travels with it. */
@@ -163,13 +194,71 @@ async function readLearned(agentId: string): Promise<PortableLearned> {
  * agent has learned, which is not shareable and is not meant to be -- it exists
  * so somebody can carry their own agent to their own new machine.
  */
-export async function packAgent(agentId: string, mode: AgentPackageMode): Promise<AgentPackage> {
+/**
+ * The provider keys this agent's models actually use.
+ *
+ * Only the ones it refers to, never every credential in the installation: an
+ * agent that thinks with one provider has no business carrying the keys for
+ * three others out of the building.
+ *
+ * Decrypted here, which is the only place that can: they are sealed under this
+ * installation's master key, and that key does not travel. That is the whole
+ * reason this is opt-in -- the file it produces is a secret in a way no other
+ * package is.
+ */
+async function readCredentials(agentId: string): Promise<PortableCredential[]> {
+  const configs = await providersRepo.listModelConfigs(agentId);
+  const wanted = new Set(configs.map((c) => c.providerCredentialId).filter((id): id is string => Boolean(id)));
+
+  const out: PortableCredential[] = [];
+  for (const id of wanted) {
+    const provider = await providersRepo.getProvider(id);
+    if (!provider) continue;
+    const apiKey = await providersRepo.getDecryptedApiKey(id).catch(() => null);
+    // A provider with no key -- a local Ollama, say -- is not an error and not
+    // a credential. It comes back with the configuration either way.
+    if (!apiKey) continue;
+    out.push({
+      kind: provider.provider,
+      label: provider.label,
+      baseUrl: provider.baseUrl ?? null,
+      apiKey,
+    });
+  }
+  return out;
+}
+
+export interface PackOptions {
+  /**
+   * Carry the provider API keys this agent's models use.
+   *
+   * MOVE only, off by default, and the resulting file is a secret: it holds
+   * keys in the clear, because a key encrypted under the machine it is leaving
+   * is of no use on the machine it is going to.
+   */
+  includeCredentials?: boolean;
+}
+
+export async function packAgent(
+  agentId: string,
+  mode: AgentPackageMode,
+  options: PackOptions = {},
+): Promise<AgentPackage> {
   const agent = await agentsRepo.getAgent(agentId);
   if (!agent) throw new BadRequestError('That agent no longer exists.');
+
+  // Refused rather than quietly ignored. Somebody who asked for their keys and
+  // got a file without them would find out at the worst possible moment.
+  if (options.includeCredentials && mode !== 'MOVE') {
+    throw new BadRequestError(
+      'Only a MOVE package can carry API keys. A SHARE package is meant to be safe to hand to somebody else.',
+    );
+  }
 
   const document = await exportAgent(agentId);
   const avatar = await readAvatar(agentId);
   const learned = mode === 'MOVE' ? await readLearned(agentId) : null;
+  const credentials = options.includeCredentials ? await readCredentials(agentId) : [];
 
   return AgentPackageSchema.parse({
     format: 'ai17z-agent',
@@ -180,10 +269,12 @@ export async function packAgent(agentId: string, mode: AgentPackageMode): Promis
     // package is something people send each other, and a stable sender id turns
     // every shared agent into a way of learning who made it.
     exportedByVersion: describeVersion(),
-    checksum: checksumOf({ agent: document, avatar, learned }),
+    checksum: checksumOf({ agent: document, avatar, learned, credentials }),
     agent: document,
     avatar,
     learned,
+    containsCredentials: credentials.length > 0,
+    credentials,
   });
 }
 
@@ -218,6 +309,7 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
     checksumOk: false,
     counts: empty,
     hasAvatar: false,
+    credentials: 0,
     notes: [],
   });
 
@@ -241,7 +333,12 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
   }
 
   const pkg = result.data;
-  const checksumOk = pkg.checksum === checksumOf({ agent: pkg.agent, avatar: pkg.avatar, learned: pkg.learned });
+  // Every field the writer covered, or a sound package reports itself damaged.
+  // Adding credentials to the written checksum without adding them here made
+  // every keyed export fail its own integrity check.
+  const checksumOk =
+    pkg.checksum ===
+    checksumOf({ agent: pkg.agent, avatar: pkg.avatar, learned: pkg.learned, credentials: pkg.credentials });
 
   const notes: string[] = [];
   if (!checksumOk) {
@@ -252,9 +349,17 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
       'This is a move package: it carries what the agent has learned, not just how it is configured. Import it only if it is your own agent.',
     );
   }
-  if (pkg.agent.models.length > 0) {
+  if (pkg.agent.models.length > 0 && pkg.credentials.length === 0) {
     notes.push(
       'Model roles name a provider but carry no credential. You will need your own key for each before the agent can run.',
+    );
+  }
+  if (pkg.credentials.length > 0) {
+    // First in the list, because it is the one fact about this file that
+    // changes how it should be handled -- not just what it will create.
+    notes.unshift(
+      `This file contains ${pkg.credentials.length} provider API key(s) in the clear. ` +
+        'Treat it as a password: do not email it, commit it, or leave it in a shared folder. Delete it once imported.',
     );
   }
   if (pkg.agent.knowledge.some((k) => k.kind === 'PATH')) {
@@ -272,6 +377,7 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
     exportedAt: pkg.exportedAt,
     exportedByVersion: pkg.exportedByVersion,
     checksumOk,
+    credentials: pkg.credentials.length,
     counts: {
       styleExamples: pkg.agent.persona?.styleExamples?.length ?? 0,
       models: pkg.agent.models.length,
@@ -287,7 +393,7 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
 export interface UnpackResult {
   agentId: string;
   /** What was brought in, counted after the fact rather than promised. */
-  imported: { memories: number; avatar: boolean };
+  imported: { memories: number; avatar: boolean; credentials: number };
   /** What could not be, and why. Never silent. */
   skipped: string[];
 }
@@ -306,6 +412,14 @@ export async function unpackAgent(input: {
   createdBy: string;
   /** Bring the learned material too. Ignored for a SHARE package, which has none. */
   includeLearned?: boolean;
+  /**
+   * Create providers for any API keys the package carries.
+   *
+   * Defaults to true, because somebody who exported their keys deliberately and
+   * then imported the file wanted them. Set false to import the agent and type
+   * the keys in by hand.
+   */
+  includeCredentials?: boolean;
 }): Promise<UnpackResult> {
   const summary = inspectPackage(input.raw);
   if (!summary.valid) throw new BadRequestError(summary.problem ?? 'That package could not be read.');
@@ -330,7 +444,7 @@ export async function unpackAgent(input: {
   const agentId = (created as { id?: string }).id ?? (created as { agentId?: string }).agentId!;
 
   const skipped: string[] = [];
-  const imported = { memories: 0, avatar: false };
+  const imported = { memories: 0, avatar: false, credentials: 0 };
 
   if (pkg.avatar) {
     try {
@@ -369,6 +483,42 @@ export async function unpackAgent(input: {
       skipped.push(
         `${pkg.learned.memories.length - imported.memories} of ${pkg.learned.memories.length} memories could not be written.`,
       );
+    }
+  }
+
+  // Providers last, because an agent with no memories is still an agent and a
+  // failure here must not cost the rest of the import.
+  if (pkg.credentials.length > 0 && input.includeCredentials !== false) {
+    const existing = await providersRepo.listProviders(input.ownerId).catch(() => []);
+    for (const credential of pkg.credentials) {
+      // A provider label is unique per owner, so importing onto an installation
+      // that already has one by that name would fail on a database constraint
+      // and surface as an error nobody can act on. Left alone instead: a key is
+      // already there under that name, and replacing somebody's working
+      // credential with one out of a file is not a decision an import gets to
+      // make.
+      if (existing.some((p) => p.label === credential.label)) {
+        skipped.push(
+          `A provider called "${credential.label}" is already here, so its key was left as it is. ` +
+            'Change it on the Providers screen if the imported one was the one you wanted.',
+        );
+        continue;
+      }
+      try {
+        // Through the ordinary create path, which seals the key under *this*
+        // installation's master key. The package carried it in the clear
+        // because it had to cross machines; it does not stay that way.
+        await providersRepo.createProvider({
+          ownerId: input.ownerId,
+          provider: credential.kind as never,
+          label: credential.label,
+          baseUrl: credential.baseUrl,
+          apiKey: credential.apiKey,
+        });
+        imported.credentials += 1;
+      } catch (error) {
+        skipped.push(`The API key for ${credential.label} was not imported: ${(error as Error).message}`);
+      }
     }
   }
 

@@ -719,27 +719,48 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
    *
    * SHARE is configuration and is safe to hand to anybody. MOVE adds what the
    * agent has learned, for carrying your own agent to your own new machine.
-   * Neither carries a credential, a session or a browser profile -- the shapes
-   * have nowhere to put one.
+   * Neither carries a session or a browser profile -- the shapes have nowhere
+   * to put one.
+   *
+   * `keys=1` is the one exception, and it is a MOVE only: it adds the provider
+   * API keys the agent's models use, in the clear, because a key sealed under
+   * the master key of the machine it is leaving is of no use on the machine it
+   * is arriving at. That makes the file itself a secret, so it is off unless
+   * asked for, named `-with-keys-SECRET`, and declared in a field the
+   * inspection shows before anybody imports it.
    */
   app.get(
     '/api/agents/:id/package',
     handler(async (request, reply) => {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
-      const mode = ((request.query ?? {}) as { mode?: string }).mode === 'MOVE' ? 'MOVE' : 'SHARE';
+      const query = (request.query ?? {}) as { mode?: string; keys?: string };
+      const mode = query.mode === 'MOVE' ? 'MOVE' : 'SHARE';
+      // Off unless explicitly asked for, and only ever on a MOVE -- packAgent
+      // refuses the combination rather than quietly dropping the keys.
+      const includeCredentials = query.keys === '1' || query.keys === 'true';
 
-      const pkg = await packAgent(agent.id, mode);
+      const pkg = await packAgent(agent.id, mode, { includeCredentials });
       await ops.audit({
         actorUserId: user.id,
         action: 'agent.exported',
         entityType: 'agent',
         entityId: agent.id,
-        data: { mode, memories: pkg.learned?.memories.length ?? 0, avatar: pkg.avatar !== null },
+        // Recorded because exporting keys is worth being able to look back at:
+        // how many, never which, and never any part of one.
+        data: {
+          mode,
+          memories: pkg.learned?.memories.length ?? 0,
+          avatar: pkg.avatar !== null,
+          credentials: pkg.credentials.length,
+        },
       });
 
       reply.header('content-type', 'application/json; charset=utf-8');
-      reply.header('content-disposition', `attachment; filename="${packageFilename(agent.name, mode)}"`);
+      reply.header(
+        'content-disposition',
+        `attachment; filename="${packageFilename(agent.name, mode, pkg.containsCredentials)}"`,
+      );
       // Never cached: a package is a point-in-time copy of an agent, and a
       // stale one downloaded from a cache is a silently older agent.
       reply.header('cache-control', 'no-store');

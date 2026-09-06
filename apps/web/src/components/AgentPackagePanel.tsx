@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Download, FileUp } from 'lucide-react';
+import { Download, KeyRound, FileUp } from 'lucide-react';
 import { ApiError, getToken, post } from '@app/lib/api';
 import { ErrorPanel, Spinner } from '@app/components/ui';
 
@@ -37,9 +37,9 @@ interface Imported {
  * Authorization header and an `<a href>` sends none. The blob is released as
  * soon as the browser has taken it.
  */
-async function download(agentId: string, mode: 'SHARE' | 'MOVE'): Promise<void> {
+async function download(agentId: string, mode: 'SHARE' | 'MOVE', keys = false): Promise<void> {
   const token = getToken();
-  const response = await fetch(`${BASE}/api/agents/${agentId}/package?mode=${mode}`, {
+  const response = await fetch(`${BASE}/api/agents/${agentId}/package?mode=${mode}${keys ? '&keys=1' : ''}`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!response.ok) throw new ApiError('INTERNAL', 'That package could not be built.', response.status);
@@ -78,12 +78,12 @@ export function AgentPackagePanel({ agentId, onImported }: { agentId?: string; o
   const [pending, setPending] = useState<string | null>(null);
   const [result, setResult] = useState<Imported | null>(null);
 
-  const exportAs = async (mode: 'SHARE' | 'MOVE') => {
+  const exportAs = async (mode: 'SHARE' | 'MOVE', keys = false) => {
     if (!agentId) return;
     setBusy(mode);
     setError(null);
     try {
-      await download(agentId, mode);
+      await download(agentId, mode, keys);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'That package could not be downloaded.');
     } finally {
@@ -151,12 +151,34 @@ export function AgentPackagePanel({ agentId, onImported }: { agentId?: string; o
               {busy === 'MOVE' ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" aria-hidden />}
               Export to move
             </button>
+            <button
+              type="button"
+              className="btn-quiet hover:text-signal-wait"
+              onClick={() => void exportAs('MOVE', true)}
+              disabled={busy !== null}
+            >
+              {busy === 'MOVE_KEYS' ? <Spinner className="h-3.5 w-3.5" /> : <KeyRound className="h-3.5 w-3.5" aria-hidden />}
+              Move, with API keys
+            </button>
           </div>
           <p className="max-w-prose text-xs leading-relaxed text-bone-faint">
             <span className="text-bone-dim">Share</span> is how the agent is configured — persona, policy, which model
             does what. Safe to send to anybody. <span className="text-bone-dim">Move</span> adds what it has learned,
             for carrying your own agent to your own new machine. Neither carries an API key, a login or a browser
             session.
+          </p>
+          {/*
+            The third button is the only one that produces a file worth being
+            careful with, so it says so here rather than in a tooltip nobody
+            opens. Its own paragraph, and the warning colour, because a person
+            skimming three similar buttons should be able to tell which one is
+            different without reading all of it.
+          */}
+          <p className="max-w-prose rounded-lg border border-signal-wait/25 bg-signal-wait/[0.05] px-3 py-2 text-xs leading-relaxed text-signal-wait">
+            <strong className="font-medium">Move, with API keys</strong> adds the provider keys this agent uses, in the
+            clear — they cannot be encrypted, because the key that would unlock them is the one staying behind. Treat
+            that file like a password: it is named <span className="font-mono">-with-keys-SECRET</span> so you notice.
+            Delete it once it has been imported.
           </p>
         </div>
       )}
