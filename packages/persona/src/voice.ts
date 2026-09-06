@@ -13,7 +13,11 @@ import { emptyFingerprint } from '@xbam/shared/contracts';
  * return a different answer for the same input.
  */
 
+// Asked with .test(), so a variation selector matching on its own changes no
+// answer. The counter that has to be exact is countEmoji in @xbam/runtime,
+// which is built from Extended_Pictographic and handles ZWJ sequences whole.
 const EMOJI =
+  // eslint-disable-next-line no-misleading-character-class
   /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/u;
 const CONTRACTION = /\b\w+'(s|t|re|ve|ll|d|m)\b/i;
 const FIRST_PERSON = /\b(i|i'm|my|me|we|our|us)\b/i;

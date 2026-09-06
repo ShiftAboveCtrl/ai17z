@@ -1,3 +1,8 @@
+/* eslint-disable no-control-regex, no-irregular-whitespace --
+   The fixtures here are hostile text: control characters, zero-width spaces
+   and bidirectional overrides, written in verbatim to prove sanitizeText
+   removes them. Writing them as escapes would test a different string from
+   the one an attacker actually sends. */
 import { describe, expect, it } from 'vitest';
 import { jobs as jobsRepo, query } from '@xbam/database';
 import { ingestNormalizedEvent } from '@xbam/runtime';

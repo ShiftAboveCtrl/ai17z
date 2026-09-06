@@ -26,7 +26,7 @@ describe('autonomy modes', () => {
   });
 
   it('MONITOR_ONLY records the event but creates no job and generates nothing', async () => {
-    const fixture = await createFixture(withMode('MONITOR_ONLY'));
+    await createFixture(withMode('MONITOR_ONLY'));
     const outcome = await ingestNormalizedEvent({
       accountId: null,
       event: mockEvent('seen but not answered'),
@@ -54,7 +54,7 @@ describe('autonomy modes', () => {
   });
 
   it('MANUAL_ONLY creates nothing automatically', async () => {
-    const fixture = await createFixture(withMode('MANUAL_ONLY'));
+    await createFixture(withMode('MANUAL_ONLY'));
     const outcome = await ingestNormalizedEvent({ accountId: null, event: mockEvent('automatic') });
     expect(outcome.jobs).toHaveLength(0);
   });

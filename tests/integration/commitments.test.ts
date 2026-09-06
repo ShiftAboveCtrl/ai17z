@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { accounts as accountsRepo, agents as agentsRepo, query, stances as stancesRepo, type CommitmentRow } from '@xbam/database';
-import { DEFAULT_FOLLOW_UP_MS, canFollowUp, followUpOnCommitment, runDueFollowUps } from '@xbam/runtime';
+import { DEFAULT_FOLLOW_UP_MS, canFollowUp, runDueFollowUps } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { uniqueSuffix } from '../support/db';

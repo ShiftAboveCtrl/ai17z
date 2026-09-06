@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext } from 'playwright';
 import { PipelineError, createLogger, envBool, errorMessage } from '@xbam/shared';
-import type { BrowserChannel, BrowserIdentity, LeasedSession, SessionConfig } from './types';
+import type { BrowserIdentity, LeasedSession, SessionConfig } from './types';
 import {
   cdpIdentity,
   cdpIsGoogleChrome,

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { PROVIDER_KINDS } from '@xbam/shared/contracts';
 import { getAdapter, listAdapters } from '@xbam/models';
@@ -34,10 +36,7 @@ describe('xAI is a first-class provider', () => {
     // Grok is the model; xAI is the account. Somebody holding a SuperGrok
     // subscription has to be able to tell that this is not that, because a
     // consumer subscription is not documented to grant API access.
-    const ui = require('node:fs').readFileSync(
-      require('node:path').resolve(__dirname, '../../apps/web/src/routes/EasySetup.tsx'),
-      'utf8',
-    ) as string;
+    const ui = readFileSync(resolve(__dirname, '../../apps/web/src/routes/EasySetup.tsx'), 'utf8');
     expect(ui).toContain("kind: 'xai'");
     expect(ui).toMatch(/SuperGrok subscription is not one/i);
   });

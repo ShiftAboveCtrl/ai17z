@@ -1,4 +1,4 @@
-import type { Capability, JobRecord, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
+import type { Capability, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
 import { MediaInventory, positionsConflict } from '@xbam/shared/contracts';
 import type { QualityReport, RelationshipContext, StanceContext } from '@xbam/shared/contracts';
 import { PipelineError, contentSignature, createLogger, describeVersion, errorMessage, truncate } from '@xbam/shared';

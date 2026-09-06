@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { ApproveJobInput, InjectMockEventInput, JobStatus } from '@xbam/shared/contracts';
-import { BadRequestError, ForbiddenError, NotFoundError, newId } from '@xbam/shared';
+import { ApproveJobInput, JobStatus } from '@xbam/shared/contracts';
+import { ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   actions as actionsRepo,
   agents as agentsRepo,
@@ -13,7 +13,7 @@ import {
   ops,
   type UserRow,
 } from '@xbam/database';
-import { approveJob, cancelJob, ingestNormalizedEvent, rejectJob, retryJob } from '@xbam/runtime';
+import { approveJob, cancelJob, rejectJob, retryJob } from '@xbam/runtime';
 import { Pagination, handler, params, parseBody, parseQuery, requireUser } from '../http';
 
 async function ownedAgent(agentId: string, user: UserRow) {

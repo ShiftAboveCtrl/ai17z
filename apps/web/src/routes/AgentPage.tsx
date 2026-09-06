@@ -6,7 +6,7 @@ import { useResource } from '@app/lib/hooks';
 import type { AgentDetail } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { AgentGlyph } from '@app/components/AgentGlyph';
-import { ErrorPanel, Field, Loading, Modal, Spinner, StatusDot } from '@app/components/ui';
+import { ErrorPanel, Field, Loading, Modal, Spinner } from '@app/components/ui';
 import { AgentPackagePanel } from '@app/components/AgentPackagePanel';
 import { NeedsYou } from '@app/components/NeedsYou';
 import { LiveStatus } from '@app/components/LiveStatus';

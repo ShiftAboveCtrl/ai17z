@@ -44,15 +44,21 @@
     "verify:install": "tsx tools/verify-install.mts",
     "owner:password": "tsx tools/owner-password.mts",
     "worker:supervised": "tsx scripts/supervise-worker.mts",
-    "release:check": "tsx tools/release-check.mts"
+    "release:check": "tsx tools/release-check.mts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@types/node": "^22.10.2",
     "concurrently": "^9.1.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^15.15.0",
     "typescript": "^5.7.2",
-    "vitest": "^3.0.5",
-    "@playwright/test": "1.62.1",
-    "vite": "^6.0.7"
+    "typescript-eslint": "^8.69.0",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.5"
   },
   "dependencies": {
     "tsx": "^4.19.2",

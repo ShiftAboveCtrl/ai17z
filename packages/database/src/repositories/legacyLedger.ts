@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { query, queryOne } from '../pool';
+import { queryOne } from '../pool';
 
 /** The signature format AI4CZ wrote into posted_index.json. */
 export function legacySignature(targetRef: string, text: string): string {

@@ -59,9 +59,6 @@ function emptyReport(): ImportReport {
   };
 }
 
-const isoFrom = (ms: number | null): string | null =>
-  ms && Number.isFinite(ms) ? new Date(ms > 1e12 ? ms : ms * 1000).toISOString() : null;
-
 /** Legacy thread channels are `x_thread:<statusId>`. */
 function threadStatusId(channel: string | null): string | null {
   if (!channel?.startsWith('x_thread:')) return null;
