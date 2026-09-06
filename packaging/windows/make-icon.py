@@ -5,153 +5,160 @@ changing anything here:
 
     python packaging/windows/make-icon.py
 
-Design constraints, in the order they mattered:
+The mark is the wordmark: `ai17z` in a thin frame, brushed-silver on nothing at
+all. Four things decided how it is drawn.
+
+**Transparent, because it was asked for.** That costs the safety a solid tile
+gave: white glyphs vanish on a white background. So every stroke carries a soft
+grey edge, which the wordmark it came from already has -- it is what makes the
+letters read as metal rather than as paint. The edge is what keeps the icon
+visible on a light taskbar, and it is not decoration.
 
 **It has to survive 16 pixels.** That is the taskbar, the window corner and the
-Alt-Tab strip, and it is where most people actually see an icon. The first
-version was thin white numerals on near-black: elegant at 256, an illegible
-smudge at 16.
+Alt-Tab strip, and it is where most people actually see an icon. Five characters
+inside a square frame at 16px is a grey smudge, so below 40px the mark becomes
+`17` alone -- the half of the wordmark that is distinctive -- at a size that can
+actually be read. The frame stays, because the frame is the silhouette and
+silhouette is what is recognised at a glance.
 
-**It has to be visible on a dark taskbar.** Windows ships dark by default, and a
-near-black icon on a near-black bar is a hole. So the ground is light and the
-mark is dark -- the opposite of the app's own interface, and the right way round
-for where the icon is seen.
+**A wordmark is wide and an icon is square.** The letters are set on a baseline
+across the middle with generous margins rather than stretched to fill, which is
+what the source does.
 
-**It must not look like something else.** The first attempt put a coloured band
-along the bottom, which turned a light tile with a big number into a calendar.
-Shape is read before glyphs are, so it would have been misread at a glance
-forever. The colour moved into the numerals.
-
-**The numerals are drawn, not typed.** No font dependency, no hinting surprises,
-and full control of stroke weight at every size: the strokes thicken as the
-canvas shrinks, because a stroke that looks refined at 256 disappears at 16.
+**Rendered large and downsampled.** PIL has no antialiased polygon fill, so the
+edges come from the resize rather than from the drawing.
 """
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from pathlib import Path
 
-# The product palette.
-INK = (12, 12, 12)
-BONE = (242, 241, 238)
-ACCENT = (139, 164, 184)
-ACCENT_DEEP = (92, 118, 140)
+HERE = Path(__file__).resolve().parent
+
+# Brushed silver, top to bottom: the sheen in the wordmark is a light band a
+# little above the middle, not a straight gradient.
+SHEEN = [
+    (0.00, (255, 255, 255)),
+    (0.34, (250, 250, 251)),
+    (0.46, (255, 255, 255)),
+    (0.62, (222, 224, 228)),
+    (0.82, (198, 202, 208)),
+    (1.00, (176, 181, 189)),
+]
+
+# The edge that keeps white visible on white. Soft and cool rather than a hard
+# black outline, which would read as a sticker.
+EDGE = (146, 152, 161)
 
 SIZES = [16, 24, 32, 48, 64, 128, 256]
-# Rendered large and downsampled: PIL has no antialiased polygon fill, so the
-# edges come from the resize rather than from the drawing.
-SUPER = 8
+SCALE = 8
+
+# Below this the full wordmark cannot be read, so the mark becomes `17`.
+WORDMARK_FLOOR = 40
 
 
-def rounded_rect(draw, box, radius, fill):
-    draw.rounded_rectangle(box, radius=radius, fill=fill)
+def sheen(height: int) -> Image.Image:
+    """A one-pixel-wide column of the gradient, stretched later."""
+    column = Image.new('RGB', (1, height))
+    pixels = column.load()
+    for y in range(height):
+        t = y / max(1, height - 1)
+        for i in range(len(SHEEN) - 1):
+            t0, c0 = SHEEN[i]
+            t1, c1 = SHEEN[i + 1]
+            if t0 <= t <= t1:
+                k = (t - t0) / max(1e-6, t1 - t0)
+                pixels[0, y] = tuple(round(c0[j] + (c1[j] - c0[j]) * k) for j in range(3))
+                break
+    return column
 
 
-def draw_one(draw, x, top, height, weight, colour):
-    """A '1': a vertical stem, an angled flag, and a foot.
-
-    The foot is what stops it reading as a lower-case 'l' at small sizes.
+def font_for(px: int) -> ImageFont.FreeTypeFont:
     """
-    stem_left = x + weight * 0.9
-    draw.rectangle([stem_left, top, stem_left + weight, top + height], fill=colour)
-    # The flag, as a quadrilateral so it has a real angle rather than a step.
-    draw.polygon(
-        [
-            (x, top + height * 0.24),
-            (stem_left + weight * 0.1, top),
-            (stem_left + weight * 0.1, top + weight * 1.1),
-            (x + weight * 0.35, top + height * 0.34),
-        ],
-        fill=colour,
+    The wordmark's face, or the closest thing this machine has.
+
+    A geometric sans with a single-storey `a` is what the source uses. Tried in
+    order of how close they are; the icon is committed as a binary, so this only
+    has to be right on the machine that regenerates it -- and it says which one
+    it used rather than silently drawing something else.
+    """
+    for name in ('arialbd.ttf', 'segoeuib.ttf', 'calibrib.ttf', 'DejaVuSans-Bold.ttf'):
+        try:
+            return ImageFont.truetype(name, px)
+        except OSError:
+            continue
+    raise SystemExit('no suitable bold sans font found; install one or edit font_for()')
+
+
+def draw_mark(size: int) -> Image.Image:
+    """One square of the icon, at `size` pixels, on transparency."""
+    n = size * SCALE
+    text = 'ai17z' if size >= WORDMARK_FLOOR else '17'
+
+    # The frame. Thin, inset, with a hairline gap inside it like the source.
+    inset = round(n * 0.055)
+    stroke = max(SCALE, round(n * 0.015))
+    frame = Image.new('L', (n, n), 0)
+    fd = ImageDraw.Draw(frame)
+    fd.rectangle([inset, inset, n - inset - 1, n - inset - 1], outline=255, width=stroke)
+    gap = stroke + max(SCALE, round(n * 0.018))
+    fd.rectangle(
+        [inset + gap, inset + gap, n - inset - gap - 1, n - inset - gap - 1],
+        outline=255,
+        width=max(SCALE // 2, round(n * 0.006)),
     )
-    # The foot.
-    foot_w = weight * 2.9
-    cx = stem_left + weight / 2
-    draw.rectangle([cx - foot_w / 2, top + height - weight, cx + foot_w / 2, top + height], fill=colour)
 
+    # The wordmark, fitted to the space inside the frame rather than guessed at.
+    room = n - 2 * (inset + gap) - round(n * 0.10)
+    px = room
+    while px > 8:
+        font = font_for(px)
+        box = font.getbbox(text)
+        if (box[2] - box[0]) <= room and (box[3] - box[1]) <= room * 0.62:
+            break
+        px = int(px * 0.94)
+    font = font_for(px)
+    box = font.getbbox(text)
 
-def draw_seven(draw, x, top, height, weight, colour, width):
-    """A '7': a top bar and a diagonal."""
-    draw.rectangle([x, top, x + width, top + weight], fill=colour)
-    # The diagonal, drawn as a quad so its width stays constant along its length
-    # instead of thinning the way a rotated rectangle would.
-    draw.polygon(
-        [
-            (x + width, top),
-            (x + width - weight * 0.15, top),
-            (x + width * 0.30 - weight * 0.2, top + height),
-            (x + width * 0.30 + weight * 0.95, top + height),
-        ],
-        fill=colour,
+    letters = Image.new('L', (n, n), 0)
+    ld = ImageDraw.Draw(letters)
+    ld.text(
+        ((n - (box[2] - box[0])) / 2 - box[0], (n - (box[3] - box[1])) / 2 - box[1]),
+        text,
+        font=font,
+        fill=255,
     )
 
+    ink = Image.new('L', (n, n), 0)
+    ink.paste(frame, (0, 0), frame)
+    ink.paste(letters, (0, 0), letters)
 
-def render(size: int) -> Image.Image:
-    s = size * SUPER
-    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
+    # The edge: the mark grown slightly and blurred, painted under it. This is
+    # what makes a white icon survive a white background.
+    halo = ink.filter(ImageFilter.MaxFilter(max(3, (round(n * 0.012) * 2) + 1)))
+    halo = halo.filter(ImageFilter.GaussianBlur(n * 0.010))
 
-    # The tile. Windows 11 uses a generous corner radius; matching it stops the
-    # icon looking like a sticker sitting on top of the taskbar.
-    radius = int(s * 0.22)
-    rounded_rect(d, [0, 0, s - 1, s - 1], radius, BONE)
+    canvas = Image.new('RGBA', (n, n), (0, 0, 0, 0))
+    canvas.paste(Image.new('RGB', (n, n), EDGE), (0, 0), halo)
+    canvas.paste(sheen(n).resize((n, n)), (0, 0), ink)
 
-    # No band along the bottom.
-    #
-    # The first version had one, and a light tile with a coloured strip under a
-    # large number is a calendar. Every phone has that icon and people read the
-    # shape before they read the glyphs, so it would have been mistaken at a
-    # glance for the rest of its life.
-    #
-    # The colour goes into the numerals instead: the 1 in ink, the 7 in the
-    # deeper accent. That is distinctive, survives 16 pixels, and cannot be
-    # confused with anything else on a taskbar.
-
-    # Numerals. Heavier as the canvas shrinks: 0.115 of the width at 256 would
-    # be a single pale pixel at 16.
-    if size <= 24:
-        weight_ratio = 0.155
-    elif size <= 48:
-        weight_ratio = 0.135
-    else:
-        weight_ratio = 0.115
-
-    weight = s * weight_ratio
-    # Smaller relative to the tile at 16 and 24. The strokes have to thicken as
-    # the canvas shrinks, and thick strokes at full height leave the numerals
-    # touching the edges with the counters closing up.
-    height = s * (0.38 if size <= 24 else 0.44)
-    # Optically centred rather than measured: the numerals have a flat top and a
-    # flat bottom, so mathematical centring reads as slightly low. A hair above.
-    top = (s - height) / 2 - s * 0.015
-
-    seven_w = s * 0.245
-    one_w = weight * 2.9
-    gap = s * 0.075
-    total = one_w + gap + seven_w
-    left = (s - total) / 2
-
-    draw_one(d, left, top, height, weight, INK)
-    draw_seven(d, left + one_w + gap, top, height, weight, ACCENT_DEEP, seven_w)
-
-    return img.resize((size, size), Image.LANCZOS)
+    return canvas.resize((size, size), Image.LANCZOS)
 
 
 def main() -> None:
-    frames = [render(n) for n in SIZES]
-    here = __file__.rsplit("make-icon.py", 1)[0]
+    frames = [draw_mark(size) for size in SIZES]
+    out = HERE / 'ai17z.ico'
+    # `append_images`, not `sizes`. Passing only the largest frame and a list of
+    # sizes makes PIL downsample that one image into all of them -- which
+    # silently threw away every size drawn for its own scale, so 16px got the
+    # full five-character wordmark shrunk into a smudge, which is the exact
+    # thing drawing per size exists to prevent.
+    frames[-1].save(out, format='ICO', append_images=frames[:-1])
+    print(f'wrote {out} ({out.stat().st_size} bytes) at {", ".join(str(s) for s in SIZES)}')
 
-    largest = frames[-1]
-    largest.save(here + "ai17z-256.png")
-    # Pillow writes every listed size into the .ico from the image it is given;
-    # passing the already-rendered frames keeps the small ones as drawn rather
-    # than as a downscale of the large one.
-    largest.save(
-        here + "ai17z.ico",
-        format="ICO",
-        sizes=[(n, n) for n in SIZES],
-        append_images=frames[:-1],
-    )
-    print("wrote ai17z.ico and ai17z-256.png at", SIZES)
+    # A PNG beside it, for anywhere that wants the mark without an .ico.
+    frames[-1].save(HERE / 'ai17z.png', format='PNG')
+    print(f'wrote {HERE / "ai17z.png"}')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

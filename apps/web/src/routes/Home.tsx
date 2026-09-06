@@ -1,11 +1,13 @@
-import { Link } from 'react-router-dom';
-import { ArrowUpRight, Plus } from 'lucide-react';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowUpRight, Package, Plus } from 'lucide-react';
 import { useResource } from '@app/lib/hooks';
 import type { AgentListItem } from '@app/lib/types';
 import { compactNumber, humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { AnimatedText, FadeIn, MagneticElement } from '@app/components/motion';
-import { EmptyState, ErrorPanel, Loading, StatusDot } from '@app/components/ui';
+import { EmptyState, ErrorPanel, Loading, Modal, StatusDot } from '@app/components/ui';
+import { AgentPackagePanel } from '@app/components/AgentPackagePanel';
 import { Explain } from '@app/components/Explain';
 
 /**
@@ -37,6 +39,17 @@ export function Home() {
   const agents = data?.items ?? [];
   const [lead, ...rest] = agents;
 
+  // Importing had nowhere to start from.
+  //
+  // The panel existed and the routes existed, but the only way to reach either
+  // was the Export dialog *inside an agent that already exists* -- so on a new
+  // machine, which is the entire point of moving an agent, there was no way in
+  // at all. It belongs here, where the agents are, and especially in the empty
+  // state, because an empty list is exactly what somebody importing is looking
+  // at.
+  const [importing, setImporting] = useState(false);
+  const navigate = useNavigate();
+
   return (
     <main className="mx-auto max-w-page px-6 pb-24 pt-24 sm:px-10 sm:pt-28">
       <header className="mb-8">
@@ -65,10 +78,16 @@ export function Home() {
             title="No agents yet."
             detail="An agent is an identity, a memory, a model, and a set of rules about what it may do. Start with one and connect it to nothing at all — the mock channel will let you watch it think."
             action={
-              <Link to="/agents/new" className="btn-primary">
-                <Plus className="h-4 w-4" aria-hidden />
-                Create your first agent
-              </Link>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Link to="/agents/new" className="btn-primary">
+                  <Plus className="h-4 w-4" aria-hidden />
+                  Create your first agent
+                </Link>
+                <button type="button" className="btn-ghost" onClick={() => setImporting(true)}>
+                  <Package className="h-4 w-4" aria-hidden />
+                  Import one you already have
+                </button>
+              </div>
             }
           />
         </FadeIn>
@@ -95,6 +114,14 @@ export function Home() {
           </FadeIn>
         </>
       )}
+      <Modal open={importing} onClose={() => setImporting(false)} title="Import an agent" wide>
+        <AgentPackagePanel
+          onImported={(id) => {
+            setImporting(false);
+            navigate(`/agents/${id}`);
+          }}
+        />
+      </Modal>
     </main>
   );
 }

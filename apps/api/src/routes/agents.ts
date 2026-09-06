@@ -13,9 +13,11 @@ import { BadRequestError, ForbiddenError, NotFoundError, slugify } from '@xbam/s
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
+  browserTasks,
   ops,
   pipelines as pipelinesRepo,
   providers as providersRepo,
+  workers as workersRepo,
 } from '@xbam/database';
 import {
   MAX_AVATAR_BYTES,
@@ -26,6 +28,7 @@ import {
   ensureAgentPipeline,
   setAgentAvatar,
 } from '@xbam/runtime';
+import { getChannelAdapter } from '@xbam/channels';
 import { handler, params, parseBody, requireUser } from '../http';
 import type { UserRow } from '@xbam/database';
 
@@ -211,14 +214,56 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * Deleting an agent closes any browser it opened, before the agent is gone.
+   *
+   * It did not, and that left the worst possible state: a signed-in Chrome on
+   * the desktop, polling, with no agent left anywhere to stop it from. Stopping
+   * an agent already queued a shutdown per account; deleting one -- which is
+   * stopping it permanently -- did nothing at all.
+   *
+   * Queued first, because the account links are read through the agent and are
+   * gone the moment it is deleted.
+   *
+   * The API owns no browsers, so this records intent for the worker. If nothing
+   * is running that can act on it the caller is told, rather than being given a
+   * silent success while the window stays open -- which is exactly how somebody
+   * ends up with a browser they cannot get rid of.
+   */
   app.delete(
     '/api/agents/:id',
     handler(async (request) => {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
+
+      const closing: { handle: string; queued: boolean; detail: string }[] = [];
+      for (const link of await accountsRepo.listAgentAccounts(agent.id)) {
+        const account = await accountsRepo.getAccount(link.accountId);
+        if (!account || !getChannelAdapter(account.channel).requiresBrowser) continue;
+        try {
+          await browserTasks.enqueueBrowserTask({
+            accountId: account.id,
+            kind: 'SHUTDOWN_BROWSER',
+            requestedBy: user.id,
+            params: {},
+          });
+          closing.push({ handle: account.handle, queued: true, detail: 'Closing the browser.' });
+        } catch (error) {
+          // One account that cannot be queued must not stop the deletion: the
+          // person asked for the agent to go.
+          closing.push({
+            handle: account.handle,
+            queued: false,
+            detail: error instanceof Error ? error.message : 'Could not queue a browser shutdown.',
+          });
+        }
+      }
+
+      const workerPresent = closing.length === 0 ? true : await workersRepo.browserWorkerPresent();
+
       await agentsRepo.deleteAgent(agent.id);
       await ops.audit({ actorUserId: user.id, action: 'agent.deleted', entityType: 'agent', entityId: agent.id });
-      return { deleted: true };
+      return { deleted: true, closing, workerPresent };
     }),
   );
 

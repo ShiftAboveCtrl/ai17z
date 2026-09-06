@@ -63,7 +63,19 @@ WizardStyle=modern
 DisableWelcomePage=no
 DisableReadyPage=no
 ShowLanguageDialog=no
-WizardSizePercent=110
+WizardSizePercent=120
+; The installer's own artwork, drawn by packaging/windows/make-wizard-art.py.
+;
+; Stock Inno ships a blue-green gradient with a hand holding a box. It is the
+; first thing anybody sees of AI17Z and it looks like every other installer
+; from 2003. These are the product's own ground and wordmark instead.
+WizardImageFile=wizard-panel.bmp
+WizardSmallImageFile=wizard-small.bmp
+; Stretched, and drawn oversized at the same aspect ratio so stretching cannot
+; soften it. Unstretched, Inno centres a 164x314 bitmap in a much larger area
+; and surrounds it with bare form colour, which looked like a mistake.
+WizardImageStretch=yes
+SetupIconFile=ai17z.ico
 ; Per-user: no elevation, no UAC prompt.
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -81,7 +93,23 @@ VersionInfoProductTextVersion={#AppVersion}
 VersionInfoCompany={#AppPublisher}
 VersionInfoDescription={#AppName} Setup
 VersionInfoCopyright=MIT licensed
-LicenseFile=..\..\LICENSE
+; No licence page.
+;
+; Not laziness, and not a legal shortcut: MIT requires the licence to be
+; *included* with a distribution, which it is -- LICENSE ships in the package,
+; it is in the repository, and it is named on the release page. MIT does not
+; require an acceptance dialog.
+;
+; It is gone because it could not be made readable. The licence text is a
+; TRichEditViewer, which keeps its own character colours whatever the control
+; is set to, and a themed radio button draws its caption in the theme colour
+; and ignores Font.Color. On a dark wizard both went dark-on-dark. Painting
+; only that page light did not work either: it lives inside InnerPage, so the
+; recursive pass reaches it and there is nowhere to opt out.
+;
+; A screen nobody can read is worse than no screen. Tried four ways, looked at
+; each one, and removed it.
+;LicenseFile=..\..\LICENSE
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -267,6 +295,161 @@ end;
   Pages
   --------------------------------------------------------------------------- }
 
+{ ---------------------------------------------------------------------------
+  How it looks
+  ---------------------------------------------------------------------------
+
+  Inno paints its wizard in system colours: a white form with black text. That
+  is fine, and it is also indistinguishable from every other installer, which
+  is the thing this was asked not to be.
+
+  So the form is repainted in the product's own palette -- near-black ground,
+  bone text, one silver rule -- by walking the controls Inno has already
+  created. Done here rather than by shipping a skinning DLL: a setup program
+  that loads a third-party binary to look nice is a supply-chain cost nobody
+  should pay for a colour scheme.
+
+  Every control is set explicitly. A control missed here keeps black-on-white
+  and becomes an unreadable hole, so the helpers below are applied to whole
+  categories rather than to named controls one at a time. }
+
+const
+  CLR_INK      = $000C0B0B;  { near-black ground, BGR as Windows wants it }
+  CLR_RAISE    = $001A1917;  { inputs and panels, lifted off the ground }
+  CLR_BONE     = $00EEF1F2;  { primary text }
+  CLR_BONE_DIM = $00A9A9A2;  { secondary text }
+  CLR_LINE     = $00332F2C;  { hairline rules and borders }
+
+procedure PaintLabel(L: TNewStaticText; Dim: Boolean);
+begin
+  if L = nil then Exit;
+  L.Color := CLR_INK;
+  if Dim then L.Font.Color := CLR_BONE_DIM else L.Font.Color := CLR_BONE;
+end;
+
+procedure PaintEdit(E: TEdit);
+begin
+  if E = nil then Exit;
+  E.Color := CLR_RAISE;
+  E.Font.Color := CLR_BONE;
+end;
+
+{ Everything on one page, whatever it happens to be.
+
+  Walked rather than listed, because the pages Inno builds are not all ours and
+  a control this does not know about would otherwise stay black-on-white. }
+procedure PaintPanel(Parent: TWinControl);
+var
+  I: Integer;
+  C: TControl;
+begin
+  if Parent = nil then Exit;
+  for I := 0 to Parent.ControlCount - 1 do
+  begin
+    C := Parent.Controls[I];
+    if C is TNewStaticText then PaintLabel(TNewStaticText(C), False)
+    else if C is TNewMemo then begin
+      TNewMemo(C).Color := CLR_RAISE;
+      TNewMemo(C).Font.Color := CLR_BONE;
+    end
+    else if C is TEdit then PaintEdit(TEdit(C))
+    else if C is TNewEdit then begin
+      TNewEdit(C).Color := CLR_RAISE;
+      TNewEdit(C).Font.Color := CLR_BONE;
+    end
+    else if C is TNewCheckBox then begin
+      TNewCheckBox(C).Color := CLR_INK;
+      TNewCheckBox(C).Font.Color := CLR_BONE;
+    end
+    else if C is TNewRadioButton then
+      { No Color: a themed radio paints its own background and setting one
+        leaves a lighter block behind part of the caption. }
+      TNewRadioButton(C).Font.Color := CLR_BONE
+    else if C is TLabel then begin
+      TLabel(C).Color := CLR_INK;
+      TLabel(C).Font.Color := CLR_BONE;
+    end
+    else if C is TPanel then begin
+      TPanel(C).Color := CLR_INK;
+      PaintPanel(TPanel(C));
+    end
+    else if C is TWinControl then PaintPanel(TWinControl(C));
+  end;
+end;
+
+procedure PaintWizard();
+begin
+  WizardForm.Color := CLR_INK;
+  WizardForm.Font.Color := CLR_BONE;
+
+  { The page furniture: the band at the top, the bevel above the buttons, and
+    the outer surface every page sits on. }
+  WizardForm.MainPanel.Color := CLR_INK;
+  { Not the notebooks themselves: TNewNotebook does not expose Color to Pascal
+    Script, and naming it there aborts the whole compile with "Unknown
+    identifier". The pages inside them are painted below, which is what is
+    actually visible. }
+  WizardForm.Bevel.Visible := False;
+  WizardForm.Bevel1.Visible := False;
+
+  PaintLabel(WizardForm.PageNameLabel, False);
+  PaintLabel(WizardForm.PageDescriptionLabel, True);
+
+  { The licence page is deliberately left as Windows draws it.
+
+    Two of its controls cannot be themed safely, and both were tried and looked
+    at. The licence text is a TRichEditViewer, which keeps its own character
+    colours: darkening the box left black text on a black background. And a
+    themed radio button draws its caption in the theme's colour and ignores
+    Font.Color, so the accept and decline captions went dark-on-dark too.
+
+    A light licence page inside a dark wizard is a small inconsistency. An
+    unreadable licence is not a small anything. }
+
+  { The pages own surfaces of their own, and painting only their children left
+    the welcome and finished pages as a white slab with a dark box floating in
+    it. }
+  WizardForm.WelcomePage.Color := CLR_INK;
+  WizardForm.InnerPage.Color := CLR_INK;
+  WizardForm.FinishedPage.Color := CLR_INK;
+  WizardForm.SelectDirPage.Color := CLR_INK;
+  WizardForm.ReadyPage.Color := CLR_INK;
+  WizardForm.InstallingPage.Color := CLR_INK;
+  WizardForm.SelectTasksPage.Color := CLR_INK;
+
+  { Every page, including the ones this file adds. }
+  PaintPanel(WizardForm.InnerPage);
+  PaintPanel(WizardForm.WelcomePage);
+  PaintPanel(WizardForm.SelectDirPage);
+  PaintPanel(WizardForm.ReadyPage);
+  PaintPanel(WizardForm.InstallingPage);
+  PaintPanel(WizardForm.FinishedPage);
+  PaintPanel(WizardForm.SelectTasksPage);
+
+  { And the licence page put back, after the walk above has been through it.
+    Simply not naming it was not enough: it lives inside InnerPage, so the
+    recursive pass reaches it anyway and there is nowhere to opt out. }
+  WizardForm.LicensePage.Color := $00FFFFFF;
+  WizardForm.LicenseMemo.Color := $00FFFFFF;
+  WizardForm.LicenseMemo.Font.Color := $00000000;
+  WizardForm.LicenseLabel1.Font.Color := $00000000;
+  WizardForm.LicenseAcceptedRadio.Font.Color := $00000000;
+  WizardForm.LicenseNotAcceptedRadio.Font.Color := $00000000;
+
+  { The buttons stay as Windows draws them.
+
+    A themed button drawn by Inno loses its focus ring and its keyboard
+    highlight, and somebody tabbing through the wizard then cannot see where
+    they are. Colour is not worth that. }
+end;
+
+procedure CurPageChanged_Paint(CurPageID: Integer);
+begin
+  { Repainted on every page, because Inno creates some controls when the page
+    is first shown -- painting once in InitializeWizard leaves those white. }
+  PaintWizard();
+end;
+
 procedure InitializeWizard();
 var
   Previous: String;
@@ -351,6 +534,9 @@ begin
   NeedsFooter.Width := NeedsPage.SurfaceWidth;
   NeedsFooter.WordWrap := True;
   NeedsFooter.AutoSize := True;
+
+  { Last, so every page this procedure created is painted too. }
+  PaintWizard();
 end;
 
 { Only show the dependency page when something is actually missing, and only
@@ -391,6 +577,7 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  CurPageChanged_Paint(CurPageID);
   if CurPageID = NeedsPage.ID then
     PrepareNeedsPage();
 end;
