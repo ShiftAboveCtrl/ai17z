@@ -202,20 +202,34 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
+  // The latest onClose, so opening does not depend on its identity.
+  //
+  // Every caller writes `onClose={() => setEditing(null)}`, which is a new
+  // function on every render. With `onClose` in the dependency list this whole
+  // effect re-ran on *every* render -- and it ends with `ref.current?.focus()`,
+  // which moved focus off whatever was being typed into and onto the dialog
+  // itself. So a keystroke changed state, the re-render stole the focus, and
+  // the field had to be clicked again for each character. It made every modal
+  // in the application, and every form inside one, effectively unusable.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') closeRef.current();
     };
     document.addEventListener('keydown', onKey);
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    // Once, when it opens. The dialog takes focus so Escape works and a screen
+    // reader announces it; anything the person then focuses is theirs to keep.
     ref.current?.focus();
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = previous;
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return createPortal(
