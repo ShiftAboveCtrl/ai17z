@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { NEVER_EXPORTED } from '@xbam/shared/contracts';
-import { agents as agentsRepo, memories as memoriesRepo, providers as providersRepo, query } from '@xbam/database';
+import {
+  agents as agentsRepo,
+  memories as memoriesRepo,
+  pipelines as pipelinesRepo,
+  providers as providersRepo,
+  query,
+} from '@xbam/database';
 import {
   AGENT_PACKAGE_EXTENSION,
   MAX_PACKAGE_BYTES,
@@ -534,5 +540,71 @@ describe('a package that carries API keys', () => {
     const pkg = await packAgent(fixture.agentId, 'MOVE', { includeCredentials: true });
     const lying = JSON.stringify({ ...pkg, containsCredentials: false });
     expect(inspectPackage(lying).valid).toBe(false);
+  });
+});
+
+/**
+ * An imported agent has to be an agent, not a shape.
+ *
+ * A package carries persona, policy, models and memories, and deliberately no
+ * pipeline: the graph is stock, and shipping one would import somebody else's
+ * wiring along with their character. So the stock pipeline has to be created on
+ * arrival -- and was not.
+ *
+ * What that looked like was an agent that imported cleanly, showed its whole
+ * character, its memories and its models, and then refused to start with "this
+ * agent has no pipeline. Reopen the agent page, which creates one." Reopening
+ * the agent page creates nothing; nothing on that path ever did. So the
+ * software sent people round a loop of its own making, on the one screen where
+ * they had done everything right.
+ *
+ * Every other way of making an agent already did this -- creating one,
+ * duplicating one, the importer from AI4CZ, and the test fixtures. Import was
+ * the only path that did not, which is exactly why it went unnoticed.
+ */
+describe('an imported agent can actually be started', () => {
+  it('arrives with the stock pipeline', async () => {
+    const fixture = await aFurnishedAgent();
+    const raw = JSON.stringify(await packAgent(fixture.agentId, 'SHARE'));
+
+    const result = await unpackAgent({
+      ownerId: fixture.ownerId,
+      raw,
+      createdBy: fixture.ownerId,
+      name: `Imported ${uniqueSuffix()}`,
+    });
+
+    const pipeline = await pipelinesRepo.getActivePipeline(result.agentId);
+    expect(pipeline, 'an imported agent has no pipeline and cannot be started').not.toBeNull();
+  });
+
+  it('gets a pipeline that is actually usable, not merely a row', async () => {
+    const fixture = await aFurnishedAgent();
+    const raw = JSON.stringify(await packAgent(fixture.agentId, 'MOVE'));
+    const result = await unpackAgent({
+      ownerId: fixture.ownerId,
+      raw,
+      createdBy: fixture.ownerId,
+      name: `Imported ${uniqueSuffix()}`,
+    });
+
+    const pipeline = await pipelinesRepo.getActivePipeline(result.agentId);
+    // The stock graph, so the imported agent behaves like every other one.
+    expect(pipeline?.nodes.length ?? 0).toBeGreaterThan(1);
+    expect(pipeline?.edges.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it('does not disturb the pipeline of the agent it came from', async () => {
+    const fixture = await aFurnishedAgent();
+    const before = await pipelinesRepo.getActivePipeline(fixture.agentId);
+    const raw = JSON.stringify(await packAgent(fixture.agentId, 'SHARE'));
+    await unpackAgent({
+      ownerId: fixture.ownerId,
+      raw,
+      createdBy: fixture.ownerId,
+      name: `Imported ${uniqueSuffix()}`,
+    });
+    const after = await pipelinesRepo.getActivePipeline(fixture.agentId);
+    expect(after?.version).toBe(before?.version);
   });
 });
