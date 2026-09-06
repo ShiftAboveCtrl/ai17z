@@ -252,16 +252,31 @@ $dataDir = Split-Path -Parent $EnvFile
 if ((-not $hadDatabaseUrl) -and $dataDir -and ($dataDir.TrimEnd('\') -ine $PSScriptRoot.TrimEnd('\'))) {
   $current = [System.IO.File]::ReadAllText($EnvFile, $utf8)
   if ($current -notmatch '(?m)^[ \t]*AI17Z_INSTANCE[ \t]*=[ \t]*\S') {
-    # Docker requires a lowercase name of letters, digits, dashes and
-    # underscores, starting with a letter or digit.
-    $instance = [regex]::Replace((Split-Path -Leaf $dataDir).ToLowerInvariant(), '[^a-z0-9_-]', '-').Trim('-', '_')
-    if (-not $instance) { $instance = 'ai17z' }
-    # Named so it is recognisable in `docker ps`. A data directory called
-    # "data" -- which is what somebody who picks their own folder usually ends
-    # up with -- produced four containers called `data-api-1`, `data-web-1` and
-    # so on, sitting in a list beside everything else on the machine with
-    # nothing to say whose they were.
-    if ($instance -notlike 'ai17z*') { $instance = "ai17z-$instance" }
+    # Unique per installation, and recognisable.
+    #
+    # The folder's name alone is neither. Somebody who picks their own data
+    # folder usually calls it "data", so two installations that both did shared
+    # a project again -- which is the entire thing this exists to prevent. The
+    # verification harness hit exactly that on its second run, having installed
+    # to two different directories that both ended in \data.
+    #
+    # So the name carries a short digest of the full path. The folder name is
+    # kept in front of it because `docker ps` is read by people: four containers
+    # called `data-api-1` and `data-web-1` said nothing about whose they were.
+    $leaf = [regex]::Replace((Split-Path -Leaf $dataDir).ToLowerInvariant(), '[^a-z0-9_-]', '-').Trim('-', '_')
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      # Case-insensitively, because Windows paths are, and the same directory
+      # spelled two ways is one installation.
+      $bytes = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($dataDir.TrimEnd('\').ToLowerInvariant()))
+    } finally {
+      $sha.Dispose()
+    }
+    $digest = ([BitConverter]::ToString($bytes) -replace '-', '').Substring(0, 6).ToLowerInvariant()
+
+    if ($leaf -and $leaf -notlike 'ai17z*') { $instance = "ai17z-$leaf-$digest" }
+    else { $instance = "ai17z-$digest" }
     if ($current -and -not $current.EndsWith("`n")) { $current += "`n" }
     $current += "AI17Z_INSTANCE=$instance`n"
     [System.IO.File]::WriteAllText($EnvFile, $current, $utf8)

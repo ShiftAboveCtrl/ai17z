@@ -244,17 +244,124 @@ describe('every shipped script finds the owner environment file', () => {
 });
 
 /**
- * A Docker project name somebody can recognise.
+ * The clean-room installation check, and the three faults it found before a
+ * release could.
  *
- * The name is taken from the data directory, and somebody who chooses their own
- * folder usually ends up with one called `data` -- which produced containers
- * called `data-api-1` and `data-web-1`, sitting in `docker ps` beside
- * everything else on the machine with nothing to say whose they were.
+ * Six candidates were published to find four faults, one at a time, each on
+ * somebody else's machine. `tools/verify-install.mts` reproduces what the
+ * installer does to a disk and drives all five entry points from a directory
+ * that did not exist a minute earlier. On its first two runs it found: a
+ * project name that still collided, an `AI17Z.cmd` that hangs for ever when
+ * nobody is watching, and a harness of its own that mistook a working
+ * installation for a hang.
+ *
+ * These pin the properties that made it able to find them.
  */
-describe('the Docker project is recognisable', () => {
-  it('prefixes anything that does not already say ai17z', () => {
-    const start = readFileSync(resolve(root, 'start-ai17z.ps1'), 'utf8');
-    expect(start).toContain("$instance -notlike 'ai17z*'");
-    expect(start).toContain('$instance = "ai17z-$instance"');
+describe('installing from scratch is checked before anything is published', () => {
+  const verify = readFileSync(resolve(root, 'tools/verify-install.mts'), 'utf8');
+
+  it('is a script somebody can run', () => {
+    expect(pkg.scripts['verify:install']).toBe('tsx tools/verify-install.mts');
+  });
+
+  it('drives every entry point a shortcut points at', () => {
+    // The Start Menu has five. Testing one of them is what let three faults
+    // through.
+    for (const entry of ['AI17Z.cmd', 'doctor-ai17z.ps1', 'stop-ai17z.ps1']) {
+      expect(verify, `${entry} is not driven`).toContain(entry);
+    }
+  });
+
+  it('runs them with no AI17Z environment at all', () => {
+    // The shortcuts run powershell.exe directly and inherit nothing. Leaking a
+    // variable in would hide the exact class of fault this looks for.
+    expect(verify).toContain('function bareEnvironment');
+    expect(verify).toMatch(/\^\(AI17Z\|XBAM\|VITE_XBAM\)_/);
+  });
+
+  it('judges by asking, not by exit codes', () => {
+    expect(verify).toContain('select count(*) from schema_migrations');
+    expect(verify).toContain('/api/health/live');
+  });
+
+  it('can run the whole thing twice from nothing', () => {
+    // A first-run bug is invisible on the second run and a second-run bug on
+    // the first. Both have shipped.
+    expect(verify).toContain("--twice");
+    expect(verify).toContain("attempt('second'");
+  });
+
+  it('refuses two installations that land in one Docker project', () => {
+    expect(verify).toContain('two installations share a Docker project');
+  });
+
+  it('cannot wait for ever', () => {
+    // A failing AI17Z.cmd ended in `pause`, which with no console waits for a
+    // keypress that never comes, so a failure looked like a slow success.
+    expect(verify).toContain('function withTimeout');
+    expect(verify).toMatch(/stdio: \['ignore', 'pipe', 'pipe'\]/);
+  });
+
+  it('waits for the process to exit, not for every pipe writer to let go', () => {
+    // A successful start leaves the native worker running, holding the same
+    // stdout handle, so `close` never fires on a working installation.
+    expect(verify).not.toMatch(/child\.on\('close'/);
+    expect(verify).toMatch(/child\.on\('exit'/);
+  });
+});
+
+/**
+ * One Docker project per installation, where "installation" means the data
+ * directory and not the name of its last folder.
+ *
+ * The first version of this took the folder's name. Somebody who picks their
+ * own data folder usually calls it "data", so two installations that both did
+ * shared a project again -- which is the whole thing the rule exists to
+ * prevent. The clean-room check hit it on its second run, having installed to
+ * two directories that both ended in \data.
+ */
+describe('the Docker project is unique to the installation', () => {
+  const start = readFileSync(resolve(root, 'start-ai17z.ps1'), 'utf8');
+
+  it('carries a digest of the whole path, not just the last folder', () => {
+    expect(start).toContain('System.Security.Cryptography.SHA256');
+    expect(start).toContain('$digest');
+    expect(start).toMatch(/ai17z-\$leaf-\$digest/);
+  });
+
+  it('takes the digest case-insensitively, because Windows paths are', () => {
+    // The same directory spelled two ways is one installation.
+    expect(start).toMatch(/\$dataDir\.TrimEnd\('\\'\)\.ToLowerInvariant\(\)/);
+  });
+
+  it('keeps the folder name in front of it, because docker ps is read by people', () => {
+    expect(start).toContain('$leaf');
+  });
+});
+
+/**
+ * An unattended start that fails must fail, not hang.
+ *
+ * `pause` holds the window open so a double-clicked icon does not flash and
+ * vanish with the reason in it. With no console attached it waits for a
+ * keypress that is never coming, so a failed start became a process that sat
+ * there looking like it was working.
+ */
+describe('nothing waits for a keypress that is not coming', () => {
+  const cmd = readFileSync(resolve(root, 'packaging/windows/AI17Z.cmd'), 'utf8');
+  const launch = readFileSync(resolve(root, 'launch-ai17z.ps1'), 'utf8');
+
+  it('only pauses when somebody is there', () => {
+    expect(cmd).toMatch(/if not defined AI17Z_NO_BROWSER if not defined CI pause/);
+    expect(cmd).not.toMatch(/^\s*pause\s*$/m);
+  });
+
+  it('does not open a browser when nobody is watching', () => {
+    expect(launch).toContain('if ($env:AI17Z_NO_BROWSER)');
+    expect(launch).toContain('Ready at $url');
+  });
+
+  it('still opens one normally', () => {
+    expect(launch).toContain('Start-Process $url');
   });
 });

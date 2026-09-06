@@ -73,5 +73,13 @@ if ($LASTEXITCODE -ne 0) {
 $webPort = Get-EnvValue 'AI17Z_WEB_PORT' (Get-EnvValue 'XBAM_WEB_PORT' '8080')
 $url = "http://localhost:$webPort"
 Write-Host ''
-Write-Host "  Opening $url" -ForegroundColor Cyan
-Start-Process $url
+
+# Opening a browser is the last thing this does and the one thing an unattended
+# run must not do. `tools/verify-install.mts` drives this exact entry point from
+# a clean room and would otherwise leave a window open on every pass.
+if ($env:AI17Z_NO_BROWSER) {
+  Write-Host "  Ready at $url" -ForegroundColor Cyan
+} else {
+  Write-Host "  Opening $url" -ForegroundColor Cyan
+  Start-Process $url
+}
