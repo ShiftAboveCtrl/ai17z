@@ -45,7 +45,7 @@
     "packages/*/src/**/*.ts",
     "apps/api/src/**/*.ts",
     "apps/worker/src/**/*.ts",
-    "tools/*/src/**/*.ts",
+    "tools/*/src/**/*.ts", "tools/*.mts",
     "tests/**/*.ts"
   ],
   "exclude": [

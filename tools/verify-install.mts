@@ -209,7 +209,11 @@ async function signInAndLook(label: string, ports: Ports): Promise<void> {
     body: JSON.stringify({ email, password, displayName: 'Verify' }),
     signal: AbortSignal.timeout(15_000),
   });
-  if (!created.ok) {
+  // 409 is "there is already an owner", which is the normal answer the second
+  // time this runs against one database -- the upgrade case signs in after an
+  // install that kept its volume, and a previous failed run can leave one too.
+  // The account is the same either way, so signing in is the right next step.
+  if (!created.ok && created.status !== 409) {
     fail(`${label}: the owner account could not be created`, `${created.status} ${await created.text()}`);
   }
 
@@ -240,35 +244,31 @@ async function signInAndLook(label: string, ports: Ports): Promise<void> {
     //
     // Not `getByRole('heading', { name: 'Your agents' })`: that heading is
     // animated a word at a time and the words are joined with a non-breaking
-    // space, so its accessible name is `Your agents` and the obvious
+    // space, so its accessible name is `Your\u00A0agents` and the obvious
     // selector never matches. Normalising the whole page and looking for the
     // phrase is both more robust and closer to the question being asked --
     // did the interface draw itself.
     await page.waitForFunction(
-      () => /Your\s+agents/.test((document.getElementById('root')?.innerText ?? '').replace(/ /g, ' ')),
+      () => /Your\s+agents/.test((document.getElementById('root')?.innerText ?? '').replace(/\u00A0/g, ' ')),
       undefined,
       { timeout: 30_000 },
     );
 
     const rendered = await page.evaluate(() => document.getElementById('root')?.innerText.trim().length ?? 0);
     if (rendered < 20) {
-      fail(`${label}: the interface signed in and then rendered nothing`, broke.join('
-') || '(no error was logged)');
+      fail(`${label}: the interface signed in and then rendered nothing`, broke.join('\n') || '(no error was logged)');
     }
     // React unmounts the tree on a render error, so an empty page and a thrown
     // error are the same fault seen from two sides. Both are checked, because
     // an error that leaves something on screen is still a bug that shipped.
     const uncaught = broke.filter((line) => line.startsWith('uncaught:'));
     if (uncaught.length > 0) {
-      fail(`${label}: the interface threw while rendering`, uncaught.join('
-'));
+      fail(`${label}: the interface threw while rendering`, uncaught.join('\n'));
     }
     say(`${label}: signed in, and the agent list drew itself`);
   } catch (error) {
     if (error instanceof Failed) throw error;
-    fail(`${label}: the interface could not be used`, `${(error as Error).message}
-${broke.join('
-')}`);
+    fail(`${label}: the interface could not be used`, `${(error as Error).message}\n${broke.join('\n')}`);
   } finally {
     await browser.close().catch(() => undefined);
   }
@@ -479,6 +479,18 @@ async function upgrade(stage: string): Promise<void> {
  *
  * The project name is read back rather than derived, so this stays right if the
  * naming rule ever changes.
+ *
+ * **`--rmi local` matters as much as `-v`.** The clean room was program
+ * directory, data directory, project and volumes -- and not images, which is
+ * where the application code actually lives. The project name is derived from
+ * the data path, and the room path is fixed, so every run produced the same
+ * project name and `docker compose up -d`, which builds only when an image is
+ * *missing*, quietly reused the images from the run before. A change to
+ * anything under `apps/` or `packages/` could therefore be staged, installed,
+ * started and declared good without ever being built.
+ *
+ * That is not hypothetical: it is how this gate passed while deliberately
+ * running the black-screen bug, which is what proved it needed fixing.
  */
 async function teardown(label: string): Promise<void> {
   if (keep) return;
@@ -488,7 +500,16 @@ async function teardown(label: string): Promise<void> {
     const text = await readFile(join(data, '.env'), 'utf8');
     const project = text.match(/^[ \t]*AI17Z_INSTANCE[ \t]*=[ \t]*(\S+)/m)?.[1];
     if (project) {
-      await run('docker', ['compose', '-p', project, 'down', '-v'], { cwd: program }).catch(() => undefined);
+      await run('docker', ['compose', '-p', project, 'down', '-v', '--rmi', 'local'], { cwd: program }).catch(
+        () => undefined,
+      );
+      // `--rmi local` only removes images compose knows it built for this
+      // project, and it cannot when a container from a failed run still holds
+      // one. Named explicitly as a second pass so a stale image can never
+      // survive into the next run, which is the whole point.
+      for (const service of ['api', 'web', 'worker']) {
+        await run('docker', ['image', 'rm', '-f', `${project}-${service}`]).catch(() => undefined);
+      }
     }
   } catch {
     // No environment file means nothing was ever started.
@@ -556,6 +577,44 @@ async function upgradeBody(stage: string): Promise<void> {
   await mkdir(program, { recursive: true });
   await install(stage, program, data, ports);
 
+  // Make the second install a different *version*, which is what an upgrade
+  // actually is.
+  //
+  // Without this the two installs are byte-identical and the interesting
+  // question cannot be asked: `docker compose up -d` builds only when an image
+  // is missing, so an upgrade used to go on serving the images built for the
+  // version before it. Somebody downloaded a fix, ran the installer, launched
+  // AI17Z and saw the identical fault. Changing the stamp here is exactly what
+  // a real new release does, and the assertion after the start is that the
+  // images moved with it.
+  const upgradedVersion = `9.9.9-verify-${Date.now()}`;
+  const stampPath = join(program, 'BUILD_INFO.json');
+  const stampBefore = JSON.parse(await readFile(stampPath, 'utf8')) as Record<string, unknown>;
+  await writeFile(
+    stampPath,
+    `${JSON.stringify({ ...stampBefore, version: upgradedVersion }, null, 2)}\n`,
+    'utf8',
+  );
+
+  const imageStamp = async (service: string): Promise<string | null> => {
+    // `{{json .Config.Labels}}`, never `{{index .Config.Labels "..."}}`: a
+    // double quote does not survive Windows PowerShell's native argument
+    // passing, and the broken template prints an empty line that reads exactly
+    // like a missing label.
+    const { stdout } = await run('docker', [
+      'inspect',
+      '--format',
+      '{{json .Config.Labels}}',
+      `${before}-${service}`,
+    ]).catch(() => ({ stdout: '' }));
+    try {
+      return (JSON.parse(stdout.trim() || 'null') as Record<string, string> | null)?.['ai17z.built-from'] ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const webBefore = await imageStamp('web');
+
   const envAfter = await readFile(join(data, '.env'), 'utf8');
   if (!envAfter.includes(`AI17Z_INSTANCE=${before}`)) {
     fail(`${label}: the upgrade changed the Docker project`, `was ${before}\n${envAfter}`);
@@ -578,7 +637,33 @@ async function upgradeBody(stage: string): Promise<void> {
     fail(`${label}: the migration count changed`, `${migrationsBefore} -> ${migrationsAfter}`);
   }
 
-  say(`${label}: same project, same database, master key intact`);
+  // The upgrade has to actually run the code it installed.
+  //
+  // This is the assertion that was missing, and its absence is why a release
+  // could have been published that nobody who already had AI17Z could receive:
+  // the data survived, the project name held, every check here passed, and the
+  // interface being served was the previous version's.
+  const webAfter = await imageStamp('web');
+  if (!webAfter) {
+    fail(`${label}: the web image does not say what it was built from`, 'nothing can tell whether an upgrade rebuilt');
+  }
+  if (webAfter === webBefore) {
+    fail(
+      `${label}: the upgrade did not rebuild`,
+      `the web image still holds ${webBefore}, so this installation is serving the version before the upgrade.\n` +
+        `The installed stamp is ${upgradedVersion}.`,
+    );
+  }
+  // And it is running what was just installed, not merely something newer.
+  if (!webAfter.startsWith(upgradedVersion)) {
+    fail(`${label}: the web image is not the installed version`, `image holds ${webAfter}, installed ${upgradedVersion}`);
+  }
+
+  // The interface, again, because an upgrade that rebuilds into a broken bundle
+  // is the same outcome as one that does not rebuild at all.
+  await withTimeout(`${label}: signing in`, 3 * 60_000, signInAndLook(label, ports));
+
+  say(`${label}: same project, same database, master key intact, and it rebuilt`);
 }
 
 async function main(): Promise<void> {

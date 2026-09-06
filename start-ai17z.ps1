@@ -443,12 +443,138 @@ if (Test-Path $stamp) {
     # about release candidates.
   }
 }
-if ($Rebuild) {
-  Write-Step 'Rebuilding images...'
-  # Stamped into the images, because a container has no git and otherwise
-  # cannot say which source it is running.
-  $env:AI17Z_BUILD_COMMIT = (git rev-parse --short=12 HEAD 2>$null)
+# Run a native command for its output, and tolerate it not being there.
+#
+# Everything below runs on every start, so none of it may stop one. Under
+# ErrorActionPreference = Stop a native command writing to stderr -- or not
+# existing at all, which is git on a machine that only ever installed AI17Z --
+# is promoted to a terminating error even when nothing is wrong.
+function Invoke-Quiet {
+  param([Parameter(Mandatory)] [string] $Exe, [string[]] $Arguments = @())
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = & $Exe @Arguments 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return ($output | Out-String).Trim()
+  } catch {
+    return $null
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+}
+
+# What the code on disk is, for stamping into the images and comparing against
+# what they already hold.
+#
+# The commit where there is a repository, the packager's stamp where there is
+# not, and the newest source file as a last resort -- a developer editing a
+# checkout without committing still has to get their changes rebuilt.
+function Get-SourceStamp {
+  $commit = Invoke-Quiet git @('-C', $PSScriptRoot, 'rev-parse', 'HEAD')
+  if ($commit -and $commit.Length -ge 12) {
+    # A working tree with edits in it is not the commit it sits on. Hashing
+    # what differs means every save produces a new stamp, and a rebuild.
+    $dirty = Invoke-Quiet git @('-C', $PSScriptRoot, 'status', '--porcelain')
+    if ($dirty) {
+      $sha = [System.Security.Cryptography.SHA256]::Create()
+      try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($dirty)
+        $digest = ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join ''
+      } finally {
+        $sha.Dispose()
+      }
+      return "$($commit.Substring(0, 12))-dirty-$($digest.Substring(0, 12))"
+    }
+    return $commit.Substring(0, 12)
+  }
+
+  # An installed copy: no repository, but a stamp the packager wrote.
+  $info = Join-Path $PSScriptRoot 'BUILD_INFO.json'
+  if (Test-Path $info) {
+    try {
+      $parsed = Get-Content -Raw $info | ConvertFrom-Json
+      if ($parsed.version -and $parsed.commit) { return "$($parsed.version)-$($parsed.commit)" }
+      if ($parsed.version) { return $parsed.version }
+    } catch {
+      # Falls through to the file times, which are always available.
+    }
+  }
+
+  # Neither. The newest source file is a poor identity and a correct one: it
+  # moves whenever anything the images are built from is edited.
+  $roots = @('apps', 'packages') | ForEach-Object { Join-Path $PSScriptRoot $_ } | Where-Object { Test-Path $_ }
+  if ($roots) {
+    $newest = Get-ChildItem -Path $roots -Recurse -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -notmatch 'node_modules' } |
+      Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if ($newest) { return "mtime-$($newest.LastWriteTimeUtc.Ticks)" }
+  }
+  return 'unknown'
+}
+
+# What an image says it was built from, or $null if it cannot say.
+#
+# `docker inspect --format '{{index .Config.Labels "x"}}'` cannot be used here:
+# a double quote does not survive Windows PowerShell's native argument passing,
+# so docker receives a broken template and prints an empty line -- which reads
+# exactly like a missing label, and would mean never rebuilding.
+# `{{json .Config.Labels}}` has no quotes in it.
+function Get-ImageStamp {
+  param([Parameter(Mandatory)] [string] $Image)
+  $labels = Invoke-Quiet docker @('inspect', '--format', '{{json .Config.Labels}}', $Image)
+  if (-not $labels -or $labels -eq 'null') { return $null }
+  try {
+    $parsed = $labels | ConvertFrom-Json
+  } catch {
+    return $null
+  }
+  if (-not $parsed) { return $null }
+  return $parsed.'ai17z.built-from'
+}
+
+# Rebuild when the images are not the code that is installed.
+#
+# `docker compose up -d` builds only when an image is *missing*. It has no idea
+# the source changed, so an installation upgraded over the top went on serving
+# the images built for the version before it: somebody downloaded a fix, ran
+# the installer, launched AI17Z, and saw exactly the same fault, with nothing
+# anywhere saying why. The Docker project name is derived from the data
+# directory, so it is stable across an upgrade and across a reinstall too --
+# which is why uninstalling and installing again did not help either.
+#
+# Asked of the images rather than remembered in a file beside them. A file can
+# claim an image that somebody has since deleted; an image cannot be wrong
+# about what it holds.
+$env:AI17Z_BUILD_STAMP = Get-SourceStamp
+# The same value reaches the application as its commit, which is what the
+# version screen and the worker heartbeat report.
+$env:AI17Z_BUILD_COMMIT = $env:AI17Z_BUILD_STAMP
+
+$composeProject = Get-EnvPort 'AI17Z_INSTANCE' 'xbam'
+$needsBuild = [bool]$Rebuild
+$why = 'asked for with -Rebuild'
+if (-not $needsBuild) {
+  foreach ($service in @('api', 'web', 'worker')) {
+    $built = Get-ImageStamp "$composeProject-$service"
+    if (-not $built) {
+      $needsBuild = $true
+      $why = "the $service image is missing, or does not say what it was built from"
+      break
+    }
+    if ($built -ne $env:AI17Z_BUILD_STAMP) {
+      $needsBuild = $true
+      $why = "the $service image holds $built and this is $($env:AI17Z_BUILD_STAMP)"
+      break
+    }
+  }
+}
+
+if ($needsBuild) {
+  Write-Step "Building images: $why..."
   Invoke-Native docker (@('compose') + $ComposeEnv + @('build', 'api', 'web', 'worker')) 'The image build failed. The output above says why.' | Out-Null
+} else {
+  Write-Step "Images are up to date ($($env:AI17Z_BUILD_STAMP))."
 }
 
 Write-Step 'Starting Postgres, API, worker and web...'

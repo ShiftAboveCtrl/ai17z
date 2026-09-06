@@ -43,6 +43,17 @@ services:
         # honest: the version then reports "source unknown" rather than
         # guessing.
         AI17Z_BUILD_COMMIT: ${AI17Z_BUILD_COMMIT:-}
+      # What this image was built from, so the launcher can tell whether it is
+      # running the code that is installed.
+      #
+      # `docker compose up -d` builds only when an image is missing. It does
+      # not notice that the source changed, so an installation upgraded over
+      # the top kept serving the images built for the version before it --
+      # somebody downloaded a fix, ran the installer, and saw the same fault,
+      # with nothing anywhere saying why. Read back by Get-ImageStamp in
+      # start-ai17z.ps1.
+      labels:
+        ai17z.built-from: ${AI17Z_BUILD_STAMP:-unknown}
     restart: unless-stopped
     command: ["npm", "run", "start:api"]
     environment:
@@ -88,6 +99,17 @@ services:
       dockerfile: docker/worker.Dockerfile
       args:
         AI17Z_BUILD_COMMIT: ${AI17Z_BUILD_COMMIT:-}
+      # What this image was built from, so the launcher can tell whether it is
+      # running the code that is installed.
+      #
+      # `docker compose up -d` builds only when an image is missing. It does
+      # not notice that the source changed, so an installation upgraded over
+      # the top kept serving the images built for the version before it --
+      # somebody downloaded a fix, ran the installer, and saw the same fault,
+      # with nothing anywhere saying why. Read back by Get-ImageStamp in
+      # start-ai17z.ps1.
+      labels:
+        ai17z.built-from: ${AI17Z_BUILD_STAMP:-unknown}
     restart: unless-stopped
     command: ["npm", "run", "start:worker"]
     environment:
@@ -127,6 +149,17 @@ services:
       dockerfile: docker/web.Dockerfile
       args:
         VITE_XBAM_API_URL: ""
+      # What this image was built from, so the launcher can tell whether it is
+      # running the code that is installed.
+      #
+      # `docker compose up -d` builds only when an image is missing. It does
+      # not notice that the source changed, so an installation upgraded over
+      # the top kept serving the images built for the version before it --
+      # somebody downloaded a fix, ran the installer, and saw the same fault,
+      # with nothing anywhere saying why. Read back by Get-ImageStamp in
+      # start-ai17z.ps1.
+      labels:
+        ai17z.built-from: ${AI17Z_BUILD_STAMP:-unknown}
     restart: unless-stopped
     ports:
       - "${AI17Z_WEB_PORT:-8080}:80"
