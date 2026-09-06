@@ -54,14 +54,6 @@ export function IdentitySection({
 
   useEffect(() => setDraft(persona), [persona]);
 
-  if (!draft) {
-    return (
-      <Section id="identity" index={index} eyebrow="Identity" heading={`Who is ${agentName}?`}>
-        <p className="text-bone-dim">This agent has no persona version yet.</p>
-      </Section>
-    );
-  }
-
   const set = <K extends keyof PersonaVersion>(key: K, value: PersonaVersion[K]) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
 
@@ -101,6 +93,22 @@ export function IdentitySection({
       await put(`/api/agents/${agentId}/persona?autosave=1`, current);
     },
   });
+
+  // Below both hooks, and it has to stay below them.
+  //
+  // An agent with no persona yet renders this instead of the editor. When it
+  // gains its first version the component is still mounted, `draft` turns
+  // non-null, and a return above the hooks would mean React counting five on
+  // one render and seven on the next -- which it answers by throwing during
+  // render and unmounting the tree, leaving a blank screen. useAutosave is
+  // already null-tolerant, so there is nothing to gain by skipping it.
+  if (!draft) {
+    return (
+      <Section id="identity" index={index} eyebrow="Identity" heading={`Who is ${agentName}?`}>
+        <p className="text-bone-dim">This agent has no persona version yet.</p>
+      </Section>
+    );
+  }
 
   const save = async () => {
     setBusy(true);

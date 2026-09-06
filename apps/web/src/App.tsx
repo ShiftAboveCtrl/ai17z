@@ -4,6 +4,7 @@ import { useSession } from '@app/lib/session';
 import { ErrorPanel, Loading } from '@app/components/ui';
 import { ScrollProgress } from '@app/components/motion';
 import { TopBar } from '@app/components/TopBar';
+import { Crash } from '@app/components/Crash';
 import { Welcome } from '@app/routes/Welcome';
 
 // Route-level splitting keeps the first paint light; the agent page pulls in Three.js.
@@ -51,20 +52,29 @@ export function App() {
     <>
       <ScrollProgress />
       <TopBar />
-      <Suspense fallback={<Loading />}>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/agents/new" element={<EasySetup />} />
-          <Route path="/agents/new/advanced" element={<CreateAgent />} />
-          <Route path="/agents/:agentId" element={<AgentPage />} />
-          <Route path="/inbox" element={<InboxPage />} />
-          <Route path="/activity" element={<ActivityPage />} />
-          <Route path="/jobs/:jobId" element={<JobPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/health" element={<HealthPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
+      {/*
+        Inside the shell rather than around it, so a screen that throws leaves
+        the header and the navigation standing and somebody can go somewhere
+        else. A boundary at the very top would replace the whole application
+        with a message and a reload button, which is only marginally better
+        than the black screen it replaces.
+      */}
+      <Crash area="page">
+        <Suspense fallback={<Loading />}>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/agents/new" element={<EasySetup />} />
+            <Route path="/agents/new/advanced" element={<CreateAgent />} />
+            <Route path="/agents/:agentId" element={<AgentPage />} />
+            <Route path="/inbox" element={<InboxPage />} />
+            <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/jobs/:jobId" element={<JobPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/health" element={<HealthPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
+      </Crash>
     </>
   );
 }
