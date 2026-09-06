@@ -18,6 +18,23 @@ import { Explain } from '@app/components/Explain';
  */
 export function Home() {
   const { data, error, loading, reload } = useResource<{ items: AgentListItem[] }>('/api/agents');
+  // Importing had nowhere to start from.
+  //
+  // The panel existed and the routes existed, but the only way to reach either
+  // was the Export dialog *inside an agent that already exists* -- so on a new
+  // machine, which is the entire point of moving an agent, there was no way in
+  // at all. It belongs here, where the agents are, and especially in the empty
+  // state, because an empty list is exactly what somebody importing is looking
+  // at.
+  //
+  // Declared here, above the early returns, and it has to stay here. These two
+  // sat below them and turned every visit to this page into a blank screen:
+  // the first render bailed out at the loading state having called seven
+  // hooks, the fetch resolved, the second render called eight, and React threw
+  // `Rendered more hooks than during the previous render` -- which unmounts the
+  // whole tree.
+  const [importing, setImporting] = useState(false);
+  const navigate = useNavigate();
 
   if (loading && !data) return <Loading label="Loading agents" />;
   if (error) {
@@ -38,17 +55,6 @@ export function Home() {
 
   const agents = data?.items ?? [];
   const [lead, ...rest] = agents;
-
-  // Importing had nowhere to start from.
-  //
-  // The panel existed and the routes existed, but the only way to reach either
-  // was the Export dialog *inside an agent that already exists* -- so on a new
-  // machine, which is the entire point of moving an agent, there was no way in
-  // at all. It belongs here, where the agents are, and especially in the empty
-  // state, because an empty list is exactly what somebody importing is looking
-  // at.
-  const [importing, setImporting] = useState(false);
-  const navigate = useNavigate();
 
   return (
     <main className="mx-auto max-w-page px-6 pb-24 pt-24 sm:px-10 sm:pt-28">
