@@ -277,11 +277,30 @@ async function preflight(agentId: string): Promise<Blocker[]> {
   if (needsBrowser) {
     const workers = await workersRepo.present();
     if (!workers.some((w) => w.browserCapable)) {
-      blockers.push({
-        what: 'Nothing is running that can open a browser.',
-        fix: 'Start the worker on the machine with Chrome (npm run dev:worker).',
-        where: 'worker',
-      });
+      // Said differently depending on which of the two it is, because they look
+      // identical from the outside and only one of them is confusing.
+      //
+      // The containerised worker polls, ingests and logs, so somebody watching
+      // it work is told "nothing is running that can open a browser" and
+      // reasonably concludes the message is wrong. It is not: that worker runs
+      // with AI17Z_WORKER_ROLE=jobs because a container has no display, and the
+      // browser work is deliberately left to a second worker on this machine.
+      //
+      // The old advice was `npm run dev:worker`, which is a developer command
+      // that an installed copy has no way to run.
+      blockers.push(
+        workers.length > 0
+          ? {
+              what: 'A worker is running, but it is the one inside Docker, which has no browser.',
+              fix: 'Chrome is driven by a second worker that runs on this machine. Start AI17Z from its desktop icon, or run .\\start-ai17z.ps1, and it starts one.',
+              where: 'worker',
+            }
+          : {
+              what: 'Nothing is running that can open a browser.',
+              fix: 'Start AI17Z from its desktop icon, or run .\\start-ai17z.ps1. In a checkout, npm run dev:worker.',
+              where: 'worker',
+            },
+      );
     }
   }
 

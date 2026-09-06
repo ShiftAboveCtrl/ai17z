@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -335,5 +335,74 @@ describe('the release notes say what changed', () => {
     // A workflow_dispatch build has no tag to compare against, and a changelog
     // invented from whatever HEAD happens to be would be worse than none.
     expect(workflow).toContain('git rev-parse -q --verify "refs/tags/$TAG"');
+  });
+});
+
+/**
+ * The installer's own look, and the one page that could not have it.
+ *
+ * Stock Inno ships a blue-green gradient with a hand holding a box. It is the
+ * first thing anybody sees of AI17Z, so the wizard is painted in the product's
+ * own palette by walking the controls Inno has already built -- rather than by
+ * shipping a skinning DLL, which is a supply-chain cost nobody should pay for a
+ * colour scheme.
+ *
+ * Everything here was compiled and photographed before it was believed. Two
+ * things were only found that way: `TNewNotebook` has no `Color` in Pascal
+ * Script and naming it aborts the whole compile, and the licence page cannot be
+ * themed at all.
+ */
+describe('the installer looks like the product', () => {
+  const iss = readFileSync(resolve(root, 'packaging/windows/ai17z.iss'), 'utf8');
+
+  it('ships its own artwork rather than Inno default', () => {
+    expect(iss).toContain('WizardImageFile=wizard-panel.bmp');
+    expect(iss).toContain('WizardSmallImageFile=wizard-small.bmp');
+    expect(iss).toContain('SetupIconFile=ai17z.ico');
+  });
+
+  it('has that artwork committed, since the compiler reads it at build time', () => {
+    for (const art of ['wizard-panel.bmp', 'wizard-small.bmp', 'ai17z.ico']) {
+      expect(existsSync(resolve(root, 'packaging/windows', art)), `${art} is missing`).toBe(true);
+    }
+  });
+
+  it('can regenerate the artwork rather than only owning the binaries', () => {
+    expect(existsSync(resolve(root, 'packaging/windows/make-wizard-art.py'))).toBe(true);
+    expect(existsSync(resolve(root, 'packaging/windows/make-icon.py'))).toBe(true);
+  });
+
+  it('paints the wizard from the product palette', () => {
+    expect(iss).toContain('procedure PaintWizard');
+    expect(iss).toContain('CLR_INK');
+    expect(iss).toContain('CLR_BONE');
+    // Repainted per page, because Inno builds some controls only when a page
+    // is first shown and painting once leaves those white.
+    expect(iss).toContain('CurPageChanged_Paint');
+  });
+
+  it('never names a control Pascal Script cannot colour', () => {
+    // `WizardForm.InnerNotebook.Color` compiles to "Unknown identifier 'COLOR'"
+    // and aborts the entire build -- a one-line error at the end of an
+    // eight-minute compile.
+    expect(iss).not.toMatch(/InnerNotebook\.Color/);
+    expect(iss).not.toMatch(/OuterNotebook\.Color/);
+  });
+
+  it('leaves the buttons to Windows', () => {
+    // A themed button loses its focus ring, and somebody tabbing through the
+    // wizard then cannot see where they are.
+    expect(iss).toContain('The buttons stay as Windows draws them');
+  });
+
+  it('has no licence page, and says why', () => {
+    // MIT requires the licence to be included, not accepted, and it ships in
+    // the package. It went because it could not be made readable: a
+    // TRichEditViewer keeps its own character colours and a themed radio
+    // ignores Font.Color, so both went dark-on-dark.
+    expect(iss).toMatch(/^;LicenseFile=/m);
+    expect(iss).toContain('MIT requires the licence to be');
+    expect(existsSync(resolve(root, 'LICENSE')), 'the licence itself must still ship').toBe(true);
+    expect(readFileSync(resolve(root, 'tools/package-windows.mts'), 'utf8')).toContain("'LICENSE'");
   });
 });
