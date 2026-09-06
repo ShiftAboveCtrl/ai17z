@@ -4,7 +4,7 @@ import { DEFAULT_TRIGGER_EVENT_TYPES } from '@xbam/shared/contracts';
 import { ApiError, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AccountRow, AgentAccountRow } from '@app/lib/types';
-import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
+import { humanStatus, toneFor } from '@app/lib/format';
 import { EmptyState, Field, Modal, Spinner, StatusDot } from '@app/components/ui';
 import { SessionPanel } from '@app/components/SessionPanel';
 import { CapabilitiesPanel } from '@app/components/CapabilitiesPanel';

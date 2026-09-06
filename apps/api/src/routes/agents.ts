@@ -3,10 +3,10 @@ import { z } from 'zod';
 import {
   CreateAgentInput,
   PersonaDraft,
-  PipelineDraft,
+  
   PolicyConfig,
   SELF_DIAGNOSTICS_TOOL,
-  SetModelConfigInput,
+  
   UpdateAgentInput,
 } from '@xbam/shared/contracts';
 import { BadRequestError, ForbiddenError, NotFoundError, slugify } from '@xbam/shared';

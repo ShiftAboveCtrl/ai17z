@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Page } from 'playwright';
-import { isDeadPage, tabHealth, TAB_ROLES, type TabMap, type TabState } from '@xbam/browser';
+import type { TAB_ROLES } from '@xbam/browser';
+import { isDeadPage, tabHealth, type TabMap, type TabState } from '@xbam/browser';
 
 /** The parts of a Page this logic touches, and nothing else. */
 function fakePage(url: string, closed = false): Page {

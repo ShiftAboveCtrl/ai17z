@@ -35,51 +35,6 @@ interface Seen {
   createdAt: string | null;
 }
 
-async function readArticle(page: Page, selector: string): Promise<Seen> {
-  const article = page.locator(selector).first();
-
-  // The article own permalink is the link wrapping its timestamp. Taking the
-  // first `/status/` link instead means an article carrying a quoted post
-  // reports the quoted post id as its own -- so the radar would discover a
-  // mention under the wrong status, and everything downstream would resolve
-  // context for, and reply to, a post nobody mentioned. The reply path had this
-  // bug and was fixed; this is the same reader, in the discovery path, where it
-  // matters more.
-  const href =
-    (await article.locator('a:has(time)').first().getAttribute('href').catch(() => null)) ??
-    (await article.locator('a[href*="/status/"]').first().getAttribute('href').catch(() => null));
-  const url = href ? `https://x.com${href.startsWith('/') ? href : `/${href}`}` : null;
-
-  const nameBlock = await article
-    .locator(SEL.userName)
-    .first()
-    .innerText()
-    .catch(() => '');
-
-  const textParts = await article
-    .locator(SEL.tweetText)
-    .allInnerTexts()
-    .catch(() => [] as string[]);
-
-  // The post's own time, off the element X renders it in. Without this every
-  // discovery is stamped with the moment it was found, so a post from last month
-  // and one from a minute ago are indistinguishable downstream -- and an agent
-  // that scrolls far enough queues a reply to both.
-  const createdAt = await article
-    .locator('time')
-    .first()
-    .getAttribute('datetime')
-    .catch(() => null);
-
-  return {
-    statusId: extractStatusId(url),
-    authorHandle: normalizeHandle(nameBlock.match(/@([A-Za-z0-9_]{1,15})/)?.[1] ?? null) ?? handleFromUrl(url),
-    text: textParts.join('\n').trim(),
-    url: normalizeTargetId(url),
-    createdAt,
-  };
-}
-
 /**
  * How far a monitor will scroll looking for more.
  *

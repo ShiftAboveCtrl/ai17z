@@ -204,7 +204,7 @@ export function validateOutput(
   }
 
   // Models sometimes prefix a label despite being told not to.
-  const labelled = output.replace(/^(?:reply|response|answer|output)\s*[:\-]\s*/i, '').trim();
+  const labelled = output.replace(/^(?:reply|response|answer|output)\s*[:-]\s*/i, '').trim();
   if (labelled !== output) {
     violations.push({ rule: 'label_prefix', severity: 'REPAIRED', message: 'Removed a leading label.' });
     output = labelled;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { IN_FLIGHT_RESUME } from '@xbam/shared/contracts';
-import { actions as actionsRepo, jobs as jobsRepo, query } from '@xbam/database';
+import { jobs as jobsRepo, query } from '@xbam/database';
 import { ingestNormalizedEvent } from '@xbam/runtime';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture } from '../support/fixtures';

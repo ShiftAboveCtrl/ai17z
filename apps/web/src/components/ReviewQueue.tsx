@@ -92,6 +92,15 @@ export function ReviewQueue({ items, onDecided }: { items: ReviewItem[]; onDecid
       return next;
     });
 
+  // The latest `decide`, held in a ref.
+  //
+  // The key handler is registered once per selection change, so without this it
+  // closes over the `decide` from that render -- and `decide` calls the
+  // `onDecided` prop, which the parent may rebuild around newer state. The same
+  // shape as usePolling in @app/lib/hooks, for the same reason.
+  const decideRef = useRef(decide);
+  decideRef.current = decide;
+
   // Keyboard triage. Ignored while typing, so an edit box does not approve
   // something because it contains the letter A.
   useEffect(() => {
@@ -111,10 +120,10 @@ export function ReviewQueue({ items, onDecided }: { items: ReviewItem[]; onDecid
           setCursor((c) => Math.max(c - 1, 0));
           break;
         case 'a':
-          if (current?.jobId) void decide([current.jobId], 'approve');
+          if (current?.jobId) void decideRef.current([current.jobId], 'approve');
           break;
         case 'r':
-          if (current?.jobId) void decide([current.jobId], 'reject');
+          if (current?.jobId) void decideRef.current([current.jobId], 'reject');
           break;
         case 'x':
           if (current?.jobId) toggle(current.jobId);

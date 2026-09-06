@@ -47,7 +47,7 @@ export class Crash extends Component<Props, State> {
     // The only console call in the application, and it earns its place: this is
     // the one failure whose stack cannot be recovered any other way once the
     // tree is gone.
-    // eslint-disable-next-line no-console
+     
     console.error(`AI17Z: ${this.props.area} failed to render`, error, info.componentStack);
     this.setState({ where: info.componentStack ?? null });
   }

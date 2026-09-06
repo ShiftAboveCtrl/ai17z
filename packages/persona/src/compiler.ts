@@ -123,7 +123,11 @@ function lightCompile(draft: string, input: CompileInput): { text: string; chang
       changes.push('toned down exclamation marks');
     }
     if (input.fingerprint.emojiRate <= 0.05) {
+      // Every matching code point is removed, so a variation selector matching
+      // separately takes the rest of the emoji with it rather than leaving
+      // half of one behind.
       const withoutEmoji = text.replace(
+        // eslint-disable-next-line no-misleading-character-class
         /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu,
         '',
       );

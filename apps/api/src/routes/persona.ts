@@ -1,18 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { PersonaDraft } from '@xbam/shared/contracts';
-import { BadRequestError, ForbiddenError, NotFoundError, createLogger, errorMessage } from '@xbam/shared';
+import { BadRequestError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import { agents as agentsRepo, personaSources,
   workers as workersRepo, type UserRow } from '@xbam/database';
 import {
-  getPersonaSourceAdapter,
+  
   listPersonaSourceAdapters,
   personaDraftFromTraits,
-  syncPersonaSource,
+  
 } from '@xbam/persona';
 import { handler, params, parseBody, parseQuery, requireUser } from '../http';
 
-const log = createLogger('persona-api');
 
 async function ownedAgent(agentId: string, user: UserRow) {
   const agent = await agentsRepo.getAgent(agentId);

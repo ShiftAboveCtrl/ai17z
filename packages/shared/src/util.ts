@@ -29,6 +29,8 @@ export function backoffMs(attempt: number, baseMs = 2_000, capMs = 5 * 60_000): 
  */
 export function sanitizeText(text: string): string {
   return text
+    // Removing control characters is the entire purpose of this expression.
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
 }

@@ -93,7 +93,7 @@ export function scoreItem(rawText: string, analysed?: NormalizedItem): ItemScore
   if (body.split(/[.!?]/).filter((s) => s.trim()).length >= 2) style += 0.05;
   style = clamp(style - noise * 0.9);
 
-  let persona = clamp(style * 0.7 + (/\b(i|my|me)\b/i.test(body) ? 0.25 : 0) - noise * 0.8);
+  const persona = clamp(style * 0.7 + (/\b(i|my|me)\b/i.test(body) ? 0.25 : 0) - noise * 0.8);
 
   let belief = 0.2;
   if (OPINION_MARKERS.test(body)) belief += 0.45;

@@ -331,12 +331,6 @@ const ENGINES: { value: Engine | null; label: string; tag: string; detail: strin
   },
 ];
 
-const CHANNELS = [
-  { value: 'chrome', label: 'Real Chrome', hint: 'Drives the Chrome installed on the machine running the worker.' },
-  { value: 'msedge', label: 'Real Edge', hint: 'Drives the installed Microsoft Edge.' },
-  { value: 'chromium', label: 'Bundled Chromium', hint: 'The build Playwright ships. This is what the container has.' },
-] as const;
-
 /**
  * Browser configuration for an account.
  *
@@ -355,7 +349,6 @@ function BrowserConfig({
   onSaved: () => void;
 }) {
   const [engine, setEngine] = useState<Engine>(session?.engine ?? 'GOOGLE_CHROME');
-  const [channel, setChannel] = useState<string>(session?.channel ?? 'chromium');
   const [cdpUrl, setCdpUrl] = useState(session?.cdpUrl ?? '');
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);

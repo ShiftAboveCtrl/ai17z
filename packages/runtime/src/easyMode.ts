@@ -145,7 +145,13 @@ export function toPolicy(setup: EasySetup, base: PolicyConfig = DEFAULT_POLICY):
 
 /** The account cadence an Easy Mode answer sheet describes. */
 export function toCadence(setup: EasySetup, base: CadenceConfig = defaultCadence()): CadenceConfig {
-  const easy = EasySetupSchema.parse(setup);
+  // Parsed for the validation, not for the result. An answer sheet that does
+  // not satisfy the schema must not quietly produce a cadence -- but none of
+  // the eleven answers say anything about timing: how often an agent posts is
+  // postIntervalSeconds' question, and quiet hours have no Easy Mode control.
+  // The only thing Easy Mode has to say here is that an agent which only
+  // replies still has to read.
+  EasySetupSchema.parse(setup);
   return {
     ...base,
     polling: {

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check, X } from 'lucide-react';
-import { get, put } from '@app/lib/api';
+import { put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { Field, Modal, Spinner } from './ui';
 

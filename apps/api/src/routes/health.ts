@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { HealthComponent, HealthReport } from '@xbam/shared/contracts';
-import { buildVersion, describeVersion, nowIso } from '@xbam/shared';
+import { describeVersion, nowIso } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   jobs as jobsRepo,

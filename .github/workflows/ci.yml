@@ -64,6 +64,16 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        # The rule this exists for is react-hooks/rules-of-hooks. A hook below
+        # an early return is not a style question here: React answers it by
+        # throwing during render and unmounting the tree, so it is a blank
+        # screen -- and one reached a published release, because TypeScript
+        # cannot see hook order and there was no ESLint in this repository at
+        # all. Everything else it enforces was already written down in
+        # CLAUDE.md and held only as well as whoever read the diff.
+        run: npm run lint
+
       # What a stranger receives when they clone this. Nothing else looks at the
       # repository that way: a secret pasted into a file, somebody's home folder
       # in a documented path, a control character a shell escape left behind in

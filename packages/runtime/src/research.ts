@@ -581,7 +581,7 @@ export async function lookupToken(query: string, timeoutMs = 8_000): Promise<Fin
     if (!response.ok) return null;
 
     const body = (await response.json()) as { pairs?: DexPair[] };
-    let pairs = (body.pairs ?? []).filter((p) => (p.liquidity?.usd ?? 0) > 0);
+    const pairs = (body.pairs ?? []).filter((p) => (p.liquidity?.usd ?? 0) > 0);
     if (pairs.length === 0) return null;
 
     const chosen = choosePair(pairs, isAddress ? null : cleaned);
