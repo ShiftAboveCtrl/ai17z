@@ -120,3 +120,57 @@ describe('an upgrade runs the code it installed', () => {
     expect(upgradeSection).toContain('signInAndLook(label, ports)');
   });
 });
+
+/**
+ * Whether a native worker is running is a question for the database.
+ *
+ * It was answered from a pid file, and that was wrong three ways at once on a
+ * machine with two installations:
+ *
+ *   - the recorded pid is the cmd.exe npm runs, not the worker. The worker can
+ *     be gone while the wrapper lives, and Get-Process still says running
+ *   - pids are reused, so an unrelated process answers to the number
+ *   - a pid says nothing about which installation a worker serves
+ *
+ * What that produced: the launcher printed "native worker already running"
+ * while the interface, reading that installation's own heartbeat, said nothing
+ * was there that could open a browser. Two scripts, one machine, opposite
+ * answers -- and the agent could not be started.
+ *
+ * The heartbeat is per-installation by construction and is what the interface
+ * already reads, so the launcher now reads the same thing.
+ */
+describe('the launcher asks the heartbeat, not Windows', () => {
+  const launcher = read('start-ai17z.ps1');
+  const packager = read('tools/package-windows.mts');
+
+  it('runs the probe rather than inspecting a process', () => {
+    expect(launcher).toContain("Invoke-Native npm @('run', '--silent', 'worker:present')");
+  });
+
+  it('no longer decides from the pid file', () => {
+    // The pid file stays -- stopping needs it -- but it must not be what
+    // "is it running" is answered from.
+    expect(launcher).not.toMatch(/Get-Process -Id \(\[int\]\$existing\)/);
+  });
+
+  it('treats "could not ask" as different from "there is none"', () => {
+    // Starting a second worker because the database blinked is worse than
+    // leaving one out, so exit 2 is not the same as exit 1.
+    expect(launcher).toContain('$probe -eq 2');
+    expect(launcher).toContain('Could not ask the database');
+  });
+
+  it('does not refuse to start because another installation has one', () => {
+    // That refusal stopped two installations from ever both driving Chrome,
+    // which is a supported setup: different accounts, different databases, and
+    // a Chrome profile keyed by account id.
+    expect(launcher).not.toContain('Another AI17Z installation is already running a native worker');
+    expect(launcher).not.toContain('Stop the other installation first');
+  });
+
+  it('ships the probe, since the launcher cannot run without it', () => {
+    expect(packager).toContain("'scripts/browser-worker-present.mts'");
+    expect(packager).toContain("'worker:present'");
+  });
+});
