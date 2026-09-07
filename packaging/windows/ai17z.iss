@@ -55,6 +55,9 @@
   LowerCase(PreWord) == "preview" ? "Preview" : PreWord
 ; The first beta is just "Beta"; only a second one has to say which.
 #define IterationSuffix (PreCount != "" && PreCount != "1") ? " (" + PreCount + ")" : ""
+#define ReleaseVersionOnly ChannelWord == "" ? \
+  NumericVersion : \
+  ChannelWord + " " + NumericVersion + IterationSuffix
 #ifndef ReleaseName
   #define ReleaseName ChannelWord == "" ? \
     AppName + " " + NumericVersion : \
@@ -68,16 +71,30 @@
 #endif
 
 [Setup]
-AppId={{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}
-AppName={#AppName}
+; Per installation, not per product.
+;
+; A fixed AppId means one uninstall entry, one Start Menu group and one desktop
+; icon for every copy on the machine -- so a second installation silently took
+; over the first one's. Everything that identifies an installation to Windows is
+; now derived from its name, and the name is asked for exactly once.
+;
+; The suffix is appended to a fixed prefix rather than being a fresh GUID, so an
+; upgrade of the same instance keeps the same identity and replaces itself
+; instead of installing alongside.
+AppId={code:AppIdFor}
+; Required by Inno whenever AppId contains a constant: it cannot look up a
+; previous language for an id it does not know until the wizard has run.
+; There is one language here anyway, and ShowLanguageDialog is already off.
+UsePreviousLanguage=no
+AppName={code:InstanceName}
 AppVersion={#AppVersion}
-AppVerName={#ReleaseName}
+AppVerName={code:InstanceName} {#ReleaseVersionOnly}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppUrl}
 AppSupportURL={#AppUrl}/issues
 AppUpdatesURL={#AppUrl}/releases
-DefaultDirName={localappdata}\Programs\AI17Z
-DefaultGroupName={#AppName}
+DefaultDirName={localappdata}\Programs\{code:InstanceName}
+DefaultGroupName={code:InstanceName}
 DisableProgramGroupPage=yes
 OutputDir=..\..\build\windows
 OutputBaseFilename=AI17Z-Setup-{#AppVersion}
@@ -106,7 +123,7 @@ SetupIconFile=ai17z.ico
 ; Per-user: no elevation, no UAC prompt.
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayName={#ReleaseName}
+UninstallDisplayName={code:InstanceName} {#ReleaseVersionOnly}
 UninstallDisplayIcon={app}\packaging\windows\ai17z.ico
 ; SignPath requires signed binaries to carry product and version attributes,
 ; and they are what a person sees in the file properties either way.
@@ -151,7 +168,7 @@ Name: "{group}\AI17Z"; Filename: "{app}\AI17Z.cmd"; WorkingDir: "{app}"; IconFil
 Name: "{group}\AI17Z diagnostics"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -NoExit -File ""{app}\doctor-ai17z.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\packaging\windows\ai17z.ico"; Comment: "Check what AI17Z needs and what is missing"
 Name: "{group}\Stop AI17Z"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\stop-ai17z.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\packaging\windows\ai17z.ico"; Comment: "Stop AI17Z"
 Name: "{group}\Install what AI17Z needs"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\packaging\windows\Install-Prerequisites.ps1"" -Pause"; WorkingDir: "{app}"; IconFilename: "{app}\packaging\windows\ai17z.ico"; Comment: "Check for Node.js, Docker Desktop and Chrome, and install any that are missing"
-Name: "{autodesktop}\AI17Z"; Filename: "{app}\AI17Z.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\packaging\windows\ai17z.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{code:InstanceName}"; Filename: "{app}\AI17Z.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\packaging\windows\ai17z.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\AI17Z.cmd"; Description: "Start AI17Z now"; Flags: postinstall nowait skipifsilent
@@ -204,6 +221,7 @@ var
   Installs:    array of TInstall;
   InstallRadios: array of TNewRadioButton;
 
+  NamePage:    TInputQueryWizardPage;
   DataPage:    TInputDirWizardPage;
   PortsPage:   TInputQueryWizardPage;
   NeedsPage:   TWizardPage;
@@ -292,6 +310,48 @@ begin
     end;
   end;
   Result := Start;
+end;
+
+{ What this installation is called.
+
+  One word, and everything Windows uses to tell two copies apart is built from
+  it: the program folder, the Start Menu group, the desktop icon and the
+  uninstall entry. Updating an existing installation reuses its name, so an
+  upgrade replaces rather than multiplies.
+
+  Defaults to AI17Z, which is what a single installation should be called and
+  what every existing one already is. }
+function InstanceName(Param: String): String;
+var
+  Chosen: Integer;
+begin
+  Chosen := ChosenInstall();
+  if Chosen >= 0 then
+  begin
+    Result := ExtractFileName(RemoveBackslash(Installs[Chosen].Program_));
+    if Result <> '' then Exit;
+  end;
+  if (NamePage <> nil) and (Trim(NamePage.Values[0]) <> '') then
+    Result := Trim(NamePage.Values[0])
+  else
+    Result := 'AI17Z';
+end;
+
+{ A stable AppId per instance.
+
+  Derived from the name rather than generated, so installing the same instance
+  again replaces it. The prefix is the original AppId, so an installation made
+  before this existed -- which is called AI17Z -- keeps the identity it already
+  had and upgrades in place rather than appearing twice. }
+function AppIdFor(Param: String): String;
+var
+  Name: String;
+begin
+  Name := InstanceName('');
+  if CompareText(Name, 'AI17Z') = 0 then
+    Result := '{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}'
+  else
+    Result := '{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}_' + Name;
 end;
 
 procedure RememberInstall(ProgramDir: String);
@@ -608,7 +668,17 @@ begin
     FoundDetail.Caption := 'You choose its folder and it picks its own free ports.';
   end;
 
-  { 1. Data directory. }
+  { 1. What to call it, so a second copy is a second copy. }
+  NamePage := CreateInputQueryPage(wpWelcome,
+    'What should this installation be called?',
+    'Only matters if you want more than one',
+    'One name, used for the program folder, the Start Menu group, the desktop icon and the' + #13#10 +
+    'entry in Add or remove programs. Leave it as AI17Z unless you are installing a second' + #13#10 +
+    'copy alongside one you already have -- then give this one a name of its own.');
+  NamePage.Add('Name', False);
+  NamePage.Values[0] := 'AI17Z';
+
+  { 2. Data directory. }
   DataPage := CreateInputDirPage(wpSelectDir,
     'Where should AI17Z keep your data?',
     'Your agents, their memories, your saved sign-ins and your encryption key',
@@ -622,9 +692,9 @@ begin
   if Previous <> '' then
     DataPage.Values[0] := Previous
   else
-    DataPage.Values[0] := ExpandConstant('{localappdata}') + '\AI17Z';
+    DataPage.Values[0] := ExpandConstant('{localappdata}') + '\' + InstanceName('');
 
-  { 2. Ports. }
+  { 3. Ports. }
   PortsPage := CreateInputQueryPage(DataPage.ID,
     'Which ports may AI17Z use?',
     'Only on this machine. Nothing is opened to the internet',
@@ -737,6 +807,10 @@ function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
   if (PageID = NeedsPage.ID) and (not AnythingMissing()) then
+    Result := True;
+
+  { An update keeps the name it already has, so there is nothing to ask. }
+  if UpdatingExisting() and (NamePage <> nil) and (PageID = NamePage.ID) then
     Result := True;
 
   if UpdatingExisting() then
