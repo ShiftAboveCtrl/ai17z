@@ -611,46 +611,44 @@ if (-not $ready) {
 if ($NoBrowser) {
   Write-Warn 'Skipping the native worker. Browser-backed accounts will wait for one.'
 } else {
-  $existing = if (Test-Path $PidFile) { Get-Content $PidFile | Select-Object -First 1 } else { $null }
-  $alive = $false
-  if ($existing) {
-    try { $alive = $null -ne (Get-Process -Id ([int]$existing) -ErrorAction Stop) } catch { $alive = $false }
-  }
-
-  # A worker from an earlier cycle counts, whether or not the pid file knows
-  # about it. Two workers means two of everything, including browsers.
+  # Whether a worker that can drive a browser is already serving *this*
+  # installation, asked of its database rather than of Windows.
   #
-  # Whose worker it is matters, and the first version did not ask. It swept for
-  # any node process running apps/worker, found one belonging to a completely
-  # different checkout, announced "already running (pid )" -- empty, because the
-  # pid file it was interpolating did not exist -- and left. The doctor then
-  # said NOT RUNNING, because it looks at this installation's pid file. Two
-  # scripts, one machine, opposite answers.
-  $adopted = $null
-  $foreign = $null
-  if (-not $alive) {
-    $running = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-      Where-Object { $_.CommandLine -and $_.CommandLine -like '*apps?worker*' })
-    foreach ($proc in $running) {
-      if ($proc.CommandLine -like "*$PSScriptRoot*") { $adopted = $proc; break }
-    }
-    if (-not $adopted -and $running.Count -gt 0) { $foreign = $running[0] }
+  # This was a pid check, and it was wrong in three ways that all arrived at
+  # once on a machine running two installations:
+  #
+  #   - the recorded pid is the cmd.exe npm runs, not the worker. The worker can
+  #     be gone while the wrapper is still alive, and Get-Process says running
+  #   - pids are reused, so an unrelated process answers to the number
+  #   - a pid says nothing about which installation a worker serves. The sweep
+  #     that tried to answer that matched on $PSScriptRoot, which two copies
+  #     sharing a program directory have in common
+  #
+  # So the launcher announced "native worker already running" while the
+  # interface, reading the same installation's heartbeat, reported nothing that
+  # could open a browser. The heartbeat is per-installation by construction, and
+  # it is what the interface already reads, so the two can no longer disagree.
+  $alive = $false
+  $probe = Invoke-Native npm @('run', '--silent', 'worker:present')
+  if ($probe -eq 0) {
+    $alive = $true
+    Write-Done 'Native worker already running.'
+  } elseif ($probe -eq 2) {
+    # Not knowing is not the same as knowing there is none. Starting a second
+    # worker because the database blinked is worse than leaving one out.
+    Write-Warn 'Could not ask the database whether a native worker is running; not starting one.'
+    $alive = $true
   }
 
-  if ($adopted) {
-    # Ours, started by an earlier run that did not get to write the file.
-    Set-Content -Path $PidFile -Value $adopted.ProcessId
-    $alive = $true
-    Write-Done "Native worker already running (pid $($adopted.ProcessId))."
-  } elseif ($foreign) {
-    $alive = $true
-    Write-Warn "Another AI17Z installation is already running a native worker (pid $($foreign.ProcessId))."
-    Write-Warn 'Not starting a second one: two native workers on one machine means two browsers for the same account.'
-    Write-Warn 'Stop the other installation first if you want this one to drive Chrome.'
-  }
+  # Deliberately nothing here about another installation's worker. There used to
+  # be a check that refused to start "a second native worker on one machine",
+  # which stopped two installations from ever both driving Chrome -- and they
+  # are meant to. They hold different accounts in different databases, and a
+  # Chrome profile is keyed by account id, so there is nothing to collide over.
+  # Two workers for one *installation* is the thing worth preventing, and the
+  # heartbeat above prevents it.
 
   if ($alive) {
-    if (-not $adopted -and -not $foreign) { Write-Done "Native worker already running (pid $existing)." }
   } else {
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
       Write-Warn 'Node is not on PATH, so the native worker cannot start. Browser-backed accounts will wait.'

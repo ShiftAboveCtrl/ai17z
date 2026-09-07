@@ -46,7 +46,8 @@
     "worker:supervised": "tsx scripts/supervise-worker.mts",
     "release:check": "tsx tools/release-check.mts",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "worker:present": "tsx scripts/browser-worker-present.mts"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

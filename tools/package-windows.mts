@@ -102,6 +102,11 @@ const INCLUDE = [
   // native worker is kept alive.
   'scripts/ensure-env.mjs',
   'scripts/supervise-worker.mts',
+  // `npm run worker:present`, which is how the launcher decides whether a
+  // native worker is already serving this installation. Without it the launcher
+  // cannot tell, treats that as "do not start one", and browser-backed accounts
+  // wait for a worker nothing will ever start.
+  'scripts/browser-worker-present.mts',
 ];
 
 /**
@@ -114,7 +119,14 @@ const INCLUDE = [
  * nobody could be expected to find. A check that names the entry points is the
  * only thing that catches the whole class.
  */
-const SHIPPED_SCRIPTS = ['migrate', 'migrate:status', 'start:api', 'start:worker', 'worker:supervised'];
+const SHIPPED_SCRIPTS = [
+  'migrate',
+  'migrate:status',
+  'start:api',
+  'start:worker',
+  'worker:supervised',
+  'worker:present',
+];
 
 /** Never shipped, even when it sits inside something that is. */
 const EXCLUDE_NAMES = new Set([
