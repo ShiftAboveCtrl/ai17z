@@ -5,6 +5,7 @@ import { ForbiddenError, NotFoundError } from '@xbam/shared';
 import { accounts as accountsRepo, cadences as cadencesRepo, ops, type UserRow } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@xbam/channels';
 import { closeSession, defaultProfileDir } from '@xbam/browser';
+import { ensureDefaultRadarSources } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAccount(accountId: string, user: UserRow) {
@@ -77,6 +78,15 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
           cdpUrl: input.browser?.cdpUrl || null,
         });
       }
+      // The monitors an account should have had from the start.
+      //
+      // These were opt-in, behind a button, because each one costs a page
+      // load. What that actually produced was a connected account with
+      // nothing searching on its behalf -- the channel poller reads the
+      // notifications page and that was all. Safe to do here rather than on
+      // connection: the poller only claims sources whose account is
+      // CONNECTED, so they sit idle until sign-in finishes.
+      await ensureDefaultRadarSources(account.id);
       await ops.audit({ actorUserId: user.id, action: 'account.created', entityType: 'account', entityId: account.id });
       return account;
     }),

@@ -1,7 +1,8 @@
 import type { EventType, NormalizedEvent, RadarCandidate, RadarSourceKind } from '@xbam/shared/contracts';
 import { EVENT_TYPES } from '@xbam/shared/contracts';
 import { createLogger } from '@xbam/shared';
-import { radar as radarRepo } from '@xbam/database';
+import { accounts as accountsRepo, radar as radarRepo } from '@xbam/database';
+import { getChannelAdapter } from '@xbam/channels';
 import { ingestNormalizedEvent, type IngestOutcome } from './ingest';
 
 const log = createLogger('reconcile');
@@ -187,3 +188,49 @@ export const DEFAULT_X_RADAR: { kind: RadarSourceKind; label: string; intervalSe
   { kind: 'reply_search', label: 'Reply search', intervalSeconds: 90 },
   { kind: 'own_threads', label: 'Replies to own posts', intervalSeconds: 180 },
 ];
+
+/**
+ * Gives an X account the four monitors, unless it already has an answer.
+ *
+ * These used to be opt-in, behind a button, on the theory that each one costs a
+ * page load. What that produced was a connected account with nothing searching
+ * on its behalf: the channel poller loads the notifications page, and the four
+ * radar monitors -- the handle search, the reply search, and the walk through
+ * the agent's own threads -- had no rows, so they never ran. The agent said it
+ * was ready and watched one surface out of five, which is exactly the "a quiet
+ * notifications surface is not silence" problem the mention search exists for.
+ *
+ * **Only ever creates.** A source somebody switched off is an answer, and
+ * turning it back on because a default said so is worse than never having
+ * offered one. `upsertSource` would re-enable it, so what exists is read first
+ * and left alone -- which also makes this safe to call on every start.
+ *
+ * Returns the kinds it actually created, so a caller can say what changed
+ * rather than claiming to have done something.
+ */
+export async function ensureDefaultRadarSources(accountId: string): Promise<RadarSourceKind[]> {
+  const account = await accountsRepo.getAccount(accountId);
+  if (!account) return [];
+
+  // Whatever the channel says it can watch. A mock account has no radar and
+  // must not acquire four sources that can never poll.
+  const adapter = getChannelAdapter(account.channel);
+  const supported = adapter.radarSourceKinds ?? [];
+  if (supported.length === 0) return [];
+
+  const existing = new Set((await radarRepo.listSources(accountId)).map((source) => source.kind));
+
+  const created: RadarSourceKind[] = [];
+  for (const preset of DEFAULT_X_RADAR) {
+    if (!supported.includes(preset.kind)) continue;
+    if (existing.has(preset.kind)) continue;
+    await radarRepo.upsertSource({
+      accountId,
+      kind: preset.kind,
+      label: preset.label,
+      config: { intervalSeconds: preset.intervalSeconds },
+    });
+    created.push(preset.kind);
+  }
+  return created;
+}
