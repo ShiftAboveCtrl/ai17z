@@ -169,6 +169,16 @@ describe('the launcher asks the heartbeat, not Windows', () => {
     expect(launcher).not.toContain('Stop the other installation first');
   });
 
+  it('does not let the probe decide how the launcher exits', () => {
+    // The probe exits 1 for "no native worker", which is an answer. The script
+    // ended without setting an exit code, so PowerShell handed cmd whatever the
+    // last native command left -- and AI17Z.cmd printed "AI17Z did not start"
+    // after a start that had worked and had just launched the worker the probe
+    // reported missing. The gate caught this before it shipped.
+    expect(launcher).toContain('$global:LASTEXITCODE = 0');
+    expect(launcher.trimEnd().endsWith('exit 0'), 'the launcher must state its own success').toBe(true);
+  });
+
   it('ships the probe, since the launcher cannot run without it', () => {
     expect(packager).toContain("'scripts/browser-worker-present.mts'");
     expect(packager).toContain("'worker:present'");

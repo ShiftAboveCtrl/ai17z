@@ -630,6 +630,12 @@ if ($NoBrowser) {
   # it is what the interface already reads, so the two can no longer disagree.
   $alive = $false
   $probe = Invoke-Native npm @('run', '--silent', 'worker:present')
+  # Cleared immediately. 1 means "no native worker", which is an answer and not
+  # a failure -- but it is still $LASTEXITCODE, and this script ends without
+  # setting one of its own, so it became the exit code cmd saw. AI17Z.cmd then
+  # said "AI17Z did not start" after a start that had worked, and had just
+  # launched the worker the probe reported missing.
+  $global:LASTEXITCODE = 0
   if ($probe -eq 0) {
     $alive = $true
     Write-Done 'Native worker already running.'
@@ -713,3 +719,11 @@ Write-Host ''
 Write-Host '  Open  ' -NoNewline; Write-Host "http://localhost:$(Get-EnvPort 'AI17Z_WEB_PORT' '8080')" -ForegroundColor White
 Write-Host '  Stop  ' -NoNewline; Write-Host '.\stop-ai17z.ps1' -ForegroundColor White
 Write-Host ''
+
+# Said, rather than inherited.
+#
+# Reaching here means the stack is up, the migrations ran and the API answered;
+# anything that went wrong threw, and ErrorActionPreference is Stop. Leaving the
+# exit code to whatever native command ran last is how a successful start
+# reported failure once already.
+exit 0

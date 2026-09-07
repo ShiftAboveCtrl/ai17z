@@ -524,6 +524,91 @@ async function teardown(label: string): Promise<void> {
   await rm(join(ROOM, label), { recursive: true, force: true }).catch(() => undefined);
 }
 
+/**
+ * Two installations, up at the same time, each still pointing at its own data.
+ *
+ * The two attempts above prove an installation works. They cannot prove two of
+ * them coexist, because each is torn down before the next begins -- and
+ * coexisting is exactly the case that broke: a second installation reused the
+ * first one's program directory, and a program directory holds one
+ * `data-location.txt`, so both shortcuts resolved to the second copy's data.
+ * The native worker then served one installation while the other reported that
+ * nothing could open a browser.
+ *
+ * What this asserts is the property rather than the symptom: two installations
+ * on one machine are two of everything a person can reach -- program directory,
+ * data directory, Docker project, ports, and the pointer that ties the first to
+ * the second.
+ */
+async function sideBySide(stage: string): Promise<void> {
+  const labels = ['sbs-one', 'sbs-two'];
+  const started: { label: string; program: string; data: string; ports: Ports }[] = [];
+
+  try {
+    for (const label of labels) {
+      const program = join(ROOM, label, 'program');
+      const data = join(ROOM, label, 'data');
+      await rm(join(ROOM, label), { recursive: true, force: true });
+      await mkdir(program, { recursive: true });
+      await mkdir(data, { recursive: true });
+
+      // Ports are asked for one installation at a time, exactly as the wizard
+      // does, so the second genuinely has to step over the first.
+      const ports: Ports = {
+        web: await freePort(8320 + started.length * 10),
+        api: await freePort(8420 + started.length * 10),
+        db: await freePort(55620 + started.length * 10),
+      };
+
+      say(`${label}: installing to ${program}`);
+      await install(stage, program, data, ports);
+      await start(label, program, ports);
+      started.push({ label, program, data, ports });
+    }
+
+    // Everything that identifies an installation has to differ.
+    const seen = new Map<string, string[]>();
+    const note = (what: string, value: string, label: string) => {
+      const key = `${what}=${value}`;
+      seen.set(key, [...(seen.get(key) ?? []), label]);
+    };
+
+    for (const one of started) {
+      const env = await readFile(join(one.data, '.env'), 'utf8');
+      const project = env.match(/^[ \t]*AI17Z_INSTANCE[ \t]*=[ \t]*(\S+)/m)?.[1] ?? '';
+      note('docker project', project, one.label);
+      note('web port', String(one.ports.web), one.label);
+      note('data directory', one.data, one.label);
+      note('program directory', one.program, one.label);
+
+      // The pointer the shortcuts follow. This is the one that actually broke:
+      // it lives in the program directory, and there is only ever one of it.
+      const pointer = (await readFile(join(one.program, 'data-location.txt'), 'utf8').catch(() => '')).trim();
+      if (pointer !== one.data) {
+        fail(
+          `${one.label}: its program directory points at another installation's data`,
+          `data-location.txt says ${pointer || '(nothing)'}, and this installation's data is ${one.data}`,
+        );
+      }
+    }
+
+    for (const [key, owners] of seen) {
+      if (owners.length > 1) {
+        fail('two installations share something they must not', `${key} is used by ${owners.join(' and ')}`);
+      }
+    }
+
+    // And both are actually usable at once, which is the point of having two.
+    for (const one of started) {
+      await withTimeout(`${one.label}: signing in`, 3 * 60_000, signInAndLook(one.label, one.ports));
+    }
+
+    say('two installations ran side by side, each with its own everything');
+  } finally {
+    for (const one of started) await teardown(one.label);
+  }
+}
+
 async function upgradeBody(stage: string): Promise<void> {
   const label = 'upgrade';
   const program = join(ROOM, label, 'program');
@@ -694,6 +779,10 @@ async function main(): Promise<void> {
   if (projects.length > 1 && new Set(projects).size !== projects.length) {
     fail('two installations share a Docker project', projects.join('\n'));
   }
+
+  // Two at once, which the two attempts above cannot show: each tears down
+  // before the next begins, and coexisting is the case that broke.
+  if (twice) await sideBySide(stage);
 
   // The path where a mistake is worst, and the last one that was untested.
   if (alsoUpgrade) await upgrade(stage);

@@ -419,8 +419,10 @@ describe('what a release is called, in both places that say it', () => {
   const version = readFileSync(resolve(root, 'packages/shared/src/version.ts'), 'utf8');
 
   it('uses the derived name for what a person reads, and the number for what Windows parses', () => {
-    expect(iss).toMatch(/^AppVerName=\{#ReleaseName\}/m);
-    expect(iss).toMatch(/^UninstallDisplayName=\{#ReleaseName\}/m);
+    // The instance name leads, because two installations differ by name rather
+    // than by version, and the version follows it.
+    expect(iss).toMatch(/^AppVerName=\{code:InstanceName\} \{#ReleaseVersionOnly\}/m);
+    expect(iss).toMatch(/^UninstallDisplayName=\{code:InstanceName\} \{#ReleaseVersionOnly\}/m);
     // VersionInfoVersion must stay four numbers or Inno refuses the script.
     expect(iss).toMatch(/^VersionInfoVersion=\{#NumericVersion\}/m);
     // And the download filename stays the version, because it is a URL: a name
@@ -495,5 +497,65 @@ describe('the release workflow publishes under the derived name', () => {
     const notes = resolve(root, `docs/release-notes/${version}.md`);
     expect(existsSync(notes), `docs/release-notes/${version}.md is missing`).toBe(true);
     expect(readFileSync(notes, 'utf8').trim().length).toBeGreaterThan(200);
+  });
+});
+
+/**
+ * Two installations on one machine have to be two installations.
+ *
+ * `AppId` and `DefaultDirName` were fixed, so a second copy got its own data
+ * directory and its own ports and then took over the first one's program
+ * folder, Start Menu group, desktop icon and uninstall entry.
+ *
+ * That is not cosmetic. The program folder holds one `data-location.txt`, so
+ * installing a second copy repointed *both* shortcuts at the second copy's
+ * data. On a machine running two of them the native worker served one
+ * installation while the other reported that nothing could open a browser, and
+ * neither shortcut did what its name said.
+ */
+describe('a second installation is a second installation', () => {
+  const iss = readFileSync(resolve(root, 'packaging/windows/ai17z.iss'), 'utf8');
+
+  it('identifies itself to Windows by instance, not by product', () => {
+    expect(iss).toMatch(/^AppId=\{code:AppIdFor\}/m);
+    expect(iss).toContain('DefaultDirName={localappdata}\\Programs\\{code:InstanceName}');
+    expect(iss).toMatch(/^DefaultGroupName=\{code:InstanceName\}/m);
+  });
+
+  it('names the desktop icon after the instance too', () => {
+    // Two icons both called AI17Z is the same collision in the place somebody
+    // actually clicks.
+    expect(iss).toContain(String.raw`Name: "{autodesktop}\{code:InstanceName}"`);
+  });
+
+  it('keeps the original identity for an installation called AI17Z', () => {
+    // Everything installed before this is called AI17Z. If its AppId moved, the
+    // next installer would sit alongside it rather than replace it, and the old
+    // uninstall entry would point at a folder that had been overwritten.
+    expect(iss).toContain("if CompareText(Name, 'AI17Z') = 0 then");
+    expect(iss).toContain("Result := '{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}'");
+  });
+
+  it('derives the id rather than generating one', () => {
+    // A fresh GUID per run would make every upgrade a new installation.
+    expect(iss).not.toMatch(/CreateGuid|NewGuid/);
+    expect(iss).toContain("Result := '{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}_' + Name;");
+  });
+
+  it('asks for the name once, and not at all on an update', () => {
+    expect(iss).toContain('What should this installation be called?');
+    expect(iss).toContain('if UpdatingExisting() and (NamePage <> nil) and (PageID = NamePage.ID) then');
+  });
+
+  it('offers a data directory that follows the name', () => {
+    // Otherwise every fresh installation proposes the same data folder and the
+    // second one silently shares the first one's agents.
+    expect(iss).toContain(String.raw`DataPage.Values[0] := ExpandConstant('{localappdata}') + '\' + InstanceName('');`);
+  });
+
+  it('sets the one thing Inno requires when AppId is not a constant', () => {
+    // Without it the script does not compile at all, which is a one-line error
+    // at the end of an eight-minute build.
+    expect(iss).toMatch(/^UsePreviousLanguage=no/m);
   });
 });
