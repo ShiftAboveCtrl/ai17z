@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { EasySetup, type RadarSourceKind } from '@xbam/shared/contracts';
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
-import { ensureAgentPipeline } from '@xbam/runtime';
+import { ensureAgentPipeline, ensureDefaultRadarSources } from '@xbam/runtime';
 import {
   accounts as accountsRepo,
   browserTasks,
@@ -339,6 +339,14 @@ export async function easyStartRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
+      // The same for the monitors, and for the same reason: an account
+      // connected before these were a default has none, and would go on
+      // watching one surface out of five for ever. Creating only what is
+      // absent, so a source somebody switched off stays off.
+      for (const link of await accountsRepo.listAgentAccounts(agent.id)) {
+        await ensureDefaultRadarSources(link.accountId);
+      }
+
       // Agents that arrived without one heal here rather than staying stuck.
       //
       // Import creates the stock pipeline now, but that does nothing for an
