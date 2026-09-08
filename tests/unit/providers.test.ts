@@ -17,7 +17,20 @@ describe('provider registry', () => {
   it('offers the providers the product promises', () => {
     const kinds = listAdapters().map((a) => a.kind).sort();
     expect(kinds).toEqual(
-      ['anthropic', 'deepseek', 'google', 'mock', 'ollama', 'openai', 'openai_compatible', 'openrouter', 'xai'].sort(),
+      [
+        'anthropic',
+        'deepseek',
+        'google',
+        'mock',
+        'ollama',
+        'openai',
+        'openai_compatible',
+        'openrouter',
+        'xai',
+        // Animal mode. A real provider kind rather than a switch in the
+        // pipeline, so it is listed here with the rest of them.
+        'animal',
+      ].sort(),
     );
   });
 
@@ -28,7 +41,10 @@ describe('provider registry', () => {
         expect(adapter.defaultBaseUrl).toBe('');
         continue;
       }
-      expect(adapter.defaultBaseUrl, adapter.kind).toMatch(/^(https?:\/\/|mock:\/\/)/);
+      // `mock://` and `animal://` are the two that answer without a network.
+      // The check is that every adapter names *somewhere*, so a missing default
+      // shows up here rather than as a request to an empty URL.
+      expect(adapter.defaultBaseUrl, adapter.kind).toMatch(/^(https?:\/\/|mock:\/\/|animal:\/\/)/);
     }
   });
 
@@ -38,9 +54,13 @@ describe('provider registry', () => {
     expect(deepseek.requiresApiKey).toBe(true);
   });
 
-  it('marks only the local and mock providers as keyless', () => {
+  it('marks only the providers that genuinely need no account as keyless', () => {
+    // Ollama runs on this machine, mock answers from a hash, and animal mode
+    // answers from a list of noises. Everything else bills somebody, and a
+    // provider that slipped into this list would be one the UI stops asking a
+    // key for -- which fails at the first generation instead of at setup.
     const keyless = listAdapters().filter((a) => !a.requiresApiKey).map((a) => a.kind).sort();
-    expect(keyless).toEqual(['mock', 'ollama']);
+    expect(keyless).toEqual(['animal', 'mock', 'ollama']);
   });
 
   it('rejects an unknown provider with a message naming it', () => {

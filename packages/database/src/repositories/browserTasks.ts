@@ -11,17 +11,29 @@ import { mapRow, mapRows } from '../mapper';
  */
 export const RUNNING_LEASE_MINUTES = 12;
 
-export type BrowserTaskKind =
-  | 'CONNECT'
-  | 'HEALTH_CHECK'
-  | 'OPEN_AUTH'
-  | 'SCREENSHOT'
-  | 'CLEAR'
-  | 'DISCONNECT'
-  | 'INGEST'
-  | 'PREFLIGHT'
-  | 'CANCEL_AUTH'
-  | 'SHUTDOWN_BROWSER';
+/**
+ * Every browser intent the code can record.
+ *
+ * A list rather than a bare union because `browser_tasks.kind` has a CHECK
+ * behind it: adding a kind here without widening that constraint fails at the
+ * database and passes every unit test, which is the failure this shape lets
+ * `tests/integration/statusConstraints.test.ts` catch.
+ */
+export const BROWSER_TASK_KINDS = [
+  'CONNECT',
+  'HEALTH_CHECK',
+  'OPEN_AUTH',
+  'SCREENSHOT',
+  'CLEAR',
+  'DISCONNECT',
+  'INGEST',
+  'PREFLIGHT',
+  'CANCEL_AUTH',
+  'SHUTDOWN_BROWSER',
+  /** Type the account's stored sign-in details into the form. Opt-in. */
+  'CREDENTIAL_SIGN_IN',
+] as const;
+export type BrowserTaskKind = (typeof BROWSER_TASK_KINDS)[number];
 
 export interface BrowserTaskRow {
   id: string;

@@ -35,9 +35,19 @@ passwords.
 
 ## Browser sessions
 
-AI17Z never handles an account password. "Open sign-in" launches a real browser
-window on the platform's own login page and the person signs in themselves; the
-resulting session lives in a Chromium profile directory AI17Z owns.
+By default AI17Z never handles an account password. "Open sign-in" launches a
+real browser window on the platform's own login page and the person signs in
+themselves; the resulting session lives in a Chromium profile directory AI17Z
+owns.
+
+An owner may optionally store a username and password for an account so that a
+lapsed session can be recovered without waiting for them. Those are sealed with
+AES-256-GCM under `AI17Z_MASTER_KEY`, exactly like a provider API key, kept in
+`account_credentials`, and readable only through
+`accountCredentials.getDecryptedLogin` — never from an API response, a log line,
+an audit row, a trace, or a browser task's parameters. Deleting the account, or
+clearing its session, deletes them. It is off unless somebody fills it in, and
+it does not move the challenge boundary below.
 
 Cookies, tokens, and storage state are never read into the application, never
 displayed, and never written to the database. The session panel shows what AI17Z

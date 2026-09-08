@@ -75,10 +75,17 @@ Connecting an X account signs you in through a real Chrome profile that AI17Z
 keeps under your data directory. That profile holds a live session, exactly as
 your ordinary browser profile does.
 
-**AI17Z never types a password and never answers a security challenge.** When a
-service asks for a CAPTCHA, a second factor, an emailed code or confirmation of
-an unusual sign-in, AI17Z stops, leaves the window open and untouched, and waits
-for you.
+**AI17Z never answers a security challenge.** When a service asks for a CAPTCHA,
+a second factor, an emailed code or confirmation of an unusual sign-in, AI17Z
+stops, leaves the window open and untouched, and waits for you.
+
+By default it never types a password either — you sign in to the window
+yourself. You can optionally store a username and password for an account so a
+lapsed session can be recovered without you. That is off unless you fill it in.
+What you store is encrypted with your installation's master key, is kept on your
+own machine like everything else here, can only be read by the part of AI17Z that
+drives the browser, and is never shown back to you or sent anywhere. Clearing
+the session, disconnecting, or deleting the account deletes it.
 
 ## What agents remember about other people
 

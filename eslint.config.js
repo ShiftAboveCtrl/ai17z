@@ -36,6 +36,10 @@ export default tseslint.config(
       'test-results/**',
       'playwright-report/**',
       'storage/**',
+      // Runtime scratch, gitignored alongside storage/. Linting throwaway
+      // diagnostic scripts held here produces failures that mean nothing and
+      // hide the ones that do.
+      'var/**',
     ],
   },
 

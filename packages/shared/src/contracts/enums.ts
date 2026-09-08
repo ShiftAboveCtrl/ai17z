@@ -172,6 +172,11 @@ export const ACTION_TYPES = [
   'POST',
   'DIRECT_MESSAGE',
   'LIKE',
+  /**
+   * A plain repost of somebody else's post. Never a quote: quoting publishes an
+   * opinion, and an action named REPOST must not be able to become one.
+   */
+  'REPOST',
   'REACT',
   'CALL_TOOL',
   'CALL_API',
@@ -198,6 +203,12 @@ export const CAPABILITIES = [
   'POST',
   'DIRECT_MESSAGE',
   'LIKE',
+  /**
+   * May repost somebody else's post. Separate from LIKE because they are
+   * different public acts: a like is private-ish approval, a repost puts the
+   * post in front of this account's followers under its name.
+   */
+  'REPOST',
   'REACT',
   'CALL_TOOL',
   'CALL_API',
@@ -304,6 +315,8 @@ export const PROVIDER_KINDS = [
   'ollama',
   'openai_compatible',
   'mock',
+  /** Animal mode: no key, no network, no opinions. See providers/animal.ts. */
+  'animal',
 ] as const;
 export const ProviderKind = enumOf(PROVIDER_KINDS).schema;
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];

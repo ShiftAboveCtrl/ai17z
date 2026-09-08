@@ -3,6 +3,7 @@ import { BadRequestError } from '@xbam/shared';
 import { anthropicAdapter } from './providers/anthropic';
 import { ollamaAdapter } from './providers/ollama';
 import { mockAdapter } from './providers/mock';
+import { animalAdapter } from './providers/animal';
 import { createOpenAiCompatibleAdapter } from './providers/openaiCompatible';
 import { xaiAdapter } from './providers/xai';
 import type { ProviderAdapter } from './types';
@@ -29,6 +30,7 @@ const ADAPTERS: Record<ProviderKind, ProviderAdapter> = {
   anthropic: anthropicAdapter,
   ollama: ollamaAdapter,
   mock: mockAdapter,
+  animal: animalAdapter,
 };
 
 export function getAdapter(kind: ProviderKind): ProviderAdapter {

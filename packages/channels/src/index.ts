@@ -3,11 +3,16 @@ export * from './registry';
 export { mockAdapter } from './mock/index';
 export { xAdapter } from './x/index';
 export { observeAuthPage } from './x/auth';
-export { CHALLENGE_SIGNALS } from './x/selectors';
+export { signInWithStoredCredentials } from './x/credentialSignIn';
+export { CHALLENGE_SIGNALS, SEL } from './x/selectors';
 export { linksInText, upgradeImageUrl, readMediaInventory } from './x/media';
 export { webSearch, readPage, extractBraveAnswer, type WebResult } from './x/websearch';
  export * as xMonitors from './x/monitors';
 export { fingerprint } from './x/index';
+// Exported for the composer-discipline tests: these are the steps that decide
+// whether a draft is complete before anything irreversible happens.
+export { readyForTyping, fillComposer, submitComposer, ensureEngaged } from './x/index';
+export type { EngagementOutcome } from './x/index';
 export {
   normalizeTargetId,
   extractStatusId,

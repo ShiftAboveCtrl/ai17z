@@ -88,6 +88,7 @@ export const PROVIDER_LABELS: Record<ProviderKind, string> = {
   ollama: 'Ollama (on this machine)',
   openai_compatible: 'Any OpenAI-compatible endpoint',
   mock: 'Mock (for testing AI17Z itself)',
+  animal: 'Animal mode (no key needed)',
 };
 
 /**

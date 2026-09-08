@@ -78,6 +78,33 @@ export interface AuthObservation {
   handle?: string | null;
 }
 
+/**
+ * Sign-in details an owner chose to store, handed to an adapter to type in.
+ *
+ * Plaintext, in memory, for the length of one call. It is never placed on the
+ * ChannelContext, never logged, and never written to a browser task's
+ * parameters or result -- the worker reads the sealed row itself and passes it
+ * straight through to the adapter.
+ */
+export interface LoginCredentials {
+  loginUsername: string;
+  loginPassword: string;
+}
+
+/**
+ * What came of typing them in.
+ *
+ * `observation` is the same normalised shape the watcher already understands,
+ * so a challenge ends this exactly as it ends a hand sign-in. `filled` records
+ * which steps were answered -- never the values -- because "X asked for a code
+ * after the password went in" and "X asked for a code before anything was
+ * typed" are different situations to put in front of an owner.
+ */
+export interface CredentialSignInResult {
+  observation: AuthObservation;
+  filled: ('username' | 'password')[];
+}
+
 export interface RadarPollRequest {
   kind: RadarSourceKind;
   /** Handle, keyword, query, or own status id, depending on the kind. */
@@ -170,6 +197,18 @@ export interface ChannelAdapter {
   wasAlreadyDone?(ctx: ChannelContext, request: ActionRequest): Promise<{ done: boolean; remoteActionId: string | null; remoteActionUrl: string | null; detail: string }>;
 
   observeAuth?(ctx: ChannelContext): Promise<AuthObservation>;
+  /**
+   * Types stored sign-in details into the service's own login form.
+   *
+   * Optional, opt-in, and separate from `observeAuth` on purpose: observing a
+   * sign-in and acting on one are different operations and are named
+   * differently so neither can become the other by accident. An adapter that
+   * implements it is still bound by the same rule -- the moment the service
+   * asks for a code, a CAPTCHA, a key, or confirmation that the sign-in was
+   * really the owner, it must stop and return `CHALLENGE` with the page
+   * untouched. Nothing here answers a security challenge.
+   */
+  signInWithCredentials?(ctx: ChannelContext, credentials: LoginCredentials): Promise<CredentialSignInResult>;
   /**
    * Polls one radar source and reports what it saw.
    *

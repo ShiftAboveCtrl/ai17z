@@ -1,6 +1,13 @@
 import { rm } from 'node:fs/promises';
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { accountLease, accounts as accountsRepo, browserTasks, ops, type BrowserTaskRow } from '@xbam/database';
+import {
+  accountCredentials,
+  accountLease,
+  accounts as accountsRepo,
+  browserTasks,
+  ops,
+  type BrowserTaskRow,
+} from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import {
   captureScreenshot,
@@ -216,7 +223,9 @@ export class BrowserTaskRunner {
 
       case 'OPEN_AUTH': {
         // Opens a real window on the account profile and leaves it open so the
-        // person signs in themselves. AI17Z never handles their credentials.
+        // person signs in themselves. This path touches nothing in it and never
+        // reads a credential -- typing stored details is CREDENTIAL_SIGN_IN, a
+        // different task, so that the two can never be confused for each other.
         //
         // Launching a browser on a cold profile is slow enough to look broken,
         // so the state is written before the launch rather than after it.
@@ -267,6 +276,104 @@ export class BrowserTaskRunner {
         return { detail: 'Sign-in cancelled and the window closed.' };
       }
 
+      case 'CREDENTIAL_SIGN_IN': {
+        // The opt-in path. Everything about it is explicit: an owner stored
+        // details, an owner pressed the button, and the task that does it has
+        // its own name so that opening a window and typing into one are never
+        // the same operation.
+        if (!adapter.signInWithCredentials) {
+          throw new Error(`The ${adapter.displayName} channel cannot sign in with stored details.`);
+        }
+
+        // Read here rather than carried in the task. `browser_tasks.params` is
+        // persisted in the clear and shown in the panel's task history, so a
+        // password must never travel that way.
+        const login = await accountCredentials.getDecryptedLogin(account.id);
+        if (!login) {
+          throw new Error(
+            'No sign-in details are stored for this account. Add them in the session panel, or use Open sign-in and sign in yourself.',
+          );
+        }
+
+        // Written before the launch, for the same reason OPEN_AUTH does it: a
+        // cold profile takes long enough that saying nothing looks broken.
+        await accountsRepo.updateAccount(account.id, {
+          status: 'STARTING_BROWSER',
+          lastHealthStatus: 'Starting a browser to sign in.',
+          lastError: null,
+          challengeKind: null,
+          authStartedAt: new Date().toISOString(),
+          touchHealthCheck: true,
+        });
+
+        const { observation, filled } = await adapter.signInWithCredentials(ctx, login);
+        await this.recordIdentityFor(account.id);
+
+        if (observation.state === 'SIGNED_IN') {
+          await accountsRepo.updateAccount(account.id, {
+            status: 'CONNECTED',
+            lastHealthStatus: 'Signed in with the stored details.',
+            lastError: null,
+            authStartedAt: null,
+            authDeadlineAt: null,
+            challengeKind: null,
+            touchHealthCheck: true,
+          });
+          return { state: observation.state, detail: 'Signed in.', filled };
+        }
+
+        if (observation.state === 'CHALLENGE') {
+          // Exactly where a hand sign-in ends up, and for the same reason. The
+          // window is left open on whatever X is asking for, nothing further is
+          // typed, and the watcher does not poll this state.
+          await ops.createDiagnostic({
+            accountId: account.id,
+            channel: account.channel,
+            kind: 'auth_challenge',
+            url: null,
+            message: `${observation.detail} AI17Z stopped and left the window open.`,
+          });
+          await accountsRepo.updateAccount(account.id, {
+            status: 'CHALLENGE_REQUIRES_USER',
+            challengeKind: observation.challengeKind ?? 'unknown',
+            lastHealthStatus: observation.detail.slice(0, 200),
+            authDeadlineAt: null,
+            touchHealthCheck: true,
+          });
+          return { state: observation.state, detail: observation.detail, filled };
+        }
+
+        if (observation.state === 'UNREACHABLE') {
+          await accountsRepo.updateAccount(account.id, {
+            status: 'NEEDS_AUTH',
+            lastError: null,
+            lastHealthStatus: 'The sign-in window went away before it finished.',
+            authStartedAt: null,
+            authDeadlineAt: null,
+            touchHealthCheck: true,
+          });
+          return { state: observation.state, detail: observation.detail, filled };
+        }
+
+        // Still on the form: either X did not accept what was stored, or it is
+        // taking longer than this task waits. Neither is a failure worth
+        // throwing over -- the window is open, so it becomes an ordinary
+        // sign-in with a deadline and the watcher carries it from here.
+        const deadline = new Date(Date.now() + SIGN_IN_WINDOW_MS);
+        await accountsRepo.updateAccount(account.id, {
+          status: 'AWAITING_LOGIN',
+          lastHealthStatus: observation.detail.slice(0, 200),
+          authDeadlineAt: deadline.toISOString(),
+          touchHealthCheck: true,
+        });
+        return {
+          state: observation.state,
+          detail: observation.detail,
+          filled,
+          deadline: deadline.toISOString(),
+        };
+      }
+
       case 'SCREENSHOT': {
         const session = await leaseSession({ accountId: account.id, engine, mode, profileDir, cdpUrl: ctx.session?.cdpUrl ?? null, channel, headless: true });
         try {
@@ -296,8 +403,16 @@ export class BrowserTaskRunner {
 
       case 'DISCONNECT': {
         await adapter.disconnect(ctx);
+        // Severing the account forgets the password with it. Storing one is a
+        // decision about a connection, so it does not outlive the connection.
+        const forgotten = await accountCredentials.clearCredentials(account.id);
         await accountsRepo.updateAccount(account.id, { status: 'DISCONNECTED', lastHealthStatus: 'Disconnected' });
-        return { detail: 'Browser session closed.' };
+        return {
+          detail: forgotten
+            ? 'Browser session closed and the stored sign-in details deleted.'
+            : 'Browser session closed.',
+          credentialsCleared: forgotten,
+        };
       }
 
       case 'SHUTDOWN_BROWSER': {
@@ -319,13 +434,22 @@ export class BrowserTaskRunner {
         await closeSession(account.id).catch(() => undefined);
         await rm(profileDir, { recursive: true, force: true });
         await accountsRepo.clearBrowserSession(account.id);
+        // And any stored sign-in details with it. Leaving a password behind
+        // after a button labelled "Clear session" is the kind of surplus secret
+        // nobody remembers is there; the panel says this will happen.
+        const forgotten = await accountCredentials.clearCredentials(account.id);
         await accountsRepo.updateAccount(account.id, {
           status: 'NEEDS_AUTH',
           lastHealthStatus: 'Session cleared',
           lastError: null,
           touchHealthCheck: true,
         });
-        return { detail: 'Stored browser session deleted. Sign in again to reconnect.' };
+        return {
+          detail: forgotten
+            ? 'Stored browser session and sign-in details deleted. Sign in again to reconnect.'
+            : 'Stored browser session deleted. Sign in again to reconnect.',
+          credentialsCleared: forgotten,
+        };
       }
 
       case 'INGEST': {
