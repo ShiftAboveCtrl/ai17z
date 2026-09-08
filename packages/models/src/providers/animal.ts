@@ -1,3 +1,4 @@
+import { PROVIDER_CATALOGUE } from '@xbam/shared/contracts';
 import { PipelineError, sha256Hex } from '@xbam/shared';
 import type { ProviderAdapter, ProviderHealth, ProviderRequest, ProviderResponse } from '../types';
 
@@ -145,9 +146,9 @@ export const ANIMAL_MODELS = Object.keys(ANIMALS).sort();
 
 export const animalAdapter: ProviderAdapter = {
   kind: 'animal',
-  defaultBaseUrl: 'animal://local',
+  defaultBaseUrl: PROVIDER_CATALOGUE.animal.defaultBaseUrl,
   // The whole point. There is nothing to sign up for and nothing to bill.
-  requiresApiKey: false,
+  requiresApiKey: PROVIDER_CATALOGUE.animal.requiresApiKey,
 
   async generate(request: ProviderRequest): Promise<ProviderResponse> {
     const animal = ANIMALS[request.model.trim().toLowerCase()];

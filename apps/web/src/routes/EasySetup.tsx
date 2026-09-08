@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Sparkles } from 'lucide-react';
-import { EASY_STYLE_PRESETS, PROVIDER_LABELS } from '@xbam/shared/contracts';
+import { EASY_SETUP_PROVIDERS, EASY_STYLE_PRESETS, PROVIDER_CATALOGUE, providerLabel } from '@xbam/shared/contracts';
 import type { EasySetup as EasySetupType, EasyAudience, EasyStylePreset } from '@xbam/shared/contracts';
 import { ApiError, post, put } from '@app/lib/api';
 import { usePolling, useResource } from '@app/lib/hooks';
@@ -31,16 +31,7 @@ import { CharacterBuilder, CompletenessBar, type CharacterDraft } from '@app/com
 // them in, and there is no model to ask until this step is done.
 const STEPS = ['Agent', 'Connect X', 'Connect AI', 'Character', 'Replies', 'Posts', 'Operation', 'Review'] as const;
 
-/**
- * A provider's display name, from the one map that owns them.
- *
- * The wizard's own picker list is a curated subset -- it deliberately omits
- * mock and the animal provider -- so it cannot also be the source of names for
- * a credential that already exists.
- */
-function providerLabelFor(kind: string): string {
-  return PROVIDER_LABELS[kind as keyof typeof PROVIDER_LABELS] ?? kind;
-}
+
 
 
 const AUDIENCE_OPTIONS: { value: EasyAudience; label: string; detail: string }[] = [
@@ -54,18 +45,22 @@ const AUDIENCE_OPTIONS: { value: EasyAudience; label: string; detail: string }[]
   { value: 'ALLOWLIST', label: 'Only people I choose', detail: 'Nobody else gets a reply.' },
 ];
 
-const PROVIDERS: { kind: ProviderCredential['provider']; label: string; needsKey: boolean; hint: string }[] = [
-  { kind: 'openrouter', label: 'OpenRouter', needsKey: true, hint: 'One key, most models.' },
-  { kind: 'openai', label: 'OpenAI', needsKey: true, hint: '' },
-  { kind: 'anthropic', label: 'Claude', needsKey: true, hint: '' },
-  { kind: 'deepseek', label: 'DeepSeek', needsKey: true, hint: '' },
-  // Named "xAI" rather than "Grok": Grok is the model, xAI is where the key
-  // comes from, and somebody holding a SuperGrok subscription needs to know
-  // this is not that.
-  { kind: 'xai', label: 'xAI (Grok)', needsKey: true, hint: 'An API key from the xAI console. A SuperGrok subscription is not one.' },
-  { kind: 'google', label: 'Google Gemini', needsKey: true, hint: 'An API key from Google AI Studio.' },
-  { kind: 'ollama', label: 'Ollama', needsKey: false, hint: 'Runs on this machine. No key needed.' },
-];
+/**
+ * The providers the simplified setup offers, from the catalogue.
+ *
+ * This was a hand-written list that had already drifted from the one the rest
+ * of the product uses -- it called Anthropic "Claude" where every other screen
+ * said "Claude (Anthropic)". Membership and wording now come from one place, so
+ * a provider added to the catalogue appears here without touching this file.
+ */
+const PROVIDERS: { kind: ProviderCredential['provider']; label: string; needsKey: boolean; hint: string }[] =
+  EASY_SETUP_PROVIDERS.map((kind) => ({
+    kind: kind as ProviderCredential['provider'],
+    label: PROVIDER_CATALOGUE[kind].label,
+    needsKey: PROVIDER_CATALOGUE[kind].requiresApiKey,
+    hint: PROVIDER_CATALOGUE[kind].hint,
+  }));
+
 
 interface Draft {
   name: string;
@@ -857,7 +852,7 @@ export function EasySetup() {
                 label="AI"
                 value={
                   savedPrimary
-                    ? `${providerLabelFor(savedPrimary.provider)} · ${savedPrimary.model}`
+                    ? `${providerLabel(savedPrimary.provider)} · ${savedPrimary.model}`
                     : savedModels.loading
                       ? 'Checking...'
                       : 'Not configured yet'

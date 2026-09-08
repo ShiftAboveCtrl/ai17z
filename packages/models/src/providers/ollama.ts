@@ -1,3 +1,4 @@
+import { PROVIDER_CATALOGUE } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
 import { postJson } from '../http';
 import type { ProviderAdapter, ProviderHealth, ProviderRequest, ProviderResponse } from '../types';
@@ -14,8 +15,8 @@ const LABEL = 'Ollama';
 /** Local models. No API key, and being offline must never fail the whole platform. */
 export const ollamaAdapter: ProviderAdapter = {
   kind: 'ollama',
-  defaultBaseUrl: 'http://localhost:11434',
-  requiresApiKey: false,
+  defaultBaseUrl: PROVIDER_CATALOGUE.ollama.defaultBaseUrl,
+  requiresApiKey: PROVIDER_CATALOGUE.ollama.requiresApiKey,
 
   async generate(request: ProviderRequest): Promise<ProviderResponse> {
     const base = (request.baseUrl || ollamaAdapter.defaultBaseUrl).replace(/\/+$/, '');
