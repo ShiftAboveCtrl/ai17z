@@ -1,7 +1,9 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { Copy, ExternalLink, Package, Pencil, Play, Square, Trash2 } from 'lucide-react';
+import type { Blocker } from '@xbam/shared/contracts';
 import { ApiError, del, patch, post } from '@app/lib/api';
+import { startAgent } from '@app/lib/setup';
 import { useResource } from '@app/lib/hooks';
 import type { AgentDetail } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
@@ -9,6 +11,7 @@ import { AgentGlyph } from '@app/components/AgentGlyph';
 import { ErrorPanel, Field, Loading, Modal, Spinner } from '@app/components/ui';
 import { AgentPackagePanel } from '@app/components/AgentPackagePanel';
 import { NeedsYou } from '@app/components/NeedsYou';
+import { Blockers } from '@app/components/Blockers';
 import { LiveStatus } from '@app/components/LiveStatus';
 import { FadeIn } from '@app/components/motion';
 import { IdentitySection } from './sections/IdentitySection';
@@ -65,11 +68,11 @@ const AREA_OF_SECTION: Record<string, AreaId> = Object.fromEntries(
 
 export function AgentPage() {
   const { agentId = '' } = useParams();
+  const { hash } = useLocation();
   const { data, error, loading, reload } = useResource<AgentDetail>(agentId ? `/api/agents/${agentId}` : null);
-  const [area, setArea] = useState<AreaId>(() => {
-    const hash = window.location.hash.replace('#', '');
-    return AREA_OF_SECTION[hash] ?? 'overview';
-  });
+  // From the router's hash on the very first render too, so a bookmarked
+  // `#policies` does not paint Overview and then jump.
+  const [area, setArea] = useState<AreaId>(() => AREA_OF_SECTION[hash.replace('#', '')] ?? 'overview');
   const [mode] = useViewMode();
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -93,34 +96,32 @@ export function AgentPage() {
     }
   };
   const [actionError, setActionError] = useState<string | null>(null);
-  const [blockers, setBlockers] = useState<{ what: string; fix: string }[]>([]);
+  const [blockers, setBlockers] = useState<Blocker[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Highlights whichever section currently owns the viewport.
-  // An old link like `#policies` names a section, not an area. Select the area
-  // that holds it, then let the browser scroll to it once it has rendered.
-  useEffect(() => {
-    const jump = () => {
-      const id = window.location.hash.replace('#', '');
-      const next = AREA_OF_SECTION[id];
-      if (!next) return;
-      setArea(next);
-      window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 60);
-    };
-    window.addEventListener('hashchange', jump);
-    return () => window.removeEventListener('hashchange', jump);
-  }, []);
+  /*
+    An anchor like `#policies` names a section, not an area. Select the area
+    that holds it, then let the browser scroll to it once it has rendered.
 
-  // The same thing on a cold load. Opening a bookmarked `#policies` directly
-  // means the browser tries to scroll to an element React has not rendered yet,
-  // finds nothing, and leaves you at the top of an area you did not ask for.
+    Driven by the router's hash rather than by the `hashchange` event. That
+    event does not fire for a `pushState` navigation, which is what every
+    in-app link is -- so a "Take me there" on a blocker put `#intelligence` in
+    the address bar, left the page on Overview, and looked broken. It fired for
+    a cold load and a hand-edited address, which is why the gap survived: both
+    of the ways somebody tests this by hand work.
+
+    `data` is a dependency because the section cannot be scrolled to before it
+    has rendered.
+  */
   useEffect(() => {
+    const id = hash.replace('#', '');
+    const next = AREA_OF_SECTION[id];
+    if (!next) return;
+    setArea(next);
     if (!data) return;
-    const id = window.location.hash.replace('#', '');
-    if (!id || !AREA_OF_SECTION[id]) return;
-    const timer = window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 120);
+    const timer = window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 60);
     return () => window.clearTimeout(timer);
-  }, [data]);
+  }, [hash, data]);
 
   if (loading && !data) return <Loading label="Loading agent" />;
   if (error) {
@@ -168,10 +169,7 @@ export function AgentPage() {
             : 'Stopped.',
         );
       } else {
-        const result = await post<{ started: boolean; blockers: { what: string; fix: string }[] }>(
-          `/api/agents/${agent.id}/start`,
-          {},
-        );
+        const result = await startAgent(agent.id);
         if (!result.started) setBlockers(result.blockers);
         else setNotice('Running. It opens a browser when it next has something to read.');
       }
@@ -342,18 +340,12 @@ export function AgentPage() {
           </div>
         )}
 
-        {blockers.length > 0 && (
-          <div className="mt-6 w-full max-w-md space-y-2 rounded-lg border border-signal-wait/40 bg-signal-wait/[0.06] p-4 text-left">
-            <p className="text-sm text-bone">It cannot start yet:</p>
-            <ul className="space-y-1.5">
-              {blockers.map((blocker) => (
-                <li key={blocker.what} className="text-[13px] leading-relaxed text-bone-dim">
-                  {blocker.what} <span className="text-bone-faint">{blocker.fix}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <Blockers
+          blockers={blockers}
+          agentId={agent.id}
+          heading="It cannot start yet:"
+          className="mt-6 w-full max-w-md text-left"
+        />
 
         {notice && (
           <p className="mt-6 max-w-md break-words rounded-lg border border-ink-line px-4 py-3 text-[13px] leading-relaxed text-bone-dim">

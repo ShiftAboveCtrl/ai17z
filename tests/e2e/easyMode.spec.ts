@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { deleteAgentsNamed, signIn, uniqueName, useInterface } from './helpers';
+import { deleteAgentsNamed, goToSection, signIn, uniqueName, useInterface } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -96,15 +96,15 @@ test('Easy and Advanced are the same configuration, not two of them', async ({ p
 
   // The Advanced surfaces exist for the agent Easy Mode made. If Easy had
   // written somewhere else, these sections would be empty or absent.
-  await page.locator('#identity').waitFor({ timeout: 20_000 });
   for (const id of ['identity', 'intelligence', 'memory', 'pipeline', 'policies']) {
+    await goToSection(page, id);
     await expect(page.locator(`#${id}`)).toBeAttached();
   }
 
   // And the character typed in Easy Mode is what Advanced holds. Read from the
   // field values, not the section text: an input's value is not text content,
   // and asserting on the latter passes for an empty form.
-  await page.locator('#identity').scrollIntoViewIfNeeded();
+  await goToSection(page, 'identity');
   const personality = page.locator('#identity').locator('#personality');
   await expect(personality).toHaveValue(/direct/i);
 });
@@ -114,7 +114,7 @@ test('a change made in Advanced comes back through Easy', async ({ page }) => {
   await signIn(page);
   await page.goto('/');
   await page.getByRole('heading', { name: AGENT_NAME, exact: true }).first().click();
-  await page.locator('#identity').waitFor({ timeout: 20_000 });
+  await goToSection(page, 'identity');
 
   // Scoped to the identity section: other sections have their own Save, and an
   // unscoped match saves the wrong document. The button used to say "save as

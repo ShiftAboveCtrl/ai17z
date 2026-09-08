@@ -2,14 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Sparkles } from 'lucide-react';
 import { EASY_SETUP_PROVIDERS, EASY_STYLE_PRESETS, PROVIDER_CATALOGUE, providerLabel } from '@xbam/shared/contracts';
+import type { Blocker, PreflightResult } from '@xbam/shared/contracts';
 import type { EasySetup as EasySetupType, EasyAudience, EasyStylePreset } from '@xbam/shared/contracts';
 import { ApiError, post, put } from '@app/lib/api';
+import { connectAccount, createAgent, saveModel, startAgent } from '@app/lib/setup';
 import { usePolling, useResource } from '@app/lib/hooks';
 import type { AccountRow, ProviderCredential } from '@app/lib/types';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { SignInProgress } from '@app/components/SignInProgress';
 import { ErrorPanel, Field, Spinner, StatusDot, Toggle } from '@app/components/ui';
+import { Blockers } from '@app/components/Blockers';
+import { ModelChooser } from '@app/components/ModelChooser';
 import { CharacterBuilder, CompletenessBar, type CharacterDraft } from '@app/components/CharacterBuilder';
 
 /**
@@ -142,7 +146,7 @@ export function EasySetup() {
   const [providerId, setProviderId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [blockers, setBlockers] = useState<{ what: string; fix: string }[]>([]);
+  const [blockers, setBlockers] = useState<Blocker[]>([]);
   const [draftCompleteness, setDraftCompleteness] = useState<CharacterDraft['completeness'] | null>(null);
 
   const providers = useResource<{ items: ProviderCredential[] }>('/api/providers');
@@ -158,7 +162,7 @@ export function EasySetup() {
    * Only fetched on the review step, because that is the only place the answer
    * is used and it costs a round trip.
    */
-  const preflight = useResource<{ ready: boolean; blockers: { what: string; fix: string }[] }>(
+  const preflight = useResource<PreflightResult>(
     agentId && step === 7 ? `/api/agents/${agentId}/preflight` : null,
     [agentId, step],
   );
@@ -238,19 +242,16 @@ export function EasySetup() {
   });
 
   /** Creates the agent so the rest of the flow has something to attach to. */
-  const createAgent = async () => {
+  const ensureAgent = async () => {
     if (agentId) return agentId;
-    const agent = await post<{ id: string }>('/api/agents', {
-      name: draft.name.trim(),
-      description: '',
-      avatarUrl: draft.avatarUrl.trim() || null,
-      avatarMode: 'PORTRAIT_25D',
-      persona: { displayName: draft.name.trim() },
+    const id = await createAgent({
+      name: draft.name,
+      avatarUrl: draft.avatarUrl,
       // Nothing acts until Review, whatever is chosen later on.
       policy: { automation: { mode: 'MANUAL_ONLY', dryRunDefault: false } },
     });
-    setAgentId(agent.id);
-    return agent.id;
+    setAgentId(id);
+    return id;
   };
 
   /**
@@ -262,17 +263,10 @@ export function EasySetup() {
    */
   const persistModels = async (id: string, credentialId: string) => {
     const model = draft.model.trim();
-    if (model) {
-      await put(`/api/agents/${id}/models`, {
-        role: 'primary',
-        providerCredentialId: credentialId,
-        model,
-        parameters: {},
-      });
-    }
+    if (model) await saveModel(id, { role: 'primary', providerCredentialId: credentialId, model });
     const vision = draft.visionModel.trim();
     if (vision) {
-      await put(`/api/agents/${id}/models`, {
+      await saveModel(id, {
         role: 'vision',
         providerCredentialId: credentialId,
         model: vision,
@@ -287,7 +281,7 @@ export function EasySetup() {
     setBusy(true);
     setError(null);
     try {
-      if (step === 0) await createAgent();
+      if (step === 0) await ensureAgent();
       /*
         Leaving the intelligence step saves the model.
 
@@ -311,15 +305,12 @@ export function EasySetup() {
     setBusy(true);
     setError(null);
     try {
-      const id = await createAgent();
+      const id = await ensureAgent();
       await put(`/api/agents/${id}/easy`, currentSetup());
 
       // Checked before activating rather than after: an agent that goes ACTIVE
       // and fails on its first job has told nobody anything useful.
-      const outcome = await post<{ started: boolean; blockers: { what: string; fix: string }[] }>(
-        `/api/agents/${id}/start`,
-        {},
-      );
+      const outcome = await startAgent(id);
       if (!outcome.started) {
         setBlockers(outcome.blockers);
         setBusy(false);
@@ -338,7 +329,7 @@ export function EasySetup() {
     setBusy(true);
     setError(null);
     try {
-      const id = await createAgent();
+      const id = await ensureAgent();
       await put(`/api/agents/${id}/easy`, currentSetup());
       navigate(`/agents/${id}`);
     } catch (e) {
@@ -879,18 +870,7 @@ export function EasySetup() {
                 With no X account connected it will run, but it has nothing to read. You can connect one from its page.
               </p>
             )}
-            {reviewBlockers.length > 0 && (
-              <div className="space-y-2 rounded-lg border border-signal-wait/40 bg-signal-wait/[0.06] p-4">
-                <p className="text-sm text-bone">Nearly. This needs sorting first:</p>
-                <ul className="space-y-2">
-                  {reviewBlockers.map((blocker) => (
-                    <li key={blocker.what} className="text-[13px] leading-relaxed text-bone-dim">
-                      {blocker.what} <span className="text-bone-faint">{blocker.fix}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <Blockers blockers={reviewBlockers} agentId={agentId} heading="Nearly. This needs sorting first:" />
             {error && <ErrorPanel title="The agent could not be started." detail={error} />}
           </div>
         )}
@@ -974,17 +954,17 @@ function ConnectX({
     setError(null);
     try {
       const clean = handle.trim().replace(/^@/, '');
-      // The API returns the existing account when this handle is already
-      // connected, so reconnecting one is not an error.
-      const created = await post<{ id: string; status: string }>('/api/accounts', {
+      /*
+        Through the shared layer, which is also where the trigger types come
+        from. This wrote `['MENTION', 'REPLY']` out by hand -- correct today,
+        and a second copy of a default whose whole history is having been wrong
+        once: defaulting a link to MENTION alone meant two of the four radar
+        monitors had every REPLY they found dropped at ingest.
+      */
+      const created = await connectAccount(agentId, {
         channel: 'x',
         handle: clean,
         displayName: clean,
-      });
-      await post(`/api/agents/${agentId}/accounts`, {
-        accountId: created.id,
-        triggerEventTypes: ['MENTION', 'REPLY'],
-        actionType: 'REPLY',
       });
       onAccount(created.id);
 
@@ -1187,12 +1167,7 @@ function ConnectAI({
       set({ model });
       // Written to the primary role. Classification, critic, and voice models
       // are Advanced concerns and fall back to this one.
-      await put(`/api/agents/${agentId}/models`, {
-        role: 'primary',
-        providerCredentialId: credential.id,
-        model,
-        parameters: {},
-      });
+      await saveModel(agentId, { role: 'primary', providerCredentialId: credential.id, model });
       setResult({ ok: true, detail: `${test.detail} Primary model set to ${model}.` });
 
       /*
@@ -1211,7 +1186,7 @@ function ConnectAI({
       */
       const vision = draft.visionModel.trim();
       if (vision) {
-        await put(`/api/agents/${agentId}/models`, {
+        await saveModel(agentId, {
           role: 'vision',
           providerCredentialId: credential.id,
           model: vision,
@@ -1283,53 +1258,35 @@ function ConnectAI({
 
         This screen used to announce "answered with 3 models" and then offer a
         free-text box with an Anthropic model id as its placeholder, whichever
-        provider was selected. The list is a datalist rather than a select
-        because a model released this morning is in no /models response yet, and
+        provider was selected. It is the shared chooser now: a list when the
+        provider has offered one, a box when it has not, and the same escape on
+        both -- a model released this morning is in no /models response yet, and
         typing one has to stay possible.
       */}
-      <Field
+      <ModelChooser
+        id="model"
         label="Model"
-        htmlFor="model"
+        models={discoveredModels}
+        value={draft.model}
+        onChange={(model) => set({ model })}
+        providerName={spec.label}
         hint={
           discoveredModels.length > 0
-            ? `${discoveredModels.length} offered by ${spec.label}. Type one of these, or any model id it accepts.`
-            : "The model it thinks with. Connect above to see what this provider offers."
+            ? undefined
+            : 'The model it thinks with. Connect above to see what this provider offers.'
         }
-      >
-        <input
-          id="model"
-          className="field font-mono text-[13px]"
-          value={draft.model}
-          onChange={(e) => set({ model: e.target.value })}
-          placeholder={discoveredModels[0] ?? 'model id'}
-          list="primary-model-options"
-        />
-        <datalist id="primary-model-options">
-          {discoveredModels.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
-      </Field>
+      />
 
-      <Field
+      <ModelChooser
+        id="visionModel"
         label="Model for reading images"
-        htmlFor="visionModel"
+        models={visionCandidates}
+        value={draft.visionModel}
+        onChange={(visionModel) => set({ visionModel })}
+        providerName={spec.label}
+        placeholder={visionSuggestion || 'leave blank if you do not want one'}
         hint="Most questions worth answering are about a picture. Without one, the agent says it cannot see them."
-      >
-        <input
-          id="visionModel"
-          className="field font-mono text-[13px]"
-          value={draft.visionModel}
-          onChange={(e) => set({ visionModel: e.target.value })}
-          placeholder={visionSuggestion || 'leave blank if you do not want one'}
-          list="vision-model-options"
-        />
-        <datalist id="vision-model-options">
-          {visionCandidates.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
-      </Field>
+      />
 
       <button type="button" className="btn-ghost" onClick={() => void connect()} disabled={busy}>
         {busy ? <Spinner /> : <Sparkles className="h-4 w-4" aria-hidden />}

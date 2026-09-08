@@ -3,6 +3,7 @@ import {
   deleteAgentsNamed,
   deleteMockAccountsNamed,
   deleteProvidersLabelled,
+  goToSection,
   signIn,
   uniqueName,
   useInterface,
@@ -83,17 +84,25 @@ test('runs a dry run end to end and shows the trace', async ({ page }) => {
   expect(provider).toBeTruthy();
 
   await page.goto(`/agents/${agentId}`);
-  await page.locator('#intelligence').scrollIntoViewIfNeeded();
+  await goToSection(page, 'intelligence');
   await page.getByRole('button', { name: /primary model/i }).click();
   await page.locator('#mprovider').selectOption(provider.id);
-  await page.locator('#mmodel').fill('mock-echo');
+  // A list, not a box. It was an `<input list=...>` when this was written; a
+  // datalist offers no way to see what exists and never says whether what you
+  // typed is real, and choosing a model is the most consequential thing on the
+  // screen. Fetch first, because the options come from the provider.
+  await page.getByRole('button', { name: /fetch the list from the provider/i }).click();
+  await expect(page.locator('#mmodel').locator('option', { hasText: 'mock-echo' })).toHaveCount(1, {
+    timeout: 20_000,
+  });
+  await page.locator('#mmodel').selectOption('mock-echo');
   // Scoped to the dialog. An unscoped Save now matches the identity section's
   // as well, since autosave gave that one a plain "Save" too.
   await page.getByLabel('Primary model').getByRole('button', { name: /^save$/i }).click();
   await expect(page.locator('#intelligence')).toContainText('mock-echo', { timeout: 20_000 });
 
   // Inject a real event through the UI and let the worker process it.
-  await page.locator('#activity').scrollIntoViewIfNeeded();
+  await goToSection(page, 'activity');
   await page.getByRole('button', { name: /inject a test event/i }).first().click();
   await page.locator('#ihandle').fill('e2e_user');
   await page.locator('#itext').fill('Remember that my favourite colour is teal.');
@@ -123,15 +132,17 @@ test('holds a job for approval, then executes the edited text', async ({ page })
   await page.goto(`/agents/${agentId}`);
 
   // Switch to review mode and turn dry run off, through the policy UI.
+  await goToSection(page, 'policies');
   const policies = page.locator('#policies');
-  await policies.scrollIntoViewIfNeeded();
-  await policies.getByRole('button', { name: /review before action/i }).click();
+  // A radio, not a button. The five automation modes are a single choice and
+  // now say so to a screen reader, which also changes how a test reaches them.
+  await policies.getByRole('radio', { name: /review before action/i }).click();
   const dryRun = policies.getByRole('switch', { name: /dry run by default/i });
   if ((await dryRun.getAttribute('aria-checked')) === 'true') await dryRun.click();
   await policies.getByRole('button', { name: /save as version/i }).click();
   await expect(policies.getByText('saved')).toBeVisible({ timeout: 20_000 });
 
-  await page.locator('#activity').scrollIntoViewIfNeeded();
+  await goToSection(page, 'activity');
   await page.getByRole('button', { name: /inject a test event/i }).first().click();
   await page.locator('#ihandle').fill('e2e_user');
   await page.locator('#itext').fill('Does the approval gate hold this?');
@@ -172,7 +183,7 @@ test('shows why a memory was retrieved in a different conversation', async ({ pa
   await page.goto(`/agents/${agentId}`);
 
   // A new thread, same person, asking about the fact stated earlier.
-  await page.locator('#activity').scrollIntoViewIfNeeded();
+  await goToSection(page, 'activity');
   await page.getByRole('button', { name: /inject a test event/i }).first().click();
   await page.locator('#ihandle').fill('e2e_user');
   await page.locator('#itext').fill('What colour did I say I liked?');
@@ -195,8 +206,8 @@ test('memory section counts what the agent actually learned', async ({ page }) =
   await useInterface(page, 'advanced');
   await signIn(page);
   await page.goto(`/agents/${agentId}`);
+  await goToSection(page, 'memory');
   const memory = page.locator('#memory');
-  await memory.scrollIntoViewIfNeeded();
 
   await expect(memory.getByRole('button', { name: /^\d+ USER$/ })).toBeVisible({ timeout: 20_000 });
   await memory.getByRole('button', { name: /USER/ }).click();
