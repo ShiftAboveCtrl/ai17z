@@ -1,7 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { PROVIDER_KINDS } from '@xbam/shared/contracts';
+import { EASY_SETUP_PROVIDERS, PROVIDER_CATALOGUE, PROVIDER_KINDS } from '@xbam/shared/contracts';
 import { getAdapter, listAdapters } from '@xbam/models';
 
 /**
@@ -36,8 +34,13 @@ describe('xAI is a first-class provider', () => {
     // Grok is the model; xAI is the account. Somebody holding a SuperGrok
     // subscription has to be able to tell that this is not that, because a
     // consumer subscription is not documented to grant API access.
-    const ui = readFileSync(resolve(__dirname, '../../apps/web/src/routes/EasySetup.tsx'), 'utf8');
-    expect(ui).toContain("kind: 'xai'");
-    expect(ui).toMatch(/SuperGrok subscription is not one/i);
+    //
+    // This used to grep EasySetup.tsx for the sentence. The picker is built
+    // from the catalogue now, so the wording is asserted where it is written
+    // rather than where it happened to be pasted -- which also means it holds
+    // for every screen that names a provider, not just that one.
+    expect(PROVIDER_CATALOGUE.xai.label).toBe('xAI (Grok)');
+    expect(PROVIDER_CATALOGUE.xai.hint).toMatch(/SuperGrok subscription is not one/i);
+    expect(EASY_SETUP_PROVIDERS).toContain('xai');
   });
 });

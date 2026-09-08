@@ -1,4 +1,5 @@
-import { PROVIDER_KINDS, type ProviderKind } from './enums';
+import { type ProviderKind } from './enums';
+import { PROVIDER_CATALOGUE } from './providerCatalogue';
 
 /**
  * Working out whose API key this is, from the key.
@@ -32,29 +33,24 @@ export interface KeyGuess {
   confidence: 'certain' | 'likely';
 }
 
-interface Rule {
-  kind: ProviderKind;
-  label: string;
-  test: RegExp;
-  confidence: 'certain' | 'likely';
-}
-
-const RULES: Rule[] = [
-  // Anthropic documents `sk-ant-` and has since the API opened.
-  { kind: 'anthropic', label: 'Claude (Anthropic)', test: /^sk-ant-/i, confidence: 'certain' },
-  // OpenRouter documents `sk-or-v1-`; the version segment is not relied on.
-  { kind: 'openrouter', label: 'OpenRouter', test: /^sk-or-/i, confidence: 'certain' },
-  { kind: 'xai', label: 'xAI (Grok)', test: /^xai-/i, confidence: 'certain' },
-  // Google AI Studio keys are `AIza` followed by 35 URL-safe characters. The
-  // prefix is a Google API key generally rather than Gemini specifically, which
-  // is still the right guess here: it is the only Google thing AI17Z talks to.
-  { kind: 'google', label: 'Google Gemini', test: /^AIza[0-9A-Za-z_-]{10,}$/, confidence: 'certain' },
-  // DeepSeek issues `sk-` keys of a fixed length with no inner hyphen, which is
-  // not enough on its own to be certain and is enough to be worth suggesting.
-  { kind: 'deepseek', label: 'DeepSeek', test: /^sk-[0-9a-f]{32}$/i, confidence: 'likely' },
-  // Last: every `sk-` that was not something more specific above.
-  { kind: 'openai', label: 'OpenAI', test: /^sk-/i, confidence: 'likely' },
-];
+/**
+ * The rules, in the order they are tested, taken from the catalogue.
+ *
+ * They used to be written out here a second time, with a third copy of every
+ * provider's display name beside them. The catalogue's declaration order is the
+ * test order, which is why it puts `sk-ant-` and `sk-or-` before the bare `sk-`
+ * they both begin with.
+ */
+const RULES: { kind: ProviderKind; label: string; test: RegExp; confidence: 'certain' | 'likely' }[] = (
+  Object.entries(PROVIDER_CATALOGUE) as [ProviderKind, (typeof PROVIDER_CATALOGUE)[ProviderKind]][]
+)
+  .filter(([, entry]) => entry.keyPattern)
+  .map(([kind, entry]) => ({
+    kind,
+    label: entry.label,
+    test: entry.keyPattern!.test,
+    confidence: entry.keyPattern!.confidence,
+  }));
 
 /**
  * The provider a key appears to belong to, or null when nothing matches.
@@ -77,20 +73,6 @@ export function guessProviderFromKey(apiKey: string): KeyGuess | null {
   return null;
 }
 
-/** Every kind, with the name a person would recognise. For the picker. */
-export const PROVIDER_LABELS: Record<ProviderKind, string> = {
-  openai: 'OpenAI',
-  anthropic: 'Claude (Anthropic)',
-  openrouter: 'OpenRouter',
-  deepseek: 'DeepSeek',
-  xai: 'xAI (Grok)',
-  google: 'Google Gemini',
-  ollama: 'Ollama (on this machine)',
-  openai_compatible: 'Any OpenAI-compatible endpoint',
-  mock: 'Mock (for testing AI17Z itself)',
-  animal: 'Animal mode (no key needed)',
-};
-
 /**
  * "a" or "an" for a provider name.
  *
@@ -102,10 +84,3 @@ export const PROVIDER_LABELS: Record<ProviderKind, string> = {
 export function articleFor(name: string): 'a' | 'an' {
   return /^[aeioux]/i.test(name.trim()) ? 'an' : 'a';
 }
-
-/** Guards the record above against a kind being added and not named. */
-export function providerLabel(kind: ProviderKind): string {
-  return PROVIDER_LABELS[kind] ?? kind;
-}
-
-export const NAMED_PROVIDER_KINDS = PROVIDER_KINDS;

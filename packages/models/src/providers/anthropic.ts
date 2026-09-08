@@ -1,3 +1,4 @@
+import { PROVIDER_CATALOGUE } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
 import { postJson } from '../http';
 import type { ProviderAdapter, ProviderHealth, ProviderRequest, ProviderResponse } from '../types';
@@ -15,8 +16,8 @@ const LABEL = 'Anthropic';
 /** Anthropic separates the system prompt from the message array, so we split it here. */
 export const anthropicAdapter: ProviderAdapter = {
   kind: 'anthropic',
-  defaultBaseUrl: 'https://api.anthropic.com/v1',
-  requiresApiKey: true,
+  defaultBaseUrl: PROVIDER_CATALOGUE.anthropic.defaultBaseUrl,
+  requiresApiKey: PROVIDER_CATALOGUE.anthropic.requiresApiKey,
 
   async generate(request: ProviderRequest): Promise<ProviderResponse> {
     const base = (request.baseUrl || anthropicAdapter.defaultBaseUrl).replace(/\/+$/, '');

@@ -30,6 +30,7 @@
  * rather than assumed symmetric, because they are not.
  */
 import { PipelineError } from '@xbam/shared';
+import { PROVIDER_CATALOGUE } from '@xbam/shared/contracts';
 import { postJson } from '../http';
 import { createOpenAiCompatibleAdapter } from './openaiCompatible';
 import type { ProviderAdapter } from '../types';
@@ -40,7 +41,7 @@ import type {
   ServerSideToolSelection,
 } from '../serverSideTools';
 
-const DEFAULT_BASE_URL = 'https://api.x.ai/v1';
+const DEFAULT_BASE_URL = PROVIDER_CATALOGUE.xai.defaultBaseUrl;
 
 /** Exactly the keys xAI reports, so a rename upstream fails loudly rather than reading as zero. */
 const USAGE_X_SEARCH = 'SERVER_SIDE_TOOL_X_SEARCH';
@@ -223,7 +224,7 @@ export async function searchWithServerSideTools(
  * adapter that cannot do this, and the runtime reports the feature unavailable
  * rather than falling back to a model call that would invent the answer.
  */
-const base = createOpenAiCompatibleAdapter('xai', DEFAULT_BASE_URL, 'xAI');
+const base = createOpenAiCompatibleAdapter('xai', DEFAULT_BASE_URL, PROVIDER_CATALOGUE.xai.label);
 
 export const xaiAdapter: ProviderAdapter = {
   ...base,

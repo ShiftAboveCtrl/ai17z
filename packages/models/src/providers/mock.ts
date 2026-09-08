@@ -1,3 +1,4 @@
+import { PROVIDER_CATALOGUE } from '@xbam/shared/contracts';
 import { PipelineError, sha256Hex } from '@xbam/shared';
 import type { ProviderAdapter, ProviderHealth, ProviderRequest, ProviderResponse } from '../types';
 
@@ -18,8 +19,8 @@ const LABEL = 'Mock';
  */
 export const mockAdapter: ProviderAdapter = {
   kind: 'mock',
-  defaultBaseUrl: 'mock://local',
-  requiresApiKey: false,
+  defaultBaseUrl: PROVIDER_CATALOGUE.mock.defaultBaseUrl,
+  requiresApiKey: PROVIDER_CATALOGUE.mock.requiresApiKey,
 
   async generate(request: ProviderRequest): Promise<ProviderResponse> {
     const model = request.model;

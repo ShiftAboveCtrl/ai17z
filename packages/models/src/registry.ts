@@ -1,4 +1,4 @@
-import type { ProviderKind } from '@xbam/shared/contracts';
+import { PROVIDER_CATALOGUE, type ProviderKind } from '@xbam/shared/contracts';
 import { BadRequestError } from '@xbam/shared';
 import { anthropicAdapter } from './providers/anthropic';
 import { ollamaAdapter } from './providers/ollama';
@@ -8,12 +8,21 @@ import { createOpenAiCompatibleAdapter } from './providers/openaiCompatible';
 import { xaiAdapter } from './providers/xai';
 import type { ProviderAdapter } from './types';
 
+/**
+ * A provider's endpoint and display name, from the one place that owns them.
+ *
+ * Both were written out here as literals and again in the catalogue every
+ * screen reads, which is two places to change and one to forget.
+ */
+const base = (kind: ProviderKind) => PROVIDER_CATALOGUE[kind].defaultBaseUrl;
+const title = (kind: ProviderKind) => PROVIDER_CATALOGUE[kind].label;
+
 const ADAPTERS: Record<ProviderKind, ProviderAdapter> = {
-  openai: createOpenAiCompatibleAdapter('openai', 'https://api.openai.com/v1', 'OpenAI'),
-  openrouter: createOpenAiCompatibleAdapter('openrouter', 'https://openrouter.ai/api/v1', 'OpenRouter', {
+  openai: createOpenAiCompatibleAdapter('openai', base('openai'), title('openai')),
+  openrouter: createOpenAiCompatibleAdapter('openrouter', base('openrouter'), title('openrouter'), {
     'x-title': 'XBAM',
   }),
-  deepseek: createOpenAiCompatibleAdapter('deepseek', 'https://api.deepseek.com/v1', 'DeepSeek'),
+  deepseek: createOpenAiCompatibleAdapter('deepseek', base('deepseek'), title('deepseek')),
   // Generation is the OpenAI chat-completions shape, verified against
   // docs.x.ai. The separate adapter exists for the half that is not shared:
   // search xAI runs on its own side, during the call, with citations.
@@ -21,12 +30,12 @@ const ADAPTERS: Record<ProviderKind, ProviderAdapter> = {
   // Google's OpenAI-compatible endpoint: same Bearer key, same
   // chat-completions shape, same GET /models. The native
   // :generateContent API is a different shape and is not used.
-  google: createOpenAiCompatibleAdapter(
-    'google',
-    'https://generativelanguage.googleapis.com/v1beta/openai',
-    'Google Gemini',
+  google: createOpenAiCompatibleAdapter('google', base('google'), title('google')),
+  openai_compatible: createOpenAiCompatibleAdapter(
+    'openai_compatible',
+    base('openai_compatible'),
+    title('openai_compatible'),
   ),
-  openai_compatible: createOpenAiCompatibleAdapter('openai_compatible', '', 'OpenAI-compatible endpoint'),
   anthropic: anthropicAdapter,
   ollama: ollamaAdapter,
   mock: mockAdapter,
