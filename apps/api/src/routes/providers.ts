@@ -33,6 +33,42 @@ export async function providerRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => {
       const user = await requireUser(request);
       const input = parseBody(CreateProviderInput, request);
+
+      /*
+        Connecting the same provider twice means the same connection.
+
+        `(owner_id, label)` is unique and setup derives the label from the
+        provider kind, so a second "connect" is the same intent as the first --
+        somebody correcting a key, or stepping back through the wizard. Creating
+        blindly reached the unique index and surfaced as a raw 500 carrying the
+        constraint name, on a screen that offered no way to edit the label.
+
+        Updating in place is also what keeps the credential id stable, which
+        matters because model_configs point at it: replacing the row would
+        orphan every role already assigned to it.
+      */
+      const existing = await providersRepo.findByLabel(user.id, input.label);
+      if (existing) {
+        const updated = await providersRepo.updateProvider(existing.id, {
+          // An absent key leaves the stored one alone; only an explicit value
+          // replaces it. Re-testing a connection must not wipe its key.
+          ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+          baseUrl: input.baseUrl,
+          ...(input.availableModels.length > 0 ? { availableModels: input.availableModels } : {}),
+          ...(input.defaultModel !== null ? { defaultModel: input.defaultModel } : {}),
+          timeoutMs: input.timeoutMs,
+          enabled: input.enabled,
+        });
+        await ops.audit({
+          actorUserId: user.id,
+          action: 'provider.reconnected',
+          entityType: 'provider',
+          entityId: updated.id,
+          data: { provider: updated.provider, hasKey: updated.hasKey },
+        });
+        return updated;
+      }
+
       const created = await providersRepo.createProvider({ ownerId: user.id, ...input });
       await ops.audit({
         actorUserId: user.id,

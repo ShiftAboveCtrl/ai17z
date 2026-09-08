@@ -28,6 +28,24 @@ export async function getProvider(id: string): Promise<ProviderCredential | null
   );
 }
 
+/**
+ * The credential this owner already has under this label, if any.
+ *
+ * `(owner_id, label)` is unique, which makes the label the natural identity of
+ * a connection rather than a decoration. Setup derives the label from the
+ * provider kind, so pressing "connect" twice means "this one again", not "a
+ * second one" -- and without this the second press reached the unique index and
+ * surfaced as a 500 with the constraint name in it.
+ */
+export async function findByLabel(ownerId: string, label: string): Promise<ProviderCredential | null> {
+  return mapRow<ProviderCredential>(
+    await queryOne(`SELECT ${PUBLIC_COLUMNS} FROM provider_credentials WHERE owner_id = $1 AND label = $2`, [
+      ownerId,
+      label,
+    ]),
+  );
+}
+
 export async function requireProvider(id: string): Promise<ProviderCredential> {
   const provider = await getProvider(id);
   if (!provider) throw new NotFoundError('Provider');

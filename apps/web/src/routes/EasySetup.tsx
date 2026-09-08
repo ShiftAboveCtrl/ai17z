@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Sparkles } from 'lucide-react';
-import { EASY_STYLE_PRESETS } from '@xbam/shared/contracts';
+import { EASY_STYLE_PRESETS, PROVIDER_LABELS } from '@xbam/shared/contracts';
 import type { EasySetup as EasySetupType, EasyAudience, EasyStylePreset } from '@xbam/shared/contracts';
 import { ApiError, post, put } from '@app/lib/api';
 import { usePolling, useResource } from '@app/lib/hooks';
@@ -30,6 +30,17 @@ import { CharacterBuilder, CompletenessBar, type CharacterDraft } from '@app/com
 // step that can hand the questions to the agent's own model and let it fill
 // them in, and there is no model to ask until this step is done.
 const STEPS = ['Agent', 'Connect X', 'Connect AI', 'Character', 'Replies', 'Posts', 'Operation', 'Review'] as const;
+
+/**
+ * A provider's display name, from the one map that owns them.
+ *
+ * The wizard's own picker list is a curated subset -- it deliberately omits
+ * mock and the animal provider -- so it cannot also be the source of names for
+ * a credential that already exists.
+ */
+function providerLabelFor(kind: string): string {
+  return PROVIDER_LABELS[kind as keyof typeof PROVIDER_LABELS] ?? kind;
+}
 
 
 const AUDIENCE_OPTIONS: { value: EasyAudience; label: string; detail: string }[] = [
@@ -141,6 +152,50 @@ export function EasySetup() {
 
   const providers = useResource<{ items: ProviderCredential[] }>('/api/providers');
 
+  /**
+   * What the server says about this agent, not what this screen is holding.
+   *
+   * The review summary used to read the local draft: it showed the provider and
+   * model somebody had typed, while the blocker list underneath -- which asks
+   * the server -- said no model was connected. One screen contradicting itself,
+   * and the draft was the half that was wrong.
+   *
+   * Only fetched on the review step, because that is the only place the answer
+   * is used and it costs a round trip.
+   */
+  const preflight = useResource<{ ready: boolean; blockers: { what: string; fix: string }[] }>(
+    agentId && step === 7 ? `/api/agents/${agentId}/preflight` : null,
+    [agentId, step],
+  );
+  const savedModels = useResource<{ items: { role: string; model: string; provider: string }[] }>(
+    agentId && step === 7 ? `/api/agents/${agentId}/models` : null,
+    [agentId, step],
+  );
+
+  /**
+   * The credential the model should be attached to.
+   *
+   * `providerId` is only set by the connect handler, so somebody whose provider
+   * is already connected -- a returning owner, or anyone who stepped back --
+   * had nothing for Continue to attach a model to, and the model was dropped
+   * again for a different reason than the first. Falling back to the stored
+   * credential for the selected kind closes that second path.
+   */
+  const effectiveProviderId =
+    providerId ?? (providers.data?.items ?? []).find((p) => p.provider === draft.providerKind && p.enabled)?.id ?? null;
+
+  /** The primary role as the server has it, or null when none is stored. */
+  const savedPrimary = (savedModels.data?.items ?? []).find((m) => m.role === 'primary') ?? null;
+
+  /**
+   * What still needs sorting, asked of the server rather than guessed.
+   *
+   * `blockers` holds the answer from the last Start attempt; this is the answer
+   * as of opening review. Preferring the fresher of the two means the list is
+   * right before anybody presses anything, which is when it is useful.
+   */
+  const reviewBlockers = preflight.data?.blockers ?? blockers;
+
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
   const setSetup = (patch: Partial<EasySetupType>) => setDraft((d) => ({ ...d, setup: { ...d.setup, ...patch } }));
 
@@ -203,11 +258,51 @@ export function EasySetup() {
     return agent.id;
   };
 
+  /**
+   * Writes whichever models the intelligence step is holding.
+   *
+   * Idempotent: `PUT /models` upserts on (agent, role), so calling this from
+   * both the connect handler and Continue is safe and the second call is a
+   * no-op when nothing changed.
+   */
+  const persistModels = async (id: string, credentialId: string) => {
+    const model = draft.model.trim();
+    if (model) {
+      await put(`/api/agents/${id}/models`, {
+        role: 'primary',
+        providerCredentialId: credentialId,
+        model,
+        parameters: {},
+      });
+    }
+    const vision = draft.visionModel.trim();
+    if (vision) {
+      await put(`/api/agents/${id}/models`, {
+        role: 'vision',
+        providerCredentialId: credentialId,
+        model: vision,
+        // Reasoning tokens are charged against the same ceiling as the answer,
+        // so a limit chosen for two sentences is spent before the answer starts.
+        parameters: { maxTokens: 1500 },
+      });
+    }
+  };
+
   const advance = async () => {
     setBusy(true);
     setError(null);
     try {
       if (step === 0) await createAgent();
+      /*
+        Leaving the intelligence step saves the model.
+
+        It used to be written only inside the provider's "Test and connect"
+        handler, so typing a model and pressing Continue -- the obvious order,
+        since you test the key first and choose the model after -- discarded it
+        silently. The agent then had a working credential, no primary model, and
+        a setup screen still reporting success.
+      */
+      if (step === 2 && agentId && effectiveProviderId) await persistModels(agentId, effectiveProviderId);
       setStep((s) => s + 1);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'That could not be saved.');
@@ -550,6 +645,7 @@ export function EasySetup() {
             providers={providers.data?.items ?? []}
             providerId={providerId}
             onProvider={setProviderId}
+            onProvidersChanged={() => providers.reload()}
             agentId={agentId}
           />
         )}
@@ -746,10 +842,27 @@ export function EasySetup() {
               </div>
             </div>
             <dl className="divide-y divide-ink-line rounded-xl border border-ink-line">
-              <Row label="X" value={draft.handle ? `@${draft.handle.replace(/^@/, '')}` : 'Not connected'} />
+              <Row
+                label="X"
+                value={draft.handle ? `@${draft.handle.replace(/^@/, '')}` : 'Not connected'}
+                verbatim={Boolean(draft.handle)}
+              />
+              {/*
+                Read back from the server, so this row cannot claim a model the
+                agent does not actually have. The exact provider id is shown as
+                stored -- never prettified -- because a model id that has been
+                title-cased for display is no longer the id.
+              */}
               <Row
                 label="AI"
-                value={providerId ? `${providerSpec.label} · ${draft.model || 'default model'}` : 'Not connected'}
+                value={
+                  savedPrimary
+                    ? `${providerLabelFor(savedPrimary.provider)} · ${savedPrimary.model}`
+                    : savedModels.loading
+                      ? 'Checking...'
+                      : 'Not configured yet'
+                }
+                verbatim={Boolean(savedPrimary)}
               />
               <Row
                 label="Replies"
@@ -771,11 +884,11 @@ export function EasySetup() {
                 With no X account connected it will run, but it has nothing to read. You can connect one from its page.
               </p>
             )}
-            {blockers.length > 0 && (
+            {reviewBlockers.length > 0 && (
               <div className="space-y-2 rounded-lg border border-signal-wait/40 bg-signal-wait/[0.06] p-4">
                 <p className="text-sm text-bone">Nearly. This needs sorting first:</p>
                 <ul className="space-y-2">
-                  {blockers.map((blocker) => (
+                  {reviewBlockers.map((blocker) => (
                     <li key={blocker.what} className="text-[13px] leading-relaxed text-bone-dim">
                       {blocker.what} <span className="text-bone-faint">{blocker.fix}</span>
                     </li>
@@ -961,6 +1074,7 @@ function ConnectAI({
   providers,
   providerId,
   onProvider,
+  onProvidersChanged,
   agentId,
 }: {
   spec: (typeof PROVIDERS)[number];
@@ -969,10 +1083,28 @@ function ConnectAI({
   providers: ProviderCredential[];
   providerId: string | null;
   onProvider: (id: string) => void;
+  /**
+   * Re-reads the credential list after it changes.
+   *
+   * The list was fetched once at mount and never again, which caused two
+   * separate faults from one stale array: the "is this provider already
+   * connected" lookup stayed empty, so pressing connect twice tried to create a
+   * duplicate and hit the unique index; and the models the provider had just
+   * returned never arrived, so the model pickers had nothing to offer while the
+   * screen said it had found three.
+   */
+  onProvidersChanged: () => void;
   agentId: string | null;
 }) {
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  /**
+   * The outcome of the last connect attempt.
+   *
+   * `needsModel` is the state the screen could not previously express: the key
+   * works and there is still no model, which is neither success nor failure and
+   * must not be reported as either.
+   */
+  const [result, setResult] = useState<{ ok: boolean; detail: string; needsModel?: boolean } | null>(null);
 
   /*
     Which of the provider's models can read an image.
@@ -989,6 +1121,17 @@ function ConnectAI({
     [providers, draft.providerKind],
   );
   const visionSuggestion = visionCandidates[0] ?? '';
+
+  /**
+   * Everything this provider said it offers.
+   *
+   * Read from the credential rather than from the test response, so it survives
+   * a re-render and is available to both pickers.
+   */
+  const discoveredModels = useMemo(
+    () => providers.find((p) => p.provider === draft.providerKind)?.availableModels ?? [],
+    [providers, draft.providerKind],
+  );
 
   const existing = useMemo(
     () => providers.find((p) => p.provider === draft.providerKind && p.enabled) ?? null,
@@ -1010,26 +1153,52 @@ function ConnectAI({
           baseUrl: draft.baseUrl.trim() || null,
         }));
       onProvider(credential.id);
+      // Before the test, so the "already connected" lookup and the model lists
+      // both see this credential on the next render.
+      onProvidersChanged();
 
       const test = await post<{ ok: boolean; detail: string; provider: ProviderCredential }>(
         `/api/providers/${credential.id}/test`,
         {},
       );
-      setResult({ ok: test.ok, detail: test.detail });
-      if (!test.ok) return;
-
-      const model = draft.model.trim() || test.provider.defaultModel || '';
-      if (model) {
-        set({ model });
-        // Written to the primary role. Classification, critic, and voice models
-        // are Advanced concerns and fall back to this one.
-        await put(`/api/agents/${agentId}/models`, {
-          role: 'primary',
-          providerCredentialId: credential.id,
-          model,
-          parameters: {},
-        });
+      if (!test.ok) {
+        setResult({ ok: false, detail: test.detail });
+        return;
       }
+      // The provider has just told us what it offers. Re-read it so the model
+      // pickers below have something to show.
+      onProvidersChanged();
+
+      /*
+        A working key is not a working agent.
+
+        These are two states and the screen used to report only the first:
+        "Connected. DeepSeek answered with 3 models." was shown whether or not a
+        primary model had been chosen, and DeepSeek returns no default, so the
+        usual outcome was a valid credential, no model, and a success message.
+        Two steps later the character builder failed on a model that was never
+        set, contradicting this screen.
+      */
+      const model = draft.model.trim() || test.provider.defaultModel || '';
+      if (!model) {
+        setResult({
+          ok: true,
+          detail: `${test.detail} Now choose the model it should think with.`,
+          needsModel: true,
+        });
+        return;
+      }
+
+      set({ model });
+      // Written to the primary role. Classification, critic, and voice models
+      // are Advanced concerns and fall back to this one.
+      await put(`/api/agents/${agentId}/models`, {
+        role: 'primary',
+        providerCredentialId: credential.id,
+        model,
+        parameters: {},
+      });
+      setResult({ ok: true, detail: `${test.detail} Primary model set to ${model}.` });
 
       /*
         The vision model, set here or not at all.
@@ -1114,14 +1283,37 @@ function ConnectAI({
         </Field>
       )}
 
-      <Field label="Model" htmlFor="model" hint="Leave blank to use the provider's default.">
+      {/*
+        The models the provider actually returned.
+
+        This screen used to announce "answered with 3 models" and then offer a
+        free-text box with an Anthropic model id as its placeholder, whichever
+        provider was selected. The list is a datalist rather than a select
+        because a model released this morning is in no /models response yet, and
+        typing one has to stay possible.
+      */}
+      <Field
+        label="Model"
+        htmlFor="model"
+        hint={
+          discoveredModels.length > 0
+            ? `${discoveredModels.length} offered by ${spec.label}. Type one of these, or any model id it accepts.`
+            : "The model it thinks with. Connect above to see what this provider offers."
+        }
+      >
         <input
           id="model"
           className="field font-mono text-[13px]"
           value={draft.model}
           onChange={(e) => set({ model: e.target.value })}
-          placeholder="anthropic/claude-sonnet-4"
+          placeholder={discoveredModels[0] ?? 'model id'}
+          list="primary-model-options"
         />
+        <datalist id="primary-model-options">
+          {discoveredModels.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
       </Field>
 
       <Field
@@ -1163,11 +1355,21 @@ function ConnectAI({
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+/**
+ * One line of the review summary.
+ *
+ * `verbatim` turns off the capitalisation the prose rows rely on. A model id
+ * and a handle are identifiers: `deepseek-v4-pro` shown as `Deepseek-V4-Pro`
+ * is not the string the provider answers to, and presenting it as though it
+ * were is how somebody copies it into a config file that then fails.
+ */
+function Row({ label, value, verbatim }: { label: string; value: string; verbatim?: boolean }) {
   return (
     <div className="flex items-baseline justify-between gap-6 px-4 py-3">
       <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">{label}</dt>
-      <dd className="text-right text-sm capitalize text-bone-dim">{value}</dd>
+      <dd className={`text-right text-sm text-bone-dim ${verbatim ? 'font-mono text-[12px]' : 'capitalize'}`}>
+        {value}
+      </dd>
     </div>
   );
 }
