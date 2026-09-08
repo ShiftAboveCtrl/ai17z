@@ -1,6 +1,8 @@
 export * from './pool';
 export * from './mapper';
 export * from './migrator';
+// Which columns are constrained to a fixed vocabulary, and what it is.
+export * from './constrainedEnums';
 
 export * as users from './repositories/users';
 export * as agents from './repositories/agents';
