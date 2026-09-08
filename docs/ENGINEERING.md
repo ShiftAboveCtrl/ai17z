@@ -274,18 +274,29 @@ so killing the recorded pid leaks the one that matters.
 
 ## Sign-in and security challenges
 
-**AI17Z never types a password and never answers a security challenge.**
+**AI17Z never answers a security challenge.**
 
 When a service asks for a CAPTCHA, a second factor, an emailed or texted code, a
 hardware key, confirmation of an unusual login, or presents a locked account, the
 account enters `CHALLENGE_REQUIRES_USER`, the window is left open and untouched,
 and the watcher stops reading the page. There is no setting for this and no code
-path around it.
+path around it, and it is the same stop whether a person started the sign-in or
+a stored password did.
 
-`observeAuthPage` only looks — it has no branch that clicks, fills, or dismisses
-anything, and `tests/unit/authObservation.test.ts` fails if any of those are
-called. A challenge is checked before the login form, because several challenge
-screens also carry an input box.
+**A password is typed only when the owner stored one.** The default is unchanged:
+`OPEN_AUTH` opens a window and touches nothing, and `observeAuthPage` only
+looks — it has no branch that clicks, fills, or dismisses anything, and
+`tests/unit/authObservation.test.ts` fails if any of those are called. The
+opt-in path is a separate task kind (`CREDENTIAL_SIGN_IN`) and a separate file
+(`packages/channels/src/x/credentialSignIn.ts`), so observing a sign-in and
+acting on one can never become each other by accident.
+
+That acting path does not re-implement the challenge check: it asks
+`observeAuthPage` what the page is on every iteration, and a challenge is checked
+before the login form — because several challenge screens also carry an input
+box, and reading one as a form is how a stored password ends up in a security
+prompt. `tests/unit/credentialSignIn.test.ts` proves nothing is typed and that
+the page is read exactly once before the loop stops.
 
 `CHALLENGE_REQUIRES_USER` must stay out of `ACCOUNT_STATUSES_IN_PROGRESS`, or the
 watcher will keep polling a page somebody is typing a code into.

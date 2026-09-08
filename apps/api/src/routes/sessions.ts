@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
+  accountCredentials,
   accounts as accountsRepo,
   browserTasks,
   ops,
@@ -31,6 +32,7 @@ const TASK_KINDS = [
   'INGEST',
   'CANCEL_AUTH',
   'SHUTDOWN_BROWSER',
+  'CREDENTIAL_SIGN_IN',
 ] as const;
 
 /**
@@ -67,6 +69,20 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         throw new BadRequestError(`The ${adapter.displayName} channel does not use a browser session.`);
       }
 
+      if (body.kind === 'CREDENTIAL_SIGN_IN') {
+        if (!adapter.signInWithCredentials) {
+          throw new BadRequestError(`The ${adapter.displayName} channel cannot sign in with stored details.`);
+        }
+        // Same reasoning as the worker check below: a task whose only possible
+        // outcome is a failure somebody has to go and read is worse than a
+        // refusal here, where they are already looking.
+        if (!(await accountCredentials.credentialPresence(account.id)).hasCredentials) {
+          throw new BadRequestError(
+            'No sign-in details are stored for this account. Add them below, or use Open sign-in and sign in yourself.',
+          );
+        }
+      }
+
       // Say so now rather than queueing into the void. A task with nothing able
       // to run it used to sit PENDING forever and block every later attempt.
       if (adapter.requiresBrowser && !(await workersRepo.browserWorkerPresent())) {
@@ -87,6 +103,86 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         entityId: account.id,
       });
       return task;
+    }),
+  );
+
+  // -- Stored sign-in details -----------------------------------------------
+  //
+  // Optional, off unless somebody fills them in, and write-only: what goes in
+  // is sealed under the master key and the only thing that ever comes back out
+  // of these routes is whether there is anything there. Reading the value is
+  // `accountCredentials.getDecryptedLogin`, which is reachable from the worker
+  // and from nowhere that can answer an HTTP request.
+  //
+  // Storing them does not change how an account signs in. It adds a button.
+
+  app.get(
+    '/api/accounts/:id/credentials',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const account = await ownedAccount(params(request).id!, user);
+      const adapter = getChannelAdapter(account.channel);
+      return {
+        ...(await accountCredentials.credentialPresence(account.id)),
+        /** Whether this channel can use them at all, so the UI can stay quiet. */
+        supported: Boolean(adapter.signInWithCredentials),
+      };
+    }),
+  );
+
+  app.put(
+    '/api/accounts/:id/credentials',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const account = await ownedAccount(params(request).id!, user);
+      const adapter = getChannelAdapter(account.channel);
+      if (!adapter.signInWithCredentials) {
+        throw new BadRequestError(`The ${adapter.displayName} channel cannot sign in with stored details.`);
+      }
+      const body = parseBody(
+        z.object({
+          // On X this is usually an email address or a phone number rather than
+          // the public handle, which is why it is sealed alongside the password
+          // instead of being kept as an ordinary field.
+          loginUsername: z.string().trim().min(1).max(320),
+          // Not trimmed. Trailing space is a legitimate character in a password
+          // and silently removing it fails at the form with nothing to read.
+          loginPassword: z.string().min(1).max(512),
+        }),
+        request,
+      );
+
+      const presence = await accountCredentials.setCredentials({
+        accountId: account.id,
+        loginUsername: body.loginUsername,
+        loginPassword: body.loginPassword,
+      });
+      // No `data`. An audit row records that details were stored, never any
+      // part of them -- not the username, not a length, not a fingerprint.
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'account.credentials.stored',
+        entityType: 'account',
+        entityId: account.id,
+      });
+      return presence;
+    }),
+  );
+
+  app.delete(
+    '/api/accounts/:id/credentials',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const account = await ownedAccount(params(request).id!, user);
+      const cleared = await accountCredentials.clearCredentials(account.id);
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'account.credentials.cleared',
+        entityType: 'account',
+        entityId: account.id,
+        data: { cleared },
+      });
+      return { cleared, hasCredentials: false, updatedAt: null };
     }),
   );
 

@@ -1,8 +1,10 @@
 # Driving a real browser
 
 Channels like X act on an account you own, using a session you signed into
-yourself. AI17Z never handles your password: it drives a browser that is already
-signed in.
+yourself. By default AI17Z never handles your password: it drives a browser that
+is already signed in. Storing a password so it can sign in again on its own is
+optional and off unless you fill it in — see
+[Signing in is yours, always](#signing-in-is-yours-always) below.
 
 There are two ways to arrange that, and the right one depends on where the
 worker runs.
@@ -187,9 +189,25 @@ sign in by hand when it does.
 
 ## Signing in is yours, always
 
-Whichever mode you use, AI17Z never types a password and never answers a
-security challenge. When X asks for a code, a CAPTCHA, a key, or confirmation
-that a sign-in was really you, the account moves to `CHALLENGE_REQUIRES_USER`,
-the window is left open and untouched, and the watcher **stops reading the
-page** so it is not looking while you type. See
-[docs/architecture/SIGN_IN.md](../architecture/SIGN_IN.md).
+Whichever mode you use, AI17Z never answers a security challenge. When X asks
+for a code, a CAPTCHA, a key, or confirmation that a sign-in was really you, the
+account moves to `CHALLENGE_REQUIRES_USER`, the window is left open and
+untouched, and the watcher **stops reading the page** so it is not looking while
+you type.
+
+By default it does not type a password either: you sign in to the window
+yourself. You may optionally store a username and password on the account's
+session panel, and then AI17Z can fill the login form after a session lapses.
+That is worth knowing three things about before you switch it on:
+
+- If the account has two-factor authentication on — and it should — every fresh
+  sign-in still reaches the code step and still needs you. This shortens the
+  wait; it does not remove you.
+- Filling a form programmatically is itself something X can notice, so this can
+  produce the challenge that stops it.
+- A password is a bigger thing to keep than a session. It is sealed under your
+  master key and only the worker can read it, but it is the credential that can
+  change the account's email address and turn its protections off.
+
+Clearing the session, disconnecting, or deleting the account deletes the stored
+details. See [docs/architecture/SIGN_IN.md](../architecture/SIGN_IN.md).

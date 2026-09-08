@@ -385,9 +385,15 @@ Edge are different browsers and are not used as substitutes.
 
 **An X account will not connect.** Connecting opens a real Chrome window and
 waits for you to sign in by hand. If X asks for a code, a CAPTCHA or confirms an
-unusual login, AI17Z stops and leaves the window alone -- it never types a
-password and never answers a security challenge. Finish it yourself and it
+unusual login, AI17Z stops and leaves the window alone -- it never answers a
+security challenge, and there is no setting for that. Finish it yourself and it
 carries on.
+
+You can optionally store a username and password on the account so AI17Z can
+fill the form itself after a session lapses. It is off unless you fill it in,
+what you store is sealed under your master key, and it changes nothing about the
+paragraph above: a challenge still stops everything and waits for you, which for
+an account with two-factor authentication on is every fresh sign-in.
 
 **The agent is running but never replies.** Open the agent's Activity. Every
 decision is recorded, including the decision not to answer and the reasons

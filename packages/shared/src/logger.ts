@@ -6,7 +6,11 @@ const configured = (process.env.XBAM_LOG_LEVEL ?? 'info').toLowerCase() as Level
 const threshold = LEVELS[configured] ?? LEVELS.info;
 const pretty = process.env.NODE_ENV !== 'production' && process.env.XBAM_LOG_JSON !== '1';
 
-const REDACT_KEYS = /(api_?key|apikey|password|secret|token|authorization|cookie|encrypted)/i;
+// `login_?username` is here for the optional stored sign-in details. On X the
+// login name is usually an email address or a phone number rather than the
+// public handle, so it is a credential; `botUsername` and the rest are not,
+// which is why this is the specific shape and not `username`.
+const REDACT_KEYS = /(api_?key|apikey|password|secret|token|authorization|cookie|encrypted|login_?username)/i;
 
 /** Recursively blanks anything that looks like a credential before it is logged. */
 export function redact(value: unknown, depth = 0): unknown {

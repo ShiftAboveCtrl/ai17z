@@ -64,6 +64,28 @@ export const SEL = {
    */
   replyingToLine: 'div[role="dialog"] a[href^="/"][role="link"]',
   timeLink: 'a[href*="/status/"] time',
+
+  /**
+   * Engagement controls, and the state each one reports.
+   *
+   * X swaps the test id rather than toggling an attribute: an unliked post has
+   * `like` and a liked one has `unlike`. That is what makes "ensure liked"
+   * expressible without guessing -- the presence of `unlike` *is* the state,
+   * so nothing has to remember whether it clicked, and a retry that finds
+   * `unlike` already there knows to do nothing rather than undoing the work.
+   */
+  like: '[data-testid="like"]',
+  unlike: '[data-testid="unlike"]',
+  repost: '[data-testid="retweet"]',
+  unrepost: '[data-testid="unretweet"]',
+  /**
+   * The plain Repost entry in the menu X opens on the repost control.
+   *
+   * Deliberately named, and deliberately not the one beside it: `quoteTweet`
+   * opens a composer and publishes an opinion nobody asked this action for.
+   * A REPOST is a repost.
+   */
+  repostConfirm: '[data-testid="retweetConfirm"]',
 } as const;
 
 /**

@@ -65,9 +65,9 @@ export const notificationKey = {
 /**
  * An account is waiting for a person to answer a challenge.
  *
- * Critical, because AI17Z never types a password and never answers a security
- * challenge: nothing will happen on this account until somebody goes and does
- * it. The window is open and waiting.
+ * Critical, because AI17Z never answers a security challenge -- not on the
+ * default path and not when the owner stored a password: nothing will happen on
+ * this account until somebody goes and does it. The window is open and waiting.
  */
 export async function accountNeedsUser(input: {
   accountId: string;

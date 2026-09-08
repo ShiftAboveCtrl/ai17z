@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, LogIn, Power, RefreshCw, Trash2 } from 'lucide-react';
-import { ApiError, artifactObjectUrl, del, get, patch, post } from '@app/lib/api';
+import { Camera, KeyRound, LogIn, Power, RefreshCw, Trash2 } from 'lucide-react';
+import { ApiError, artifactObjectUrl, del, get, patch, post, put } from '@app/lib/api';
 import { useElapsed, useResource } from '@app/lib/hooks';
 import type { AccountRow, BrowserTask, DiagnosticRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
@@ -191,6 +191,10 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
           />
         )}
 
+      {browserBacked && (
+        <StoredSignIn accountId={accountId} busy={Boolean(pending)} onSignIn={() => void run('CREDENTIAL_SIGN_IN')} />
+      )}
+
       {browserBacked && <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />}
 
       {browserBacked && <BrowserIdentityPanel session={data.session} />}
@@ -276,12 +280,15 @@ const LABELS: Record<string, string> = {
   SCREENSHOT: 'Capturing the page',
   CLEAR: 'Clearing the stored session',
   DISCONNECT: 'Closing the browser session',
+  CREDENTIAL_SIGN_IN: 'Signing in with the stored details',
 };
 
 const SLOW_HINTS: Record<string, string> = {
   CONNECT: 'A cold browser profile takes a while to start the first time.',
   OPEN_AUTH: 'Launching a real browser window. It may already be open behind this one.',
   HEALTH_CHECK: 'Loading a page in a real browser to see whether the session still works.',
+  CREDENTIAL_SIGN_IN:
+    'Typing the stored details into X. If X asks for a code, a CAPTCHA or anything else, this stops and leaves the window open for you.',
 };
 
 type Engine = 'GOOGLE_CHROME' | 'MICROSOFT_EDGE' | 'PLAYWRIGHT_CHROMIUM' | 'CUSTOM_CDP';
@@ -330,6 +337,219 @@ const ENGINES: { value: Engine | null; label: string; tag: string; detail: strin
       'Attaches to a browser you started yourself. Chrome has refused remote debugging on the default profile directory since version 136, so it needs its own --user-data-dir.',
   },
 ];
+
+interface CredentialState {
+  hasCredentials: boolean;
+  updatedAt: string | null;
+  /** False for a channel with no login form to type into. */
+  supported: boolean;
+}
+
+/**
+ * Optional stored sign-in details.
+ *
+ * Off unless somebody fills it in, and folded away until they do: the ordinary
+ * way to connect an account is still to press Open sign-in and sign in to the
+ * real browser window yourself, and that path is untouched by anything here.
+ *
+ * The panel is deliberately plain about three things, because each of them is a
+ * surprise somebody would otherwise find out the hard way: a password is a
+ * larger thing to keep than a session, a security challenge still stops
+ * everything and waits for a person, and clearing the session deletes these too.
+ */
+function StoredSignIn({
+  accountId,
+  busy,
+  onSignIn,
+}: {
+  accountId: string;
+  busy: boolean;
+  onSignIn: () => void;
+}) {
+  const { data, error: loadError, loading, reload } = useResource<CredentialState>(
+    `/api/accounts/${accountId}/credentials`,
+  );
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const stored = data?.hasCredentials ?? false;
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await put(`/api/accounts/${accountId}/credentials`, { loginUsername: username, loginPassword: password });
+      // Held only as long as it takes to send. Nothing keeps them after that,
+      // and there is no route that could read them back to refill the form.
+      setUsername('');
+      setPassword('');
+      setOpen(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2400);
+      reload();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Those details could not be saved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const forget = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await del(`/api/accounts/${accountId}/credentials`);
+      reload();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Those details could not be deleted.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading && !data) return null;
+
+  // A failed read is said rather than rendered as "not stored", which is what
+  // returning null here would amount to: somebody who stored a password would
+  // see the section disappear and conclude it had been forgotten.
+  if (loadError) {
+    return (
+      <div className="rounded-lg border border-signal-fail/25 bg-signal-fail/[0.04] p-4">
+        <p className="eyebrow">Stored sign-in details</p>
+        <p className="mt-2 break-words text-sm text-bone-dim">
+          Whether anything is stored for this account could not be read. {loadError}
+        </p>
+        <button type="button" className="btn-quiet mt-2 px-0 text-xs" onClick={() => reload()}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  // A channel with no login form has nothing to offer here, and an empty
+  // section that explains why is worse than no section.
+  if (!data?.supported) return null;
+
+  return (
+    <div className="space-y-4 rounded-lg border border-ink-line bg-ink-panel/60 p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="eyebrow">Stored sign-in details</p>
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">
+          {stored ? `stored ${timeAgo(data.updatedAt)}` : 'not stored'}
+        </span>
+      </div>
+
+      <p className="break-words text-[11px] leading-relaxed text-bone-faint">
+        Optional. Without these, connecting an account means pressing Open sign-in and signing in yourself in the
+        browser window &mdash; which is still the recommended way, and still what happens if you leave this empty.
+        Store them and AI17Z can type them into X on its own after a session lapses, so an agent is not idle until you
+        are awake.
+      </p>
+
+      <ul className="space-y-1.5 text-[11px] leading-relaxed text-bone-faint">
+        <li>
+          <span className="text-bone-dim">A security challenge still stops everything.</span> If X asks for a code, a
+          CAPTCHA, a two-factor prompt, a passkey, or confirmation that the sign-in was really you, AI17Z stops there,
+          leaves the window open and untouched, and waits. It never answers one. If this account has two-factor
+          authentication on &mdash; and it should &mdash; a fresh sign-in will reach that step every time and still need
+          you.
+        </li>
+        <li>
+          <span className="text-bone-dim">A password is a bigger thing to keep than a session.</span> It is sealed with
+          the same key as your provider API keys and can only be read by the worker, but it lives on this machine, and
+          it is the credential that can change the account&rsquo;s email and turn its protections off.
+        </li>
+        <li>
+          <span className="text-bone-dim">Clearing the session deletes these too</span>, as does disconnecting or
+          deleting the account.
+        </li>
+      </ul>
+
+      {error && <p className="break-words text-sm text-signal-fail">{error}</p>}
+
+      {stored && !open && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="btn-ghost" disabled={busy || saving} onClick={onSignIn}>
+            <KeyRound className="h-3.5 w-3.5" aria-hidden />
+            Sign in with stored details
+          </button>
+          <button type="button" className="btn-quiet text-xs" disabled={saving} onClick={() => setOpen(true)}>
+            Replace
+          </button>
+          <button type="button" className="btn-quiet text-xs text-signal-fail" disabled={saving} onClick={() => void forget()}>
+            Delete
+          </button>
+          <SavedTick visible={saved} />
+        </div>
+      )}
+
+      {!stored && !open && (
+        <div className="flex items-center gap-3">
+          <button type="button" className="btn-quiet px-0 text-xs" onClick={() => setOpen(true)}>
+            Add sign-in details
+          </button>
+          <SavedTick visible={saved} />
+        </div>
+      )}
+
+      {open && (
+        <div className="space-y-3">
+          <Field
+            label="Username, email, or phone"
+            htmlFor="cred-user"
+            hint="Whatever X asks for on the first step of its sign-in form. Often an email address rather than the @handle."
+          >
+            <input
+              id="cred-user"
+              className="field"
+              autoComplete="off"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+          </Field>
+          <Field label="Password" htmlFor="cred-pass" hint="Sealed under this installation's master key. It is never shown again.">
+            <input
+              id="cred-pass"
+              type="password"
+              className="field"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </Field>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={saving || username.trim().length === 0 || password.length === 0}
+              onClick={() => void save()}
+            >
+              {saving && <Spinner className="h-3.5 w-3.5" />}
+              Save sign-in details
+            </button>
+            <button
+              type="button"
+              className="btn-quiet text-xs"
+              disabled={saving}
+              onClick={() => {
+                setUsername('');
+                setPassword('');
+                setOpen(false);
+                setError(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Browser configuration for an account.

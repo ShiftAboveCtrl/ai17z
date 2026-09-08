@@ -103,9 +103,15 @@ Channels that drive a browser get a session, in one of two modes:
 - **CDP** — AI17Z attaches to a Chrome you started yourself with
   `--remote-debugging-port`.
 
-The adapter does not care which. In both cases AI17Z never handles the account
-password: "Open sign-in" opens a real window on the login page and the person
-signs in themselves.
+The adapter does not care which. In both cases the ordinary route is that AI17Z
+never handles the account password: "Open sign-in" opens a real window on the
+login page and the person signs in themselves.
+
+An owner may instead store a username and password for an account, in which case
+`signInWithCredentials` types them into the login form. It is opt-in, sealed at
+rest, and stops at exactly the same place as everything else the moment the
+service asks for a code, a CAPTCHA or a key. See
+[SIGN_IN.md](SIGN_IN.md).
 
 Because a Chromium profile can only be held by one process at a time, the API
 never opens a browser. It records intent in `browser_tasks` and the worker

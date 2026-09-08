@@ -62,14 +62,33 @@ callback to anywhere.
 
 ## Security challenges are yours
 
-AI17Z never types a password and never answers a security challenge. When X asks
-for a CAPTCHA, a second factor, an emailed or texted code, a hardware key, or
-confirmation of an unusual login, the account moves to `CHALLENGE_REQUIRES_USER`,
-the window is left open and untouched, and the watcher stops reading the page.
+AI17Z never answers a security challenge. When X asks for a CAPTCHA, a second
+factor, an emailed or texted code, a hardware key, or confirmation of an unusual
+login, the account moves to `CHALLENGE_REQUIRES_USER`, the window is left open
+and untouched, and the watcher stops reading the page.
 
-There is no setting for this and no code path around it. The function that
+There is no setting for this and no code path around it, and it is the same stop
+whether you started the sign-in or a stored password did. The function that
 observes an authentication page has no branch that clicks, fills or dismisses
 anything, and a test fails if any of those are ever called.
+
+## Passwords
+
+By default AI17Z never types one: you sign in to the browser window yourself and
+the session lives in the profile.
+
+You may optionally store a username and password on an account so that AI17Z can
+sign in again after a session lapses. It is off unless you fill it in. What you
+store is sealed with AES-256-GCM under your installation's master key, exactly
+like a provider API key, and can be read only by the worker that drives the
+browser — never from an API response, a log line, an audit record, or a trace.
+Clearing the session, disconnecting, or deleting the account deletes it.
+
+It does not get you past a challenge. An account with two-factor authentication
+on will reach the code step on every fresh sign-in and still need you, and a
+form filled by software is more likely to be challenged than one filled by a
+person. Storing a password is a real increase in what an attacker with access to
+your machine would get; storing nothing remains the recommended setup.
 
 ## The browser
 

@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { ACCOUNT_STATUSES, PIPELINE_NODE_KINDS, PROVIDER_KINDS, TRACE_EVENT_TYPES } from '@xbam/shared/contracts';
-import { accounts as accountsRepo, knowledge, observability, pipelines, providers, users } from '@xbam/database';
+import {
+  BROWSER_TASK_KINDS,
+  accounts as accountsRepo,
+  browserTasks,
+  knowledge,
+  observability,
+  pipelines,
+  providers,
+  users,
+} from '@xbam/database';
 import { ingestNormalizedEvent } from '@xbam/runtime';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -181,6 +190,56 @@ describe('every knowledge source kind the code can create is one the database ac
         kind: 'URL',
         location: 'https://example.com/docs',
         refreshIntervalMinutes: 1,
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+
+/**
+ * Browser task kinds have a CHECK too, and this file did not cover them.
+ *
+ * The constraint has been widened three times -- 0014 for PREFLIGHT, 0021 for
+ * CANCEL_AUTH, 0043 for SHUTDOWN_BROWSER -- each time by hand, each time
+ * alongside a TypeScript union that nothing checked it against. Adding
+ * CREDENTIAL_SIGN_IN was the fourth, so the list is a value now and this asks
+ * the database about every entry in it.
+ */
+describe('every browser task kind the code can record is one the database accepts', () => {
+  it('queues one of each kind', async () => {
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({
+      ownerId: fixture.ownerId,
+      channel: 'x',
+      handle: `tasks_${uniqueSuffix()}`,
+    });
+
+    for (const kind of BROWSER_TASK_KINDS) {
+      // PREFLIGHT belongs to the machine rather than to an account, and each
+      // task is settled before the next so the one-active-task index -- which
+      // is a different guarantee -- does not get in the way of this one.
+      const task = await browserTasks.enqueueBrowserTask({
+        accountId: kind === 'PREFLIGHT' ? null : account.id,
+        kind,
+        requestedBy: fixture.ownerId,
+      });
+      expect(task.kind, `the database refused a ${kind} task`).toBe(kind);
+      await browserTasks.finishBrowserTask(task.id, 'COMPLETED', null);
+    }
+  });
+
+  it('still refuses a kind that is not in the list', async () => {
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({
+      ownerId: fixture.ownerId,
+      channel: 'x',
+      handle: `tasks_${uniqueSuffix()}`,
+    });
+    await expect(
+      browserTasks.enqueueBrowserTask({
+        accountId: account.id,
+        kind: 'TYPE_A_PASSWORD_SOMEWHERE_ELSE' as never,
+        requestedBy: fixture.ownerId,
       }),
     ).rejects.toThrow();
   });

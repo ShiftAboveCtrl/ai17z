@@ -78,9 +78,25 @@ describe('a sealed provider key', () => {
       { headers: { authorization: `Bearer ${SENTINEL}` } },
       { secret: SENTINEL },
       { password: SENTINEL },
+      // The shapes an account's stored sign-in details arrive in. The login
+      // name is a credential too: on X it is usually an email address or a
+      // phone number rather than the public handle.
+      { loginPassword: SENTINEL },
+      { loginUsername: SENTINEL },
+      { login_username: SENTINEL },
+      { login: { loginUsername: SENTINEL, loginPassword: SENTINEL } },
     ]) {
       expect(JSON.stringify(redact(shape))).not.toContain(SENTINEL);
     }
+  });
+
+  it('still lets through the ordinary fields that merely look similar', () => {
+    // `username` on its own is not redacted, because a Telegram bot's username
+    // is not a secret and blanking it costs a diagnostic that people use. The
+    // pattern is deliberately the narrower `login_?username`.
+    const kept = redact({ botUsername: 'ai17z_notify_bot', handle: 'someone' });
+    expect(JSON.stringify(kept)).toContain('ai17z_notify_bot');
+    expect(JSON.stringify(kept)).toContain('someone');
   });
 
   it('is not written into a trace event', async () => {

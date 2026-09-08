@@ -16,6 +16,8 @@ import type {
   ActionResult,
   AuthObservation,
   ChannelAdapter,
+  CredentialSignInResult,
+  LoginCredentials,
   RadarPollRequest,
   ChannelContext,
   ConnectionResult,
@@ -27,6 +29,7 @@ import type {
 } from '../contract';
 import { SEL, X_URLS, articleForStatus } from './selectors';
 import { observeAuthPage } from './auth';
+import { signInWithStoredCredentials } from './credentialSignIn';
 import { X_MONITORS } from './monitors';
 import { readMediaInventory } from './media';
 import { readPage, webSearch } from './websearch';
@@ -248,7 +251,7 @@ function monitorRole(kind: string): TabRole {
 export const xAdapter: ChannelAdapter = {
   id: 'x',
   displayName: 'X',
-  capabilities: ['REPLY', 'POST', 'LIKE'],
+  capabilities: ['REPLY', 'POST', 'LIKE', 'REPOST'],
   requiresBrowser: true,
 
   async connect(ctx: ChannelContext): Promise<ConnectionResult> {
@@ -370,6 +373,29 @@ export const xAdapter: ChannelAdapter = {
       return await withSession(ctx, 'ACTION', async ({ page }) => observeAuthPage(page));
     } catch (error) {
       return { state: 'UNREACHABLE', detail: errorMessage(error) };
+    }
+  },
+
+  /**
+   * Types the owner's stored sign-in details into X's login form.
+   *
+   * Opt-in and separate from `observeAuth`, which still only looks. The
+   * navigation happens inside the same lease as the typing, because the action
+   * tab is shared and a form filled on whatever page happened to be loaded is
+   * a form filled somewhere nobody chose.
+   *
+   * The challenge boundary is not re-implemented here or in the worker: the
+   * loop this delegates to reads the page through `observeAuthPage`, which
+   * ranks a challenge above a login form, and returns the moment it sees one.
+   */
+  async signInWithCredentials(ctx: ChannelContext, credentials: LoginCredentials): Promise<CredentialSignInResult> {
+    try {
+      return await withSession(ctx, 'ACTION', async ({ page }) => {
+        await goto(page, X_URLS.login);
+        return signInWithStoredCredentials(page, credentials);
+      });
+    } catch (error) {
+      return { observation: { state: 'UNREACHABLE', detail: errorMessage(error) }, filled: [] };
     }
   },
 
@@ -747,7 +773,9 @@ export const xAdapter: ChannelAdapter = {
   },
 
   async executeAction(ctx: ChannelContext, request: ActionRequest): Promise<ActionResult> {
-    if (request.type !== 'REPLY' && request.type !== 'POST') {
+    // LIKE was advertised in `capabilities` long before anything could perform
+    // it, so an agent granted it queued work that always failed here.
+    if (!['REPLY', 'POST', 'LIKE', 'REPOST'].includes(request.type)) {
       throw PipelineError.permanent('unsupported_action', `The X adapter cannot perform ${request.type} yet.`);
     }
     const verification = await xAdapter.verifyAction(ctx, request);
@@ -760,6 +788,9 @@ export const xAdapter: ChannelAdapter = {
       return { status: 'DRY_RUN', remoteActionId: null, remoteActionUrl: null, verification };
     }
     if (request.type === 'POST') return postOwn(ctx, request, verification);
+    if (request.type === 'LIKE' || request.type === 'REPOST') {
+      return engagePost(ctx, request, verification, request.type);
+    }
 
     const statusId = extractStatusId(verification.targetRef)!;
     const anchor = articleForStatus(statusId);
@@ -773,32 +804,14 @@ export const xAdapter: ChannelAdapter = {
       // whatever happens to be loaded is how an automation replies to the wrong
       // post, and it is why this failed with "the composer did not open" while
       // sitting on /compose/post.
+      // Navigate, wait for the anchored article, and re-check on the freshly
+      // loaded page that it is still the intended post. One implementation,
+      // shared with likes and reposts: a wrong-target guard that exists twice
+      // is a wrong-target guard that will eventually disagree with itself.
       const url = buildStatusUrl(verification.targetRef)!;
-      await goto(page, url);
-
+      const onPage = await anchorTarget(page, statusId, url);
       const article = page.locator(anchor).first();
-      const rendered = await article
-        .waitFor({ state: 'visible', timeout: 15_000 })
-        .then(() => true)
-        .catch(() => false);
-      if (!rendered) {
-        throw PipelineError.retryable(
-          'target_not_rendered',
-          `Status ${statusId} did not render on ${url}, so there was nothing to reply to.`,
-          { url },
-        );
-      }
 
-      // Re-check the author on the freshly loaded page. The verification a
-      // moment ago was on a different load, and this is the last look before
-      // something irreversible.
-      const onPage = await readArticle(page, anchor);
-      if (onPage.statusId !== statusId) {
-        throw PipelineError.review(
-          'target_moved',
-          `The anchored article now reports status ${onPage.statusId ?? 'unknown'}, expected ${statusId}.`,
-        );
-      }
       if (onPage.authorHandle && selfHandles(ctx).includes(onPage.authorHandle)) {
         throw PipelineError.permanent('self_reply', `The target post belongs to this account (@${onPage.authorHandle}).`);
       }
@@ -865,8 +878,15 @@ export const xAdapter: ChannelAdapter = {
           remoteActionUrl: sent.url,
           verification: {
             ...verification,
-            detail: `${verification.detail} The composer stayed open, but the reply is on the thread as ${sent.statusId}.`,
-            evidence: { ...verification.evidence, readBackConfirmed: true, composerStayedOpen: true },
+            detail:
+              `${verification.detail} The composer stayed open, but the reply is on the thread as ${sent.statusId}.` +
+              (sent.exact ? '' : ' What was published does not carry the whole draft.'),
+            evidence: {
+              ...verification.evidence,
+              readBackConfirmed: true,
+              composerStayedOpen: true,
+              draftExact: sent.exact,
+            },
           },
         };
       }
@@ -897,13 +917,189 @@ export const xAdapter: ChannelAdapter = {
         remoteActionUrl: readBack.url,
         verification: {
           ...verification,
-          detail: `${verification.detail} Reply confirmed on read-back as ${readBack.statusId}.`,
-          evidence: { ...verification.evidence, readBackConfirmed: true, replyStatusId: readBack.statusId },
+          detail:
+            `${verification.detail} Reply confirmed on read-back as ${readBack.statusId}.` +
+            (readBack.exact ? '' : ' What was published does not carry the whole draft.'),
+          evidence: {
+            ...verification.evidence,
+            readBackConfirmed: true,
+            replyStatusId: readBack.statusId,
+            draftExact: readBack.exact,
+          },
         },
       };
     });
   },
 };
+
+/**
+ * What each engagement looks like on the page, in both states.
+ *
+ * `settled` is the selector that is present once the desired state holds, and
+ * `control` the one that is present while it does not. They are different test
+ * ids rather than one element with an attribute, which is what lets this be
+ * expressed as a desired state instead of a toggle.
+ */
+const ENGAGEMENTS = {
+  LIKE: { control: SEL.like, settled: SEL.unlike, done: 'liked', doing: 'Liking' },
+  REPOST: { control: SEL.repost, settled: SEL.unrepost, done: 'reposted', doing: 'Reposting' },
+} as const;
+
+/**
+ * Ensures a post is liked, or reposted. Never toggles.
+ *
+ * The distinction is the whole design. An autonomous agent that clicks the like
+ * control because it decided to like something will *unlike* a post it already
+ * liked -- and it will do that precisely when a retry happens, which is exactly
+ * when it is least wanted. So the state is read first and the click only
+ * happens if the state is wrong.
+ *
+ * That also makes recovery free: a worker that died after clicking comes back,
+ * finds the post already in the desired state, and reports success having
+ * touched nothing. There is no separate reconciliation path to keep correct
+ * because reading the state first *is* the reconciliation.
+ */
+async function engagePost(
+  ctx: ChannelContext,
+  request: ActionRequest,
+  verification: VerificationResult,
+  type: 'LIKE' | 'REPOST',
+): Promise<ActionResult> {
+  const statusId = extractStatusId(verification.targetRef)!;
+  const url = buildStatusUrl(verification.targetRef)!;
+  const anchor = articleForStatus(statusId);
+
+  return withSession(ctx, 'ACTION', async ({ page }) => {
+    // Navigated and re-anchored here rather than trusting where verification
+    // left the tab, for the same reason a reply does it: the action tab is
+    // shared, and engaging with whatever happens to be loaded is how an
+    // automation likes a stranger's post.
+    await anchorTarget(page, statusId, url);
+    const outcome = await ensureEngaged(page, page.locator(anchor).first(), type, statusId);
+
+    return {
+      status: 'EXECUTED' as const,
+      remoteActionId: statusId,
+      remoteActionUrl: url,
+      verification: {
+        ...verification,
+        detail: `${verification.detail} ${outcome.detail}`,
+        evidence: { ...verification.evidence, ...outcome.evidence },
+      },
+    };
+  });
+}
+
+export interface EngagementOutcome {
+  detail: string;
+  evidence: { alreadyInState: boolean; clicks: number };
+}
+
+/**
+ * Brings one article to the desired engagement state, and proves it got there.
+ *
+ * Separated from the session and navigation around it so the decision -- which
+ * is the part that must never toggle -- can be exercised without a browser.
+ */
+export async function ensureEngaged(
+  page: Page,
+  article: Locator,
+  type: 'LIKE' | 'REPOST',
+  statusId: string,
+): Promise<EngagementOutcome> {
+  const spec = ENGAGEMENTS[type];
+
+  // Read before acting. This is both the desired-state check and the whole of
+  // the reconciliation a retry needs: a worker that died after clicking comes
+  // back, finds the state already right, and touches nothing.
+  const already = await article
+    .locator(spec.settled)
+    .first()
+    .isVisible()
+    .catch(() => false);
+  if (already) {
+    return {
+      detail: `Already ${spec.done}; nothing was clicked.`,
+      evidence: { alreadyInState: true, clicks: 0 },
+    };
+  }
+
+  const control = article.locator(spec.control).first();
+  if (!(await control.isVisible().catch(() => false))) {
+    throw PipelineError.retryable(
+      'engagement_control_missing',
+      `The ${type.toLowerCase()} control was not visible on status ${statusId}.`,
+    );
+  }
+  await control.click({ timeout: 10_000 });
+
+  if (type === 'REPOST') {
+    // X asks which kind. Plain repost, explicitly -- the entry beside it opens
+    // a quote composer, and a quote is a different action with a different
+    // meaning that nobody asked for here.
+    const confirm = page.locator(SEL.repostConfirm).first();
+    const offered = await confirm
+      .waitFor({ state: 'visible', timeout: 6_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!offered) {
+      throw PipelineError.retryable('repost_menu_missing', 'X did not offer the repost menu.');
+    }
+    await confirm.click({ timeout: 8_000 });
+  }
+
+  // Proved on the page, not assumed from the click. A click that opened a menu
+  // and went nowhere looks identical to one that worked, from here.
+  const settled = await article
+    .locator(spec.settled)
+    .first()
+    .waitFor({ state: 'visible', timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!settled) {
+    throw PipelineError.retryable(
+      'engagement_did_not_settle',
+      `Status ${statusId} still does not read as ${spec.done} after acting.`,
+    );
+  }
+
+  return { detail: `Now ${spec.done}.`, evidence: { alreadyInState: false, clicks: 1 } };
+}
+
+/**
+ * Loads the target and proves the article on screen is the intended post.
+ *
+ * Lifted out of the reply path so that likes and reposts get exactly the same
+ * wrong-target protection rather than a second implementation of it. There is
+ * no positional fallback here and there never was: no matching article means a
+ * stop, because acting on the article that happens to be first is how an
+ * automation engages with the wrong post.
+ */
+async function anchorTarget(page: Page, statusId: string, url: string): Promise<ArticleSnapshot> {
+  await goto(page, url);
+  const anchor = articleForStatus(statusId);
+  const rendered = await page
+    .locator(anchor)
+    .first()
+    .waitFor({ state: 'visible', timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!rendered) {
+    throw PipelineError.retryable(
+      'target_not_rendered',
+      `Status ${statusId} did not render on ${url}, so there was nothing to act on.`,
+      { url },
+    );
+  }
+  const onPage = await readArticle(page, anchor);
+  if (onPage.statusId !== statusId) {
+    throw PipelineError.review(
+      'target_moved',
+      `The anchored article now reports status ${onPage.statusId ?? 'unknown'}, expected ${statusId}.`,
+    );
+  }
+  return onPage;
+}
 
 interface OpenComposer {
   scope: ReturnType<Page['locator']>;
@@ -944,13 +1140,46 @@ async function openComposer(page: Page, timeoutMs = 15_000): Promise<OpenCompose
   //
   // Five live attempts failed on "X did not enable the post button" while a
   // diagnostic screenshot showed an enabled Post button holding the right text.
-  const dialog = await visibleDialog(page);
+  //
+  // Settled, not sampled once. Asking a single time is a race that was measured
+  // losing on a live account: the inline composer on a status page became
+  // visible at 18:22:13.294 with no dialog on the page, and X opened the reply
+  // modal 548ms later. Binding to the inline editor in that gap is the whole
+  // truncated-reply bug -- the first characters go into the editor that was
+  // bound, X moves focus to the modal's editor, and the rest of the draft is
+  // typed there without them. The orphaned node then never detaches, so the
+  // post-submit wait for it burned its full twenty-second timeout every time.
+  const dialog = await settledDialog(page);
   const inDialog = dialog !== null;
   return {
     scope: dialog ?? page.locator('main').first(),
     editor: dialog ? dialog.locator(SEL.anyComposer).first() : editor,
     inDialog,
   };
+}
+
+/**
+ * The visible dialog, once X has had a moment to open one.
+ *
+ * `visibleDialog` answers about this instant. This answers about the surface
+ * the composer is settling onto, which is a different question when the thing
+ * being waited for arrives a few hundred milliseconds after the editor does.
+ *
+ * Bounded and short. A reply on a status page may legitimately have no dialog
+ * at all -- CLAUDE.md is explicit that the composer may be inline -- so this
+ * must not become "wait for a dialog", only "do not conclude there is none
+ * before X has had time to open one". The cost when there genuinely is no
+ * dialog is this window; the saving when there is one is the twenty-second
+ * detach timeout that was being paid on every single reply.
+ */
+async function settledDialog(page: Page, timeoutMs = 1_800): Promise<Locator | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const dialog = await visibleDialog(page);
+    if (dialog) return dialog;
+    if (Date.now() >= deadline) return null;
+    await sleep(150);
+  }
 }
 
 /**
@@ -963,7 +1192,7 @@ async function openComposer(page: Page, timeoutMs = 15_000): Promise<OpenCompose
  * and merely covered. The keyboard shortcut goes through the same handler and
  * no overlay can intercept it.
  */
-async function submitComposer(page: Page, opened: OpenComposer): Promise<void> {
+export async function submitComposer(page: Page, opened: OpenComposer): Promise<'clicked' | 'keyboard'> {
   const submit = opened.scope.locator(SEL.anySubmit).first();
   const ready = await submit
     .waitFor({ state: 'visible', timeout: 8_000 })
@@ -977,10 +1206,36 @@ async function submitComposer(page: Page, opened: OpenComposer): Promise<void> {
       .click({ timeout: 5_000 })
       .then(() => true)
       .catch(() => false);
-    if (clicked) return;
+    if (clicked) return 'clicked';
+
+    // The click reported failure, which usually means Playwright never
+    // dispatched it. "Usually" is not a good enough basis for a second
+    // irreversible attempt: a click that landed and then failed its own
+    // actionability re-check, followed by the keyboard shortcut below, is two
+    // submits of one reply. So ask the page whether it went anyway, and only
+    // reach for the keyboard when it plainly did not.
+    if (await composerLetGo(opened.editor)) return 'clicked';
   }
 
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
+  return 'keyboard';
+}
+
+/**
+ * Whether the composer has accepted what was in it.
+ *
+ * A dialog composer detaches; an inline one is emptied in place. Either is X
+ * saying it took the text. Short, because this only has to distinguish "the
+ * click landed" from "nothing happened" before deciding whether to press a key
+ * that would send the same reply a second time.
+ */
+async function composerLetGo(editor: Locator, timeoutMs = 2_500): Promise<boolean> {
+  const gone = await editor
+    .waitFor({ state: 'detached', timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false);
+  if (gone) return true;
+  return ((await editor.innerText().catch(() => 'x')) ?? '').trim().length === 0;
 }
 
 /**
@@ -1089,7 +1344,8 @@ async function scanForOwnReply(
   page: Page,
   needle: string,
   me: string[],
-): Promise<{ statusId: string; url: string | null } | null> {
+  whole: string,
+): Promise<OwnReply | null> {
   const articles = page.locator(SEL.tweetArticle);
   const count = Math.min(await articles.count().catch(() => 0), 20);
   for (let index = 0; index < count; index += 1) {
@@ -1097,55 +1353,152 @@ async function scanForOwnReply(
     if (!snapshot.statusId || !snapshot.authorHandle) continue;
     if (!me.includes(snapshot.authorHandle)) continue;
     if (!fingerprint(snapshot.text).includes(needle)) continue;
-    return { statusId: snapshot.statusId, url: snapshot.url };
+    // The needle is sixty characters: enough to pick the right post out of
+    // twenty, and nowhere near enough to prove the post is the whole reply. A
+    // reply truncated after those sixty characters matched here and was
+    // recorded `readBackConfirmed: true`, so the system could not see the one
+    // failure it most needed to see.
+    //
+    // Reported rather than rejected. Refusing to match a post that is really
+    // there would make the caller conclude nothing was sent and retry, and
+    // retrying a reply X accepted posts it twice -- which is worse than an
+    // imperfect one recorded honestly.
+    const exact = fingerprint(snapshot.text).includes(whole);
+    return { statusId: snapshot.statusId, url: snapshot.url, exact };
   }
   return null;
 }
 
 /**
- * Puts the text into the composer, and proves it went in.
+ * How long to wait for an editor to become genuinely usable.
  *
- * Typing at X's editor fails often enough to matter: the @-mention typeahead
- * opens over it and takes focus, and the editor is sometimes re-rendered
- * between being located and being typed into. A live run hit this four times in
- * a row on one reply and gave up -- which for an agent meant to run unattended
- * is the difference between working and needing somebody.
- *
- * So it is attempted twice, and the second attempt clears first: a composer
- * holding half the text is worse than an empty one, because the half would have
- * been published.
- *
- * The check is on the fingerprint, not the raw string, because X's editor turns
- * a typed @mention into a link node and innerText puts spaces around it.
+ * X mounts the contenteditable node before it wires the editor behind it, so
+ * "the locator resolved" and "a keystroke will land" are several hundred
+ * milliseconds apart on a cold profile.
  */
-async function fillComposer(page: Page, editor: Locator, text: string): Promise<string> {
-  const wanted = fingerprint(text).slice(0, 60);
+const COMPOSER_READY_MS = 10_000;
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) {
-      // Clear whatever landed. Select-all inside the editor, not the page.
-      await editor.focus().catch(() => undefined);
-      await page.keyboard.press('Control+A').catch(() => undefined);
-      await page.keyboard.press('Delete').catch(() => undefined);
-      await settle(300, 600);
-    }
+/**
+ * How many times a draft may be prepared before giving up.
+ *
+ * Bounded on purpose. The failure this replaces was an open/type/clear/retype
+ * cycle a person could watch happening, and an unbounded version of it is worse
+ * than a refusal: it hammers the editor and leaves drafts behind.
+ */
+const COMPOSER_ATTEMPTS = 2;
 
-    await editor.focus().catch(() => undefined);
-    await editor.type(text, { delay: 12 }).catch(() => undefined);
-    await settle(400, 900);
+/**
+ * Proves a keystroke would land in this editor, before any keystroke is sent.
+ *
+ * This is the fix for a bug that was visible from across the room: the reply
+ * would start typing, arrive missing its first characters, get cleared, and be
+ * typed again. The cause was two swallowed results --
+ * `editor.focus().catch(() => undefined)` immediately followed by
+ * `editor.type(...).catch(() => undefined)`. If focus landed anywhere but the
+ * editor, which is exactly what X's @-mention typeahead exists to do, the
+ * leading keystrokes went to the overlay and the draft arrived short; and if
+ * the editor was re-rendered mid-type, the throw was discarded and a partial
+ * draft was left sitting there.
+ *
+ * Nothing is typed until this returns. Recovery still exists below, but it is
+ * no longer the mechanism: it is the exception.
+ */
+export async function readyForTyping(editor: Locator): Promise<void> {
+  await editor.waitFor({ state: 'visible', timeout: COMPOSER_READY_MS }).catch(() => {
+    throw PipelineError.retryable('composer_not_visible', 'The composer did not become visible.');
+  });
 
-    const typed = (await editor.innerText().catch(() => '')).trim();
-    if (typed && (!wanted || fingerprint(typed).includes(wanted))) return typed;
+  // Editable, not merely present. `isContentEditable` is false while X still
+  // has the node mounted as a placeholder.
+  const editable = await editor.evaluate((el) => (el as HTMLElement).isContentEditable).catch(() => false);
+  if (!editable) {
+    throw PipelineError.retryable(
+      'composer_not_editable',
+      'The composer is on screen but is not accepting input yet.',
+    );
   }
 
-  const finally_ = (await editor.innerText().catch(() => '')).trim();
+  await editor.focus();
+
+  // Verified, never assumed. `document.activeElement` is the only thing that
+  // knows where the next keystroke actually goes.
+  const holdsFocus = await editor
+    .evaluate((el) => el === document.activeElement || el.contains(document.activeElement))
+    .catch(() => false);
+  if (!holdsFocus) {
+    throw PipelineError.retryable(
+      'composer_not_focused',
+      'Focus did not land in the composer, so nothing was typed into it.',
+    );
+  }
+}
+
+/** Empties the editor. Select-all inside it, never across the page. */
+async function clearComposer(page: Page, editor: Locator): Promise<void> {
+  await editor.focus().catch(() => undefined);
+  await page.keyboard.press('Control+A').catch(() => undefined);
+  await page.keyboard.press('Delete').catch(() => undefined);
+  await settle(300, 600);
+}
+
+/**
+ * Puts the text into the composer, and proves the whole of it went in.
+ *
+ * Two changes from the version that shipped the truncation. Readiness is proved
+ * before typing rather than recovered from afterwards, and the check is on the
+ * *entire* draft rather than its first sixty characters -- a draft correct at
+ * the start and cut off later passed the old check, which is the shape of the
+ * bug that was actually happening.
+ *
+ * The comparison is on the fingerprint, not the raw string, because X's editor
+ * turns a typed @mention into a link node and `innerText` puts spaces around
+ * it. It strips punctuation and case and nothing else: a missing word, a
+ * missing URL, or a missing first character all still fail.
+ */
+export async function fillComposer(page: Page, editor: Locator, text: string): Promise<string> {
+  const wanted = fingerprint(text);
+  let landed = '';
+
+  for (let attempt = 0; attempt < COMPOSER_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) await clearComposer(page, editor);
+
+    await readyForTyping(editor);
+
+    try {
+      await editor.type(text, { delay: 12 });
+    } catch {
+      // A throw here means X replaced the node mid-type. The draft is partial
+      // by definition, so fall through to the check, which will say so.
+    }
+    await settle(400, 900);
+
+    landed = (await editor.innerText().catch(() => '')).trim();
+    if (fingerprint(landed) === wanted) return landed;
+  }
+
+  // Deliberately not a submit. A composer holding the wrong text is the one
+  // situation where doing nothing is the whole job.
   throw PipelineError.retryable(
-    finally_ ? 'composer_text_mismatch' : 'composer_empty',
-    finally_
-      ? 'The composer does not hold the text that was typed into it, after two attempts.'
-      : 'The composer was still empty after typing, twice.',
-    { typed: finally_.slice(0, 120) },
+    landed ? 'composer_text_mismatch' : 'composer_empty',
+    landed
+      ? `The composer holds ${landed.length} characters of a ${text.length} character draft, after ${COMPOSER_ATTEMPTS} attempts.`
+      : `The composer was still empty after typing, ${COMPOSER_ATTEMPTS} times.`,
+    { wantedChars: text.length, landedChars: landed.length },
   );
+}
+
+/**
+ * A post of ours that was found on the remote.
+ *
+ * `exact` says whether it carries the entire draft. It is separate from
+ * "found" because those are different questions with different consequences:
+ * not finding it may mean nothing was sent, while finding a shortened version
+ * means something was sent and must never be sent again.
+ */
+interface OwnReply {
+  statusId: string;
+  url: string | null;
+  exact: boolean;
 }
 
 async function findOwnReply(
@@ -1153,13 +1506,14 @@ async function findOwnReply(
   text: string,
   me: string[],
   reloads = 1,
-): Promise<{ statusId: string; url: string | null } | null> {
+): Promise<OwnReply | null> {
   // Sixty characters of fingerprint, not forty of raw text: stripping the
   // punctuation costs length, and a short needle matches the wrong post.
   const needle = fingerprint(text).slice(0, 60);
   if (!needle) return null;
+  const whole = fingerprint(text);
 
-  const first = await scanForOwnReply(page, needle, me);
+  const first = await scanForOwnReply(page, needle, me, whole);
   if (first) return first;
 
   // Reload before giving up. X does not always graft a new post into the page
@@ -1173,7 +1527,7 @@ async function findOwnReply(
   for (let attempt = 0; attempt < reloads; attempt += 1) {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
     await page.waitForTimeout(3_000 + attempt * 2_000);
-    const found = await scanForOwnReply(page, needle, me);
+    const found = await scanForOwnReply(page, needle, me, whole);
     if (found) return found;
   }
   return null;
