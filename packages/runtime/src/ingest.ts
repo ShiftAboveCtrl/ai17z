@@ -126,6 +126,40 @@ function postAgeMs(occurredAt: string | null | undefined, now = Date.now()): num
 }
 
 /**
+ * The link a manual trigger acts through.
+ *
+ * Which events trigger the agent is deliberately overridden here -- a manual
+ * trigger is a person deciding that *this* event is worth acting on, and that
+ * exemption is the whole point of the path.
+ *
+ * What the agent then *does* is not the person's to invent, and this used to
+ * hard-code REPLY. An agent configured to LIKE, asked to act on a post, posted
+ * a reply to it instead: the wrong public action, and not one the owner had
+ * chosen. The capability check below inherited the same mistake, asking whether
+ * REPLY was granted rather than the action that would actually run -- so an
+ * agent granted LIKE and not REPLY was refused, and one granted REPLY but
+ * configured never to use it was allowed.
+ *
+ * Falls back to REPLY only when there is no link at all, which is the case the
+ * mock channel's inject route has always been in.
+ */
+async function manualTriggerLink(
+  accountId: string | null,
+  agentId: string,
+  type: NormalizedEventType['type'],
+): Promise<{ agentId: string; triggerEventTypes: string[]; actionType: ActionType }[]> {
+  const links = accountId ? await accountsRepo.listAccountAgents(accountId) : [];
+  const own = links.find((link) => link.agentId === agentId);
+  return [
+    {
+      agentId,
+      triggerEventTypes: [type],
+      actionType: own?.actionType ?? ('REPLY' as ActionType),
+    },
+  ];
+}
+
+/**
  * Turns a channel event into durable work.
  *
  * The event row and every job it produces are written in one transaction and
@@ -165,7 +199,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
   const links = options.recordOnly
     ? []
     : options.onlyAgentId
-    ? [{ agentId: options.onlyAgentId, triggerEventTypes: [event.type], actionType: 'REPLY' as ActionType }]
+    ? await manualTriggerLink(accountId, options.onlyAgentId, event.type)
     : accountId
       ? (await accountsRepo.listAccountAgents(accountId)).map((link) => ({
           agentId: link.agentId,
