@@ -194,6 +194,25 @@ export function PoliciesSection({
           <Field label="Tools allowed" hint="Comma separated tool keys, for example time.now, memory.search.">
             <input className="field" value={draft.tools.allowed.join(', ')} onChange={(e) => patch((n) => void (n.tools.allowed = list(e.target.value)))} />
           </Field>
+          {/*
+            The validator rejects any address the agent was not given, and until
+            this field existed the only way to give it one was to write it into
+            the persona. So an owner with a real contract address had a working
+            guard, a refused reply, and nowhere to go: the failure named
+            `policy.output.verifiedAddresses`, which was not a thing you could
+            reach from the interface.
+          */}
+          <Field
+            label="Addresses it may state"
+            hint="Comma separated, exact. Anything else it writes is refused, including a near miss."
+          >
+            <input
+              className="field"
+              placeholder="0x..."
+              value={draft.output.verifiedAddresses.join(', ')}
+              onChange={(e) => patch((n) => void (n.output.verifiedAddresses = list(e.target.value)))}
+            />
+          </Field>
         </div>
       </div>
 

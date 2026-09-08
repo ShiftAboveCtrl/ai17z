@@ -978,6 +978,62 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * Whether the agent may speak unprompted, and how often it gets to consider it.
+   *
+   * This existed only in Easy Mode, so an owner on the advanced screens could
+   * read the schedule -- the Content section shows it -- and had no way to turn
+   * it on. The two paths write the same row through the same repository; Easy
+   * Mode picks the interval from a word, this takes the seconds.
+   */
+  app.put(
+    '/api/agents/:id/posting',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(
+        z.object({
+          enabled: z.boolean(),
+          // The same bounds the CHECK constraint carries, so a bad value is
+          // refused with a sentence rather than by Postgres.
+          intervalSeconds: z.number().int().min(300).max(604_800),
+        }),
+        request,
+      );
+
+      // A schedule needs an account to post through. Keeping whichever one is
+      // already recorded means turning posting on does not have to re-answer a
+      // question the account link already answered.
+      const existing = await postingRepo.getSchedule(agent.id);
+      const links = await accountsRepo.listAgentAccounts(agent.id);
+      const accountId = existing?.accountId ?? links[0]?.accountId ?? null;
+      if (body.enabled && !accountId) {
+        throw new BadRequestError('Connect an account before turning posting on; a schedule with none never fires.');
+      }
+
+      const schedule = await postingRepo.setSchedule({
+        agentId: agent.id,
+        accountId,
+        enabled: body.enabled,
+        intervalSeconds: body.intervalSeconds,
+      });
+
+      // Linking an account grants READ, GENERATE and the reply action only, so
+      // without this the scheduler comes due, finds no permission, and records
+      // a reason nobody reads. It looks exactly like an agent with nothing to
+      // say. Easy Mode grants it for the same reason.
+      if (body.enabled && accountId) await capabilitiesRepo.grant(agent.id, accountId, 'POST');
+
+      await ops.audit({
+        actorUserId: user.id,
+        action: body.enabled ? 'posting.enabled' : 'posting.disabled',
+        entityType: 'agent',
+        entityId: agent.id,
+      });
+      return { schedule };
+    }),
+  );
+
   app.patch(
     '/api/agents/:id/ideas/:ideaId',
     handler(async (request) => {

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Plus, RotateCcw, Trash2 } from 'lucide-react';
-import { ApiError, patch, post } from '@app/lib/api';
+import { ApiError, patch, post, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
-import { EmptyState, Field, Modal, Spinner } from '@app/components/ui';
+import { EmptyState, Field, Modal, Spinner, Toggle } from '@app/components/ui';
 import { Section } from './Section';
 
 interface Idea {
@@ -73,6 +73,18 @@ function everyHowOften(seconds: number): string {
   return days === 1 ? 'about once a day' : `about every ${days} days`;
 }
 
+/**
+ * How often it may consider speaking, in the words Easy Mode uses.
+ *
+ * The same three rhythms Easy Mode writes, so an agent set up there and then
+ * opened here reads back as one of these rather than as a raw second count.
+ */
+const RHYTHMS: { seconds: number; label: string }[] = [
+  { seconds: 18_000, label: 'Often' },
+  { seconds: 21_600, label: 'Occasionally' },
+  { seconds: 79_200, label: 'Rarely' },
+];
+
 /** When the next chance to post is, or why there is not one. */
 function nextChance(schedule: Schedule | null): string {
   if (!schedule || !schedule.enabled) return 'Posting is off, so this backlog is only being collected.';
@@ -132,6 +144,23 @@ export function ContentSection({ index, agentId }: { index: number; agentId: str
   const [error, setError] = useState<string | null>(null);
 
   const say = (problem: unknown) => setError(problem instanceof ApiError ? problem.message : String(problem));
+
+  /**
+   * Turning posting on lived only in Easy Mode, so this screen could show a
+   * schedule it gave you no way to change. Both write the same row.
+   */
+  const setSchedule = async (enabled: boolean, intervalSeconds: number) => {
+    setBusy('schedule');
+    setError(null);
+    try {
+      await put(`/api/agents/${agentId}/posting`, { enabled, intervalSeconds });
+      view.reload();
+    } catch (problem) {
+      say(problem);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const add = async () => {
     setBusy('add');
@@ -199,6 +228,42 @@ export function ContentSection({ index, agentId }: { index: number; agentId: str
               >
                 <Plus className="h-3.5 w-3.5" /> Add an idea
               </button>
+            </div>
+
+            {/*
+              Whether it may speak unprompted, and how often it gets to consider
+              it. The rhythm buttons only appear once it is on, because choosing
+              how often something happens that is not happening is a question
+              about nothing.
+            */}
+            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-bone/10 pt-3">
+              <Toggle
+                checked={data.schedule?.enabled ?? false}
+                onChange={(v) => void setSchedule(v, data.schedule?.intervalSeconds ?? 21_600)}
+                label="Post without being asked"
+                description="A ceiling, not a timetable. With nothing worth saying it stays quiet and records that it looked."
+              />
+              {data.schedule?.enabled && (
+                <div className="flex items-center gap-2">
+                  {RHYTHMS.map((r) => (
+                    <button
+                      key={r.seconds}
+                      type="button"
+                      disabled={busy === 'schedule'}
+                      onClick={() => void setSchedule(true, r.seconds)}
+                      className={`rounded border px-3 py-1.5 text-[13px] disabled:opacity-50 ${
+                        data.schedule?.intervalSeconds === r.seconds
+                          ? 'border-bone/60 text-bone'
+                          : 'border-bone/20 text-bone-faint hover:border-bone/40'
+                      }`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                  <span className="text-[13px] text-bone-faint">{everyHowOften(data.schedule.intervalSeconds)}</span>
+                </div>
+              )}
+              {busy === 'schedule' && <Spinner />}
             </div>
 
             {data.schedule?.lastReason && (
