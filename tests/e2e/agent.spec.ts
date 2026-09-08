@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { deleteAgentsNamed, deleteMockAccountsNamed, openAgent, signIn, uniqueName, useInterface } from './helpers';
+import {
+  deleteAgentsNamed,
+  deleteMockAccountsNamed,
+  goToSection,
+  openAgent,
+  signIn,
+  uniqueName,
+  useInterface,
+} from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -38,8 +46,23 @@ test('creates an agent through the advanced wizard', async ({ page }) => {
   await expect(page.getByText(/^review$/i).first()).toBeVisible();
   await page.getByRole('button', { name: /create agent/i }).last().click();
 
-  await page.locator('#identity').waitFor({ timeout: 30_000 });
-  await expect(page.getByRole('heading', { name: AGENT_NAME, exact: true })).toBeVisible();
+  /*
+    The agent is made whichever way this goes: this wizard deliberately lets
+    somebody leave the model blank and come back to it. What it must not do is
+    say nothing about that -- Advanced used to create the agent and go straight
+    to its page, so the first sign that no model was connected was a failed
+    job. It now asks the same readiness question Easy Mode asks and shows what
+    is missing, without refusing.
+  */
+  await expect(page.getByText(/it will not run until these are sorted/i)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/no ai model is connected/i)).toBeVisible();
+
+  // And the way out leads to the agent that now exists.
+  await page.getByRole('button', { name: /open the agent/i }).click();
+  await expect(page.getByRole('heading', { name: AGENT_NAME, exact: true }).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await goToSection(page, 'identity');
 });
 
 test('shows the agent sections and the pipeline it actually runs', async ({ page }) => {
@@ -47,10 +70,14 @@ test('shows the agent sections and the pipeline it actually runs', async ({ page
   await signIn(page);
   await openAgent(page, AGENT_NAME);
 
+  // One per area, plus the rest of the sections each area holds. Only the
+  // selected area renders, so this walks them rather than asserting one page.
   for (const id of ['identity', 'accounts', 'intelligence', 'memory', 'pipeline', 'tools', 'policies', 'activity']) {
+    await goToSection(page, id);
     await expect(page.locator(`#${id}`)).toBeAttached();
   }
 
+  await goToSection(page, 'pipeline');
   await page.locator('#pipeline').scrollIntoViewIfNeeded();
   await expect(page.getByRole('button', { name: /resolve context/i })).toBeVisible();
   await page.getByRole('button', { name: /retrieve memory/i }).click();
@@ -82,7 +109,7 @@ test('edits the persona and cuts a new version', async ({ page }) => {
   // below is the assertion that matters anyway: the form used to report saving
   // these two fields before it could even show them.
   await page.reload();
-  await page.locator('#identity').waitFor({ timeout: 30_000 });
+  await goToSection(page, 'identity');
   await expect(page.locator('#styleGuidelines')).toHaveValue('One sentence, then stop.');
   await expect(page.locator('#customInstructions')).toHaveValue('The address is ADDR-E2E-1234.');
 });

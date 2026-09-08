@@ -71,17 +71,32 @@ describe('a link to a section still lands on it', () => {
     expect(source).toContain('AREA_OF_SECTION');
   });
 
-  it('reacts to the hash changing, not only to a fresh load', () => {
-    expect(source).toContain("addEventListener('hashchange'");
+  it('follows the hash the router reports, not the browser event', () => {
+    /*
+      This asserted `addEventListener('hashchange')` and passed while every
+      in-app link to a section was broken.
+
+      `hashchange` does not fire for a `pushState` navigation, which is what a
+      React Router `<Link>` performs -- so a "Take me there" on a blocker put
+      `#intelligence` in the address bar and left the page on Overview. It
+      fires for a cold load and for a hand-edited address, which is why the gap
+      survived: both of the ways somebody checks this by hand work.
+    */
+    expect(source).toContain('useLocation');
+    expect(source).not.toContain("addEventListener('hashchange'");
   });
 
-  it('also handles a cold load, when the section is not rendered yet', () => {
+  it('waits for the area to render before scrolling to the section', () => {
     // The browser tries to scroll before React has drawn the area, finds
-    // nothing, and silently leaves you at the top.
-    // Anchored on the comment rather than on exact whitespace, because line
-    // endings differ between checkouts.
-    const at = source.indexOf('The same thing on a cold load');
-    expect(at, 'the cold-load effect is gone').toBeGreaterThan(-1);
-    expect(source.slice(at, at + 700)).toContain('scrollIntoView');
+    // nothing, and silently leaves you at the top. Anchored on the comment
+    // rather than on exact whitespace, because line endings differ between
+    // checkouts.
+    const at = source.indexOf('An anchor like `#policies` names a section');
+    expect(at, 'the hash effect is gone').toBeGreaterThan(-1);
+    const effect = source.slice(at, at + 1400);
+    expect(effect).toContain('scrollIntoView');
+    // Both are dependencies: the hash says where to go, and `data` is what
+    // says the section exists to be scrolled to.
+    expect(effect).toContain('[hash, data]');
   });
 });

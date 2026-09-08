@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Pencil, Sparkles } from 'lucide-react';
-import type { EasySetup, EasyView } from '@xbam/shared/contracts';
+import { Pencil, Sparkles } from 'lucide-react';
+import type { EasySetup, EasyView, PreflightResult } from '@xbam/shared/contracts';
 import { AccountsSection } from './sections/AccountsSection';
 import { IntelligenceSection } from './sections/IntelligenceSection';
 import { VoiceSection } from './sections/VoiceSection';
@@ -11,6 +11,7 @@ import type { AgentDetail, JobSummary } from '@app/lib/types';
 import { timeAgo } from '@app/lib/format';
 import { ErrorPanel, Field, Loading, Modal, Spinner, Toggle } from '@app/components/ui';
 import { BrowserTabsPanel } from '@app/components/BrowserTabsPanel';
+import { Blockers } from '@app/components/Blockers';
 
 /**
  * The agent page for somebody who does not want to configure anything.
@@ -49,9 +50,7 @@ interface EasyPayload {
 
 export function EasyAgentView({ agent, onChanged }: { agent: AgentDetail; onChanged: () => void }) {
   const easy = useResource<EasyPayload>(`/api/agents/${agent.agent.id}/easy`);
-  const preflight = useResource<{ ready: boolean; blockers: { what: string; fix: string }[] }>(
-    `/api/agents/${agent.agent.id}/preflight`,
-  );
+  const preflight = useResource<PreflightResult>(`/api/agents/${agent.agent.id}/preflight`);
   const [editing, setEditing] = useState(false);
 
   if (easy.loading && !easy.data) return <Loading label="Loading" />;
@@ -64,21 +63,7 @@ export function EasyAgentView({ agent, onChanged }: { agent: AgentDetail; onChan
 
   return (
     <div className="space-y-6">
-      {blockers.length > 0 && (
-        <div className="space-y-2 rounded-xl border border-signal-wait/40 bg-signal-wait/[0.06] p-5">
-          <p className="flex items-center gap-2 text-sm text-bone">
-            <AlertTriangle className="h-4 w-4 shrink-0 text-signal-wait" aria-hidden />
-            {blockers.length === 1 ? 'One thing needs sorting.' : `${blockers.length} things need sorting.`}
-          </p>
-          <ul className="space-y-1.5 pl-6">
-            {blockers.map((blocker) => (
-              <li key={blocker.what} className="text-[13px] leading-relaxed text-bone-dim">
-                {blocker.what} <span className="text-bone-faint">{blocker.fix}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <Blockers blockers={blockers} agentId={agent.agent.id} />
 
       {view && !view.exact && (
         <div className="space-y-2 rounded-xl border border-ink-line bg-ink-panel/50 p-5">

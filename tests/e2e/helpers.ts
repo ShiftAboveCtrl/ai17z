@@ -103,10 +103,58 @@ export function uniqueName(prefix: string): string {
   return `${prefix} ${Date.now().toString(36).slice(-5)}`;
 }
 
-export async function openAgent(page: Page, name: string): Promise<void> {
+/**
+ * Which of the agent page's five areas holds a section.
+ *
+ * The page used to be fifteen sections on one scroll, so every spec found what
+ * it wanted with `#identity` and no navigation. It is five areas now and only
+ * the selected one is rendered, which turned most of this suite into a
+ * twenty-second wait for an element that was never going to exist. Kept here
+ * rather than imported from the app: a test that reads the map it is checking
+ * asserts nothing, and the point is that a section somebody moved has to be
+ * moved here too.
+ */
+const AREA_OF_SECTION: Record<string, string> = {
+  activity: 'Overview',
+  identity: 'Character',
+  voice: 'Character',
+  beliefs: 'Character',
+  accounts: 'Reach',
+  intelligence: 'Reach',
+  tools: 'Reach',
+  memory: 'Memory',
+  knowledge: 'Memory',
+  relationships: 'Memory',
+  learned: 'Memory',
+  content: 'Behaviour',
+  behaviour: 'Behaviour',
+  policies: 'Behaviour',
+  pipeline: 'Behaviour',
+};
+
+/**
+ * Selects the area holding a section and waits for it, the way a person would.
+ *
+ * Clicking the area tab rather than setting a hash on purpose: the tab is what
+ * somebody uses, and an anchor is a separate contract with its own test.
+ */
+export async function goToSection(page: Page, section: string): Promise<void> {
+  const area = AREA_OF_SECTION[section];
+  if (!area) throw new Error(`No area holds #${section}. Add it to AREA_OF_SECTION in helpers.ts.`);
+  // `.first()` because the page renders its navigation twice, once for a phone
+  // and once for a desktop, and only one is visible at a time. A bare locator
+  // matches both and throws on strict mode, which used to be swallowed and
+  // reappear twenty seconds later as "#identity never became visible".
+  const tab = page.getByRole('button', { name: area, exact: true }).first();
+  await tab.click({ timeout: 20_000 });
+  await page.locator(`#${section}`).waitFor({ timeout: 20_000 });
+}
+
+/** Opens an agent from the list and lands on the area holding `section`. */
+export async function openAgent(page: Page, name: string, section = 'identity'): Promise<void> {
   await page.goto('/');
   await page.getByRole('heading', { name, exact: true }).first().click();
-  await page.locator('#identity').waitFor({ timeout: 20_000 });
+  await goToSection(page, section);
 }
 
 /**

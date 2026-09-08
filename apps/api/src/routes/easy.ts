@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { EasySetup, type RadarSourceKind } from '@xbam/shared/contracts';
+import { EasySetup, type Blocker, type RadarSourceKind } from '@xbam/shared/contracts';
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
 import { ensureAgentPipeline, ensureDefaultRadarSources } from '@xbam/runtime';
 import {
@@ -179,17 +179,11 @@ export async function easyRoutes(app: FastifyInstance): Promise<void> {
 /**
  * What is stopping this agent from running.
  *
- * Each entry names one thing and what to do about it, in a sentence somebody
- * can act on. "Browser context state authentication health failure" is not a
- * sentence somebody can act on.
+ * The shape lives in contracts because the browser renders it: four screens
+ * used to declare their own `{ what, fix }[]` inline, and all four dropped the
+ * `where` this computes -- so nothing could take somebody to the panel holding
+ * the fix.
  */
-export interface Blocker {
-  what: string;
-  fix: string;
-  /** Where in the UI the fix lives, when there is a place to send them. */
-  where: 'account' | 'models' | 'persona' | 'worker' | 'capabilities' | null;
-}
-
 async function preflight(agentId: string): Promise<Blocker[]> {
   const blockers: Blocker[] = [];
 

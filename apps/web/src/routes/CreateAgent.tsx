@@ -1,13 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { DEFAULT_TRIGGER_EVENT_TYPES } from '@xbam/shared/contracts';
+import type { Blocker } from '@xbam/shared/contracts';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
-import { ApiError, post, put } from '@app/lib/api';
+import { ApiError } from '@app/lib/api';
+import { connectAccount, createAgent, preflightAgent, saveModel } from '@app/lib/setup';
 import { useResource } from '@app/lib/hooks';
 import type { ChannelInfo, ProviderCredential } from '@app/lib/types';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { ErrorPanel, Field, Spinner, Toggle } from '@app/components/ui';
+import { Blockers } from '@app/components/Blockers';
+import { ModelChooser } from '@app/components/ModelChooser';
 
 const STEPS = ['Identity', 'Portrait', 'Persona', 'Intelligence', 'Channel', 'Memory', 'Automation', 'Review'] as const;
 
@@ -67,6 +70,9 @@ export function CreateAgent() {
   const [draft, setDraft] = useState<Draft>(INITIAL);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set once the agent exists, which is also what turns Create into Open. */
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [blockers, setBlockers] = useState<Blocker[]>([]);
 
   const providers = useResource<{ items: ProviderCredential[] }>('/api/providers');
   const channels = useResource<{ items: ChannelInfo[] }>('/api/channels');
@@ -80,17 +86,28 @@ export function CreateAgent() {
 
   const canAdvance = step !== 0 || draft.name.trim().length > 0;
 
+  /**
+   * Creates the agent, then asks the same question Easy Mode asks.
+   *
+   * The writes go through `lib/setup` because Easy performs exactly these
+   * three and they were written twice. The readiness check is the half
+   * Advanced never had: it created the agent and went straight to its page,
+   * so somebody who left the model blank -- which this wizard allows, on
+   * purpose -- found out from a failed job rather than from the screen they
+   * were looking at.
+   *
+   * The agent is created either way. Nothing here refuses; being told what is
+   * missing is not the same as being stopped.
+   */
   const create = async () => {
     setBusy(true);
     setError(null);
     try {
-      const agent = await post<{ id: string }>('/api/agents', {
-        name: draft.name.trim(),
-        description: draft.description.trim(),
-        avatarUrl: draft.avatarUrl.trim() || null,
-        avatarMode: 'PORTRAIT_25D',
+      const id = await createAgent({
+        name: draft.name,
+        description: draft.description,
+        avatarUrl: draft.avatarUrl,
         persona: {
-          displayName: draft.name.trim(),
           identityKind: draft.identityKind,
           personality: draft.personality.trim(),
           tone: draft.tone.trim(),
@@ -111,29 +128,25 @@ export function CreateAgent() {
       });
 
       if (draft.providerId && draft.model.trim()) {
-        await put(`/api/agents/${agent.id}/models`, {
-          role: 'primary',
-          providerCredentialId: draft.providerId,
-          model: draft.model.trim(),
-          parameters: {},
-        });
+        await saveModel(id, { role: 'primary', providerCredentialId: draft.providerId, model: draft.model });
       }
 
       if (draft.channel !== 'none') {
-        const handle = draft.handle.trim() || draft.name.trim().toLowerCase().replace(/\s+/g, '_');
-        const account = await post<{ id: string }>('/api/accounts', {
+        await connectAccount(id, {
           channel: draft.channel,
-          handle,
+          handle: draft.handle.trim() || draft.name.trim().toLowerCase().replace(/\s+/g, '_'),
           displayName: draft.name.trim(),
-        });
-        await post(`/api/agents/${agent.id}/accounts`, {
-          accountId: account.id,
-          triggerEventTypes: [...DEFAULT_TRIGGER_EVENT_TYPES],
-          actionType: 'REPLY',
         });
       }
 
-      navigate(`/agents/${agent.id}`);
+      const { blockers: found } = await preflightAgent(id);
+      if (found.length === 0) {
+        navigate(`/agents/${id}`);
+        return;
+      }
+      setCreatedId(id);
+      setBlockers(found);
+      setBusy(false);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'The agent could not be created.');
       setBusy(false);
@@ -232,14 +245,15 @@ export function CreateAgent() {
                 </select>
               </Field>
               {provider && (
-                <Field label="Model" htmlFor="model" hint={provider.availableModels.length ? 'Suggestions come from the provider itself.' : 'Type the model id exactly as the provider expects it.'}>
-                  <input id="model" className="field" list="model-options" value={draft.model} onChange={(e) => set('model', e.target.value)} placeholder={provider.defaultModel ?? 'model-id'} />
-                  <datalist id="model-options">
-                    {provider.availableModels.map((m) => (
-                      <option key={m} value={m} />
-                    ))}
-                  </datalist>
-                </Field>
+                <ModelChooser
+                  id="model"
+                  label="Model"
+                  models={provider.availableModels}
+                  value={draft.model}
+                  onChange={(m) => set('model', m)}
+                  providerName={provider.label}
+                  placeholder={provider.defaultModel ?? 'model-id'}
+                />
               )}
             </>
           ))}
@@ -348,13 +362,29 @@ export function CreateAgent() {
               <Row label="Dry run" value={draft.dryRunDefault ? 'On, nothing is sent remotely' : 'Off, real actions permitted'} />
               <Row label="Memory" value={[draft.threadMemory && 'conversations', draft.rememberUserFacts && 'user facts'].filter(Boolean).join(', ') || 'none'} />
             </dl>
+            <Blockers
+              blockers={blockers}
+              agentId={createdId}
+              heading={
+                createdId
+                  ? 'Created. It will not run until these are sorted:'
+                  : 'This needs sorting before it can run:'
+              }
+            />
             {error && <ErrorPanel title="The agent could not be created." detail={error} />}
           </div>
         )}
       </div>
 
       <div className="mt-12 flex items-center justify-between gap-4 border-t border-ink-line pt-6">
-        <button type="button" className="btn-quiet" onClick={() => (step === 0 ? navigate('/') : setStep(step - 1))} disabled={busy}>
+        <button
+          type="button"
+          className="btn-quiet"
+          onClick={() => (step === 0 ? navigate('/') : setStep(step - 1))}
+          // Stepping back after the agent exists would offer to create a
+          // second one from the same answers.
+          disabled={busy || Boolean(createdId)}
+        >
           <ArrowLeft className="h-4 w-4" aria-hidden />
           {step === 0 ? 'Cancel' : 'Back'}
         </button>
@@ -364,9 +394,14 @@ export function CreateAgent() {
             <ArrowRight className="h-4 w-4" aria-hidden />
           </button>
         ) : (
-          <button type="button" className="btn-primary" onClick={() => void create()} disabled={busy || !draft.name.trim()}>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => (createdId ? navigate(`/agents/${createdId}`) : void create())}
+            disabled={busy || !draft.name.trim()}
+          >
             {busy ? <Spinner /> : <Check className="h-4 w-4" aria-hidden />}
-            Create agent
+            {createdId ? 'Open the agent' : 'Create agent'}
           </button>
         )}
       </div>
