@@ -116,6 +116,43 @@ describe('saving from Easy Mode and reading it back', () => {
     expect(view.beyondEasyMode.join(' ')).toContain('banned phrase');
   });
 
+  it('leaves every newly exposed Advanced setting alone', async () => {
+    /*
+      Thirty settings were enforced by the runtime and reachable from no screen.
+      Exposing them in Advanced makes them somebody's decision, which means an
+      Easy Mode save must not quietly undo it -- and Easy writes a whole policy,
+      so anything it does not know about is exactly what is at risk.
+
+      One field from each group it touches, rather than all thirty: the failure
+      would be Easy rebuilding the policy from its own defaults, which loses a
+      group at a time rather than a field at a time.
+    */
+    const fixture = await createFixture();
+    const existing = await agents.getActivePolicy(fixture.agentId);
+    const advanced: PolicyConfig = {
+      ...existing!.config,
+      identity: { ...existing!.config.identity, disclosureStatement: 'I am a machine, and I say so.' },
+      output: { ...existing!.config.output, forbidHashtags: true, minCharacters: 12 },
+      content: { ...existing!.config.content, blockedTopics: ['price predictions'] },
+      media: { ...existing!.config.media, analyzeVideo: true, linkPolicy: 'IGNORE_LINKS' },
+      stance: { ...existing!.config.stance, trackPredictions: false },
+      voice: { ...existing!.config.voice, signaturePhrases: ['the short version is'] },
+    };
+    await agents.savePolicyVersion(fixture.agentId, advanced, 'set in Advanced', fixture.ownerId);
+
+    await saveEasy(fixture.agentId, fixture.ownerId);
+    const after = await agents.getActivePolicy(fixture.agentId)!;
+
+    expect(after!.config.identity.disclosureStatement).toBe('I am a machine, and I say so.');
+    expect(after!.config.output.forbidHashtags).toBe(true);
+    expect(after!.config.output.minCharacters).toBe(12);
+    expect(after!.config.content.blockedTopics).toEqual(['price predictions']);
+    expect(after!.config.media.analyzeVideo).toBe(true);
+    expect(after!.config.media.linkPolicy).toBe('IGNORE_LINKS');
+    expect(after!.config.stance.trackPredictions).toBe(false);
+    expect(after!.config.voice.signaturePhrases).toEqual(['the short version is']);
+  });
+
   it('saving twice changes nothing the second time', async () => {
     // Someone opening the screen and pressing save must not alter their agent.
     const fixture = await createFixture();

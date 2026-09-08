@@ -20,3 +20,4 @@ export * from './diagnostics';
 export * from './portable';
 export * from './portablePackage';
 export * from './providerKeys';
+export * from './policyReachability';
