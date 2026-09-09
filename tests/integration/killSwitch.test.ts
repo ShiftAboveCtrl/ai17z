@@ -83,7 +83,9 @@ describe('stopping everything', () => {
  * the pipeline -- which is the window somebody reaches for this button in.
  */
 describe('where the check actually sits', () => {
-  const steps = readFileSync(resolve(__dirname, '../../packages/runtime/src/steps.ts'), 'utf8');
+  // The execution step. `steps.ts` is a barrel over five files now, and the
+  // gate this is about lives with the only step that touches a remote service.
+  const steps = readFileSync(resolve(__dirname, '../../packages/runtime/src/steps/execute.ts'), 'utf8');
 
   it('is after the last await before the remote call', () => {
     const gate = steps.indexOf('remoteActionsAllowed()');

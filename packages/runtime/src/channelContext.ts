@@ -9,6 +9,7 @@ import type { ChannelContext } from '@xbam/channels';
 export function storageDir(): string {
   return resolve(envString('AI17Z_STORAGE_DIR', './storage'));
 }
+import type { JobBundle } from './loadJob';
 
 /** Builds the adapter context for an account, including its browser session config. */
 export async function buildChannelContext(account: Account, jobId: string | null): Promise<ChannelContext> {
@@ -62,3 +63,26 @@ export function syntheticAccount(overrides: Partial<Account> & Pick<Account, 'id
     ...overrides,
   };
 }
+
+/**
+ * The channel context a pipeline step acts through.
+ *
+ * Moved here from steps.ts, which was the only reason four unrelated groups of
+ * steps had to share a file. An agent with no linked account gets a synthetic
+ * one so a dry run has somewhere to act.
+ */
+export async function adapterContext(bundle: JobBundle) {
+  const account =
+    bundle.account ?? syntheticAccount({ id: `synthetic-${bundle.agent.id}`, ownerId: bundle.agent.ownerId });
+  return buildChannelContext(account, bundle.job.id);
+}
+
+/**
+ * The context for a post the agent decided to make.
+ *
+ * There is no remote target to resolve and no conversation to read: the event
+ * carries a brief written from the idea backlog. Built here rather than in the
+ * adapter because it is the same on every channel, and because sending a
+ * browser to a status page that does not exist would be a strange way to find
+ * out there is nothing to look at.
+ */

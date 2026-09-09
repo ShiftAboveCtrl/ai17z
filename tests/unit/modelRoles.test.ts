@@ -62,7 +62,7 @@ describe('model roles and what can set them', () => {
       a silent gap, not a missing feature.
     */
     const asked: { role: ModelRole; where: string }[] = [
-      { role: 'vision', where: 'packages/runtime/src/steps.ts' },
+      { role: 'vision', where: 'packages/runtime/src/steps/context.ts' },
       { role: 'classifier', where: 'packages/runtime/src/research.ts' },
       { role: 'voice_rewrite', where: 'packages/runtime/src/voice.ts' },
       { role: 'primary', where: 'packages/models/src/gateway.ts' },
@@ -78,7 +78,11 @@ describe('model roles and what can set them', () => {
   it('finds no runtime consumer for the reserved roles', () => {
     // If one appears, the role has become real and its status is now a lie.
     for (const file of [
-      'packages/runtime/src/steps.ts',
+      'packages/runtime/src/steps/context.ts',
+      'packages/runtime/src/steps/generate.ts',
+      'packages/runtime/src/steps/execute.ts',
+      'packages/runtime/src/steps/social.ts',
+      'packages/runtime/src/steps/research.ts',
       'packages/runtime/src/voice.ts',
       'packages/models/src/gateway.ts',
     ]) {
