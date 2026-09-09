@@ -1,7 +1,7 @@
 {
   "name": "xbam",
   "private": true,
-  "version": "1.0.0-beta.8",
+  "version": "1.0.0-beta.9",
   "license": "MIT",
   "type": "module",
   "description": "XBAM \u2014 a local-first universal autonomous-agent platform.",
