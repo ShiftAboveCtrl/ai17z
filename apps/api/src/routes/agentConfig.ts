@@ -13,9 +13,14 @@ import {
   PolicyConfig,
   SetModelConfigInput,
   IN_FLIGHT_JOB_STATUSES,
+  CAPABILITY_PERMISSIONS,
 } from '@xbam/shared/contracts';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
+import { getCapability } from '@xbam/tools';
 import {
+  capabilityViews,
+  setCapabilityPermission,
+  pauseState,
   collectDiagnostics,
   compareModels,
   describeDuplicateScope,
@@ -54,6 +59,7 @@ import {
   learned as learnedRepo,
   memories as memoriesRepo,
   query,
+  capabilityInvocations,
 } from '@xbam/database';
 import { compileForJob, fingerprintFor, refreshFingerprint, validateGraph } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
@@ -1128,6 +1134,72 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
           ...toolSupply(tool.key),
         })),
       };
+    }),
+  );
+
+  /**
+   * Every capability this agent has, and whether it would run right now.
+   *
+   * Under `/toolspace` rather than `/capabilities`, which is already taken by
+   * `agent_account_capabilities` -- what an agent is permitted to do on a
+   * channel. Two things called capability in one product is one too many, and
+   * the collision was a route Fastify refused to register.
+   *
+   * Derived, never stored: the permission is a setting and the status is a fact
+   * about this minute. The same `resolvePermission` the loop uses answers it, so
+   * a screen cannot say something would run while the runtime refuses it.
+   */
+  app.get(
+    '/api/agents/:id/toolspace',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const links = await accountsRepo.listAgentAccounts(agent.id);
+      const paused = (await pauseState().catch(() => ({ paused: false }))).paused;
+      return {
+        items: await capabilityViews({
+          agentId: agent.id,
+          // The account a capability would act as. The first linked one, which
+          // is the only one an agent has today.
+          accountId: links[0]?.accountId ?? null,
+          paused,
+        }),
+      };
+    }),
+  );
+
+  app.put(
+    '/api/agents/:id/toolspace/:capabilityId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(z.object({ permission: z.enum(CAPABILITY_PERMISSIONS) }), request);
+      const capabilityId = params(request).capabilityId!;
+      if (!getCapability(capabilityId)) throw new NotFoundError('Capability');
+      await setCapabilityPermission({ agentId: agent.id, capabilityId, permission: body.permission });
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'capability.permission_set',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { capabilityId, permission: body.permission },
+      });
+      return { ok: true };
+    }),
+  );
+
+  /**
+   * What the agent has actually used, including what it was refused.
+   *
+   * A capability an owner switched off and the model kept asking for is exactly
+   * the thing worth seeing, so refusals are in here rather than filtered out.
+   */
+  app.get(
+    '/api/agents/:id/toolspace/invocations',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      return { items: await capabilityInvocations.listForAgent(agent.id, 50) };
     }),
   );
 
