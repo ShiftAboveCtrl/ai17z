@@ -1,7 +1,7 @@
 import { createLogger, errorMessage } from '@xbam/shared';
 import { pipelines as pipelinesRepo, prompts as promptsRepo } from '@xbam/database';
 import { DEFAULT_TEMPLATES } from '@xbam/prompts';
-import { syncToolCatalogue } from '@xbam/tools';
+import { registerBuiltinCapabilities, syncToolCatalogue } from '@xbam/tools';
 import { defaultPipelineDraft } from './defaultPipeline';
 
 const log = createLogger('bootstrap');
@@ -19,6 +19,10 @@ export async function bootstrapRuntime(): Promise<void> {
     log.info('prompt template ready', { key: template.key, version: version.version });
   }
   await syncToolCatalogue();
+  // The capability registry is process-wide and in memory, so it is filled
+  // here rather than at import time: a module that registers on load makes
+  // the contents of the registry depend on what happened to be imported.
+  registerBuiltinCapabilities();
   await upgradePipelinesWithResearch().catch((error) =>
     log.warn('could not add the research node to existing pipelines', { message: errorMessage(error) }),
   );
