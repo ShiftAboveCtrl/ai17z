@@ -42,13 +42,20 @@ export function BehaviourSection({ index, agentId }: { index: number; agentId: s
     <Section
       id="behaviour"
       index={index}
-      eyebrow="Behaviour"
+      /*
+        "Track record", not "Behaviour". This sat inside the Behaviour area
+        under the same word, so the page read "Behaviour > Behaviour" -- and
+        the label was wrong twice over: the area is the whole domain of what an
+        agent does and may do, while this one section is the count of what it
+        actually did. The anchor stays `behaviour` because links to it exist.
+      */
+      eyebrow="Track record"
       heading="What it has been doing."
       lede="Counted from what actually happened, not from a running tally. Nothing here is an engagement metric: an agent optimised for replies per hour is a worse agent."
       explain={
         <>
-          <p><strong>How it decides whether to answer at all</strong>, and how much of the other person's tone to take on.</p>
-          <p>Not replying is a real answer here, with its reasons recorded. Hostility is met by stepping back rather than matching it, which is how an agent avoids ending up in an argument on your behalf.</p>
+          <p><strong>What arrived, and what became of it</strong> over the window you choose.</p>
+          <p>Staying silent is counted beside answering because it is a real outcome with its reasons recorded, not a gap in the numbers. The quality scores are about register rather than correctness, and none of them is a target to raise.</p>
         </>
       }
     >

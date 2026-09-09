@@ -116,11 +116,20 @@ export function AvatarEditor({
         </div>
       </div>
 
+      {/*
+        Plumbing, not a control. The visible "Choose a picture" button opens it,
+        and `sr-only` hides it from sight without taking it out of the tab
+        order -- so it was a focusable file input with no accessible name,
+        announced as "button" and reachable by Tab. `tabIndex={-1}` first,
+        because `aria-hidden` on something focusable is its own violation.
+      */}
       <input
         ref={input}
         type="file"
         accept={ACCEPT}
         className="sr-only"
+        tabIndex={-1}
+        aria-hidden
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void upload(file);

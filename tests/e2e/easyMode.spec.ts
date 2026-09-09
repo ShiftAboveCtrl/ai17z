@@ -62,7 +62,9 @@ test('walks a new owner from nothing to a configured agent', async ({ page }) =>
 
   // 7 — Operation. Review first is the honest default for somebody new.
   await expect(page.getByText(/step 7 of 8/i)).toBeVisible();
-  await page.getByRole('button', { name: /review first/i }).first().click();
+  // A radio, not a button: the eight single-choice pickers in this wizard now
+  // say to a screen reader that they are one choice out of several.
+  await page.getByRole('radio', { name: /review first/i }).first().click();
   await continueStep(page);
 
   // 8 — Review. Everything chosen, in one place, before anything runs.

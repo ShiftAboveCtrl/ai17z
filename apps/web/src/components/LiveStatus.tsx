@@ -65,7 +65,17 @@ export function LiveStatus({ agentId, fallback }: { agentId: string; fallback: {
   if (!status) return <StatusDot state={fallback.tone} label={fallback.label} />;
 
   return (
-    <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+    <span
+      /*
+        Announced when it changes, not on every poll: the text is only rewritten
+        when the activity or its sentence actually differs, so "thinking" ->
+        "needs you" is spoken and five seconds of the same thing is silent.
+        Without it, the one part of the page that changes on its own was the one
+        part nobody was told about.
+      */
+      role="status"
+      className="inline-flex flex-wrap items-center gap-x-2 gap-y-1"
+    >
       <StatusDot state={TONE[status.activity]} label={WORDS[status.activity] ?? status.activity} />
       {/* The sentence is the part that makes the word actionable. */}
       <span className="break-words text-[11px] leading-relaxed text-bone-faint">{status.detail}</span>

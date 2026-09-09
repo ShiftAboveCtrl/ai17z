@@ -37,7 +37,7 @@ import {
   workers as workersRepo,
 } from '@xbam/database';
 import type { NotificationRecord } from '@xbam/database';
-import { createLogger } from '@xbam/shared';
+import { createLogger, workerAbsenceSentence } from '@xbam/shared';
 import { pauseState } from './killSwitch';
 
 const log = createLogger('notify');
@@ -216,7 +216,9 @@ export async function checkWorkerPresence(): Promise<NotificationRecord | null> 
     kind: 'WORKER_STOPPED',
     severity: 'CRITICAL',
     title: 'No worker is running',
-    body: `Nothing has reported in for over ${WORKER_PRESENT_SECONDS} seconds. Agents will not read, reply or post until a worker is running again. Start one with "npm run dev:worker".`,
+    // "npm run dev:worker" is a developer command, and this message goes to
+    // somebody's phone from an installed copy that has no way to run it.
+    body: workerAbsenceSentence(WORKER_PRESENT_SECONDS),
     actionLabel: 'Open health',
     actionHref: '/health',
     dedupeKey: notificationKey.workerStopped(),

@@ -144,7 +144,7 @@ export function LearnedSection({ index, agentId }: { index: number; agentId: str
                         onClick={() => void forget(item)}
                         className="inline-flex shrink-0 items-center gap-1.5 rounded border border-bone/20 px-2.5 py-1 text-[12px] text-bone-faint hover:border-bone/40 hover:text-bone disabled:opacity-50"
                       >
-                        <Trash2 className="h-3 w-3" /> Forget this
+                        <Trash2 className="h-3 w-3" aria-hidden /> Forget this
                       </button>
                     ) : (
                       <span className="shrink-0 text-[11px] text-bone-faint">

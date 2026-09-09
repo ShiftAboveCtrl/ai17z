@@ -1,5 +1,6 @@
 import { AlertTriangle, Check, Loader2, X } from 'lucide-react';
 import { cloneElement, isValidElement, useEffect, useId, useRef, type ReactElement, type ReactNode } from 'react';
+import type React from 'react';
 import { createPortal } from 'react-dom';
 
 export function StatusDot({ state, label }: { state: 'live' | 'wait' | 'fail' | 'idle'; label?: string }) {
@@ -116,9 +117,34 @@ export function Field({
 }) {
   const generated = useId();
   const only = isValidElement(children) ? (children as ReactElement<{ id?: string }>) : null;
+  /*
+    A child that names itself.
+
+    `ChoiceGroup` is a radiogroup carrying its own accessible name, so wrapping
+    it in another labelled group announces the same words twice -- and pointing
+    `htmlFor` at it puts a label on an element labels cannot address. The child
+    says so rather than this guessing from its type.
+  */
+  const selfLabelled = Boolean(only && (only.type as { groupLabelled?: boolean }).groupLabelled);
   const existingId = htmlFor ?? only?.props.id;
-  const controlId = existingId ?? (only ? generated : undefined);
+  const controlId = selfLabelled ? undefined : (existingId ?? (only ? generated : undefined));
   const labelId = `${generated}-label`;
+
+  /*
+    The hint and the error belong to the control, not to the space under it.
+
+    Both were rendered as loose paragraphs: a screen reader read the label and
+    stopped, so "Exactly as the provider names it" and "that model does not
+    exist" were visible and unsaid. `aria-invalid` is what turns the error from
+    red text into a state.
+  */
+  const hintId = hint && !error ? `${generated}-hint` : undefined;
+  const errorId = error ? `${generated}-error` : undefined;
+  const describedBy = errorId ?? hintId;
+  const described =
+    only && !selfLabelled && describedBy
+      ? { 'aria-describedby': describedBy, ...(error ? { 'aria-invalid': true } : {}) }
+      : {};
 
   return (
     <div className="space-y-2">
@@ -129,19 +155,29 @@ export function Field({
       >
         {label}
       </label>
-      {only && !existingId ? (
-        cloneElement(only, { id: controlId })
+      {selfLabelled ? (
+        cloneElement(only!, { labelledBy: labelId, describedBy } as Record<string, unknown>)
+      ) : only && !existingId ? (
+        cloneElement(only, { id: controlId, ...described })
       ) : only ? (
-        children
+        cloneElement(only, described)
       ) : (
         // No single control to point at, so the label names the group. Without
         // this these fields have no accessible name at all.
-        <div role="group" aria-labelledby={labelId}>
+        <div role="group" aria-labelledby={labelId} aria-describedby={describedBy}>
           {children}
         </div>
       )}
-      {hint && !error && <p className="text-xs leading-relaxed text-bone-faint">{hint}</p>}
-      {error && <p className="break-words text-xs text-signal-fail">{error}</p>}
+      {hint && !error && (
+        <p id={hintId} className="text-xs leading-relaxed text-bone-faint">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={errorId} className="break-words text-xs text-signal-fail">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -216,18 +252,58 @@ export function Modal({
 
   useEffect(() => {
     if (!open) return;
+
+    /*
+      Tab stays inside the dialog.
+
+      `aria-modal` confines a screen reader and nothing else: a sighted
+      keyboard user could tab straight out into the page behind, which is
+      covered, scroll-locked and still fully focusable. Wrapping at the ends is
+      what makes it a dialog rather than a panel that happens to be on top.
+    */
+    const focusables = () =>
+      [
+        ...(ref.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? []),
+      ].filter((el) => el.offsetParent !== null || el === document.activeElement);
+
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeRef.current();
+      if (event.key === 'Escape') {
+        closeRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusables();
+      if (items.length === 0) return;
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      const active = document.activeElement;
+      if (!ref.current?.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
+
     document.addEventListener('keydown', onKey);
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    // Where focus was, so closing puts it back rather than dropping somebody at
+    // the top of the page with no idea what they had been operating.
+    const returnTo = document.activeElement as HTMLElement | null;
     // Once, when it opens. The dialog takes focus so Escape works and a screen
     // reader announces it; anything the person then focuses is theirs to keep.
     ref.current?.focus();
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = previous;
+      if (returnTo?.isConnected) returnTo.focus();
     };
   }, [open]);
 
@@ -258,7 +334,13 @@ export function Modal({
 export function SavedTick({ visible }: { visible: boolean }) {
   if (!visible) return null;
   return (
-    <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-live">
+    <span
+      // Announced, because it is the only confirmation that a save happened
+      // and it clears itself after a couple of seconds -- so somebody not
+      // looking at this corner of the screen had no way to know.
+      role="status"
+      className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-signal-live"
+    >
       <Check className="h-3 w-3" aria-hidden /> saved
     </span>
   );
@@ -343,5 +425,134 @@ export function RetryablePanel({
         {retryLabel}
       </button>
     </div>
+  );
+}
+
+/**
+ * One choice out of several, said properly to a screen reader.
+ *
+ * These are everywhere -- automation mode, permission profile, which provider,
+ * who it answers, how it writes -- and every one of them was a row of plain
+ * `<button>`s. A screen reader heard eight buttons and no indication that one
+ * of them was chosen, and a keyboard user tabbed through all eight instead of
+ * arrowing between them the way a radio group works.
+ *
+ * Native `<input type="radio">` would be better if these were labels. They are
+ * cards with a heading, a description, sometimes a status chip, and the layout
+ * varies -- so this supplies the semantics and the keyboard, and each caller
+ * keeps its own markup inside.
+ *
+ * Selection follows focus, which is what a native radio group does: arrowing
+ * onto an option chooses it. That is the behaviour people expect from the
+ * shape, and an arrow key that moves focus without choosing is a group where
+ * the keyboard and the mouse disagree.
+ */
+export function ChoiceGroup({
+  label,
+  labelledBy,
+  describedBy,
+  className,
+  children,
+}: {
+  /** What the group is choosing. Announced before the options. */
+  label: string;
+  /**
+   * The id of a visible label to use instead.
+   *
+   * Passed by `Field`, so the name a screen reader hears is the one on screen
+   * rather than a second copy written into a prop that can drift from it.
+   */
+  labelledBy?: string;
+  describedBy?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  /*
+    Exactly one option is tabbable: the chosen one, or the first when nothing
+    is chosen yet. Done from the DOM rather than by asking every caller to pass
+    an index, because a caller that forgets makes the whole group unreachable
+    by keyboard and nothing says so.
+  */
+  useEffect(() => {
+    const container = ref.current;
+    if (!container) return;
+    const items = [...container.querySelectorAll<HTMLElement>('[role="radio"]')];
+    const chosen = items.find((el) => el.getAttribute('aria-checked') === 'true');
+    const tabbable = chosen ?? items.find((el) => !el.hasAttribute('disabled')) ?? null;
+    for (const el of items) el.tabIndex = el === tabbable ? 0 : -1;
+  });
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const keys = ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'];
+    if (!keys.includes(event.key)) return;
+    const items = [...(ref.current?.querySelectorAll<HTMLElement>('[role="radio"]') ?? [])].filter(
+      (el) => !el.hasAttribute('disabled'),
+    );
+    if (items.length === 0) return;
+    event.preventDefault();
+    const at = items.findIndex((el) => el === document.activeElement);
+    const last = items.length - 1;
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? last
+          : event.key === 'ArrowUp' || event.key === 'ArrowLeft'
+            ? at <= 0
+              ? last
+              : at - 1
+            : at === -1 || at === last
+              ? 0
+              : at + 1;
+    const target = items[next];
+    target?.focus();
+    target?.click();
+  };
+
+  return (
+    <div
+      ref={ref}
+      role="radiogroup"
+      aria-label={labelledBy ? undefined : label}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      className={className}
+      onKeyDown={onKeyDown}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Tells {@link Field} this child names itself. See the note there. */
+ChoiceGroup.groupLabelled = true;
+
+/** One option inside a {@link ChoiceGroup}. The caller owns everything inside. */
+export function ChoiceOption({
+  selected,
+  onSelect,
+  disabled,
+  className,
+  children,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  disabled?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      disabled={disabled}
+      onClick={onSelect}
+      className={className}
+    >
+      {children}
+    </button>
   );
 }

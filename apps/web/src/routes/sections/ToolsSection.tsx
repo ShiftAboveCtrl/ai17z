@@ -4,7 +4,7 @@ import type { AgentTool } from '@app/lib/types';
 import { ApiError, post, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { Field, Modal, Spinner } from '@app/components/ui';
-import { IndexedRow, Section } from './Section';
+import { IndexedRow, Section, SubHeading } from './Section';
 
 interface ToolVerdict {
   key: string;
@@ -222,7 +222,7 @@ export function ToolsSection({
       {policy && (
         <div className="mt-6 border-t border-ink-line pt-8">
           <p className="eyebrow">Looking things up</p>
-          <h4 className="mt-2 text-base font-light text-bone">Where it may check before answering</h4>
+          <SubHeading className="mt-2 text-base font-light text-bone">Where it may check before answering</SubHeading>
           <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
             An agent asked about a post from an hour ago cannot answer from a training set, and one asked anyway
             invents something. The first two are on because of that. Switching one off does not make the agent guess:

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { ApiError, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
-import { SavedTick, Spinner } from './ui';
+import { ChoiceGroup, ChoiceOption, SavedTick, Spinner } from './ui';
 
 type Capability = string;
 
@@ -131,31 +131,33 @@ export function CapabilitiesPanel({
       */}
       {data.catalogue && (
         <div className="space-y-2">
-          {data.catalogue.map((entry) => {
-            const on = entry.name === profile;
-            return (
-              <button
-                key={entry.name}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                disabled={busy}
-                onClick={() => void setProfile(entry.name)}
-                className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                  on ? 'border-signal-calm/50 bg-signal-calm/[0.07]' : 'border-ink-line hover:border-bone-faint'
-                } disabled:opacity-50`}
-              >
-                <span
-                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${on ? 'bg-signal-calm' : 'bg-ink-line'}`}
-                  aria-hidden
-                />
-                <span className="min-w-0">
-                  <span className="block text-[13px] text-bone">{entry.label}</span>
-                  <span className="mt-0.5 block text-xs leading-relaxed text-bone-faint">{entry.summary}</span>
-                </span>
-              </button>
-            );
-          })}
+          {/* Only the options are inside the group: a radiogroup holding two
+              explanatory paragraphs describes them as choices too. */}
+          <ChoiceGroup label="What this agent may do" className="space-y-2">
+            {data.catalogue.map((entry) => {
+              const on = entry.name === profile;
+              return (
+                <ChoiceOption
+                  key={entry.name}
+                  selected={on}
+                  disabled={busy}
+                  onSelect={() => void setProfile(entry.name)}
+                  className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                    on ? 'border-signal-calm/50 bg-signal-calm/[0.07]' : 'border-ink-line hover:border-bone-faint'
+                  } disabled:opacity-50`}
+                >
+                  <span
+                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${on ? 'bg-signal-calm' : 'bg-ink-line'}`}
+                    aria-hidden
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-[13px] text-bone">{entry.label}</span>
+                    <span className="mt-0.5 block text-xs leading-relaxed text-bone-faint">{entry.summary}</span>
+                  </span>
+                </ChoiceOption>
+              );
+            })}
+          </ChoiceGroup>
 
           {profile === 'CUSTOM' && (
             <p className="text-xs leading-relaxed text-bone-faint">

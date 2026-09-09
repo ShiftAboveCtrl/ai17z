@@ -11,10 +11,21 @@ const MAX_BYTES = 200_000;
 /**
  * Fetches a URL and returns its text.
  *
- * Disabled by default and inert until the operator configures an explicit host
- * allowlist on the agent tool. An agent that can fetch arbitrary URLs is an
- * agent that can be steered by whatever it fetches, so the allowlist is the
- * feature, not a formality.
+ * **Not in the catalogue, on purpose.** AI17Z has no tool-calling loop -- the
+ * model never chooses a tool, and looking things up is a pipeline step that
+ * drives the browser and the market API directly. Registering this put a
+ * switch, a host allowlist and an editor on the tools screen for something
+ * that could never run; migration 0062 removed the row.
+ *
+ * Kept rather than deleted because it is the allowlist-gated fetcher a real
+ * tool loop would need, and rewriting it later would probably do it worse:
+ * disabled by default, https only, size-capped, markup stripped, and inert
+ * until an explicit host allowlist exists. An agent that can fetch arbitrary
+ * URLs is an agent that can be steered by whatever it fetches, so the
+ * allowlist is the feature, not a formality.
+ *
+ * Adding it back to `registry.ts` is what returns it, and that should happen
+ * only alongside a loop that actually calls it.
  */
 export const httpFetchTool: ToolDefinition<z.infer<typeof Input>> = {
   key: 'http.fetch',

@@ -52,9 +52,20 @@ describe('what health says about the thing that does the work', () => {
     expect(report.status).toBe('offline');
   });
 
-  it('says what the consequence is, not just that a thing is missing', async () => {
+  it('says what the consequence is, whose problem it is, and how to fix it', async () => {
+    /*
+      Four screens described a missing worker and each wrote its own sentence.
+      Only one of them said how to fix it, and one told an owner to run
+      `npm run dev:worker` -- a developer command an installed copy has no way
+      to run. They share `workerAbsenceSentence` now, so this asserts the three
+      things it has to carry rather than a particular wording.
+    */
     const worker = component(await health(), 'Worker');
-    expect(worker!.detail).toMatch(/queue|nothing will run/i);
+    expect(worker!.detail).toMatch(/reading, replying or posting/i);
+    // Whose problem: nothing running is AI17Z being down, not this agent being
+    // misconfigured. Somebody reading it otherwise goes looking for a setting.
+    expect(worker!.detail).toMatch(/AI17Z itself/i);
+    expect(worker!.detail).toMatch(/desktop icon|start-ai17z\.ps1/i);
   });
 
   it('reports healthy once one checks in, and whether it can drive a browser', async () => {

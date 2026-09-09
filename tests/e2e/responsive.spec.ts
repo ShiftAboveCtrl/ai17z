@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { signIn, useInterface } from './helpers';
 
 /**
@@ -29,13 +29,44 @@ const WIDTHS = [
 
 const ROUTES = ['/', '/activity', '/settings'];
 
+/**
+ * The agent page, which this did not cover and is the one that would break.
+ *
+ * Three static routes were checked and the densest layout in the application
+ * was not: five areas of sections, a 3D portrait, tab navigation that has to
+ * fit five labels on a 375px phone, and tables of machine-generated text. It
+ * needs an agent, so the id is read from the API rather than written down.
+ */
+async function agentRoutes(page: Page): Promise<string[]> {
+  const id = await page.evaluate(async () => {
+    const token = localStorage.getItem('ai17z.session') ?? localStorage.getItem('xbam.session');
+    if (!token) return null;
+    const listed = await fetch('/api/agents', { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
+    return (listed?.data?.items ?? [])[0]?.id ?? null;
+  });
+  // Every area, because only the selected one renders.
+  return id ? ['', '#identity', '#accounts', '#memory', '#policies'].map((h) => `/agents/${id}${h}`) : [];
+}
+
 for (const size of WIDTHS) {
   test(`no sideways scroll and no clipped heading at ${size.width}px (${size.name})`, async ({ page }) => {
     await useInterface(page, 'advanced');
     await page.setViewportSize({ width: size.width, height: size.height });
+    /*
+      Without motion, because the thing being measured is the layout.
+
+      The monumental headings enter with `whileInView` from `y: 0.35em`, and a
+      heading still sitting at its starting offset measures as exactly that
+      much overflow -- which is the animation, not a clipped descender. On the
+      three static routes the heading is at the top and has already arrived,
+      which is why this never came up until the agent page, whose sections are
+      mostly below the fold. `AnimatedText` honours the preference by rendering
+      the words plainly, so this measures the geometry that ships.
+    */
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await signIn(page);
 
-    for (const route of ROUTES) {
+    for (const route of [...ROUTES, ...(await agentRoutes(page))]) {
       await page.goto(route, { waitUntil: 'domcontentloaded' });
       await page.waitForTimeout(400);
 

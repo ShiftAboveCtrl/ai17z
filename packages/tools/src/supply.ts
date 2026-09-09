@@ -49,9 +49,14 @@ export const TOOL_SUPPLY: Record<string, { supply: ToolSupply; says: string }> =
     supply: 'ANOTHER_LAYER',
     says: 'Its own health is included when support mode is on, so it can say why it is not replying.',
   },
+  /*
+    No longer in the catalogue, so no agent has this row -- kept because a
+    database that predates migration 0062 can still hold the key, and an
+    unknown key would otherwise be answered by the vaguer fallback below.
+  */
   'http.fetch': {
     supply: 'NOTHING_CALLS_IT',
-    says: 'Nothing in AI17Z calls this yet. Looking things up is a pipeline step that uses the browser and market data directly, and it does not go through here.',
+    says: 'Nothing in AI17Z calls this. Looking things up is a pipeline step that uses the browser and market data directly, and it does not go through here.',
   },
 };
 

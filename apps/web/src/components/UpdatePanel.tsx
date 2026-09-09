@@ -99,7 +99,7 @@ export function UpdatePanel() {
             onClick={() => void load(() => post<UpdateState>('/api/updates/check', {}), 'check')}
             disabled={busy !== null}
           >
-            {busy === 'check' ? <Spinner className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" />}
+            {busy === 'check' ? <Spinner className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" aria-hidden />}
             Check now
           </button>
         )}
@@ -139,12 +139,12 @@ export function UpdatePanel() {
                 target="_blank"
                 rel="noreferrer"
               >
-                <Download className="h-4 w-4" />
+                <Download className="h-4 w-4" aria-hidden />
                 {latest.installerUrl ? 'Download the installer' : 'Open the release'}
               </a>
             ) : (
               <a className="btn-primary" href={latest.url} target="_blank" rel="noreferrer">
-                <ExternalLink className="h-4 w-4" />
+                <ExternalLink className="h-4 w-4" aria-hidden />
                 Read the release
               </a>
             )}

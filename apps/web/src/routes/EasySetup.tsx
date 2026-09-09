@@ -11,7 +11,7 @@ import type { AccountRow, ProviderCredential } from '@app/lib/types';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { SignInProgress } from '@app/components/SignInProgress';
-import { ErrorPanel, Field, Spinner, StatusDot, Toggle } from '@app/components/ui';
+import { ChoiceGroup, ChoiceOption, ErrorPanel, Field, Spinner, StatusDot, Toggle } from '@app/components/ui';
 import { Blockers } from '@app/components/Blockers';
 import { ModelChooser } from '@app/components/ModelChooser';
 import { CharacterBuilder, CompletenessBar, type CharacterDraft } from '@app/components/CharacterBuilder';
@@ -442,12 +442,12 @@ export function EasySetup() {
             </Field>
 
             <Field label="How do they speak?" hint="A starting point. Everything here stays editable afterwards.">
-              <div className="grid gap-2 sm:grid-cols-2">
+              <ChoiceGroup label="How do they speak?" className="grid gap-2 sm:grid-cols-2">
                 {(Object.keys(EASY_STYLE_PRESETS) as Exclude<EasyStylePreset, 'CUSTOM'>[]).map((preset) => (
-                  <button
+                  <ChoiceOption
                     key={preset}
-                    type="button"
-                    onClick={() => setSetup({ character: { ...draft.setup.character, preset, tone: '', speaksLike: '' } })}
+                    selected={draft.setup.character.preset === preset}
+                    onSelect={() => setSetup({ character: { ...draft.setup.character, preset, tone: '', speaksLike: '' } })}
                     className={`rounded-lg border px-3.5 py-3 text-left transition-colors ${
                       draft.setup.character.preset === preset
                         ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone'
@@ -467,9 +467,9 @@ export function EasySetup() {
                         {EASY_STYLE_PRESETS[preset].tone} {EASY_STYLE_PRESETS[preset].style}
                       </span>
                     )}
-                  </button>
+                  </ChoiceOption>
                 ))}
-              </div>
+              </ChoiceGroup>
             </Field>
 
             <Field label="Personality" htmlFor="personality">
@@ -498,7 +498,7 @@ export function EasySetup() {
               label="What language should it reply in?"
               hint="With no rule it answers in whatever language it was written to, which surprises most people the first time it happens."
             >
-              <div className="grid gap-2 sm:grid-cols-3">
+              <ChoiceGroup label="What language does it reply in?" className="grid gap-2 sm:grid-cols-3">
                 {(
                   [
                     ['MIRROR', 'Match the message', 'Polish in, Polish out'],
@@ -506,10 +506,10 @@ export function EasySetup() {
                     ['CUSTOM', 'Something else', 'Write the rule yourself'],
                   ] as const
                 ).map(([value, label, hint]) => (
-                  <button
+                  <ChoiceOption
                     key={value}
-                    type="button"
-                    onClick={() => setSetup({ language: value })}
+                    selected={draft.setup.language === value}
+                    onSelect={() => setSetup({ language: value })}
                     className={`rounded-lg border px-3.5 py-3 text-left transition-colors ${
                       draft.setup.language === value
                         ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone'
@@ -518,9 +518,9 @@ export function EasySetup() {
                   >
                     <span className="block text-sm">{label}</span>
                     <span className="mt-1 block text-[11px] text-bone-faint">{hint}</span>
-                  </button>
+                  </ChoiceOption>
                 ))}
-              </div>
+              </ChoiceGroup>
             </Field>
 
             {draft.setup.language === 'CUSTOM' && (
@@ -536,7 +536,7 @@ export function EasySetup() {
             )}
 
             <Field label="Emoji" hint="Models left alone put one in every sentence, which is the fastest way to read as a bot.">
-              <div className="grid gap-2 sm:grid-cols-2">
+              <ChoiceGroup label="How much emoji?" className="grid gap-2 sm:grid-cols-2">
                 {(
                   [
                     ['NONE', 'None at all', 'Not even when the other person uses them'],
@@ -545,10 +545,10 @@ export function EasySetup() {
                     ['UNRESTRICTED', 'No rule', 'Whatever the model does'],
                   ] as const
                 ).map(([value, label, hint]) => (
-                  <button
+                  <ChoiceOption
                     key={value}
-                    type="button"
-                    onClick={() => setSetup({ emoji: { ...draft.setup.emoji, use: value } })}
+                    selected={draft.setup.emoji.use === value}
+                    onSelect={() => setSetup({ emoji: { ...draft.setup.emoji, use: value } })}
                     className={`rounded-lg border px-3.5 py-3 text-left transition-colors ${
                       draft.setup.emoji.use === value
                         ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone'
@@ -557,9 +557,9 @@ export function EasySetup() {
                   >
                     <span className="block text-sm">{label}</span>
                     <span className="mt-1 block text-[11px] text-bone-faint">{hint}</span>
-                  </button>
+                  </ChoiceOption>
                 ))}
-              </div>
+              </ChoiceGroup>
             </Field>
 
             {draft.setup.emoji.use === 'SELECTED' && (
@@ -639,12 +639,12 @@ export function EasySetup() {
         {step === 4 && (
           <>
             <Field label="Who should it answer?">
-              <div className="space-y-2">
+              <ChoiceGroup label="Who should it answer?" className="space-y-2">
                 {AUDIENCE_OPTIONS.map((option) => (
-                  <button
+                  <ChoiceOption
                     key={option.value}
-                    type="button"
-                    onClick={() =>
+                    selected={draft.setup.replies.audience === option.value}
+                    onSelect={() =>
                       setSetup({
                         replies: {
                           ...draft.setup.replies,
@@ -664,9 +664,9 @@ export function EasySetup() {
                   >
                     <span className="block text-sm">{option.label}</span>
                     <span className="mt-1 block text-[11px] text-bone-faint">{option.detail}</span>
-                  </button>
+                  </ChoiceOption>
                 ))}
-              </div>
+              </ChoiceGroup>
             </Field>
 
             {draft.setup.replies.audience === 'ALLOWLIST' && (
@@ -683,7 +683,7 @@ export function EasySetup() {
             )}
 
             <Field label="How selective should it be?">
-              <div className="grid gap-2 sm:grid-cols-3">
+              <ChoiceGroup label="How selective should it be?" className="grid gap-2 sm:grid-cols-3">
                 {(
                   [
                     ['ALMOST_EVERYTHING', 'Reply to almost everything'],
@@ -691,10 +691,10 @@ export function EasySetup() {
                     ['ONLY_WHEN_USEFUL', 'Only when it has something useful to say'],
                   ] as const
                 ).map(([value, label]) => (
-                  <button
+                  <ChoiceOption
                     key={value}
-                    type="button"
-                    onClick={() => setSetup({ replies: { ...draft.setup.replies, selectivity: value } })}
+                    selected={draft.setup.replies.selectivity === value}
+                    onSelect={() => setSetup({ replies: { ...draft.setup.replies, selectivity: value } })}
                     className={`rounded-lg border px-3.5 py-3 text-left text-sm transition-colors ${
                       draft.setup.replies.selectivity === value
                         ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone'
@@ -702,9 +702,9 @@ export function EasySetup() {
                     }`}
                   >
                     {label}
-                  </button>
+                  </ChoiceOption>
                 ))}
-              </div>
+              </ChoiceGroup>
             </Field>
 
             <div className="space-y-3 border-t border-ink-line pt-6">
@@ -758,7 +758,7 @@ export function EasySetup() {
             />
             {draft.setup.posting.enabled && (
               <Field label="How often?" hint="A ceiling, not a schedule. It stays quiet when it has nothing worth posting.">
-                <div className="grid gap-2 sm:grid-cols-3">
+                <ChoiceGroup label="How often should it post?" className="grid gap-2 sm:grid-cols-3">
                   {(
                     [
                       ['OCCASIONALLY', 'Occasionally'],
@@ -766,10 +766,10 @@ export function EasySetup() {
                       ['DAILY', 'About daily'],
                     ] as const
                   ).map(([value, label]) => (
-                    <button
+                    <ChoiceOption
                       key={value}
-                      type="button"
-                      onClick={() => setSetup({ posting: { ...draft.setup.posting, frequency: value } })}
+                      selected={draft.setup.posting.frequency === value}
+                      onSelect={() => setSetup({ posting: { ...draft.setup.posting, frequency: value } })}
                       className={`rounded-lg border px-3.5 py-3 text-sm transition-colors ${
                         draft.setup.posting.frequency === value
                           ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone'
@@ -777,9 +777,9 @@ export function EasySetup() {
                       }`}
                     >
                       {label}
-                    </button>
+                    </ChoiceOption>
                   ))}
-                </div>
+                </ChoiceGroup>
               </Field>
             )}
           </>
@@ -787,7 +787,7 @@ export function EasySetup() {
 
         {step === 6 && (
           <Field label="How should it operate?">
-            <div className="space-y-2">
+            <ChoiceGroup label="How should it operate?" className="space-y-2">
               {(
                 [
                   [
@@ -798,10 +798,10 @@ export function EasySetup() {
                   ['AUTOMATIC', 'Automatic', 'It replies and posts on its own, within the rules you just set.'],
                 ] as const
               ).map(([value, label, detail]) => (
-                <button
+                <ChoiceOption
                   key={value}
-                  type="button"
-                  onClick={() => setSetup({ operation: value })}
+                  selected={draft.setup.operation === value}
+                  onSelect={() => setSetup({ operation: value })}
                   className={`block w-full rounded-lg border px-3.5 py-3 text-left transition-colors ${
                     draft.setup.operation === value
                       ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone'
@@ -810,9 +810,9 @@ export function EasySetup() {
                 >
                   <span className="block text-sm">{label}</span>
                   <span className="mt-1 block text-[11px] text-bone-faint">{detail}</span>
-                </button>
+                </ChoiceOption>
               ))}
-            </div>
+            </ChoiceGroup>
           </Field>
         )}
 
@@ -1205,12 +1205,12 @@ function ConnectAI({
   return (
     <div className="space-y-6">
       <Field label="Which AI is behind this agent?">
-        <div className="grid gap-2 sm:grid-cols-2">
+        <ChoiceGroup label="Which AI is behind this agent?" className="grid gap-2 sm:grid-cols-2">
           {PROVIDERS.map((option) => (
-            <button
+            <ChoiceOption
               key={option.kind}
-              type="button"
-              onClick={() => set({ providerKind: option.kind })}
+              selected={draft.providerKind === option.kind}
+              onSelect={() => set({ providerKind: option.kind })}
               className={`rounded-lg border px-3.5 py-3 text-left transition-colors ${
                 draft.providerKind === option.kind
                   ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone'
@@ -1219,9 +1219,9 @@ function ConnectAI({
             >
               <span className="block text-sm">{option.label}</span>
               {option.hint && <span className="mt-1 block text-[11px] text-bone-faint">{option.hint}</span>}
-            </button>
+            </ChoiceOption>
           ))}
-        </div>
+        </ChoiceGroup>
       </Field>
 
       {spec.needsKey && !existing && (

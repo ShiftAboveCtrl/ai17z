@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { HealthComponent, HealthReport } from '@xbam/shared/contracts';
-import { describeVersion, nowIso } from '@xbam/shared';
+import { describeVersion, nowIso, workerAbsenceSentence } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   jobs as jobsRepo,
@@ -89,7 +89,7 @@ async function collect(): Promise<HealthReport> {
         status: present.length === 0 ? 'offline' : 'healthy',
         detail:
           present.length === 0
-            ? `Nothing has checked in for ${WORKER_PRESENT_SECONDS} seconds. Jobs will queue and nothing will run them.`
+            ? workerAbsenceSentence(WORKER_PRESENT_SECONDS)
             : `${present.length} running, ${browserCapable} of them able to drive a browser`,
         optional: false,
         kind: 'core',

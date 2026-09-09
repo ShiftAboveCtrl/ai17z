@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
 import { ApiError, get, put } from '@app/lib/api';
-import { Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
-import { Section } from './Section';
+import { ChoiceGroup, ChoiceOption, Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
+import { Section, useSubHeading } from './Section';
 
 /** What the spending endpoint answers with. One report per limit, plus warnings. */
 interface LimitReport {
@@ -35,10 +35,13 @@ const STANCE_CONFLICT = ['REWRITE', 'REVIEW', 'ALLOW_AND_REVISE', 'IGNORE'] as c
  * undifferentiated list.
  */
 function Group({ title, blurb, children }: { title: string; blurb: string; children: React.ReactNode }) {
+  // One level below whatever the surrounding section used, rather than always
+  // `h4` -- which skipped a level on the agent page.
+  const H = useSubHeading();
   return (
     <section className="space-y-4">
       <div className="border-b border-ink-line pb-3">
-        <h4 className="text-sm text-bone">{title}</h4>
+        <H className="text-sm text-bone">{title}</H>
         <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-bone-faint">{blurb}</p>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">{children}</div>
@@ -135,20 +138,18 @@ export function PoliciesSection({
       <div className="space-y-10">
         <Group title="Automation" blurb="What it is allowed to do without being asked.">
           <Field label="Automation" hint="Review mode holds every message for a person before anything is sent.">
-            <div className="space-y-2">
+            <ChoiceGroup label="Automation" className="space-y-2">
               {MODES.map((mode) => (
-                <button
+                <ChoiceOption
                   key={mode}
-                  type="button"
-                  role="radio"
-                  aria-checked={draft.automation.mode === mode}
-                  onClick={() => patch((n) => void (n.automation.mode = mode))}
+                  selected={draft.automation.mode === mode}
+                  onSelect={() => patch((n) => void (n.automation.mode = mode))}
                   className={`block w-full rounded-lg border px-3.5 py-2.5 text-left text-sm capitalize transition-colors ${draft.automation.mode === mode ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone' : 'border-ink-line text-bone-dim hover:border-bone-faint'}`}
                 >
                   {mode.replace(/_/g, ' ').toLowerCase()}
-                </button>
+                </ChoiceOption>
               ))}
-            </div>
+            </ChoiceGroup>
           </Field>
           <Toggle
             checked={draft.automation.dryRunDefault}
