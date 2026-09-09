@@ -2,8 +2,8 @@ import { useRef, useState } from 'react';
 import { Download, FileText, Sparkles, Upload, Wand2 } from 'lucide-react';
 import type { CharacterAnswers, CharacterCompleteness } from '@xbam/shared/contracts';
 import { ApiError, post } from '@app/lib/api';
-import { usePolling, useResource } from '@app/lib/hooks';
-import { ErrorPanel, Field, Spinner } from './ui';
+import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
+import { ErrorPanel, Field, Spinner, Working } from './ui';
 
 /**
  * Four ways to describe a character, and the same answers out of all of them.
@@ -82,6 +82,8 @@ export function CharacterBuilder({
 function DescribeIt({ agentId, onDraft }: { agentId: string; onDraft: (draft: CharacterDraft) => void }) {
   const [description, setDescription] = useState('');
   const [busy, setBusy] = useState(false);
+  // Seconds on screen, so a slow answer and a hung one look different.
+  const elapsedRequest = useElapsed(busy);
   const [error, setError] = useState<string | null>(null);
 
   const build = async () => {
@@ -125,6 +127,19 @@ function DescribeIt({ agentId, onDraft }: { agentId: string; onDraft: (draft: Ch
         </button>
         <span className="text-[11px] text-bone-faint">Uses the model you connected to this agent.</span>
       </div>
+      {/*
+        This asks a model to invent a whole character and routinely takes over
+        a minute. Behind a spinner in a button, a minute and a hang look the
+        same -- which is the thing `Working` exists to stop.
+      */}
+      {busy && (
+        <Working
+          label="Writing the character"
+          seconds={elapsedRequest}
+          slowAfter={20}
+          slowHint="A full character is a long answer. A slow provider can take two or three minutes."
+        />
+      )}
       {error && <ErrorPanel title="That could not be built." detail={error} />}
     </div>
   );
@@ -134,6 +149,8 @@ function DescribeIt({ agentId, onDraft }: { agentId: string; onDraft: (draft: Ch
 function UseTemplate({ agentId, onDraft }: { agentId: string; onDraft: (draft: CharacterDraft) => void }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  // Seconds on screen, so a slow answer and a hung one look different.
+  const elapsedRequest = useElapsed(busy);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -214,6 +231,7 @@ function UseTemplate({ agentId, onDraft }: { agentId: string; onDraft: (draft: C
         {busy ? <Spinner /> : <FileText className="h-4 w-4" aria-hidden />}
         Read it
       </button>
+      {busy && <Working label="Reading the brief" seconds={elapsedRequest} />}
       {error && <ErrorPanel title="That could not be read." detail={error} />}
     </div>
   );
@@ -244,6 +262,9 @@ function LearnFromAccount({ agentId, onDraft }: { agentId: string; onDraft: (dra
 
   const working = started && !learned.data?.ready;
   usePolling(() => learned.reload(), 4_000, working);
+  // The wait here is the reading, not the request that asked for it: the POST
+  // returns immediately and the work goes on in the worker.
+  const elapsedWork = useElapsed(working);
 
   const start = async () => {
     setBusy(true);
@@ -282,9 +303,12 @@ function LearnFromAccount({ agentId, onDraft }: { agentId: string; onDraft: (dra
       </button>
 
       {working && (
-        <p className="rounded-lg border border-ink-line px-3.5 py-3 text-[13px] leading-relaxed text-bone-dim">
-          {learned.data?.detail ?? 'Reading the account. This takes a minute or two.'}
-        </p>
+        <Working
+          label={learned.data?.detail ?? 'Reading the account'}
+          seconds={elapsedWork}
+          slowAfter={45}
+          slowHint="Six hundred posts is a lot to read. It keeps going while you look at something else."
+        />
       )}
 
       {learned.data?.ready && learned.data.answers && (

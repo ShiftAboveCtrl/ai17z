@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ApiError, get, post, setToken, getToken } from './api';
+import { forgetFetchedResources } from './hooks';
 
 export interface SessionUser {
   id: string;
@@ -70,6 +71,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     await post('/api/auth/logout').catch(() => undefined);
     setToken(null);
     setUser(null);
+    // Resources hold whatever the last person was looking at for a couple of
+    // seconds. Signing out is exactly when that must not be handed on.
+    forgetFetchedResources();
   }, []);
 
   const value = useMemo(

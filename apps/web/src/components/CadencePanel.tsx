@@ -281,7 +281,7 @@ export function CadencePanel({ accountId }: { accountId: string }) {
       <div className="flex items-center gap-3">
         <button type="button" className="btn-ghost" onClick={() => void save()} disabled={busy || !dirty}>
           {busy && <Spinner className="h-3.5 w-3.5" />}
-          Save as version
+          Save
         </button>
         <SavedTick visible={saved} />
         {dirty && !busy && <span className="text-xs text-bone-faint">unsaved</span>}

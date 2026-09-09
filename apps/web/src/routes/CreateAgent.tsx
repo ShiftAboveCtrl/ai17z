@@ -178,7 +178,7 @@ export function CreateAgent() {
       <div className="min-h-[22rem] space-y-6">
         {step === 0 && (
           <>
-            <Field label="Name" htmlFor="name" hint="Shown everywhere in AI17Z and used as the agent display name.">
+            <Field label="Name" htmlFor="name" hint="Shown everywhere in AI17Z, and it is the name the agent posts under.">
               <input id="name" className="field" autoFocus value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder="Nova" />
             </Field>
             <Field label="Description" htmlFor="description" hint="For you, not for the model.">
@@ -190,7 +190,7 @@ export function CreateAgent() {
         {step === 1 && (
           <div className="grid gap-8 sm:grid-cols-[auto_1fr] sm:items-start">
             <AgentGlyph agentId="preview" name={draft.name || 'Agent'} imageUrl={draft.avatarUrl || null} size="lg" />
-            <Field label="Portrait URL" htmlFor="avatar" hint="Any image URL. It becomes the agent likeness, rendered with depth and parallax on its page. Leave blank for a generated mark.">
+            <Field label="Portrait URL" htmlFor="avatar" hint="Any image URL. It becomes the agent's likeness, rendered with depth and parallax on its page. Leave blank for a generated mark.">
               <input id="avatar" className="field" value={draft.avatarUrl} onChange={(e) => set('avatarUrl', e.target.value)} placeholder="https://..." />
             </Field>
           </div>

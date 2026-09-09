@@ -133,7 +133,7 @@ export function AgentPage() {
           actions={
             <>
               <button type="button" className="btn-ghost" onClick={reload}>
-                Retry
+                Try again
               </button>
               <Link to="/" className="btn-quiet">
                 Back to agents
