@@ -74,3 +74,44 @@ describe('icons in the interface', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * The agent's name is announced once.
+ *
+ * It appeared twice in the page's text: the heading, and an `sr-only` span
+ * inside the portrait -- itself inside an `aria-hidden` wrapper, so hidden
+ * from sight and from assistive technology both, and reachable only by reading
+ * the DOM. Which is exactly how it was found and reported.
+ */
+describe('the agent portrait', () => {
+  const portrait = readFileSync(resolve(web, 'components/AgentPortrait.tsx'), 'utf8');
+
+  it('carries no text of its own', () => {
+    // The heading beside it is what names the agent. Matched on the element
+    // rather than the word, because the comment explaining the removal
+    // necessarily says "sr-only" too.
+    expect(portrait).not.toMatch(/className="sr-only"/);
+    expect(portrait).toContain('aria-hidden');
+  });
+
+  it('shows something where WebGL is unavailable', () => {
+    // The case the sr-only span claimed to cover and could not: with scripting
+    // on and WebGL off the canvas paints nothing, and an `sr-only` label is
+    // invisible to the person looking at the empty box.
+    expect(portrait).toContain('<AgentGlyph');
+    expect(portrait).toContain('absolute inset-0');
+    // `<noscript>` could never show: with scripting off, none of this renders.
+    expect(portrait).not.toMatch(/^\s*<noscript>/m);
+  });
+
+  it('is the only place the page renders the name', () => {
+    const page = readFileSync(resolve(web, 'routes/AgentPage.tsx'), 'utf8');
+    /*
+      Rendered as a child, on a line of its own -- not passed as a prop and not
+      interpolated into a sentence. `name={agent.name}` on a glyph is the same
+      string used as data, and "Delete {name}?" is a question, not a heading.
+    */
+    const asText = page.split('\n').filter((line) => line.trim() === '{agent.name}').length;
+    expect(asText, 'the name is rendered as page text more than once').toBe(1);
+  });
+});

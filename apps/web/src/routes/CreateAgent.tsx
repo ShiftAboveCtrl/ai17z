@@ -52,7 +52,16 @@ const INITIAL: Draft = {
   rememberUserFacts: true,
   threadMemory: true,
   automation: 'REVIEW_BEFORE_ACTION',
-  dryRunDefault: true,
+  /*
+    Off, and Easy Mode has always had it off for the reason written there:
+    review means a person approves a real action, not that the action is
+    pretended. Stacked on the default REVIEW_BEFORE_ACTION this was two safety
+    nets where the second silently defeats the first -- somebody approves a
+    reply, having been told this step "waits for you to approve or edit before
+    anything is sent", and nothing is sent. The toggle is on the same screen
+    for anybody who wants both.
+  */
+  dryRunDefault: false,
   maxCharacters: 280,
 };
 
@@ -336,7 +345,7 @@ export function CreateAgent() {
               checked={draft.dryRunDefault}
               onChange={(v) => set('dryRunDefault', v)}
               label="Dry run by default"
-              description="Runs the whole pipeline including target verification, then stops before touching the remote account."
+              description="Runs the whole pipeline including target verification, then stops before touching the remote account. Approving a held reply will not send it either."
             />
             <Field label="Maximum reply length" htmlFor="maxchars">
               <input id="maxchars" type="number" min={20} max={5000} className="field" value={draft.maxCharacters} onChange={(e) => set('maxCharacters', Number(e.target.value) || 280)} />
