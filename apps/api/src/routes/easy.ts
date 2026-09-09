@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { EasySetup, type Blocker, type RadarSourceKind } from '@xbam/shared/contracts';
-import { ForbiddenError, NotFoundError } from '@xbam/shared';
+import { ForbiddenError, NotFoundError, noBrowserWorker, noWorkerRunning } from '@xbam/shared';
 import { ensureAgentPipeline, ensureDefaultRadarSources } from '@xbam/runtime';
 import {
   accounts as accountsRepo,
@@ -13,6 +13,7 @@ import {
   providers as providersRepo,
   radar as radarRepo,
   workers as workersRepo,
+  WORKER_PRESENT_SECONDS,
   type UserRow,
 } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
@@ -293,16 +294,8 @@ async function preflight(agentId: string): Promise<Blocker[]> {
       // that an installed copy has no way to run.
       blockers.push(
         workers.length > 0
-          ? {
-              what: 'A worker is running, but it is the one inside Docker, which has no browser.',
-              fix: 'Chrome is driven by a second worker that runs on this machine. Start AI17Z from its desktop icon, or run .\\start-ai17z.ps1, and it starts one.',
-              where: 'worker',
-            }
-          : {
-              what: 'Nothing is running that can open a browser.',
-              fix: 'Start AI17Z from its desktop icon, or run .\\start-ai17z.ps1. In a checkout, npm run dev:worker.',
-              where: 'worker',
-            },
+          ? { ...noBrowserWorker(), where: 'worker' }
+          : { ...noWorkerRunning(WORKER_PRESENT_SECONDS), where: 'worker' },
       );
     }
   }

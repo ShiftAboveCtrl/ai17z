@@ -1,6 +1,35 @@
-import type { ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { Explain } from '@app/components/Explain';
+
+/**
+ * What heading level the section itself used, so anything nested under it can
+ * be one below rather than guessing.
+ *
+ * A section is `<h2>` on the agent page and `<h3>` in Easy Mode's compact
+ * view, and the groups inside it were `<h4>` either way -- a skipped level in
+ * Advanced, which is what a screen reader reports as a missing heading.
+ */
+const SectionLevel = createContext<2 | 3>(2);
+
+/**
+ * The tag a heading inside the current section should use.
+ *
+ * Only correct when called from a component that renders *inside* the section
+ * -- a group, a panel -- not from the one that renders the `<Section>` itself,
+ * which sits outside the provider and would always read the default. Use
+ * {@link SubHeading} where the heading is written directly in that component's
+ * own JSX.
+ */
+export function useSubHeading(): 'h3' | 'h4' {
+  return useContext(SectionLevel) === 2 ? 'h3' : 'h4';
+}
+
+/** A heading one level below the section it is inside. */
+export function SubHeading({ className, children }: { className?: string; children: ReactNode }) {
+  const Tag = useSubHeading();
+  return <Tag className={className}>{children}</Tag>;
+}
 
 /**
  * One domain per section.
@@ -53,6 +82,7 @@ export function Section({
 }) {
   if (compact) {
     return (
+      <SectionLevel.Provider value={3}>
       <section id={id} className="scroll-mt-28">
         <div className="mb-4">
           <p className="eyebrow">{eyebrow}</p>
@@ -62,10 +92,12 @@ export function Section({
         </div>
         {children}
       </section>
+      </SectionLevel.Provider>
     );
   }
 
   return (
+    <SectionLevel.Provider value={2}>
     <section id={id} className="scroll-mt-24 border-t border-ink-line py-7 sm:py-14">
       <div className="mb-6 sm:mb-8">
         <FadeIn>
@@ -93,6 +125,7 @@ export function Section({
       </div>
       <FadeIn delay={0.1}>{children}</FadeIn>
     </section>
+    </SectionLevel.Provider>
   );
 }
 

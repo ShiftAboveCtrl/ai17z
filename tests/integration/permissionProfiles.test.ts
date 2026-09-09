@@ -127,15 +127,17 @@ describe('switching a profile leaves everything it does not name alone', () => {
   });
 
   it('does not re-enable a tool the owner turned off', async () => {
+    // Any real tool will do; this used `http.fetch`, which is no longer in the
+    // catalogue because nothing in AI17Z ever called it.
     const fixture = await createFixture();
     const accountId = await linkedAccount(fixture.ownerId, fixture.agentId);
-    await ops.setAgentTool({ agentId: fixture.agentId, toolKey: 'http.fetch', enabled: false });
+    await ops.setAgentTool({ agentId: fixture.agentId, toolKey: 'memory.search', enabled: false });
 
     await applyProfile({ agentId: fixture.agentId, accountId, profile: 'REPLIES_ONLY' });
     await applyProfile({ agentId: fixture.agentId, accountId, profile: 'REPLIES_AND_POSTS' });
 
     const tools = await ops.listAgentTools(fixture.agentId);
-    expect(tools.find((tool: { key: string }) => tool.key === 'http.fetch')?.enabled).toBe(false);
+    expect(tools.find((tool: { key: string }) => tool.key === 'memory.search')?.enabled).toBe(false);
   });
 
   it('does not widen which events trigger the agent', async () => {

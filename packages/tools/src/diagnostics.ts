@@ -15,7 +15,7 @@
  * field.
  */
 import type { AgentDiagnostics, ComponentHealth, FailureSummary, HealthState } from '@xbam/shared/contracts';
-import { createLogger, errorMessage, nowIso } from '@xbam/shared';
+import { createLogger, errorMessage, nowIso, workerAbsenceSentence } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -99,7 +99,10 @@ async function workerHealth(): Promise<ComponentHealth> {
       state: present.length === 0 ? 'FAILING' : 'HEALTHY',
       detail:
         present.length === 0
-          ? `Nothing has checked in for ${WORKER_PRESENT_SECONDS} seconds, so no work is being done at all.`
+          ? // Says whose problem it is and how to get out of it. This used to
+            // be "no work is being done at all", which is true, is the loudest
+            // thing on an agent page, and reads as a fault in the agent.
+            workerAbsenceSentence(WORKER_PRESENT_SECONDS)
           : `${present.length} running, ${browserCapable} able to drive a browser.`,
       lastSucceededAt: present[0]?.lastSeenAt ?? null,
       failingForMinutes: null,

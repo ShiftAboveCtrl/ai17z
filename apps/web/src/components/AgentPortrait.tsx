@@ -122,9 +122,27 @@ export function AgentPortrait({
   // portrait AI17Z stores has to be resolved before it gets here.
   const resolved = useAuthedImage(imageUrl);
 
+  /*
+    Decorative, because the heading beside it already names the agent.
+
+    It used to carry an `sr-only` span holding the name -- inside an
+    `aria-hidden` wrapper, so hidden from assistive technology as well as from
+    sight, and reachable only by reading the page's text out of the DOM, which
+    is exactly how it was found and reported as the name rendering twice. And
+    the `<noscript>` under it could never show: with scripting off this React
+    application renders nothing at all for it to be inside of.
+
+    So both are gone, and the case they claimed to cover is handled instead:
+    the flat likeness sits behind the canvas, and shows through wherever WebGL
+    is unavailable and the canvas paints nothing.
+  */
   return (
-    <div className={className} aria-hidden>
+    <div className={`relative ${className ?? ''}`} aria-hidden>
+      <div className="absolute inset-0">
+        <AgentGlyph agentId={agentId} name={name} imageUrl={imageUrl} size="xl" interactive={false} />
+      </div>
       <Canvas
+        className="relative"
         dpr={[1, 1.75]}
         frameloop={reduced ? 'demand' : 'always'}
         gl={{ antialias: true, powerPreference: 'low-power' }}
@@ -138,11 +156,6 @@ export function AgentPortrait({
           )}
         </Suspense>
       </Canvas>
-      {/* Screen readers and no-WebGL browsers get the flat likeness instead. */}
-      <span className="sr-only">{name}</span>
-      <noscript>
-        <AgentGlyph agentId={agentId} name={name} imageUrl={imageUrl} size="xl" interactive={false} />
-      </noscript>
     </div>
   );
 }

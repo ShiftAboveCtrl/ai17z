@@ -125,12 +125,17 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
+                    {/*
+                      Named rather than hidden: the icon is the only thing that
+                      says whether this is a folder, a page or a file, so
+                      hiding it would take that away rather than tidy it.
+                    */}
                     {source.kind === 'PATH' ? (
-                      <FolderOpen className="h-4 w-4 shrink-0" />
+                      <FolderOpen className="h-4 w-4 shrink-0" role="img" aria-label="Folder" />
                     ) : source.kind === 'URL' ? (
-                      <Globe className="h-4 w-4 shrink-0" />
+                      <Globe className="h-4 w-4 shrink-0" role="img" aria-label="Web page" />
                     ) : (
-                      <FileText className="h-4 w-4 shrink-0" />
+                      <FileText className="h-4 w-4 shrink-0" role="img" aria-label="File" />
                     )}
                     <span className="font-medium">{source.name}</span>
                   </div>
@@ -180,11 +185,14 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                       })
                     }
                   >
-                    {busy === `refresh-${source.id}` ? <Spinner /> : <RefreshCw className="h-4 w-4" />}
+                    {busy === `refresh-${source.id}` ? <Spinner /> : <RefreshCw className="h-4 w-4" aria-hidden />}
                     Read again
                   </button>
                   <button
                     type="button"
+                    // The only control here with no words in it, and it is the
+                    // destructive one: a screen reader announced "button".
+                    aria-label={`Remove ${source.name}`}
                     className="btn-ghost text-signal-fail"
                     disabled={busy !== null}
                     onClick={() => {
@@ -196,7 +204,7 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                       });
                     }}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="h-4 w-4" aria-hidden />
                   </button>
                 </div>
               </div>
@@ -229,7 +237,7 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
             title={offer.describes}
             onClick={() => void create({ name: offer.name, kind: 'PATH', location: offer.location })}
           >
-            {busy === 'create' ? <Spinner /> : <FolderOpen className="h-4 w-4" />}
+            {busy === 'create' ? <Spinner /> : <FolderOpen className="h-4 w-4" aria-hidden />}
             Teach it about {offer.name}
           </button>
         ))}

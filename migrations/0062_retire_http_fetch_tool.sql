@@ -1,0 +1,20 @@
+-- Retires the `http.fetch` tool from the owner-facing catalogue.
+--
+-- AI17Z has no tool-calling loop: the model never chooses a tool. Looking
+-- things up is a pipeline step that drives the browser and the market API
+-- directly, before the reply is written, and hands over what it found.
+--
+-- So `http.fetch` was a switch, an allowlist and an editor for something that
+-- could never run. The tools screen said so on its row -- "nothing calls it" --
+-- which is honest and is still a control that does nothing. Advertising a
+-- capability the product does not have is the thing this repository refuses to
+-- do everywhere else, and a warning label is a mitigation rather than an
+-- answer.
+--
+-- The implementation is kept, deliberately unregistered, because it is the
+-- allowlist-gated fetcher a real tool loop would need and rewriting it later
+-- would probably do it worse. Registering it again is what brings the row back.
+--
+-- `agent_tools` cascades. What is lost is a per-agent enable flag and a host
+-- allowlist for something that never fetched anything.
+DELETE FROM tools WHERE key = 'http.fetch';

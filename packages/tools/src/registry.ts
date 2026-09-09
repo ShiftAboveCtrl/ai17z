@@ -3,15 +3,24 @@ import { createLogger } from '@xbam/shared';
 import type { ToolDefinition } from './contract';
 import { timeNowTool } from './builtin/timeNow';
 import { memorySearchTool } from './builtin/memorySearch';
-import { httpFetchTool } from './builtin/httpFetch';
 import { selfDiagnosticsTool } from './builtin/selfDiagnostics';
 
 const log = createLogger('tools');
 
+/*
+  The catalogue, which is also what the tools screen offers.
+
+  `httpFetchTool` is deliberately absent. Nothing in AI17Z calls a tool: the
+  model never chooses one, and looking things up is a pipeline step that drives
+  the browser and the market API directly. A row for it was a switch, an
+  allowlist and an editor for something that could never run -- labelled
+  "nothing calls it", which is honest and is still a control that does nothing.
+  Migration 0062 removes the row that was already synced. Adding it back here
+  is what would return it, and it should only happen alongside a real loop.
+*/
 const TOOLS: ToolDefinition<never>[] = [
   timeNowTool as ToolDefinition<never>,
   memorySearchTool as ToolDefinition<never>,
-  httpFetchTool as ToolDefinition<never>,
   selfDiagnosticsTool as ToolDefinition<never>,
 ];
 
@@ -37,10 +46,3 @@ export async function syncToolCatalogue(): Promise<void> {
   log.info('tool catalogue synced', { count: TOOLS.length });
 }
 
-/** One-line descriptions for the TOOLS prompt layer. */
-export function describeTools(keys: readonly string[]): string[] {
-  return keys
-    .map((key) => getToolDefinition(key))
-    .filter((tool): tool is ToolDefinition<never> => Boolean(tool))
-    .map((tool) => `${tool.key}: ${tool.description}`);
-}

@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { LogOut, Plus } from 'lucide-react';
 import { useViewMode, type ViewMode } from '@app/lib/viewMode';
 import { useSession } from '@app/lib/session';
+import { ChoiceGroup, ChoiceOption } from '@app/components/ui';
 
 /**
  * Deliberately not a persistent sidebar. Navigation stays out of the way until
@@ -132,9 +133,8 @@ export function TopBar() {
  */
 function ModeSwitch({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
   return (
-    <div
-      role="radiogroup"
-      aria-label="Interface detail"
+    <ChoiceGroup
+      label="Interface detail"
       className="flex items-center rounded-full border border-ink-line bg-ink-panel/70 p-0.5"
     >
       {(
@@ -143,20 +143,17 @@ function ModeSwitch({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewM
           ['advanced', 'Advanced', 'Every setting AI17Z has'],
         ] as const
       ).map(([value, label, title]) => (
-        <button
+        <ChoiceOption
           key={value}
-          type="button"
-          role="radio"
-          aria-checked={mode === value}
-          title={title}
-          onClick={() => onChange(value)}
+          selected={mode === value}
+          onSelect={() => onChange(value)}
           className={`rounded-full px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] transition-colors sm:px-3 ${
             mode === value ? 'bg-bone/[0.12] text-bone' : 'text-bone-faint hover:text-bone-dim'
           }`}
         >
-          {label}
-        </button>
+          <span title={title}>{label}</span>
+        </ChoiceOption>
       ))}
-    </div>
+    </ChoiceGroup>
   );
 }

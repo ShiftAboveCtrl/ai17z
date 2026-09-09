@@ -22,6 +22,11 @@ import { IndexedRow, Section } from './Section';
  * `mediaResolve`, `plan`, `arcs`, `voice` and `xIntelligence`; the rest of
  * MODEL_ROLES is not wired to anything yet and would be a promise rather than
  * a setting.
+ *
+ * Which is which is declared in `MODEL_ROLE_STATUS` rather than decided here,
+ * so the omission is a recorded decision with a reason rather than a list
+ * somebody forgot to extend -- which is exactly how `vision` came to be asked
+ * for on every image with no row to set it.
  */
 const ROLES = [
   { role: 'primary', label: 'Primary model', hint: 'Tried first for every generation.' },

@@ -226,7 +226,7 @@ export function ContentSection({ index, agentId }: { index: number; agentId: str
                 onClick={() => setAdding(true)}
                 className="inline-flex items-center gap-2 rounded border border-bone/20 px-3 py-1.5 text-[13px] text-bone hover:border-bone/40"
               >
-                <Plus className="h-3.5 w-3.5" /> Add an idea
+                <Plus className="h-3.5 w-3.5" aria-hidden /> Add an idea
               </button>
             </div>
 
@@ -413,7 +413,7 @@ export function ContentSection({ index, agentId }: { index: number; agentId: str
                             onClick={() => setStatus(idea, 'discarded')}
                             className="inline-flex items-center gap-1.5 rounded border border-bone/20 px-2.5 py-1 text-[12px] text-bone-faint hover:border-bone/40 hover:text-bone disabled:opacity-50"
                           >
-                            <Trash2 className="h-3 w-3" /> Set aside
+                            <Trash2 className="h-3 w-3" aria-hidden /> Set aside
                           </button>
                         )}
                       </div>

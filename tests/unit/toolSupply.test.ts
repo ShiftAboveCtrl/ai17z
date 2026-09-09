@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { TOOL_SUPPLY, suppliedFacts, toolSupply } from '@xbam/tools';
+import { TOOL_SUPPLY, getToolDefinition, listToolDefinitions, suppliedFacts, toolSupply } from '@xbam/tools';
 
 const root = resolve(__dirname, '../..');
 
@@ -101,5 +101,39 @@ describe('saying which tools have anything behind them', () => {
       expect(entry.says.length, key).toBeGreaterThan(20);
       expect(entry.says.endsWith('.'), key).toBe(true);
     }
+  });
+});
+
+/**
+ * A tool nothing calls is not a capability, and a switch for one is a control
+ * that does nothing.
+ *
+ * `http.fetch` was in the catalogue with a working, allowlist-gated
+ * implementation and no caller anywhere: AI17Z has no tool-calling loop, and
+ * looking things up is a pipeline step that drives the browser and the market
+ * API itself. The screen labelled the row "nothing calls it", which is honest
+ * and is still a switch, an allowlist and an editor for something that could
+ * never run.
+ */
+describe('the catalogue offers only tools something can call', () => {
+  it('does not offer http.fetch', () => {
+    expect(listToolDefinitions().map((t) => t.key)).not.toContain('http.fetch');
+    expect(getToolDefinition('http.fetch')).toBeNull();
+  });
+
+  it('keeps the implementation, unregistered and said so', () => {
+    // Deleting it would lose the allowlist-gated fetcher a real tool loop
+    // would need. What must not happen is it quietly reappearing in the list.
+    const source = readFileSync(resolve(__dirname, '../../packages/tools/src/builtin/httpFetch.ts'), 'utf8');
+    expect(source).toContain('Not in the catalogue, on purpose');
+    const registry = readFileSync(resolve(__dirname, '../../packages/tools/src/registry.ts'), 'utf8');
+    expect(registry).not.toContain('httpFetchTool as ToolDefinition');
+  });
+
+  it('still explains the key to a database that predates its removal', () => {
+    // The row is gone from the catalogue; an installation upgraded from before
+    // migration 0062 can still hold it, and should get the real sentence
+    // rather than the vaguer fallback for an unknown key.
+    expect(toolSupply('http.fetch').says).toContain('pipeline step');
   });
 });
