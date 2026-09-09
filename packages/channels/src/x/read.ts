@@ -1,9 +1,9 @@
-import type { XPost, XProfile, XSearchResult } from '@xbam/shared/contracts';
+import type { XPost, XProfile, XSearchResult, XThread } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
 import type { ChannelContext } from '../contract';
 import { SEL, X_URLS } from './selectors';
-import type { ArticleSnapshot } from './conversation';
-import { goto, readArticle, settle, withSession } from './page';
+import { resolveBranch, type ArticleSnapshot } from './conversation';
+import { MAX_ARTICLES_READ, goto, readArticle, selfHandles, settle, withSession } from './page';
 import { extractStatusId } from './targets';
 import { readAllArticles } from './monitors';
 
@@ -259,5 +259,60 @@ export async function searchPosts(
     // Honest about what it did not read. A caller told there are ten results
     // when the page had four hundred is being told the wrong thing.
     return { query, mode, posts, more: seen.length > posts.length };
+  });
+}
+
+/**
+ * A whole conversation, root first, with the post that was asked about marked.
+ *
+ * Uses the same walker the reply pipeline uses. On a status page X has already
+ * resolved the reply chain and renders the path from root to focal above it, so
+ * the ancestors are the articles before the focal one and sibling branches are
+ * excluded structurally rather than filtered afterwards. There is no positional
+ * fallback here either: a focal post that cannot be found is a stop, because the
+ * alternative is picking a neighbour and reading the wrong conversation.
+ */
+export async function readThread(ctx: ChannelContext, reference: string): Promise<XThread> {
+  const url = statusUrl(reference);
+  const focalStatusId = extractStatusId(url)!;
+
+  return withSession(ctx, 'RESEARCH', async (session) => {
+    await goto(session.page, url);
+    await settle();
+
+    const snapshots: ArticleSnapshot[] = [];
+    const articles = session.page.locator(SEL.tweetArticle);
+    const count = Math.min(await articles.count().catch(() => 0), MAX_ARTICLES_READ);
+    for (let i = 0; i < count; i += 1) {
+      const snapshot = await readArticle(session.page, `${SEL.tweetArticle} >> nth=${i}`, i).catch(() => null);
+      if (snapshot) snapshots.push(snapshot);
+    }
+
+    const branch = resolveBranch({ articles: snapshots, focalStatusId, selfHandles: selfHandles(ctx) });
+    if (!branch.ok) throw PipelineError.permanent(branch.reason, branch.detail);
+
+    // The path the walker kept, root first, with the focal post last. Sibling
+    // branches are on the page and are not part of this conversation -- the
+    // walker excluded them structurally, so they never reach this list.
+    const branchIds = new Set(
+      [...branch.conversation.ancestors, branch.conversation.incoming]
+        .map((post) => post.remoteId)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const posts: XPost[] = [];
+    const byId = new Map(snapshots.filter((s) => s.statusId).map((s) => [s.statusId!, s]));
+    for (const id of branchIds) {
+      const snapshot = byId.get(id);
+      if (!snapshot) continue;
+      posts.push(toPost(id, snapshot.url ?? `https://x.com/i/web/status/${id}`, snapshot));
+    }
+
+    return {
+      focalStatusId,
+      posts,
+      // Honest about the ceiling: a conversation longer than the walk is a
+      // conversation this did not finish reading.
+      truncated: snapshots.length >= MAX_ARTICLES_READ,
+    };
   });
 }

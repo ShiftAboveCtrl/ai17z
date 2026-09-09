@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { XPost, XProfile, XSearchResult } from '@xbam/shared/contracts';
+import { XPost, XProfile, XSearchResult, XThread } from '@xbam/shared/contracts';
 import { jobs as jobsRepo } from '@xbam/database';
 import { accounts as accountsRepo, workers as workersRepo } from '@xbam/database';
-import { readPost, readProfile, searchPosts } from '@xbam/channels';
+import { readPost, readProfile, readThread, searchPosts } from '@xbam/channels';
 import { defineCapability, registerCapability } from '@xbam/tools';
 import { buildChannelContext } from './channelContext';
 import { performCapabilityAction } from './capabilityActions';
@@ -160,6 +160,38 @@ const searchCapability = defineCapability({
   },
 });
 
+const readThreadCapability = defineCapability({
+  id: 'x.read_thread',
+  name: 'Read a conversation on X',
+  description:
+    'Reads the whole conversation a post belongs to, root first, and returns every post on that branch. ' +
+    'Use it when a post only makes sense in the context of what came before it.',
+  category: 'READ',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z.object({
+    post: z
+      .string()
+      .min(5)
+      .max(200)
+      .refine((value) => /\/status\/\d{5,25}/.test(value) || /^\d{5,25}$/.test(value.trim()), {
+        message: 'must be a post id or a post URL, not a handle',
+      }),
+  }),
+  output: XThread,
+  modelCallable: true,
+  // A conversation is more articles than a single post, and each one is read.
+  timeoutMs: 75_000,
+  async readiness(ctx) {
+    return browserReadiness(ctx.accountId);
+  },
+  async run(input, ctx) {
+    const channel = await contextFor(ctx.accountId, ctx.jobId);
+    if (!channel) throw new Error('This agent has no connected X account to read as.');
+    return readThread(channel, input.post);
+  },
+});
+
 /**
  * Liking a post, which is the first thing a model may do rather than read.
  *
@@ -235,6 +267,70 @@ const likeCapability = defineCapability({
   },
 });
 
+/**
+ * Reposting, which is the other desired-state engagement.
+ *
+ * Same shape as liking and the same machinery underneath, but a higher risk on
+ * purpose: a like is a private-ish acknowledgement and a repost puts somebody
+ * else's words in front of the agent's own followers under its own name. The
+ * default for both is off; the difference is what an owner is deciding about
+ * when they turn one on.
+ */
+const repostCapability = defineCapability({
+  id: 'x.repost',
+  name: 'Repost on X',
+  description:
+    'Reposts one post on X, by id or URL. Use it when something is worth putting in front of the followers of this account as it stands.',
+  category: 'ENGAGE',
+  effect: 'WRITE',
+  risk: 'HIGH',
+  input: z.object({
+    post: z
+      .string()
+      .min(5)
+      .max(200)
+      .refine((value) => /\/status\/\d{5,25}/.test(value) || /^\d{5,25}$/.test(value.trim()), {
+        message: 'must be a post id or a post URL, not a handle',
+      }),
+  }),
+  output: z.object({
+    reposted: z.boolean(),
+    alreadyReposted: z.boolean(),
+    post: z.string(),
+    detail: z.string(),
+  }),
+  modelCallable: true,
+  timeoutMs: 90_000,
+  async readiness(ctx) {
+    if (!ctx.jobId) {
+      return { status: 'UNAVAILABLE' as const, why: 'Acting on X only happens inside a job.' };
+    }
+    return browserReadiness(ctx.accountId);
+  },
+  async run(input, ctx) {
+    const job = ctx.jobId ? await jobsRepo.getJob(ctx.jobId) : null;
+    if (!job || !ctx.accountId) throw new Error('This action has no job to belong to.');
+    const targetRef = normaliseStatus(input.post);
+    const result = await performCapabilityAction({
+      agentId: ctx.agentId,
+      jobId: job.id,
+      accountId: ctx.accountId,
+      capabilityId: 'x.repost',
+      type: 'REPOST',
+      targetRef,
+      text: '',
+      jobIdempotencyKey: job.idempotencyKey,
+      dryRun: job.dryRun,
+    });
+    return {
+      reposted: result.performed,
+      alreadyReposted: result.alreadyDone,
+      post: targetRef,
+      detail: result.detail,
+    };
+  },
+});
+
 /** A post reference the action path will accept: always a full status URL. */
 function normaliseStatus(reference: string): string {
   const id = reference.match(/\/status\/(\d{5,25})/)?.[1] ?? reference.trim();
@@ -246,5 +342,7 @@ export function registerXCapabilities(): void {
   registerCapability(readPostCapability);
   registerCapability(readProfileCapability);
   registerCapability(searchCapability);
+  registerCapability(readThreadCapability);
   registerCapability(likeCapability);
+  registerCapability(repostCapability);
 }
