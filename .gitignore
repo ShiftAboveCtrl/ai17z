@@ -33,6 +33,18 @@ accounts.db
 .vscode/
 .idea/
 
+# A local assistant guidance file, at any depth.
+#
+# The public engineering guidance is docs/ENGINEERING.md. A CLAUDE.md is one
+# developer's local copy of instructions for their own tooling, and it is the
+# kind of file `git add -A` picks up without anybody deciding to publish it.
+# This clone was protected only by .git/info/exclude, which no other clone has.
+#
+# Both spellings, because ignore matching is case-sensitive where the
+# filesystem is.
+CLAUDE.md
+claude.md
+
 # Repository backups. Never publishable: a bundle is the whole history.
 *.bundle
 

@@ -156,8 +156,12 @@ describe('files that should never be tracked', () => {
       'storage/browser-profiles/Default/Cookies',
       'storage/native-worker.pid',
       'accounts.db',
+      'CLAUDE.md',
+      'apps/web/claude.md',
+      '.claude/settings.json',
       'src/app.ts',
       '.env.example',
+      'docs/ENGINEERING.md',
     ]);
     expect(found.map((f) => f.file)).toEqual([
       '.env',
@@ -165,6 +169,9 @@ describe('files that should never be tracked', () => {
       'storage/browser-profiles/Default/Cookies',
       'storage/native-worker.pid',
       'accounts.db',
+      'CLAUDE.md',
+      'apps/web/claude.md',
+      '.claude/settings.json',
     ]);
   });
 
@@ -232,5 +239,31 @@ describe('the release check knows a binary when it sees one', () => {
     for (const art of ['packaging/windows/wizard-small.bmp', 'packaging/windows/wizard-panel.bmp']) {
       expect(existsSync(resolve(root, art)), `${art} is not committed`).toBe(true);
     }
+  });
+});
+
+/**
+ * The accident this is here to prevent, at the step before the check.
+ *
+ * `git add -A` in a clone with a local CLAUDE.md stages it. In this clone that
+ * was prevented by .git/info/exclude, which is per-clone and travels with
+ * nobody -- so the protection existed on one machine and nowhere else. The
+ * ignore rule is the prevention and the NEVER_TRACKED entry above is the
+ * backstop for a file that got tracked anyway, since the release check reads
+ * what git tracks rather than what is on disk.
+ */
+describe('a local assistant file cannot be published by accident', () => {
+  const ignore = readFileSync(resolve(root, '.gitignore'), 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim());
+
+  it('ignores it in the repository rather than only in this clone', () => {
+    // Both spellings: ignore matching is case-sensitive where the filesystem is.
+    expect(ignore).toContain('CLAUDE.md');
+    expect(ignore).toContain('claude.md');
+  });
+
+  it('still ignores the assistant tooling directory', () => {
+    expect(ignore).toContain('.claude/');
   });
 });

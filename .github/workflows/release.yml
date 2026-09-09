@@ -91,7 +91,7 @@ jobs:
         # screen -- and one reached a published release, because TypeScript
         # cannot see hook order and there was no ESLint in this repository at
         # all. Everything else it enforces was already written down in
-        # CLAUDE.md and held only as well as whoever read the diff.
+        # docs/ENGINEERING.md and held only as well as whoever read the diff.
         run: npm run lint
 
       - name: Release check
