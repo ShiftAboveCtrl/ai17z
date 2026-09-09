@@ -69,6 +69,12 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'agents', column: 'state', values: AGENT_STATES },
   { table: 'approvals', column: 'status', values: APPROVAL_STATUSES },
   { table: 'capability_invocations', column: 'outcome', values: INVOCATION_OUTCOMES },
+  {
+    table: 'post_analytics',
+    column: 'source',
+    values: ['TIMELINE', 'POST_ANALYTICS'],
+    note: 'Where a reading came from. Nothing outside the database needs to name these yet.',
+  },
   { table: 'browser_sessions', column: 'channel', values: BROWSER_CHANNELS },
   { table: 'browser_sessions', column: 'engine', values: BROWSER_ENGINES },
   { table: 'browser_sessions', column: 'mode', values: BROWSER_MODES },
