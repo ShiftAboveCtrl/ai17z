@@ -54,3 +54,4 @@ export * from './capabilityInputShape';
 export * from './xCapabilities';
 export * from './capabilityPermissions';
 export * from './capabilityActions';
+export * from './capabilityViews';

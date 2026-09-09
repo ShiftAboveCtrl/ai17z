@@ -27,6 +27,7 @@ import { VoiceSection } from './sections/VoiceSection';
 import { BehaviourSection } from './sections/BehaviourSection';
 import { PipelineSection } from './sections/PipelineSection';
 import { ToolsSection } from './sections/ToolsSection';
+import { CapabilitiesSection } from './sections/CapabilitiesSection';
 import { PoliciesSection } from './sections/PoliciesSection';
 import { ActivitySection } from './sections/ActivitySection';
 import { useViewMode } from '@app/lib/viewMode';
@@ -54,7 +55,7 @@ const AgentPortrait = lazy(() => import('@app/components/AgentPortrait').then((m
 const AREAS = [
   { id: 'overview', label: 'Overview', blurb: 'How it is doing, and anything that needs you.', sections: ['activity'] },
   { id: 'character', label: 'Character', blurb: 'Who it is, and how it writes.', sections: ['identity', 'voice', 'beliefs'] },
-  { id: 'reach', label: 'Reach', blurb: 'Where it speaks, what it thinks with, what it can use.', sections: ['accounts', 'intelligence', 'tools'] },
+  { id: 'reach', label: 'Reach', blurb: 'Where it speaks, what it thinks with, what it can use.', sections: ['accounts', 'intelligence', 'capabilities', 'tools'] },
   { id: 'memory', label: 'Memory', blurb: 'What it knows, and who it knows.', sections: ['memory', 'knowledge', 'relationships', 'learned'] },
   { id: 'behaviour', label: 'Behaviour', blurb: 'What it does on its own, and what it is allowed to do.', sections: ['content', 'behaviour', 'policies', 'pipeline'] },
 ] as const;
@@ -478,8 +479,9 @@ export function AgentPage() {
           <>
             <AccountsSection index={1} agentId={agent.id} accounts={accounts} onChanged={reload} />
             <IntelligenceSection index={2} agentId={agent.id} models={models} onChanged={reload} />
+            <CapabilitiesSection index={3} agentId={agent.id} />
             <ToolsSection
-              index={3}
+              index={4}
               agentId={agent.id}
               tools={tools}
               allowedKeys={policy?.config.tools.allowed ?? []}
