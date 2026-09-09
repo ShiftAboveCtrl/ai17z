@@ -1,0 +1,150 @@
+import { z } from 'zod';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const recorded: { capabilityId: string; outcome: string; step: number }[] = [];
+
+// The loop writes an audit row for every step. Mocked rather than run against
+// Postgres because what is being tested here is the loop's shape -- how many
+// times it asks, what it feeds back, when it stops -- and a database would only
+// make those questions slower to ask. `tests/integration` covers the row.
+vi.mock('@xbam/database', () => ({
+  capabilityInvocations: {
+    async recordInvocation(input: { capabilityId: string; outcome: string; step: number }) {
+      recorded.push({ capabilityId: input.capabilityId, outcome: input.outcome, step: input.step });
+      return { id: 'x' };
+    },
+  },
+}));
+
+const { runCapabilityLoop } = await import('@xbam/runtime');
+const { defineCapability, registerCapability, resetCapabilitiesForTest, CALL_OPEN, CALL_CLOSE } = await import(
+  '@xbam/tools'
+);
+
+const clock = defineCapability({
+  id: 'test.clock',
+  name: 'Clock',
+  description: 'The time.',
+  category: 'READ',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z.object({}),
+  output: z.object({ now: z.string() }),
+  modelCallable: true,
+  timeoutMs: 1_000,
+  async run() {
+    return { now: 'noon' };
+  },
+});
+
+const call = (id: string, input: unknown = {}) =>
+  `${CALL_OPEN}${JSON.stringify({ id, input })}${CALL_CLOSE}`;
+
+beforeEach(() => {
+  recorded.length = 0;
+  resetCapabilitiesForTest();
+  registerCapability(clock);
+});
+afterEach(() => resetCapabilitiesForTest());
+
+const base = {
+  agentId: 'agent-1',
+  jobId: 'job-1',
+  accountId: null,
+  messages: [{ role: 'user' as const, content: 'what time is it?' }],
+  permissions: new Map(),
+  paused: false,
+};
+
+describe('the capability loop', () => {
+  it('answers without asking for anything when it does not need to', async () => {
+    const generate = vi.fn().mockResolvedValue('It is noon.');
+    const result = await runCapabilityLoop({ ...base, generate });
+    expect(result.answer).toBe('It is noon.');
+    expect(result.steps).toEqual([]);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(recorded).toEqual([]);
+  });
+
+  it('offers the menu, runs what was chosen, and feeds the result back', async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call('test.clock'))
+      .mockResolvedValueOnce('It is noon.');
+    const result = await runCapabilityLoop({ ...base, generate });
+
+    expect(result.answer).toBe('It is noon.');
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]).toMatchObject({ capabilityId: 'test.clock', outcome: 'SUCCEEDED' });
+
+    // The menu is in the conversation, and so is the result of what it chose.
+    const firstMessages = generate.mock.calls[0]![0] as { content: string }[];
+    expect(firstMessages.some((m) => m.content.includes('test.clock'))).toBe(true);
+    const secondMessages = generate.mock.calls[1]![0] as { content: string }[];
+    expect(secondMessages.some((m) => m.content.includes('noon'))).toBe(true);
+  });
+
+  it('records every step, including one it refused', async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call('test.invented'))
+      .mockResolvedValueOnce('I could not look that up.');
+    const result = await runCapabilityLoop({ ...base, generate });
+
+    expect(result.steps[0]).toMatchObject({ outcome: 'REFUSED' });
+    // A refusal is exactly the thing an owner wants to see afterwards.
+    expect(recorded).toEqual([{ capabilityId: 'test.invented', outcome: 'REFUSED', step: 1 }]);
+  });
+
+  it('tells the model plainly when its call was malformed', async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(`${CALL_OPEN}not json${CALL_CLOSE}`)
+      .mockResolvedValueOnce('Fine, noon.');
+    const result = await runCapabilityLoop({ ...base, generate });
+    expect(result.answer).toBe('Fine, noon.');
+    const second = generate.mock.calls[1]![0] as { content: string }[];
+    expect(second.some((m) => m.content.includes('not a usable capability call'))).toBe(true);
+  });
+
+  it('stops asking after the ceiling and answers with what it has', async () => {
+    // A model that keeps asking runs out of asks. Without this the loop is one
+    // provider outage away from a job that never ends.
+    const generate = vi.fn().mockResolvedValue(call('test.clock'));
+    const result = await runCapabilityLoop({ ...base, generate, maxSteps: 2 });
+
+    expect(result.exhausted).toBe(true);
+    expect(result.steps).toHaveLength(2);
+    // Two loop turns plus the final one it is given with no menu.
+    expect(generate).toHaveBeenCalledTimes(3);
+    const last = generate.mock.calls[2]![0] as { content: string }[];
+    expect(last.some((m) => m.content.includes('no more lookups'))).toBe(true);
+  });
+
+  it('stops when the budget is spent, whatever the step count allows', async () => {
+    const generate = vi.fn().mockResolvedValue(call('test.clock'));
+    const result = await runCapabilityLoop({ ...base, generate, maxSteps: 10, budgetMs: -1 });
+    expect(result.exhausted).toBe(true);
+    expect(result.steps).toHaveLength(0);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses everything while paused, and keeps going', async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call('test.clock'))
+      .mockResolvedValueOnce('I cannot check right now.');
+    const result = await runCapabilityLoop({ ...base, generate, paused: true });
+    expect(result.steps[0]).toMatchObject({ outcome: 'REFUSED' });
+    expect(result.steps[0]!.detail).toContain('paused');
+  });
+
+  it('never leaves a call tag in the answer', async () => {
+    // A model that writes a call on its last turn has still said something, and
+    // the tag must not reach a reply that goes to X.
+    const generate = vi.fn().mockResolvedValue(`${call('test.clock')}\nProbably noon.`);
+    const result = await runCapabilityLoop({ ...base, generate, maxSteps: 1 });
+    expect(result.answer).not.toContain(CALL_OPEN);
+    expect(result.answer).toContain('Probably noon.');
+  });
+});

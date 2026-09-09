@@ -24,3 +24,4 @@ export * from './policyReachability';
 export * from './providerCatalogue';
 export * from './readiness';
 export * from './modelRoleStatus';
+export * from './capabilities';

@@ -25,6 +25,7 @@ export * as accountLease from './repositories/accountLease';
 export * as personaSources from './repositories/personaSources';
 export * as cadences from './repositories/cadences';
 export * as capabilities from './repositories/capabilities';
+export * as capabilityInvocations from './repositories/capabilityInvocations';
 export * as workers from './repositories/workers';
 export * as radar from './repositories/radar';
 export * as mentions from './repositories/mentions';
