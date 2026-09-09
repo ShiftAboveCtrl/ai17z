@@ -415,3 +415,51 @@ describe('upgrading over an installation is checked too', () => {
     expect(verify).toContain('Stop-Process -Id $_.ProcessId');
   });
 });
+
+/**
+ * Stopping one installation stops one installation.
+ *
+ * The pid file is per data directory and was always right. The sweep beside it
+ * was not: it matched every node process whose command line said
+ * `supervise-worker` or `apps/worker` and killed its tree, on a machine where
+ * more than one AI17Z can be installed and each is supposed to run its own
+ * browser worker.
+ *
+ * So "Stop AI17Z" on one copy stopped the other copy's worker too, and with it
+ * the real Chrome that worker was holding a signed-in X session in. Found by
+ * `verify:install`, which drives the shipped stop script five times: it stopped
+ * two live installations that had nothing to do with the room it was testing.
+ *
+ * doctor-ai17z.ps1 and Stop-ForUninstall.ps1 already scope by the program
+ * directory. This is the third.
+ */
+describe('stopping one installation leaves the others alone', () => {
+  const stop = readFileSync(resolve(root, 'stop-ai17z.ps1'), 'utf8');
+  const doctor = readFileSync(resolve(root, 'doctor-ai17z.ps1'), 'utf8');
+  const uninstall = readFileSync(resolve(root, 'packaging/windows/Stop-ForUninstall.ps1'), 'utf8');
+
+  it('narrows the stray sweep to workers running out of this program directory', () => {
+    expect(stop).toContain('$PSScriptRoot.TrimEnd');
+    expect(stop).toMatch(/CommandLine\.Replace\('\/', '\\'\)\.ToLowerInvariant\(\)\.Contains\(\$Here\)/);
+  });
+
+  it('does not kill a worker on the name of its script alone', () => {
+    // The shape of the bug: a supervise-worker match with nothing tying it to
+    // this installation.
+    const sweep = stop.slice(stop.indexOf('$stray = Get-CimInstance'), stop.indexOf('if ($stray)'));
+    expect(sweep).toContain('supervise-worker');
+    expect(sweep, 'the sweep matches every installation on the machine').toContain('$Here');
+  });
+
+  it('compares with separators normalised, because one command line has both', () => {
+    // tsx passes the program directory back as a file:/// URL with forward
+    // slashes, in the same command line that spells it with backslashes.
+    const backslash = String.fromCharCode(92);
+    expect(stop).toContain(`.Replace('/', '${backslash}')`);
+  });
+
+  it('is the same question the other two shipped scripts already ask', () => {
+    expect(doctor).toContain('$PSScriptRoot');
+    expect(uninstall).toContain('-like "*$root*"');
+  });
+});
