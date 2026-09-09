@@ -18,6 +18,9 @@ import {
 } from '@xbam/database';
 
 import { assemblePrompt } from '@xbam/prompts';
+import { runCapabilityLoop } from '../capabilityLoop';
+import { capabilityPermissions } from '../capabilityPermissions';
+import { pauseState } from '../killSwitch';
 import { generate } from '@xbam/models';
 import { getChannelAdapter } from '@xbam/channels';
 import {
@@ -159,19 +162,61 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     },
   });
 
-  const result = await generate({
-    agentId: bundle.agent.id,
-    jobId: bundle.job.id,
-    purpose: 'GENERATE',
-    messages: prompt.messages,
-    promptLayers: prompt.layers,
-    promptText: prompt.promptText,
-    maxCalls: bundle.policy.budget.maxModelCallsPerJob,
-  });
+  const callModel = async (messages: typeof prompt.messages) =>
+    (
+      await generate({
+        agentId: bundle.agent.id,
+        jobId: bundle.job.id,
+        purpose: 'GENERATE',
+        messages,
+        promptLayers: prompt.layers,
+        promptText: prompt.promptText,
+        maxCalls: bundle.policy.budget.maxModelCallsPerJob,
+      })
+    ).text;
+
+  /**
+   * Answering, with the option of asking for one thing first.
+   *
+   * Off unless the owner turned it on. The runtime has already resolved
+   * context, retrieved memory and done its research by this point, so the
+   * ordinary answer needs nothing more -- this is for the case where the model
+   * is part-way through and needs one specific fact it does not have.
+   *
+   * The loop is given a closure over the same gateway call, so it never picks a
+   * model, never sees a credential, and cannot spend more than
+   * `budget.maxModelCallsPerJob` allows -- the cap is inside `generate`, and
+   * every step of the loop goes through it.
+   */
+  let text: string;
+  if (bundle.policy.tools.capabilityLoop) {
+    const loop = await runCapabilityLoop({
+      agentId: bundle.agent.id,
+      jobId: bundle.job.id,
+      accountId: bundle.job.accountId,
+      messages: prompt.messages,
+      generate: callModel,
+      permissions: await capabilityPermissions(bundle.agent.id),
+      paused: (await pauseState().catch(() => ({ paused: false }))).paused,
+    });
+    text = loop.answer;
+    for (const step of loop.steps) {
+      await observability.emitTrace({
+        jobId: bundle.job.id,
+        agentId: bundle.agent.id,
+        type: 'CAPABILITY_USED',
+        level: step.outcome === 'SUCCEEDED' ? 'info' : 'warn',
+        message: `${step.capabilityId}: ${step.detail}`,
+        data: { capabilityId: step.capabilityId, outcome: step.outcome, durationMs: step.durationMs },
+      });
+    }
+  } else {
+    text = await callModel(prompt.messages);
+  }
 
   await jobsRepo.updateJob(bundle.job.id, {
     status: 'GENERATED',
-    generatedOutput: result.text,
+    generatedOutput: text,
     touch: ['generatedAt'],
   });
 }

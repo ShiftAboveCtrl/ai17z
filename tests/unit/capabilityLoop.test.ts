@@ -238,3 +238,20 @@ describe('the owner’s answer', () => {
     expect(decision.why).toContain('browser');
   });
 });
+
+describe('whether the loop runs at all', () => {
+  it('is off until an owner turns it on', async () => {
+    // Low-risk reads are already permitted for every agent, so a loop that ran
+    // by default would change how every existing agent answers the moment it
+    // shipped. Generation is exactly what it was until somebody decides.
+    const { DEFAULT_POLICY } = await import('@xbam/shared/contracts');
+    expect(DEFAULT_POLICY.tools.capabilityLoop).toBe(false);
+  });
+
+  it('is reachable from a screen, like every other enforced setting', async () => {
+    // A runtime-enforced setting an owner cannot find is the defect the
+    // reachability registry exists for.
+    const { POLICY_REACHABILITY } = await import('@xbam/shared/contracts');
+    expect(POLICY_REACHABILITY['tools.capabilityLoop']?.where).toBe('ADVANCED_ONLY');
+  });
+});

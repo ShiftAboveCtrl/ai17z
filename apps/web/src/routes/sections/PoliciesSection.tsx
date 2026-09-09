@@ -342,6 +342,18 @@ export function PoliciesSection({
             <input className="field" value={draft.tools.allowed.join(', ')} onChange={(e) => patch((n) => void (n.tools.allowed = list(e.target.value)))} />
           </Field>
           {/*
+            Off by default on purpose. Low-risk reads are already permitted for
+            every agent, so switching this on by default would change how every
+            existing agent answers -- and the point of the loop is that an owner
+            decides what their agent reaches for.
+          */}
+          <Toggle
+            label="Let it look things up while answering"
+            hint="The model may ask for one of its capabilities mid-answer, up to four times, instead of answering from what it already has. Costs an extra model call each time."
+            checked={draft.tools.capabilityLoop}
+            onChange={(v) => patch((n) => void (n.tools.capabilityLoop = v))}
+          />
+          {/*
             The validator rejects any address the agent was not given, and until
             this field existed the only way to give it one was to write it into
             the persona.

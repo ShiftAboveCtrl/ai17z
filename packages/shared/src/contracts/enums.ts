@@ -463,6 +463,16 @@ export const TRACE_EVENT_TYPES = [
   'REPETITION_DETECTED',
   /** Something was looked up off-platform because the answer changes daily. */
   'RESEARCH_DONE',
+  /**
+   * The model asked for a capability, and this is what happened.
+   *
+   * Distinct from RESEARCH_DONE, which is the runtime deciding to look
+   * something up before the prompt is assembled. This is the model choosing,
+   * mid-answer, and it is traced for the same reason every other decision is:
+   * an owner has to be able to see what their agent asked for and what it was
+   * told, including when it was refused.
+   */
+  'CAPABILITY_USED',
 ] as const;
 export const TraceEventType = enumOf(TRACE_EVENT_TYPES).schema;
 export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];

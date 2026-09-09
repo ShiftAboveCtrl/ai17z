@@ -246,6 +246,20 @@ export const ToolPolicy = z.object({
   /** Tool keys this agent may call. Empty means no tools. */
   allowed: z.array(z.string().max(120)).max(200).default([]),
   /**
+   * Whether the model may ask for a capability part-way through an answer.
+   *
+   * Off by default, and that is deliberate rather than cautious-by-habit. The
+   * permission model already allows low-risk reads for every agent, so turning
+   * this on by default would change how every existing agent answers the moment
+   * it shipped -- and the whole point of the loop is that an owner decides what
+   * their agent may reach for.
+   *
+   * On, it costs one extra model call per lookup and is bounded by the loop's
+   * own ceiling. Off, generation is exactly what it was: the runtime resolves
+   * context, retrieves memory and researches, and the model answers once.
+   */
+  capabilityLoop: z.boolean().default(false),
+  /**
    * Where an agent may look things up, by source.
    *
    * Separate switches rather than one, because they fail differently and people
