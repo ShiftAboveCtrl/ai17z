@@ -26,7 +26,7 @@ export interface MonitorContext {
 }
 
 /** A post as seen on a timeline, before anything is decided about it. */
-interface Seen {
+export interface Seen {
   statusId: string | null;
   authorHandle: string | null;
   text: string;
@@ -70,7 +70,7 @@ const SCROLL_PIXELS = 2_000;
  * makes an article carrying a quoted post report the quoted post's id as its
  * own.
  */
-async function readAllArticles(page: Page, limit: number): Promise<Seen[]> {
+export async function readAllArticles(page: Page, limit: number): Promise<Seen[]> {
   const raw = await page
     .locator(SEL.tweetArticle)
     .evaluateAll(

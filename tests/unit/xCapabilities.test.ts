@@ -19,14 +19,14 @@ describe('the X read capabilities', () => {
   resetCapabilitiesForTest();
   registerXCapabilities();
 
-  it('offers both to the model', () => {
-    expect(listModelCallable().map((c) => c.id)).toEqual(['x.read_post', 'x.read_profile']);
+  it('offers all three to the model', () => {
+    expect(listModelCallable().map((c) => c.id)).toEqual(['x.read_post', 'x.read_profile', 'x.search']);
   });
 
   it('declares reading as reading', () => {
     // Not cosmetic: `defaultPermission` allows a low-risk read and disables a
     // write, so this is what decides whether they work out of the box.
-    for (const id of ['x.read_post', 'x.read_profile']) {
+    for (const id of ['x.read_post', 'x.read_profile', 'x.search']) {
       const capability = getCapability(id)!;
       expect(capability.effect, id).toBe('READ');
       expect(capability.risk, id).toBe('LOW');
@@ -48,6 +48,17 @@ describe('the X read capabilities', () => {
     expect(input.safeParse({ handle: '007Ledger' }).success).toBe(true);
     expect(input.safeParse({ handle: '@007Ledger' }).success).toBe(true);
     expect(input.safeParse({ handle: '' }).success).toBe(false);
+  });
+
+  it('bounds what a search may ask for', () => {
+    // The ceiling is the bound on how long one capability can hold a job open,
+    // and a model asked for "everything" would otherwise scroll until X stopped.
+    const input = getCapability('x.search')!.input;
+    expect(input.safeParse({ query: 'ai17z' }).success).toBe(true);
+    expect(input.parse({ query: 'ai17z' })).toMatchObject({ mode: 'LIVE', limit: 10 });
+    expect(input.safeParse({ query: 'ai17z', limit: 500 }).success).toBe(false);
+    expect(input.safeParse({ query: 'a' }).success).toBe(false);
+    expect(input.safeParse({ query: 'ai17z', mode: 'RANKED' }).success).toBe(false);
   });
 
   it('says why it cannot run rather than failing later', async () => {

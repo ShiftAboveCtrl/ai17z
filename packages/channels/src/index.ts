@@ -40,4 +40,4 @@ export { replyingToHandles } from './x/index';
  * `contracts/xDomain`. The runtime supplies the context and registers them as
  * capabilities; nothing about the DOM crosses this line.
  */
-export { readPost, readProfile, parseCount } from './x/index';
+export { readPost, readProfile, parseCount, searchPosts } from './x/index';

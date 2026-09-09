@@ -1,10 +1,11 @@
-import type { XPost, XProfile } from '@xbam/shared/contracts';
+import type { XPost, XProfile, XSearchResult } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
 import type { ChannelContext } from '../contract';
 import { SEL, X_URLS } from './selectors';
 import type { ArticleSnapshot } from './conversation';
 import { goto, readArticle, settle, withSession } from './page';
 import { extractStatusId } from './targets';
+import { readAllArticles } from './monitors';
 
 /**
  * Reading X on purpose, rather than as a step in answering something.
@@ -177,4 +178,65 @@ function toPost(
     postedAt: snapshot.createdAt ?? undefined,
     media: [],
   };
+}
+
+/**
+ * Searching X as the signed-in account.
+ *
+ * The same page a person uses, read by the same harvester the radar monitors
+ * use -- one implementation of "scroll a timeline and collect what is on it",
+ * so search and discovery cannot drift in how much they see or how they
+ * deduplicate. A second copy of that loop would be a second set of bounds on
+ * what an agent can find.
+ *
+ * `live` is newest-first and `top` is X's own ranking. The default is live
+ * because a capability is usually asked because something just happened, and
+ * ranked results answer a different question.
+ */
+export async function searchPosts(
+  ctx: ChannelContext,
+  request: { query: string; mode?: 'LIVE' | 'TOP'; limit?: number },
+): Promise<XSearchResult> {
+  const query = request.query.trim();
+  if (!query) throw PipelineError.permanent('empty_query', 'A search needs something to search for.');
+  const mode = request.mode ?? 'LIVE';
+  const limit = Math.min(Math.max(request.limit ?? 10, 1), 25);
+
+  return withSession(ctx, 'RESEARCH', async (session) => {
+    const url = `https://x.com/search?q=${encodeURIComponent(query)}${mode === 'LIVE' ? '&f=live' : ''}`;
+    await goto(session.page, url);
+    await settle();
+
+    // Scroll only as far as the answer needs. Reading three times the limit
+    // leaves room for the things a timeline interleaves that are not results.
+    const wanted = limit * 3;
+    let seen = await readAllArticles(session.page, wanted);
+    for (let pass = 0; pass < 4 && seen.length < wanted; pass += 1) {
+      const before = seen.length;
+      await session.page.mouse.wheel(0, 1_400).catch(() => undefined);
+      await session.page.waitForTimeout(800);
+      seen = await readAllArticles(session.page, wanted);
+      if (seen.length <= before) break;
+    }
+
+    const posts: XPost[] = [];
+    const ids = new Set<string>();
+    for (const item of seen) {
+      if (posts.length >= limit) break;
+      if (!item.statusId || ids.has(item.statusId) || !item.text) continue;
+      ids.add(item.statusId);
+      posts.push({
+        statusId: item.statusId,
+        url: item.url ?? `https://x.com/i/web/status/${item.statusId}`,
+        author: { handle: (item.authorHandle ?? '').replace(/^@+/, '') },
+        text: item.text,
+        postedAt: item.createdAt ?? undefined,
+        media: [],
+      });
+    }
+
+    // Honest about what it did not read. A caller told there are ten results
+    // when the page had four hundred is being told the wrong thing.
+    return { query, mode, posts, more: seen.length > posts.length };
+  });
 }
