@@ -117,7 +117,7 @@ export function EasyAgentView({ agent, onChanged }: { agent: AgentDetail; onChan
         <Panel title="AI">
           {model ? (
             <>
-              <Line label="Model" value={model.model} />
+              <Line label="Model" value={model.model} verbatim />
               <Line label="Through" value={model.providerLabel ?? 'a saved provider'} />
             </>
           ) : (
@@ -208,11 +208,25 @@ function Panel({ title, action, children }: { title: string; action?: React.Reac
   );
 }
 
-function Line({ label, value }: { label: string; value: string }) {
+/**
+ * One labelled line of the summary.
+ *
+ * `verbatim` turns off the sentence casing the prose lines rely on, for the
+ * same reason the setup wizard's `Row` has it: a model id is an identifier, and
+ * `deepseek-v4-pro` shown as `Deepseek-v4-pro` is not the string the provider
+ * answers to. This view had the wizard's bug one screen over -- the id rendered
+ * correctly in the Intelligence section directly below it and capitalised here,
+ * so the same screen showed the same model two ways.
+ */
+function Line({ label, value, verbatim }: { label: string; value: string; verbatim?: boolean }) {
   return (
     <div className="grid gap-0.5 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-3">
       <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">{label}</dt>
-      <dd className="text-[13px] leading-relaxed text-bone-dim first-letter:uppercase">{value}</dd>
+      <dd
+        className={`text-[13px] leading-relaxed text-bone-dim ${verbatim ? 'font-mono text-[12px]' : 'first-letter:uppercase'}`}
+      >
+        {value}
+      </dd>
     </div>
   );
 }
