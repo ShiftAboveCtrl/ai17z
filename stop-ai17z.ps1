@@ -131,8 +131,27 @@ if (Test-Path $PidFile) {
 # The supervisor counts too, and first: it exists to restart a worker that
 # stops, so killing the worker while it is still running just produces
 # another worker. Its own kill is a signal it recognises as deliberate.
+#
+# Scoped to this installation, and that scoping is the whole point. Matching on
+# the script name alone matched every AI17Z on the machine and killed its tree,
+# so stopping one installation stopped the browser worker of every other one --
+# and with it the signed-in Chrome that worker was holding, which is the single
+# most expensive thing on the machine to get back. Two installations are two
+# installations, and that has to be true of stopping one.
+#
+# The program directory tells them apart: every worker process an installation
+# starts runs out of its own node_modules and carries that path. Compared with
+# separators normalised, because tsx passes the same directory back as a
+# file:/// URL with forward slashes in the same command line that has
+# backslashes. doctor-ai17z.ps1 and Stop-ForUninstall.ps1 already ask this
+# question the same way.
+$Here = $PSScriptRoot.TrimEnd('\').ToLowerInvariant()
 $stray = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -and ($_.CommandLine -like '*supervise-worker*' -or $_.CommandLine -like '*apps?worker*') }
+  Where-Object {
+    $_.CommandLine -and
+    ($_.CommandLine -like '*supervise-worker*' -or $_.CommandLine -like '*apps?worker*') -and
+    $_.CommandLine.Replace('/', '\').ToLowerInvariant().Contains($Here)
+  }
 if ($stray) {
   Write-Step "Stopping $($stray.Count) leftover worker process(es)..."
   foreach ($proc in $stray) {
