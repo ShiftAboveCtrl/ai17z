@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { XPost, XProfile } from '@xbam/shared/contracts';
+import { XPost, XProfile, XSearchResult } from '@xbam/shared/contracts';
 import { accounts as accountsRepo, workers as workersRepo } from '@xbam/database';
-import { readPost, readProfile } from '@xbam/channels';
+import { readPost, readProfile, searchPosts } from '@xbam/channels';
 import { defineCapability, registerCapability } from '@xbam/tools';
 import { buildChannelContext } from './channelContext';
 
@@ -128,8 +128,39 @@ const readProfileCapability = defineCapability({
   },
 });
 
+const searchCapability = defineCapability({
+  id: 'x.search',
+  name: 'Search X',
+  description:
+    'Searches X for posts matching a query and returns what it found, newest first by default. ' +
+    'Use it when the answer depends on what people are saying right now rather than on what you know.',
+  category: 'DISCOVER',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z.object({
+    query: z.string().min(2).max(200),
+    /** Newest first, or X's own ranking. */
+    mode: z.enum(['LIVE', 'TOP']).default('LIVE'),
+    limit: z.number().int().min(1).max(25).default(10),
+  }),
+  output: XSearchResult,
+  modelCallable: true,
+  // Scrolling a timeline is slower than reading one page, and this is the
+  // capability most likely to be asked for on a slow connection.
+  timeoutMs: 90_000,
+  async readiness(ctx) {
+    return browserReadiness(ctx.accountId);
+  },
+  async run(input, ctx) {
+    const channel = await contextFor(ctx.accountId, ctx.jobId);
+    if (!channel) throw new Error('This agent has no connected X account to search as.');
+    return searchPosts(channel, input);
+  },
+});
+
 /** Registered at bootstrap, beside the built-ins. */
 export function registerXCapabilities(): void {
   registerCapability(readPostCapability);
   registerCapability(readProfileCapability);
+  registerCapability(searchCapability);
 }
