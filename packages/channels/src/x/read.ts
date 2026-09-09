@@ -30,6 +30,21 @@ import { readAllArticles } from './monitors';
 const PROFILE_POSTS = 5;
 
 /**
+ * How long to wait for one optional field before deciding it is not there.
+ *
+ * Playwright's locator actions auto-wait for the whole default timeout, so
+ * `.catch(() => '')` around a field the page simply does not have costs thirty
+ * seconds before the catch ever runs -- and a profile reads five of them, one
+ * after another. The first live run of this took minutes and looked like a
+ * hang.
+ *
+ * Two seconds is longer than a rendered element needs and short enough that
+ * five missing ones cost ten. Absence is an answer here, not a failure: a
+ * profile with no website has no website.
+ */
+const FIELD_TIMEOUT_MS = 2_000;
+
+/**
  * Turns X's abbreviated counts into numbers, or into nothing.
  *
  * "1,234" is 1234 and "12.3K" is 12300, but the important case is the third
@@ -102,7 +117,7 @@ export async function readProfile(ctx: ChannelContext, handleInput: string): Pro
     const header = await session.page
       .locator(SEL.profileHeader)
       .first()
-      .innerText()
+      .innerText({ timeout: FIELD_TIMEOUT_MS })
       .catch(() => '');
     if (!header) {
       // A handle that does not exist, a suspended account, or a page that never
@@ -113,26 +128,32 @@ export async function readProfile(ctx: ChannelContext, handleInput: string): Pro
     const bio = await session.page
       .locator(SEL.profileBio)
       .first()
-      .innerText()
+      .innerText({ timeout: FIELD_TIMEOUT_MS })
       .catch(() => '');
     const joined = await session.page
       .locator(SEL.profileJoinDate)
       .first()
-      .innerText()
+      .innerText({ timeout: FIELD_TIMEOUT_MS })
       .catch(() => '');
-    const followers = await countBeside(session.page, `a[href="/${handle}/verified_followers"], a[href="/${handle}/followers"]`);
-    const following = await countBeside(session.page, `a[href="/${handle}/following"]`);
+    // Matched on the end of the href rather than the whole of it: the handle
+    // X puts there is its own canonical casing, which is not necessarily what
+    // the caller typed.
+    const followers = await countBeside(session.page, 'a[href$="/verified_followers"], a[href$="/followers"]');
+    const following = await countBeside(session.page, 'a[href$="/following"]');
     const website = await session.page
       .locator(SEL.profileWebsite)
       .first()
-      .getAttribute('href')
+      .getAttribute('href', { timeout: FIELD_TIMEOUT_MS })
       .catch(() => null);
 
     const recent: XPost[] = [];
     const articles = session.page.locator(SEL.tweetArticle);
     const count = Math.min(await articles.count().catch(() => 0), PROFILE_POSTS);
     for (let i = 0; i < count; i += 1) {
-      const snapshot = await readArticle(session.page, SEL.tweetArticle, i).catch(() => null);
+      // `>> nth=` is how every other caller picks an article. The third
+      // argument is the snapshot's own index, not a selector -- passing it
+      // and expecting it to choose read the first article five times.
+      const snapshot = await readArticle(session.page, `${SEL.tweetArticle} >> nth=${i}`, i).catch(() => null);
       if (!snapshot?.url) continue;
       const id = extractStatusId(snapshot.url);
       if (id) recent.push(toPost(id, snapshot.url, snapshot));
@@ -156,7 +177,7 @@ async function countBeside(page: Parameters<typeof readArticle>[0], selector: st
   const text = await page
     .locator(selector)
     .first()
-    .innerText()
+    .innerText({ timeout: FIELD_TIMEOUT_MS })
     .catch(() => '');
   return parseCount(text);
 }

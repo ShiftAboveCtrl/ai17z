@@ -349,7 +349,7 @@ export function PoliciesSection({
           */}
           <Toggle
             label="Let it look things up while answering"
-            hint="The model may ask for one of its capabilities mid-answer, up to four times, instead of answering from what it already has. Costs an extra model call each time."
+            description="The model may ask for one of its capabilities mid-answer, up to four times, instead of answering from what it already has. Costs an extra model call each time."
             checked={draft.tools.capabilityLoop}
             onChange={(v) => patch((n) => void (n.tools.capabilityLoop = v))}
           />
