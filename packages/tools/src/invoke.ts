@@ -16,6 +16,9 @@ export interface InvocationResult {
   durationMs: number;
 }
 
+/** A value nothing else can return, so the race is unambiguous. */
+const TIMEOUT = Symbol('capability-timeout');
+
 export interface InvokeOptions {
   call: CapabilityCall;
   context: Omit<CapabilityContext, 'signal'>;
@@ -76,9 +79,37 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), capability.timeoutMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * The timeout is a race, not a request.
+   *
+   * Aborting the signal and then awaiting `run` bounds nothing: a capability
+   * that does not watch the signal simply keeps going, and the invocation --
+   * and the job holding it -- waits for ever. Found the first time a browser
+   * read was pointed at a real page: the signal fired, Playwright never looked
+   * at it, and the whole thing sat there.
+   *
+   * That defeats the property the loop's safety rests on. So the timeout wins
+   * on its own, and the signal stays as the courtesy that lets a capability
+   * stop its own work early rather than leaving it running behind an answer
+   * nobody is waiting for any more.
+   */
+  const expired = new Promise<typeof TIMEOUT>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(TIMEOUT);
+    }, capability.timeoutMs);
+  });
   try {
-    const raw = await capability.run(parsedInput.data as never, { ...context, signal: controller.signal });
+    const raw = await Promise.race([
+      capability.run(parsedInput.data as never, { ...context, signal: controller.signal }),
+      expired,
+    ]);
+    if (raw === TIMEOUT) {
+      return done('TIMED_OUT', `${capability.name} took longer than ${capability.timeoutMs}ms and was abandoned.`, {
+        input: parsedInput.data,
+      });
+    }
     const parsedOutput = capability.output.safeParse(raw);
     if (!parsedOutput.success) {
       return done('FAILED', `${capability.id} returned something that did not match its own result shape.`, {

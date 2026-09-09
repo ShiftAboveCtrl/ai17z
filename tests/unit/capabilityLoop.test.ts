@@ -161,6 +161,32 @@ describe('what may run', () => {
     expect(result.detail).toContain('result shape');
   });
 
+  it('abandons one that ignores the signal, which is the only kind that matters', async () => {
+    // The first version aborted the signal and then awaited `run`, which bounds
+    // nothing: a capability that never looks at the signal keeps going and the
+    // job holding it waits for ever. Found by pointing a browser read at a real
+    // page -- the signal fired, Playwright never looked at it, and the whole
+    // thing sat there. The timeout has to win on its own.
+    registerCapability(
+      echo('test.deaf', {
+        timeoutMs: 20,
+        async run() {
+          await new Promise((resolve) => setTimeout(resolve, 10_000));
+          return { word: 'eventually' };
+        },
+      }),
+    );
+    const started = Date.now();
+    const result = await invokeCapability({
+      call: { id: 'test.deaf', input: { word: 'hi' } },
+      context,
+      permission: allowed,
+    });
+    expect(result.outcome).toBe('TIMED_OUT');
+    // Returned on the timeout rather than when the work finished.
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
   it('abandons one that runs too long', async () => {
     registerCapability(
       echo('test.slow', {
