@@ -10,6 +10,19 @@ import {
 import { getAdapter, listAdapters } from '@xbam/models';
 
 /**
+ * @release-check-fixtures
+ *
+ * The key below is invented and written out in full on purpose: what the
+ * catalogue's `keyPattern` recognises is a real key's prefix, so a disguised
+ * one would test something other than the thing that ships.
+ *
+ * It is still key-shaped, so the repository's own secret scan flags it --
+ * correctly, since it cannot tell a fixture from the real thing. This marker is
+ * the sanctioned answer, the same one tests/unit/providerKeys.test.ts uses for
+ * the same reason. The body is `abcdefghijklmnop`, which no vendor would issue.
+ */
+
+/**
  * Adding a provider used to mean editing eight files, six of which were saying
  * the same things again in a different shape -- and they had already drifted:
  * the Easy Mode picker called Anthropic "Claude" while every other screen said
