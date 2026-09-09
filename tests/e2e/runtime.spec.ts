@@ -139,7 +139,10 @@ test('holds a job for approval, then executes the edited text', async ({ page })
   await policies.getByRole('radio', { name: /review before action/i }).click();
   const dryRun = policies.getByRole('switch', { name: /dry run by default/i });
   if ((await dryRun.getAttribute('aria-checked')) === 'true') await dryRun.click();
-  await policies.getByRole('button', { name: /save as version/i }).click();
+  // "Save", like every other section. The version number moved out of the verb
+  // and into the line beside it: it is what the save produces, not what the
+  // button does.
+  await policies.getByRole('button', { name: /^save$/i }).click();
   await expect(policies.getByText('saved')).toBeVisible({ timeout: 20_000 });
 
   await goToSection(page, 'activity');

@@ -580,10 +580,17 @@ export function PoliciesSection({
       <div className="mt-5 flex flex-wrap items-center gap-4 border-t border-ink-line pt-6">
         <button type="button" className="btn-primary" onClick={() => void save()} disabled={busy}>
           {busy && <Spinner />}
-          Save as version {version + 1}
+          Save
         </button>
         <SavedTick visible={saved} />
-        <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">Currently v{version}</span>
+        {/*
+          The version is what the save produces, not what the button does.
+          Every other section says "Save" and shows where it is beside it; this
+          one put the number in the verb and read as a different action.
+        */}
+        <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.16em] text-bone-faint">
+          v{version} — saving makes v{version + 1}
+        </span>
         {error && <p className="w-full text-sm text-signal-fail">{error}</p>}
       </div>
     </Section>

@@ -22,6 +22,30 @@ export interface Resource<T> {
   reload: () => void;
 }
 
+/**
+ * The last answer for each path, and when it arrived.
+ *
+ * The agent page renders one area at a time, so moving between two of them
+ * unmounts every section in the first and mounts every section in the second.
+ * Clicking Reach, Memory, Reach, Memory, Reach asked for accounts, providers,
+ * tools, memories, knowledge, relationships and learned items eighteen times
+ * over, for data that had not changed in the four seconds it took.
+ *
+ * Two seconds, because that is about the length of a decision somebody makes
+ * with the mouse: long enough to cover flicking between areas, far too short
+ * to show anybody a value that has since changed. Anything longer would start
+ * being a cache, which this deliberately is not -- nothing is served from here
+ * after two seconds, and `reload()` never reads it at all.
+ */
+const FRESH_MS = 2_000;
+
+const recent = new Map<string, { at: number; data: unknown }>();
+
+/** Forgets everything. Called on sign-out: the next person is a different person. */
+export function forgetFetchedResources(): void {
+  recent.clear();
+}
+
 /** Fetches a JSON resource, aborting in flight when the path changes or unmounts. */
 export function useResource<T>(path: string | null, deps: unknown[] = []): Resource<T> {
   const [data, setData] = useState<T | null>(null);
@@ -35,18 +59,36 @@ export function useResource<T>(path: string | null, deps: unknown[] = []): Resou
       setLoading(false);
       return;
     }
+
+    /*
+      A component mounting for the first time takes an answer that is seconds
+      old. One that has reloaded is asking for a reason -- it has just written
+      something, or it is a poller -- and always goes and looks.
+    */
+    const cached = recent.get(path);
+    if (nonce === 0 && cached && Date.now() - cached.at < FRESH_MS) {
+      setData(cached.data as T);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     controller.current?.abort();
     const ac = new AbortController();
     controller.current = ac;
     setLoading(true);
     get<T>(path, ac.signal)
       .then((result) => {
+        // Recorded even when this caller has gone: the value is good, and the
+        // next thing to ask for the same path is usually a moment away.
+        recent.set(path, { at: Date.now(), data: result });
         if (ac.signal.aborted) return;
         setData(result);
         setError(null);
       })
       .catch((e: unknown) => {
         if (ac.signal.aborted || (e as Error).name === 'AbortError') return;
+        recent.delete(path);
         setError(e instanceof ApiError ? e.message : 'Something went wrong loading this.');
       })
       .finally(() => {
@@ -56,18 +98,65 @@ export function useResource<T>(path: string | null, deps: unknown[] = []): Resou
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, nonce, ...deps]);
 
-  const reload = useCallback(() => setNonce((n) => n + 1), []);
+  const reload = useCallback(() => {
+    // Never from the record: a reload follows a write, and reading back what
+    // was there before it would report the write as having done nothing.
+    if (path) recent.delete(path);
+    setNonce((n) => n + 1);
+  }, [path]);
   return { data, error, loading, reload };
 }
 
-/** Polls a resource while `active` is true. Used for live job and task views. */
+/**
+ * Polls a resource while `active` is true and somebody is looking.
+ *
+ * Thirteen of these run across the interface and six never stop: the agent's
+ * status every five seconds, notifications, the pause switch, browser tabs,
+ * health, the inbox. AI17Z is left open -- it is the window somebody glances
+ * at while the agent works -- so a tab sitting behind an editor all afternoon
+ * was asking a local API a few thousand questions to render pixels nobody was
+ * looking at, on the same machine the agent is driving a browser on.
+ *
+ * Two rules, and the second is what makes the first safe:
+ *
+ *   - nothing is asked while the document is hidden;
+ *   - one poll fires the moment it is visible again, so what somebody comes
+ *     back to is current rather than however stale it was when they left.
+ *
+ * Without the second, this would trade wasted requests for a screen that lies
+ * for up to one interval, which is the worse of the two.
+ */
 export function usePolling(callback: () => void, intervalMs: number, active: boolean): void {
   const saved = useRef(callback);
   saved.current = callback;
   useEffect(() => {
     if (!active) return;
-    const id = setInterval(() => saved.current(), intervalMs);
-    return () => clearInterval(id);
+
+    let id: number | null = null;
+    const stop = () => {
+      if (id !== null) window.clearInterval(id);
+      id = null;
+    };
+    const start = () => {
+      if (id !== null) return;
+      id = window.setInterval(() => saved.current(), intervalMs);
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stop();
+        return;
+      }
+      saved.current();
+      start();
+    };
+
+    if (document.visibilityState !== 'hidden') start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [intervalMs, active]);
 }
 

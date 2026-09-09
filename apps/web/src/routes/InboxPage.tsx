@@ -44,6 +44,23 @@ const WORDS: Record<Bucket, string> = {
   OUTREACH: 'Outreach',
 };
 
+/**
+ * What somebody sees when a bucket is empty.
+ *
+ * Five of the six said "Nothing here" and stopped. An empty list has to say
+ * what would have been in it and why nothing is, or it reads as a screen that
+ * failed to load -- especially on a new installation, where every bucket but
+ * one is empty and none of them explained itself.
+ */
+const WHEN_EMPTY: Record<Bucket, string> = {
+  NEEDS_REVIEW: 'Your agents are deciding for themselves, within the policies you set.',
+  ERRORS: 'Nothing has failed. A job that cannot finish appears here with the reason.',
+  QUESTIONS: 'Nobody has asked one of your agents anything it has not answered.',
+  MENTIONS: 'Nobody has addressed one of your agents yet. Connect an account and the radar starts watching.',
+  REPLIES: 'No one has answered your agents in a conversation they are already in.',
+  OUTREACH: 'Your agents have not gone looking for anything. Outreach is off unless you turn it on.',
+};
+
 /** What each bucket is for, so the word above the list is not the only clue. */
 const LEDE: Record<Bucket, string> = {
   NEEDS_REVIEW: 'Held for you to decide. Nothing moves until you do.',
@@ -132,12 +149,8 @@ export function InboxPage() {
       <div className="mt-6 space-y-2">
         {bucket === 'NEEDS_REVIEW' && items.length > 0 ? null : items.length === 0 ? (
           <EmptyState
-            title={bucket === 'NEEDS_REVIEW' ? 'Nothing is waiting on you' : 'Nothing here'}
-            detail={
-              bucket === 'NEEDS_REVIEW'
-                ? 'Your agents are deciding for themselves, within the policies you set.'
-                : undefined
-            }
+            title={bucket === 'NEEDS_REVIEW' ? 'Nothing is waiting on you' : 'Nothing here yet'}
+            detail={WHEN_EMPTY[bucket]}
           />
         ) : (
           items.map((item) => (

@@ -45,7 +45,7 @@ export function Home() {
           detail={error}
           actions={
             <button type="button" className="btn-ghost" onClick={reload}>
-              Retry
+              Try again
             </button>
           }
         />
