@@ -463,3 +463,55 @@ describe('stopping one installation leaves the others alone', () => {
     expect(uninstall).toContain('-like "*$root*"');
   });
 });
+
+/**
+ * An update stops the installation it is replacing, and only that one.
+ *
+ * A silent installer run over a running AI17Z aborted: RestartManager could not
+ * close the native worker, because the worker holds esbuild under the program
+ * directory, and with /SUPPRESSMSGBOXES the Abort/Retry/Ignore prompt defaults
+ * to Abort. Setup exited 5 and rolled back cleanly -- so nothing broke, and an
+ * unattended update simply never happened. The documentation says to run the
+ * installer over the top of an earlier one, and that only worked with somebody
+ * sitting there to answer a prompt.
+ *
+ * The uninstaller already had the right shape: a bounded script that never
+ * prompts and is scoped to its own program directory. The installer runs the
+ * same one, with the containers left alone -- they hold the owner's database
+ * and an update has no reason to interrupt it.
+ */
+describe('an update stops its own runtime before replacing files', () => {
+  const iss = readFileSync(resolve(root, 'packaging/windows/ai17z.iss'), 'utf8');
+  const stop = readFileSync(resolve(root, 'packaging/windows/Stop-ForUninstall.ps1'), 'utf8');
+
+  it('stops before the files are replaced, not after', () => {
+    // ssPostInstall would be too late: the copy is what fails.
+    expect(iss).toMatch(/if CurStep = ssInstall then\s*\r?\n\s*StopTargetInstallation\(\);/);
+  });
+
+  it('runs the script that is already in the target program directory', () => {
+    // `{app}` is the installation being replaced, which is what scopes this to
+    // one installation. A first install has no script there and nothing happens.
+    expect(iss).toContain(String.raw`Script := ExpandConstant('{app}\packaging\windows\Stop-ForUninstall.ps1')`);
+    expect(iss).toContain('if not FileExists(Script) then Exit;');
+  });
+
+  it('never waits for an answer nobody is there to give', () => {
+    const proc = iss.slice(iss.indexOf('procedure StopTargetInstallation'), iss.indexOf('procedure CurStepChanged'));
+    expect(proc).toContain('-NonInteractive');
+    expect(proc).toContain('ewWaitUntilTerminated');
+  });
+
+  it('leaves the containers running, because they hold the database', () => {
+    const proc = iss.slice(iss.indexOf('procedure StopTargetInstallation'), iss.indexOf('procedure CurStepChanged'));
+    expect(proc).toContain('-WorkerOnly');
+    expect(stop).toContain('[switch] $WorkerOnly');
+    expect(stop).toContain('if ((-not $WorkerOnly) -and (Get-Command docker');
+  });
+
+  it('still sweeps only what runs out of its own program directory', () => {
+    // The multi-instance guarantee. A second installation's worker is not this
+    // installation's to stop, on an update any more than on an uninstall.
+    expect(stop).toContain('-like "*$root*"');
+  });
+});

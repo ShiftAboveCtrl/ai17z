@@ -10,3 +10,4 @@ export * from './supervisor';
 export * from './version';
 export * from './image';
 export * from './workerAbsence';
+export * from './installEnv';

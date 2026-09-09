@@ -33,6 +33,13 @@ export const SEL = {
   profileLink: '[data-testid="AppTabBar_Profile_Link"]',
   loginForm: '[data-testid="loginButton"], input[autocomplete="username"]',
   tweetArticle: 'article[data-testid="tweet"]',
+  // A profile page, for reading an account rather than acting on one. The
+  // header carries the display name; the handle is already known, because a
+  // profile is only ever opened by one.
+  profileHeader: '[data-testid="UserName"]',
+  profileBio: '[data-testid="UserDescription"]',
+  profileJoinDate: '[data-testid="UserJoinDate"]',
+  profileWebsite: '[data-testid="UserUrl"]',
   userName: '[data-testid="User-Name"]',
   /** The badge X puts beside a verified account's name. */
   verifiedBadge: '[data-testid="User-Name"] [data-testid="icon-verified"]',

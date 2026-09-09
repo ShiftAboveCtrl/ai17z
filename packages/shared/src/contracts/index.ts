@@ -25,3 +25,4 @@ export * from './providerCatalogue';
 export * from './readiness';
 export * from './modelRoleStatus';
 export * from './capabilities';
+export * from './xDomain';

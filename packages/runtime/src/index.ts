@@ -51,3 +51,4 @@ export * from './agentPackage';
 export * from './updates';
 export * from './capabilityLoop';
 export * from './capabilityInputShape';
+export * from './xCapabilities';

@@ -18,10 +18,21 @@
   quickly on anything that does not answer.
 
   Never prompts. Never fails the uninstall. Bounded by construction.
+
+.PARAMETER WorkerOnly
+  Stop the native worker and leave the containers running.
+
+  For an update rather than an uninstall. A silent installer run over a running
+  AI17Z aborts: RestartManager cannot close the native worker because it holds
+  esbuild under the program directory, and with /SUPPRESSMSGBOXES the
+  Abort/Retry/Ignore prompt defaults to Abort. The worker is the only thing that
+  holds those files, so stopping it is enough -- and the containers hold the
+  owner's database, which an update must not interrupt.
 #>
 [CmdletBinding()]
 param(
-  [int] $TimeoutSeconds = 20
+  [int] $TimeoutSeconds = 20,
+  [switch] $WorkerOnly
 )
 
 # Nothing here is worth failing an uninstall for.
@@ -62,7 +73,11 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   ForEach-Object { Stop-Tree $_.ProcessId }
 
 # -- The containers, as a courtesy, and only if Docker answers quickly --------
-if (Get-Command docker -ErrorAction SilentlyContinue) {
+#
+# Skipped for an update: the program directory is what is being replaced, and
+# nothing the containers own lives there. Stopping the database for a file copy
+# would be downtime bought for nothing.
+if ((-not $WorkerOnly) -and (Get-Command docker -ErrorAction SilentlyContinue)) {
   $compose = Join-Path $root 'docker-compose.yml'
   if (Test-Path $compose) {
     # `stop`, never `down -v`: the database is the owner's and removing it is a
