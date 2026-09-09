@@ -17,7 +17,9 @@ const root = resolve(__dirname, '../..');
  */
 describe('the prompt no longer offers what nothing can do', () => {
   const templates = readFileSync(resolve(root, 'packages/prompts/src/defaultTemplates.ts'), 'utf8');
-  const steps = readFileSync(resolve(root, 'packages/runtime/src/steps.ts'), 'utf8');
+  // The generation step, which is where the prompt is assembled. `steps.ts`
+  // is a barrel over five files now, so reading it finds only re-exports.
+  const steps = readFileSync(resolve(root, 'packages/runtime/src/steps/generate.ts'), 'utf8');
 
   it('does not tell the model a tool is available to call', () => {
     // Only in the comments explaining why it is gone.
