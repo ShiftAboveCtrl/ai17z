@@ -617,4 +617,4 @@ export const xAdapter: ChannelAdapter = {
     return replyOnPage(ctx, request, verification);
   },
 };
-export { readPost, readProfile, parseCount, searchPosts } from './read';
+export { readPost, readProfile, parseCount, searchPosts, readThread } from './read';

@@ -20,13 +20,20 @@ describe('the X read capabilities', () => {
   registerXCapabilities();
 
   it('offers every registered X capability to the model', () => {
-    expect(listModelCallable().map((c) => c.id)).toEqual(['x.like', 'x.read_post', 'x.read_profile', 'x.search']);
+    expect(listModelCallable().map((c) => c.id)).toEqual([
+      'x.like',
+      'x.read_post',
+      'x.read_profile',
+      'x.read_thread',
+      'x.repost',
+      'x.search',
+    ]);
   });
 
   it('declares reading as reading', () => {
     // Not cosmetic: `defaultPermission` allows a low-risk read and disables a
     // write, so this is what decides whether they work out of the box.
-    for (const id of ['x.read_post', 'x.read_profile', 'x.search']) {
+    for (const id of ['x.read_post', 'x.read_profile', 'x.read_thread', 'x.search']) {
       const capability = getCapability(id)!;
       expect(capability.effect, id).toBe('READ');
       expect(capability.risk, id).toBe('LOW');
@@ -179,5 +186,32 @@ describe('the key a capability action is claimed under', () => {
         capabilityIdempotencyKey({ ...base, capabilityId: 'x.like', targetRef: 'https://x.com/i/web/status/2' }),
       );
     });
+  });
+});
+
+describe('the two engagement writes are told apart', () => {
+  resetCapabilitiesForTest();
+  registerXCapabilities();
+
+  it('rates reposting above liking, because it is louder', async () => {
+    // A like is an acknowledgement. A repost puts somebody else's words in
+    // front of this account's own followers under its own name. Both are off by
+    // default; the difference is what an owner is deciding about.
+    const { defaultPermission } = await import('@xbam/shared/contracts');
+    expect(getCapability('x.like')!.risk).toBe('MEDIUM');
+    expect(getCapability('x.repost')!.risk).toBe('HIGH');
+    for (const id of ['x.like', 'x.repost']) {
+      const c = getCapability(id)!;
+      expect(defaultPermission(c.effect, c.risk), id).toBe('DISABLED');
+    }
+  });
+
+  it('keeps every read a read', () => {
+    for (const id of ['x.read_post', 'x.read_profile', 'x.read_thread', 'x.search']) {
+      expect(getCapability(id)!.effect, id).toBe('READ');
+    }
+    for (const id of ['x.like', 'x.repost']) {
+      expect(getCapability(id)!.effect, id).toBe('WRITE');
+    }
   });
 });
