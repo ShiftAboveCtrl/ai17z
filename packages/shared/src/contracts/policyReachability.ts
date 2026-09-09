@@ -133,6 +133,7 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'tone.humour': { where: 'DEPRECATED', why: "Tone mirroring weights. No consumer." },
   'tone.technical': { where: 'INTERNAL', why: "Tone mirroring weights." },
   'tools.allowed': { where: 'EASY_AND_ADVANCED' },
+  'tools.capabilityLoop': { where: 'ADVANCED_ONLY' },
   'tools.research.market': { where: 'ADVANCED_ONLY' },
   'tools.research.web': { where: 'ADVANCED_ONLY' },
   'tools.research.xIntelligence': { where: 'EASY_AND_ADVANCED' },
