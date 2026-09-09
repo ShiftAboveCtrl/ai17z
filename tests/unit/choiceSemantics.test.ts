@@ -125,3 +125,37 @@ describe('what gets announced', () => {
     expect(read('components/Blockers.tsx')).toContain('role="status"');
   });
 });
+
+/**
+ * A hint and an error rendered under a field are not part of it.
+ *
+ * Both were loose paragraphs: a screen reader read the label and stopped, so
+ * "Exactly as the provider names it" and "that model does not exist" were on
+ * screen and unsaid. `aria-invalid` is what turns the error from red text into
+ * a state something can act on.
+ */
+describe('fields and what they say about themselves', () => {
+  const ui = read('components/ui.tsx');
+
+  it('describes a control with its own hint', () => {
+    expect(ui).toContain("'aria-describedby': describedBy");
+    expect(ui).toMatch(/const hintId = hint && !error/);
+  });
+
+  it('prefers the error over the hint when there is one', () => {
+    // Two descriptions is one too many, and the error is the one that matters.
+    expect(ui).toContain('const describedBy = errorId ?? hintId;');
+  });
+
+  it('marks a field with an error as invalid', () => {
+    expect(ui).toContain("...(error ? { 'aria-invalid': true } : {})");
+  });
+
+  it('does not name a group twice', () => {
+    // A `Field` around a `ChoiceGroup` used to wrap it in a second labelled
+    // group, so the same words were announced before the options and again
+    // around them -- and `htmlFor` pointed at an element labels cannot address.
+    expect(ui).toContain('groupLabelled');
+    expect(ui).toMatch(/const selfLabelled = Boolean/);
+  });
+});
