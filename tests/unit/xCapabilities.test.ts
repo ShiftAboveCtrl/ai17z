@@ -19,8 +19,8 @@ describe('the X read capabilities', () => {
   resetCapabilitiesForTest();
   registerXCapabilities();
 
-  it('offers all three to the model', () => {
-    expect(listModelCallable().map((c) => c.id)).toEqual(['x.read_post', 'x.read_profile', 'x.search']);
+  it('offers every registered X capability to the model', () => {
+    expect(listModelCallable().map((c) => c.id)).toEqual(['x.like', 'x.read_post', 'x.read_profile', 'x.search']);
   });
 
   it('declares reading as reading', () => {
@@ -111,5 +111,73 @@ describe('reading the counts X actually renders', () => {
     for (const value of ['', null, undefined, 'Followers', '—']) {
       expect(parseCount(value), String(value)).toBeUndefined();
     }
+  });
+});
+
+describe('the first write capability', () => {
+  resetCapabilitiesForTest();
+  registerXCapabilities();
+
+  it('is a write, and so is off until an owner turns it on', async () => {
+    // The default that matters. An agent that looks things up unasked is
+    // useful; one that acts unasked is a decision somebody makes.
+    const { defaultPermission } = await import('@xbam/shared/contracts');
+    const like = getCapability('x.like')!;
+    expect(like.effect).toBe('WRITE');
+    expect(defaultPermission(like.effect, like.risk)).toBe('DISABLED');
+  });
+
+  it('refuses to act outside a job', async () => {
+    // Every remote action belongs to a durable job: that is what carries the
+    // idempotency key and what a crash is recovered against.
+    const readiness = await getCapability('x.like')!.readiness!({
+      agentId: 'a',
+      jobId: null,
+      accountId: 'account-1',
+      config: {},
+      logger: console as never,
+    });
+    expect(readiness.status).toBe('UNAVAILABLE');
+    expect(readiness.why).toContain('inside a job');
+  });
+
+  it('takes a post, not a handle', () => {
+    const input = getCapability('x.like')!.input;
+    expect(input.safeParse({ post: 'https://x.com/a/status/2094843814082924574' }).success).toBe(true);
+    expect(input.safeParse({ post: '@somebody' }).success).toBe(false);
+  });
+});
+
+describe('the key a capability action is claimed under', () => {
+  it('is derived from the job, so a retried job cannot act twice', async () => {
+    const { capabilityIdempotencyKey } = await import('@xbam/runtime');
+    const key = capabilityIdempotencyKey({
+      jobIdempotencyKey: 'x|account|2094843814082924574|REPLY|agent',
+      capabilityId: 'x.like',
+      targetRef: 'https://x.com/i/web/status/999',
+    });
+    // Same job, same capability, same target is the same action by
+    // construction -- which is what stops a model that asks twice acting twice.
+    expect(key).toBe(
+      capabilityIdempotencyKey({
+        jobIdempotencyKey: 'x|account|2094843814082924574|REPLY|agent',
+        capabilityId: 'x.like',
+        targetRef: 'https://x.com/i/web/status/999',
+      }),
+    );
+    expect(key).toContain('cap:x.like');
+    expect(key).toContain('x|account|2094843814082924574|REPLY|agent');
+  });
+
+  it('separates two capabilities and two targets inside one job', () => {
+    return import('@xbam/runtime').then(({ capabilityIdempotencyKey }) => {
+      const base = { jobIdempotencyKey: 'job-key', targetRef: 'https://x.com/i/web/status/1' };
+      expect(capabilityIdempotencyKey({ ...base, capabilityId: 'x.like' })).not.toBe(
+        capabilityIdempotencyKey({ ...base, capabilityId: 'x.repost' }),
+      );
+      expect(capabilityIdempotencyKey({ ...base, capabilityId: 'x.like' })).not.toBe(
+        capabilityIdempotencyKey({ ...base, capabilityId: 'x.like', targetRef: 'https://x.com/i/web/status/2' }),
+      );
+    });
   });
 });

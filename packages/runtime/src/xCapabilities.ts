@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { XPost, XProfile, XSearchResult } from '@xbam/shared/contracts';
+import { jobs as jobsRepo } from '@xbam/database';
 import { accounts as accountsRepo, workers as workersRepo } from '@xbam/database';
 import { readPost, readProfile, searchPosts } from '@xbam/channels';
 import { defineCapability, registerCapability } from '@xbam/tools';
 import { buildChannelContext } from './channelContext';
+import { performCapabilityAction } from './capabilityActions';
 
 /**
  * X, as capabilities a model may choose.
@@ -158,9 +160,91 @@ const searchCapability = defineCapability({
   },
 });
 
+/**
+ * Liking a post, which is the first thing a model may do rather than read.
+ *
+ * A write, so it is DISABLED by default and an owner has to decide -- an agent
+ * that looks things up unasked is useful, one that acts unasked is a decision
+ * somebody makes. Chosen first because a like is the smallest real write there
+ * is: no text, desired-state rather than a toggle, and `ensureEngaged` already
+ * treats "already liked" as success rather than something to undo.
+ *
+ * It goes nowhere near the browser from here. `performCapabilityAction` claims
+ * a durable action under an idempotency key derived from the job's, asks the
+ * remote before retaking anything a dead worker left behind, and runs the same
+ * verify-then-execute the reply path runs. A capability that called Chrome
+ * directly would be a second execution path beside the one that took months to
+ * harden.
+ */
+const likeCapability = defineCapability({
+  id: 'x.like',
+  name: 'Like a post on X',
+  description:
+    'Likes one post on X, by id or URL. Use it when something deserves acknowledging and a reply would add nothing.',
+  category: 'ENGAGE',
+  effect: 'WRITE',
+  risk: 'MEDIUM',
+  input: z.object({
+    post: z
+      .string()
+      .min(5)
+      .max(200)
+      .refine((value) => /\/status\/\d{5,25}/.test(value) || /^\d{5,25}$/.test(value.trim()), {
+        message: 'must be a post id or a post URL, not a handle',
+      }),
+  }),
+  output: z.object({
+    liked: z.boolean(),
+    alreadyLiked: z.boolean(),
+    post: z.string(),
+    detail: z.string(),
+  }),
+  modelCallable: true,
+  timeoutMs: 90_000,
+  async readiness(ctx) {
+    if (!ctx.jobId) {
+      // Every remote action belongs to a durable job, because that is what
+      // carries the idempotency key and what a crash is recovered against.
+      return { status: 'UNAVAILABLE' as const, why: 'Acting on X only happens inside a job.' };
+    }
+    return browserReadiness(ctx.accountId);
+  },
+  async run(input, ctx) {
+    const job = ctx.jobId ? await jobsRepo.getJob(ctx.jobId) : null;
+    if (!job || !ctx.accountId) throw new Error('This action has no job to belong to.');
+    const targetRef = normaliseStatus(input.post);
+    const result = await performCapabilityAction({
+      agentId: ctx.agentId,
+      jobId: job.id,
+      accountId: ctx.accountId,
+      capabilityId: 'x.like',
+      type: 'LIKE',
+      targetRef,
+      text: '',
+      jobIdempotencyKey: job.idempotencyKey,
+      // A dry-run job stays a dry run all the way down. Anything else would
+      // make the safety net leak at exactly the point it matters.
+      dryRun: job.dryRun,
+    });
+    return {
+      liked: result.performed,
+      alreadyLiked: result.alreadyDone,
+      post: targetRef,
+      detail: result.detail,
+    };
+  },
+});
+
+/** A post reference the action path will accept: always a full status URL. */
+function normaliseStatus(reference: string): string {
+  const id = reference.match(/\/status\/(\d{5,25})/)?.[1] ?? reference.trim();
+  return `https://x.com/i/web/status/${id}`;
+}
+
 /** Registered at bootstrap, beside the built-ins. */
 export function registerXCapabilities(): void {
   registerCapability(readPostCapability);
   registerCapability(readProfileCapability);
   registerCapability(searchCapability);
+  registerCapability(likeCapability);
 }
