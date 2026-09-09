@@ -32,3 +32,12 @@ export {
   type BranchOutcome,
 } from './x/conversation';
 export { replyingToHandles } from './x/index';
+
+/**
+ * Reading X as a capability rather than as a pipeline step.
+ *
+ * These take a `ChannelContext` and return the normalised shapes in
+ * `contracts/xDomain`. The runtime supplies the context and registers them as
+ * capabilities; nothing about the DOM crosses this line.
+ */
+export { readPost, readProfile, parseCount } from './x/index';

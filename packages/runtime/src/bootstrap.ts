@@ -3,6 +3,7 @@ import { pipelines as pipelinesRepo, prompts as promptsRepo } from '@xbam/databa
 import { DEFAULT_TEMPLATES } from '@xbam/prompts';
 import { registerBuiltinCapabilities, syncToolCatalogue } from '@xbam/tools';
 import { defaultPipelineDraft } from './defaultPipeline';
+import { registerXCapabilities } from './xCapabilities';
 
 const log = createLogger('bootstrap');
 
@@ -23,6 +24,11 @@ export async function bootstrapRuntime(): Promise<void> {
   // here rather than at import time: a module that registers on load makes
   // the contents of the registry depend on what happened to be imported.
   registerBuiltinCapabilities();
+  // X's are registered here rather than in packages/channels: a capability
+  // needs an account row and a browser session, which is database work the
+  // channel package does not do. The selector boundary is unaffected --
+  // what crosses it is still only the normalised shapes.
+  registerXCapabilities();
   await upgradePipelinesWithResearch().catch((error) =>
     log.warn('could not add the research node to existing pipelines', { message: errorMessage(error) }),
   );

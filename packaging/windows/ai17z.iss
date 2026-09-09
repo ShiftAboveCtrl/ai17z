@@ -978,8 +978,42 @@ begin
     ExpandConstant('{app}'), SW_SHOW, ewWaitUntilTerminated, ResultCode);
 end;
 
+{ Stops the installation being replaced, and only that one.
+
+  A silent update over a running AI17Z aborted. RestartManager could not close
+  the native worker -- it holds esbuild under the program directory -- and with
+  /SUPPRESSMSGBOXES the Abort/Retry/Ignore prompt defaults to Abort, so setup
+  exited 5 and rolled back. An interactive person gets a prompt they can answer;
+  nobody running it unattended does.
+
+  The uninstaller already solved this with a purpose-built script that is
+  bounded, never prompts, and is scoped to its own program directory. This runs
+  the copy already installed there, with -WorkerOnly: the worker is the only
+  thing holding those files, and the containers hold the owner's database, which
+  an update has no reason to interrupt.
+
+  Scoped by program directory, which is what keeps the multi-instance guarantee:
+  a second installation's worker is not this installation's to stop. Nothing
+  happens on a first install, where there is no script there to run. }
+procedure StopTargetInstallation();
+var
+  Script: String;
+  ResultCode: Integer;
+begin
+  Script := ExpandConstant('{app}\packaging\windows\Stop-ForUninstall.ps1');
+  if not FileExists(Script) then Exit;
+  Exec('powershell.exe',
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + Script + '" -WorkerOnly',
+    ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  { Before any file is replaced, and only for an installation that is already
+    there. }
+  if CurStep = ssInstall then
+    StopTargetInstallation();
+
   if CurStep = ssPostInstall then
   begin
     { Created here rather than by the application, so an upgrade finds it

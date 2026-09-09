@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
+import { installedEnvFile } from './installEnv';
 
 let loaded = false;
 
@@ -32,6 +34,29 @@ export function loadEnv(startDir = process.cwd()): void {
     return;
   }
 
+  /**
+   * The installation this process belongs to, before anything about cwd.
+   *
+   * `data-location.txt` beside the program is what every shipped script
+   * follows, and it is the only answer that does not change when somebody
+   * launches from a different directory. Anchored to the entry script and to
+   * this module's own path -- both of which are files this process is made of
+   * -- rather than to where it was started.
+   *
+   * The bug this closes: an installed worker launched from a shell sitting in
+   * a development checkout took that checkout's `.env`, and so its database and
+   * its browser profile, while writing its log into the installation's own
+   * folder. Two installations have to be two installations, and cwd is not part
+   * of an installation's identity.
+   */
+  const owned = installedEnvFile(installationAnchors(), { exists: existsSync, read: (p) => readFileSync(p, 'utf8') });
+  if (owned) {
+    applyEnvFile(readFileSync(owned, 'utf8'));
+    process.env.AI17Z_ENV_FILE ??= owned;
+    applyBrandCompatibility();
+    return;
+  }
+
   let dir = resolve(startDir);
   for (let i = 0; i < 8; i += 1) {
     const candidate = resolve(dir, '.env');
@@ -46,6 +71,28 @@ export function loadEnv(startDir = process.cwd()): void {
   }
   // No .env found: the environment may still carry either prefix.
   applyBrandCompatibility();
+}
+
+
+/**
+ * Places to look for this installation's pointer.
+ *
+ * The entry script first: for an installed copy that is
+ * `<program>/apps/worker/src/main.ts` or the script a shortcut ran, so the
+ * program directory is a few levels above it. Then this module's own file,
+ * which reaches the program directory through the workspace link even when the
+ * entry point is somewhere unexpected.
+ */
+function installationAnchors(): string[] {
+  const anchors: string[] = [];
+  const entry = process.argv[1];
+  if (entry) anchors.push(dirname(resolve(entry)));
+  try {
+    anchors.push(dirname(fileURLToPath(import.meta.url)));
+  } catch {
+    // Not ESM, or no URL to resolve. The entry script is the important one.
+  }
+  return anchors;
 }
 
 export function applyEnvFile(contents: string): void {
