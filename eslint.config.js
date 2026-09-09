@@ -1,9 +1,9 @@
 /**
  * The rules this repository already had, made enforceable.
  *
- * CLAUDE.md has said for a long time: no `any`, no empty `catch {}` without a
- * comment explaining the deliberate swallow, no `console.log` outside the
- * logger, `import type` for type-only imports. They were conventions, which
+ * docs/ENGINEERING.md has said for a long time: no `any`, no empty `catch {}`
+ * without a comment explaining the deliberate swallow, no `console.log` outside
+ * the logger, `import type` for type-only imports. They were conventions, which
  * means they held exactly as well as whoever was reading the diff.
  *
  * What made this urgent is a rule nobody had written down at all.
@@ -53,7 +53,7 @@ export default tseslint.config(
       globals: { ...globals.node, ...globals.es2023 },
     },
     rules: {
-      // -- The conventions, verbatim from CLAUDE.md ---------------------------
+      // -- The conventions, verbatim from docs/ENGINEERING.md -----------------
 
       // "No `any`". A warning rather than an error only where it is unavoidable
       // below; everywhere else it is a mistake.

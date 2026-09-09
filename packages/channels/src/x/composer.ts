@@ -85,9 +85,9 @@ export async function openComposer(page: Page, timeoutMs = 15_000): Promise<Open
  * being waited for arrives a few hundred milliseconds after the editor does.
  *
  * Bounded and short. A reply on a status page may legitimately have no dialog
- * at all -- CLAUDE.md is explicit that the composer may be inline -- so this
- * must not become "wait for a dialog", only "do not conclude there is none
- * before X has had time to open one". The cost when there genuinely is no
+ * at all -- docs/ENGINEERING.md is explicit that the composer may be inline --
+ * so this must not become "wait for a dialog", only "do not conclude there is
+ * none before X has had time to open one". The cost when there genuinely is no
  * dialog is this window; the saving when there is one is the twenty-second
  * detach timeout that was being paid on every single reply.
  */

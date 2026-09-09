@@ -223,6 +223,11 @@ const NEVER_TRACKED: { pattern: RegExp; problem: string }[] = [
   { pattern: /\.(?:pid|log)$/, problem: 'A runtime file from somebody running it, not part of the source.' },
   { pattern: /(^|\/)accounts\.db$/, problem: 'A database of accounts.' },
   { pattern: /(^|\/)node_modules\//, problem: 'Installed dependencies.' },
+  {
+    pattern: /(^|\/)(?:CLAUDE|claude)\.md$/,
+    problem: 'A local assistant guidance file. The public engineering guidance is docs/ENGINEERING.md.',
+  },
+  { pattern: /(^|\/)\.claude\//, problem: "One developer's assistant tooling, not part of the product." },
 ];
 
 export function findFilesThatShouldNotBeTracked(paths: string[]): Finding[] {
