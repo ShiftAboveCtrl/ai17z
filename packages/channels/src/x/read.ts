@@ -99,7 +99,14 @@ export async function readPost(ctx: ChannelContext, reference: string): Promise<
     }
 
     const snapshot = await readArticle(session.page, anchor);
-    return toPost(id, url, snapshot);
+    const counts = await readCounts(session.page, anchor);
+    return {
+      ...toPost(id, url, snapshot),
+      replyCount: counts.replies,
+      repostCount: counts.reposts,
+      likeCount: counts.likes,
+      viewCount: counts.views,
+    };
   });
 }
 
@@ -315,4 +322,52 @@ export async function readThread(ctx: ChannelContext, reference: string): Promis
       truncated: snapshots.length >= MAX_ARTICLES_READ,
     };
   });
+}
+
+/**
+ * The counts X renders under a post.
+ *
+ * Read from the one aria-label X puts on the action group -- "12 replies, 3
+ * reposts, 40 likes, 1,205 views" -- rather than from four separate spans,
+ * because a count of zero is hidden as a span and still named in the label.
+ *
+ * Anything the label does not mention comes back missing. That is the whole
+ * discipline of this file: absent is not zero, and an agent told a post has no
+ * views will say so.
+ */
+export function parseCounts(label: string | null | undefined): {
+  replies?: number;
+  reposts?: number;
+  likes?: number;
+  bookmarks?: number;
+  views?: number;
+} {
+  if (!label) return {};
+  const of = (word: string): number | undefined => {
+    const match = label.match(new RegExp(String.raw`([\d.,]+[KMB]?)\s+` + word, 'i'));
+    return parseCount(match?.[1]);
+  };
+  const counts = {
+    replies: of('repl(?:y|ies)'),
+    reposts: of('reposts?'),
+    likes: of('likes?'),
+    bookmarks: of('bookmarks?'),
+    views: of('views?'),
+  };
+  // Only what was actually there. An object of undefineds reads as "we looked
+  // and found nothing", which is different from "we did not look".
+  return Object.fromEntries(Object.entries(counts).filter(([, value]) => value !== undefined));
+}
+
+/** The counts on one article, or nothing when X did not render the group. */
+export async function readCounts(
+  page: Parameters<typeof readArticle>[0],
+  articleSelector: string,
+): Promise<ReturnType<typeof parseCounts>> {
+  const label = await page
+    .locator(`${articleSelector} ${SEL.countGroup}`)
+    .first()
+    .getAttribute('aria-label', { timeout: FIELD_TIMEOUT_MS })
+    .catch(() => null);
+  return parseCounts(label);
 }

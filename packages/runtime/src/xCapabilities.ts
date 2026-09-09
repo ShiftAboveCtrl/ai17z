@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { XPost, XProfile, XSearchResult, XThread } from '@xbam/shared/contracts';
-import { jobs as jobsRepo } from '@xbam/database';
+import { jobs as jobsRepo, postAnalytics } from '@xbam/database';
 import { accounts as accountsRepo, workers as workersRepo } from '@xbam/database';
 import { readPost, readProfile, readThread, searchPosts } from '@xbam/channels';
 import { defineCapability, registerCapability } from '@xbam/tools';
@@ -101,7 +101,35 @@ const readPostCapability = defineCapability({
   async run(input, ctx) {
     const channel = await contextFor(ctx.accountId, ctx.jobId);
     if (!channel) throw new Error('This agent has no connected X account to read as.');
-    return readPost(channel, input.post);
+    const post = await readPost(channel, input.post);
+
+    /**
+     * Reading a post is also observing it.
+     *
+     * The alternative was a second loop that walks recent posts asking X how
+     * they did, which is more moving parts and more requests for numbers that
+     * were on the page somebody just looked at. Every read contributes
+     * evidence instead, and the unique index means reading the same post twice
+     * in a minute records one observation.
+     *
+     * Never allowed to fail the read. An agent that could not answer because a
+     * measurement did not save would be trading the thing for the record of it.
+     */
+    if (ctx.accountId) {
+      await postAnalytics
+        .record({
+          agentId: ctx.agentId,
+          accountId: ctx.accountId,
+          remotePostId: post.statusId,
+          source: 'TIMELINE',
+          likes: post.likeCount ?? null,
+          reposts: post.repostCount ?? null,
+          replies: post.replyCount ?? null,
+          impressions: post.viewCount ?? null,
+        })
+        .catch(() => undefined);
+    }
+    return post;
   },
 });
 

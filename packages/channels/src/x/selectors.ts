@@ -93,6 +93,16 @@ export const SEL = {
    * A REPOST is a repost.
    */
   repostConfirm: '[data-testid="retweetConfirm"]',
+  /**
+   * The group those controls sit in, which is also where the counts are.
+   *
+   * One aria-label carries all of them -- "12 replies, 3 reposts, 40 likes,
+   * 1,205 views" -- and that is more reliable than reading four separate
+   * spans, because X hides an individual count when it is zero and names it in
+   * the label either way. Absent is not zero, so the label is the only place
+   * the difference survives.
+   */
+  countGroup: '[role="group"][aria-label]',
 } as const;
 
 /**
