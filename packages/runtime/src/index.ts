@@ -52,6 +52,8 @@ export * from './updates';
 export * from './capabilityLoop';
 export * from './capabilityInputShape';
 export * from './xCapabilities';
+export * from './xSurfaceCapabilities';
+export * from './xCapabilityContext';
 export * from './capabilityPermissions';
 export * from './capabilityActions';
 export * from './capabilityViews';

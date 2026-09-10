@@ -20,11 +20,20 @@ describe('the X read capabilities', () => {
   registerXCapabilities();
 
   it('offers every registered X capability to the model', () => {
+    // Pinned exactly. Adding one is meant to fail this test: what a model may
+    // choose is the surface of the whole feature, and it should never grow by
+    // accident.
     expect(listModelCallable().map((c) => c.id)).toEqual([
       'x.like',
+      'x.read_connections',
+      'x.read_conversation',
+      'x.read_inbox',
+      'x.read_notifications',
       'x.read_post',
+      'x.read_post_analytics',
       'x.read_profile',
       'x.read_thread',
+      'x.read_timeline',
       'x.repost',
       'x.search',
     ]);

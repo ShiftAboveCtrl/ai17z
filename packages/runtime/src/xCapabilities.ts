@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import { XPost, XProfile, XSearchResult, XThread } from '@xbam/shared/contracts';
 import { jobs as jobsRepo, postAnalytics } from '@xbam/database';
-import { accounts as accountsRepo, workers as workersRepo } from '@xbam/database';
 import { readPost, readProfile, readThread, searchPosts } from '@xbam/channels';
 import { defineCapability, registerCapability } from '@xbam/tools';
-import { buildChannelContext } from './channelContext';
 import { performCapabilityAction } from './capabilityActions';
+import { browserReadiness, contextFor, normaliseStatus } from './xCapabilityContext';
+import { registerXSurfaceCapabilities } from './xSurfaceCapabilities';
 
 /**
  * X, as capabilities a model may choose.
@@ -19,49 +19,17 @@ import { performCapabilityAction } from './capabilityActions';
  * reaches anything above `packages/channels`, which is the rule that has held
  * since the adapter was written.
  *
- * These are reads. Writing through a capability is a different problem with a
- * different answer -- it has to land in the durable action machinery, with
- * exact-target verification, idempotency and remote read-back -- and wiring a
- * write to a browser call from here would be a second execution path beside the
- * one that took months to harden.
- */
-
-/**
- * Which account these run as.
+ * The posts and people an agent reads while answering, plus the two writes it
+ * may choose. Everything a person opens rather than a model -- notifications,
+ * follower lists, timelines, the inbox, a post's own figures -- is in
+ * `xSurfaceCapabilities.ts`, registered from here so there is still one
+ * bootstrap call.
  *
- * A capability arrives with an account id when the job has one. Without it
- * there is nothing to read X as: `docs/ENGINEERING.md` is explicit that X's own
- * index is reachable only as the agent's own signed-in account, and guessing an
- * account would mean reading X as somebody the owner did not choose.
+ * A write never touches the browser from here. It lands in the durable action
+ * machinery, with exact-target verification, idempotency and remote read-back;
+ * wiring a write to a browser call from a capability would be a second
+ * execution path beside the one that took months to harden.
  */
-async function contextFor(accountId: string | null, jobId: string | null) {
-  if (!accountId) return null;
-  const account = await accountsRepo.getAccount(accountId);
-  if (!account || account.channel !== 'x') return null;
-  return buildChannelContext(account, jobId);
-}
-
-/**
- * Whether anything could drive a browser right now.
- *
- * Asked before the permission model, because an owner told "you have not
- * enabled this" about something that could not have worked anyway learns the
- * wrong thing. The same heartbeat the interface reads, so the two cannot
- * disagree about whether a browser exists.
- */
-async function browserReadiness(accountId: string | null) {
-  if (!accountId) {
-    return { status: 'UNAVAILABLE' as const, why: 'This agent has no X account to read as.' };
-  }
-  const present = await workersRepo.browserWorkerPresent().catch(() => false);
-  if (!present) {
-    return {
-      status: 'UNAVAILABLE' as const,
-      why: 'Nothing that can open a browser is running. This is AI17Z itself rather than anything about this agent.',
-    };
-  }
-  return { status: 'AVAILABLE' as const };
-}
 
 const readPostCapability = defineCapability({
   id: 'x.read_post',
@@ -359,12 +327,6 @@ const repostCapability = defineCapability({
   },
 });
 
-/** A post reference the action path will accept: always a full status URL. */
-function normaliseStatus(reference: string): string {
-  const id = reference.match(/\/status\/(\d{5,25})/)?.[1] ?? reference.trim();
-  return `https://x.com/i/web/status/${id}`;
-}
-
 /** Registered at bootstrap, beside the built-ins. */
 export function registerXCapabilities(): void {
   registerCapability(readPostCapability);
@@ -373,4 +335,5 @@ export function registerXCapabilities(): void {
   registerCapability(readThreadCapability);
   registerCapability(likeCapability);
   registerCapability(repostCapability);
+  registerXSurfaceCapabilities();
 }
