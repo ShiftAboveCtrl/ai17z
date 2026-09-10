@@ -74,12 +74,31 @@ export class UpstreamFailure extends Error {
   readonly kind: UpstreamFailureKind;
   /** When the upstream named a time, how long until it may be asked again. */
   readonly retryAfterMs: number | null;
+  /**
+   * Whether the upstream said this, or we did.
+   *
+   * Both look like RATE_LIMITED and they mean opposite things. When the operator
+   * refuses, everything sharing that budget has to hear about it. When our own
+   * scheduler refuses -- the budget we set is spent -- recording it as an
+   * announcement blocks the whole origin on the strength of our own accounting,
+   * and the next request is turned away by a limit nobody imposed.
+   *
+   * Found by the first weighted-budget test: a request that did not fit locally
+   * put a sixty-second block on a perfectly willing endpoint.
+   */
+  readonly fromUpstream: boolean;
 
-  constructor(kind: UpstreamFailureKind, message: string, retryAfterMs: number | null = null) {
+  constructor(
+    kind: UpstreamFailureKind,
+    message: string,
+    retryAfterMs: number | null = null,
+    fromUpstream = true,
+  ) {
     super(message);
     this.name = 'UpstreamFailure';
     this.kind = kind;
     this.retryAfterMs = retryAfterMs;
+    this.fromUpstream = fromUpstream;
   }
 }
 
