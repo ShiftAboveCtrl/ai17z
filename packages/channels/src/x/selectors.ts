@@ -37,6 +37,14 @@ export const SEL = {
   // header carries the display name; the handle is already known, because a
   // profile is only ever opened by one.
   profileHeader: '[data-testid="UserName"]',
+  /**
+   * The column X renders a route into.
+   *
+   * Present on every page it actually rendered, including the one that says an
+   * account does not exist. Absent means the route never mounted at all, which
+   * is the difference between "there is no such account" and "X did not answer".
+   */
+  primaryColumn: '[data-testid="primaryColumn"]',
   profileBio: '[data-testid="UserDescription"]',
   profileJoinDate: '[data-testid="UserJoinDate"]',
   profileWebsite: '[data-testid="UserUrl"]',

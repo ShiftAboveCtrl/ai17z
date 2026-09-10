@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RETRYABLE_MARKERS, looksLikeXBroke, looksUnavailable } from '@xbam/channels';
+import { RETRYABLE_MARKERS, UNAVAILABLE_MARKERS, looksLikeXBroke, looksUnavailable } from '@xbam/channels';
 
 /**
  * Telling "X errored" apart from "there is nothing there".
@@ -31,16 +31,25 @@ describe('X saying its own request failed', () => {
     expect(looksLikeXBroke('We’ll keep retrying.')).toBe(true);
   });
 
-  it('matches X’s typographic apostrophe, not the one a marker would be written with', () => {
-    // Every marker is deliberately apostrophe-free. A marker written "we'll"
-    // matches nothing, because the page says "we’ll" -- and the failure is
-    // silent, which is how this class of defect keeps arriving.
-    for (const marker of RETRYABLE_MARKERS) expect(marker).not.toMatch(/['’]/);
-  });
-
   it('does not mistake an ordinary empty page for one', () => {
     expect(looksLikeXBroke('No results for "asdkjhasd"')).toBe(false);
     expect(looksLikeXBroke('')).toBe(false);
+  });
+
+  it('is a different question from whether the account is gone', () => {
+    // X renders this *inside* the column, which is what makes it a verdict
+    // about the handle rather than a page that failed to load.
+    expect(looksUnavailable('This account doesn’t exist Try searching for another.')).toBe(true);
+    expect(looksLikeXBroke('This account doesn’t exist Try searching for another.')).toBe(false);
+  });
+
+  it('writes every marker without an apostrophe, in both lists', () => {
+    // X writes a typographic apostrophe. A marker containing either kind fails
+    // silently, so the markers stop before one -- "hmm...this page doesn",
+    // "this account doesn" -- and this is the rule that keeps them that way.
+    for (const marker of [...RETRYABLE_MARKERS, ...UNAVAILABLE_MARKERS]) {
+      expect(marker, marker).not.toMatch(/['’]/);
+    }
   });
 
   it('is a different question from whether the page is gone', () => {
