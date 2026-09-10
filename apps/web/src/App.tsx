@@ -13,6 +13,7 @@ const EasySetup = lazy(() => import('@app/routes/EasySetup').then((m) => ({ defa
 // The original eight-screen flow, kept in full for people who want every field.
 const CreateAgent = lazy(() => import('@app/routes/CreateAgent').then((m) => ({ default: m.CreateAgent })));
 const AgentPage = lazy(() => import('@app/routes/AgentPage').then((m) => ({ default: m.AgentPage })));
+const StudioPage = lazy(() => import('@app/routes/StudioPage').then((m) => ({ default: m.StudioPage })));
 const ActivityPage = lazy(() => import('@app/routes/ActivityPage').then((m) => ({ default: m.ActivityPage })));
 const InboxPage = lazy(() => import('@app/routes/InboxPage').then((m) => ({ default: m.InboxPage })));
 const JobPage = lazy(() => import('@app/routes/JobPage').then((m) => ({ default: m.JobPage })));
@@ -66,6 +67,7 @@ export function App() {
             <Route path="/agents/new" element={<EasySetup />} />
             <Route path="/agents/new/advanced" element={<CreateAgent />} />
             <Route path="/agents/:agentId" element={<AgentPage />} />
+            <Route path="/agents/:agentId/studio" element={<StudioPage />} />
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/jobs/:jobId" element={<JobPage />} />

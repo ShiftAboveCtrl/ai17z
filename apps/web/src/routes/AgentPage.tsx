@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { Copy, ExternalLink, Package, Pencil, Play, Square, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, LineChart, Package, Pencil, Play, Square, Trash2 } from 'lucide-react';
 import type { Blocker } from '@xbam/shared/contracts';
 import { ApiError, del, patch, post } from '@app/lib/api';
 import { startAgent } from '@app/lib/setup';
@@ -293,6 +293,16 @@ export function AgentPage() {
             )}
             <Link className="btn-quiet" to="/activity">
               Activity
+            </Link>
+            {/*
+              Offered in both views, and beside Activity rather than inside the
+              tabs below. Studio is about what came of the agent, and the tabs
+              are about what it is -- and the five of them are sized to fit a
+              phone without a sideways scroller, which a sixth would end.
+            */}
+            <Link className="btn-quiet" to={`/agents/${agent.id}/studio`}>
+              <LineChart className="h-3.5 w-3.5" aria-hidden />
+              Studio
             </Link>
             {/*
               Renaming is a display change and stays one: the agent id is the

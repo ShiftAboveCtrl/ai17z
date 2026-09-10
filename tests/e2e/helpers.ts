@@ -31,10 +31,39 @@ export async function useInterface(page: Page, mode: 'easy' | 'advanced'): Promi
 }
 
 /**
+ * A session this process was handed rather than one it signed in for.
+ *
+ * `npm run session:e2e` mints one against the local database and prints it.
+ * That exists so these specs can run against an installation somebody is
+ * already using -- a real one has a real owner with a real password, and the
+ * alternative is putting that password in an environment variable so a test
+ * runner can type it into a form.
+ *
+ * Unset in the ordinary case, where the suite runs on a fresh database and
+ * creates the owner it signs in as.
+ */
+const OWNER_TOKEN = process.env.AI17Z_E2E_TOKEN ?? '';
+
+/**
  * Signs in through the real form. The session token lands in localStorage, so
  * subsequent navigations in the same context stay authenticated.
  */
 export async function signIn(page: Page): Promise<void> {
+  if (OWNER_TOKEN) {
+    // Before the app's own scripts, on every navigation: the first render reads
+    // this, so a later write would paint the sign-in screen and then replace it.
+    await page.addInitScript((token) => {
+      try {
+        window.localStorage.setItem('ai17z.session', token as string);
+      } catch {
+        // Storage blocked; the spec fails on its own assertion, not here.
+      }
+    }, OWNER_TOKEN);
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: 'Your agents' }).waitFor({ timeout: 20_000 });
+    return;
+  }
+
   // These run against a real stack, so the first request after an idle or
   // just-restarted API can be slow. One reload beats a flaky suite.
   for (let attempt = 1; attempt <= 2; attempt += 1) {
