@@ -515,3 +515,29 @@ describe('an update stops its own runtime before replacing files', () => {
     expect(stop).toContain('-like "*$root*"');
   });
 });
+
+/**
+ * The launcher answers two questions and they need two answers.
+ *
+ * `AI17Z_BUILD_STAMP` says whether the images were built from this source, so it
+ * changes whenever anything does -- it carries a version, a dirty digest or a
+ * file time, whichever is available. `AI17Z_BUILD_COMMIT` is read by the
+ * application as a commit and shown as the exact source.
+ *
+ * They were the same value, so an installed copy -- which stamps
+ * `<version>-<commit>` because it has no repository -- reported the first twelve
+ * characters of that, "1.0.0-beta.1", for three releases.
+ */
+describe('the launcher tells the application which commit it is running', () => {
+  const launcher = readFileSync(resolve(root, 'start-ai17z.ps1'), 'utf8');
+
+  it('does not hand the image stamp over as the commit', () => {
+    expect(launcher).not.toMatch(/AI17Z_BUILD_COMMIT\s*=\s*\$env:AI17Z_BUILD_STAMP/);
+  });
+
+  it('works the commit out on its own, and both questions still get asked', () => {
+    expect(launcher).toMatch(/AI17Z_BUILD_COMMIT\s*=\s*Get-SourceCommit/);
+    expect(launcher).toMatch(/function Get-SourceCommit/);
+    expect(launcher).toMatch(/AI17Z_BUILD_STAMP\s*=\s*Get-SourceStamp/);
+  });
+});
