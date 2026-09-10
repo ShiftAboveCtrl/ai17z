@@ -10,3 +10,4 @@ export * from './addresses';
 export * from './http';
 export * from './families/evm';
 export * from './failures';
+export { MachineQuotaCoordinator, quotaDirectory } from './machineQuota';

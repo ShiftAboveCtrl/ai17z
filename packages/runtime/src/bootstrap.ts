@@ -2,6 +2,8 @@ import { createLogger, errorMessage } from '@xbam/shared';
 import { pipelines as pipelinesRepo, prompts as promptsRepo } from '@xbam/database';
 import { DEFAULT_TEMPLATES } from '@xbam/prompts';
 import { registerBuiltinCapabilities, syncToolCatalogue } from '@xbam/tools';
+import { registerEvmUpstreams, useQuotaCoordinator } from '@xbam/upstream';
+import { InstallationQuotaCoordinator } from './upstreamQuota';
 import { defaultPipelineDraft } from './defaultPipeline';
 import { registerXCapabilities } from './xCapabilities';
 
@@ -29,6 +31,20 @@ export async function bootstrapRuntime(): Promise<void> {
   // channel package does not do. The selector boundary is unaffected --
   // what crosses it is still only the normalised shapes.
   registerXCapabilities();
+
+  // Every upstream call in this process now goes through a coordinator that
+  // other processes can see. The default one counts alone, which is right for a
+  // unit test and wrong for an installation: a container worker and a native
+  // worker each holding one would each believe they had the whole allowance,
+  // and the endpoint would be shown twice what AI17Z thought it was sending.
+  const quota = new InstallationQuotaCoordinator();
+  useQuotaCoordinator(quota);
+  log.info('upstream quota coordinated', quota.describe());
+
+  // Upstreams are registered here for the same reason capabilities are: a
+  // registry filled at import time contains whatever happened to be imported.
+  registerEvmUpstreams();
+
   await upgradePipelinesWithResearch().catch((error) =>
     log.warn('could not add the research node to existing pipelines', { message: errorMessage(error) }),
   );

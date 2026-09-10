@@ -44,6 +44,7 @@ export * as content from './repositories/content';
 export * as posting from './repositories/posting';
 export * as evaluation from './repositories/evaluation';
 export * as notifications from './repositories/notifications';
+export * as upstreamQuota from './repositories/upstreamQuota';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.
