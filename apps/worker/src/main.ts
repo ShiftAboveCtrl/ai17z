@@ -7,6 +7,7 @@ import {
   content,
   knowledge,
   pingDatabase,
+  upstreamQuota,
   workers as workersRepo,
 } from '@xbam/database';
 import { JobWorker, capabilitiesFor, type WorkerRole } from '@xbam/jobs';
@@ -99,6 +100,17 @@ async function main(): Promise<void> {
       if (freed.abandoned > 0 || freed.unclaimed > 0) log.info('freed stuck browser tasks', freed);
     } catch (error) {
       log.warn('browser task sweep failed', { message: errorMessage(error) });
+    }
+    try {
+      // The ledger every upstream call writes to. Swept here rather than on a
+      // timer of its own for the reason the cadence engine gives about second
+      // timers -- and because a worker runs for weeks, so an unbounded table of
+      // every request ever paced is a leak that shows up on somebody's machine
+      // after a fortnight.
+      const quota = await upstreamQuota.sweepQuota();
+      if (quota.spends > 0 || quota.blocks > 0) log.info('swept upstream quota', quota);
+    } catch (error) {
+      log.warn('upstream quota sweep failed', { message: errorMessage(error) });
     }
     try {
       // The same shape of problem one table over: an idea is claimed before a
