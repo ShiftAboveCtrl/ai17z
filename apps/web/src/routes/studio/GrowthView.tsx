@@ -39,17 +39,15 @@ interface Verdict {
   topics?: string[];
 }
 
-/** In the order somebody would want to understand them. */
-const DECLINE_ORDER = [
-  'off_topic',
-  'too_old',
-  'already_engaged',
-  'crowded',
-  'nothing_said',
-  'age_unknown',
-  'own_post',
-  'blocked',
-];
+/**
+ * In the order somebody would want to understand them.
+ *
+ * Every reason the engine can actually give, and nothing else. Crowding is not
+ * here because it is not a decline: a busy thread under somebody the agent has
+ * a real relationship with is still worth answering, so it is a cost the other
+ * factors can outweigh rather than a door closing.
+ */
+const DECLINE_ORDER = ['off_topic', 'too_old', 'already_engaged', 'nothing_said', 'age_unknown', 'own_post', 'blocked'];
 
 const DECLINE_WORDS: Record<string, string> = {
   off_topic: 'Nothing it has anything to say about',

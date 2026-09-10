@@ -110,7 +110,11 @@ describe('reading narratives', () => {
       { now },
     );
     const found = narratives.find((n) => n.term === 'sequencer');
-    expect(found!.lift).toBe(Infinity);
+    // A flag rather than an infinite ratio: `Infinity` serialises to `null`,
+    // which by the time it reaches a screen is indistinguishable from a lift
+    // nobody computed.
+    expect(found!.newlySeen).toBe(true);
+    expect(found!.lift).toBeUndefined();
     expect(found!.detail).toMatch(/was not mentioned in the previous/);
   });
 

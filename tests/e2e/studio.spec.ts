@@ -66,6 +66,7 @@ test('opens Studio from the agent page and shows every view', async ({ page }) =
     ['Analytics', 'What has worked'],
     ['Launches', 'What is being launched'],
     ['Create', 'Something to say'],
+    ['Experiments', 'Try one thing against another'],
   ] as const) {
     await page.getByRole('button', { name: tab, exact: true }).click();
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();
@@ -246,6 +247,33 @@ test.describe('with something to show', () => {
     await expect(page.getByText('0x2222222222222222222222222222222222222222', { exact: true })).toBeVisible();
     await expect(page.getByText(/Verify an address at its source/)).toBeVisible();
   });
+});
+
+test('starts one experiment and refuses a second', async ({ page }) => {
+  await useInterface(page, 'advanced');
+  await signIn(page);
+  const agentId = await createAgent(page, `${AGENT_NAME} experiment`);
+  await page.goto(`/agents/${agentId}/studio`);
+  await page.getByRole('button', { name: 'Experiments', exact: true }).click();
+
+  await page.getByRole('textbox').first().fill('Do shorter posts get more replies?');
+  await page.getByRole('button', { name: 'Start' }).click();
+
+  // The verdict most of this screen ever shows, and the one it has to keep
+  // showing for a fortnight: an agent posts twice a day, and a winner announced
+  // on Thursday is how somebody rewrites their agent's voice on eleven posts.
+  await expect(page.getByRole('heading', { name: 'Running now' })).toBeVisible();
+  await expect(page.getByText('Not yet')).toBeVisible();
+  await expect(page.getByText(/more posts needed/)).toBeVisible();
+
+  // One at a time. The form is gone while one is running, which is the only
+  // honest way to say "not two" on a screen.
+  await expect(page.getByRole('button', { name: 'Start' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await expect(page.getByRole('heading', { name: 'Try one thing against another' })).toBeVisible();
+  // Stopped, never deleted: a null result is most of what this teaches.
+  await expect(page.getByText('Do shorter posts get more replies?')).toBeVisible();
 });
 
 test.afterAll(async ({ browser }) => {

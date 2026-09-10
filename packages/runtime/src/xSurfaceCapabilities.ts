@@ -101,14 +101,21 @@ const timelineCapability = defineCapability({
   id: 'x.read_timeline',
   name: 'Read a timeline on X',
   description:
-    'Reads what is on this account’s home timeline, its following feed, its bookmarks, or one of its lists. ' +
+    'Reads what is on this account’s home timeline, its following feed, its bookmarks, one of its lists, or a community it belongs to. ' +
     'Use it when the question is what is going on rather than what one particular person said.',
   category: 'DISCOVER',
   effect: 'READ',
   risk: 'LOW',
   input: z.object({
-    surface: z.enum(['HOME', 'FOLLOWING', 'BOOKMARKS', 'LIST']).default('HOME'),
-    /** Required for LIST and meaningless otherwise. */
+    surface: z.enum(['HOME', 'FOLLOWING', 'BOOKMARKS', 'LIST', 'COMMUNITY']).default('HOME'),
+    /**
+     * Which list or community. Required for those two and meaningless
+     * otherwise.
+     *
+     * One field rather than two, because they are the same kind of argument and
+     * a model handed `listId` and `communityId` picks the wrong one about as
+     * often as it picks the right one.
+     */
     listId: z.string().regex(/^\d{5,25}$/).optional(),
     limit: z.number().int().min(1).max(50).default(15),
   }),

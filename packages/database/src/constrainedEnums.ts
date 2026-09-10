@@ -75,6 +75,12 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     values: ['TIMELINE', 'POST_ANALYTICS'],
     note: 'Where a reading came from. Nothing outside the database needs to name these yet.',
   },
+  {
+    table: 'experiments',
+    column: 'status',
+    values: ['RUNNING', 'STOPPED'],
+    note: 'Whether an experiment is still collecting. Stopped, never deleted -- a null result is most of what this teaches.',
+  },
   { table: 'browser_sessions', column: 'channel', values: BROWSER_CHANNELS },
   { table: 'browser_sessions', column: 'engine', values: BROWSER_ENGINES },
   { table: 'browser_sessions', column: 'mode', values: BROWSER_MODES },

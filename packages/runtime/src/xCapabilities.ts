@@ -122,7 +122,33 @@ const readProfileCapability = defineCapability({
   async run(input, ctx) {
     const channel = await contextFor(ctx.accountId, ctx.jobId);
     if (!channel) throw new Error('This agent has no connected X account to read as.');
-    return readProfile(channel, input.handle);
+    const profile = await readProfile(channel, input.handle);
+
+    /**
+     * Reading our own profile is also measuring this account.
+     *
+     * Only our own: a follower count for somebody else belongs to the bridge
+     * score, which reads it live and does not keep it. Recording a series about
+     * accounts the agent merely looked at would be building a history of people
+     * who never asked for one.
+     *
+     * Nothing schedules this. `docs/architecture/CADENCE.md` allows one timing
+     * engine and no second timer, so the series is as dense as the looking --
+     * which is why whatever shows it says so.
+     */
+    const own = channel.account.handle?.replace(/^@+/, '').toLowerCase();
+    if (own && own === profile.handle.replace(/^@+/, '').toLowerCase()) {
+      await postAnalytics
+        .recordAccount({
+          agentId: ctx.agentId,
+          accountId: ctx.accountId,
+          handle: profile.handle,
+          followers: profile.followerCount ?? null,
+          following: profile.followingCount ?? null,
+        })
+        .catch(() => undefined);
+    }
+    return profile;
   },
 });
 

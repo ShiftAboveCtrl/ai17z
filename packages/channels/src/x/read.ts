@@ -5,7 +5,13 @@ import { SEL, X_URLS } from './selectors';
 import { resolveBranch, type ArticleSnapshot } from './conversation';
 import { MAX_ARTICLES_READ, goto, readArticle, selfHandles, settle, withSession } from './page';
 import { extractStatusId } from './targets';
+import { parseCount, readCounts } from './counts';
 import { readAllArticles } from './monitors';
+
+// Re-exported so the public surface of the channel package is unchanged: these
+// moved into `counts.ts` when the radar needed them too, and a file that both
+// `read.ts` and `monitors.ts` import cannot be either of them.
+export { parseCount, parseCounts, readCounts } from './counts';
 
 /**
  * Reading X on purpose, rather than as a step in answering something.
@@ -43,26 +49,6 @@ const PROFILE_POSTS = 5;
  * profile with no website has no website.
  */
 const FIELD_TIMEOUT_MS = 2_000;
-
-/**
- * Turns X's abbreviated counts into numbers, or into nothing.
- *
- * "1,234" is 1234 and "12.3K" is 12300, but the important case is the third
- * one: a count the page did not show comes back undefined rather than zero.
- * `docs/ENGINEERING.md` treats an unread image as an explicit gap instead of
- * silence, and a follower count behind a login wall is the same kind of gap --
- * an agent told an account has zero followers will say so.
- */
-export function parseCount(raw: string | null | undefined): number | undefined {
-  if (!raw) return undefined;
-  const text = raw.replace(/,/g, '').trim();
-  const match = text.match(/^(\d+(?:\.\d+)?)\s*([KMB])?/i);
-  if (!match) return undefined;
-  const value = Number.parseFloat(match[1]!);
-  if (!Number.isFinite(value)) return undefined;
-  const scale = { k: 1_000, m: 1_000_000, b: 1_000_000_000 }[(match[2] ?? '').toLowerCase()] ?? 1;
-  return Math.round(value * scale);
-}
 
 /** The status url for whatever the caller had: an id, a url, or a handle path. */
 function statusUrl(reference: string): string {
@@ -322,52 +308,4 @@ export async function readThread(ctx: ChannelContext, reference: string): Promis
       truncated: snapshots.length >= MAX_ARTICLES_READ,
     };
   });
-}
-
-/**
- * The counts X renders under a post.
- *
- * Read from the one aria-label X puts on the action group -- "12 replies, 3
- * reposts, 40 likes, 1,205 views" -- rather than from four separate spans,
- * because a count of zero is hidden as a span and still named in the label.
- *
- * Anything the label does not mention comes back missing. That is the whole
- * discipline of this file: absent is not zero, and an agent told a post has no
- * views will say so.
- */
-export function parseCounts(label: string | null | undefined): {
-  replies?: number;
-  reposts?: number;
-  likes?: number;
-  bookmarks?: number;
-  views?: number;
-} {
-  if (!label) return {};
-  const of = (word: string): number | undefined => {
-    const match = label.match(new RegExp(String.raw`([\d.,]+[KMB]?)\s+` + word, 'i'));
-    return parseCount(match?.[1]);
-  };
-  const counts = {
-    replies: of('repl(?:y|ies)'),
-    reposts: of('reposts?'),
-    likes: of('likes?'),
-    bookmarks: of('bookmarks?'),
-    views: of('views?'),
-  };
-  // Only what was actually there. An object of undefineds reads as "we looked
-  // and found nothing", which is different from "we did not look".
-  return Object.fromEntries(Object.entries(counts).filter(([, value]) => value !== undefined));
-}
-
-/** The counts on one article, or nothing when X did not render the group. */
-export async function readCounts(
-  page: Parameters<typeof readArticle>[0],
-  articleSelector: string,
-): Promise<ReturnType<typeof parseCounts>> {
-  const label = await page
-    .locator(`${articleSelector} ${SEL.countGroup}`)
-    .first()
-    .getAttribute('aria-label', { timeout: FIELD_TIMEOUT_MS })
-    .catch(() => null);
-  return parseCounts(label);
 }

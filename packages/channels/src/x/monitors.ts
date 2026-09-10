@@ -1,8 +1,9 @@
 import type { RadarCandidate, RadarPollResult, RadarSourceKind } from '@xbam/shared/contracts';
 import { errorMessage } from '@xbam/shared';
 import type { Page } from '@xbam/browser';
-import { SEL, X_URLS } from './selectors';
+import { articleForStatus, SEL, X_URLS } from './selectors';
 import { extractStatusId, handleFromUrl, normalizeHandle, normalizeTargetId } from './targets';
+import { readCounts } from './counts';
 
 /**
  * The several ways X will tell you something happened.
@@ -256,11 +257,24 @@ export const X_MONITORS: Record<RadarSourceKind, XMonitor> = {
     if (!ctx.target) return { candidates: [], cursor: null, error: 'No own post was given to check.' };
     await goto(ctx.page, `https://x.com/i/status/${ctx.target}`);
     const candidates = await harvest(ctx, 'REPLY', 'own_threads');
+    // Already standing on the page where the counts are.
+    //
+    // This is what makes measurement automatic instead of something a
+    // capability has to be asked for: the agent's own recent posts are visited
+    // on a cycle anyway, to find replies that generated no notification, and
+    // the numbers under the post are right there. Nothing extra is loaded and
+    // nothing polls X to ask how a post is doing.
+    //
+    // Anchored on the status id rather than on the first article, because the
+    // page renders replies underneath and counting those would report somebody
+    // else's post as ours.
+    const targetCounts = await readCounts(ctx.page, articleForStatus(ctx.target)).catch(() => ({}));
     return {
       // Everything under our own post is a reply to it, whatever the DOM says.
       candidates: candidates.map((c) => ({ ...c, parentRemoteId: ctx.target, conversationRemoteId: ctx.target })),
       cursor: null,
       error: null,
+      ...(Object.keys(targetCounts).length > 0 ? { targetCounts } : {}),
     };
   }),
 

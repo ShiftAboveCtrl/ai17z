@@ -49,7 +49,7 @@ export {
   type NotificationCell,
 } from './x/index';
 export { readConnections, toConnections, type UserCell } from './x/index';
-export { readTimeline, toTimelinePosts } from './x/index';
+export { readTimeline, toTimelinePosts, timelineUrl } from './x/index';
 export { readInbox, readConversation, toThreads, type ConversationRow } from './x/index';
 export { readPostAnalytics, parseAnalytics, type PostAnalyticsReading } from './x/index';
 /** The timeline row shape the harvester produces, for anything that maps it. */

@@ -35,6 +35,13 @@ interface Signals {
   total: number;
 }
 
+interface AccountReading {
+  observed_at: string;
+  handle: string;
+  followers: number | null;
+  following: number | null;
+}
+
 interface PublishedPost {
   action_id: string;
   remote_post_id: string;
@@ -52,10 +59,46 @@ const figure = (value: number | null) => (value === null ? '—' : value.toLocal
 export function AnalyticsView({ agentId }: { agentId: string }) {
   const signals = useResource<Signals>(`/api/agents/${agentId}/growth/content`);
   const posts = useResource<{ items: PublishedPost[] }>(`/api/agents/${agentId}/growth/posts`);
+  const account = useResource<{ readings: AccountReading[] }>(`/api/agents/${agentId}/growth/account`);
   const items = posts.data?.items ?? [];
+  const readings = account.data?.readings ?? [];
+  const first = readings[0];
+  const last = readings[readings.length - 1];
+  // One reading is a number, not a trend. Saying "up 0" about an account
+  // somebody looked at once is worse than saying nothing.
+  const moved =
+    readings.length >= 2 && first?.followers !== null && last?.followers !== null && first && last
+      ? { from: first.followers!, to: last.followers!, since: first.observed_at }
+      : null;
 
   return (
     <>
+      <Panel
+        title="The account itself"
+        lede="Read when something reads this account's own profile. Nothing polls for it, so this series is as dense as the looking."
+      >
+        {account.loading && <Spinner />}
+
+        {!account.loading && readings.length < 2 && (
+          <EmptyState
+            title={readings.length === 1 ? 'One reading so far' : 'Nothing read yet'}
+            detail="A follower count becomes a trend at the second reading. Ask the agent to read its own profile, or let a capability do it while it works."
+          />
+        )}
+
+        {moved && (
+          <Card
+            title={`@${last!.handle}`}
+            score={`${moved.to.toLocaleString()}`}
+            meta={`${moved.to >= moved.from ? 'Up' : 'Down'} ${Math.abs(moved.to - moved.from).toLocaleString()} from ${moved.from.toLocaleString()} when this was first read, ${timeAgo(moved.since)}.`}
+          >
+            <p className="font-mono text-[11px] text-bone-faint">
+              {readings.length} readings, the most recent {timeAgo(last!.observed_at)}
+            </p>
+          </Card>
+        )}
+      </Panel>
+
       <Panel
         title="What has worked"
         lede={

@@ -55,6 +55,19 @@ export interface AssembleInput {
    * mode. Absent for every other agent, which is most of them.
    */
   support?: { subject: string; version: string; runtime: string | null };
+  /**
+   * The arm of a running experiment this post is being written for.
+   *
+   * Joins the output rules and nothing else. That is deliberately the smallest
+   * mechanism available: an arm that rewrote the persona, added a layer or
+   * changed the task would be a second agent rather than the same agent writing
+   * differently, and no comparison between the two would mean anything.
+   *
+   * An empty instruction -- the control arm -- must leave the prompt exactly as
+   * it was. If it did not, both arms would differ from the baseline and the
+   * experiment would be measuring the harness.
+   */
+  experiment?: { label: string; instruction: string };
 }
 
 export interface AssembledPrompt {
@@ -210,7 +223,7 @@ function renderParentAttachments(inventory: MediaInventory | undefined, alreadyD
   return `That post also carries ${parts.join(' and ')}. You have not seen the attachments, so do not describe them.`;
 }
 
-function renderOutputRules(persona: PersonaVersion, policy: PolicyConfig): string {
+function renderOutputRules(persona: PersonaVersion, policy: PolicyConfig, extra?: string): string {
   const rules: string[] = [`Stay under ${policy.output.maxCharacters} characters.`];
   if (policy.output.minCharacters > 1) rules.push(`Write at least ${policy.output.minCharacters} characters.`);
   rules.push(LENGTH_HINTS[persona.responseLength]);
@@ -220,6 +233,9 @@ function renderOutputRules(persona: PersonaVersion, policy: PolicyConfig): strin
   const emoji = describeEmojiPolicy(policy.output.emoji);
   if (emoji) rules.push(emoji);
   rules.push('No surrounding quotation marks, no preamble, no sign-off.');
+  // Last, so an experiment's instruction reads as an addition to the rules
+  // rather than as a replacement for one of them.
+  if (extra?.trim()) rules.push(extra.trim());
   return bulletList(rules);
 }
 
@@ -303,7 +319,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
     incomingText: context.incomingText,
     toolsBlock: bulletList(input.toolDescriptions),
-    outputRules: renderOutputRules(persona, policy),
+    outputRules: renderOutputRules(persona, policy, input.experiment?.instruction),
     // The TASK layer reads this. A post has no incoming message to answer, and
     // telling a model to "reply" to its own brief produces something that reads
     // like half a conversation.

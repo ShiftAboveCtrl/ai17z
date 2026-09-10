@@ -10,6 +10,7 @@ import { RelationshipsView } from './studio/RelationshipsView';
 import { GrowthView } from './studio/GrowthView';
 import { AnalyticsView } from './studio/AnalyticsView';
 import { LaunchView } from './studio/LaunchView';
+import { ExperimentsView } from './studio/ExperimentsView';
 
 /**
  * X Studio: what the agent has seen and what it did, rather than how it is set up.
@@ -38,6 +39,7 @@ const VIEWS = [
   { id: 'analytics', label: 'Analytics', blurb: 'What has worked, from the posts that were measured.' },
   { id: 'launch', label: 'Launches', blurb: 'Tickers and addresses, with nothing added to them.' },
   { id: 'create', label: 'Create', blurb: 'What it has to say, before it says it.' },
+  { id: 'experiments', label: 'Experiments', blurb: 'One question at a time, answered slowly or not at all.' },
 ] as const;
 
 type ViewId = (typeof VIEWS)[number]['id'];
@@ -78,10 +80,10 @@ export function StudioPage() {
       <nav aria-label="Studio" className="sticky top-[3.75rem] z-30 mt-6 border-y border-ink-line bg-ink/90 backdrop-blur-md sm:top-[3.5rem]">
         <div className="mx-auto max-w-page px-4 sm:px-8">
           {/*
-            Seven of these do not fit a phone side by side, so this one scrolls
-            and says so with an edge fade. The agent page's five are sized not
-            to; the difference is that these are places to look rather than
-            places to change something, and missing one costs nothing.
+            Eight of these do not fit a phone side by side, so this one
+            scrolls. The agent page's five are sized not to; the difference is
+            that these are places to look rather than places to change
+            something, and missing one costs nothing.
           */}
           <ul className="-mx-1 flex gap-1 overflow-x-auto py-2">
             {VIEWS.map((entry) => (
@@ -124,6 +126,7 @@ export function StudioPage() {
             {view === 'analytics' && <AnalyticsView agentId={agentId} />}
             {view === 'launch' && <LaunchView agentId={agentId} />}
             {view === 'create' && <CreateView agentId={agentId} />}
+            {view === 'experiments' && <ExperimentsView agentId={agentId} />}
           </div>
         </Crash>
       </div>

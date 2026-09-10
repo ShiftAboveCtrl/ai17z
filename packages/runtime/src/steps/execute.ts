@@ -44,6 +44,7 @@ import {
   canFollowUp,
 } from '../followUp';
 import { remoteActionsAllowed } from '../killSwitch';
+import { recordPublished } from '../experimentRuns';
 import type { JobBundle } from '../loadJob';
 
 import { checkActionRate } from '../policyGate';
@@ -385,6 +386,13 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       // can be offered again.
       const callbackId = (context?.meta as { callbackId?: string } | undefined)?.callbackId;
       if (callbackId) await relationshipsRepo.markCallbackUsed(callbackId).catch(() => undefined);
+    }
+
+    // Which arm this post was written for, attached to the post that actually
+    // went out. A draft that was reviewed and discarded never counts, and a dry
+    // run is not a public position.
+    if (result.status !== 'DRY_RUN' && result.remoteActionId) {
+      await recordPublished(job.id, result.remoteActionId);
     }
 
     // A post that went out spends the idea it came from, immediately, so the

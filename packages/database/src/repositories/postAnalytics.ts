@@ -172,3 +172,55 @@ export async function publishedWithReadings(agentId: string, limit = 100): Promi
     [agentId, Math.min(Math.max(limit, 1), 500)],
   );
 }
+
+export interface AccountReadingRow extends Record<string, unknown> {
+  id: string;
+  agent_id: string;
+  account_id: string | null;
+  channel: string;
+  handle: string;
+  observed_at: string;
+  followers: number | null;
+  following: number | null;
+}
+
+/**
+ * Records what the account itself looked like, or leaves the existing reading
+ * alone.
+ *
+ * Lives here rather than in a file of its own because it is the same idea as a
+ * post reading and shares its rules: snapshots, never a total; absent is not
+ * zero; one reading per minute, because two reads in the same minute are
+ * looking at one state and recording both makes a flat line look like activity.
+ */
+export async function recordAccount(input: {
+  agentId: string;
+  accountId: string | null;
+  handle: string;
+  followers?: number | null;
+  following?: number | null;
+}): Promise<AccountReadingRow | null> {
+  const rows = await query<AccountReadingRow>(
+    `INSERT INTO account_analytics (agent_id, account_id, handle, followers, following)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT DO NOTHING
+     RETURNING *`,
+    [input.agentId, input.accountId, input.handle, input.followers ?? null, input.following ?? null],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * How the account has moved, oldest first.
+ *
+ * Nothing polls for these, so the series is as dense as the looking. Whatever
+ * shows it has to say that rather than implying a daily measurement nobody is
+ * taking.
+ */
+export async function accountHistory(agentId: string, limit = 60): Promise<AccountReadingRow[]> {
+  const rows = await query<AccountReadingRow>(
+    `SELECT * FROM account_analytics WHERE agent_id = $1 ORDER BY observed_at DESC LIMIT $2`,
+    [agentId, Math.min(Math.max(limit, 2), 500)],
+  );
+  return rows.reverse();
+}

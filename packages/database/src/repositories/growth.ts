@@ -117,20 +117,39 @@ export async function neighbourCounts(input: {
 /**
  * Accounts this agent has published something to since a moment.
  *
+ * Read through the event the action answered rather than off the target URL.
+ * A target ref is normalised to `https://x.com/<handle>/status/<id>`, but a
+ * reply built from a bare status id normalises to `/i/status/<id>` -- so
+ * parsing the URL yields "i" for exactly the actions where the handle matters
+ * most, and the agent would go on to approach somebody it had just answered.
+ * The event knows who wrote the post.
+ *
  * Real actions only, and executed ones only. A dry run is not a public
- * position, so it is not a reason to hold off approaching somebody -- and a
- * draft that was never sent has not used anybody's attention.
+ * position, so it is not a reason to hold off approaching somebody, and a draft
+ * that was never sent has used nobody's attention.
  */
 export async function handlesEngagedSince(agentId: string, sinceIso: string): Promise<string[]> {
-  const rows = await query<{ handle: string }>(
-    `SELECT DISTINCT lower(substring(target_ref from 'x\\.com/([A-Za-z0-9_]{1,15})/')) AS handle
-       FROM actions
-      WHERE agent_id = $1
-        AND dry_run = false
-        AND status = 'EXECUTED'
-        AND executed_at >= $2
-        AND target_ref IS NOT NULL`,
+  const rows = await query<{ handle: string | null }>(
+    `SELECT DISTINCT lower(COALESCE(
+              NULLIF(e.remote_author_handle, ''),
+              -- Fall back to the URL, skipping the /i/ form X uses when a post
+              -- is addressed by id alone, which names no account at all.
+              -- A character class rather than an escaped dot: this string is a
+              -- JavaScript template literal on the way to Postgres, and a lone
+              -- backslash in one is a JavaScript escape that never arrives.
+              NULLIF(substring(a.target_ref from 'x[.]com/([A-Za-z0-9_]{1,15})/status/'), 'i')
+            )) AS handle
+       FROM actions a
+       LEFT JOIN jobs j ON j.id = a.job_id
+       LEFT JOIN events e ON e.id = j.event_id
+      WHERE a.agent_id = $1
+        AND a.dry_run = false
+        AND a.status = 'EXECUTED'
+        AND a.executed_at >= $2`,
     [agentId, sinceIso],
   );
-  return rows.map((row) => row.handle).filter((handle): handle is string => Boolean(handle));
+  return rows
+    .map((row) => row.handle)
+    .filter((handle): handle is string => Boolean(handle))
+    .map((handle) => handle.replace(/^@+/, ''));
 }

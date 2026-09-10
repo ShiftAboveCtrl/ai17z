@@ -1,5 +1,10 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { accounts as accountsRepo, radar as radarRepo, type RadarSourceRow } from '@xbam/database';
+import {
+  accounts as accountsRepo,
+  postAnalytics as postAnalyticsRepo,
+  radar as radarRepo,
+  type RadarSourceRow,
+} from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import { buildChannelContext, reconcileCandidates } from '@xbam/runtime';
 import { describeBrowserError } from '@xbam/browser';
@@ -67,6 +72,7 @@ export class SocialRadar {
     // instead of one thread monopolising the source.
     let target = source.target;
     let ownPostId: string | null = null;
+    let ownPostAgentId: string | null = null;
     if (source.kind === 'own_threads') {
       const [next] = await radarRepo.ownPostsToCheck(source.accountId, 1);
       if (!next) {
@@ -81,6 +87,7 @@ export class SocialRadar {
       }
       target = next.remoteId;
       ownPostId = next.id;
+      ownPostAgentId = next.agentId;
     }
 
     try {
@@ -118,6 +125,32 @@ export class SocialRadar {
         cursor: poll.cursor,
       });
       if (ownPostId) await radarRepo.markOwnPostChecked(ownPostId, poll.candidates.length);
+
+      // A visit is also a measurement.
+      //
+      // This poll loaded one of the agent's own posts to look for replies, and
+      // the counts underneath it were on the page. Recording them here is what
+      // keeps `post_analytics` filling on its own -- otherwise nothing measures
+      // an agent's own posts unless somebody asks a capability to, and every
+      // comparison built on those numbers stays empty forever.
+      //
+      // Never allowed to fail the poll: a missing observation is a gap in a
+      // series, and a failed poll is a reply nobody sees.
+      if (ownPostId && ownPostAgentId && target && poll.targetCounts) {
+        await postAnalyticsRepo
+          .record({
+            agentId: ownPostAgentId,
+            accountId: source.accountId,
+            remotePostId: target,
+            source: 'TIMELINE',
+            replies: poll.targetCounts.replies ?? null,
+            reposts: poll.targetCounts.reposts ?? null,
+            likes: poll.targetCounts.likes ?? null,
+            bookmarks: poll.targetCounts.bookmarks ?? null,
+            impressions: poll.targetCounts.views ?? null,
+          })
+          .catch(() => undefined);
+      }
 
       // This source just proved the browser works. Anything else on the account
       // sitting out a backoff earned by the browser being gone should try again
