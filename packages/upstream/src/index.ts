@@ -11,3 +11,5 @@ export * from './http';
 export * from './families/evm';
 export * from './failures';
 export { MachineQuotaCoordinator, quotaDirectory } from './machineQuota';
+export * from './pinnedAgent';
+export * from './pinnedAgent';
