@@ -83,7 +83,16 @@ const readPostCapability = defineCapability({
      * Never allowed to fail the read. An agent that could not answer because a
      * measurement did not save would be trading the thing for the record of it.
      */
-    if (ctx.accountId) {
+    const measured =
+      post.likeCount !== undefined ||
+      post.repostCount !== undefined ||
+      post.replyCount !== undefined ||
+      post.viewCount !== undefined;
+    // A reading with nothing in it is not evidence, and it would occupy the
+    // one slot this post has for that minute. Proved on a live page: X leaves a
+    // count out of the label entirely when it is zero, so a post nobody has
+    // touched yet renders a label with one figure on it or none at all.
+    if (ctx.accountId && measured) {
       await postAnalytics
         .record({
           agentId: ctx.agentId,

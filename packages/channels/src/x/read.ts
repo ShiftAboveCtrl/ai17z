@@ -3,7 +3,7 @@ import { PipelineError } from '@xbam/shared';
 import type { ChannelContext } from '../contract';
 import { SEL, X_URLS } from './selectors';
 import { resolveBranch, type ArticleSnapshot } from './conversation';
-import { MAX_ARTICLES_READ, goto, readArticle, selfHandles, settle, withSession } from './page';
+import { MAX_ARTICLES_READ, goto, readArticle, refuseIfXBroke, selfHandles, settle, withSession } from './page';
 import { extractStatusId } from './targets';
 import { parseCount, readCounts } from './counts';
 import { readAllArticles } from './monitors';
@@ -248,6 +248,11 @@ export async function searchPosts(
         media: [],
       });
     }
+
+    // An empty search is an answer only when X did not say it failed. Its own
+    // error page renders no articles, and returning nought from one is how "X
+    // errored" reaches an agent as "nobody is talking about that".
+    if (posts.length === 0) await refuseIfXBroke(session.page, `results for "${query}"`);
 
     // Honest about what it did not read. A caller told there are ten results
     // when the page had four hundred is being told the wrong thing.

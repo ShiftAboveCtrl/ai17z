@@ -1,7 +1,7 @@
 import type { XAuthor, XNotification } from '@xbam/shared/contracts';
 import type { ChannelContext } from '../contract';
 import { SEL, X_URLS } from './selectors';
-import { goto, settle, withSession, type Page } from './page';
+import { goto, refuseIfXBroke, settle, withSession, type Page } from './page';
 import { extractStatusId } from './targets';
 
 /**
@@ -136,6 +136,7 @@ export async function readNotifications(
     }
 
     const notifications = toNotifications(cells);
+    if (notifications.length === 0) await refuseIfXBroke(session.page, 'notifications');
     return {
       surface,
       notifications: notifications.slice(0, limit),

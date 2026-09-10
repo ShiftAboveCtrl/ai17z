@@ -9,7 +9,7 @@ import {
 import type { ChannelContext } from '../contract';
 import { SEL } from './selectors';
 import type { ArticleSnapshot } from './conversation';
-import { extractStatusId, handleFromUrl, normalizeHandle, normalizeTargetId } from './targets';
+import { extractStatusId, handleFromUrl, looksLikeXBroke, normalizeHandle, normalizeTargetId } from './targets';
 
 /**
  * Driving a page on X, without knowing what it is being driven for.
@@ -41,6 +41,29 @@ export const MAX_ARTICLES_READ = 20;
  * package, and the type of the thing holding the DOM is part of that.
  */
 export type { Page };
+
+/**
+ * Refuses to call an empty page an empty answer.
+ *
+ * X answers a failed request with its own error page and a Retry button, and
+ * every reader here would otherwise return an empty list from it -- so "X
+ * errored" and "nobody has said anything about that" arrive upstream looking
+ * identical, and an agent told there are no results says so.
+ *
+ * Found on a live signed-in session: a search for "ethereum" came back with
+ * nothing at all, and the page said "Something went wrong. Try reloading."
+ *
+ * Retryable rather than permanent. The results are probably still there; this
+ * request is the thing that failed.
+ */
+export async function refuseIfXBroke(page: Page, what: string): Promise<void> {
+  const text = await readText(page).catch(() => '');
+  if (!looksLikeXBroke(text)) return;
+  throw PipelineError.retryable(
+    'x_page_error',
+    `X could not show ${what} -- its own page says something went wrong. Nothing was read, which is not the same as nothing being there.`,
+  );
+}
 
 /**
  * How many times to scroll a feed looking for more.

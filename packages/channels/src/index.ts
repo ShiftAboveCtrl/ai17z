@@ -20,7 +20,9 @@ export {
   normalizeHandle,
   handleFromUrl,
   looksUnavailable,
+  looksLikeXBroke,
   UNAVAILABLE_MARKERS,
+  RETRYABLE_MARKERS,
 } from './x/targets';
 export {
   resolveBranch,
