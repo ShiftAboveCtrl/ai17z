@@ -23,8 +23,16 @@ import { PolicyConfig } from './policy';
  * carry one has to be added deliberately, and that test fails when it is.
  */
 
-/** Bumped when a change would make an older importer read this wrongly. */
-export const PORTABLE_AGENT_VERSION = 1;
+/**
+ * Bumped when a change would make an older importer read this wrongly.
+ *
+ * 2 added `toolspace`. The schema is strict, so a build that reads version 1
+ * would refuse a document carrying that key -- correctly, but with a zod
+ * complaint about an unrecognised field rather than the sentence the version
+ * check exists to produce. One reads "Update before importing it"; the other
+ * reads like the file is broken.
+ */
+export const PORTABLE_AGENT_VERSION = 2;
 
 /**
  * Where a knowledge source's content lives, without the content.
@@ -73,6 +81,37 @@ export const PortableTool = z.object({
 });
 export type PortableTool = z.infer<typeof PortableTool>;
 
+/**
+ * What an owner decided about one Toolspace capability.
+ *
+ * Deliberately not called a capability field on its own: `PortableAgent` has
+ * carried `capabilities` since before Toolspace existed, and that one means
+ * *channel* capabilities -- REPLY, POST, LIKE, REPOST -- which are about what
+ * an agent may do through an account. Two things called capability in one
+ * product was already one too many; two of them under one key in one document
+ * would be a format nobody could read twice the same way.
+ *
+ * Configuration, so it travels: an owner who switched a capability on and set
+ * it up has made a decision, and a decision is exactly what this format is for.
+ * Importing one grants nothing by itself -- a capability still has to exist in
+ * the installation reading the file, and one that does not is reported rather
+ * than invented.
+ */
+export const PortableCapability = z.object({
+  /** The registry id, `family.verb_noun`. */
+  id: z.string().max(120),
+  permission: z.enum(['DISABLED', 'OWNER_APPROVAL', 'ALLOWED']),
+  /**
+   * Named settings, stripped the way a tool's are.
+   *
+   * A capability's configuration is a free-form document for the same reason a
+   * tool's is, so the same rule applies: anything key-shaped is removed on the
+   * way out rather than trusted not to be there.
+   */
+  config: z.record(z.unknown()).default({}),
+});
+export type PortableCapability = z.infer<typeof PortableCapability>;
+
 export const PortableAgent = z
   .object({
     /** The format, so an importer can refuse what it cannot read. */
@@ -114,6 +153,16 @@ export const PortableAgent = z
      * when somebody connects an account themselves.
      */
     capabilities: z.array(z.string().max(40)).max(20).default([]),
+
+    /**
+     * What the agent may reach for while it is answering, and how.
+     *
+     * Separate from `capabilities` above, which is about acting through an
+     * account. This is the Toolspace registry: reading a post, searching,
+     * liking, reposting. Absent in documents written before this existed, which
+     * is why it defaults rather than being required.
+     */
+    toolspace: z.array(PortableCapability).max(200).default([]),
   })
   // Strict, so an unknown field is a refusal rather than something that rides
   // along into an installation nobody inspected.

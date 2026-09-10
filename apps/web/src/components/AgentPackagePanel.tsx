@@ -19,6 +19,7 @@ interface Summary {
     tools: number;
     knowledgeSources: number;
     memories: number;
+    toolspace: number;
   };
   hasAvatar: boolean;
   notes: string[];
@@ -110,7 +111,7 @@ export function AgentPackagePanel({ agentId, onImported }: { agentId?: string; o
         exportedAt: null,
         exportedByVersion: null,
         checksumOk: false,
-        counts: { styleExamples: 0, models: 0, tools: 0, knowledgeSources: 0, memories: 0 },
+        counts: { styleExamples: 0, models: 0, tools: 0, knowledgeSources: 0, memories: 0, toolspace: 0 },
         hasAvatar: false,
         notes: [],
       });
@@ -221,6 +222,7 @@ export function AgentPackagePanel({ agentId, onImported }: { agentId?: string; o
             <li>{summary.counts.tools} tool(s)</li>
             <li>{summary.counts.knowledgeSources} knowledge source(s)</li>
             <li>{summary.counts.memories} memor{summary.counts.memories === 1 ? 'y' : 'ies'}</li>
+            <li>{summary.counts.toolspace} capabilit{summary.counts.toolspace === 1 ? 'y' : 'ies'}</li>
             <li>{summary.hasAvatar ? 'a picture' : 'no picture'}</li>
           </ul>
 
