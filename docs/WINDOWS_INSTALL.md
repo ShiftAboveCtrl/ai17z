@@ -8,7 +8,7 @@ Get `AI17Z-Setup-<version>.exe` from the
 Check it against `SHA256SUMS.txt`, published beside it:
 
 ```powershell
-Get-FileHash .\AI17Z-Setup-1.0.0-beta.9.exe -Algorithm SHA256
+Get-FileHash .\AI17Z-Setup-1.0.0-beta.10.exe -Algorithm SHA256
 ```
 
 **Code signing policy:** see [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
