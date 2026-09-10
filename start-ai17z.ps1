@@ -546,10 +546,36 @@ function Get-ImageStamp {
 # Asked of the images rather than remembered in a file beside them. A file can
 # claim an image that somebody has since deleted; an image cannot be wrong
 # about what it holds.
+function Get-SourceCommit {
+  # The stamp above answers "have the images been built from this source", so it
+  # deliberately changes when anything does -- it carries a version, a dirty
+  # digest or a file time, whichever is available.
+  #
+  # This answers a different question: which commit is this. The application
+  # reads it as one, and it used to be handed the stamp, so an installed copy
+  # -- which has no repository, and stamps <version>-<commit> from
+  # BUILD_INFO.json -- reported the first twelve characters of that as its exact
+  # source: "1.0.0-beta.1". Not a commit, not a version, and it reads like an
+  # answer. Empty is better than that, and the application says "source unknown".
+  $commit = Invoke-Quiet git @('-C', $PSScriptRoot, 'rev-parse', 'HEAD')
+  if ($commit -and $commit.Length -ge 12) { return $commit.Substring(0, 12) }
+
+  $info = Join-Path $PSScriptRoot 'BUILD_INFO.json'
+  if (Test-Path $info) {
+    try {
+      $parsed = Get-Content -Raw $info | ConvertFrom-Json
+      if ($parsed.commit) { return "$($parsed.commit)".Substring(0, [Math]::Min(12, "$($parsed.commit)".Length)) }
+    } catch {
+      # No stamp is a fine answer. A wrong one is not.
+    }
+  }
+  return ''
+}
+
 $env:AI17Z_BUILD_STAMP = Get-SourceStamp
 # The same value reaches the application as its commit, which is what the
 # version screen and the worker heartbeat report.
-$env:AI17Z_BUILD_COMMIT = $env:AI17Z_BUILD_STAMP
+$env:AI17Z_BUILD_COMMIT = Get-SourceCommit
 
 $composeProject = Get-EnvPort 'AI17Z_INSTANCE' 'xbam'
 $needsBuild = [bool]$Rebuild

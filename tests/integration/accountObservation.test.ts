@@ -21,6 +21,18 @@ installHarness();
  * one browser binary, and a series that mixed them would be a follower count
  * for the wrong account presented as this one's.
  */
+/**
+ * Waits until there is comfortably a whole minute left in the current one.
+ *
+ * The uniqueness rule buckets by clock minute, so a case about "the same
+ * minute" has to be sure it is not about to end.
+ */
+async function startOfAMinute(): Promise<void> {
+  const leftInThisMinute = 60_000 - (Date.now() % 60_000);
+  if (leftInThisMinute > 5_000) return;
+  await new Promise((resolve) => setTimeout(resolve, leftInThisMinute + 250));
+}
+
 describe('recording what the account looked like', () => {
   it('keeps a metric X did not show as missing rather than zero', async () => {
     // An agent told it has zero followers will say so.
@@ -68,6 +80,17 @@ describe('recording what the account looked like', () => {
   });
 
   it('records one reading a minute, so a poll that runs twice is one state', async () => {
+    // The bucket is a *clock* minute -- `date_trunc('minute', ... AT TIME ZONE
+    // 'UTC')` in migration 0067 -- not a rolling sixty seconds. Two calls in
+    // quick succession are almost always inside one bucket, and once in a while
+    // they straddle the boundary and the second is recorded because it should
+    // be. That is a test that fails for a reason that is not a defect, so wait
+    // out the last moments of a minute rather than start there.
+    //
+    // Found by watching two live readings 43 seconds apart both record, and
+    // briefly believing the rule was broken.
+    await startOfAMinute();
+
     const fixture = await createFixture();
     const reading = { agentId: fixture.agentId, accountId: null, handle: 'nova', followers: 100 };
     expect(await postAnalytics.recordAccount(reading)).not.toBeNull();
