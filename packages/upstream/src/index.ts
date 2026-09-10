@@ -13,3 +13,4 @@ export * from './failures';
 export { MachineQuotaCoordinator, quotaDirectory } from './machineQuota';
 export * from './pinnedAgent';
 export * from './pinnedAgent';
+export * from './families/contract';
