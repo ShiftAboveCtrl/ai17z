@@ -68,6 +68,26 @@ describe('addresses that are this machine or its network', () => {
     expect(allowed('100.128.0.1')).toBe(true);
   });
 
+  it('refuses documentation and other non-global ranges', () => {
+    // The comment says "public internet", so the implementation has to mean
+    // globally routable rather than merely "not RFC1918". These all look like
+    // ordinary addresses and none of them is a destination.
+    for (const address of ['192.0.2.1', '198.51.100.1', '203.0.113.1', '192.88.99.1', '2001:db8::1', '100::1']) {
+      expect(allowed(address), address).toBe(false);
+    }
+    // And the neighbours of those ranges are still perfectly public.
+    expect(allowed('203.0.114.5')).toBe(true);
+    expect(allowed('198.51.101.1')).toBe(true);
+    expect(allowed('192.0.3.1')).toBe(true);
+  });
+
+  it('sees the IPv4 destination inside a NAT64 address', () => {
+    // 64:ff9b::/96 carries an IPv4 address inside it, so one there is an IPv4
+    // destination wearing a third hat.
+    expect(allowed('64:ff9b::7f00:1')).toBe(false); // 127.0.0.1
+    expect(allowed('64:ff9b::5db8:d822')).toBe(true); // 93.184.216.34
+  });
+
   it('refuses multicast and reserved space', () => {
     for (const address of ['224.0.0.1', '239.255.255.250', '240.0.0.1', '255.255.255.255']) {
       expect(allowed(address), address).toBe(false);

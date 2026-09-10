@@ -67,7 +67,16 @@ function ipv4Verdict(address: string): AddressVerdict {
   }
   if (a === 172 && b >= 16 && b <= 31) return refuse('172.16.0.0/12 is a private network, and where Docker puts things.');
   if (a === 192 && b === 168) return refuse('192.168.0.0/16 is a private network.');
-  if (a === 192 && b === 0) return refuse('192.0.0.0/24 is reserved for protocol assignments.');
+
+  const [, , c] = parts as [number, number, number, number];
+  // 192.0.0.0/24 is protocol assignments; 192.0.2.0/24 is TEST-NET-1. Both sit
+  // inside 192.0, and only the second is a documentation range.
+  if (a === 192 && b === 0 && c === 0) return refuse('192.0.0.0/24 is reserved for protocol assignments.');
+  if (a === 192 && b === 0 && c === 2) return refuse('192.0.2.0/24 is a documentation range, not a real host.');
+  if (a === 198 && b === 51 && c === 100) return refuse('198.51.100.0/24 is a documentation range.');
+  if (a === 203 && b === 0 && c === 113) return refuse('203.0.113.0/24 is a documentation range.');
+  // Deprecated in 2015 and still routed oddly in places.
+  if (a === 192 && b === 88 && c === 99) return refuse('192.88.99.0/24 is the deprecated 6to4 relay anycast range.');
   if (a === 198 && (b === 18 || b === 19)) return refuse('198.18.0.0/15 is reserved for benchmarking.');
   if (a >= 224) return refuse(`${address} is multicast or reserved, not a host.`);
   return allow();
@@ -144,6 +153,27 @@ function ipv6Verdict(address: string): AddressVerdict {
     return refuse('fe80::/10 is link-local, and is where cloud metadata services live.');
   }
   if (bytes[0] === 0xff) return refuse(`${address} is multicast, not a host.`);
+
+  // The i-th 16-bit group, not the i-th byte. Reading by byte steps across a
+  // group boundary and compares half of one field with half of the next, which
+  // refused 2001:4860:4860::8888 as a protocol assignment and let a NAT64
+  // address through -- both caught by the tests below.
+  const group = (i: number) => ((bytes[i * 2]! << 8) | bytes[i * 2 + 1]!) >>> 0;
+  // 2001:db8::/32, the documentation range, and the one most likely to appear
+  // in a copied example.
+  if (group(0) === 0x2001 && group(1) === 0x0db8) return refuse('2001:db8::/32 is a documentation range.');
+  // 2001::/23 is IETF protocol assignments -- Teredo, ORCHID and friends. Not
+  // ordinary destinations, and Teredo in particular is a tunnel to somewhere.
+  if (group(0) === 0x2001 && group(1) < 0x0200) return refuse('2001::/23 is reserved for protocol assignments.');
+  // 64:ff9b::/96 and 64:ff9b:1::/48 carry IPv4 inside them, so an address there
+  // is an IPv4 destination wearing a third hat.
+  if (group(0) === 0x0064 && group(1) === 0xff9b) {
+    return ipv4Verdict(`${bytes[12]}.${bytes[13]}.${bytes[14]}.${bytes[15]}`);
+  }
+  // 100::/64 is the discard-only range: a packet sent there goes nowhere.
+  if (group(0) === 0x0100 && group(1) === 0 && group(2) === 0 && group(3) === 0) {
+    return refuse('100::/64 is discard-only, so nothing there can answer.');
+  }
   return allow();
 }
 

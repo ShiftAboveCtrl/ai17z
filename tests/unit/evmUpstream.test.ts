@@ -17,12 +17,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * that these nodes answer at all was taken separately against the real chain.
  */
 
-const lookups = new Map<string, { address: string }[]>();
-vi.mock('node:dns/promises', () => ({
-  async lookup(hostname: string) {
-    const found = lookups.get(hostname);
-    if (!found) throw new Error(`getaddrinfo ENOTFOUND ${hostname}`);
-    return found;
+/**
+ * Mocked at `undici`, because that is what `safeFetch` calls.
+ *
+ * It used to stub `globalThis.fetch`, and when the transport moved to undici's
+ * own fetch -- so the socket could be pinned to an address that was judged --
+ * the stub stopped intercepting and these tests quietly started reaching the
+ * real chain. They still passed, which is the worst way for that to happen:
+ * `eth_chainId` really did answer 1, so the wrong-chain case had nothing to
+ * catch. Mocking what production imports is the fix.
+ */
+const served: { chainIdHex: string; results: Record<string, unknown> } = { chainIdHex: '0x1', results: {} };
+const methodsAsked: string[] = [];
+
+vi.mock('undici', () => ({
+  // A dispatcher the fake fetch ignores; the pinning itself is proved in
+  // `safeFetch.test.ts` against the real one.
+  Agent: class {
+    async close() {}
+  },
+  async fetch(_input: unknown, init?: { body?: string }) {
+    const body = JSON.parse(String(init?.body ?? '{}')) as { method: string };
+    methodsAsked.push(body.method);
+    const result = body.method === 'eth_chainId' ? served.chainIdHex : (served.results[body.method] ?? '0x1');
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), {
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+    });
   },
 }));
 
@@ -33,20 +54,10 @@ type EvmQueryShape = import('@xbam/upstream').EvmQuery;
 
 /** Answers every JSON-RPC call, with a chain id the caller chooses. */
 function serveChain(chainIdHex: string, results: Record<string, unknown> = {}) {
-  const methods: string[] = [];
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (_input: URL | string, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body ?? '{}')) as { method: string };
-      methods.push(body.method);
-      const result = body.method === 'eth_chainId' ? chainIdHex : (results[body.method] ?? '0x1');
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), {
-        status: 200,
-        headers: new Headers({ 'content-type': 'application/json' }),
-      });
-    }),
-  );
-  return { methods };
+  served.chainIdHex = chainIdHex;
+  served.results = results;
+  methodsAsked.length = 0;
+  return { methods: methodsAsked };
 }
 
 beforeEach(() => {
@@ -54,15 +65,11 @@ beforeEach(() => {
   resetBreakerForTest();
   resetCacheForTest();
   resetLimiterForTest();
-  lookups.clear();
-  for (const host of ['ethereum-rpc.publicnode.com', 'eth.llamarpc.com', 'cloudflare-eth.com']) {
-    lookups.set(host, [{ address: '93.184.216.34' }]);
-  }
+  methodsAsked.length = 0;
+  served.chainIdHex = '0x1';
+  served.results = {};
 });
-afterEach(() => {
-  vi.unstubAllGlobals();
-  resetUpstreamsForTest();
-});
+afterEach(() => resetUpstreamsForTest());
 
 describe('what may be asked of a chain', () => {
   it('has no method that signs, spends or unlocks', () => {
