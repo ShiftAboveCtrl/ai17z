@@ -1,44 +1,40 @@
 import { defaultPermission, type CapabilityPermission } from '@xbam/shared/contracts';
-import { ops } from '@xbam/database';
+import { capabilityPermissions as permissionsRepo } from '@xbam/database';
 import { listCapabilities } from '@xbam/tools';
 
 /**
  * What an owner has decided about each capability, for one agent.
  *
- * Read out of `agent_tools`, which already exists and already carries a
- * per-agent switch and a config blob. `docs/ENGINEERING.md` is clear that only
- * genuinely new concepts get new tables, and "may this agent use this" is not
- * new -- only the invocation record was.
+ * Two sources, in order:
  *
- * Three sources, in order:
+ *   1. the decision the owner recorded, in `agent_capability_permissions`;
+ *   2. the capability's own default -- reads allowed, writes not.
  *
- *   1. `config.permission`, when the owner chose one of the three states. The
- *      boolean cannot express OWNER_APPROVAL, and an owner who wants to watch
- *      the first few uses should not have to choose between off and unattended.
- *   2. the `enabled` boolean, for a row written before that existed.
- *   3. the capability's own default -- reads allowed, writes not.
- *
- * A capability with no row at all falls to its default, which is what makes a
- * newly registered read work without anybody configuring anything, and a newly
+ * A capability with no row falls to its default, which is what makes a newly
+ * registered read work without anybody configuring anything, and a newly
  * registered write not.
+ *
+ * ### Why this is not `agent_tools`
+ *
+ * It was, and it silently did nothing. `agent_tools.tool_id` is a foreign key
+ * into the built-in tool catalogue and `setAgentTool` selects that row by key,
+ * so a capability id -- which is registry-defined and has never been in the
+ * catalogue -- selected nothing and inserted nothing. Every permission an owner
+ * set was written nowhere and read back as the default. Reads default to
+ * allowed so they worked; writes default to disabled, so `x.like` and
+ * `x.repost` could not be switched on from the interface at all.
+ *
+ * The screen said Allowed, the runtime said "switched off for this agent", and
+ * nothing anywhere raised. See migration 0068.
  */
 export async function capabilityPermissions(agentId: string): Promise<Map<string, CapabilityPermission>> {
-  const stored = await ops.listAgentTools(agentId).catch(() => []);
-  const byKey = new Map(stored.map((row) => [row.key, row]));
+  const stored = await permissionsRepo.listForAgent(agentId).catch(() => []);
+  const byId = new Map(stored.map((row) => [row.capability_id, row.permission]));
   const permissions = new Map<string, CapabilityPermission>();
 
   for (const capability of listCapabilities()) {
-    const row = byKey.get(capability.id);
-    const configured = (row?.config as { permission?: unknown } | undefined)?.permission;
-    if (configured === 'ALLOWED' || configured === 'OWNER_APPROVAL' || configured === 'DISABLED') {
-      permissions.set(capability.id, configured);
-      continue;
-    }
-    if (row) {
-      permissions.set(capability.id, row.enabled ? 'ALLOWED' : 'DISABLED');
-      continue;
-    }
-    permissions.set(capability.id, defaultPermission(capability.effect, capability.risk));
+    const chosen = byId.get(capability.id);
+    permissions.set(capability.id, chosen ?? defaultPermission(capability.effect, capability.risk));
   }
   return permissions;
 }

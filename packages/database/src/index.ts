@@ -29,6 +29,7 @@ export * as capabilityInvocations from './repositories/capabilityInvocations';
 export * as postAnalytics from './repositories/postAnalytics';
 export * as growth from './repositories/growth';
 export * as experiments from './repositories/experiments';
+export * as capabilityPermissions from './repositories/capabilityPermissions';
 export * as workers from './repositories/workers';
 export * as radar from './repositories/radar';
 export * as mentions from './repositories/mentions';
@@ -55,6 +56,7 @@ export type { NotificationRecord, NotificationSeverity } from './repositories/no
 export type { PipelineVersionRecord } from './repositories/pipelines';
 export type { EventRecord, IngestResult } from './repositories/events';
 export type { ExperimentRow, AssignmentRow, ArmReadingRow } from './repositories/experiments';
+export type { CapabilityPermissionRow } from './repositories/capabilityPermissions';
 export type { ConversationRecord } from './repositories/conversations';
 export type { CreateJobInput, CreateJobResult, JobPatch, JobSummary, JobListFilters, JobAttemptRow } from './repositories/jobs';
 export type { ClaimActionInput, ClaimActionResult } from './repositories/actions';

@@ -1,6 +1,7 @@
 import type { CapabilityPermission, CapabilityView } from '@xbam/shared/contracts';
 import { defaultPermission } from '@xbam/shared/contracts';
-import { ops } from '@xbam/database';
+import { NotFoundError } from '@xbam/shared';
+import { capabilityPermissions as permissionsRepo } from '@xbam/database';
 import { listCapabilities, resolvePermission } from '@xbam/tools';
 import { capabilityPermissions } from './capabilityPermissions';
 
@@ -81,25 +82,27 @@ export async function capabilityViews(input: {
 /**
  * What an owner just decided, written where the loop will read it.
  *
- * Stored in `agent_tools.config.permission` rather than in a new column: the
- * boolean beside it cannot express OWNER_APPROVAL, and the row already exists.
- * `enabled` is kept in step so anything still reading the boolean -- the older
- * tools screen -- does not contradict this.
+ * Stored in `agent_capability_permissions`, which exists because the intended
+ * home could not work: `agent_tools.tool_id` is a foreign key into the tool
+ * catalogue, capability ids were never in it, and the insert selected nothing
+ * and wrote nothing without complaining. See migration 0068.
  */
 export async function setCapabilityPermission(input: {
   agentId: string;
   capabilityId: string;
   permission: CapabilityPermission;
 }): Promise<void> {
-  const existing = await ops.listAgentTools(input.agentId);
-  const row = existing.find((tool) => tool.key === input.capabilityId);
-  const config = { ...((row?.config as Record<string, unknown>) ?? {}), permission: input.permission };
-  await ops.setAgentTool({
-    agentId: input.agentId,
-    toolKey: input.capabilityId,
-    enabled: input.permission !== 'DISABLED',
-    config,
-  });
+  // Refuses a capability that is not registered, rather than recording a
+  // decision about something that will never be offered. The previous storage
+  // failed the other way -- it accepted anything and wrote nothing -- and that
+  // is precisely how an unswitchable write capability survived a release.
+  if (!listCapabilities().some((capability) => capability.id === input.capabilityId)) {
+    throw new NotFoundError('Capability');
+  }
+  const written = await permissionsRepo.set(input);
+  if (!written) {
+    throw new Error(`The permission for ${input.capabilityId} was not stored.`);
+  }
 }
 
 /** What a capability would default to if nobody ever chose. For the screen. */
