@@ -14,3 +14,4 @@ export * from './protocol';
 export * from './invoke';
 export * from './fromToolDefinition';
 export * from './builtinCapabilities';
+export * from './toolpacks';
