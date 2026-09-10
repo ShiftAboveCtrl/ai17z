@@ -20,7 +20,15 @@ export interface CapabilityContext {
   agentId: string;
   jobId: string | null;
   accountId: string | null;
-  /** Per-agent configuration, from `agent_tools.config`. */
+  /**
+   * Named settings for this capability and this agent, or `{}`.
+   *
+   * From `agent_capability_permissions.config`, beside the owner's decision
+   * about whether the capability may run at all. It said `agent_tools.config`
+   * for as long as capabilities have existed, and that was never where it came
+   * from -- nothing wrote such a row, and the only caller of the loop did not
+   * pass configs at all, so this arrived empty however it was filled in.
+   */
   config: Record<string, unknown>;
   logger: Logger;
   /** Cancelled when the invocation's own timeout expires. */
