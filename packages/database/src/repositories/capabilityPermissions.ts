@@ -15,6 +15,8 @@ export interface CapabilityPermissionRow extends Record<string, unknown> {
   agent_id: string;
   capability_id: string;
   permission: 'DISABLED' | 'OWNER_APPROVAL' | 'ALLOWED';
+  /** Named settings for this capability and this agent. Always an object. */
+  config: Record<string, unknown>;
   updated_at: string;
 }
 
@@ -42,9 +44,45 @@ export async function set(input: {
     `INSERT INTO agent_capability_permissions (agent_id, capability_id, permission)
      VALUES ($1,$2,$3)
      ON CONFLICT (agent_id, capability_id)
+       -- Deliberately leaves the config column alone. Deciding whether a
+       -- capability may run and deciding how it should behave are separate
+       -- acts, and toggling one off and on again should not silently discard
+       -- the other. (No backticks in here: this is a template literal, and one
+       -- inside a SQL comment ends it thirty lines before the error appears.)
        DO UPDATE SET permission = excluded.permission, updated_at = now()
      RETURNING *`,
     [input.agentId, input.capabilityId, input.permission],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Records the settings for one capability, replacing whatever was there.
+ *
+ * Replacing rather than merging, because a merge has no way to remove a
+ * setting: an owner clearing a field would send an object without it and get
+ * back the value they just cleared.
+ *
+ * The permission is left alone for the same reason `set` leaves the config
+ * alone, and defaults when there is no row yet -- writing settings for a
+ * capability nobody has decided about must not quietly allow it, so the column
+ * default (DISABLED) is not used here; the caller's default is applied by the
+ * reader instead. What goes in is the safest value, and the reader still
+ * prefers the capability's own default when no decision was ever recorded.
+ */
+export async function setConfig(input: {
+  agentId: string;
+  capabilityId: string;
+  permission: 'DISABLED' | 'OWNER_APPROVAL' | 'ALLOWED';
+  config: Record<string, unknown>;
+}): Promise<CapabilityPermissionRow | null> {
+  const rows = await query<CapabilityPermissionRow>(
+    `INSERT INTO agent_capability_permissions (agent_id, capability_id, permission, config)
+     VALUES ($1,$2,$3,$4::jsonb)
+     ON CONFLICT (agent_id, capability_id)
+       DO UPDATE SET config = excluded.config, updated_at = now()
+     RETURNING *`,
+    [input.agentId, input.capabilityId, input.permission, JSON.stringify(input.config ?? {})],
   );
   return rows[0] ?? null;
 }

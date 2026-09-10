@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { capabilityPermissions as permissionsRepo, ops } from '@xbam/database';
-import { capabilityPermissions, registerXCapabilities, setCapabilityPermission } from '@xbam/runtime';
+import { capabilityPermissions as permissionsRepo, ops, query } from '@xbam/database';
+import { capabilityPermissions, capabilitySettings, registerXCapabilities, setCapabilityPermission } from '@xbam/runtime';
 import { getCapability, resetCapabilitiesForTest } from '@xbam/tools';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -130,5 +130,118 @@ describe('turning on a tool that does not exist', () => {
     await ops.setAgentTool({ agentId: fixture.agentId, toolKey: tool!.key, enabled: true });
     const rows = await ops.listAgentTools(fixture.agentId);
     expect(rows.find((row) => row.key === tool!.key)?.enabled).toBe(true);
+  });
+});
+
+/**
+ * The other half of the same row: how a capability should behave, not whether.
+ *
+ * `CapabilityContext.config` has been in the contract since capabilities were,
+ * described as coming from `agent_tools.config`. It never did. Capabilities
+ * left `agent_tools` when they were given their own table, nothing wrote that
+ * row before, and `stepGenerate` -- the only production caller of the loop --
+ * passed permissions and never configs. So every capability was handed `{}`
+ * however it was configured, and the sentence saying where it came from was
+ * false in two ways at once.
+ *
+ * Against real Postgres because the storage is a jsonb column with a CHECK on
+ * it, and the interesting cases are what the database will and will not accept.
+ */
+describe('how an owner has set a capability up', () => {
+  it('survives being written down, and reaches the reader', async () => {
+    const fixture = await createFixture();
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+
+    await permissionsRepo.setConfig({
+      agentId: fixture.agentId,
+      capabilityId: 'x.search',
+      permission: 'ALLOWED',
+      config: { maxResults: 5, language: 'en' },
+    });
+
+    const settings = await capabilitySettings(fixture.agentId);
+    expect(settings.configs.get('x.search')).toEqual({ maxResults: 5, language: 'en' });
+    expect(settings.permissions.get('x.search')).toBe('ALLOWED');
+  });
+
+  it('carries nothing for a capability nobody has configured', async () => {
+    // Absent rather than present-and-empty: the loop already answers a missing
+    // entry with {}, and two ways of saying nothing is one too many.
+    const fixture = await createFixture();
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+
+    await setCapabilityPermission({ agentId: fixture.agentId, capabilityId: 'x.like', permission: 'ALLOWED' });
+
+    const settings = await capabilitySettings(fixture.agentId);
+    expect(settings.configs.has('x.like')).toBe(false);
+    expect(settings.permissions.get('x.like')).toBe('ALLOWED');
+  });
+
+  it('keeps the decision and the settings out of each other’s way', async () => {
+    // Turning a capability off and on again must not discard how it was set up,
+    // and changing the settings must not quietly re-permit it.
+    const fixture = await createFixture();
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+
+    await permissionsRepo.setConfig({
+      agentId: fixture.agentId,
+      capabilityId: 'x.search',
+      permission: 'ALLOWED',
+      config: { maxResults: 5 },
+    });
+    await setCapabilityPermission({ agentId: fixture.agentId, capabilityId: 'x.search', permission: 'DISABLED' });
+    await setCapabilityPermission({ agentId: fixture.agentId, capabilityId: 'x.search', permission: 'ALLOWED' });
+
+    const settings = await capabilitySettings(fixture.agentId);
+    expect(settings.configs.get('x.search')).toEqual({ maxResults: 5 });
+    expect(settings.permissions.get('x.search')).toBe('ALLOWED');
+  });
+
+  it('replaces the settings rather than merging them, so a field can be cleared', async () => {
+    const fixture = await createFixture();
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+
+    await permissionsRepo.setConfig({
+      agentId: fixture.agentId,
+      capabilityId: 'x.search',
+      permission: 'ALLOWED',
+      config: { maxResults: 5, language: 'en' },
+    });
+    await permissionsRepo.setConfig({
+      agentId: fixture.agentId,
+      capabilityId: 'x.search',
+      permission: 'ALLOWED',
+      config: { maxResults: 9 },
+    });
+
+    expect((await capabilitySettings(fixture.agentId)).configs.get('x.search')).toEqual({ maxResults: 9 });
+  });
+
+  it('refuses anything that is not a bag of named settings', async () => {
+    // Every reader treats this as Record<string, unknown>. A bare number or a
+    // list would arrive as something no caller has a branch for, so the
+    // database refuses it rather than the runtime hoping.
+    const fixture = await createFixture();
+    await expect(
+      query(
+        `INSERT INTO agent_capability_permissions (agent_id, capability_id, permission, config)
+         VALUES ($1, 'x.search', 'ALLOWED', $2::jsonb)`,
+        [fixture.agentId, JSON.stringify([1, 2, 3])],
+      ),
+    ).rejects.toThrow(/config_object/);
+  });
+
+  it('defaults to an empty object for a row written without one', async () => {
+    const fixture = await createFixture();
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+
+    await setCapabilityPermission({ agentId: fixture.agentId, capabilityId: 'x.like', permission: 'ALLOWED' });
+    const [row] = await permissionsRepo.listForAgent(fixture.agentId);
+    expect(row!.config).toEqual({});
   });
 });

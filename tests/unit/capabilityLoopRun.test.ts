@@ -37,6 +37,23 @@ const clock = defineCapability({
   },
 });
 
+/** Reports the settings it was handed, so a caller can see what arrived. */
+const settingsProbe = defineCapability({
+  id: 'test.settings',
+  name: 'Settings',
+  description: 'What this capability was configured with.',
+  category: 'READ',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z.object({}),
+  output: z.object({ seen: z.string() }),
+  modelCallable: true,
+  timeoutMs: 1_000,
+  async run(_input, context) {
+    return { seen: JSON.stringify(context.config) };
+  },
+});
+
 const call = (id: string, input: unknown = {}) =>
   `${CALL_OPEN}${JSON.stringify({ id, input })}${CALL_CLOSE}`;
 
@@ -44,6 +61,7 @@ beforeEach(() => {
   recorded.length = 0;
   resetCapabilitiesForTest();
   registerCapability(clock);
+  registerCapability(settingsProbe);
 });
 afterEach(() => resetCapabilitiesForTest());
 
@@ -146,5 +164,54 @@ describe('the capability loop', () => {
     const result = await runCapabilityLoop({ ...base, generate, maxSteps: 1 });
     expect(result.answer).not.toContain(CALL_OPEN);
     expect(result.answer).toContain('Probably noon.');
+  });
+});
+
+/**
+ * The settings an owner recorded, arriving where a capability can read them.
+ *
+ * `CapabilityContext.config` was described as per-agent configuration for as
+ * long as capabilities have existed and was always `{}`: the loop accepted
+ * `configs` and `stepGenerate`, its only production caller, never passed any.
+ * The loop half was right all along, which is exactly why nothing caught it --
+ * so this pins the half that was, and the integration suite pins the storage
+ * and the reader that now feed it.
+ */
+describe('what a capability is configured with', () => {
+  it('hands over the settings recorded for that capability', async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call('test.settings'))
+      .mockResolvedValueOnce('Done.');
+
+    const result = await runCapabilityLoop({
+      ...base,
+      generate,
+      configs: new Map([['test.settings', { maxResults: 5, language: 'en' }]]),
+    });
+
+    expect(result.steps[0]!.outcome).toBe('SUCCEEDED');
+    // The second call is where the loop feeds the result back to the model.
+    const fedBack = JSON.stringify(generate.mock.calls[1]![0]);
+    expect(fedBack).toContain('maxResults');
+    expect(fedBack).toContain('language');
+  });
+
+  it('hands over an empty bag when nothing was recorded for it', async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call('test.settings'))
+      .mockResolvedValueOnce('Done.');
+
+    await runCapabilityLoop({
+      ...base,
+      generate,
+      configs: new Map([['test.clock', { irrelevant: true }]]),
+    });
+
+    // Another capability's settings must never arrive here.
+    const fedBack = JSON.stringify(generate.mock.calls[1]![0]);
+    expect(fedBack).toContain('{}');
+    expect(fedBack).not.toContain('irrelevant');
   });
 });

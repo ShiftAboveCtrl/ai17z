@@ -20,7 +20,7 @@ import {
 import { assemblePrompt } from '@xbam/prompts';
 import { runCapabilityLoop } from '../capabilityLoop';
 import { variantForPost } from '../experimentRuns';
-import { capabilityPermissions } from '../capabilityPermissions';
+import { capabilitySettings } from '../capabilityPermissions';
 import { pauseState } from '../killSwitch';
 import { generate } from '@xbam/models';
 import { getChannelAdapter } from '@xbam/channels';
@@ -221,13 +221,18 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
    */
   let text: string;
   if (bundle.policy.tools.capabilityLoop) {
+    // Both halves of the owner's setup, in one read. Passing the permissions
+    // and not the configs is what made `CapabilityContext.config` a field that
+    // was always empty however it was filled in.
+    const settings = await capabilitySettings(bundle.agent.id);
     const loop = await runCapabilityLoop({
       agentId: bundle.agent.id,
       jobId: bundle.job.id,
       accountId: bundle.job.accountId,
       messages: prompt.messages,
       generate: callModel,
-      permissions: await capabilityPermissions(bundle.agent.id),
+      permissions: settings.permissions,
+      configs: settings.configs,
       paused: (await pauseState().catch(() => ({ paused: false }))).paused,
     });
     text = loop.answer;
