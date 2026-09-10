@@ -53,6 +53,52 @@ export interface BuildVersion {
   source: 'build' | 'git' | 'unknown';
 }
 
+/**
+ * The commit inside a build stamp, or nothing when there is not one in it.
+ *
+ * `AI17Z_BUILD_COMMIT` is set from the launcher's source stamp, and that stamp
+ * has never been only a commit. An installed copy has no repository, so the
+ * launcher falls back to `BUILD_INFO.json` and stamps `<version>-<commit>` --
+ * and this read it as a commit and took the first twelve characters:
+ *
+ *     "1.0.0-beta.13-05da2440e1f2".slice(0, 12) === "1.0.0-beta.1"
+ *
+ * Which is what every installed copy has been reporting as its exact source, in
+ * the version display and in the worker heartbeat. Not a commit, not a version,
+ * and worst of all not obviously either -- it reads like a real answer.
+ *
+ * So the shapes are named rather than assumed, and anything else is refused.
+ * `describeVersion` then says "source unknown", which is true and useful, where
+ * a mangled prefix was neither.
+ */
+export function commitFromStamp(stamp: string): string | null {
+  const trimmed = stamp.trim();
+
+  // The two shapes that carry no commit at all, named before anything is
+  // matched. `mtime-<ticks>` is the trap: ticks are decimal, decimal digits are
+  // valid hex, and a rule looking for a hex tail happily reads the last twelve
+  // of them as a commit. Found by a test written for a different case.
+  if (!trimmed || trimmed === 'unknown' || trimmed.startsWith('mtime-')) return null;
+
+  // A clean checkout: the stamp is the commit.
+  const bare = /^([0-9a-f]{7,40})$/i.exec(trimmed);
+  if (bare) return bare[1]!.toLowerCase().slice(0, 12);
+
+  // A checkout with edits in it. Still the commit it sits on, which is the
+  // honest answer to "what source is this"; the edits are the launcher's
+  // business, not the version display's.
+  const dirty = /^([0-9a-f]{7,40})-dirty-/i.exec(trimmed);
+  if (dirty) return dirty[1]!.toLowerCase().slice(0, 12);
+
+  // An installed copy: `<version>-<commit>` from BUILD_INFO.json.
+  const stamped = /-([0-9a-f]{7,40})$/i.exec(trimmed);
+  if (stamped) return stamped[1]!.toLowerCase().slice(0, 12);
+
+  // `mtime-<ticks>`, `unknown`, or a version with no commit beside it. None of
+  // those is a commit and none of them should be shown as one.
+  return null;
+}
+
 let cached: BuildVersion | null = null;
 
 /** Read once. The answer cannot change without the process restarting. */
@@ -61,7 +107,11 @@ export function buildVersion(): BuildVersion {
 
   const stamped = process.env.AI17Z_BUILD_COMMIT ?? process.env.XBAM_BUILD_COMMIT;
   if (stamped && stamped.trim()) {
-    cached = { version: releasedVersion(), commit: stamped.trim().slice(0, 12), source: 'build' };
+    const commit = commitFromStamp(stamped);
+    cached = commit
+      ? { version: releasedVersion(), commit, source: 'build' }
+      : // A stamp with no commit in it is not an excuse to print part of it.
+        { version: releasedVersion(), commit: null, source: 'unknown' };
     return cached;
   }
 

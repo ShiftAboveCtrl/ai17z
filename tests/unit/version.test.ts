@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildVersion, describeVersion, releaseName } from '@xbam/shared';
+import { buildVersion, commitFromStamp, describeVersion, releaseName } from '@xbam/shared';
 
 /**
  * An installation that cannot say what it is running makes two ordinary
@@ -106,5 +106,46 @@ describe('what a release is called', () => {
 
   it('names whatever this installation is running', () => {
     expect(releaseName().number).toBe(buildVersion().version.replace(/-.*$/, ''));
+  });
+});
+
+/**
+ * What the launcher hands over, and what may be called a commit.
+ *
+ * The stamp answers "were the images built from this source", so it carries
+ * whatever identifies the source -- a commit, a dirty digest, a version, a file
+ * time. The version display asks a different question, and used to be handed
+ * that same string and take twelve characters off the front of it. On every
+ * installed copy, which stamps `<version>-<commit>` because it has no
+ * repository, that produced "1.0.0-beta.1" and showed it as the exact source.
+ */
+describe('the commit inside a build stamp', () => {
+  it('reads a clean checkout stamp, which is the commit itself', () => {
+    expect(commitFromStamp('05da2440e1f2')).toBe('05da2440e1f2');
+    expect(commitFromStamp('  05DA2440E1F2  ')).toBe('05da2440e1f2');
+  });
+
+  it('reads an installed copy stamp, which carries the version in front', () => {
+    // The case that was wrong, and the one every real installation is in.
+    expect(commitFromStamp('1.0.0-beta.13-05da2440e1f2')).toBe('05da2440e1f2');
+    expect(commitFromStamp('1.0.0-beta.13-05da2440e1f2ab34cd56ef7890ab12cd34ef5678')).toBe('05da2440e1f2');
+  });
+
+  it('reads a dirty checkout as the commit it sits on', () => {
+    expect(commitFromStamp('05da2440e1f2-dirty-9f8e7d6c5b4a')).toBe('05da2440e1f2');
+  });
+
+  it('refuses everything that is not a commit rather than printing part of it', () => {
+    // "1.0.0-beta.1" was the visible symptom. None of these is an answer.
+    expect(commitFromStamp('1.0.0-beta.13')).toBeNull();
+    expect(commitFromStamp('mtime-638912345678901234')).toBeNull();
+    expect(commitFromStamp('unknown')).toBeNull();
+    expect(commitFromStamp('')).toBeNull();
+  });
+
+  it('says so plainly when there is no commit to show', () => {
+    expect(describeVersion({ version: '1.0.0-beta.13', commit: null, source: 'unknown' })).toBe(
+      'v1.0.0-beta.13 (source unknown)',
+    );
   });
 });
