@@ -3,7 +3,7 @@ import {
   candidatesFrom,
   chooseCandidate,
   describeToken,
-  endpointFor,
+  marketQueryFor,
   mergeReferences,
   normaliseChain,
   parseTokenReference,
@@ -71,23 +71,27 @@ describe('reading which token was meant', () => {
   });
 });
 
-describe('which endpoint answers the question', () => {
+describe('which question the market family is asked', () => {
+  // The URL itself now belongs to the market family: this file and research.ts
+  // each used to build their own, which is two clients for one service and two
+  // places to change when it moves. What is decided here is the *question*.
   it('asks about the pair when one was linked', () => {
-    expect(endpointFor({ address: null, chain: 'solana', pairAddress: 'p1', symbol: null, fromUrl: true })).toContain(
-      '/pairs/solana/p1',
-    );
+    expect(marketQueryFor({ address: null, chain: 'solana', pairAddress: 'p1', symbol: null, fromUrl: true })).toEqual({
+      kind: 'pair',
+      chain: 'solana',
+      pairAddress: 'p1',
+    });
   });
 
-  it('asks the token endpoint for an address, never search', () => {
-    // search matches either side of a pair, which returns a price belonging to
-    // whatever the token trades against.
-    const url = endpointFor({ address: ETH_DOG, chain: null, pairAddress: null, symbol: null, fromUrl: false });
-    expect(url).toContain('/tokens/');
-    expect(url).not.toContain('/search');
+  it('asks about the contract for an address, never by ticker', () => {
+    // A ticker search matches either side of a pair, which returns a price
+    // belonging to whatever the token trades against.
+    const query = marketQueryFor({ address: ETH_DOG, chain: null, pairAddress: null, symbol: null, fromUrl: false });
+    expect(query).toEqual({ kind: 'token', address: ETH_DOG });
   });
 
-  it('has nowhere to go when nothing identified a token', () => {
-    expect(endpointFor({ address: null, chain: null, pairAddress: null, symbol: null, fromUrl: false })).toBeNull();
+  it('has nothing to ask when nothing identified a token', () => {
+    expect(marketQueryFor({ address: null, chain: null, pairAddress: null, symbol: null, fromUrl: false })).toBeNull();
   });
 });
 

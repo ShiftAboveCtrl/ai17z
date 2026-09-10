@@ -2,7 +2,12 @@ import { createLogger, errorMessage } from '@xbam/shared';
 import { pipelines as pipelinesRepo, prompts as promptsRepo } from '@xbam/database';
 import { DEFAULT_TEMPLATES } from '@xbam/prompts';
 import { registerBuiltinCapabilities, syncToolCatalogue } from '@xbam/tools';
-import { registerContractUpstreams, registerEvmUpstreams, useQuotaCoordinator } from '@xbam/upstream';
+import {
+  registerContractUpstreams,
+  registerEvmUpstreams,
+  registerMarketUpstreams,
+  useQuotaCoordinator,
+} from '@xbam/upstream';
 import { InstallationQuotaCoordinator } from './upstreamQuota';
 import { registerChainCapabilities } from './chainCapabilities';
 import { registerContractCapabilities } from './contractCapabilities';
@@ -47,6 +52,7 @@ export async function bootstrapRuntime(): Promise<void> {
   // registry filled at import time contains whatever happened to be imported.
   registerEvmUpstreams();
   registerContractUpstreams();
+  registerMarketUpstreams();
   // The capabilities that read a chain, registered after the upstreams they
   // ask. The model asks `chain.read_balance`; which node answers is provenance.
   registerChainCapabilities();
