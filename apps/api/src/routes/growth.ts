@@ -170,11 +170,15 @@ export async function growthRoutes(app: FastifyInstance): Promise<void> {
   /**
    * How the account itself has moved, oldest first.
    *
-   * Nothing polls for these: `docs/architecture/CADENCE.md` allows one timing
-   * engine and no second timer, so a reading is taken when something reads the
-   * account's own profile. The count of readings travels with the series so a
-   * screen can say the series is as dense as the looking rather than implying a
-   * measurement nobody is taking.
+   * A reading is taken roughly every six hours, inside the own-threads radar
+   * visit rather than on a timer of its own: `docs/architecture/CADENCE.md`
+   * allows one timing engine and no second timer. Anything else that reads the
+   * profile records one too.
+   *
+   * The first arrangement put the reading in the slot where that visit found no
+   * recent post to check, which reads well and is backwards -- an account that
+   * posts regularly always has a post to check, so the accounts most worth
+   * measuring were the ones that would never have been measured.
    */
   app.get(
     '/api/agents/:id/growth/account',
@@ -182,7 +186,7 @@ export async function growthRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
       const readings = await postAnalyticsRepo.accountHistory(agent.id);
-      return { readings, scheduled: false };
+      return { readings, scheduled: true };
     }),
   );
 
