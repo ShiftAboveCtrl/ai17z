@@ -97,11 +97,23 @@ export function looksUnavailable(pageText: string): boolean {
  * upstream, and an agent told there are no results will say so. Found on a live
  * signed-in session, where a search for "ethereum" -- which certainly has
  * results -- came back with nought.
+ *
+ * The connectivity banner is the same failure wearing different words, and it
+ * was found the same way: reading @ai17zOS's profile returned no articles at
+ * all, and the page said "Seems like you lost connectivity. We'll keep
+ * retrying." Both halves are listed because either sentence can be reworded on
+ * its own, and matching one of them is better than matching neither.
+ *
+ * Every marker here is apostrophe-free on purpose. X writes a typographic
+ * apostrophe, so a marker containing one matches the page and not the string
+ * anybody would write down here.
  */
 export const RETRYABLE_MARKERS = [
   'something went wrong. try reloading',
   'something went wrong, but don',
   'try reloading',
+  'seems like you lost connectivity',
+  'keep retrying',
 ];
 
 export function looksLikeXBroke(pageText: string): boolean {
