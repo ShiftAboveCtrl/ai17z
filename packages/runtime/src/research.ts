@@ -1,4 +1,5 @@
 import { createLogger, errorMessage, refersToSomethingElse } from '@xbam/shared';
+import { ask, type MarketPairs, type MarketQuery } from '@xbam/upstream';
 import { describeToken, mergeReferences, parseTokenReference, resolveToken } from './token';
 
 const log = createLogger('research');
@@ -568,20 +569,17 @@ export async function lookupToken(query: string, timeoutMs = 8_000): Promise<Fin
   // The dedicated endpoint for an address returns only that token's pairs.
   // `search` matches either side, which is how a query for a token comes back
   // with pairs where it is the quote asset and the price belongs to something
-  // else entirely.
-  const url = isAddress
-    ? `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(cleaned)}`
-    : `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(cleaned)}`;
+  // else entirely. Which URL that is belongs to the market family, not here:
+  // this file and `token.ts` each used to build their own, which is two clients
+  // for one service and two places to change when it moves.
+  void timeoutMs;
 
   try {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) return null;
-
-    const body = (await response.json()) as { pairs?: DexPair[] };
-    const pairs = (body.pairs ?? []).filter((p) => (p.liquidity?.usd ?? 0) > 0);
+    const answer = await ask<MarketQuery, MarketPairs>(
+      'market_pairs',
+      isAddress ? { kind: 'token', address: cleaned } : { kind: 'search', symbol: cleaned },
+    );
+    const pairs = (answer.value.pairs as DexPair[]).filter((p) => (p.liquidity?.usd ?? 0) > 0);
     if (pairs.length === 0) return null;
 
     const chosen = choosePair(pairs, isAddress ? null : cleaned);

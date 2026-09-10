@@ -18,6 +18,7 @@
  * grants no permission to predict one.
  */
 import { createLogger, errorMessage } from '@xbam/shared';
+import { ask, type MarketPairs, type MarketQuery } from '@xbam/upstream';
 
 const log = createLogger('token');
 
@@ -362,47 +363,49 @@ export function candidatesFrom(pairs: DexPairRaw[], symbol?: string | null): Tok
   return candidates.sort((a, b) => b.liquidityUsd - a.liquidityUsd);
 }
 
-/** Which DexScreener endpoint answers this reference. */
-export function endpointFor(reference: TokenReference): string | null {
+/** Which question the market family is being asked, from a reference. */
+export function marketQueryFor(reference: TokenReference): MarketQuery | null {
   if (reference.pairAddress && reference.chain) {
-    return `https://api.dexscreener.com/latest/dex/pairs/${encodeURIComponent(reference.chain)}/${encodeURIComponent(reference.pairAddress)}`;
+    return { kind: 'pair', chain: reference.chain, pairAddress: reference.pairAddress };
   }
-  if (reference.address) {
-    // The token endpoint returns only that contract's pairs. `search` matches
-    // either side of a pair, which is how asking about a token comes back with
-    // a price belonging to whatever it trades against.
-    return `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(reference.address)}`;
-  }
-  if (reference.symbol) {
-    return `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(reference.symbol)}`;
-  }
+  if (reference.address) return { kind: 'token', address: reference.address };
+  if (reference.symbol) return { kind: 'search', symbol: reference.symbol };
   return null;
 }
 
-/** Resolve a reference against the live API. */
+/**
+ * Resolve a reference against the live market family.
+ *
+ * The request goes through `ask` rather than `fetch`, so it is paced to what
+ * the operator allows, shared with anything asking the same question in the
+ * same moment, and abandoned when the source is failing -- none of which this
+ * module has to know about. What it kept is the part that matters: deciding
+ * *which* token was meant, and refusing to guess.
+ */
 export async function resolveToken(
   reference: TokenReference,
   options: ResolveOptions & { timeoutMs?: number } = {},
 ): Promise<TokenResolution> {
-  const url = endpointFor(reference);
-  if (!url) {
+  const query = marketQueryFor(reference);
+  if (!query) {
     return { status: 'NOT_FOUND', facts: null, candidates: [], how: 'nothing in the message identified a token' };
   }
 
   try {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(options.timeoutMs ?? 8_000),
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) {
-      return { status: 'NOT_FOUND', facts: null, candidates: [], how: `DexScreener answered ${response.status}` };
-    }
-    const body = (await response.json()) as { pairs?: DexPairRaw[] | null };
-    const candidates = candidatesFrom(body.pairs ?? [], reference.address ? null : reference.symbol);
+    const answer = await ask<MarketQuery, MarketPairs>('market_pairs', query);
+    const candidates = candidatesFrom(answer.value.pairs as DexPairRaw[], reference.address ? null : reference.symbol);
     return chooseCandidate(candidates, reference, options);
   } catch (error) {
+    // Still NOT_FOUND rather than a throw: a market lookup that cannot be made
+    // is a reply that says so, not a failed job. The reason is carried through
+    // so the prompt can say which it was.
     log.debug('token resolution failed', { message: errorMessage(error) });
-    return { status: 'NOT_FOUND', facts: null, candidates: [], how: 'DexScreener could not be reached' };
+    return {
+      status: 'NOT_FOUND',
+      facts: null,
+      candidates: [],
+      how: `the market data could not be read (${errorMessage(error).slice(0, 120)})`,
+    };
   }
 }
 
