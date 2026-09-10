@@ -20,6 +20,8 @@ import { getCapability } from '@xbam/tools';
 import {
   capabilityViews,
   setCapabilityPermission,
+  setToolpack,
+  toolpackViews,
   pauseState,
   collectDiagnostics,
   compareModels,
@@ -1165,6 +1167,45 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
           paused,
         }),
       };
+    }),
+  );
+
+  /**
+   * The same decisions, grouped the way somebody would ask for them.
+   *
+   * A projection over the capability permissions rather than a second store:
+   * the state of a pack is computed from what is underneath it, so a screen
+   * showing packs and a screen showing capabilities cannot disagree.
+   */
+  app.get(
+    '/api/agents/:id/toolspace/packs',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const links = await accountsRepo.listAgentAccounts(agent.id);
+      const paused = (await pauseState().catch(() => ({ paused: false }))).paused;
+      return toolpackViews({ agentId: agent.id, accountId: links[0]?.accountId ?? null, paused });
+    }),
+  );
+
+  app.put(
+    '/api/agents/:id/toolspace/packs/:packId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(z.object({ on: z.boolean() }), request);
+      const packId = params(request).packId!;
+      const { changed } = await setToolpack({ agentId: agent.id, packId, on: body.on });
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'toolpack.set',
+        entityType: 'agent',
+        entityId: agent.id,
+        // Every capability it touched, because a bulk edit somebody cannot see
+        // the effect of is a bulk edit nobody can audit.
+        data: { packId, on: body.on, changed },
+      });
+      return { ok: true, changed };
     }),
   );
 
