@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ask,
   defineUpstream,
@@ -6,6 +6,8 @@ import {
   familyMembers,
   healthOf,
   listFamilies,
+  perMinute,
+  perSecond,
   registerUpstream,
   resetBreakerForTest,
   resetCacheForTest,
@@ -40,6 +42,7 @@ function fake(options: {
   delayMs?: number;
   freshMs?: number;
   perSecond?: number;
+  perMinuteCap?: number;
   concurrent?: number;
   secret?: { key: string; why: string; required: boolean };
 }) {
@@ -50,7 +53,13 @@ function fake(options: {
     name: options.id,
     description: 'A test upstream.',
     origin: `${options.id}.example`,
-    limit: { perSecond: options.perSecond ?? 1000, concurrent: options.concurrent ?? 100 },
+    limit: {
+      concurrentPerProcess: options.concurrent ?? 100,
+      windows: [
+        perSecond(options.perSecond ?? 1000, { scope: 'MACHINE' }),
+        ...(options.perMinuteCap ? [perMinute(options.perMinuteCap, { scope: 'MACHINE' })] : []),
+      ],
+    },
     timeoutMs: 1_000,
     freshMs: options.freshMs ?? 60_000,
     rank: options.rank ?? 1,
@@ -91,8 +100,12 @@ describe('what may be registered', () => {
     // An unpaced upstream is one nothing protects, and the whole point of this
     // layer is asking for less than an endpoint allows.
     const { upstream } = fake({ id: 'evm.ankr' });
-    expect(() => registerUpstream({ ...upstream, limit: { perSecond: 0, concurrent: 1 } })).toThrow(/positive/);
-    expect(() => registerUpstream({ ...upstream, limit: { perSecond: 1, concurrent: 0 } })).toThrow(/positive/);
+    expect(() =>
+      registerUpstream({ ...upstream, limit: { concurrentPerProcess: 1, windows: [] } }),
+    ).toThrow(/at least one quota window/);
+    expect(() =>
+      registerUpstream({ ...upstream, limit: { concurrentPerProcess: 0, windows: [perSecond(1)] } }),
+    ).toThrow(/at least one request at a time/);
   });
 
   it('refuses a second implementation of one id', () => {
@@ -209,11 +222,11 @@ describe('knowing when to stop asking', () => {
   });
 
   it('says what could not answer, rather than only that nothing could', async () => {
-    registerUpstream(fake({ id: 'evm.one', rank: 1, fail: 'connection refused' }).upstream);
+    registerUpstream(fake({ id: 'evm.one', rank: 1, fail: 'ECONNREFUSED' }).upstream);
     registerUpstream(fake({ id: 'evm.two', rank: 2, fail: '503' }).upstream);
 
     await expect(ask<Query, string>('evm', { of: 'height' })).rejects.toThrow(
-      /evm\.one \(connection refused\).*evm\.two \(503\)/,
+      /evm\.one \(\w+: ECONNREFUSED\).*evm\.two \(\w+: 503\)/,
     );
   });
 
@@ -274,51 +287,68 @@ describe('an upstream nobody has given a key to', () => {
 });
 
 describe('asking for less than an endpoint allows', () => {
-  it('paces requests to the declared rate', async () => {
-    vi.useFakeTimers();
-    try {
-      // Four different questions, so nothing is cached or coalesced, at five a
-      // second: the fourth cannot start before 600ms have passed.
-      const source = fake({ id: 'evm.ankr', perSecond: 5 });
-      registerUpstream(source.upstream);
+  it('lets a burst through up to the capacity', async () => {
+    // What an operator publishes is a capacity, not a cadence: "5 a second"
+    // permits five at once. Spacing them evenly would be stricter than anything
+    // anybody asked for, and the earlier implementation did exactly that -- so
+    // this asserts the published limit rather than the old code's rhythm.
+    const source = fake({ id: 'evm.ankr', perSecond: 5 });
+    registerUpstream(source.upstream);
 
-      const all = Promise.all(
-        ['a', 'b', 'c', 'd'].map((of) => ask<Query, string>('evm', { of })),
-      );
-      await vi.advanceTimersByTimeAsync(0);
-      expect(source.calls).toHaveLength(1);
-
-      await vi.advanceTimersByTimeAsync(200);
-      expect(source.calls).toHaveLength(2);
-
-      await vi.advanceTimersByTimeAsync(400);
-      expect(source.calls).toHaveLength(4);
-      await all;
-    } finally {
-      vi.useRealTimers();
-    }
+    await Promise.all(['a', 'b', 'c', 'd', 'e'].map((of) => ask<Query, string>('evm', { of })));
+    expect(source.calls).toHaveLength(5);
   });
 
-  it('keeps one budget for an upstream however many agents are asking', async () => {
-    // The budget belongs to the endpoint, not to the caller. Two agents reading
-    // one chain are two callers of one service, and a per-agent limiter would
-    // let the second double what its operator sees.
-    vi.useFakeTimers();
-    try {
-      const source = fake({ id: 'evm.ankr', perSecond: 2 });
-      registerUpstream(source.upstream);
-      const all = Promise.all([
-        ask<Query, string>('evm', { of: 'agent-one' }),
-        ask<Query, string>('evm', { of: 'agent-two' }),
-      ]);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(source.calls).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(500);
-      expect(source.calls).toHaveLength(2);
-      await all;
-    } finally {
-      vi.useRealTimers();
-    }
+  it('reports a budget that will not refill soon rather than holding the job', async () => {
+    // The distinction the pacing threshold exists for. A per-second window
+    // refills while you wait; a per-minute one does not, and waiting for a daily
+    // one would hold a job open until tomorrow. So this is reported, and the
+    // family is free to try somebody else.
+    const source = fake({ id: 'evm.capped', perSecond: 100, perMinuteCap: 2 });
+    registerUpstream(source.upstream);
+
+    await Promise.all([ask<Query, string>('evm', { of: 'a' }), ask<Query, string>('evm', { of: 'b' })]);
+    expect(source.calls).toHaveLength(2);
+
+    const started = Date.now();
+    await expect(ask<Query, string>('evm', { of: 'c' })).rejects.toThrow(/minute/);
+    expect(source.calls).toHaveLength(2);
+    // Reported immediately, not after waiting out the minute.
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('waits out a short refill rather than failing an ordinary burst', async () => {
+    // A per-second window refills inside the pacing wait, so a sixth caller
+    // arriving a moment later is served rather than refused.
+    const source = fake({ id: 'evm.ankr', perSecond: 2 });
+    registerUpstream(source.upstream);
+
+    await Promise.all([ask<Query, string>('evm', { of: 'a' }), ask<Query, string>('evm', { of: 'b' })]);
+    expect(source.calls).toHaveLength(2);
+
+    const started = Date.now();
+    await ask<Query, string>('evm', { of: 'c' });
+    expect(source.calls).toHaveLength(3);
+    // It waited for the window rather than going straight through.
+    expect(Date.now() - started).toBeGreaterThan(100);
+  });
+
+  it('keeps one budget per host, however many upstreams point at it', async () => {
+    // Three adapters on one host are one caller to that host. Counting them
+    // separately is how a published per-IP limit gets tripled by an
+    // implementation detail.
+    const one = fake({ id: 'evm.one', rank: 1, perSecond: 2 });
+    const two = fake({ id: 'evm.two', rank: 2, perSecond: 2 });
+    const shared = 'shared.example';
+    registerUpstream({ ...one.upstream, origin: shared });
+    registerUpstream({ ...two.upstream, origin: shared });
+
+    // Two calls exhaust the shared per-second budget; the third has to wait,
+    // and it waits rather than falling through, because the wait is short.
+    await Promise.all([ask<Query, string>('evm', { of: 'a' }), ask<Query, string>('evm', { of: 'b' })]);
+    const started = Date.now();
+    await ask<Query, string>('evm', { of: 'c' });
+    expect(Date.now() - started).toBeGreaterThan(100);
   });
 });
 

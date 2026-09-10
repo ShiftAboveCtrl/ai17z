@@ -29,10 +29,20 @@ export function registerUpstream<Q, R>(upstream: Upstream<Q, R>): void {
         'Fallback reads the family, so these cannot disagree.',
     );
   }
-  if (upstream.limit.perSecond <= 0 || upstream.limit.concurrent <= 0) {
-    // An unlimited upstream is one nothing paces, and everything here exists to
-    // ask an endpoint for less than it allows rather than as much as it will bear.
-    throw new Error(`Upstream "${upstream.id}" must declare a positive rate and concurrency.`);
+  if (upstream.limit.concurrentPerProcess <= 0) {
+    throw new Error(`Upstream "${upstream.id}" must allow at least one request at a time.`);
+  }
+  // An upstream with no window is one nothing paces, and everything here exists
+  // to ask an endpoint for less than it allows rather than as much as it will
+  // bear. Declaring the limit is not paperwork: it is the only thing the
+  // scheduler reads, so a missing one is a missing limit.
+  if (upstream.limit.windows.length === 0) {
+    throw new Error(`Upstream "${upstream.id}" must declare at least one quota window.`);
+  }
+  for (const window of upstream.limit.windows) {
+    if (window.capacity <= 0 || window.intervalMs <= 0) {
+      throw new Error(`Upstream "${upstream.id}" has a window with no capacity: ${window.label}.`);
+    }
   }
   if (upstream.freshMs < 0) throw new Error(`Upstream "${upstream.id}" cannot have a negative freshness.`);
 

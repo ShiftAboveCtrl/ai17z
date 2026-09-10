@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defineUpstream, type Upstream } from '../contract';
+import { perMinute, perSecond } from '../quota';
 import { registerUpstream } from '../registry';
 import { safeFetch } from '../http';
 
@@ -129,7 +130,19 @@ function node(input: {
     name: input.name,
     description: `Reads the ${input.chain} chain.`,
     origin: new URL(input.url).hostname,
-    limit: { perSecond: input.perSecond, concurrent: 4 },
+    limit: {
+      concurrentPerProcess: 4,
+      // Neither PublicNode nor LlamaRPC publishes a numeric limit for its free
+      // endpoint -- checked September 2026, both are fair-use and per-IP -- so
+      // these are numbers AI17Z chose to be a good guest with, and are marked as
+      // ours rather than dressed up as an allowance somebody granted. The minute
+      // window is the one that matters: a burst inside one second is ordinary,
+      // and a sustained rate is what an operator notices.
+      windows: [
+        perSecond(input.perSecond, { scope: 'MACHINE' }),
+        perMinute(input.perSecond * 20, { scope: 'MACHINE' }),
+      ],
+    },
     timeoutMs: 10_000,
     // A chain's head moves every few seconds, so nothing here is worth keeping
     // for long. Short enough to be current, long enough that four agents asking

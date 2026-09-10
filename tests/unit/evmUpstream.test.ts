@@ -140,7 +140,17 @@ describe('the family itself', () => {
     expect(members.map((m) => m.rank)).toEqual([...members.map((m) => m.rank)].sort((a, b) => a - b));
     // Every member declares a rate below what these endpoints publish: they are
     // free services run by somebody else.
-    for (const member of members) expect(member.limit.perSecond, member.id).toBeLessThanOrEqual(5);
+    for (const member of members) {
+      expect(member.limit.windows.length, member.id).toBeGreaterThan(0);
+      for (const window of member.limit.windows) {
+        // Every window says whether the operator published it. Neither of these
+        // endpoints does, so all of them are ours -- and a future one that is
+        // genuinely published has to say so on purpose.
+        expect(window.source, `${member.id} ${window.label}`).toBe('SELF_IMPOSED');
+      }
+      const second = member.limit.windows.find((w) => w.intervalMs === 1_000);
+      expect(second?.capacity, member.id).toBeLessThanOrEqual(5);
+    }
   });
 
   it('reads a chain over https only', () => {

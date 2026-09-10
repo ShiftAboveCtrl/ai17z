@@ -1,99 +1,172 @@
-import type { UpstreamLimit } from './contract';
+import { InMemoryQuotaCoordinator } from './memoryQuota';
+import { quotaKey, weightOf, type QuotaCoordinator, type UpstreamLimit } from './quota';
 
 /**
  * Asking an endpoint for less than it allows.
  *
- * The budget belongs to the **upstream**, not to the agent asking. Two agents
- * on one installation reading the same chain are two callers of one endpoint,
- * and a per-agent limiter would let a second agent double the traffic the
- * operator sees while both stayed politely inside their own allowance.
+ * Two jobs, and they are different in kind:
  *
- * Two constraints rather than one, because they answer different questions.
- * A rate says how often a request may start; a concurrency says how many may be
- * in the air. An endpoint that allows ten a second and one connection is a real
- * shape, and a limiter that knows only the rate opens ten sockets to a service
- * that wanted one.
+ *   **the budgets**, which are counted and refill, and belong to whoever the
+ *     endpoint counts -- this installation, or the machine's address. Those go
+ *     through a coordinator, because more than one process can be spending them;
+ *   **the concurrency**, which is a live gauge of what is in the air right now,
+ *     and is per process by construction and by name.
  *
  * ### What this is not
  *
- * This is politeness and resilience, and only that. Nothing here rotates an
- * identity, spreads load across origins to look like several callers, or treats
- * a refusal as something to be got around. Being asked to slow down is a signal
- * to slow down. If an upstream says no, the answer is to ask it less, and the
- * breaker beside this decides when to stop asking altogether.
- *
- * ### The boundary, said plainly
- *
- * In-process. Every upstream call in AI17Z is made by the worker, which is one
- * process, so one process is where the budget lives -- the same reasoning that
- * puts `openOnce` in memory while the account lease is in the database. Two
- * workers running against one installation would each keep their own budget and
- * the endpoint would see twice what either believes it is sending. That is a
- * real limit of this design rather than an oversight, and the day a second
- * caller exists this has to move to the database.
+ * Politeness and resilience, and only that. Nothing here rotates an identity,
+ * spreads load across origins to look like several callers, or treats a refusal
+ * as something to get around. Being asked to slow down is a reason to slow down,
+ * which is why a 429 reaches the coordinator as a fact everything sharing that
+ * budget can see rather than as a failure for one caller to retry past.
  */
 
-interface Bucket {
-  /** When a request may next start, as a timestamp. */
-  nextFreeAt: number;
-  /** How many are in the air. */
+interface Gauge {
   active: number;
-  /** Callers waiting for a slot, in arrival order. */
   queue: (() => void)[];
 }
 
-const BUCKETS = new Map<string, Bucket>();
-
-function bucketFor(id: string): Bucket {
-  let bucket = BUCKETS.get(id);
-  if (!bucket) {
-    bucket = { nextFreeAt: 0, active: 0, queue: [] };
-    BUCKETS.set(id, bucket);
-  }
-  return bucket;
-}
-
-/** How long until this upstream would let another request start. */
-export function waitFor(id: string, limit: UpstreamLimit, now = Date.now()): number {
-  const bucket = bucketFor(id);
-  if (bucket.active >= limit.concurrent) return Number.POSITIVE_INFINITY;
-  return Math.max(0, bucket.nextFreeAt - now);
-}
+const GAUGES = new Map<string, Gauge>();
 
 /**
- * Waits for a slot, then hands back the release.
+ * The coordinator every call goes through.
  *
- * The release must be called however the request ends, which is why the only
- * caller is `ask` and it is in a `finally`. A leaked slot is an upstream that
- * quietly stops being asked at all -- the worst kind of failure here, because
- * everything keeps working and one source silently drops out.
+ * In memory by default, which is right for a test and wrong for an
+ * installation: two processes each holding one believe they each have the whole
+ * budget. Production replaces it at startup, once, and `ask` never chooses.
  */
-export async function acquire(id: string, limit: UpstreamLimit): Promise<() => void> {
-  const bucket = bucketFor(id);
+let coordinator: QuotaCoordinator = new InMemoryQuotaCoordinator();
 
-  while (bucket.active >= limit.concurrent) {
-    await new Promise<void>((resolve) => bucket.queue.push(resolve));
+export function useQuotaCoordinator(next: QuotaCoordinator): void {
+  coordinator = next;
+}
+
+export function currentQuotaCoordinator(): QuotaCoordinator {
+  return coordinator;
+}
+
+function gaugeFor(id: string): Gauge {
+  let gauge = GAUGES.get(id);
+  if (!gauge) {
+    gauge = { active: 0, queue: [] };
+    GAUGES.set(id, gauge);
   }
-  bucket.active += 1;
+  return gauge;
+}
 
-  const spacingMs = 1000 / limit.perSecond;
-  const now = Date.now();
-  const startAt = Math.max(now, bucket.nextFreeAt);
-  // Claimed before waiting, so several callers arriving together space
-  // themselves out instead of all reading the same free moment.
-  bucket.nextFreeAt = startAt + spacingMs;
-  if (startAt > now) await new Promise((resolve) => setTimeout(resolve, startAt - now));
+export interface Slot {
+  release(): void;
+}
+
+export type SlotOutcome = { granted: true; slot: Slot } | { granted: false; retryAfterMs: number; why: string };
+
+/**
+ * The longest this will wait for a budget to refill rather than giving up.
+ *
+ * Two seconds, which is the line between pacing and hanging. A per-second
+ * window refills inside it, so four callers arriving together are spaced out --
+ * that is what being a good guest looks like, and failing them instead would
+ * make a burst of ordinary work look like an outage. A per-minute, per-hour or
+ * per-day window never refills inside it, so an exhausted daily quota is
+ * reported immediately and the family tries somebody else, rather than holding
+ * a job open until tomorrow.
+ */
+const MAX_PACING_WAIT_MS = 2_000;
+
+/**
+ * Takes a slot for one request, or says why not and for how long.
+ *
+ * A short wait is served; a long one is refused. The difference matters more
+ * than it looks: waiting is the polite response to a rate that is about to
+ * refill, and refusing is the only sane response to a budget that refills
+ * tomorrow -- and one threshold decides which, in one place, rather than every
+ * adapter guessing.
+ */
+export async function takeSlot(input: {
+  upstreamId: string;
+  origin: string;
+  limit: UpstreamLimit;
+  query: unknown;
+  now: number;
+}): Promise<SlotOutcome> {
+  const weight = weightOf(input.limit, input.query);
+
+  for (const window of input.limit.windows) {
+    const key = quotaKey({ upstreamId: input.upstreamId, origin: input.origin, scope: window.scope });
+    const blockedFor = await coordinator.blockedFor({ key, now: input.now });
+    if (blockedFor > 0) {
+      return { granted: false, retryAfterMs: blockedFor, why: 'it asked us to wait' };
+    }
+  }
+
+  // Grouped by scope so one reservation covers every window that shares a
+  // budget, and the all-or-nothing rule inside the coordinator actually holds.
+  const byScope = new Map<string, typeof input.limit.windows>();
+  for (const window of input.limit.windows) {
+    const key = quotaKey({ upstreamId: input.upstreamId, origin: input.origin, scope: window.scope });
+    byScope.set(key, [...(byScope.get(key) ?? []), window]);
+  }
+
+  for (const [key, windows] of byScope) {
+    let waited = 0;
+    for (;;) {
+      const reservation = await coordinator.reserve({ key, windows, weight, now: Date.now() });
+      if (reservation.granted) break;
+      // Long enough that it will not refill soon, or long enough that we have
+      // already waited our share: report it and let the family try a sibling.
+      if (reservation.retryAfterMs > MAX_PACING_WAIT_MS || waited + reservation.retryAfterMs > MAX_PACING_WAIT_MS) {
+        return { granted: false, retryAfterMs: reservation.retryAfterMs, why: `its ${reservation.window} budget` };
+      }
+      await new Promise((resolve) => setTimeout(resolve, reservation.retryAfterMs));
+      waited += reservation.retryAfterMs;
+    }
+  }
+
+  const gauge = gaugeFor(input.upstreamId);
+  while (gauge.active >= input.limit.concurrentPerProcess) {
+    await new Promise<void>((resolve) => gauge.queue.push(resolve));
+  }
+  gauge.active += 1;
 
   let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    bucket.active -= 1;
-    bucket.queue.shift()?.();
+  return {
+    granted: true,
+    slot: {
+      release() {
+        if (released) return;
+        released = true;
+        gauge.active -= 1;
+        gauge.queue.shift()?.();
+      },
+    },
   };
 }
 
-/** Only for tests, and for a worker that has just started. */
+/** Tells everything sharing this budget that the operator named a time. */
+export async function recordRateLimit(input: {
+  upstreamId: string;
+  origin: string;
+  limit: UpstreamLimit;
+  until: number;
+  why: string;
+}): Promise<void> {
+  const scopes = new Set(input.limit.windows.map((window) => window.scope));
+  // Blocked at every scope the upstream declares, because a 429 is about the
+  // endpoint rather than about which of our budgets we thought we were
+  // spending. An upstream that declares none is still blocked, by origin,
+  // which is the scope an address-based refusal actually has.
+  if (scopes.size === 0) scopes.add('MACHINE');
+  for (const scope of scopes) {
+    await coordinator.blockUntil({
+      key: quotaKey({ upstreamId: input.upstreamId, origin: input.origin, scope }),
+      until: input.until,
+      why: input.why,
+    });
+  }
+}
+
+/** Only for tests, and for a process that has just started. */
 export function resetLimiterForTest(): void {
-  BUCKETS.clear();
+  GAUGES.clear();
+  coordinator = new InMemoryQuotaCoordinator();
 }
