@@ -16,3 +16,4 @@ export * from './pinnedAgent';
 export * from './families/contract';
 export * from './families/market';
 export * from './families/defi';
+export * from './families/tokenRisk';
