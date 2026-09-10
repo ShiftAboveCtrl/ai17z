@@ -79,3 +79,4 @@ export * from './chainCapabilities';
 export * from './contractCapabilities';
 export * from './toolpackViews';
 export * from './defiCapabilities';
+export * from './tokenRiskCapabilities';

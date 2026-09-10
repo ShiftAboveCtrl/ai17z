@@ -65,7 +65,7 @@ export const TOOLPACKS: Toolpack[] = [
     id: 'crypto',
     name: 'Crypto & Onchain',
     summary: 'Verify contracts, read balances and transactions, check what a token is worth, and see where value is locked.',
-    prefixes: ['chain.', 'contract.', 'defi.', 'market.'],
+    prefixes: ['chain.', 'contract.', 'defi.', 'market.', 'token.'],
   },
 ];
 
