@@ -224,3 +224,19 @@ export async function accountHistory(agentId: string, limit = 60): Promise<Accou
   );
   return rows.reverse();
 }
+
+/**
+ * When this account was last looked at, or null if it never has been.
+ *
+ * Asked by the radar's own-threads source to decide whether to spend a cycle on
+ * the account instead of on a post. Keyed on the account rather than the agent
+ * because it is the account that gets read, and two agents on one account are
+ * looking at the same profile.
+ */
+export async function lastAccountReadingAt(accountId: string): Promise<string | null> {
+  const rows = await query<{ observed_at: string }>(
+    'SELECT observed_at FROM account_analytics WHERE account_id = $1 ORDER BY observed_at DESC LIMIT 1',
+    [accountId],
+  );
+  return rows[0]?.observed_at ?? null;
+}

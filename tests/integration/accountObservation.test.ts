@@ -75,6 +75,29 @@ describe('recording what the account looked like', () => {
     expect(await postAnalytics.accountHistory(fixture.agentId)).toHaveLength(1);
   });
 
+  it('knows when the account was last looked at, so a cadence can be kept', async () => {
+    // The radar's own-threads source asks this to decide whether to spend a
+    // cycle on the account instead of on a post. Returning nothing for an
+    // account never read is what makes the first reading happen at all.
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({
+      ownerId: fixture.ownerId,
+      channel: 'x',
+      handle: `cad_${uniqueSuffix()}`,
+    });
+    expect(await postAnalytics.lastAccountReadingAt(account.id)).toBeNull();
+
+    await postAnalytics.recordAccount({
+      agentId: fixture.agentId,
+      accountId: account.id,
+      handle: account.handle,
+      followers: 5,
+    });
+    const seen = await postAnalytics.lastAccountReadingAt(account.id);
+    expect(seen).not.toBeNull();
+    expect(Date.now() - new Date(seen!).getTime()).toBeLessThan(60_000);
+  });
+
   it('ties the reading to the account it was taken from', async () => {
     const fixture = await createFixture();
     const account = await accountsRepo.createAccount({
