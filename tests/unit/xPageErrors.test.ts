@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { looksLikeXBroke, looksUnavailable } from '@xbam/channels';
+import { RETRYABLE_MARKERS, looksLikeXBroke, looksUnavailable } from '@xbam/channels';
 
 /**
  * Telling "X errored" apart from "there is nothing there".
@@ -17,6 +17,25 @@ describe('X saying its own request failed', () => {
   it('recognises the error page', () => {
     expect(looksLikeXBroke('Something went wrong. Try reloading. Retry')).toBe(true);
     expect(looksLikeXBroke('SOMETHING WENT WRONG. TRY RELOADING.')).toBe(true);
+  });
+
+  it('recognises the connectivity banner, which is the same failure in other words', () => {
+    // Found the same way as the first one, on the same live session: reading a
+    // profile returned no articles at all and the page said this. Under the
+    // markers as they were, the reader would have reported an account with
+    // nothing on it.
+    expect(looksLikeXBroke('Seems like you lost connectivity. We’ll keep retrying.')).toBe(true);
+    // Either sentence on its own, because either can be reworded without the
+    // other.
+    expect(looksLikeXBroke('Seems like you lost connectivity.')).toBe(true);
+    expect(looksLikeXBroke('We’ll keep retrying.')).toBe(true);
+  });
+
+  it('matches X’s typographic apostrophe, not the one a marker would be written with', () => {
+    // Every marker is deliberately apostrophe-free. A marker written "we'll"
+    // matches nothing, because the page says "we’ll" -- and the failure is
+    // silent, which is how this class of defect keeps arriving.
+    for (const marker of RETRYABLE_MARKERS) expect(marker).not.toMatch(/['’]/);
   });
 
   it('does not mistake an ordinary empty page for one', () => {

@@ -113,8 +113,12 @@ export async function readProfile(ctx: ChannelContext, handleInput: string): Pro
       .innerText({ timeout: FIELD_TIMEOUT_MS })
       .catch(() => '');
     if (!header) {
-      // A handle that does not exist, a suspended account, or a page that never
-      // rendered. All three are the same answer to the caller: nothing to read.
+      // Three things arrive here and only two of them are permanent: a handle
+      // that does not exist, a suspended account, and a page that never
+      // rendered. Answering the third with a permanent failure gives up on a
+      // profile that is there, over a blip -- so ask X first, because when it
+      // has failed it says so, and that answer is retryable.
+      await refuseIfXBroke(session.page, `@${handle}'s profile`);
       throw PipelineError.permanent('profile_not_readable', `Nothing readable on @${handle}'s profile.`);
     }
 
