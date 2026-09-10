@@ -4,6 +4,7 @@ import { DEFAULT_TEMPLATES } from '@xbam/prompts';
 import { registerBuiltinCapabilities, syncToolCatalogue } from '@xbam/tools';
 import {
   registerContractUpstreams,
+  registerDefiUpstreams,
   registerEvmUpstreams,
   registerMarketUpstreams,
   useQuotaCoordinator,
@@ -11,6 +12,7 @@ import {
 import { InstallationQuotaCoordinator } from './upstreamQuota';
 import { registerChainCapabilities } from './chainCapabilities';
 import { registerContractCapabilities } from './contractCapabilities';
+import { registerDefiCapabilities } from './defiCapabilities';
 import { defaultPipelineDraft } from './defaultPipeline';
 import { registerXCapabilities } from './xCapabilities';
 
@@ -53,10 +55,12 @@ export async function bootstrapRuntime(): Promise<void> {
   registerEvmUpstreams();
   registerContractUpstreams();
   registerMarketUpstreams();
+  registerDefiUpstreams();
   // The capabilities that read a chain, registered after the upstreams they
   // ask. The model asks `chain.read_balance`; which node answers is provenance.
   registerChainCapabilities();
   registerContractCapabilities();
+  registerDefiCapabilities();
 
   await upgradePipelinesWithResearch().catch((error) =>
     log.warn('could not add the research node to existing pipelines', { message: errorMessage(error) }),
