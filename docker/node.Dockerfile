@@ -18,6 +18,7 @@ COPY packages/prompts/package.json ./packages/prompts/
 COPY packages/channels/package.json ./packages/channels/
 COPY packages/browser/package.json ./packages/browser/
 COPY packages/tools/package.json ./packages/tools/
+COPY packages/upstream/package.json ./packages/upstream/
 COPY packages/runtime/package.json ./packages/runtime/
 COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/

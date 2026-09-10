@@ -29,6 +29,7 @@ export default defineConfig({
       '@xbam/channels': r('./packages/channels/src/index.ts'),
       '@xbam/browser': r('./packages/browser/src/index.ts'),
       '@xbam/tools': r('./packages/tools/src/index.ts'),
+      '@xbam/upstream': r('./packages/upstream/src/index.ts'),
       '@xbam/runtime': r('./packages/runtime/src/index.ts'),
     },
   },

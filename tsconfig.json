@@ -33,6 +33,9 @@
       "@xbam/tools": [
         "packages/tools/src/index.ts"
       ],
+      "@xbam/upstream": [
+        "packages/upstream/src/index.ts"
+      ],
       "@xbam/runtime": [
         "packages/runtime/src/index.ts"
       ],
