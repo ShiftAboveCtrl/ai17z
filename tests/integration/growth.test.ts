@@ -77,7 +77,7 @@ async function seeEvent(input: {
  * and what a crash is recovered against. So a test that wants an action has to
  * make a real job first.
  */
-async function jobFor(agentId: string, text: string): Promise<string> {
+async function jobFor(agentId: string, text: string, handle = 'somebody'): Promise<string> {
   const { ingestNormalizedEvent } = await import('@xbam/runtime');
   const outcome = await ingestNormalizedEvent({
     // Not attached to the account under test: this event exists to give the
@@ -89,7 +89,7 @@ async function jobFor(agentId: string, text: string): Promise<string> {
       channel: 'x',
       type: 'MENTION',
       remoteEventId: `job-ev-${uniqueSuffix()}`,
-      remoteAuthorHandle: 'somebody',
+      remoteAuthorHandle: handle,
       text,
     }),
   });
@@ -253,7 +253,10 @@ describe('what the growth screens read', () => {
       text: 'another rollups thread that is going nowhere good',
       agoHours: 1,
     });
-    const jobId = await jobFor(fixture.agentId, 'a rollups thread worth answering');
+    // The job answers alice's post, so the event names alice. Who was engaged is
+    // read from the event rather than from the target URL, because a reply built
+    // from a bare status id normalises to `/i/status/...` and names nobody.
+    const jobId = await jobFor(fixture.agentId, 'a rollups thread worth answering', 'alice');
     await query(
       `INSERT INTO actions (job_id, agent_id, account_id, channel, type, status, dry_run, payload,
                             target_ref, remote_action_id, idempotency_key, executed_at)

@@ -173,7 +173,8 @@ export type XConnections = z.infer<typeof XConnections>;
  * saved, a List is what somebody curated.
  */
 export const XTimeline = z.object({
-  surface: z.enum(['HOME', 'FOLLOWING', 'BOOKMARKS', 'LIST']),
+  surface: z.enum(['HOME', 'FOLLOWING', 'BOOKMARKS', 'LIST', 'COMMUNITY']),
+  /** For LIST and COMMUNITY, whose timeline this is. */
   listId: z.string().optional(),
   posts: z.array(XPost).default([]),
   more: z.boolean().default(false),

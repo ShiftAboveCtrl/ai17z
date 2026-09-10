@@ -19,6 +19,7 @@ import {
 
 import { assemblePrompt } from '@xbam/prompts';
 import { runCapabilityLoop } from '../capabilityLoop';
+import { variantForPost } from '../experimentRuns';
 import { capabilityPermissions } from '../capabilityPermissions';
 import { pauseState } from '../killSwitch';
 import { generate } from '@xbam/models';
@@ -134,6 +135,35 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
       }
     : undefined;
 
+  /**
+   * Which arm of a running experiment this post is being written for.
+   *
+   * Posts only. An experiment about how the agent writes belongs to the things
+   * it chooses to say; quietly varying the way it answers somebody is an
+   * experiment run on a person who did not agree to be in one.
+   *
+   * Never fails the job. An assignment that could not be written means the post
+   * goes out unvaried and uncounted, which is a missing data point rather than
+   * a missing post.
+   */
+  const variant =
+    bundle.job.actionType === 'POST'
+      ? await variantForPost({
+          agentId: bundle.agent.id,
+          jobId: bundle.job.id,
+          jobIdempotencyKey: bundle.job.idempotencyKey,
+        })
+      : null;
+  if (variant) {
+    await observability.emitTrace({
+      jobId: bundle.job.id,
+      agentId: bundle.agent.id,
+      type: 'PROMPT_ASSEMBLED',
+      message: `Experiment arm: ${variant.label}`,
+      data: { experimentId: variant.experimentId, variant: variant.key },
+    });
+  }
+
   const prompt = assemblePrompt({
     layers: template.layers,
     templateKey: template.templateKey,
@@ -148,6 +178,7 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     actionType: bundle.job.actionType,
     evidence,
     support,
+    ...(variant ? { experiment: { label: variant.label, instruction: variant.instruction } } : {}),
   });
 
   await observability.emitTrace({

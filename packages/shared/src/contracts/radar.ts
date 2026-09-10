@@ -81,6 +81,26 @@ export const RadarPollResult = z.object({
   cursor: z.string().max(300).nullable().default(null),
   /** Set when the source could not be read. */
   error: z.string().nullable().default(null),
+  /**
+   * The public counts on the post this source was pointed at.
+   *
+   * Only `own_threads` sets it, and only because it is already standing on the
+   * page: checking one of the agent's own posts for replies means loading the
+   * post, and the numbers underneath it are right there. Recording them here
+   * is what makes measurement a by-product of work already being done rather
+   * than a second loop asking X how a post is doing.
+   *
+   * Absent when X did not render them. Absent is not zero.
+   */
+  targetCounts: z
+    .object({
+      replies: z.number().int().nonnegative().optional(),
+      reposts: z.number().int().nonnegative().optional(),
+      likes: z.number().int().nonnegative().optional(),
+      bookmarks: z.number().int().nonnegative().optional(),
+      views: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
 });
 export type RadarPollResult = z.infer<typeof RadarPollResult>;
 

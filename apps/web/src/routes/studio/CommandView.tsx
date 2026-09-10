@@ -104,6 +104,7 @@ export function CommandView({ agentId, onGo }: { agentId: string; onGo: (view: s
             ['analytics', 'What has worked', 'Compared across the posts that were measured.'],
             ['launch', 'What is being launched', 'Tickers and addresses, with nothing added.'],
             ['create', 'Something to say', 'The backlog it draws on when it is next due.'],
+            ['experiments', 'One thing against another', 'Whether a change to how it writes did anything.'],
           ].map(([id, title, blurb]) => (
             <button
               key={id}

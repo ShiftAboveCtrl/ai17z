@@ -200,11 +200,14 @@ export async function recordOwnPost(input: {
  * next reply is going to appear, and checking it costs a page load.
  */
 export async function ownPostsToCheck(accountId: string, limit: number, maxAgeHours = 72): Promise<
-  { id: string; remoteId: string; remoteUrl: string | null; replyCount: number }[]
+  { id: string; remoteId: string; remoteUrl: string | null; replyCount: number; agentId: string | null }[]
 > {
   return mapRows(
     await query(
-      `SELECT id, remote_id, remote_url, reply_count FROM own_posts
+      // The agent comes back too, because visiting one of these posts is also
+      // the moment its numbers are read, and an observation belongs to an
+      // agent. Null for a post recorded before agents were attached to them.
+      `SELECT id, remote_id, remote_url, reply_count, agent_id FROM own_posts
         WHERE account_id = $1
           AND (posted_at IS NULL OR posted_at > now() - ($3::int * interval '1 hour'))
         ORDER BY last_checked_at NULLS FIRST

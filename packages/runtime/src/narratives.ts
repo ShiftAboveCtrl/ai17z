@@ -37,8 +37,17 @@ export interface Narrative {
   share: number;
   /** Share in the window before, where there was one. */
   priorShare?: number;
-  /** How much the share moved. Absent when there was nothing to compare with. */
+  /**
+   * How much the share moved. Absent when there was nothing to compare with.
+   *
+   * Always a finite number. A term that was not said at all before has no
+   * meaningful ratio, and putting `Infinity` here would serialise to `null` --
+   * indistinguishable from "not computed" by the time it reached a screen.
+   * That case is `newlySeen` instead.
+   */
   lift?: number;
+  /** True when the term was in the earlier window not at all. */
+  newlySeen?: boolean;
   /** A few of the accounts saying it, so an owner can go and look. */
   examples: string[];
   detail: string;
@@ -174,8 +183,9 @@ export function readNarratives(
     const share = entry.mentions / recentBucket.posts;
     const priorEntry = priorBucket?.byTerm.get(term);
     const priorShare = priorBucket ? (priorEntry?.mentions ?? 0) / priorBucket.posts : undefined;
+    const newlySeen = priorShare !== undefined && priorShare === 0;
     const lift =
-      priorShare === undefined ? undefined : priorShare === 0 ? Infinity : Number((share / priorShare).toFixed(2));
+      priorShare === undefined || newlySeen ? undefined : Number((share / priorShare).toFixed(2));
 
     const rising = lift !== undefined && lift >= RISING_LIFT;
     const examples = [...entry.authors].slice(0, 3);
@@ -186,21 +196,23 @@ export function readNarratives(
       share: Number(share.toFixed(3)),
       ...(priorShare === undefined ? {} : { priorShare: Number(priorShare.toFixed(3)) }),
       ...(lift === undefined ? {} : { lift }),
+      ...(newlySeen ? { newlySeen: true } : {}),
       examples,
-      detail:
-        lift === undefined
+      detail: newlySeen
+        ? `"${term}" was not mentioned in the previous ${windowHours} hours and is now in ${entry.mentions} of ${recentBucket.posts} posts, from ${entry.authors.size} accounts.`
+        : lift === undefined
           ? `${entry.authors.size} accounts mentioned "${term}" in ${entry.mentions} of ${recentBucket.posts} posts.`
-          : lift === Infinity
-            ? `"${term}" was not mentioned in the previous ${windowHours} hours and is now in ${entry.mentions} of ${recentBucket.posts} posts, from ${entry.authors.size} accounts.`
-            : rising
-              ? `"${term}" is in ${Math.round(share * 100)}% of posts, up from ${Math.round((priorShare ?? 0) * 100)}%, from ${entry.authors.size} accounts.`
-              : `"${term}" is in ${Math.round(share * 100)}% of posts, against ${Math.round((priorShare ?? 0) * 100)}% before.`,
+          : rising
+            ? `"${term}" is in ${Math.round(share * 100)}% of posts, up from ${Math.round((priorShare ?? 0) * 100)}%, from ${entry.authors.size} accounts.`
+            : `"${term}" is in ${Math.round(share * 100)}% of posts, against ${Math.round((priorShare ?? 0) * 100)}% before.`,
     });
   }
 
-  // Rising first, then how widely held. A term one account repeated is already
-  // excluded; among the rest, more accounts is a stronger claim than more posts.
+  // Newly said first, then rising, then how widely held. A term one account
+  // repeated is already excluded; among the rest, more accounts is a stronger
+  // claim than more posts.
   narratives.sort((a, b) => {
+    if (Boolean(a.newlySeen) !== Boolean(b.newlySeen)) return a.newlySeen ? -1 : 1;
     const liftA = a.lift ?? 1;
     const liftB = b.lift ?? 1;
     if (liftA !== liftB) return liftB - liftA;

@@ -26,7 +26,15 @@ const SCROLL_PIXELS = 2_000;
 /** The hard ceiling on one read. An infinite feed needs one that is not. */
 const MAX_POSTS = 50;
 
-function urlFor(surface: XTimeline['surface'], listId: string | undefined): string {
+/**
+ * Where each surface lives.
+ *
+ * Exported so the refusals can be tested without a browser: a LIST or COMMUNITY
+ * asked for without an id would otherwise fall through to whatever URL was
+ * built, and reading the home timeline in answer to "what is in this community"
+ * is a wrong answer that looks like a right one.
+ */
+export function timelineUrl(surface: XTimeline['surface'], listId: string | undefined): string {
   switch (surface) {
     case 'HOME':
       return 'https://x.com/home';
@@ -42,6 +50,18 @@ function urlFor(surface: XTimeline['surface'], listId: string | undefined): stri
         throw PipelineError.permanent('bad_list_id', `"${listId ?? ''}" is not an X list id.`);
       }
       return `https://x.com/i/lists/${listId}`;
+    }
+    case 'COMMUNITY': {
+      // A community is a timeline behind a membership, and reading it needs the
+      // signed-in account to be in it. X shows a join prompt rather than an
+      // error to somebody who is not, which the harvester reads as an empty
+      // timeline -- so an empty community and one this account cannot see look
+      // the same from here, and `more` is the only honest thing to say about
+      // the difference.
+      if (!listId || !/^\d{5,25}$/.test(listId)) {
+        throw PipelineError.permanent('bad_community_id', `"${listId ?? ''}" is not an X community id.`);
+      }
+      return `https://x.com/i/communities/${listId}`;
     }
   }
 }
@@ -73,7 +93,7 @@ export async function readTimeline(
 ): Promise<XTimeline> {
   const surface = request.surface ?? 'HOME';
   const limit = Math.min(Math.max(request.limit ?? 15, 1), MAX_POSTS);
-  const url = urlFor(surface, request.listId);
+  const url = timelineUrl(surface, request.listId);
 
   return withSession(ctx, 'RESEARCH', async (session) => {
     await goto(session.page, url);

@@ -84,7 +84,7 @@ export function CreateView({ agentId }: { agentId: string }) {
         <div className="space-y-4 rounded-xl border border-ink-line px-4 py-4">
           <Field label="The idea" hint="One sentence. What it should have a view about.">
             <input
-              className="input"
+              className="field"
               value={summary}
               onChange={(event) => setSummary(event.target.value)}
               placeholder="Sequencer downtime is becoming a pattern"
@@ -92,7 +92,7 @@ export function CreateView({ agentId }: { agentId: string }) {
           </Field>
           <Field label="Anything else" hint="Optional. Context, a link, what angle you had in mind.">
             <textarea
-              className="input min-h-[5rem]"
+              className="field min-h-[5rem]"
               value={detail}
               onChange={(event) => setDetail(event.target.value)}
             />

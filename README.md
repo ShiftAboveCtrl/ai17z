@@ -477,7 +477,8 @@ How it works:
 - [The social layer: identity, relationships, voice](docs/architecture/SOCIAL.md)
 - [Cadence: when an account is read and may act](docs/architecture/CADENCE.md) · [Capabilities](docs/architecture/CAPABILITIES.md)
 - [Connecting an account and security challenges](docs/architecture/SIGN_IN.md) · [Persona sources](docs/architecture/PERSONA_SOURCES.md)
-- [Searching X itself](docs/architecture/X_INTELLIGENCE.md) · [Owner notifications](docs/architecture/NOTIFICATIONS.md) · [Agent packages](docs/architecture/AGENT_PACKAGES.md)
+- [The three-tab X runtime](docs/architecture/X_RUNTIME.md) · [Searching X itself](docs/architecture/X_INTELLIGENCE.md) · [Owner notifications](docs/architecture/NOTIFICATIONS.md) · [Agent packages](docs/architecture/AGENT_PACKAGES.md)
+- [Growth: what an agent has seen and what came of it](docs/architecture/GROWTH.md)
 - [Security](docs/architecture/SECURITY.md) · [Easy Mode](docs/architecture/EASY_MODE.md) · [Updates](docs/architecture/UPDATES.md)
 
 AI17Z can also read these itself: attach `docs/` as a knowledge source and an

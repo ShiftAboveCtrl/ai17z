@@ -4,6 +4,7 @@ import {
   toConnections,
   toThreads,
   toTimelinePosts,
+  timelineUrl,
   type ConversationRow,
   type UserCell,
 } from '@xbam/channels';
@@ -100,6 +101,16 @@ describe('reading a timeline', () => {
       10,
     );
     expect(posts.map((p) => p.statusId)).toEqual(['3']);
+  });
+
+  it('refuses a list or community it cannot name', () => {
+    // Falling through to some other URL would answer "what is in this
+    // community" with the home timeline, which is a wrong answer that looks
+    // exactly like a right one.
+    expect(() => timelineUrl('LIST', undefined)).toThrow(/not an X list id/);
+    expect(() => timelineUrl('COMMUNITY', 'my-community')).toThrow(/not an X community id/);
+    expect(timelineUrl('COMMUNITY', '1234567890')).toBe('https://x.com/i/communities/1234567890');
+    expect(timelineUrl('LIST', '1234567890')).toBe('https://x.com/i/lists/1234567890');
   });
 
   it('counts what it did not return', () => {
