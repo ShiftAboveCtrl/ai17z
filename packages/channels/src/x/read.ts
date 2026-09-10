@@ -116,9 +116,28 @@ export async function readProfile(ctx: ChannelContext, handleInput: string): Pro
       // Three things arrive here and only two of them are permanent: a handle
       // that does not exist, a suspended account, and a page that never
       // rendered. Answering the third with a permanent failure gives up on a
-      // profile that is there, over a blip -- so ask X first, because when it
-      // has failed it says so, and that answer is retryable.
+      // profile that is there, over a blip.
+      //
+      // Ask X first, because when it has failed in the ordinary way it says so.
       await refuseIfXBroke(session.page, `@${handle}'s profile`);
+
+      // And when it has not said so, ask whether it rendered anything at all.
+      // Throttled profile views arrive as the application shell and nothing
+      // else: no header, no column, no error, 179 characters of navigation.
+      // A handle that genuinely does not exist renders the column and says so
+      // inside it -- so the column is what tells the two apart, and without
+      // this the account series stops for good the first time X throttles.
+      //
+      // Watched live: every other route was serving this session normally
+      // while both profiles came back as that empty shell, and both were
+      // rendering again a few minutes later.
+      if ((await session.page.locator(SEL.primaryColumn).count().catch(() => 0)) === 0) {
+        throw PipelineError.retryable(
+          'profile_not_rendered',
+          `X returned an empty page for @${handle} rather than a profile. Nothing was read, ` +
+            'which is not the same as there being nothing there.',
+        );
+      }
       throw PipelineError.permanent('profile_not_readable', `Nothing readable on @${handle}'s profile.`);
     }
 

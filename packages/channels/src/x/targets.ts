@@ -78,6 +78,7 @@ export const UNAVAILABLE_MARKERS = [
   'this account owner limits who can view',
   'you are not authorized to see this',
   'sorry, that page does',
+  'this account doesn',
 ];
 
 export function looksUnavailable(pageText: string): boolean {
