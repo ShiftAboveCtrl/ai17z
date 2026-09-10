@@ -139,7 +139,10 @@ export async function ask<Q, R>(family: string, query: Q, options: AskOptions = 
           now: Date.now(),
         });
         if (!slot.granted) {
-          throw new UpstreamFailure('RATE_LIMITED', `Not asking yet: ${slot.why}.`, slot.retryAfterMs);
+          // Ours, not theirs: `fromUpstream: false` keeps this out of the
+          // coordinator, which would otherwise block the origin because of our
+          // own accounting.
+          throw new UpstreamFailure('RATE_LIMITED', `Not asking yet: ${slot.why}.`, slot.retryAfterMs, false);
         }
 
         const controller = new AbortController();
@@ -176,7 +179,7 @@ export async function ask<Q, R>(family: string, query: Q, options: AskOptions = 
       // It goes to the coordinator so every process sharing that budget knows,
       // rather than to the breaker, which would cool off a healthy service for
       // being popular.
-      if (failure.kind === 'RATE_LIMITED' && failure.retryAfterMs !== null) {
+      if (failure.kind === 'RATE_LIMITED' && failure.fromUpstream && failure.retryAfterMs !== null) {
         await recordRateLimit({
           upstreamId: upstream.id,
           origin: upstream.origin,
