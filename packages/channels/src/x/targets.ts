@@ -84,3 +84,27 @@ export function looksUnavailable(pageText: string): boolean {
   const haystack = pageText.toLowerCase();
   return UNAVAILABLE_MARKERS.some((marker) => haystack.includes(marker));
 }
+
+/**
+ * X saying its own request failed.
+ *
+ * Different from a page that is unavailable, and the difference matters: this
+ * one is transient and worth retrying, and the post or the results are probably
+ * still there.
+ *
+ * It exists because a search that hits this returns an empty list. "X errored"
+ * and "nobody has said anything about that" then look identical to everything
+ * upstream, and an agent told there are no results will say so. Found on a live
+ * signed-in session, where a search for "ethereum" -- which certainly has
+ * results -- came back with nought.
+ */
+export const RETRYABLE_MARKERS = [
+  'something went wrong. try reloading',
+  'something went wrong, but don',
+  'try reloading',
+];
+
+export function looksLikeXBroke(pageText: string): boolean {
+  const haystack = pageText.toLowerCase();
+  return RETRYABLE_MARKERS.some((marker) => haystack.includes(marker));
+}

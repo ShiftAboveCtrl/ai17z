@@ -1,7 +1,7 @@
 import type { XPost, XTimeline } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
 import type { ChannelContext } from '../contract';
-import { goto, settle, withSession } from './page';
+import { goto, refuseIfXBroke, settle, withSession } from './page';
 import { readAllArticles, type Seen } from './monitors';
 
 /**
@@ -113,6 +113,8 @@ export async function readTimeline(
     }
 
     const { posts, more } = toTimelinePosts(seen, limit);
+    // Same refusal as search: X's own error page has no articles on it either.
+    if (posts.length === 0) await refuseIfXBroke(session.page, `the ${surface.toLowerCase()} timeline`);
     return {
       surface,
       ...(request.listId ? { listId: request.listId } : {}),

@@ -136,7 +136,9 @@ export class SocialRadar {
       //
       // Never allowed to fail the poll: a missing observation is a gap in a
       // series, and a failed poll is a reply nobody sees.
-      if (ownPostId && ownPostAgentId && target && poll.targetCounts) {
+      // An empty label is no reading. X omits a count from the label entirely
+      // when it is zero, so a post nobody has touched can render nothing at all.
+      if (ownPostId && ownPostAgentId && target && poll.targetCounts && Object.keys(poll.targetCounts).length > 0) {
         await postAnalyticsRepo
           .record({
             agentId: ownPostAgentId,

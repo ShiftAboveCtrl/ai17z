@@ -59,6 +59,35 @@ describe('reading the counts under a post', () => {
     expect(parseCounts('')).toEqual({});
   });
 
+  it('reads the labels X actually renders, proved against a live timeline', () => {
+    // Copied verbatim from a signed-in session, September 2026. The singular
+    // "1 reply" and the bookmark count are both real, and the view count
+    // arrives without separators while the others have them.
+    expect(parseCounts('1 reply, 17 reposts, 170 likes, 6 bookmarks, 45523 views')).toEqual({
+      replies: 1,
+      reposts: 17,
+      likes: 170,
+      bookmarks: 6,
+      views: 45523,
+    });
+    expect(parseCounts('46 replies, 88 reposts, 683 likes, 67 bookmarks, 5742075 views')).toEqual({
+      replies: 46,
+      reposts: 88,
+      likes: 683,
+      bookmarks: 67,
+      views: 5742075,
+    });
+  });
+
+  it('reads a post nobody has touched, which names only what it has', () => {
+    // Also from a live page: X leaves a count out of the label entirely when it
+    // is zero, so a fresh post renders one figure or none. That is why nothing
+    // records an observation with nothing in it -- it is not evidence, and it
+    // would occupy the one slot that post has for that minute.
+    expect(parseCounts('3 views')).toEqual({ views: 3 });
+    expect(parseCounts('')).toEqual({});
+  });
+
   it('matches digits rather than the letter d', () => {
     // The exact failure a mangled escape produced: a pattern that compiles,
     // runs, and matches nothing that is actually a number.
