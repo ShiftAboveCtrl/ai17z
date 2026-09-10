@@ -1,7 +1,8 @@
 import { PipelineError } from '@xbam/shared';
 import type { AnyUpstream, Answer, Provenance, Upstream, UpstreamHealth } from './contract';
 import { familyMembers } from './registry';
-import { acquire } from './limiter';
+import { recordRateLimit, takeSlot } from './limiter';
+import { UpstreamFailure, classifyThrown, countsAgainstHealth, worthTryingSibling } from './failures';
 import { isCoolingOff, healthOf, recordFailure, recordSuccess } from './breaker';
 import { coalesce, lookup, remember } from './cache';
 
@@ -126,7 +127,21 @@ export async function ask<Q, R>(family: string, query: Q, options: AskOptions = 
     try {
       const fetchedAt = Date.now();
       const { value, joined } = await coalesce<R>(key, async () => {
-        const release = await acquire(upstream.id, upstream.limit);
+        // A budget is not waited for. Holding the call open until a daily quota
+        // refills is how one exhausted upstream keeps a job open for eleven
+        // hours; the family is told to try somebody else instead, which is the
+        // whole reason a family has more than one member.
+        const slot = await takeSlot({
+          upstreamId: upstream.id,
+          origin: upstream.origin,
+          limit: upstream.limit,
+          query,
+          now: Date.now(),
+        });
+        if (!slot.granted) {
+          throw new UpstreamFailure('RATE_LIMITED', `Not asking yet: ${slot.why}.`, slot.retryAfterMs);
+        }
+
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), upstream.timeoutMs);
         try {
@@ -138,7 +153,7 @@ export async function ask<Q, R>(family: string, query: Q, options: AskOptions = 
           });
         } finally {
           clearTimeout(timer);
-          release();
+          slot.slot.release();
         }
       });
 
@@ -155,10 +170,35 @@ export async function ask<Q, R>(family: string, query: Q, options: AskOptions = 
         }),
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      recordFailure(upstream.id, message, now);
-      tried.push({ upstreamId: upstream.id, why: message });
-      options.log?.('upstream could not answer', { upstreamId: upstream.id, family, message });
+      const failure = classifyThrown(error);
+
+      // A named time is a fact about the endpoint, not a fault of this caller.
+      // It goes to the coordinator so every process sharing that budget knows,
+      // rather than to the breaker, which would cool off a healthy service for
+      // being popular.
+      if (failure.kind === 'RATE_LIMITED' && failure.retryAfterMs !== null) {
+        await recordRateLimit({
+          upstreamId: upstream.id,
+          origin: upstream.origin,
+          limit: upstream.limit,
+          until: Date.now() + failure.retryAfterMs,
+          why: failure.message,
+        });
+      }
+      if (countsAgainstHealth(failure.kind)) recordFailure(upstream.id, failure.message, now);
+
+      tried.push({ upstreamId: upstream.id, why: `${failure.kind}: ${failure.message}` });
+      options.log?.('upstream could not answer', {
+        upstreamId: upstream.id,
+        family,
+        kind: failure.kind,
+        message: failure.message,
+      });
+
+      // Some answers are about the question rather than the answerer. Walking
+      // the rest of the family to be told the same thing spends four budgets to
+      // learn nothing.
+      if (!worthTryingSibling(failure.kind)) break;
     }
   }
 

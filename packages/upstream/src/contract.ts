@@ -30,6 +30,7 @@
  * retries past a refusal to make one request look like several.
  */
 import { z } from 'zod';
+import type { UpstreamLimit } from './quota';
 
 /** How an answer reached the caller. Always said, never inferred. */
 export const UPSTREAM_SOURCES = ['LIVE', 'CACHED', 'COALESCED'] as const;
@@ -81,23 +82,10 @@ export interface Answer<T> {
   provenance: Provenance;
 }
 
-/**
- * What an upstream's operator asks of a caller.
- *
- * Two numbers rather than one, because they answer different questions: how
- * often may I ask, and how many may be in the air at once. An endpoint that
- * allows ten a second and one connection is a real shape, and a limiter that
- * knows only the rate will open ten sockets to a service that wanted one.
- *
- * Deliberately conservative by default. Being asked to slow down is a signal
- * this package respects rather than routes around.
- */
-export interface UpstreamLimit {
-  /** Requests per second, across every agent on this installation. */
-  perSecond: number;
-  /** How many may be outstanding at once. */
-  concurrent: number;
-}
+// What an operator allows lives in `quota.ts`, because it grew from two numbers
+// into a model that can hold what endpoints actually publish -- several windows,
+// a weight per request, and whose budget each window is.
+export type { QuotaCoordinator, QuotaScope, QuotaWindow, UpstreamLimit } from './quota';
 
 /** A secret an upstream needs, named rather than carried. */
 export interface UpstreamSecret {
