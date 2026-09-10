@@ -70,15 +70,32 @@ function fail(what: string, detail: string): never {
   throw new Failed(`${what}\n      ${detail.replace(/\n/g, '\n      ')}`);
 }
 
-/** A port nothing is listening on, taken by binding it rather than guessing. */
+/**
+ * A port nothing is listening on, taken by binding it rather than guessing.
+ *
+ * Both stacks, because Docker publishes on both -- `0.0.0.0:PORT` *and*
+ * `[::]:PORT` -- and a port free on one is not free. Checking only IPv4 let a
+ * browser holding `[::]:8600` pass this and fail four minutes later inside
+ * `docker compose up`, as "ports are not available", in the one phase that had
+ * already installed twice to get there. A gate that fails on somebody else's
+ * socket is a gate nobody can read.
+ *
+ * It does not close the race, and cannot: the socket is released before Docker
+ * takes it, so something can always arrive in between. It closes the half of it
+ * that was invisible.
+ */
 async function freePort(from: number): Promise<number> {
-  for (let port = from; port < from + 200; port += 1) {
-    const free = await new Promise<boolean>((done) => {
+  const bindable = (port: number, host: string) =>
+    new Promise<boolean>((done) => {
       const server = createServer();
       server.once('error', () => done(false));
-      server.listen(port, '0.0.0.0', () => server.close(() => done(true)));
+      // ipv6Only so the two attempts test the two stacks rather than one of
+      // them testing both and colliding with itself.
+      server.listen({ port, host, ipv6Only: host === '::' }, () => server.close(() => done(true)));
     });
-    if (free) return port;
+
+  for (let port = from; port < from + 200; port += 1) {
+    if ((await bindable(port, '0.0.0.0')) && (await bindable(port, '::'))) return port;
   }
   throw new Error(`no free port near ${from}`);
 }
