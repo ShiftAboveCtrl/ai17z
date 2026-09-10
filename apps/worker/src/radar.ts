@@ -5,7 +5,7 @@ import {
   radar as radarRepo,
   type RadarSourceRow,
 } from '@xbam/database';
-import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
+import { getChannelAdapter, isChannelImplemented, readProfile } from '@xbam/channels';
 import { buildChannelContext, reconcileCandidates } from '@xbam/runtime';
 import { describeBrowserError } from '@xbam/browser';
 import { startLoop } from './loop';
@@ -78,6 +78,14 @@ export class SocialRadar {
       if (!next) {
         // Nothing posted recently is not a failure; there is simply nothing to
         // check, and saying so beats recording a spurious success.
+        //
+        // The slot is not wasted, though. This source is the one that looks at
+        // the agent's own account, and when it has no post to look at, looking
+        // at the account itself is the same job -- so the follower count is
+        // read here rather than by a second timer that exists only for it.
+        // `docs/architecture/CADENCE.md` allows one timing engine; this is
+        // reuse of a poll that was already due and was about to do nothing.
+        await this.observeOwnAccount(source.accountId).catch(() => undefined);
         await radarRepo.recordPoll({
           sourceId: source.id,
           nextPollAt: new Date(Date.now() + interval),
@@ -185,6 +193,48 @@ export class SocialRadar {
         .catch(() => undefined);
       log.warn('radar source threw', { kind: source.kind, message });
     }
+  }
+
+  /**
+   * Reads the agent's own profile and records what the account looked like.
+   *
+   * Called only from the own-threads slot when there is no post to check, so it
+   * costs a page load that was not going to happen otherwise and adds no timer
+   * of its own. `post_analytics` answers "how did that post do"; this answers
+   * the question an owner asks first, which is whether any of it is adding up.
+   *
+   * Its own profile only. A follower count for somebody else is read live for a
+   * bridge score and not kept, because a series about accounts the agent merely
+   * looked at would be a history of people who never asked for one.
+   *
+   * Never allowed to fail a poll. A missing reading is a gap in a series; a
+   * failed poll is a reply nobody sees.
+   */
+  private async observeOwnAccount(accountId: string): Promise<void> {
+    const account = await accountsRepo.getAccount(accountId);
+    if (!account?.handle) return;
+    const [link] = await accountsRepo.listAccountAgents(accountId);
+    if (!link) return;
+
+    const ctx = await buildChannelContext(account, null);
+    const profile = await readProfile(ctx, account.handle);
+    if (profile.followerCount === undefined && profile.followingCount === undefined) {
+      // X showed neither number. Absent is not zero, and a row of nulls is not
+      // a reading -- it would occupy the minute the real one needs.
+      return;
+    }
+    await postAnalyticsRepo.recordAccount({
+      agentId: link.agentId,
+      accountId,
+      handle: profile.handle,
+      followers: profile.followerCount ?? null,
+      following: profile.followingCount ?? null,
+    });
+    log.info('recorded what the account looked like', {
+      accountId,
+      handle: profile.handle,
+      followers: profile.followerCount ?? null,
+    });
   }
 
   /**

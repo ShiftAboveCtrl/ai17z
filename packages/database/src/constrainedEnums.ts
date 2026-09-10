@@ -5,6 +5,7 @@ import {
   AGENT_STATES,
   APPROVAL_STATUSES,
   AVATAR_MODES,
+  CAPABILITY_PERMISSIONS,
   BROWSER_CHANNELS,
   BROWSER_ENGINES,
   BROWSER_MODES,
@@ -74,6 +75,12 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     column: 'source',
     values: ['TIMELINE', 'POST_ANALYTICS'],
     note: 'Where a reading came from. Nothing outside the database needs to name these yet.',
+  },
+  {
+    table: 'agent_capability_permissions',
+    column: 'permission',
+    values: CAPABILITY_PERMISSIONS,
+    note: "An owner's decision about one capability. Its own table because agent_tools.tool_id points at the built-in catalogue, which capability ids were never in -- see migration 0068.",
   },
   {
     table: 'experiments',

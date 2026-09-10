@@ -1,3 +1,4 @@
+import { NotFoundError } from '@xbam/shared';
 import { query, queryOne } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
@@ -201,18 +202,31 @@ export async function listAgentTools(agentId: string): Promise<AgentToolRow[]> {
   return mapRows<AgentToolRow>(rows);
 }
 
+/**
+ * Turns one catalogue tool on or off for one agent.
+ *
+ * Raises when the key names no tool, and that is not defensive tidiness. The
+ * insert selects the catalogue row by key, so an unknown key selected nothing,
+ * inserted nothing, and returned as though it had worked -- which is exactly
+ * how capability permissions were written nowhere for an entire release while
+ * the screen reported them saved. A write that cannot land has to say so.
+ */
 export async function setAgentTool(input: {
   agentId: string;
   toolKey: string;
   enabled: boolean;
   config?: Record<string, unknown>;
 }): Promise<void> {
-  await query(
+  const written = await query(
     `INSERT INTO agent_tools (agent_id, tool_id, enabled, config)
      SELECT $1, t.id, $3, $4::jsonb FROM tools t WHERE t.key = $2
-     ON CONFLICT (agent_id, tool_id) DO UPDATE SET enabled = excluded.enabled, config = excluded.config`,
+     ON CONFLICT (agent_id, tool_id) DO UPDATE SET enabled = excluded.enabled, config = excluded.config
+     RETURNING agent_id`,
     [input.agentId, input.toolKey, input.enabled, JSON.stringify(input.config ?? {})],
   );
+  if (written.length === 0) {
+    throw new NotFoundError(`Tool ${input.toolKey}`);
+  }
 }
 
 export interface ImportRunRow {
