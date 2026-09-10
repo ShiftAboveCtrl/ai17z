@@ -126,8 +126,81 @@ export const XNotification = z.object({
   statusId: z.string().optional(),
   text: z.string().optional(),
   occurredAt: z.string().optional(),
+  /**
+   * How many accounts the notification says were involved beyond those named.
+   *
+   * X aggregates and links only the first: "alice and 4 others liked your
+   * post". Listing five actors would mean inventing four people and listing one
+   * would mean losing four, so the count is the only honest form of it.
+   */
+  others: z.number().int().nonnegative().optional(),
 });
 export type XNotification = z.infer<typeof XNotification>;
+
+/**
+ * Who follows an account, or who it follows.
+ *
+ * The raw material of the relationship graph, and the one X surface where
+ * reading eagerly costs something real -- a large account's follower list is
+ * effectively infinite. So a reading is a bounded window that says when it
+ * stopped early, never a list that implies it is the whole one.
+ */
+export const XConnections = z.object({
+  /** Whose list this is. */
+  handle: z.string(),
+  kind: z.enum(['FOLLOWERS', 'FOLLOWING', 'VERIFIED_FOLLOWERS']),
+  accounts: z
+    .array(
+      z.object({
+        handle: z.string(),
+        displayName: z.string().optional(),
+        bio: z.string().optional(),
+        /** X's own badge. Only ever true; its absence is X not saying. */
+        followsYou: z.boolean().optional(),
+      }),
+    )
+    .default([]),
+  more: z.boolean().default(false),
+});
+export type XConnections = z.infer<typeof XConnections>;
+
+/**
+ * One of the timelines the account can already see.
+ *
+ * The surface travels with the result because these are four different claims
+ * about relevance and none of them substitutes for another: Home is what X
+ * decided to show, Following is what the account chose, Bookmarks is what it
+ * saved, a List is what somebody curated.
+ */
+export const XTimeline = z.object({
+  surface: z.enum(['HOME', 'FOLLOWING', 'BOOKMARKS', 'LIST']),
+  listId: z.string().optional(),
+  posts: z.array(XPost).default([]),
+  more: z.boolean().default(false),
+});
+export type XTimeline = z.infer<typeof XTimeline>;
+
+/**
+ * One direct message conversation, as the inbox lists it.
+ *
+ * Who has been in touch, and the line X shows as a preview. What was actually
+ * said is a separate read, because listing who wrote is a much smaller claim on
+ * somebody's privacy than reading what they wrote.
+ */
+export const XDirectMessageThread = z.object({
+  conversationId: z.string(),
+  participants: z.array(XAuthor).default([]),
+  lastMessage: z.string().optional(),
+  lastAt: z.string().optional(),
+});
+export type XDirectMessageThread = z.infer<typeof XDirectMessageThread>;
+
+/** The direct message inbox. Read only; nothing in AI17Z sends one. */
+export const XInbox = z.object({
+  threads: z.array(XDirectMessageThread).default([]),
+  more: z.boolean().default(false),
+});
+export type XInbox = z.infer<typeof XInbox>;
 
 /**
  * That two accounts were seen in the same place.

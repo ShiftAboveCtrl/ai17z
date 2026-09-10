@@ -33,6 +33,16 @@ import { extractStatusId, handleFromUrl, normalizeHandle, normalizeTargetId } fr
 export const MAX_ARTICLES_READ = 20;
 
 /**
+ * The page type, re-exported so a reader does not have to reach for Playwright.
+ *
+ * Every surface reader takes one of these. Importing it from `@xbam/browser`
+ * in each of them would put the automation library's name in six more files
+ * for no benefit; the boundary rule is that nothing about the DOM leaves this
+ * package, and the type of the thing holding the DOM is part of that.
+ */
+export type { Page };
+
+/**
  * How many times to scroll a feed looking for more.
  *
  * Eight passes of two thousand pixels reaches roughly sixty mentions, which is

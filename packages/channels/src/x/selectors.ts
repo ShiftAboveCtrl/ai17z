@@ -103,6 +103,24 @@ export const SEL = {
    * the difference survives.
    */
   countGroup: '[role="group"][aria-label]',
+
+  /**
+   * The surfaces an agent can read besides a timeline.
+   *
+   * Each is a container test id and nothing finer. What is inside one is read
+   * in a single page evaluation rather than through a locator per field -- the
+   * argument `readAllArticles` makes about round trips applies to every one of
+   * these, and they share a tab with the work that has to answer somebody.
+   */
+
+  /** One row on the notifications page. Holds an article or a sentence. */
+  notificationCell: '[data-testid="cellInnerDiv"]',
+  /** One account in a follower, following or suggestion list. */
+  userCell: '[data-testid="UserCell"]',
+  /** One conversation in the direct message list. */
+  dmConversation: '[data-testid="conversation"]',
+  /** One message inside a conversation. */
+  messageEntry: '[data-testid="messageEntry"]',
 } as const;
 
 /**

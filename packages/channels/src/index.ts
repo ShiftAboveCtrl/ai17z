@@ -41,3 +41,16 @@ export { replyingToHandles } from './x/index';
  * capabilities; nothing about the DOM crosses this line.
  */
 export { readPost, readProfile, parseCount, parseCounts, searchPosts, readThread } from './x/index';
+export {
+  readNotifications,
+  classifyNotification,
+  othersCount,
+  toNotifications,
+  type NotificationCell,
+} from './x/index';
+export { readConnections, toConnections, type UserCell } from './x/index';
+export { readTimeline, toTimelinePosts } from './x/index';
+export { readInbox, readConversation, toThreads, type ConversationRow } from './x/index';
+export { readPostAnalytics, parseAnalytics, type PostAnalyticsReading } from './x/index';
+/** The timeline row shape the harvester produces, for anything that maps it. */
+export type { Seen } from './x/monitors';
