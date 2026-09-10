@@ -105,7 +105,7 @@ describe('what may be asked of a chain', () => {
     registerEvmUpstreams();
     serveChain('0x1');
     const forged = { chain: 'ethereum', method: 'eth_sendRawTransaction', params: ['0xdeadbeef'] } as unknown as EvmQueryShape;
-    await expect(ask<EvmQueryShape, EvmResult>('evm', forged)).rejects.toThrow(/not a method this reads/);
+    await expect(ask<EvmQueryShape, EvmResult>('evm_ethereum', forged)).rejects.toThrow(/not a method this reads/);
   });
 });
 
@@ -113,7 +113,7 @@ describe('which chain a node is actually serving', () => {
   it('proves the id before it trusts anything else', async () => {
     registerEvmUpstreams();
     const { methods } = serveChain('0x1', { eth_blockNumber: '0x18be2f5' });
-    const answer = await ask<EvmQueryShape, EvmResult>('evm', EvmQuery.parse({ chain: 'ethereum', method: 'eth_blockNumber' }));
+    const answer = await ask<EvmQueryShape, EvmResult>('evm_ethereum', EvmQuery.parse({ chain: 'ethereum', method: 'eth_blockNumber' }));
 
     expect(methods[0]).toBe('eth_chainId');
     expect(answer.value.chainId).toBe(1);
@@ -126,23 +126,38 @@ describe('which chain a node is actually serving', () => {
     registerEvmUpstreams();
     serveChain('0x2105', { eth_blockNumber: '0x18be2f5' }); // 8453, Base
     await expect(
-      ask<EvmQueryShape, EvmResult>('evm', EvmQuery.parse({ chain: 'ethereum', method: 'eth_blockNumber' })),
+      ask<EvmQueryShape, EvmResult>('evm_ethereum', EvmQuery.parse({ chain: 'ethereum', method: 'eth_blockNumber' })),
     ).rejects.toThrow(/says it is chain 8453/);
   });
 
   it('names every chain it claims to know with the id it must prove', () => {
+    // Each of these was read back from a live node rather than copied from a
+    // list, which is the difference between a registry and a guess.
     expect(EVM_CHAINS.ethereum).toBe(1);
     expect(EVM_CHAINS.base).toBe(8453);
     expect(EVM_CHAINS.arbitrum).toBe(42161);
     expect(EVM_CHAINS.optimism).toBe(10);
     expect(EVM_CHAINS.polygon).toBe(137);
+    expect(EVM_CHAINS.bnb).toBe(56);
+    expect(EVM_CHAINS.avalanche).toBe(43114);
+  });
+
+  it('gives each chain its own family, so one cannot answer for another', () => {
+    // Fallback happens inside a family, and a Base node standing in for an
+    // Ethereum one would answer confidently about the wrong world.
+    registerEvmUpstreams();
+    for (const chain of Object.keys(EVM_CHAINS)) {
+      const members = familyMembers(`evm_${chain}`);
+      expect(members.length, chain).toBeGreaterThan(0);
+      for (const member of members) expect(member.family, member.id).toBe(`evm_${chain}`);
+    }
   });
 });
 
 describe('the family itself', () => {
   it('is several nodes, ranked, so one being down is a fallback', async () => {
     registerEvmUpstreams();
-    const members = familyMembers('evm');
+    const members = familyMembers('evm_ethereum');
     expect(members.length).toBeGreaterThanOrEqual(3);
     expect(members.map((m) => m.rank)).toEqual([...members.map((m) => m.rank)].sort((a, b) => a - b));
     // Every member declares a rate below what these endpoints publish: they are
@@ -163,7 +178,7 @@ describe('the family itself', () => {
   it('reads a chain over https only', () => {
     // `allowPrivate` is never set here. A node somebody runs themselves is a
     // deliberate configuration and would be its own upstream.
-    for (const member of familyMembers('evm')) {
+    for (const member of familyMembers('evm_ethereum')) {
       expect(member.origin, member.id).not.toMatch(/localhost|127\.|^10\.|^192\.168\./);
     }
   });

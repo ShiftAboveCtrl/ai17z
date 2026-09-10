@@ -75,3 +75,4 @@ export * from './launches';
 export * from './growth';
 export * from './experimentRuns';
 export * from './upstreamQuota';
+export * from './chainCapabilities';
