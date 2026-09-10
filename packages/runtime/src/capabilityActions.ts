@@ -221,11 +221,26 @@ async function runAction(
 }
 
 /**
- * What was said, for the duplicate-text check.
+ * What was said, for the duplicate-text check -- and nothing when nothing was.
  *
- * An action with no text of its own -- a like, a repost -- signs its target
- * instead, so "already did this to this post" is still answerable.
+ * `actions_content_signature_key` exists to stop byte-identical text reaching
+ * the same target twice, which is migration 0006's own description of it. A
+ * like and a repost have no text, and signing the target instead turned that
+ * text guard into "never engage with this post again, ever".
+ *
+ * That directly contradicts the design of the thing it was guarding.
+ * `ensureEngaged` is a desired state rather than a toggle precisely so that
+ * asking twice is safe: the second ask reads the page, finds the state already
+ * right, and touches nothing. Found by doing exactly that -- a second `x.like`
+ * in a later job reached the page, correctly clicked nothing, and then failed
+ * on this constraint while writing down that it had succeeded. The model was
+ * told the like had failed, about a post that was liked.
+ *
+ * So: sign the text when there is text, and otherwise sign nothing. The
+ * idempotency key already stops duplicate work inside a job, and the page state
+ * already stops duplicate effect outside one. A capability that does carry text
+ * still gets the guard, without anyone having to remember to ask for it.
  */
-function signatureFor(request: CapabilityActionRequest): string {
-  return sha256Hex(`${request.type}|${request.text || request.targetRef}`);
+export function signatureFor(request: Pick<CapabilityActionRequest, 'type' | 'text' | 'targetRef'>): string | null {
+  return request.text ? sha256Hex(`${request.type}|${request.text}`) : null;
 }

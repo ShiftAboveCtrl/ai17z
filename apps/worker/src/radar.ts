@@ -20,6 +20,9 @@ const log = createLogger('radar');
  * an account looking healthy while nothing was arriving. Now the account keeps
  * working through the other monitors and the failing one says so.
  */
+/** How often the own-threads source spends a cycle on the account itself. */
+const ACCOUNT_READING_INTERVAL_MS = 6 * 60 * 60_000;
+
 export class SocialRadar {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -74,18 +77,37 @@ export class SocialRadar {
     let ownPostId: string | null = null;
     let ownPostAgentId: string | null = null;
     if (source.kind === 'own_threads') {
+      /**
+       * Every so often, this cycle looks at the account rather than at a post.
+       *
+       * This source is the one that looks at the agent's own account, and the
+       * follower count is part of that. Giving it a cycle now and then is reuse
+       * of a poll that was already due -- `docs/architecture/CADENCE.md` allows
+       * one timing engine and no second timer, and this adds none.
+       *
+       * It has to be a cadence rather than "when there is no post to check".
+       * That was the first attempt and it was wrong: an account that posts
+       * regularly always has a post to check, so the one case that needed
+       * measuring most would never have been measured at all.
+       *
+       * Nothing is lost by spending the cycle: the post check happens on the
+       * next one, a minute or two later.
+       */
+      if (await this.dueForAccountReading(source.accountId)) {
+        await this.observeOwnAccount(source.accountId).catch(() => undefined);
+        await radarRepo.recordPoll({
+          sourceId: source.id,
+          nextPollAt: new Date(Date.now() + interval),
+          found: 0,
+        });
+        return;
+      }
+
       const [next] = await radarRepo.ownPostsToCheck(source.accountId, 1);
       if (!next) {
         // Nothing posted recently is not a failure; there is simply nothing to
         // check, and saying so beats recording a spurious success.
         //
-        // The slot is not wasted, though. This source is the one that looks at
-        // the agent's own account, and when it has no post to look at, looking
-        // at the account itself is the same job -- so the follower count is
-        // read here rather than by a second timer that exists only for it.
-        // `docs/architecture/CADENCE.md` allows one timing engine; this is
-        // reuse of a poll that was already due and was about to do nothing.
-        await this.observeOwnAccount(source.accountId).catch(() => undefined);
         await radarRepo.recordPoll({
           sourceId: source.id,
           nextPollAt: new Date(Date.now() + interval),
@@ -210,6 +232,20 @@ export class SocialRadar {
    * Never allowed to fail a poll. A missing reading is a gap in a series; a
    * failed poll is a reply nobody sees.
    */
+  /**
+   * Whether it is time to look at the account rather than at one of its posts.
+   *
+   * Six hours because a follower count moves slowly and four readings a day is
+   * plenty to see a week's shape, while costing four page loads. Shorter would
+   * spend cycles that could be finding replies; longer would take days to draw
+   * a second point, and one point is not a series.
+   */
+  private async dueForAccountReading(accountId: string): Promise<boolean> {
+    const last = await postAnalyticsRepo.lastAccountReadingAt(accountId).catch(() => null);
+    if (!last) return true;
+    return Date.now() - new Date(last).getTime() >= ACCOUNT_READING_INTERVAL_MS;
+  }
+
   private async observeOwnAccount(accountId: string): Promise<void> {
     const account = await accountsRepo.getAccount(accountId);
     if (!account?.handle) return;
