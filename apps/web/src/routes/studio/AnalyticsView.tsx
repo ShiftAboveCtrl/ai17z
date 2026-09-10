@@ -75,14 +75,14 @@ export function AnalyticsView({ agentId }: { agentId: string }) {
     <>
       <Panel
         title="The account itself"
-        lede="Read when something reads this account's own profile. Nothing polls for it, so this series is as dense as the looking."
+        lede="Read about four times a day, on a visit the agent was already making to check its own posts, and whenever anything else reads this profile."
       >
         {account.loading && <Spinner />}
 
         {!account.loading && readings.length < 2 && (
           <EmptyState
             title={readings.length === 1 ? 'One reading so far' : 'Nothing read yet'}
-            detail="A follower count becomes a trend at the second reading. Ask the agent to read its own profile, or let a capability do it while it works."
+            detail="A follower count becomes a trend at the second reading. Your agent takes one roughly every six hours while it is watching its own posts."
           />
         )}
 
