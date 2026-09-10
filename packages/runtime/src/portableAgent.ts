@@ -15,11 +15,13 @@
  * original's relationships would be an agent that believes it has met people it
  * has never spoken to.
  */
-import type { PortableAgent, PortableTool } from '@xbam/shared/contracts';
+import type { PortableAgent, PortableCapability, PortableTool } from '@xbam/shared/contracts';
 import { PORTABLE_AGENT_VERSION, PersonaDraft, PolicyConfig, PortableAgent as PortableAgentSchema, withoutSecrets } from '@xbam/shared/contracts';
 import { BadRequestError, describeVersion, nowIso, slugify } from '@xbam/shared';
+import { setCapabilityPermission } from './capabilityViews';
 import {
   agents as agentsRepo,
+  capabilityPermissions as capabilityPermissionsRepo,
   knowledge as knowledgeRepo,
   ops as opsRepo,
   posting as postingRepo,
@@ -37,11 +39,12 @@ export async function exportAgent(agentId: string): Promise<PortableAgent> {
   const agent = await agentsRepo.getAgent(agentId);
   if (!agent) throw new BadRequestError('That agent no longer exists.');
 
-  const [persona, policy, models, tools, knowledge, cadence, posting] = await Promise.all([
+  const [persona, policy, models, tools, toolspace, knowledge, cadence, posting] = await Promise.all([
     agentsRepo.getActivePersona(agentId),
     agentsRepo.getActivePolicy(agentId),
     providersRepo.listModelConfigs(agentId),
     opsRepo.listAgentTools(agentId),
+    capabilityPermissionsRepo.listForAgent(agentId).catch(() => []),
     knowledgeRepo.listSources(agentId).catch(() => []),
     // Cadence belongs to an account rather than an agent, and an export
     // carries no account -- so there is nothing here to carry. Said rather
@@ -91,6 +94,21 @@ export async function exportAgent(agentId: string): Promise<PortableAgent> {
       enabled: source.enabled,
     })),
     capabilities: [],
+    // What the owner switched on and how they set it up. A decision, so it
+    // travels -- and it is the half that was silently lost: an imported agent
+    // arrived with every capability back at its default, which for a write
+    // means off, so an agent that could like and repost quietly could not.
+    //
+    // The config is stripped exactly as a tool's is. It is a free-form document
+    // for the same reason, so it gets the same treatment rather than the
+    // benefit of the doubt.
+    toolspace: toolspace.map(
+      (row: { capability_id: string; permission: string; config?: Record<string, unknown> | null }): PortableCapability => ({
+        id: row.capability_id,
+        permission: row.permission as PortableCapability['permission'],
+        config: withoutSecrets(row.config ?? {}),
+      }),
+    ),
   });
 }
 
@@ -114,6 +132,21 @@ export async function importAgent(input: {
   name?: string;
   createdBy?: string | null;
 }): Promise<ImportReport> {
+  // The version is read before the shape is, and that order is the whole point.
+  //
+  // The schema is strict, so a document from a newer build carries a field this
+  // one has no place for and the parse fails on it. Checking the version
+  // afterwards meant this message -- the one that says what to do about it --
+  // could never fire for the only change that produces it. An owner was told
+  // "toolspace: Unrecognized key" about a file that is perfectly good and one
+  // upgrade away from readable.
+  const declared = (input.document as { version?: unknown } | null | undefined)?.version;
+  if (typeof declared === 'number' && declared > PORTABLE_AGENT_VERSION) {
+    throw new BadRequestError(
+      `This agent was exported by a newer AI17Z (format version ${declared}; this one reads ${PORTABLE_AGENT_VERSION}). Update before importing it.`,
+    );
+  }
+
   const parsed = PortableAgentSchema.safeParse(input.document);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
@@ -122,12 +155,6 @@ export async function importAgent(input: {
     );
   }
   const doc = parsed.data;
-
-  if (doc.version > PORTABLE_AGENT_VERSION) {
-    throw new BadRequestError(
-      `This agent was exported by a newer AI17Z (format version ${doc.version}; this one reads ${PORTABLE_AGENT_VERSION}). Update before importing it.`,
-    );
-  }
 
   const notes: string[] = [];
   const name = input.name?.trim() || doc.name;
@@ -168,6 +195,30 @@ export async function importAgent(input: {
     await opsRepo
       .setAgentTool({ agentId: agent.id, toolKey: tool.key, enabled: tool.enabled, config: tool.config })
       .catch(() => notes.push(`The tool "${tool.key}" is not available in this installation.`));
+  }
+
+  // A capability that does not exist here is reported rather than invented. The
+  // registry is process-wide and in memory, so `setCapabilityPermission` refuses
+  // an id nothing registers -- which is what makes this a note instead of a row
+  // nobody will ever read.
+  for (const capability of doc.toolspace) {
+    try {
+      await setCapabilityPermission({
+        agentId: agent.id,
+        capabilityId: capability.id,
+        permission: capability.permission,
+      });
+      if (Object.keys(capability.config).length > 0) {
+        await capabilityPermissionsRepo.setConfig({
+          agentId: agent.id,
+          capabilityId: capability.id,
+          permission: capability.permission,
+          config: capability.config,
+        });
+      }
+    } catch {
+      notes.push(`This installation has no capability called "${capability.id}", so what was decided about it could not be carried over.`);
+    }
   }
 
   for (const source of doc.knowledge) {

@@ -227,6 +227,14 @@ export const AgentPackageSummary = z
       tools: z.number().int(),
       knowledgeSources: z.number().int(),
       memories: z.number().int(),
+      /**
+       * Toolspace capabilities the file has a decision about.
+       *
+       * Counted because inspecting is how somebody checks a package before
+       * opening it, and a thing that travels without appearing here is exactly
+       * what that screen exists to prevent.
+       */
+      toolspace: z.number().int(),
     }),
     hasAvatar: z.boolean(),
     /**

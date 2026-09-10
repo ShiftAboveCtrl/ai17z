@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { NEVER_EXPORTED } from '@xbam/shared/contracts';
 import {
   agents as agentsRepo,
+  capabilityPermissions as capabilityPermissionsRepo,
   memories as memoriesRepo,
   pipelines as pipelinesRepo,
   providers as providersRepo,
@@ -10,14 +11,18 @@ import {
 import {
   AGENT_PACKAGE_EXTENSION,
   MAX_PACKAGE_BYTES,
+  capabilitySettings,
   checksumOf,
   inspectPackage,
   packAgent,
   packageFilename,
   serialisePackage,
+  registerXCapabilities,
   setAgentAvatar,
+  setCapabilityPermission,
   unpackAgent,
 } from '@xbam/runtime';
+import { resetCapabilitiesForTest } from '@xbam/tools';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { uniqueSuffix } from '../support/db';
@@ -606,5 +611,147 @@ describe('an imported agent can actually be started', () => {
     });
     const after = await pipelinesRepo.getActivePipeline(fixture.agentId);
     expect(after?.version).toBe(before?.version);
+  });
+});
+
+/**
+ * What an owner decided about Toolspace, travelling with the agent.
+ *
+ * It did not. `PortableAgent` has carried `capabilities` since before Toolspace
+ * existed and that field means *channel* capabilities -- REPLY, POST, LIKE,
+ * REPOST, what an agent may do through an account. There was no field for the
+ * registry at all, so exporting an agent and importing it dropped every
+ * capability decision its owner had made. Reads default to allowed so they came
+ * back by themselves; writes default to disabled, so an agent that could like
+ * and repost quietly could not, and nothing said why.
+ */
+describe('the capabilities an agent may reach for', () => {
+  it('travels, with what it was set up with', async () => {
+    const fixture = await aFurnishedAgent();
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+
+    await setCapabilityPermission({ agentId: fixture.agentId, capabilityId: 'x.like', permission: 'ALLOWED' });
+    await capabilityPermissionsRepo.setConfig({
+      agentId: fixture.agentId,
+      capabilityId: 'x.search',
+      permission: 'OWNER_APPROVAL',
+      config: { maxResults: 5 },
+    });
+
+    const pkg = await packAgent(fixture.agentId, 'SHARE');
+    const carried = new Map(pkg.agent.toolspace.map((c) => [c.id, c]));
+    expect(carried.get('x.like')?.permission).toBe('ALLOWED');
+    expect(carried.get('x.search')?.permission).toBe('OWNER_APPROVAL');
+    expect(carried.get('x.search')?.config).toEqual({ maxResults: 5 });
+
+    const imported = await unpackAgent({
+      ownerId: fixture.ownerId,
+      raw: serialisePackage(pkg),
+      createdBy: fixture.ownerId,
+      name: `Copy ${uniqueSuffix()}`,
+    });
+    const settings = await capabilitySettings(imported.agentId);
+    expect(settings.permissions.get('x.like')).toBe('ALLOWED');
+    expect(settings.permissions.get('x.search')).toBe('OWNER_APPROVAL');
+    expect(settings.configs.get('x.search')).toEqual({ maxResults: 5 });
+  });
+
+  it('says so rather than inventing a capability this installation lacks', async () => {
+    // The registry is process-wide and in memory. A decision about something
+    // that is not registered here is worth reporting and not worth storing.
+    const fixture = await aFurnishedAgent();
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+    await setCapabilityPermission({ agentId: fixture.agentId, capabilityId: 'x.like', permission: 'ALLOWED' });
+
+    const pkg = await packAgent(fixture.agentId, 'SHARE');
+    pkg.agent.toolspace.push({ id: 'moon.read_craters', permission: 'ALLOWED', config: {} });
+    const raw = serialisePackage({
+      ...pkg,
+      checksum: checksumOf({ agent: pkg.agent, avatar: pkg.avatar, learned: pkg.learned, credentials: pkg.credentials }),
+    });
+
+    const report = await unpackAgent({ ownerId: fixture.ownerId, raw, createdBy: fixture.ownerId, name: `Copy ${uniqueSuffix()}` });
+    // `skipped` is where an import says what it could not carry.
+    expect(report.skipped.join(' ')).toMatch(/moon\.read_craters/);
+    // The one that does exist is unaffected by the one that does not.
+    expect((await capabilitySettings(report.agentId)).permissions.get('x.like')).toBe('ALLOWED');
+  });
+
+  it('strips anything key-shaped out of the settings, the way a tool’s are', async () => {
+    const fixture = await aFurnishedAgent();
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+    await capabilityPermissionsRepo.setConfig({
+      agentId: fixture.agentId,
+      capabilityId: 'x.search',
+      permission: 'ALLOWED',
+      config: { maxResults: 5, apiKey: 'sk-should-never-travel' },
+    });
+
+    const pkg = await packAgent(fixture.agentId, 'SHARE');
+    const carried = pkg.agent.toolspace.find((c) => c.id === 'x.search');
+    expect(carried?.config).toEqual({ maxResults: 5 });
+    expect(JSON.stringify(pkg)).not.toContain('sk-should-never-travel');
+  });
+
+  it('counts them where somebody inspecting before importing will see them', async () => {
+    const fixture = await aFurnishedAgent();
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+    await setCapabilityPermission({ agentId: fixture.agentId, capabilityId: 'x.like', permission: 'ALLOWED' });
+
+    const summary = inspectPackage(serialisePackage(await packAgent(fixture.agentId, 'SHARE')));
+    expect(summary.valid).toBe(true);
+    expect(summary.counts.toolspace).toBeGreaterThan(0);
+    expect(summary.notes.join(' ')).toMatch(/switched on/i);
+  });
+});
+
+/**
+ * A file from a newer build, and the sentence somebody needs to read.
+ *
+ * The version gate existed and could never fire for the only change that
+ * produces it: the schemas are strict, so an unknown field failed the parse
+ * first and the owner was told "Unrecognized key" about a file that is
+ * perfectly good and one upgrade away from readable.
+ */
+describe('a package written by a newer AI17Z', () => {
+  it('says to update rather than that the file is broken', async () => {
+    const fixture = await aFurnishedAgent();
+    const pkg = await packAgent(fixture.agentId, 'SHARE');
+    const fromTheFuture = {
+      ...pkg,
+      agent: { ...pkg.agent, version: 99, somethingThisBuildHasNoPlaceFor: true },
+    };
+
+    const summary = inspectPackage(JSON.stringify(fromTheFuture));
+    expect(summary.valid).toBe(false);
+    expect(summary.problem).toMatch(/newer AI17Z/i);
+    expect(summary.problem).toMatch(/Update before reading it/i);
+  });
+});
+
+/**
+ * What the document import could not carry, reaching whoever imported it.
+ *
+ * `skipped` says "what could not be, and why. Never silent." Unpacking a
+ * package took the agent id off `importAgent`'s result and threw the rest away,
+ * so a package naming a tool this installation does not have imported quietly
+ * and said nothing about it.
+ */
+describe('a package that names something this installation has not got', () => {
+  it('says so, rather than importing quietly', async () => {
+    const fixture = await aFurnishedAgent();
+    const pkg = await packAgent(fixture.agentId, 'SHARE');
+    pkg.agent.tools.push({ key: 'not.a.real.tool', enabled: true, config: {} });
+    const raw = serialisePackage({
+      ...pkg,
+      checksum: checksumOf({ agent: pkg.agent, avatar: pkg.avatar, learned: pkg.learned, credentials: pkg.credentials }),
+    });
+
+    const report = await unpackAgent({ ownerId: fixture.ownerId, raw, createdBy: fixture.ownerId, name: `Copy ${uniqueSuffix()}` });
+    expect(report.skipped.join(' ')).toMatch(/not\.a\.real\.tool/);
   });
 });

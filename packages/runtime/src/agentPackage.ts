@@ -35,6 +35,7 @@ import {
   AGENT_PACKAGE_EXTENSION,
   AGENT_PACKAGE_VERSION,
   AgentPackage as AgentPackageSchema,
+  PORTABLE_AGENT_VERSION,
 } from '@xbam/shared/contracts';
 import type {
   AgentPackage,
@@ -299,6 +300,7 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
     tools: 0,
     knowledgeSources: 0,
     memories: 0,
+    toolspace: 0,
   };
   const unreadable = (problem: string): AgentPackageSummary => ({
     valid: false,
@@ -324,6 +326,18 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
     parsed = JSON.parse(text);
   } catch {
     return unreadable('That file is not an AI17Z agent package. It is not readable as JSON.');
+  }
+
+  // Same order as `importAgent`, for the same reason: the schemas are strict,
+  // so a package written by a newer build fails to parse on a field this one
+  // does not know, and "Unrecognized key" is a worse thing to tell somebody
+  // than "update before reading it". Read from the raw document, because a
+  // parsed one does not exist yet.
+  const declaredAgent = (parsed as { agent?: { version?: unknown } } | null | undefined)?.agent?.version;
+  if (typeof declaredAgent === 'number' && declaredAgent > PORTABLE_AGENT_VERSION) {
+    return unreadable(
+      `That package was written by a newer AI17Z (agent format version ${declaredAgent}; this one reads ${PORTABLE_AGENT_VERSION}). Update before reading it.`,
+    );
   }
 
   const result = AgentPackageSchema.safeParse(parsed);
@@ -369,6 +383,11 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
   if (pkg.agent.capabilities.length > 0) {
     notes.push('Capabilities describe an intended permission profile. Importing grants nothing until you connect an account.');
   }
+  if (pkg.agent.toolspace.some((c) => c.permission !== 'DISABLED')) {
+    notes.push(
+      'This agent has capabilities switched on -- things it may reach for while it answers. Importing carries those decisions, and anything that writes still asks you or stays off until you say otherwise.',
+    );
+  }
 
   return {
     valid: true,
@@ -385,6 +404,7 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
       tools: pkg.agent.tools.length,
       knowledgeSources: pkg.agent.knowledge.length,
       memories: pkg.learned?.memories.length ?? 0,
+      toolspace: pkg.agent.toolspace.length,
     },
     hasAvatar: pkg.avatar !== null,
     notes,
@@ -442,9 +462,17 @@ export async function unpackAgent(input: {
     ...(input.name ? { name: input.name } : {}),
     createdBy: input.createdBy,
   });
-  const agentId = (created as { id?: string }).id ?? (created as { agentId?: string }).agentId!;
+  const agentId = created.agentId;
 
-  const skipped: string[] = [];
+  // Everything the document import could not carry, carried out to the caller.
+  //
+  // These were thrown away. `importAgent` has always reported the tool this
+  // installation does not have, the knowledge folder that is a path on somebody
+  // else's machine, the model role it could not set -- and unpacking a package
+  // took the agent id off the result and dropped the rest. `skipped` says "what
+  // could not be, and why. Never silent", and for a package it was silent about
+  // every one of them.
+  const skipped: string[] = [...created.notes];
   const imported = { memories: 0, avatar: false, credentials: 0 };
 
   if (pkg.avatar) {
