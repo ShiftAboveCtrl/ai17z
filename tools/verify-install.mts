@@ -71,6 +71,21 @@ function fail(what: string, detail: string): never {
 }
 
 /**
+ * Where the search for a free port starts.
+ *
+ * Not the 8000s. Those are where desktop software lives -- dev servers,
+ * browsers, and whatever a browser starts on your behalf -- and this gate spent
+ * two full runs failing in its last phase because Brave was holding 8600 on and
+ * off. A bind to `[::]` without IPV6_V6ONLY is dual-stack on Windows, so it
+ * took `0.0.0.0:8600` with it, and `docker compose up` said "ports are not
+ * available" after the phase had already installed twice to get there.
+ *
+ * A quieter range does not make the race impossible. It makes it rare enough
+ * that a red gate means something about AI17Z.
+ */
+const PORT_BASE = { web: 18300, api: 18400, db: 55600 } as const;
+
+/**
  * A port nothing is listening on, taken by binding it rather than guessing.
  *
  * Both stacks, because Docker publishes on both -- `0.0.0.0:PORT` *and*
@@ -357,9 +372,9 @@ async function attempt(label: string, stage: string): Promise<string> {
   await mkdir(data, { recursive: true });
 
   const ports: Ports = {
-    web: await freePort(8300),
-    api: await freePort(8400),
-    db: await freePort(55600),
+    web: await freePort(PORT_BASE.web),
+    api: await freePort(PORT_BASE.api),
+    db: await freePort(PORT_BASE.db),
   };
   // The Docker project is whatever the launcher decides and writes into the
   // environment file, so it is read back afterwards rather than guessed at.
@@ -572,9 +587,9 @@ async function sideBySide(stage: string): Promise<void> {
       // Ports are asked for one installation at a time, exactly as the wizard
       // does, so the second genuinely has to step over the first.
       const ports: Ports = {
-        web: await freePort(8320 + started.length * 10),
-        api: await freePort(8420 + started.length * 10),
-        db: await freePort(55620 + started.length * 10),
+        web: await freePort(PORT_BASE.web + 20 + started.length * 10),
+        api: await freePort(PORT_BASE.api + 20 + started.length * 10),
+        db: await freePort(PORT_BASE.db + 20 + started.length * 10),
       };
 
       say(`${label}: installing to ${program}`);
@@ -634,7 +649,11 @@ async function upgradeBody(stage: string): Promise<void> {
   await mkdir(program, { recursive: true });
   await mkdir(data, { recursive: true });
 
-  const ports: Ports = { web: await freePort(8500), api: await freePort(8600), db: await freePort(55700) };
+  const ports: Ports = {
+    web: await freePort(PORT_BASE.web + 200),
+    api: await freePort(PORT_BASE.api + 200),
+    db: await freePort(PORT_BASE.db + 100),
+  };
   const marker = `written-before-the-upgrade-${Date.now()}`;
 
   const projectOf = async (): Promise<string | null> => {
