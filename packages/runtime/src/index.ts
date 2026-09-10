@@ -57,3 +57,19 @@ export * from './xCapabilityContext';
 export * from './capabilityPermissions';
 export * from './capabilityActions';
 export * from './capabilityViews';
+/**
+ * Growth intelligence: reading what happened rather than deciding what to say.
+ *
+ * All pure, all separate from the reply path on purpose. A bridge score must
+ * never reach the engagement heuristic -- whether to answer somebody is about
+ * their message, never about who they are -- and each of these carries the
+ * reasons that produced it, because a number nobody can argue with is a number
+ * nobody can correct.
+ */
+export * from './bridge';
+export * from './opportunity';
+export * from './narratives';
+export * from './contentIntelligence';
+export * from './experiments';
+export * from './launches';
+export * from './growth';

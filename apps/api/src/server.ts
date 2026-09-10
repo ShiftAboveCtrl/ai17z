@@ -19,6 +19,7 @@ import { knowledgeRoutes } from './routes/knowledge';
 import { personaRoutes } from './routes/persona';
 import { artifactRoutes } from './routes/artifacts';
 import { settingsRoutes } from './routes/settings';
+import { growthRoutes } from './routes/growth';
 
 const log = createLogger('api');
 
@@ -80,6 +81,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(personaRoutes);
   await app.register(artifactRoutes);
   await app.register(settingsRoutes);
+  await app.register(growthRoutes);
 
   app.addHook('onResponse', async (request, reply) => {
     if (reply.statusCode >= 500) {

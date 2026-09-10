@@ -121,3 +121,54 @@ export async function growth(remotePostId: string): Promise<{ metric: string; fr
     .map((metric) => ({ metric: String(metric), from: first[metric] as number | null, to: last[metric] as number | null }))
     .filter((row): row is { metric: string; from: number; to: number } => row.from !== null && row.to !== null);
 }
+
+export interface PublishedPostRow extends Record<string, unknown> {
+  action_id: string;
+  remote_post_id: string;
+  text: string;
+  published_at: string;
+  action_type: string;
+  impressions: number | null;
+  likes: number | null;
+  reposts: number | null;
+  replies: number | null;
+  observed_at: string | null;
+}
+
+/**
+ * What this agent actually published, with the freshest reading of each.
+ *
+ * Anchored on `actions` rather than on `post_analytics`, because a post nobody
+ * has measured yet is still a post the agent published -- and a query that
+ * started from the readings would silently make the unmeasured ones not exist,
+ * which is exactly the shape that turns "we have not looked" into "it got
+ * nothing".
+ *
+ * Real actions only. A dry run is not a public position, so it did not happen
+ * as far as anything measuring performance is concerned.
+ */
+export async function publishedWithReadings(agentId: string, limit = 100): Promise<PublishedPostRow[]> {
+  return query<PublishedPostRow>(
+    `SELECT a.id                                 AS action_id,
+            a.remote_action_id                   AS remote_post_id,
+            COALESCE(a.payload->>'text', '')     AS text,
+            COALESCE(a.executed_at, a.created_at) AS published_at,
+            a.type                               AS action_type,
+            p.impressions, p.likes, p.reposts, p.replies, p.observed_at
+       FROM actions a
+       LEFT JOIN LATERAL (
+              SELECT impressions, likes, reposts, replies, observed_at
+                FROM post_analytics
+               WHERE post_analytics.remote_post_id = a.remote_action_id
+               ORDER BY observed_at DESC
+               LIMIT 1
+            ) p ON true
+      WHERE a.agent_id = $1
+        AND a.dry_run = false
+        AND a.status = 'EXECUTED'
+        AND a.remote_action_id IS NOT NULL
+      ORDER BY COALESCE(a.executed_at, a.created_at) DESC
+      LIMIT $2`,
+    [agentId, Math.min(Math.max(limit, 1), 500)],
+  );
+}
