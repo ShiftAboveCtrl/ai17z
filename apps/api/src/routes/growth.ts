@@ -151,6 +151,22 @@ export async function growthRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * What this agent published, with the freshest reading of each.
+   *
+   * Anchored on what was published rather than on what was measured, so a post
+   * nobody has looked at yet is present with its figures absent. A list built
+   * the other way round turns "we have not looked" into "it got nothing".
+   */
+  app.get(
+    '/api/agents/:id/growth/posts',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      return { items: await postAnalyticsRepo.publishedWithReadings(agent.id, 60) };
+    }),
+  );
+
   /** Every reading taken of one post, oldest first, which is how it grew. */
   app.get(
     '/api/agents/:id/growth/posts/:postId',
