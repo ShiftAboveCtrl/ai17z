@@ -39,8 +39,10 @@ afterAll(() => {
 
 interface ChildResult {
   granted: number;
-  /** How many reservations this process actually made and got an answer to. */
-  attempted: number;
+  /** Reservations this process began. */
+  started: number;
+  /** Reservations that came back with an answer. */
+  completed: number;
   /** False when the child ran without ever being let go, which proves nothing. */
   released: boolean;
 }
@@ -54,34 +56,42 @@ async function child(args: string[], env: NodeJS.ProcessEnv = {}): Promise<Child
   });
   const line = stdout.trim().split('\n').at(-1) ?? '{}';
   const parsed = JSON.parse(line) as Partial<ChildResult>;
-  return { granted: parsed.granted ?? 0, attempted: parsed.attempted ?? 0, released: parsed.released ?? false };
+  return {
+    granted: parsed.granted ?? 0,
+    started: parsed.started ?? 0,
+    completed: parsed.completed ?? 0,
+    released: parsed.released ?? false,
+  };
 }
 
 /** Runs children that must genuinely contend, and insists that they did. */
 async function contending(args: string[][], attemptsEach: number): Promise<number[]> {
   const line = createBarrier();
   barriers.push(line);
+  // Named rather than counted, so a timeout can say which child never arrived.
+  const ids = args.map((_, index) => `child-${index}`);
   const running = args.map((argv, index) =>
-    child(argv, { QUOTA_CHILD_BARRIER: line.directory, QUOTA_CHILD_ID: String(index) }),
+    child(argv, { QUOTA_CHILD_BARRIER: line.directory, QUOTA_CHILD_ID: ids[index]! }),
   );
 
   // Both halves are asserted, and the parent's half first: if the children
   // never met, whatever counts they produced say nothing about contention, and
   // the old version let that surface later as a confusing number.
-  const arrival = await line.releaseWhenReady(args.length);
+  const arrival = await line.releaseWhenReady(ids);
   const results = await Promise.all(running);
 
   expect(
     arrival.released,
-    `only ${arrival.arrived} of ${arrival.expected} children reached the line: the barrier did not hold`,
+    `these children never reached the line: ${arrival.missing.join(', ') || 'none'} -- the barrier did not hold`,
   ).toBe(true);
+
+  // Participation, proved per child. This is what makes a grant count of zero
+  // meaningful: that process competed for every one of its attempts and lost
+  // them all, which is participation rather than absence.
   for (const [index, result] of results.entries()) {
-    expect(result.released, `child ${index} ran without being released`).toBe(true);
-    // Both processes really did the whole workload against the shared budget.
-    // This is what makes a grant count of zero meaningful: that child competed
-    // for every one of its attempts and lost them all, which is participation,
-    // not absence.
-    expect(result.attempted, `child ${index} did not complete its attempts`).toBe(attemptsEach);
+    expect(result.released, `${ids[index]} ran without being released`).toBe(true);
+    expect(result.started, `${ids[index]} did not begin all its attempts`).toBe(attemptsEach);
+    expect(result.completed, `${ids[index]} did not complete all its attempts`).toBe(attemptsEach);
   }
   return results.map((result) => result.granted);
 }
