@@ -34,8 +34,8 @@ describe('a barrier holds everybody or says it did not', () => {
     writeFileSync(join(barrier.directory, 'ready-0'), '1');
     writeFileSync(join(barrier.directory, 'ready-1'), '1');
 
-    const outcome = await barrier.releaseWhenReady(2);
-    expect(outcome).toMatchObject({ released: true, arrived: 2, expected: 2 });
+    const outcome = await barrier.releaseWhenReady(['0', '1']);
+    expect(outcome).toMatchObject({ released: true, arrived: ['0', '1'], missing: [] });
     expect(existsSync(join(barrier.directory, 'go'))).toBe(true);
   });
 
@@ -44,12 +44,12 @@ describe('a barrier holds everybody or says it did not', () => {
     writeFileSync(join(barrier.directory, 'ready-0'), '1');
 
     // The second arrives late. The parent must still be waiting for it.
-    const releasing = barrier.releaseWhenReady(2);
+    const releasing = barrier.releaseWhenReady(['0', '1']);
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(existsSync(join(barrier.directory, 'go'))).toBe(false);
 
     writeFileSync(join(barrier.directory, 'ready-1'), '1');
-    expect(await releasing).toMatchObject({ released: true, arrived: 2 });
+    expect(await releasing).toMatchObject({ released: true, missing: [] });
   });
 
   it('reports a timeout instead of swallowing it', async () => {
@@ -59,24 +59,27 @@ describe('a barrier holds everybody or says it did not', () => {
     const barrier = make(100);
     writeFileSync(join(barrier.directory, 'ready-0'), '1');
 
-    const outcome = await barrier.releaseWhenReady(2);
-    expect(outcome).toMatchObject({ released: false, arrived: 1, expected: 2 });
+    const outcome = await barrier.releaseWhenReady(['0', '1']);
+    // It names the one that never arrived, so somebody reading the failure
+    // looks at one child rather than at both.
+    expect(outcome).toMatchObject({ released: false, arrived: ['0'], missing: ['1'] });
   });
 
   it('still lets waiting children go when it times out', async () => {
     // Otherwise a child that did arrive sits until its own deadline, turning a
     // clear failure into a slow one.
     const barrier = make(100);
-    await barrier.releaseWhenReady(2);
+    await barrier.releaseWhenReady(['0', '1']);
     expect(existsSync(join(barrier.directory, 'go'))).toBe(true);
   });
 
   it('cannot hang when no child ever arrives', async () => {
     const barrier = make(100);
     const started = Date.now();
-    const outcome = await barrier.releaseWhenReady(3);
+    const outcome = await barrier.releaseWhenReady(['a', 'b', 'c']);
     expect(outcome.released).toBe(false);
-    expect(outcome.arrived).toBe(0);
+    expect(outcome.arrived).toEqual([]);
+    expect(outcome.missing).toEqual(['a', 'b', 'c']);
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 });
@@ -98,8 +101,8 @@ describe('one barrier cannot be released by another', () => {
 
     const now = make(100);
     expect(readdirSync(now.directory)).toEqual([]);
-    const outcome = await now.releaseWhenReady(1);
-    expect(outcome).toMatchObject({ released: false, arrived: 0 });
+    const outcome = await now.releaseWhenReady(['0']);
+    expect(outcome).toMatchObject({ released: false, arrived: [], missing: ['0'] });
   });
 });
 
@@ -112,7 +115,7 @@ describe('a child at the line', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(existsSync(join(barrier.directory, 'ready-a'))).toBe(true);
 
-    expect(await barrier.releaseWhenReady(1)).toMatchObject({ released: true });
+    expect(await barrier.releaseWhenReady(['a'])).toMatchObject({ released: true });
     expect(await waiting).toBe(true);
   });
 

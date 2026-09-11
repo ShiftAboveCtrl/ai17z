@@ -39,13 +39,17 @@ export interface Barrier {
   /** Passed to each child, which writes its ready file here. */
   readonly directory: string;
   /**
-   * Waits for every child, then releases them all.
+   * Waits for every named child, then releases them all.
    *
-   * Returns what actually happened rather than assuming it worked: `arrived`
-   * short of `expected` means the barrier did not do its job and whatever the
-   * children then produced proves nothing about contention.
+   * Takes the ids rather than a count so a timeout can say **which** children
+   * never arrived. "1 of 2 arrived" sends somebody looking at both; "child b
+   * never arrived" sends them at one.
+   *
+   * Returns what actually happened rather than assuming it worked: anything
+   * missing means the barrier did not do its job, and whatever the children
+   * then produced proves nothing about contention.
    */
-  releaseWhenReady(expected: number): Promise<{ released: boolean; arrived: number; expected: number }>;
+  releaseWhenReady(ids: readonly string[]): Promise<{ released: boolean; arrived: string[]; missing: string[] }>;
   cleanup(): void;
 }
 
@@ -59,21 +63,29 @@ export function createBarrier(options: { timeoutMs?: number } = {}): Barrier {
   return {
     directory,
 
-    async releaseWhenReady(expected: number) {
+    async releaseWhenReady(ids: readonly string[]) {
       const giveUpAt = Date.now() + timeoutMs;
-      let arrived = 0;
+      let arrived: string[] = [];
       for (;;) {
-        arrived = readdirSync(directory).filter((name) => name.startsWith('ready-')).length;
-        if (arrived >= expected) break;
+        const present = new Set(
+          readdirSync(directory)
+            .filter((name) => name.startsWith('ready-'))
+            .map((name) => name.slice('ready-'.length)),
+        );
+        arrived = ids.filter((id) => present.has(id));
+        if (arrived.length >= ids.length) break;
         if (Date.now() >= giveUpAt) break;
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
 
       // Written even on a timeout, so children still waiting are let go and
-      // exit rather than sitting until their own deadline -- but the caller is
-      // told, which is the part the old version left out.
+      // exit rather than sitting until their own deadline. That keeps a clear
+      // failure from also being a slow one -- but the caller is told it timed
+      // out, which is the part the old version left out. A timeout must never
+      // read as a normal release.
       writeFileSync(join(directory, 'go'), '1');
-      return { released: arrived >= expected, arrived, expected };
+      const missing = ids.filter((id) => !arrived.includes(id));
+      return { released: missing.length === 0, arrived, missing };
     },
 
     cleanup() {

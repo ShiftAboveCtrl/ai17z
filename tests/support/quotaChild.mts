@@ -32,37 +32,43 @@ async function waitForRelease(): Promise<boolean> {
   return waitAtBarrier(directory, id);
 }
 
-async function throughDatabase(): Promise<{ granted: number; attempted: number }> {
+async function throughDatabase(): Promise<{ granted: number; started: number; completed: number }> {
   const [key, capacity, intervalMs, attempts] = rest;
   // All at once, deliberately. Sequential reservations are a round trip apart,
   // which is long enough that two processes rarely have a transaction open
   // together -- so a sequential test passes whether or not anything is
   // serialising them, which is exactly the green that proves nothing. Fired
   // together, the reads genuinely overlap and only the lock keeps the sum right.
+  let started = 0;
   const outcomes = await Promise.all(
-    Array.from({ length: Number(attempts) }, () =>
-      quotaRepo.reserve({
+    Array.from({ length: Number(attempts) }, () => {
+      started += 1;
+      return quotaRepo.reserve({
         quotaKey: key!,
         windows: [{ capacity: Number(capacity), intervalMs: Number(intervalMs), label: 'test window' }],
         weight: 1,
-      }),
-    ),
+      });
+    }),
   );
-  // `attempted` is the count that actually came back, not the number asked
-  // for: it is evidence this process really did the work, which is what makes
-  // a grant count of zero meaningful rather than suspicious.
-  return { granted: outcomes.filter((outcome) => outcome.granted).length, attempted: outcomes.length };
+  // Started and completed separately. `completed` is what actually came back,
+  // not the number asked for -- evidence this process really did the work,
+  // which is what makes a grant count of zero meaningful rather than
+  // suspicious. They differ only if a reservation threw, and then the child
+  // exits non-zero anyway.
+  return { granted: outcomes.filter((outcome) => outcome.granted).length, started, completed: outcomes.length };
 }
 
-async function throughFiles(): Promise<{ granted: number; attempted: number }> {
+async function throughFiles(): Promise<{ granted: number; started: number; completed: number }> {
   const [root, key, capacity, intervalMs, attempts, gapMs] = rest;
   const coordinator = new MachineQuotaCoordinator(root!);
   const window = { ...perSecond(Number(capacity), { scope: 'MACHINE' }), intervalMs: Number(intervalMs) };
   let granted = 0;
-  let attempted = 0;
+  let started = 0;
+  let completed = 0;
   for (let i = 0; i < Number(attempts); i += 1) {
+    started += 1;
     const outcome = await coordinator.reserve({ key: key!, windows: [window], weight: 1, now: Date.now() });
-    attempted += 1;
+    completed += 1;
     if (outcome.granted) granted += 1;
     // A gap, so two children genuinely interleave. One reservation is a few
     // file operations and takes well under a millisecond, so without it a whole
@@ -71,7 +77,7 @@ async function throughFiles(): Promise<{ granted: number; attempted: number }> {
     const gap = Number(gapMs);
     if (Number.isFinite(gap) && gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
   }
-  return { granted, attempted };
+  return { granted, started, completed };
 }
 
 try {
