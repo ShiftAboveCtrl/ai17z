@@ -58,6 +58,17 @@ export async function bootstrapRuntime(): Promise<void> {
   // unit test and wrong for an installation: a container worker and a native
   // worker each holding one would each believe they had the whole allowance,
   // and the endpoint would be shown twice what AI17Z thought it was sending.
+  //
+  // Which processes this has to cover, checked rather than assumed -- a process
+  // that reaches `ask()` without coming through here would quietly spend a
+  // budget nobody else could see:
+  //
+  //   apps/api      -- capability invocations from the interface. Calls this.
+  //   apps/worker   -- the pipeline and the capability loop. Calls this.
+  //   import-ai4cz  -- calls this, except on a dry run, which reaches nothing.
+  //   scenarios/run -- ingests events and stops; the worker executes them, so
+  //                    it never reaches an upstream itself.
+  //   unit tests    -- deliberately left with the in-memory one.
   const quota = new InstallationQuotaCoordinator();
   useQuotaCoordinator(quota);
   log.info('upstream quota coordinated', quota.describe());
