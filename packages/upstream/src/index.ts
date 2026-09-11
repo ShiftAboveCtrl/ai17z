@@ -19,3 +19,5 @@ export * from './families/defi';
 export * from './families/tokenRisk';
 export * from './families/solana';
 export * from './exactNumbers';
+export * from './families/bitcoin';
+export * from './bitcoinAddress';
