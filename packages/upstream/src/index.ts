@@ -21,4 +21,6 @@ export * from './families/solana';
 export * from './exactNumbers';
 export * from './families/bitcoin';
 export * from './families/governance';
+export * from './families/ipfs';
+export * from './cid';
 export * from './bitcoinAddress';
