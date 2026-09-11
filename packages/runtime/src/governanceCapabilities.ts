@@ -303,6 +303,16 @@ const proposal = defineCapability({
     state: z.string().nullable(),
     opensAt: z.string().nullable(),
     closesAt: z.string().nullable(),
+    /**
+     * The block voting power was measured at.
+     *
+     * Not decoration. Snapshot weighs each voter by what they held at this
+     * block, not by what they hold now -- so "these addresses control the
+     * outcome" is a statement about that moment, and tokens bought or sold
+     * since do not count. Reporting the result without it invites a reader to
+     * check today's balances and find they disagree.
+     */
+    measuredAtBlock: z.number().nullable(),
     outcomes: z.array(Outcome),
     /** The option with the most power, which is not the same as "it passed". */
     leading: z.string().nullable(),
@@ -332,6 +342,7 @@ const proposal = defineCapability({
         state: null,
         opensAt: null,
         closesAt: null,
+        measuredAtBlock: null,
         outcomes: [],
         leading: null,
         totalVotingPower: null,
@@ -361,6 +372,12 @@ const proposal = defineCapability({
           'Ask governance.read_votes to see how concentrated it was.',
       );
     }
+    if (row.snapshot) {
+      caveats.push(
+        `Voting power was measured at block ${String(row.snapshot)}, so it reflects holdings at that moment ` +
+          'rather than now.',
+      );
+    }
     // A quorum of zero is Snapshot's way of saying none was set, which is not
     // the same as one that was met.
     if (quorum === 0) {
@@ -378,6 +395,7 @@ const proposal = defineCapability({
       state: typeof row.state === 'string' ? row.state : null,
       opensAt: typeof row.start === 'number' ? new Date(row.start * 1000).toISOString() : null,
       closesAt: typeof row.end === 'number' ? new Date(row.end * 1000).toISOString() : null,
+      measuredAtBlock: typeof row.snapshot === 'number' ? row.snapshot : Number(row.snapshot) || null,
       outcomes: ranked,
       leading: ranked.length > 0 ? [...ranked].sort((a, b) => b.score - a.score)[0]!.choice : null,
       totalVotingPower: total,

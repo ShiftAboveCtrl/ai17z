@@ -151,6 +151,19 @@ describe('a proposal', () => {
     expect(answer.caveats.join(' ')).toMatch(/not by itself an onchain action/i);
   });
 
+  it('says which block the voting power was measured at', async () => {
+    // Snapshot weighs each voter by what they held at this block, not now. A
+    // result reported without it invites a reader to check today's balances,
+    // find they disagree, and conclude the numbers are wrong.
+    reply = answering({ proposal: { ...closed, snapshot: 25527225 } });
+    const answer = await run<{ measuredAtBlock: number | null; caveats: string[] }>('governance.read_proposal', {
+      proposal: PROPOSAL,
+    });
+    expect(answer.measuredAtBlock).toBe(25527225);
+    expect(answer.caveats.join(' ')).toMatch(/measured at block 25527225/i);
+    expect(answer.caveats.join(' ')).toMatch(/rather than now/i);
+  });
+
   it('says power is not headcount, and gives both', async () => {
     reply = answering({ proposal: closed });
     const answer = await run<{ totalVotingPower: number | null; voters: number | null; caveats: string[] }>(
