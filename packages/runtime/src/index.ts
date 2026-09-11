@@ -81,6 +81,7 @@ export * from './toolpackViews';
 export * from './defiCapabilities';
 export * from './tokenRiskCapabilities';
 export * from './feedCapabilities';
+export * from './scholarCapabilities';
 export * from './feedWatcher';
 export * from './webHistoryCapabilities';
 export * from './solanaCapabilities';

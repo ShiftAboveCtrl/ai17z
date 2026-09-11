@@ -18,6 +18,7 @@ export * from './families/market';
 export * from './families/defi';
 export * from './families/tokenRisk';
 export * from './families/feed';
+export * from './families/scholar';
 export * from './families/webHistory';
 export * from './families/solana';
 export * from './exactNumbers';
