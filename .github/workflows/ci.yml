@@ -11,19 +11,25 @@ on:
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Cancel superseded runs on a pull request, never on main.
+  # A pull request groups by branch; a push groups by commit.
   #
-  # On a branch this is right: only the newest push matters, and the older run
-  # is testing something nobody will merge. On main it is the opposite, and it
-  # cost real signal -- a run of sequential commits left most of them never
-  # tested at all, because each push killed the run before it. Solana was
-  # pushed, cancelled, and never verified; whatever was wrong then surfaced two
-  # commits later against a diff containing two waves instead of one, which is
-  # the difference between reading a failure and hunting for it.
+  # That one difference is the whole fix. On a branch only the newest push
+  # matters, so they share a group and the older run is cancelled -- it was
+  # testing something nobody will merge. On main every commit is a thing that
+  # happened, so each gets a group of its own, which means nothing to cancel and
+  # a completed verdict for each one.
   #
-  # Every commit on main gets its own verdict. They queue, which is the point.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # It was `github.ref` for both, and that cost real signal: a run of sequential
+  # pushes to main left most of them never tested, because each push killed the
+  # run before it. Solana was pushed, cancelled, and never verified; what was
+  # wrong surfaced two commits later against a diff carrying two waves instead
+  # of one, which is the difference between reading a failure and hunting for it.
+  #
+  # Grouping by commit rather than turning cancellation off for main: a shared
+  # group with cancelling disabled would serialise every push into a queue, so
+  # the fifth commit waits an hour to find out. These are independent runs.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
 
 env:
   # A throwaway key, generated for this run and thrown away with it. The real
