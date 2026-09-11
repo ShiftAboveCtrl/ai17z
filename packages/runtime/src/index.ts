@@ -81,3 +81,4 @@ export * from './toolpackViews';
 export * from './defiCapabilities';
 export * from './tokenRiskCapabilities';
 export * from './solanaCapabilities';
+export * from './bitcoinCapabilities';

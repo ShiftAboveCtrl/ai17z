@@ -69,7 +69,7 @@ export const TOOLPACKS: Toolpack[] = [
     // things up on chains" is one decision a person makes once; a pack per
     // chain would turn it into a decision per chain, which is the flat list of
     // switches these exist to replace.
-    prefixes: ['chain.', 'contract.', 'defi.', 'market.', 'solana.', 'token.'],
+    prefixes: ['bitcoin.', 'chain.', 'contract.', 'defi.', 'market.', 'solana.', 'token.'],
   },
 ];
 
