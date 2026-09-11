@@ -64,12 +64,14 @@ export const TOOLPACKS: Toolpack[] = [
   {
     id: 'crypto',
     name: 'Crypto & Onchain',
-    summary: 'Verify contracts, read balances and transactions, check what a token is worth, and see where value is locked.',
+    summary:
+      'Verify contracts, read balances and transactions across chains, check what a token is worth, see where ' +
+      'value is locked, and read what a DAO has voted on.',
     // Solana sits here rather than in a pack of its own. "Let my agent look
     // things up on chains" is one decision a person makes once; a pack per
     // chain would turn it into a decision per chain, which is the flat list of
     // switches these exist to replace.
-    prefixes: ['bitcoin.', 'chain.', 'contract.', 'defi.', 'market.', 'solana.', 'token.'],
+    prefixes: ['bitcoin.', 'chain.', 'contract.', 'defi.', 'governance.', 'market.', 'solana.', 'token.'],
   },
 ];
 

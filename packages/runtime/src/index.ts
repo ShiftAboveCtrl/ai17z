@@ -82,3 +82,4 @@ export * from './defiCapabilities';
 export * from './tokenRiskCapabilities';
 export * from './solanaCapabilities';
 export * from './bitcoinCapabilities';
+export * from './governanceCapabilities';
