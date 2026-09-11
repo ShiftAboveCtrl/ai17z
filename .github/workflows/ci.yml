@@ -12,7 +12,18 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs on a pull request, never on main.
+  #
+  # On a branch this is right: only the newest push matters, and the older run
+  # is testing something nobody will merge. On main it is the opposite, and it
+  # cost real signal -- a run of sequential commits left most of them never
+  # tested at all, because each push killed the run before it. Solana was
+  # pushed, cancelled, and never verified; whatever was wrong then surfaced two
+  # commits later against a diff containing two waves instead of one, which is
+  # the difference between reading a failure and hunting for it.
+  #
+  # Every commit on main gets its own verdict. They queue, which is the point.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # A throwaway key, generated for this run and thrown away with it. The real
