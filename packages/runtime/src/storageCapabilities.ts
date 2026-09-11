@@ -23,11 +23,15 @@ import { IPFS_FAMILY, ask, familyHealth, parseCid, type IpfsQuery, type IpfsResu
  *   following of links found inside it. A document that says "now fetch this
  *   other thing" does not get to.
  *
- * ### The gateway is checked rather than trusted
+ * ### The gateway is checked where the identifier allows it, and only there
  *
- * A CID is a hash of the content, so `verification` says whether the bytes were
- * actually what was asked for. `UNVERIFIABLE` is reported honestly rather than
- * quietly rounded up to fine -- see `cid.ts` for which forms can be checked.
+ * A CID names an IPLD block, not a file. When the codec is `raw` the block *is*
+ * the content and the bytes can be hashed against it, which is real
+ * verification of the gateway. When it is `dag-pb` -- every `Qm...`, and any
+ * file over one chunk -- it commits to a UnixFS node whose children a gateway
+ * `GET` does not return, and `UNVERIFIABLE` is reported rather than rounded up
+ * to fine. `kind` says which case it was, so an agent can tell "checked and it
+ * matched" from "there was nothing here to check". See `cid.ts`.
  */
 
 const ProvenanceOut = z.object({
@@ -68,10 +72,20 @@ async function storageReadable(): Promise<{ status: 'AVAILABLE' | 'UNAVAILABLE';
   return { status: 'UNAVAILABLE', why: 'No storage gateway is answering.' };
 }
 
+/**
+ * What each outcome actually means, in the reader's terms.
+ *
+ * Worded against the codec rather than in general, because "verified" and "we
+ * could not check" are different claims and flattening them is how a
+ * cryptographic guarantee gets invented.
+ */
 const VERIFICATION_WORDS: Record<string, string> = {
-  VERIFIED: 'The bytes were checked against the identifier and match it, so the gateway served the right content.',
+  VERIFIED:
+    'This identifier names a single raw block, so the bytes were hashed and compared against it and they match. ' +
+    'The gateway served exactly what was asked for.',
   UNVERIFIABLE:
-    'The identifier does not commit directly to these bytes, so the gateway was not checked. The content is what it served, which is not the same as what was asked for.',
+    'This identifier does not commit to these bytes directly, so nothing was checked. The content is what the ' +
+    'gateway served, which is not the same as proving it is what was asked for.',
 };
 
 const read = defineCapability({
@@ -94,6 +108,8 @@ const read = defineCapability({
     contentType: z.string().nullable(),
     /** VERIFIED or UNVERIFIABLE. A mismatch never reaches here. */
     verification: z.string(),
+    /** RAW_BLOCK, DAG_PB, OTHER_CODEC or UNSUPPORTED_HASH -- what decided it. */
+    kind: z.string(),
     verificationNote: z.string(),
     /** Said before the content, every time. */
     handling: z.string(),
@@ -124,7 +140,10 @@ const read = defineCapability({
       bytes: value.bytes,
       contentType: value.contentType,
       verification: value.verification,
-      verificationNote: VERIFICATION_WORDS[value.verification] ?? value.verificationNote,
+      kind: value.kind,
+      // The generic sentence for the outcome, then the specific reason this
+      // identifier produced it.
+      verificationNote: `${VERIFICATION_WORDS[value.verification] ?? ''} ${value.verificationNote}`.trim(),
       handling: QUOTED,
       content: value.text,
       json,
@@ -147,6 +166,7 @@ const describe = defineCapability({
     input: z.string(),
     isIdentifier: z.boolean(),
     cid: z.string().nullable(),
+    kind: z.string().nullable(),
     canBeVerified: z.boolean(),
     note: z.string(),
   }),
@@ -161,6 +181,7 @@ const describe = defineCapability({
         input: input.cid,
         isIdentifier: false,
         cid: null,
+        kind: null,
         canBeVerified: false,
         note: 'That is not a content identifier.',
       };
@@ -169,6 +190,7 @@ const describe = defineCapability({
       input: input.cid,
       isIdentifier: true,
       cid: parsed.cid,
+      kind: parsed.kind,
       canBeVerified: parsed.sha256 !== null,
       note: parsed.why,
     };

@@ -11,8 +11,10 @@ import { parseExactJson } from '../exactNumbers';
  *
  * ### What the research found, and why this is shaped the way it is
  *
- * Probed September 2026, before any of this was written: there is no keyless
- * general web search API that works.
+ * Probed September 2026, before any of this was written. **No suitable keyless
+ * general-purpose search upstream was proven from the candidates tested** --
+ * which is the honest form of the claim, and narrower than "none exists". Four
+ * candidates were tried and all four were unusable:
  *
  *   `searx.be` -- 200, carrying an HTML "Verifying..." bot challenge.
  *   `search.inetol.net` -- 200, carrying "Security check - Substation".
@@ -22,13 +24,15 @@ import { parseExactJson } from '../exactNumbers';
  * The first two matter most, and they are the same trap as an IPFS gateway
  * serving a notice page: **a 200 whose body is not the answer.** Anything
  * switching on the status code alone would have fed a challenge page to a model
- * as search results.
+ * as search results. A SearXNG upstream added later would have to treat a
+ * challenge page as a full stop -- recognised, engine abandoned, gap recorded
+ * -- exactly as browser search already does.
  *
  * So this does not pretend to be web search. AI17Z already searches the open
- * web through the browser that is already running, which exists precisely
- * because these APIs do not work, and there is no second research system here.
- * What this adds is the thing that *is* freely readable without a browser: two
- * reference sources, for "what is this" rather than "what happened today".
+ * web through the browser that is already running, and through a provider where
+ * one is configured; there is no second research system here and this is not
+ * one. What this adds is the thing that *is* freely readable without a browser:
+ * two reference sources, for "what is this" rather than "what happened today".
  *
  * ### Two families rather than two members
  *

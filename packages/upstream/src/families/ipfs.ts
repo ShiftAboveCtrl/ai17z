@@ -4,18 +4,25 @@ import { perMinute, perSecond } from '../quota';
 import { registerUpstream } from '../registry';
 import { safeFetch } from '../http';
 import { UpstreamFailure, classifyStatus, classifyThrown } from '../failures';
-import { parseCid, verifyCid, type CidVerification } from '../cid';
+import { parseCid, verifyCid, type CidKind, type CidVerification } from '../cid';
 
 /**
  * Fetching content-addressed storage through a gateway that is not trusted.
  *
- * ### The gateway is checked, not believed
+ * ### The gateway is checked where the identifier allows it
  *
  * Every other family in this package has to trust its upstream to some degree:
  * if a node lies about a balance there is nothing local that can tell. IPFS is
- * the exception, because the CID is a hash of the content. So the bytes are
- * verified against the CID that was asked for, and a gateway that returns
- * something else is reported as a mismatch rather than passed on.
+ * partly an exception -- but only partly, and the size of the exception is
+ * exactly the codec.
+ *
+ * A CID names an IPLD **block**, not a file. When the codec is `raw` the block
+ * is the content, so the body can be hashed and compared and a gateway that
+ * substitutes something else is caught. When it is `dag-pb` -- every `Qm...`,
+ * and any file bigger than one chunk -- the CID commits to a UnixFS node whose
+ * children a plain gateway `GET` never returns, so there is nothing here to
+ * check it against and the answer says `UNVERIFIABLE` rather than inventing an
+ * assurance. See `cid.ts`.
  *
  * That is not a hypothetical protection. Probed September 2026, `ipfs.io`
  * answered a request for a known CID with 188 bytes of "This IPFS gateway is
@@ -38,10 +45,12 @@ import { parseCid, verifyCid, type CidVerification } from '../cid';
  *     from here, so not registered on a guess -- the `eth.llamarpc.com` rule.
  *   `w3s.link` -- resolves, and the connection failed anyway.
  *
- * One member, then. Worth saying that the usual risk of a single source is
- * smaller here than anywhere else in this package: the content is verified
- * independently of who served it, so adding gateways later is a question of
- * availability rather than of trust.
+ * One member, then. For a `raw` identifier the usual risk of a single source is
+ * smaller here than anywhere else in this package, because the content is
+ * checked independently of who served it -- so adding gateways later is a
+ * question of availability rather than of trust. For `dag-pb` it is not: there
+ * the gateway is trusted like any other upstream, and a second one would be a
+ * second opinion rather than a redundant transport. The answer says which.
  */
 
 export const IPFS_FAMILY = 'ipfs';
@@ -61,6 +70,8 @@ export interface IpfsResult {
   bytes: number;
   contentType: string | null;
   verification: CidVerification;
+  /** Which kind of identifier it was, which is what decided the above. */
+  kind: CidKind;
   /** Why it could or could not be verified, in a sentence. */
   verificationNote: string;
 }
@@ -125,6 +136,7 @@ function gateway(input: GatewayOptions): Upstream<IpfsQuery, IpfsResult> {
 
         return {
           cid: parsed.cid,
+          kind: parsed.kind,
           text: response.text,
           bytes: body.length,
           contentType: response.headers.get('content-type'),

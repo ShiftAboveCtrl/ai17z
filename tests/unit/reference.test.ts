@@ -4,9 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * Looking a term up, and the three ways this could mislead.
  *
  * **By pretending to be web search.** It is not. AI17Z searches the open web
- * through the browser that is already running; this reads reference works. A
- * model asked what happened this morning must not be handed an encyclopedia
- * article written last year and report it as current.
+ * through the browser that is already running and through a provider where one
+ * is configured; this reads reference works. A model asked what happened this
+ * morning must not be handed an encyclopedia article written last year and
+ * report it as current.
+ *
+ * (The probing that led here proved something narrower than it first looked:
+ * no *suitable keyless* general-purpose search upstream was found among the
+ * candidates tested. That is not the same as "none exists", and the source
+ * comment says the narrower thing.)
  *
  * **By reading an empty field as an answer.** DuckDuckGo returns every field as
  * an empty string when it has nothing. Treating that as an abstract reports
@@ -190,8 +196,26 @@ describe('what it says about itself', () => {
     // The point: a model choosing from a menu must not read this as "search the
     // web", because it will then use it for a question about today.
     expect(text).toMatch(/not a web search/);
-    expect(text).toMatch(/wrong tool for anything recent/);
+    expect(text).toMatch(/will not know what happened today/);
     expect(capability.id).not.toMatch(/^web\./);
+  });
+
+  it('names the misuses it is most likely to be reached for', () => {
+    // A model does not read "reference work" as excluding a price. Naming the
+    // cases is what actually stops the misuse, so they are named.
+    const description = getCapability('reference.look_up')!.description.toLowerCase();
+    for (const misuse of ['breaking news', 'current price', 'role right now', 'latest release', 'weather']) {
+      expect(description).toContain(misuse);
+    }
+    // And it says what to do instead, which is the part that changes behaviour.
+    expect(description).toMatch(/say you could not check/);
+  });
+
+  it('says when each quote was read, so freshness can be stated', async () => {
+    replies['wikipedia.org'] = wikiFound('Ethereum', 'Ethereum is a decentralized blockchain.');
+    replies['duckduckgo.com'] = DDG_NONE;
+    const answer = (await look()) as unknown as { entries: { retrievedAt: string }[] };
+    expect(answer.entries[0]!.retrievedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it('carries the limitation on every answer, not only when it fails', async () => {
