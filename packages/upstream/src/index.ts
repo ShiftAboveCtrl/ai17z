@@ -17,6 +17,7 @@ export * from './families/contract';
 export * from './families/market';
 export * from './families/defi';
 export * from './families/tokenRisk';
+export * from './families/entities';
 export * from './families/feed';
 export * from './families/scholar';
 export * from './families/webHistory';
