@@ -80,6 +80,7 @@ export * from './contractCapabilities';
 export * from './toolpackViews';
 export * from './defiCapabilities';
 export * from './tokenRiskCapabilities';
+export * from './entityCapabilities';
 export * from './feedCapabilities';
 export * from './scholarCapabilities';
 export * from './feedWatcher';
