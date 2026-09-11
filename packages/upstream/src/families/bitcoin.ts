@@ -27,12 +27,28 @@ import { parseExactJson } from '../exactNumbers';
  * travels with every transaction, and an unconfirmed one is reported as
  * unconfirmed rather than as a transaction.
  *
- * ### Two members, genuinely interchangeable
+ * ### Two members: redundant transport, NOT independent confirmation
  *
  * Both are Esplora, Blockstream's API, and the responses are byte-identical:
  * probed in September 2026, mempool.space and blockstream.info returned the
- * same 284 bytes for the same address. That is what a family's members are
- * supposed to be, and it is why fallback here means something.
+ * same 284 bytes for the same address. That is exactly what a family's members
+ * are supposed to be, and it is why fallback here means something -- one can be
+ * down and the question still gets answered.
+ *
+ * It is **not** a second opinion, and the distinction matters enough to spell
+ * out. They run the same indexing software over the same canonical chain. If
+ * that chain view is wrong, or the software has a bug, both are wrong together
+ * and agreeing tells nobody anything. Two sources here buy availability, not
+ * corroboration -- so nothing in this family should ever describe an agreement
+ * between them as confirmation.
+ *
+ * (The genuinely independent reading would be a different implementation, and
+ * there is one worth knowing about: probed at the same time, blockchain.info
+ * reported 107.44 BTC received for the genesis address where Esplora reported
+ * 57.43 -- a ~50 BTC gap, being the unspendable genesis coinbase that Core
+ * excludes from the UTXO set. Not adopted, because its shape is different and
+ * a family's members have to be substitutable, but that is what a real
+ * cross-check looks like: two implementations that can disagree.)
  *
  * Two things deliberately stayed out:
  *

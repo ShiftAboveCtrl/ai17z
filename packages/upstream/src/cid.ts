@@ -1,47 +1,86 @@
 import { createHash } from 'node:crypto';
 
 /**
- * Content identifiers, and the one property that makes a gateway safe to use.
+ * Content identifiers, and exactly how much a gateway can be checked.
  *
- * An IPFS gateway is somebody else's server standing between AI17Z and the
- * content. Ordinarily that would mean trusting it. It does not here, because a
- * CID **is a hash of the content**: whatever comes back can be hashed and
- * compared, and a gateway that returns something else is caught rather than
- * believed.
+ * ### A CID identifies a block, not a file
  *
- * This is not theoretical. Probing in September 2026, `ipfs.io` answered a
- * request for a known CID with 188 bytes of "This IPFS gateway is switching to
- * a service worker gateway" and a 429. Code that trusted the gateway would have
- * handed that notice page to a model as the file's contents. The hash check
- * caught it in one line.
+ * This is the distinction everything here turns on, and the easy thing to get
+ * wrong. "The CID is the hash of the file" is true only for the narrow case
+ * where the file *is* one block. In general a CID names an IPLD block, and a
+ * UnixFS file is a root block of links pointing at more blocks -- so for
+ * anything larger than a chunk, `sha256(what the gateway sent)` has no reason
+ * to equal the CID's multihash, and comparing them would fail on perfectly
+ * good content. Worse, writing the comparison anyway and calling a pass
+ * "verified" would be a cryptographic claim this code has not earned.
  *
- * ### What can be checked, and what honestly cannot
+ * So the codec decides what may be claimed:
  *
- * A **raw** CIDv1 -- `bafkrei...`, codec 0x55 -- commits to the sha2-256 of the
- * bytes themselves, so verifying it is a hash and a comparison. Small JSON
- * documents, which is most token metadata, are usually stored this way.
+ * **raw (0x55)** -- `bafkrei...`. The multihash is over the bytes themselves,
+ * single block by definition. Hash the body, compare, done. This is genuine
+ * verification, and it is what most token metadata happens to be: a small JSON
+ * document that fits in one block.
  *
- * A **dag-pb** CID -- the old `Qm...` form, and `bafybei...` -- commits to a
- * protobuf node wrapping UnixFS metadata, and for anything over a chunk it
- * commits to a tree of them. Verifying that means implementing UnixFS chunking,
- * and getting it subtly wrong would produce a check that says "verified" while
- * checking nothing -- worse than no check at all.
+ * **dag-pb (0x70)** -- the old `Qm...` form and `bafybei...`. The multihash is
+ * over a protobuf node carrying UnixFS metadata and, for a file over a chunk,
+ * links to child blocks. Verifying it properly means fetching the blocks and
+ * checking each one, which a plain gateway `GET` does not return. Nothing here
+ * pretends otherwise: it is reported `UNVERIFIABLE`.
  *
- * So this verifies what it can verify exactly, and reports `UNVERIFIABLE` for
- * the rest rather than implying an assurance it did not make. Which of the two
- * happened travels with the content.
+ * **anything else** -- dag-cbor, dag-json, an unfamiliar codec, or a multihash
+ * that is not sha2-256 -- is `UNVERIFIABLE` too, and says which it was rather
+ * than failing silently.
+ *
+ * A directory is a dag-pb node, so it falls under the same rule: a gateway asked
+ * for one answers with a generated HTML index, which is not the directory and is
+ * not claimed to be.
+ *
+ * ### Where it does bite, it bites hard
+ *
+ * Probing in September 2026, `ipfs.io` answered a request for a known **raw**
+ * CID with 188 bytes of "This IPFS gateway is switching to a service worker
+ * gateway" and a 429. Code that trusted the gateway would have handed that
+ * notice page to a model as the file's contents. One hash caught it.
+ *
+ * That is the whole value proposition, stated at its true size: where the codec
+ * permits it this is real cryptographic verification of the gateway, and where
+ * it does not, the answer says so.
  */
 
 export const CID_VERIFICATIONS = ['VERIFIED', 'MISMATCH', 'UNVERIFIABLE'] as const;
 export type CidVerification = (typeof CID_VERIFICATIONS)[number];
 
+/**
+ * What kind of thing this identifier names, which decides what may be claimed.
+ *
+ * Typed rather than left as a sentence, so a caller can branch on it and a
+ * reader can tell "we checked and it matched" from "there was nothing here we
+ * could check" -- three different situations that a single boolean flattens
+ * into one misleading answer.
+ */
+export const CID_KINDS = ['RAW_BLOCK', 'DAG_PB', 'OTHER_CODEC', 'UNSUPPORTED_HASH'] as const;
+export type CidKind = (typeof CID_KINDS)[number];
+
 export interface ParsedCid {
   /** The text as given, after any `ipfs://` prefix is removed. */
   cid: string;
-  /** Present only when this CID commits directly to the bytes. */
+  version: 0 | 1;
+  kind: CidKind;
+  /** The multicodec number, when it was a single-byte one this could read. */
+  codec: number | null;
+  /**
+   * The digest this commits to, and **only** when it commits to the bytes.
+   *
+   * Null for everything else, which is what stops a dag-pb root being compared
+   * against a file body and the pass being called verification.
+   */
   sha256: string | null;
   why: string;
 }
+
+/** The two multicodecs this can reason about. Everything else is unverified. */
+const RAW = 0x55;
+const DAG_PB = 0x70;
 
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -112,14 +151,20 @@ export function parseCid(value: string): ParsedCid | null {
   if (!normalised) return null;
   const { cid } = normalised;
 
-  // CIDv0: base58, always dag-pb sha2-256, always begins Qm.
+  // CIDv0: base58, always dag-pb with sha2-256, always begins Qm.
   if (cid.startsWith('Qm')) {
     const bytes = base58Decode(cid);
     if (!bytes || bytes.length !== 34 || bytes[0] !== 0x12 || bytes[1] !== 0x20) return null;
     return {
       cid,
+      version: 0,
+      kind: 'DAG_PB',
+      codec: DAG_PB,
       sha256: null,
-      why: 'This is a CIDv0, which commits to a UnixFS node rather than to the bytes themselves, so the content cannot be checked against it here.',
+      why:
+        'This is a CIDv0, which is always dag-pb: it names a UnixFS node, not the file bytes. A gateway response ' +
+        'cannot be checked against it without fetching and verifying the blocks underneath, which a plain gateway ' +
+        'request does not return.',
     };
   }
 
@@ -127,27 +172,59 @@ export function parseCid(value: string): ParsedCid | null {
   if (cid.startsWith('b')) {
     const bytes = base32Decode(cid.slice(1).toLowerCase());
     if (!bytes || bytes.length < 4) return null;
-    const [version, codec, hashFunction, length] = [bytes[0], bytes[1], bytes[2], bytes[3]];
-    if (version !== 0x01) return null;
+    if (bytes[0] !== 0x01) return null;
+
+    // The codec is a varint. Everything this needs to tell apart is one byte,
+    // so a continuation bit means something longer than raw or dag-pb, and it
+    // is reported as such rather than misread as whatever the low byte says.
+    const multiByteCodec = (bytes[1]! & 0x80) !== 0;
+    const codec = multiByteCodec ? null : bytes[1]!;
+
+    if (multiByteCodec || (codec !== RAW && codec !== DAG_PB)) {
+      return {
+        cid,
+        version: 1,
+        kind: 'OTHER_CODEC',
+        codec,
+        sha256: null,
+        why:
+          `This identifier uses a codec this does not verify (${codec === null ? 'a multi-byte codec' : `0x${codec.toString(16)}`}), ` +
+          'so nothing was checked.',
+      };
+    }
+
+    const [hashFunction, length] = [bytes[2], bytes[3]];
     if (hashFunction !== 0x12 || length !== 0x20 || bytes.length !== 36) {
       return {
         cid,
+        version: 1,
+        kind: 'UNSUPPORTED_HASH',
+        codec,
         sha256: null,
-        why: 'This CID does not use sha2-256, so the content cannot be checked against it here.',
+        why: 'This identifier does not use sha2-256, so nothing was checked.',
       };
     }
-    // 0x55 is the raw codec: the hash is of the content itself.
-    if (codec === 0x55) {
+
+    if (codec === RAW) {
       return {
         cid,
+        version: 1,
+        kind: 'RAW_BLOCK',
+        codec,
         sha256: Buffer.from(bytes.subarray(4)).toString('hex'),
-        why: 'This CID commits directly to the bytes, so the content was checked against it.',
+        why: 'This identifier names a single raw block, so the bytes themselves are what it commits to.',
       };
     }
+
     return {
       cid,
+      version: 1,
+      kind: 'DAG_PB',
+      codec,
       sha256: null,
-      why: 'This CID commits to a UnixFS node rather than to the bytes themselves, so the content cannot be checked against it here.',
+      why:
+        'This identifier is dag-pb: it names a UnixFS node, not the file bytes. A gateway response cannot be ' +
+        'checked against it without fetching and verifying the blocks underneath.',
     };
   }
 

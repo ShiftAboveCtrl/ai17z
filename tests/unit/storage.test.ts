@@ -75,7 +75,34 @@ afterEach(() => {
   resetCapabilitiesForTest();
 });
 
-describe('understanding an identifier', () => {
+describe('the codec decides what may be claimed', () => {
+  /**
+   * One real identifier per case.
+   *
+   * The claim being pinned is narrow on purpose: **a CID names a block, not a
+   * file**. Hashing a gateway response and comparing it to the CID is correct
+   * only for `raw`, where the block is the content. For dag-pb -- every
+   * `Qm...`, every file over one chunk, and every directory -- the CID commits
+   * to a UnixFS node whose children a gateway GET never returns, so the same
+   * comparison would fail on perfectly good content and calling a pass
+   * "verified" would invent a guarantee.
+   */
+  const VECTORS: [string, string, string, boolean][] = [
+    [RAW_CID, 'raw CIDv1', 'RAW_BLOCK', true],
+    [V0_CID, 'CIDv0, always dag-pb', 'DAG_PB', false],
+    ['bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi', 'CIDv1 dag-pb file', 'DAG_PB', false],
+    ['bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354', 'CIDv1 dag-pb directory', 'DAG_PB', false],
+    ['bafyreidykglsfhoixmivffc5uwhcgshx4j465xwqntbmu43nb2dzqwfvae', 'CIDv1 dag-cbor', 'OTHER_CODEC', false],
+    ['bagcqcera4sjonwlqsl3bfrhpmsmvxkcrbzjjk2ldoqxvegdr7u7ubvmjihda', 'multi-byte codec', 'OTHER_CODEC', false],
+  ];
+
+  it.each(VECTORS)('classifies %s (%s) as %s, verifiable=%s', (cid, _label, kind, verifiable) => {
+    const parsed = parseCid(cid);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.kind).toBe(kind);
+    expect(parsed!.sha256 !== null).toBe(verifiable);
+  });
+
   it('knows which forms can be checked against their content', () => {
     expect(parseCid(RAW_CID)?.sha256).toBe('b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9');
     // A CIDv0 commits to a UnixFS node, so it is honestly reported as
@@ -83,6 +110,37 @@ describe('understanding an identifier', () => {
     expect(parseCid(V0_CID)).not.toBeNull();
     expect(parseCid(V0_CID)?.sha256).toBeNull();
   });
+
+  it('never claims verification for anything but a raw block', () => {
+    // The property, rather than a list: only RAW_BLOCK carries a digest, so
+    // only RAW_BLOCK can ever produce VERIFIED.
+    for (const [cid, , kind] of VECTORS) {
+      const parsed = parseCid(cid)!;
+      if (kind !== 'RAW_BLOCK') expect(parsed.sha256).toBeNull();
+    }
+  });
+
+  it('reports no codec number at all for a multi-byte one, rather than a wrong one', () => {
+    // Safety here does not depend on this: a varint's continuation byte is
+    // always >= 0x80, so it can never equal raw (0x55) or dag-pb (0x70), and
+    // the classification is right either way -- removing the check does not
+    // make anything verifiable that should not be.
+    //
+    // What it does affect is the number reported. Reading a two-byte codec as
+    // its first byte yields a value that is not the codec, and putting that in
+    // an answer is a small invented fact of exactly the kind this package
+    // exists to avoid.
+    const multi = parseCid('bagcqcera4sjonwlqsl3bfrhpmsmvxkcrbzjjk2ldoqxvegdr7u7ubvmjihda')!;
+    expect(multi.kind).toBe('OTHER_CODEC');
+    expect(multi.codec).toBeNull();
+    expect(multi.why).toMatch(/multi-byte codec/i);
+
+    // A single-byte one does report its number.
+    expect(parseCid('bafyreidykglsfhoixmivffc5uwhcgshx4j465xwqntbmu43nb2dzqwfvae')!.codec).toBe(0x71);
+  });
+});
+
+describe('understanding an identifier', () => {
 
   it('accepts the forms a link actually arrives in', () => {
     expect(parseCid(`ipfs://${RAW_CID}`)?.cid).toBe(RAW_CID);
@@ -122,13 +180,16 @@ describe('understanding an identifier', () => {
 describe('the gateway is checked, not believed', () => {
   it('passes content whose hash matches', async () => {
     reply = { body: RAW_CONTENT };
-    const answer = await run<{ verification: string; content: string; verificationNote: string }>(
+    const answer = await run<{ verification: string; kind: string; content: string; verificationNote: string }>(
       'storage.read_document',
       { cid: RAW_CID },
     );
     expect(answer.verification).toBe('VERIFIED');
+    expect(answer.kind).toBe('RAW_BLOCK');
     expect(answer.content).toBe(RAW_CONTENT);
-    expect(answer.verificationNote).toMatch(/served the right content/i);
+    expect(answer.verificationNote).toMatch(/served exactly what was asked for/i);
+    // And it says why it was able to: the narrowness is the honest part.
+    expect(answer.verificationNote).toMatch(/single raw block/i);
   });
 
   it('refuses the notice page a real gateway actually served', async () => {
@@ -147,11 +208,46 @@ describe('the gateway is checked, not believed', () => {
 
   it('says plainly when it could not check, rather than implying it did', async () => {
     reply = { body: '{"name":"anything at all"}' };
-    const answer = await run<{ verification: string; verificationNote: string }>('storage.read_document', {
-      cid: V0_CID,
+    const answer = await run<{ verification: string; kind: string; verificationNote: string }>(
+      'storage.read_document',
+      { cid: V0_CID },
+    );
+    expect(answer.verification).toBe('UNVERIFIABLE');
+    expect(answer.kind).toBe('DAG_PB');
+    expect(answer.verificationNote).toMatch(/not the same as proving it is what was asked for/i);
+  });
+
+  it('does not treat a dag-pb body hash as proof, whatever the body is', async () => {
+    // The heart of it. For a dag-pb identifier there is no body that could be
+    // VERIFIED, because the identifier does not commit to a body at all -- so
+    // even bytes chosen to look right cannot earn the claim.
+    reply = { body: 'hello world' };
+    const answer = await run<{ verification: string; kind: string }>('storage.read_document', { cid: V0_CID });
+    expect(answer.verification).toBe('UNVERIFIABLE');
+    expect(answer.kind).toBe('DAG_PB');
+  });
+
+  it('does not mistake a directory listing for the directory', async () => {
+    // A gateway asked for a directory answers with a generated HTML index.
+    // That is not the directory, is not claimed to be, and must never read as
+    // verified content.
+    reply = { body: '<html><body><ul><li>file1</li></ul></body></html>' };
+    const answer = await run<{ verification: string; kind: string; content: string }>('storage.read_document', {
+      cid: 'bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354',
     });
     expect(answer.verification).toBe('UNVERIFIABLE');
-    expect(answer.verificationNote).toMatch(/not the same as what was asked for/i);
+    expect(answer.kind).toBe('DAG_PB');
+  });
+
+  it('gives an unsupported codec its own state rather than a vague failure', async () => {
+    reply = { body: '{"some":"dag-cbor thing"}' };
+    const answer = await run<{ verification: string; kind: string; verificationNote: string }>(
+      'storage.read_document',
+      { cid: 'bafyreidykglsfhoixmivffc5uwhcgshx4j465xwqntbmu43nb2dzqwfvae' },
+    );
+    expect(answer.verification).toBe('UNVERIFIABLE');
+    expect(answer.kind).toBe('OTHER_CODEC');
+    expect(answer.verificationNote).toMatch(/codec this does not verify/i);
   });
 });
 
