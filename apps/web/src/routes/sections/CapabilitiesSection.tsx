@@ -74,7 +74,15 @@ interface Invocation {
 }
 
 export function CapabilitiesSection({ index, agentId }: { index: number; agentId: string }) {
-  const capabilities = useResource<{ items: CapabilityView[] }>(`/api/agents/${agentId}/toolspace`);
+  /**
+   * One resource, because the pack view already contains everything.
+   *
+   * `packs` plus `ungrouped` is every capability there is, so the flat
+   * `/toolspace` list this screen also used to fetch was answered, paid for and
+   * thrown away -- and worse, it was the one the individual switches reloaded,
+   * while every row on screen was drawn from this one. Changing a single
+   * capability refreshed nothing an owner could see.
+   */
   const packView = useResource<{ packs: ToolpackView[]; ungrouped: CapabilityView[] }>(
     `/api/agents/${agentId}/toolspace/packs`,
   );
@@ -87,7 +95,9 @@ export function CapabilitiesSection({ index, agentId }: { index: number; agentId
     setSaving(id);
     try {
       await put(`/api/agents/${agentId}/toolspace/${id}`, { permission });
-      capabilities.reload();
+      // The pack's own word has to move with this: switching one capability off
+      // inside Advanced is exactly what turns a pack from On to Some.
+      packView.reload();
     } finally {
       setSaving(null);
     }
@@ -101,7 +111,6 @@ export function CapabilitiesSection({ index, agentId }: { index: number; agentId
     try {
       await put(`/api/agents/${agentId}/toolspace/packs/${packId}`, { on });
       packView.reload();
-      capabilities.reload();
     } finally {
       setSaving(null);
     }
