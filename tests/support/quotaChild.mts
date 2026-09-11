@@ -12,23 +12,46 @@
  *   quotaChild.mts db <key> <capacity> <intervalMs> <attempts>
  *   quotaChild.mts machine <root> <key> <capacity> <intervalMs> <attempts>
  */
+import { existsSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { upstreamQuota as quotaRepo } from '@xbam/database';
 import { MachineQuotaCoordinator, perSecond } from '@xbam/upstream';
 
 const [mode, ...rest] = process.argv.slice(2);
 
 /**
- * Waits for a moment the parent chose, so two children genuinely compete.
+ * Waits at the line until the parent releases every child together.
  *
- * Without it the first process can finish the whole budget before the second
- * has finished starting, and the test proves the counters add up without
+ * Without a barrier the first process can finish the whole budget before the
+ * second has finished starting, and the test proves the counters add up without
  * proving anything ever contended for them.
+ *
+ * This used to be a timestamp: the parent picked a moment 1.5 seconds out and
+ * each child slept until then. That is a guess about how long `tsx` takes to
+ * load this module, and on a slow machine it is the wrong guess -- the deadline
+ * has already passed by the time a child reaches it, the child proceeds
+ * immediately, and whichever got there first takes the entire budget. It failed
+ * exactly that way on Linux, and reported it as "expected 0 to be greater than
+ * 0", which says nothing about what went wrong.
+ *
+ * So it is a handshake now. The child says it is ready and waits to be let go;
+ * the parent lets everybody go once everybody is ready. No guess, and it is
+ * correct on a machine of any speed.
+ *
+ * Returns whether it was actually released, so a run where the barrier did not
+ * work can say so instead of looking like a coordination failure.
  */
-async function waitForTheOffFrom(startAt: string | undefined): Promise<void> {
-  const at = Number(startAt);
-  if (!Number.isFinite(at)) return;
-  const wait = at - Date.now();
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+async function waitAtTheBarrier(directory: string | undefined, id: string | undefined): Promise<boolean> {
+  if (!directory || !id) return false;
+  writeFileSync(join(directory, `ready-${id}`), '1');
+
+  const giveUpAt = Date.now() + 60_000;
+  const go = join(directory, 'go');
+  while (Date.now() < giveUpAt) {
+    if (existsSync(go)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return false;
 }
 
 async function throughDatabase(): Promise<number> {
@@ -69,9 +92,11 @@ async function throughFiles(): Promise<number> {
 }
 
 try {
-  await waitForTheOffFrom(process.env.QUOTA_CHILD_START_AT);
+  const released = await waitAtTheBarrier(process.env.QUOTA_CHILD_BARRIER, process.env.QUOTA_CHILD_ID);
   const granted = mode === 'db' ? await throughDatabase() : await throughFiles();
-  process.stdout.write(`${JSON.stringify({ granted })}\n`);
+  // `released` travels with the count, so the parent can tell a real result
+  // from one where the children never actually met at the line.
+  process.stdout.write(`${JSON.stringify({ granted, released })}\n`);
   process.exit(0);
 } catch (error) {
   process.stderr.write(`${(error as Error).message}\n`);
