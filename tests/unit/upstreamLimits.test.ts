@@ -118,59 +118,93 @@ describe('what AI17Z allows itself against Solana', () => {
     requestsPerTenSeconds: 100,
     perMethodPerTenSeconds: 40,
     concurrentConnections: 40,
+    newConnectionsPerTenSeconds: 40,
     megabytesPerThirtySeconds: 100,
   };
 
-  it('stays under every published limit it can reach', async () => {
+  it('stays under every published limit, for any number of installations', async () => {
     const { registerSolanaUpstreams, listUpstreams, resetUpstreamsForTest } = await import('@xbam/upstream');
     resetUpstreamsForTest();
     registerSolanaUpstreams();
     const solana = listUpstreams().find((upstream) => upstream.family === 'solana_mainnet')!;
-    const { windows, concurrentPerProcess } = solana.limit;
-
-    const perSecondWindow = windows.find((w) => w.intervalMs === 1_000);
-    const perMinuteWindow = windows.find((w) => w.intervalMs === 60_000);
-    const methodWindow = windows.find((w) => w.per !== undefined);
-
-    // Named before they are used, so deleting one produces a sentence rather
-    // than "cannot read properties of undefined" twelve lines later.
-    expect(perSecondWindow, 'Solana has no per-second window').toBeDefined();
-    expect(perMinuteWindow, 'Solana has no per-minute window').toBeDefined();
-    expect(
-      methodWindow,
-      'Solana has no per-method window: 5/s is 50 in ten seconds against a published 40 for one RPC',
-    ).toBeDefined();
-
-    // Requests in any ten seconds: the tighter of the two untargeted windows.
-    const inTenSeconds = Math.min(perSecondWindow!.capacity * 10, perMinuteWindow!.capacity);
-    expect(inTenSeconds).toBeLessThanOrEqual(PUBLISHED.requestsPerTenSeconds);
-
-    // Per method: this is the one that was over before the window existed --
-    // five a second is fifty in ten seconds against a published forty.
-    expect(methodWindow!.intervalMs).toBe(10_000);
-    expect(methodWindow!.capacity).toBeLessThanOrEqual(PUBLISHED.perMethodPerTenSeconds);
-
-    // Bytes in any thirty seconds. The minute window caps the request count, so
-    // the byte ceiling is derived from it rather than chosen for comfort.
-    const requestsInThirtySeconds = Math.min(perSecondWindow!.capacity * 30, perMinuteWindow!.capacity);
-    const maxBytesPerRequest = 256_000;
-    const worstCaseMegabytes = (requestsInThirtySeconds * maxBytesPerRequest) / 1e6;
-    expect(worstCaseMegabytes).toBeLessThan(PUBLISHED.megabytesPerThirtySeconds);
+    const { windows } = solana.limit;
 
     /**
-     * Concurrency is not coordinated across processes, and does not need to be.
+     * Trailing windows, so a span can straddle boundaries.
      *
-     * The published cap is per address, which no single process can see. Rather
-     * than building leases for it, the arithmetic is pinned: two in flight per
-     * process, two processes per installation, is four per installation -- so
-     * the machine cap is not reached until ten installations ask Solana at
-     * once. If that stops being comfortably true, this test fails and the
-     * answer is machine-scoped leases rather than a larger number here.
+     * `capacity * ceil(span / interval)` is the honest ceiling for a sliding
+     * window, and using the fixed-window figure would understate it.
      */
-    const processesPerInstallation = 2; // the api and the worker both call ask()
-    const installationsBeforeBreaching =
-      PUBLISHED.concurrentConnections / (concurrentPerProcess * processesPerInstallation);
-    expect(installationsBeforeBreaching).toBeGreaterThanOrEqual(10);
+    const maxIn = (capacity: number, interval: number, span: number) => capacity * Math.ceil(span / interval);
+
+    /** The tightest thing every machine-scoped window allows over a span. */
+    const grantsIn = (span: number) =>
+      Math.min(
+        ...windows
+          .filter((w) => w.per === undefined)
+          .map((w) => maxIn(w.capacity, w.intervalMs, span)),
+      );
+
+    const TEN_SECONDS = 10_000;
+    const THIRTY_SECONDS = 30_000;
+
+    // Requests per ten seconds, against the published hundred.
+    expect(grantsIn(TEN_SECONDS)).toBeLessThanOrEqual(PUBLISHED.requestsPerTenSeconds);
+
+    /**
+     * New connections per ten seconds, against the published forty.
+     *
+     * `safeFetch` builds one undici Agent per call and closes it, so there is
+     * no keep-alive and **every request opens a connection**. The connection
+     * rate is therefore exactly the request rate -- not something smaller that
+     * pooling would have given. At five a second this was fifty against forty.
+     */
+    expect(grantsIn(TEN_SECONDS)).toBeLessThanOrEqual(PUBLISHED.newConnectionsPerTenSeconds);
+
+    /**
+     * Concurrent connections, against the published forty.
+     *
+     * Proved without counting installations, which was the wrong proof: AI17Z
+     * supports side-by-side installations and publishes no maximum, so "it
+     * takes ten of them" showed headroom rather than impossibility.
+     *
+     * A request begins only after a grant from a MACHINE-scoped window that
+     * every AI17Z on this machine shares, and ends within `timeoutMs`. So the
+     * connections open at any instant are a subset of the grants in a trailing
+     * span of that length -- whatever the number of processes or installations.
+     */
+    const concurrentCeiling = grantsIn(solana.timeoutMs);
+    expect(concurrentCeiling).toBeLessThan(PUBLISHED.concurrentConnections);
+
+    // Per method, against the published forty. This is the one that was being
+    // broken before a discriminator existed.
+    const methodWindow = windows.find((w) => w.per !== undefined);
+    expect(
+      methodWindow,
+      'Solana has no per-method window: an overall rate can be spent entirely on one RPC',
+    ).toBeDefined();
+    expect(maxIn(methodWindow!.capacity, methodWindow!.intervalMs, TEN_SECONDS)).toBeLessThanOrEqual(
+      PUBLISHED.perMethodPerTenSeconds,
+    );
+
+    /**
+     * Bytes per thirty seconds, against the published hundred megabytes.
+     *
+     * Asserted twice on purpose. Against our own windows, which is what
+     * actually applies; and against **their** published request ceiling, which
+     * is the claim that survives somebody later relaxing ours.
+     */
+    const maxBytesPerRequest = 256_000;
+    expect((grantsIn(THIRTY_SECONDS) * maxBytesPerRequest) / 1e6).toBeLessThan(
+      PUBLISHED.megabytesPerThirtySeconds,
+    );
+    const atTheirCeiling = maxIn(PUBLISHED.requestsPerTenSeconds, TEN_SECONDS, THIRTY_SECONDS);
+    expect(atTheirCeiling).toBe(300);
+    expect((atTheirCeiling * maxBytesPerRequest) / 1e6).toBeLessThan(PUBLISHED.megabytesPerThirtySeconds);
+
+    // And the response cap is load-bearing rather than decorative: a megabyte
+    // each would breach the byte limit at their own request ceiling.
+    expect((atTheirCeiling * 1_000_000) / 1e6).toBeGreaterThan(PUBLISHED.megabytesPerThirtySeconds);
   });
 });
 

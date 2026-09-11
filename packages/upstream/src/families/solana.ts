@@ -86,18 +86,31 @@ import { parseExactJson } from '../exactNumbers';
  *   **per method** -- the same five a second is *also* fifty of one RPC, over
  *     the forty allowed. Reachable, and therefore enforced: the third window
  *     below is counted per method by the central scheduler.
- *   **bytes** -- the minute window caps us at a hundred requests in any thirty
- *     seconds, so a 256 KB ceiling each is 25.6 MB against a hundred. Derived
- *     from the request budget rather than picked; at the previous 2 MB the
- *     worst case was 200 MB, over a published limit.
- *   **concurrent connections** -- two per process, two processes per
- *     installation, so the machine cap is not reached until ten installations
- *     ask at once. Proved by arithmetic rather than by leases, because leases
- *     for a limit that arithmetic already precludes are machinery nothing
- *     needs. The test fails if that stops being comfortably true.
- *   **connection rate** -- undici keeps connections alive, so new connections
- *     are bounded by concurrency rather than by request count, and concurrency
- *     is four per installation.
+ *   **bytes** -- proved against the *published* request ceiling rather than
+ *     against our own window, so the bound survives somebody later relaxing
+ *     ours. Windows here are trailing, so a span of S allows `capacity *
+ *     ceil(S / interval)`: at the published hundred per ten seconds that is
+ *     **three hundred** requests in any thirty seconds, and a 256 KB ceiling
+ *     each is 76.8 MB against the published hundred megabytes. (Under AI17Z's
+ *     own tighter minute window it is a hundred requests and 25.6 MB, but that
+ *     is the weaker claim because it depends on a number we chose.) The cap is
+ *     load-bearing: at 1 MB each the same ceiling gives 300 MB, and at the 2 MB
+ *     this used to carry it was over the limit outright.
+ *   **connection rate** -- `safeFetch` builds one undici Agent per call and
+ *     closes it, deliberately, so that a pooled socket cannot outlive the DNS
+ *     judgement that approved it. There is therefore **no keep-alive here and
+ *     every request is a new connection**: the connection rate simply *is* the
+ *     request rate. At the previous five a second that was fifty per ten
+ *     seconds against a published forty -- over. Twenty per ten seconds is the
+ *     window that fixes it, and it is the tightest of all five limits.
+ *   **concurrent connections** -- the same fact makes this provable without
+ *     counting installations, which was the wrong proof: AI17Z supports
+ *     side-by-side installations and publishes no maximum, so "it needs ten of
+ *     them" was headroom rather than impossibility. A request begins only after
+ *     a grant every AI17Z on this machine shares, and ends within the ten-second
+ *     timeout, so the connections open at any instant are a subset of the grants
+ *     in a trailing ten seconds -- at most twenty, against forty, for **any**
+ *     number of installations. No leases needed, and the bound is a test.
  *
  * ### It can only read
  *
@@ -293,18 +306,18 @@ function node(input: NodeOptions): Upstream<SolanaQuery, SolanaResult> {
     origin: new URL(input.url).hostname,
     limit: {
       /**
-       * Two, and the arithmetic matters more than the number.
+       * Per process, and deliberately not the thing that bounds connections.
        *
-       * The published cap is 40 concurrent connections **per address**, which
-       * is a machine-wide budget this process cannot see. It is not enforced
-       * across processes, and it does not need to be: two in flight per
-       * process, two processes per installation (api and worker), is four per
-       * installation -- so the machine cap is not reached until ten AI17Z
-       * installations are asking Solana at once. `upstreamLimits.test.ts` pins
-       * that arithmetic so lowering it is a decision rather than an accident.
+       * Counting installations was the wrong proof: AI17Z supports side-by-side
+       * installations and publishes no maximum, so "the cap needs ten of them"
+       * showed headroom rather than impossibility.
        *
-       * Two also never binds: at roughly 200ms a call, two in flight sustains
-       * ten a second and the rate windows below cap us at five.
+       * The real bound comes from the machine-scoped rate below plus the
+       * timeout, and holds for any number of installations. A request only
+       * begins after a grant that every AI17Z on this machine shares, and ends
+       * within `timeoutMs` -- so the connections open at any instant are a
+       * subset of the grants in the trailing timeout span, which the ten-second
+       * window caps at twenty against a published forty.
        */
       concurrentPerProcess: 2,
       /**
@@ -324,16 +337,34 @@ function node(input: NodeOptions): Upstream<SolanaQuery, SolanaResult> {
        * limit while believing itself polite.
        */
       windows: [
+        // Smooths a burst; the ten-second window is what actually binds.
         perSecond(input.perSecondOurs, { scope: 'MACHINE' }),
-        perMinute(input.perSecondOurs * 20, { scope: 'MACHINE' }),
+        // The window everything else is proved against. Twenty per ten seconds
+        // against a published hundred requests AND a published forty new
+        // connections -- the latter is the tighter of the two and is the reason
+        // this is not fifty.
+        perTenSeconds(20, { scope: 'MACHINE' }),
+        perMinute(100, { scope: 'MACHINE' }),
         {
-          ...perTenSeconds(20, { scope: 'MACHINE' }),
-          // Half of what is allowed, counted per method.
+          ...perTenSeconds(15, { scope: 'MACHINE' }),
+          // Counted per method, well under the published forty.
           per: (query) => (query as SolanaQuery | undefined)?.method ?? null,
         },
       ],
     },
-    timeoutMs: 15_000,
+    /**
+     * Ten seconds, and it is load-bearing rather than a comfort figure.
+     *
+     * Concurrent connections are bounded by the grants in a trailing span of
+     * this length, so the timeout is half of that proof: at twenty per ten
+     * seconds, a ten-second ceiling means at most twenty connections open at
+     * once against a published forty. Lengthening it weakens the bound, which
+     * is why `upstreamLimits.test.ts` recomputes it rather than trusting it.
+     *
+     * Measured calls return in 60-200ms, and the slowest cold one seen was
+     * about 1.2s.
+     */
+    timeoutMs: 10_000,
     // A slot is about 400ms. Short enough to be current, long enough that
     // several agents asking at once cost one request.
     freshMs: 4_000,
