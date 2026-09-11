@@ -689,8 +689,16 @@ describe('the base32 the digest depends on', () => {
   it('agrees with the independent implementation these tests use', () => {
     // Two implementations that disagree would mean every digest assertion here
     // was proving nothing.
-    for (const sample of ['', 'a', 'abc', 'the quick brown fox', ' ÿþ']) {
-      const bytes = new TextEncoder().encode(sample);
+    const samples: Uint8Array[] = [
+      new TextEncoder().encode(''),
+      new TextEncoder().encode('a'),
+      new TextEncoder().encode('abc'),
+      new TextEncoder().encode('the quick brown fox'),
+      // Bytes rather than a string literal: a digest is taken over octets, and
+      // the interesting values here are the ones no editor renders honestly.
+      Uint8Array.from([0, 255, 254, 128, 1]),
+    ];
+    for (const bytes of samples) {
       expect(base32(bytes)).toBe(base32Locally(bytes));
     }
   });
