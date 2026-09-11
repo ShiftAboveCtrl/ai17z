@@ -1,7 +1,7 @@
 import { capabilityInvocations } from '@xbam/database';
 import { createLogger, type Logger } from '@xbam/shared';
 import type { ChatMessage } from '@xbam/shared/contracts';
-import type { CapabilityPermission } from '@xbam/shared/contracts';
+import { defaultPermission, type CapabilityPermission } from '@xbam/shared/contracts';
 import {
   invokeCapability,
   listModelCallable,
@@ -90,7 +90,24 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
   const budgetMs = options.budgetMs ?? DEFAULT_BUDGET_MS;
   const deadline = Date.now() + budgetMs;
 
-  const offered = listModelCallable();
+  /**
+   * What this agent may actually reach for, not everything that exists.
+   *
+   * The menu used to be the whole registry. Two things were wrong with that.
+   * An owner who switched the Crypto pack off still had all of its capabilities
+   * described to their agent, which could then choose one and be refused --
+   * spending a step and a model call to be told no. And the menu is prompt: at
+   * the time of writing, 38 capabilities are about 2,700 tokens on every
+   * generation, and the catalogue is going to keep growing.
+   *
+   * So a capability switched off is not offered. One that asks first still is:
+   * the model is allowed to ask, and the owner's approval is the point of that
+   * setting rather than a reason to hide it.
+   */
+  const offered = listModelCallable().filter((capability) => {
+    const stored = options.permissions.get(capability.id) ?? null;
+    return (stored ?? defaultPermission(capability.effect, capability.risk)) !== 'DISABLED';
+  });
   const messages: ChatMessage[] = [...options.messages];
   const steps: LoopResult['steps'] = [];
 
