@@ -8,6 +8,6 @@
   },
   "dependencies": {
     "@xbam/shared": "*",
-    "undici": "7.16.0"
+    "undici": "7.29.1"
   }
 }
