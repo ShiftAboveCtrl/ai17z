@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -27,27 +27,77 @@ installHarness();
 
 const CHILD = resolve(__dirname, '..', 'support', 'quotaChild.mts');
 
+/** Temporary directories to remove: barrier directories and quota roots alike. */
+const roots: string[] = [];
+afterAll(() => {
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
+});
+
 /**
- * Starts both children and holds them until one agreed moment.
+ * Holds every child at a line and lets them go together.
  *
- * Node takes a noticeable fraction of a second to start, which is longer than
- * the work -- so without an agreed start the first child finishes the whole
- * budget before the second is awake, and the test proves the counters add up
- * without proving anything ever contended for them.
+ * Node plus `tsx` plus this module takes a noticeable fraction of a second to
+ * start, which is far longer than the work -- so without a barrier the first
+ * child finishes the whole budget before the second is awake, and the test
+ * proves the counters add up without proving anything ever contended.
+ *
+ * This was a timestamp 1.5 seconds out, which is a guess about startup time,
+ * and on a slower machine it is the wrong guess: the moment passes before a
+ * child reaches it, the child proceeds at once, and one of them takes
+ * everything. It failed precisely that way on Linux and reported "expected 0 to
+ * be greater than 0" -- a sentence about the symptom that says nothing about
+ * the cause. A handshake has no such guess in it.
  */
-function theOff(inMs = 1_500): string {
-  return String(Date.now() + inMs);
+function barrier(): { directory: string; releaseWhenReady(children: number): Promise<void> } {
+  const directory = mkdtempSync(join(tmpdir(), 'ai17z-barrier-'));
+  roots.push(directory);
+  return {
+    directory,
+    async releaseWhenReady(children: number) {
+      const giveUpAt = Date.now() + 60_000;
+      while (Date.now() < giveUpAt) {
+        const ready = readdirSync(directory).filter((name) => name.startsWith('ready-')).length;
+        if (ready >= children) break;
+        await new Promise((resolve_) => setTimeout(resolve_, 5));
+      }
+      writeFileSync(join(directory, 'go'), '1');
+    },
+  };
+}
+
+interface ChildResult {
+  granted: number;
+  /** False when the child ran without ever being let go, which proves nothing. */
+  released: boolean;
 }
 
 /** Runs the child, and reads the one line of JSON it prints. */
-async function child(args: string[], env: NodeJS.ProcessEnv = {}): Promise<number> {
+async function child(args: string[], env: NodeJS.ProcessEnv = {}): Promise<ChildResult> {
   const { stdout } = await run(process.execPath, [require.resolve('tsx/cli'), CHILD, ...args], {
     env: { ...process.env, ...env },
     cwd: resolve(__dirname, '..', '..'),
-    timeout: 60_000,
+    timeout: 90_000,
   });
   const line = stdout.trim().split('\n').at(-1) ?? '{}';
-  return (JSON.parse(line) as { granted: number }).granted;
+  const parsed = JSON.parse(line) as Partial<ChildResult>;
+  return { granted: parsed.granted ?? 0, released: parsed.released ?? false };
+}
+
+/** Runs children that must genuinely contend, and insists that they did. */
+async function contending(args: string[][]): Promise<number[]> {
+  const line = barrier();
+  const running = args.map((argv, index) =>
+    child(argv, { QUOTA_CHILD_BARRIER: line.directory, QUOTA_CHILD_ID: String(index) }),
+  );
+  await line.releaseWhenReady(args.length);
+  const results = await Promise.all(running);
+
+  // Said plainly rather than left to show up as a confusing count. A run where
+  // the barrier did not hold has not tested contention, and should say so.
+  for (const [index, result] of results.entries()) {
+    expect(result.released, `child ${index} ran without being released: the barrier did not hold`).toBe(true);
+  }
+  return results.map((result) => result.granted);
 }
 
 describe("an installation's own budget, spent by two of its processes", () => {
@@ -55,35 +105,29 @@ describe("an installation's own budget, spent by two of its processes", () => {
     // Ten attempts each against a budget of six. Uncoordinated, both would grant
     // six and the endpoint would see twelve.
     const key = `upstream:test-${uniqueSuffix()}`;
-    const startAt = theOff();
-    const [first, second] = await Promise.all([
-      child(['db', key, '6', '60000', '10'], { QUOTA_CHILD_START_AT: startAt }),
-      child(['db', key, '6', '60000', '10'], { QUOTA_CHILD_START_AT: startAt }),
+    const [first, second] = await contending([
+      ['db', key, '6', '60000', '10'],
+      ['db', key, '6', '60000', '10'],
     ]);
 
-    expect(first + second).toBe(6);
+    expect(first! + second!).toBe(6);
     // And both of them did some of the work, so this is two processes competing
     // rather than one finishing before the other started.
     expect(first).toBeGreaterThan(0);
     expect(second).toBeGreaterThan(0);
-  }, 120_000);
+  }, 180_000);
 
   it('keeps two different budgets apart', async () => {
     const [a, b] = await Promise.all([
       child(['db', `upstream:a-${uniqueSuffix()}`, '3', '60000', '5']),
       child(['db', `upstream:b-${uniqueSuffix()}`, '3', '60000', '5']),
     ]);
-    expect(a).toBe(3);
-    expect(b).toBe(3);
+    expect(a.granted).toBe(3);
+    expect(b.granted).toBe(3);
   }, 120_000);
 });
 
 describe('a budget an endpoint counts by address, shared by two installations', () => {
-  const roots: string[] = [];
-  afterAll(() => {
-    for (const root of roots) rmSync(root, { recursive: true, force: true });
-  });
-
   it('adds up to the capacity across installations that share nothing else', async () => {
     // ai17z-test and ai17z-main have separate databases and no table in common,
     // so this budget cannot live in either. What they do share is an address,
@@ -93,16 +137,15 @@ describe('a budget an endpoint counts by address, shared by two installations', 
     roots.push(root);
     const key = `origin:example-${uniqueSuffix()}`;
 
-    const startAt = theOff();
-    const [installationA, installationB] = await Promise.all([
-      child(['machine', root, key, '6', '60000', '10', '25'], { QUOTA_CHILD_START_AT: startAt }),
-      child(['machine', root, key, '6', '60000', '10', '25'], { QUOTA_CHILD_START_AT: startAt }),
+    const [installationA, installationB] = await contending([
+      ['machine', root, key, '6', '60000', '10', '25'],
+      ['machine', root, key, '6', '60000', '10', '25'],
     ]);
 
-    expect(installationA + installationB).toBe(6);
+    expect(installationA! + installationB!).toBe(6);
     expect(installationA).toBeGreaterThan(0);
     expect(installationB).toBeGreaterThan(0);
-  }, 120_000);
+  }, 180_000);
 
   it('lets one installation stop without stranding the other', async () => {
     // Stopping or uninstalling one AI17Z must not take the other's ability to
@@ -112,11 +155,11 @@ describe('a budget an endpoint counts by address, shared by two installations', 
     roots.push(root);
     const key = `origin:example-${uniqueSuffix()}`;
 
-    expect(await child(['machine', root, key, '4', '60000', '4'])).toBe(4);
+    expect((await child(['machine', root, key, '4', '60000', '4'])).granted).toBe(4);
     // That "installation" has now exited entirely. The next one reads the same
     // counters and is correctly told the budget is spent -- rather than finding
     // a held lock, or an empty ledger.
-    expect(await child(['machine', root, key, '4', '60000', '2'])).toBe(0);
+    expect((await child(['machine', root, key, '4', '60000', '2'])).granted).toBe(0);
   }, 120_000);
 
   it('separates two machines that are not sharing a directory', async () => {
@@ -130,7 +173,7 @@ describe('a budget an endpoint counts by address, shared by two installations', 
       child(['machine', one, key, '3', '60000', '5']),
       child(['machine', two, key, '3', '60000', '5']),
     ]);
-    expect(a).toBe(3);
-    expect(b).toBe(3);
+    expect(a.granted).toBe(3);
+    expect(b.granted).toBe(3);
   }, 120_000);
 });
