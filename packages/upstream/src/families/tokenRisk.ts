@@ -257,7 +257,141 @@ function honeypotIs(): Upstream<TokenRiskQuery, TradeSimulation> {
   });
 }
 
+/**
+ * What a known-malicious-address database holds about one address.
+ *
+ * ### This is a list of known bad, not an assessment
+ *
+ * That distinction is the whole reason this file treats the answer the way it
+ * does, and it was established by probing rather than assumed. Asked about the
+ * Ronin bridge exploiter -- still on the OFAC list -- the service answers
+ * `sanctioned: 1`, `stealing_attack: 1`, `data_source: "SlowMist,BlockSec"`.
+ * Asked about the Uniswap V2 router, which every security service on earth has
+ * looked at, it answers every field `0` and `data_source: ""`. Asked about an
+ * address with no history at all, the same.
+ *
+ * So an empty answer means "not in the lists we hold". It does **not** mean
+ * "we checked and it is fine", and there is no field that would let anybody
+ * tell those apart, because the service only speaks when it has something to
+ * say. `matched` carries that: false is the absence of a match, and the
+ * capability is required to say so in those words rather than report a clean
+ * bill nobody issued.
+ *
+ * ### Sharing GoPlus's allowance rather than inventing a second one
+ *
+ * Same origin as `token_security`, and machine-scoped windows are keyed on the
+ * origin -- so these two families spend one budget between them, which is what
+ * the service actually meters. A second set of numbers here would be two halves
+ * of an allowance each believing it held all of it.
+ *
+ * Free, no key, checked September 2026.
+ */
+export interface AddressRisk {
+  /**
+   * Whether any source has an entry for this address.
+   *
+   * Derived from `data_source` being non-empty or any flag being set, because
+   * a record of all noughts and no source is the shape of "no match" and must
+   * never be rendered as "clean".
+   */
+  matched: boolean;
+  /** Who said so, as the service names them -- "SlowMist,BlockSec". */
+  dataSource: string | null;
+  sanctioned: Reported<boolean>;
+  stealingAttack: Reported<boolean>;
+  phishingActivities: Reported<boolean>;
+  blackmailActivities: Reported<boolean>;
+  darkwebTransactions: Reported<boolean>;
+  cybercrime: Reported<boolean>;
+  moneyLaundering: Reported<boolean>;
+  financialCrime: Reported<boolean>;
+  maliciousMiningActivities: Reported<boolean>;
+  honeypotRelatedAddress: Reported<boolean>;
+  fakeKyc: Reported<boolean>;
+  fakeToken: Reported<boolean>;
+  fakeStandardInterface: Reported<boolean>;
+  gasAbuse: Reported<boolean>;
+  blacklistDoubt: Reported<boolean>;
+  mixer: Reported<boolean>;
+  isContract: Reported<boolean>;
+  maliciousContractsCreated: Reported<number>;
+}
+
+function goplusAddress(): Upstream<TokenRiskQuery, AddressRisk> {
+  return defineUpstream<TokenRiskQuery, AddressRisk>({
+    id: 'address_risk.goplus',
+    family: 'address_risk',
+    name: 'goplus',
+    description: 'Whether an address appears in databases of known malicious addresses.',
+    origin: 'api.gopluslabs.io',
+    limit: {
+      concurrentPerProcess: 2,
+      // The same published 30 a minute as `token_security`, and deliberately
+      // the same origin, so the two share it rather than each taking it.
+      windows: [perSecond(1, { scope: 'MACHINE' }), perMinute(30, { scope: 'MACHINE', source: 'PUBLISHED' })],
+    },
+    timeoutMs: 20_000,
+    // An address joins one of these lists after somebody investigates, which is
+    // a slow process. An hour is soon enough and keeps a shared budget for the
+    // questions nobody has asked yet.
+    freshMs: 60 * 60_000,
+    rank: 1,
+    cacheKey: (query) => `${query.chainId}:${query.address.toLowerCase()}`,
+    async fetch(query, ctx) {
+      try {
+        const url =
+          `https://api.gopluslabs.io/api/v1/address_security/${encodeURIComponent(query.address)}` +
+          `?chain_id=${query.chainId}`;
+        const response = await safeFetch(url, {
+          signal: ctx.signal,
+          headers: { accept: 'application/json' },
+          // Measured at 491 bytes for both a flagged address and a clean one.
+          maxBytes: 50_000,
+        });
+        const status = classifyStatus(response.status, response.headers);
+        if (status) throw status;
+
+        const body = JSON.parse(response.text) as { result?: Record<string, unknown> };
+        const row = body.result ?? {};
+
+        const dataSource = typeof row.data_source === 'string' && row.data_source.trim() !== '' ? row.data_source : null;
+        // `contract_address` says what an address is, not that anything is wrong
+        // with it, so it is excluded from what counts as a match. Including it
+        // would make every contract on the chain look like a hit.
+        const anyFlag = Object.entries(row).some(([key, value]) => key !== 'contract_address' && value === '1');
+        const created = count(row.number_of_malicious_contracts_created);
+
+        return {
+          matched: dataSource !== null || anyFlag || (created.known && created.value > 0),
+          dataSource,
+          sanctioned: flag(row.sanctioned),
+          stealingAttack: flag(row.stealing_attack),
+          phishingActivities: flag(row.phishing_activities),
+          blackmailActivities: flag(row.blackmail_activities),
+          darkwebTransactions: flag(row.darkweb_transactions),
+          cybercrime: flag(row.cybercrime),
+          moneyLaundering: flag(row.money_laundering),
+          financialCrime: flag(row.financial_crime),
+          maliciousMiningActivities: flag(row.malicious_mining_activities),
+          honeypotRelatedAddress: flag(row.honeypot_related_address),
+          fakeKyc: flag(row.fake_kyc),
+          fakeToken: flag(row.fake_token),
+          fakeStandardInterface: flag(row.fake_standard_interface),
+          gasAbuse: flag(row.gas_abuse),
+          blacklistDoubt: flag(row.blacklist_doubt),
+          mixer: flag(row.mixer),
+          isContract: flag(row.contract_address),
+          maliciousContractsCreated: created,
+        };
+      } catch (error) {
+        throw classifyThrown(error);
+      }
+    },
+  });
+}
+
 export function registerTokenRiskUpstreams(): void {
   registerUpstream(goplus());
+  registerUpstream(goplusAddress());
   registerUpstream(honeypotIs());
 }
