@@ -73,6 +73,16 @@ export const TOOLPACKS: Toolpack[] = [
     // switches these exist to replace.
     prefixes: ['bitcoin.', 'chain.', 'contract.', 'defi.', 'governance.', 'market.', 'solana.', 'storage.', 'token.'],
   },
+  {
+    id: 'reference',
+    name: 'Reference & Knowledge',
+    summary: 'Look up what an established term, person or project is, from reference works that cite their source.',
+    // Deliberately separate from the crypto pack rather than folded into it.
+    // "Let my agent look things up on chains" and "let my agent check what a
+    // word means" are different decisions, and somebody may well want the
+    // second without the first.
+    prefixes: ['reference.'],
+  },
 ];
 
 /** Which pack a capability belongs to, or nothing. */

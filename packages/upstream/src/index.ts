@@ -22,5 +22,6 @@ export * from './exactNumbers';
 export * from './families/bitcoin';
 export * from './families/governance';
 export * from './families/ipfs';
+export * from './families/reference';
 export * from './cid';
 export * from './bitcoinAddress';
