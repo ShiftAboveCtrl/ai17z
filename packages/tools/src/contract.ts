@@ -4,7 +4,17 @@ import type { Logger } from '@xbam/shared';
 export interface ToolContext {
   agentId: string;
   jobId: string | null;
-  /** Per-agent configuration from `agent_tools.config`. */
+  /**
+   * Per-agent configuration from `agent_tools.config`.
+   *
+   * Correct here and **not** the same as `CapabilityContext.config`, which
+   * looks identical and comes from `agent_capability_permissions.config`.
+   * Tools and capabilities are separate catalogues with separate per-agent
+   * rows: `agent_tools.tool_id` is a foreign key into the built-in tool table,
+   * which capability ids were never in. Saying so because the two fields are
+   * one word apart, and a capability once carried this file's sentence while
+   * reading nothing at all -- see migration 0069.
+   */
   config: Record<string, unknown>;
   logger: Logger;
 }

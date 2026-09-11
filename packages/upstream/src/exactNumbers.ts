@@ -110,3 +110,29 @@ export function withDecimals(amount: string, decimals: number): string {
   const fraction = decimals === 0 ? '' : digits.slice(digits.length - decimals).replace(/0+$/, '');
   return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
 }
+
+/**
+ * A hex quantity as an exact decimal string.
+ *
+ * EVM JSON-RPC returns every quantity as hex, and a `uint256` balance is far
+ * past what a double can hold -- so it goes through BigInt and comes out as
+ * text, never as a number. Shared here rather than written per family: the
+ * chain capabilities had their own copy, and a second chain adapter would have
+ * written a third.
+ *
+ * `0x` on its own is what some nodes answer for zero.
+ */
+export function hexToExactInteger(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]*$/.test(value)) return null;
+  return BigInt(value === '0x' ? '0x0' : value).toString(10);
+}
+
+/**
+ * The sum of exact integers, as an exact integer.
+ *
+ * Adding through `Number` is the obvious way and the wrong one: a total of
+ * satoshis or lamports can pass the safe range even when no single amount does.
+ */
+export function sumExact(values: readonly string[]): string {
+  return values.reduce((total, value) => total + BigInt(value), 0n).toString();
+}

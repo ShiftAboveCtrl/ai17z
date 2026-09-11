@@ -5,6 +5,7 @@ import {
   ask,
   evmFamily,
   familyHealth,
+  hexToExactInteger,
   type EvmChain,
   type EvmQuery,
   type EvmResult,
@@ -83,11 +84,13 @@ async function readChain(chain: EvmChain, method: EvmQuery['method'], params: un
   return { result: answer.value.result, chainId: answer.value.chainId, provenance: reported(answer.provenance) };
 }
 
-/** Hex quantity to a decimal string, because a balance does not fit in a number. */
-function hexToDecimalString(value: unknown): string | null {
-  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]*$/.test(value)) return null;
-  return BigInt(value === '0x' ? '0x0' : value).toString(10);
-}
+/**
+ * Hex quantity to a decimal string, because a balance does not fit in a number.
+ *
+ * The implementation lives in `@xbam/upstream` so a second chain adapter does
+ * not write a third copy of it.
+ */
+const hexToDecimalString = hexToExactInteger;
 
 function hexToNumber(value: unknown): number | null {
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]*$/.test(value)) return null;
