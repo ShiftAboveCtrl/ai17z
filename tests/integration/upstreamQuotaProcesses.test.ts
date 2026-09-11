@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, describe, expect, it } from 'vitest';
 import { installHarness } from '../support/harness';
+import { createBarrier } from '../support/barrier';
 import { uniqueSuffix } from '../support/db';
 
 const run = promisify(execFile);
@@ -27,43 +28,14 @@ installHarness();
 
 const CHILD = resolve(__dirname, '..', 'support', 'quotaChild.mts');
 
-/** Temporary directories to remove: barrier directories and quota roots alike. */
+/** Quota root directories to remove when the file is done. */
 const roots: string[] = [];
+/** Barriers to clean up, kept apart because they clean themselves. */
+const barriers: { cleanup(): void }[] = [];
 afterAll(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
+  for (const barrier of barriers) barrier.cleanup();
 });
-
-/**
- * Holds every child at a line and lets them go together.
- *
- * Node plus `tsx` plus this module takes a noticeable fraction of a second to
- * start, which is far longer than the work -- so without a barrier the first
- * child finishes the whole budget before the second is awake, and the test
- * proves the counters add up without proving anything ever contended.
- *
- * This was a timestamp 1.5 seconds out, which is a guess about startup time,
- * and on a slower machine it is the wrong guess: the moment passes before a
- * child reaches it, the child proceeds at once, and one of them takes
- * everything. It failed precisely that way on Linux and reported "expected 0 to
- * be greater than 0" -- a sentence about the symptom that says nothing about
- * the cause. A handshake has no such guess in it.
- */
-function barrier(): { directory: string; releaseWhenReady(children: number): Promise<void> } {
-  const directory = mkdtempSync(join(tmpdir(), 'ai17z-barrier-'));
-  roots.push(directory);
-  return {
-    directory,
-    async releaseWhenReady(children: number) {
-      const giveUpAt = Date.now() + 60_000;
-      while (Date.now() < giveUpAt) {
-        const ready = readdirSync(directory).filter((name) => name.startsWith('ready-')).length;
-        if (ready >= children) break;
-        await new Promise((resolve_) => setTimeout(resolve_, 5));
-      }
-      writeFileSync(join(directory, 'go'), '1');
-    },
-  };
-}
 
 interface ChildResult {
   granted: number;
@@ -85,17 +57,24 @@ async function child(args: string[], env: NodeJS.ProcessEnv = {}): Promise<Child
 
 /** Runs children that must genuinely contend, and insists that they did. */
 async function contending(args: string[][]): Promise<number[]> {
-  const line = barrier();
+  const line = createBarrier();
+  barriers.push(line);
   const running = args.map((argv, index) =>
     child(argv, { QUOTA_CHILD_BARRIER: line.directory, QUOTA_CHILD_ID: String(index) }),
   );
-  await line.releaseWhenReady(args.length);
+
+  // Both halves are asserted, and the parent's half first: if the children
+  // never met, whatever counts they produced say nothing about contention, and
+  // the old version let that surface later as a confusing number.
+  const arrival = await line.releaseWhenReady(args.length);
   const results = await Promise.all(running);
 
-  // Said plainly rather than left to show up as a confusing count. A run where
-  // the barrier did not hold has not tested contention, and should say so.
+  expect(
+    arrival.released,
+    `only ${arrival.arrived} of ${arrival.expected} children reached the line: the barrier did not hold`,
+  ).toBe(true);
   for (const [index, result] of results.entries()) {
-    expect(result.released, `child ${index} ran without being released: the barrier did not hold`).toBe(true);
+    expect(result.released, `child ${index} ran without being released`).toBe(true);
   }
   return results.map((result) => result.granted);
 }
