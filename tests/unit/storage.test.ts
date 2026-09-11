@@ -4,11 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * Reading content-addressed storage, where the gateway is not trusted and the
  * content belongs to somebody else.
  *
- * **The gateway is checked.** A CID is a hash of the content. Probed in
- * September 2026, `ipfs.io` answered a request for a known CID with 188 bytes
- * of "This IPFS gateway is switching to a service worker gateway" and a 429 --
- * code that trusted the gateway would have passed that notice page to a model
- * as the document. The fixture below is that exact response.
+ * **The gateway is checked where the identifier allows it, and only there.** A
+ * CID names an IPLD block, not a file: hashing a gateway response and comparing
+ * it to the CID is correct for `raw` and meaningless for `dag-pb`, where the
+ * identifier commits to a UnixFS node whose children a gateway GET never
+ * returns. Claiming otherwise would be inventing a cryptographic guarantee.
+ *
+ * Where it does apply it earns its keep. Probed in September 2026, `ipfs.io`
+ * answered a request for a known **raw** CID with 188 bytes of "This IPFS
+ * gateway is switching to a service worker gateway" and a 429 -- code that
+ * trusted the gateway would have passed that notice page to a model as the
+ * document. The fixture below is that exact response.
  *
  * **The content is quoted, never followed.** Token metadata is written by
  * whoever minted the token, specifically to be read by systems like this one.
@@ -190,6 +196,10 @@ describe('the gateway is checked, not believed', () => {
     expect(answer.verificationNote).toMatch(/served exactly what was asked for/i);
     // And it says why it was able to: the narrowness is the honest part.
     expect(answer.verificationNote).toMatch(/single raw block/i);
+    // Said once. Concatenating the outcome sentence with the identifier's own
+    // reason repeated this phrase, which every substring assertion above was
+    // happy with -- the live canary is what showed it.
+    expect(answer.verificationNote.match(/single raw block/gi)).toHaveLength(1);
   });
 
   it('refuses the notice page a real gateway actually served', async () => {
