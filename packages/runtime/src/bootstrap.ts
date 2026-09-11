@@ -11,6 +11,7 @@ import {
   registerGovernanceUpstreams,
   registerIpfsUpstreams,
   registerReferenceUpstreams,
+  registerSignatureUpstreams,
   registerSolanaUpstreams,
   registerTokenRiskUpstreams,
   useQuotaCoordinator,
@@ -85,6 +86,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerGovernanceUpstreams();
   registerIpfsUpstreams();
   registerReferenceUpstreams();
+  registerSignatureUpstreams();
   // The capabilities that read a chain, registered after the upstreams they
   // ask. The model asks `chain.read_balance`; which node answers is provenance.
   registerChainCapabilities();
