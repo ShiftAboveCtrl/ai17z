@@ -294,6 +294,70 @@ official documentation, probed live once, weighed, and then adopted, made
 optional, deferred or rejected -- with the measurement recorded next to the
 decision, including for the ones that were rejected.
 
+## Evaluated and not adopted
+
+Recorded because the measurement is the expensive part. A source that was
+examined and set aside looks exactly like a source nobody thought of, and the
+next person to look will spend the same afternoon reaching the same conclusion.
+
+Each entry says what was tested, what the answer was, and what would change it.
+None of these is a permanent judgement about the organisation behind it.
+
+### Wayback availability API -- rejected for this use
+
+`https://archive.org/wayback/available?url=...` is officially documented and
+answers quickly. It also returns `{"archived_snapshots": {}}` for URLs that
+demonstrably have captures.
+
+    https://commoncrawl.org      capture returned
+    commoncrawl.org  (bare)      empty
+    example.com                  empty
+    https://www.bbc.co.uk        empty
+
+Probed September 2026. A web-history capability exists precisely to keep "not
+captured" apart from "the page did not exist", and a source that manufactures
+the first is worse than no second source. Rejected for this use -- it may be
+perfectly serviceable for whatever it was designed for.
+
+### Wayback CDX server -- deferred
+
+`https://web.archive.org/cdx/search/cdx` works and returns real captures. Two
+things stopped it being adopted: both of its documentation pages on archive.org
+now answer 404, so building on it means building on an interface nobody
+currently documents; and a three-row query took **24 seconds** against Common
+Crawl's 320 milliseconds for the same shape of question.
+
+Worth revisiting if it becomes documented again. The data is good.
+
+### GDELT DOC 2.0 API -- deferred
+
+Terms are generous and were not the obstacle: "unlimited and unrestricted use
+for any academic, commercial, or governmental use of any kind without fee",
+requiring a citation and a link. Access was.
+
+Five requests, September 2026, every one refused with HTTP 429 and a canned
+message asking for one request every five seconds:
+
+    request 1, cold          429
+    request 2                429
+    request 3                429
+    request 4, +90s idle     429
+    request 5, +5min idle    429
+
+The first request was refused before any burst existed, and the last followed
+five minutes of silence -- so the refusal is not about pacing, whatever the
+message says. Each refusal also took about ten seconds to arrive, which is a
+tarpit rather than a rejection.
+
+Their own message points high-traffic users at a bulk ngrams dataset, which is
+not a bounded query API and is not what an interactive capability needs.
+
+No news family was built on an unverified response shape. A family whose
+behaviour cannot be proved against the live source is a family that compiles,
+and compiling is not evidence -- see the testing discipline above. This is
+deferred until either the endpoint answers from an ordinary network or a source
+with comparable coverage and workable terms is found.
+
 ## Testing discipline
 
 **A green test proves nothing until it has failed for the right reason.** Every
