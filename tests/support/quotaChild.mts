@@ -32,7 +32,7 @@ async function waitForRelease(): Promise<boolean> {
   return waitAtBarrier(directory, id);
 }
 
-async function throughDatabase(): Promise<number> {
+async function throughDatabase(): Promise<{ granted: number; attempted: number }> {
   const [key, capacity, intervalMs, attempts] = rest;
   // All at once, deliberately. Sequential reservations are a round trip apart,
   // which is long enough that two processes rarely have a transaction open
@@ -48,16 +48,21 @@ async function throughDatabase(): Promise<number> {
       }),
     ),
   );
-  return outcomes.filter((outcome) => outcome.granted).length;
+  // `attempted` is the count that actually came back, not the number asked
+  // for: it is evidence this process really did the work, which is what makes
+  // a grant count of zero meaningful rather than suspicious.
+  return { granted: outcomes.filter((outcome) => outcome.granted).length, attempted: outcomes.length };
 }
 
-async function throughFiles(): Promise<number> {
+async function throughFiles(): Promise<{ granted: number; attempted: number }> {
   const [root, key, capacity, intervalMs, attempts, gapMs] = rest;
   const coordinator = new MachineQuotaCoordinator(root!);
   const window = { ...perSecond(Number(capacity), { scope: 'MACHINE' }), intervalMs: Number(intervalMs) };
   let granted = 0;
+  let attempted = 0;
   for (let i = 0; i < Number(attempts); i += 1) {
     const outcome = await coordinator.reserve({ key: key!, windows: [window], weight: 1, now: Date.now() });
+    attempted += 1;
     if (outcome.granted) granted += 1;
     // A gap, so two children genuinely interleave. One reservation is a few
     // file operations and takes well under a millisecond, so without it a whole
@@ -66,15 +71,15 @@ async function throughFiles(): Promise<number> {
     const gap = Number(gapMs);
     if (Number.isFinite(gap) && gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
   }
-  return granted;
+  return { granted, attempted };
 }
 
 try {
   const released = await waitForRelease();
-  const granted = mode === 'db' ? await throughDatabase() : await throughFiles();
-  // `released` travels with the count, so the parent can tell a real result
-  // from one where the children never actually met at the line.
-  process.stdout.write(`${JSON.stringify({ granted, released })}\n`);
+  const work = mode === 'db' ? await throughDatabase() : await throughFiles();
+  // `released` and `attempted` travel with the count, so the parent can tell a
+  // real result from one where the children never met, or never ran.
+  process.stdout.write(`${JSON.stringify({ ...work, released })}\n`);
   process.exit(0);
 } catch (error) {
   process.stderr.write(`${(error as Error).message}\n`);

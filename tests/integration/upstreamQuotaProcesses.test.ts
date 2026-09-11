@@ -39,6 +39,8 @@ afterAll(() => {
 
 interface ChildResult {
   granted: number;
+  /** How many reservations this process actually made and got an answer to. */
+  attempted: number;
   /** False when the child ran without ever being let go, which proves nothing. */
   released: boolean;
 }
@@ -52,11 +54,11 @@ async function child(args: string[], env: NodeJS.ProcessEnv = {}): Promise<Child
   });
   const line = stdout.trim().split('\n').at(-1) ?? '{}';
   const parsed = JSON.parse(line) as Partial<ChildResult>;
-  return { granted: parsed.granted ?? 0, released: parsed.released ?? false };
+  return { granted: parsed.granted ?? 0, attempted: parsed.attempted ?? 0, released: parsed.released ?? false };
 }
 
 /** Runs children that must genuinely contend, and insists that they did. */
-async function contending(args: string[][]): Promise<number[]> {
+async function contending(args: string[][], attemptsEach: number): Promise<number[]> {
   const line = createBarrier();
   barriers.push(line);
   const running = args.map((argv, index) =>
@@ -75,6 +77,11 @@ async function contending(args: string[][]): Promise<number[]> {
   ).toBe(true);
   for (const [index, result] of results.entries()) {
     expect(result.released, `child ${index} ran without being released`).toBe(true);
+    // Both processes really did the whole workload against the shared budget.
+    // This is what makes a grant count of zero meaningful: that child competed
+    // for every one of its attempts and lost them all, which is participation,
+    // not absence.
+    expect(result.attempted, `child ${index} did not complete its attempts`).toBe(attemptsEach);
   }
   return results.map((result) => result.granted);
 }
@@ -84,16 +91,30 @@ describe("an installation's own budget, spent by two of its processes", () => {
     // Ten attempts each against a budget of six. Uncoordinated, both would grant
     // six and the endpoint would see twelve.
     const key = `upstream:test-${uniqueSuffix()}`;
-    const [first, second] = await contending([
-      ['db', key, '6', '60000', '10'],
-      ['db', key, '6', '60000', '10'],
-    ]);
+    const [first, second] = await contending(
+      [
+        ['db', key, '6', '60000', '10'],
+        ['db', key, '6', '60000', '10'],
+      ],
+      10,
+    );
 
+    // The claim: twenty attempts from two processes against a budget of six
+    // grant six. Uncoordinated, each would grant six and the endpoint would see
+    // twelve.
     expect(first! + second!).toBe(6);
-    // And both of them did some of the work, so this is two processes competing
-    // rather than one finishing before the other started.
-    expect(first).toBeGreaterThan(0);
-    expect(second).toBeGreaterThan(0);
+
+    // Deliberately NOT asserting that each child won at least one.
+    //
+    // That assertion was here, and it failed on Linux while the sum was still
+    // correct -- so the budget was never overspent and the test failed anyway.
+    // Every reservation takes an advisory lock, so whichever child's
+    // connections queue first can win all six while the other's ten are all
+    // correctly refused. The distribution is scheduling, not evidence.
+    //
+    // What proves contention is structural and above: both processes reached
+    // the barrier, were released together, and each completed all ten
+    // attempts. A child that won nothing still competed for everything.
   }, 180_000);
 
   it('keeps two different budgets apart', async () => {
@@ -116,14 +137,17 @@ describe('a budget an endpoint counts by address, shared by two installations', 
     roots.push(root);
     const key = `origin:example-${uniqueSuffix()}`;
 
-    const [installationA, installationB] = await contending([
-      ['machine', root, key, '6', '60000', '10', '25'],
-      ['machine', root, key, '6', '60000', '10', '25'],
-    ]);
+    const [installationA, installationB] = await contending(
+      [
+        ['machine', root, key, '6', '60000', '10', '25'],
+        ['machine', root, key, '6', '60000', '10', '25'],
+      ],
+      10,
+    );
 
+    // Same reasoning as the database case: the sum is the claim, and both
+    // installations completing all ten attempts is what makes it contention.
     expect(installationA! + installationB!).toBe(6);
-    expect(installationA).toBeGreaterThan(0);
-    expect(installationB).toBeGreaterThan(0);
   }, 180_000);
 
   it('lets one installation stop without stranding the other', async () => {
