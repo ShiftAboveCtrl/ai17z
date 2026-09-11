@@ -141,9 +141,15 @@ const read = defineCapability({
       contentType: value.contentType,
       verification: value.verification,
       kind: value.kind,
-      // The generic sentence for the outcome, then the specific reason this
-      // identifier produced it.
-      verificationNote: `${VERIFICATION_WORDS[value.verification] ?? ''} ${value.verificationNote}`.trim(),
+      // For VERIFIED the outcome sentence already carries the reason -- there
+      // is only one way to be verified. For UNVERIFIABLE there are three, so
+      // the specific one is added. Concatenating both unconditionally said
+      // "names a single raw block" twice, which the live canary showed and the
+      // unit tests did not, because they matched substrings.
+      verificationNote:
+        value.verification === 'VERIFIED'
+          ? (VERIFICATION_WORDS.VERIFIED ?? value.verificationNote)
+          : `${VERIFICATION_WORDS[value.verification] ?? ''} ${value.verificationNote}`.trim(),
       handling: QUOTED,
       content: value.text,
       json,
