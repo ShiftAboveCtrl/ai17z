@@ -80,6 +80,7 @@ export * from './contractCapabilities';
 export * from './toolpackViews';
 export * from './defiCapabilities';
 export * from './tokenRiskCapabilities';
+export * from './webHistoryCapabilities';
 export * from './solanaCapabilities';
 export * from './bitcoinCapabilities';
 export * from './governanceCapabilities';
