@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { loadEnv } from '@xbam/shared';
 import { agents, legacyLedger, memories, query, users } from '@xbam/database';
 import { importAi4cz } from '../../tools/import-ai4cz/src/import';
 import { installHarness } from '../support/harness';
@@ -10,6 +11,16 @@ installHarness();
 
 // No default: this suite needs a real AI4CZ installation to read, and there is
 // no sensible guess for where somebody keeps theirs. It skips without one.
+//
+// Loaded here rather than relied upon. The variable lives in the environment
+// file, and this read happens while the module is being evaluated -- before any
+// hook has run. Under Vitest 3 every file shared one process, so by the time
+// this one was reached some earlier file had already called loadEnv and the
+// value was simply there; under Vitest 4 each file gets its own, and this suite
+// skipped itself in a checkout that had the legacy project all along. A
+// precondition that depends on another file having run first is not a
+// precondition. loadEnv is idempotent, so asking again costs nothing.
+loadEnv();
 const LEGACY_DIR = process.env.AI4CZ_LEGACY_DIR ?? '';
 const available = existsSync(LEGACY_DIR);
 
