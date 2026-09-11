@@ -10,6 +10,7 @@ import {
   registerBitcoinUpstreams,
   registerGovernanceUpstreams,
   registerIpfsUpstreams,
+  registerReferenceUpstreams,
   registerSolanaUpstreams,
   registerTokenRiskUpstreams,
   useQuotaCoordinator,
@@ -23,6 +24,7 @@ import { registerSolanaCapabilities } from './solanaCapabilities';
 import { registerBitcoinCapabilities } from './bitcoinCapabilities';
 import { registerGovernanceCapabilities } from './governanceCapabilities';
 import { registerStorageCapabilities } from './storageCapabilities';
+import { registerReferenceCapabilities } from './referenceCapabilities';
 import { defaultPipelineDraft } from './defaultPipeline';
 import { registerXCapabilities } from './xCapabilities';
 
@@ -71,6 +73,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerBitcoinUpstreams();
   registerGovernanceUpstreams();
   registerIpfsUpstreams();
+  registerReferenceUpstreams();
   // The capabilities that read a chain, registered after the upstreams they
   // ask. The model asks `chain.read_balance`; which node answers is provenance.
   registerChainCapabilities();
@@ -81,6 +84,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerBitcoinCapabilities();
   registerGovernanceCapabilities();
   registerStorageCapabilities();
+  registerReferenceCapabilities();
 
   await upgradePipelinesWithResearch().catch((error) =>
     log.warn('could not add the research node to existing pipelines', { message: errorMessage(error) }),
