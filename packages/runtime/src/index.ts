@@ -83,3 +83,4 @@ export * from './tokenRiskCapabilities';
 export * from './solanaCapabilities';
 export * from './bitcoinCapabilities';
 export * from './governanceCapabilities';
+export * from './storageCapabilities';
