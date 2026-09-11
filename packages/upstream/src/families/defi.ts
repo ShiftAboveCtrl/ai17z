@@ -30,6 +30,32 @@ import { UpstreamFailure, classifyStatus, classifyThrown } from '../failures';
  * capability that asks both, and its job is to report a disagreement rather than
  * to resolve one.
  *
+ * ### What was measured, and what was refused
+ *
+ * Every endpoint here was fetched once and weighed, September 2026. Size is the
+ * governing constraint at DefiLlama, not the rate limit:
+ *
+ *     stablecoinchains                       19 KB   adopted
+ *     v2/historicalChainTvl/Ethereum        118 KB   adopted
+ *     stablecoins (every one there is)      540 KB   adopted
+ *     overview/fees (charts excluded)       4.2 MB   refused
+ *     protocols (8,227 of them)             8.6 MB   refused
+ *     protocol/aave                        10.2 MB   refused
+ *     yields pools (17,210 of them)        11.5 MB   refused
+ *     stablecoin/1 (one single asset)      20.6 MB   refused
+ *
+ * The last line is the one worth remembering. Asking about *one* stablecoin
+ * costs thirty-eight times what asking about *all* of them costs, because the
+ * single-asset endpoint carries the full daily history of every chain it is on.
+ * The specific question being far more expensive than the general one is not the
+ * shape anyone assumes, and assuming the other way round is how a worker ends up
+ * holding twenty megabytes to report one number.
+ *
+ * The four refused above are not gaps to fill later with a bigger cap. Yields
+ * and the protocol list are answers to questions nobody asked precisely, and a
+ * capability that returns 17,210 pools has not answered anything -- it has moved
+ * the problem into the prompt.
+ *
  * Free, no key, checked September 2026.
  */
 
@@ -45,6 +71,12 @@ export const DefiQuery = z.discriminatedUnion('kind', [
    * attached to the wrong contract is the error that costs somebody money.
    */
   z.object({ kind: z.literal('price'), chain: z.string().min(1).max(40), address: z.string().min(1).max(120) }),
+  /** Every stablecoin, its peg and what is circulating. */
+  z.object({ kind: z.literal('stablecoins') }),
+  /** How much stablecoin supply sits on each chain. */
+  z.object({ kind: z.literal('stablecoin_chains') }),
+  /** One chain's value locked, daily, for as long as it has been measured. */
+  z.object({ kind: z.literal('chain_history'), chain: z.string().min(1).max(40) }),
 ]);
 export type DefiQuery = z.infer<typeof DefiQuery>;
 
@@ -53,6 +85,19 @@ export interface DefiAnswer {
   tvlUsd?: number;
   /** Present for `chains`. */
   chains?: { name: string; tvlUsd: number; tokenSymbol: string | null }[];
+  /** Present for `stablecoins`. */
+  stablecoins?: {
+    name: string;
+    symbol: string;
+    pegType: string | null;
+    pegMechanism: string | null;
+    circulating: number | null;
+    price: number | null;
+  }[];
+  /** Present for `stablecoin_chains`. */
+  stablecoinChains?: { name: string; circulatingUsd: number }[];
+  /** Present for `chain_history`. */
+  history?: { at: string; tvlUsd: number }[];
   /** Present for `price`. */
   price?: {
     usd: number;
@@ -70,13 +115,27 @@ export interface DefiAnswer {
   };
 }
 
+/**
+ * The host each kind actually talks to.
+ *
+ * Not cosmetic. `origin` is what a MACHINE-scoped window is keyed on and what
+ * provenance shows a person, so a family that declares one host and fetches
+ * another would share an allowance with a service it never calls and attribute
+ * its answer to a service that never gave one.
+ */
+function originFor(kind: DefiQuery['kind']): string {
+  if (kind === 'price') return 'coins.llama.fi';
+  if (kind === 'stablecoins' || kind === 'stablecoin_chains') return 'stablecoins.llama.fi';
+  return 'api.llama.fi';
+}
+
 function llama(kind: DefiQuery['kind'], family: string): Upstream<DefiQuery, DefiAnswer> {
   return defineUpstream<DefiQuery, DefiAnswer>({
     id: `${family}.defillama`,
     family,
     name: 'defillama',
     description: 'Value locked and token prices, from DefiLlama.',
-    origin: kind === 'price' ? 'coins.llama.fi' : 'api.llama.fi',
+    origin: originFor(kind),
     limit: {
       concurrentPerProcess: 2,
       // DefiLlama publishes no number for the free endpoints -- checked
@@ -86,15 +145,25 @@ function llama(kind: DefiQuery['kind'], family: string): Upstream<DefiQuery, Def
     },
     timeoutMs: 15_000,
     // Value locked moves slowly and a price does not move usefully faster than
-    // this for anything an agent would say about it.
-    freshMs: kind === 'price' ? 60_000 : 5 * 60_000,
+    // this for anything an agent would say about it. Stablecoin supply moves
+    // slower still, and its list is 540 KB -- so it is held ten minutes, which
+    // is what turns a half-megabyte fetch into something several agents share
+    // rather than each pay for.
+    freshMs:
+      kind === 'price'
+        ? 60_000
+        : kind === 'stablecoins' || kind === 'stablecoin_chains'
+          ? 10 * 60_000
+          : 5 * 60_000,
     rank: 1,
     cacheKey: (query) =>
       query.kind === 'protocol_tvl'
         ? `tvl:${query.slug.toLowerCase()}`
         : query.kind === 'price'
           ? `price:${query.chain.toLowerCase()}:${query.address.toLowerCase()}`
-          : 'chains',
+          : query.kind === 'chain_history'
+            ? `history:${query.chain.toLowerCase()}`
+            : query.kind,
     async fetch(query, ctx) {
       try {
         if (query.kind === 'protocol_tvl') {
@@ -141,6 +210,92 @@ function llama(kind: DefiQuery['kind'], family: string): Upstream<DefiQuery, Def
           };
         }
 
+        if (query.kind === 'stablecoins') {
+          const response = await safeFetch('https://stablecoins.llama.fi/stablecoins', {
+            signal: ctx.signal,
+            headers: { accept: 'application/json' },
+            // Measured at 540 KB for every stablecoin there is. Large, and the
+            // smallest way to ask the question: the *single asset* endpoint is
+            // 20.6 MB, because it carries full history. The specific URL being
+            // bigger than the general one is not the shape anybody expects.
+            maxBytes: 1_200_000,
+          });
+          const status = classifyStatus(response.status, response.headers);
+          if (status) throw status;
+          const body = JSON.parse(response.text) as { peggedAssets?: Record<string, unknown>[] };
+          if (!Array.isArray(body.peggedAssets)) {
+            throw new UpstreamFailure('BAD_RESPONSE', 'DefiLlama answered with no stablecoin list.');
+          }
+          return {
+            stablecoins: body.peggedAssets
+              .filter((row) => typeof row.name === 'string' && typeof row.symbol === 'string')
+              .map((row) => {
+                const circulating = row.circulating as Record<string, unknown> | undefined;
+                const amount = circulating ? Object.values(circulating).find((v) => typeof v === 'number') : undefined;
+                return {
+                  name: row.name as string,
+                  symbol: row.symbol as string,
+                  pegType: typeof row.pegType === 'string' ? row.pegType : null,
+                  pegMechanism: typeof row.pegMechanism === 'string' ? row.pegMechanism : null,
+                  circulating: typeof amount === 'number' ? amount : null,
+                  price: typeof row.price === 'number' ? row.price : null,
+                };
+              }),
+          };
+        }
+
+        if (query.kind === 'stablecoin_chains') {
+          const response = await safeFetch('https://stablecoins.llama.fi/stablecoinchains', {
+            signal: ctx.signal,
+            headers: { accept: 'application/json' },
+            // 19 KB. One of the few small things here.
+            maxBytes: 200_000,
+          });
+          const status = classifyStatus(response.status, response.headers);
+          if (status) throw status;
+          const rows = JSON.parse(response.text) as Record<string, unknown>[];
+          if (!Array.isArray(rows)) throw new UpstreamFailure('BAD_RESPONSE', 'DefiLlama answered with no chain list.');
+          return {
+            stablecoinChains: rows
+              .filter((row) => typeof row.name === 'string')
+              .map((row) => {
+                const total = row.totalCirculatingUSD as Record<string, unknown> | undefined;
+                const amount = total ? Object.values(total).find((v) => typeof v === 'number') : undefined;
+                return { name: row.name as string, circulatingUsd: typeof amount === 'number' ? amount : 0 };
+              }),
+          };
+        }
+
+        if (query.kind === 'chain_history') {
+          const response = await safeFetch(
+            `https://api.llama.fi/v2/historicalChainTvl/${encodeURIComponent(query.chain)}`,
+            {
+              signal: ctx.signal,
+              headers: { accept: 'application/json' },
+              // 118 KB for Ethereum's whole history, which is every daily point
+              // since 2017. The capability trims it; the wire cost is bounded.
+              maxBytes: 500_000,
+            },
+          );
+          // A chain nobody has is a 404 of nginx's own HTML, which the general
+          // classifier already reads as NOT_FOUND -- correctly, and with the
+          // breaker left alone. What it cannot do is say *what* was not found,
+          // and "It has no such thing (404)" is not something to show a person
+          // who asked about a chain by name. Probed September 2026.
+          if (response.status === 404) {
+            throw new UpstreamFailure('NOT_FOUND', `DefiLlama has no history for a chain called "${query.chain}".`);
+          }
+          const status = classifyStatus(response.status, response.headers);
+          if (status) throw status;
+          const rows = JSON.parse(response.text) as { date?: unknown; tvl?: unknown }[];
+          if (!Array.isArray(rows)) throw new UpstreamFailure('BAD_RESPONSE', 'DefiLlama answered with no history.');
+          return {
+            history: rows
+              .filter((row) => typeof row.date === 'number' && typeof row.tvl === 'number')
+              .map((row) => ({ at: new Date((row.date as number) * 1000).toISOString(), tvlUsd: row.tvl as number })),
+          };
+        }
+
         const key = `${query.chain}:${query.address}`;
         const response = await safeFetch(`https://coins.llama.fi/prices/current/${encodeURIComponent(key)}`, {
           signal: ctx.signal,
@@ -177,4 +332,7 @@ export function registerDefiUpstreams(): void {
   registerUpstream(llama('protocol_tvl', 'defi_tvl'));
   registerUpstream(llama('chains', 'defi_chains'));
   registerUpstream(llama('price', 'price_usd'));
+  registerUpstream(llama('stablecoins', 'defi_stablecoins'));
+  registerUpstream(llama('stablecoin_chains', 'defi_stablecoin_chains'));
+  registerUpstream(llama('chain_history', 'defi_chain_history'));
 }

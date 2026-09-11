@@ -237,3 +237,223 @@ describe('what it asks for', () => {
     expect(asked[0]).not.toMatch(/\/protocol\//);
   });
 });
+
+/** Two chains' worth of a stablecoin, in the nested shape the source uses. */
+function pegged(name: string, symbol: string, pegType: string | null, circulating: number, price: number | null) {
+  return { name, symbol, pegType, pegMechanism: 'fiat-backed', circulating: { [pegType ?? 'peggedUSD']: circulating }, price };
+}
+
+describe('stablecoins, and the peg it is honest about not being able to measure', () => {
+  it('measures a dollar peg, in both directions', async () => {
+    responses = {
+      'stablecoins.llama.fi/stablecoins': {
+        status: 200,
+        body: JSON.stringify({
+          peggedAssets: [
+            pegged('Tether', 'USDT', 'peggedUSD', 180_000_000_000, 0.9994),
+            pegged('Dai', 'DAI', 'peggedUSD', 5_300_000_000, 1.0021),
+          ],
+        }),
+      },
+    };
+    const answer = (await invoke('defi.stablecoins', {})) as {
+      stablecoins: { symbol: string; pegDeviationPercent: number | null; deviationUnmeasurable: string | null }[];
+    };
+
+    const usdt = answer.stablecoins.find((row) => row.symbol === 'USDT')!;
+    const dai = answer.stablecoins.find((row) => row.symbol === 'DAI')!;
+    // Below a dollar is negative and above it is positive. A deviation reported
+    // as a magnitude cannot tell a depeg from a premium.
+    expect(usdt.pegDeviationPercent).toBeCloseTo(-0.06, 3);
+    expect(dai.pegDeviationPercent).toBeCloseTo(0.21, 3);
+    expect(usdt.deviationUnmeasurable).toBeNull();
+  });
+
+  it('refuses to call a euro stablecoin depegged for trading at 1.08 dollars', async () => {
+    // This is the whole reason the check exists. EURC at 1.08 is exactly on its
+    // peg; measuring it against a dollar invents an eight per cent alarm about a
+    // perfectly healthy asset.
+    responses = {
+      'stablecoins.llama.fi/stablecoins': {
+        status: 200,
+        body: JSON.stringify({ peggedAssets: [pegged('Euro Coin', 'EURC', 'peggedEUR', 200_000_000, 1.0832)] }),
+      },
+    };
+    const answer = (await invoke('defi.stablecoins', {})) as {
+      stablecoins: {
+        symbol: string;
+        priceUsd: number | null;
+        circulatingUnit: string | null;
+        pegDeviationPercent: number | null;
+        deviationUnmeasurable: string | null;
+      }[];
+    };
+
+    const eurc = answer.stablecoins[0]!;
+    expect(eurc.pegDeviationPercent).toBeNull();
+    // And its supply is named in euros, because 465,693,298 read as dollars
+    // when it means euros is the same sixteen per cent error by another route.
+    expect(eurc.circulatingUnit).toBe('peggedEUR');
+    expect(eurc.deviationUnmeasurable).toMatch(/peggedEUR/);
+    expect(eurc.deviationUnmeasurable).toMatch(/not the dollar/i);
+    // The price is still reported. Declining to measure a deviation is not the
+    // same as withholding what was observed.
+    expect(eurc.priceUsd).toBe(1.0832);
+  });
+
+  it('says a dollar peg went unmeasured because there was no price, not because of its peg', async () => {
+    responses = {
+      'stablecoins.llama.fi/stablecoins': {
+        status: 200,
+        body: JSON.stringify({ peggedAssets: [pegged('Some Coin', 'SOME', 'peggedUSD', 1_000_000, null)] }),
+      },
+    };
+    const answer = (await invoke('defi.stablecoins', {})) as {
+      stablecoins: { pegDeviationPercent: number | null; deviationUnmeasurable: string | null }[];
+    };
+    expect(answer.stablecoins[0]!.pegDeviationPercent).toBeNull();
+    expect(answer.stablecoins[0]!.deviationUnmeasurable).toMatch(/no current price/i);
+  });
+
+  it('orders by supply and can be narrowed to one', async () => {
+    responses = {
+      'stablecoins.llama.fi/stablecoins': {
+        status: 200,
+        body: JSON.stringify({
+          peggedAssets: [
+            pegged('Dai', 'DAI', 'peggedUSD', 5_300_000_000, 1),
+            pegged('Tether', 'USDT', 'peggedUSD', 180_000_000_000, 1),
+            pegged('USD Coin', 'USDC', 'peggedUSD', 74_000_000_000, 1),
+          ],
+        }),
+      },
+    };
+    const top = (await invoke('defi.stablecoins', { limit: 2 })) as {
+      stablecoins: { symbol: string }[];
+      totalReported: number;
+    };
+    expect(top.stablecoins.map((row) => row.symbol)).toEqual(['USDT', 'USDC']);
+    expect(top.totalReported).toBe(3);
+
+    const one = (await invoke('defi.stablecoins', { symbol: 'dai' })) as { stablecoins: { symbol: string }[] };
+    expect(one.stablecoins.map((row) => row.symbol)).toEqual(['DAI']);
+  });
+
+  it('never asks the single-asset endpoint, which is thirty-eight times larger', async () => {
+    // `stablecoins.llama.fi/stablecoin/1` is 20.6 MB against 540 KB for every
+    // stablecoin there is, because it carries full history. The specific
+    // question costing far more than the general one is not the shape anyone
+    // assumes, and is exactly the trap worth a test.
+    responses = {
+      'stablecoins.llama.fi/stablecoins': { status: 200, body: JSON.stringify({ peggedAssets: [] }) },
+    };
+    await invoke('defi.stablecoins', { symbol: 'USDT' });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatch(/stablecoins\.llama\.fi\/stablecoins$/);
+  });
+
+  it('attributes the answer to the host that gave it', async () => {
+    // `origin` is both what a person is shown and what a machine-scoped window
+    // is keyed on, so a family that says api.llama.fi while fetching
+    // stablecoins.llama.fi would share an allowance it never spends and credit
+    // a service that never answered.
+    responses = {
+      'stablecoins.llama.fi/stablecoins': { status: 200, body: JSON.stringify({ peggedAssets: [] }) },
+    };
+    const answer = (await invoke('defi.stablecoins', {})) as { provenance: { host: string } };
+    expect(answer.provenance.host).toBe('stablecoins.llama.fi');
+  });
+});
+
+describe('where stablecoin supply sits', () => {
+  it('unwraps the nested total and orders by it', async () => {
+    responses = {
+      'stablecoins.llama.fi/stablecoinchains': {
+        status: 200,
+        body: JSON.stringify([
+          { name: 'Tron', totalCirculatingUSD: { peggedUSD: 81_000_000_000 } },
+          { name: 'Ethereum', totalCirculatingUSD: { peggedUSD: 148_000_000_000 } },
+          { name: 'Solana', totalCirculatingUSD: { peggedUSD: 13_000_000_000 } },
+        ]),
+      },
+    };
+    const answer = (await invoke('defi.stablecoin_supply_by_chain', { limit: 2 })) as {
+      chains: { name: string; circulatingUsd: number }[];
+      totalReported: number;
+    };
+    expect(answer.chains.map((row) => row.name)).toEqual(['Ethereum', 'Tron']);
+    expect(answer.chains[0]!.circulatingUsd).toBe(148_000_000_000);
+    expect(answer.totalReported).toBe(3);
+  });
+});
+
+/** A daily series ending today, oldest first, exactly as the source sends it. */
+function series(values: readonly number[]) {
+  const day = 86_400;
+  const end = 1_789_000_000;
+  return values.map((tvl, index) => ({ date: end - (values.length - 1 - index) * day, tvl }));
+}
+
+describe('how a chain has moved', () => {
+  it('trims the window, computes the change across it, and says how much more there is', async () => {
+    responses = {
+      'api.llama.fi/v2/historicalChainTvl': { status: 200, body: JSON.stringify(series([10, 20, 30, 40, 50])) },
+    };
+    const answer = (await invoke('defi.chain_tvl_history', { chain: 'Ethereum', days: 3 })) as {
+      points: { tvlUsd: number }[];
+      first: { tvlUsd: number } | null;
+      last: { tvlUsd: number } | null;
+      changePercent: number | null;
+      totalDaysAvailable: number;
+    };
+
+    // The last three, not the first three: a window is the recent end of a
+    // series, and taking the other end answers a question about 2017.
+    expect(answer.points.map((point) => point.tvlUsd)).toEqual([30, 40, 50]);
+    // The change is across the window that was asked for, not across everything
+    // the source holds.
+    expect(answer.changePercent).toBeCloseTo(66.667, 2);
+    expect(answer.first!.tvlUsd).toBe(30);
+    expect(answer.last!.tvlUsd).toBe(50);
+    // And the rest is acknowledged rather than hidden.
+    expect(answer.totalDaysAvailable).toBe(5);
+  });
+
+  it('turns the epoch seconds into a date a person can read', async () => {
+    responses = {
+      'api.llama.fi/v2/historicalChainTvl': { status: 200, body: JSON.stringify(series([10, 20])) },
+    };
+    const answer = (await invoke('defi.chain_tvl_history', { chain: 'Ethereum', days: 2 })) as {
+      points: { at: string }[];
+    };
+    expect(answer.points[1]!.at).toBe(new Date(1_789_000_000 * 1000).toISOString());
+  });
+
+  it('declines to state a change from a baseline of nothing', async () => {
+    // The first day a chain is measured is often zero, and dividing by it
+    // produces an infinite growth figure that reads like a discovery.
+    responses = {
+      'api.llama.fi/v2/historicalChainTvl': { status: 200, body: JSON.stringify(series([0, 5_000_000])) },
+    };
+    const answer = (await invoke('defi.chain_tvl_history', { chain: 'Newchain', days: 2 })) as {
+      changePercent: number | null;
+      points: unknown[];
+    };
+    expect(answer.changePercent).toBeNull();
+    // The points still come back. Not stating a ratio is not refusing to answer.
+    expect(answer.points).toHaveLength(2);
+  });
+
+  it('treats a chain nobody has as the question being wrong, and names it', async () => {
+    // Live, an unknown chain is a 404 carrying nginx's own HTML page. The
+    // general classifier reads that as NOT_FOUND and leaves the breaker alone,
+    // which is right; what it cannot do is say what was not found, and
+    // "It has no such thing (404)" is not an answer to give somebody who asked
+    // about a chain by name.
+    responses = {};
+    await expect(invoke('defi.chain_tvl_history', { chain: 'Nowhere', days: 7 })).rejects.toThrow(
+      /no history for a chain called "Nowhere"/,
+    );
+    expect(healthOf('defi_chain_history.defillama').failures).toBe(0);
+  });
+});
