@@ -16,6 +16,7 @@ import {
   registerSolanaUpstreams,
   registerTokenRiskUpstreams,
   registerFeedUpstreams,
+  registerScholarUpstreams,
   registerWebHistoryUpstreams,
   useQuotaCoordinator,
 } from '@xbam/upstream';
@@ -25,6 +26,7 @@ import { registerContractCapabilities } from './contractCapabilities';
 import { registerDefiCapabilities } from './defiCapabilities';
 import { registerTokenRiskCapabilities } from './tokenRiskCapabilities';
 import { registerFeedCapabilities } from './feedCapabilities';
+import { registerScholarCapabilities } from './scholarCapabilities';
 import { registerWebHistoryCapabilities } from './webHistoryCapabilities';
 import { registerSolanaCapabilities } from './solanaCapabilities';
 import { registerBitcoinCapabilities } from './bitcoinCapabilities';
@@ -96,6 +98,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerGeckoUpstreams();
   registerWebHistoryUpstreams();
   registerFeedUpstreams();
+  registerScholarUpstreams();
   // The capabilities that read a chain, registered after the upstreams they
   // ask. The model asks `chain.read_balance`; which node answers is provenance.
   registerChainCapabilities();
@@ -110,6 +113,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerMarketCapabilities();
   registerWebHistoryCapabilities();
   registerFeedCapabilities();
+  registerScholarCapabilities();
 
   await upgradePipelinesWithResearch().catch((error) =>
     log.warn('could not add the research node to existing pipelines', { message: errorMessage(error) }),
