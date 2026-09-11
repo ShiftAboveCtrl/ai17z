@@ -71,6 +71,49 @@ describe('an amount becoming text', () => {
   });
 });
 
+describe('a hex quantity', () => {
+  it('survives a uint256, which is the whole point of not using a number', async () => {
+    const { hexToExactInteger } = await import('@xbam/upstream');
+    // 2^256 - 1. A double cannot hold a millionth of this.
+    const max = '0x' + 'f'.repeat(64);
+    expect(hexToExactInteger(max)).toBe(
+      '115792089237316195423570985008687907853269984665640564039457584007913129639935',
+    );
+    // One ether in wei, already past the safe range.
+    expect(hexToExactInteger('0xde0b6b3a7640000')).toBe('1000000000000000000');
+  });
+
+  it('reads the empty quantity some nodes answer for zero', async () => {
+    const { hexToExactInteger } = await import('@xbam/upstream');
+    expect(hexToExactInteger('0x')).toBe('0');
+    expect(hexToExactInteger('0x0')).toBe('0');
+  });
+
+  it('refuses anything that is not one, rather than guessing', async () => {
+    const { hexToExactInteger } = await import('@xbam/upstream');
+    expect(hexToExactInteger('123')).toBeNull();
+    expect(hexToExactInteger('0xnothex')).toBeNull();
+    expect(hexToExactInteger(null)).toBeNull();
+    expect(hexToExactInteger(42)).toBeNull();
+  });
+});
+
+describe('summing exact integers', () => {
+  it('stays exact where adding through a number would not', async () => {
+    const { sumExact } = await import('@xbam/upstream');
+    // Three amounts, each individually safe, whose total is not.
+    const parts = ['9007199254740991', '9007199254740991', '9007199254740991'];
+    expect(sumExact(parts)).toBe('27021597764222973');
+    // What the obvious implementation gives instead.
+    expect(String(parts.reduce((total, part) => total + Number(part), 0))).not.toBe('27021597764222973');
+  });
+
+  it('sums nothing to nought', async () => {
+    const { sumExact } = await import('@xbam/upstream');
+    expect(sumExact([])).toBe('0');
+  });
+});
+
 describe('rendering an amount with its decimals', () => {
   it('does it as text, because dividing is the thing being avoided', () => {
     expect(withDecimals('533858884382', 9)).toBe('533.858884382');

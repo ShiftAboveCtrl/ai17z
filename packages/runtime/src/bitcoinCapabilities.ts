@@ -8,6 +8,7 @@ import {
   familyHealth,
   parseBitcoinAddress,
   isBitcoinTxid,
+  sumExact,
   withDecimals,
   type BitcoinQuery,
   type BitcoinResult,
@@ -384,14 +385,16 @@ const unspent = defineCapability({
         };
       });
 
-    const total = outputs.reduce((sum, output) => sum + BigInt(output.valueSats), 0n);
+    // Summed exactly: a total can pass the safe range even when no single
+    // output does.
+    const total = sumExact(outputs.map((output) => output.valueSats));
     const truncated = rows.length > outputs.length;
 
     return {
       address: input.address,
       listed: true,
       outputs,
-      totalShownSats: total.toString(),
+      totalShownSats: total,
       truncated,
       note: truncated
         ? `Showing ${outputs.length} of ${rows.length} unspent outputs, so the total above is not the address's balance.`
