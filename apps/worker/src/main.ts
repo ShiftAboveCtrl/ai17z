@@ -28,6 +28,7 @@ import { PersonaSyncRunner } from './personaSync';
 import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
+import { pollDueFeeds } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -162,6 +163,25 @@ async function main(): Promise<void> {
   const sweeper = startLoop('recovery-sweep', 60_000, sweep);
 
   /**
+   * Looks at feeds that are due.
+   *
+   * A minute is the tick, not the poll interval: each subscription carries its
+   * own, and the claim is what decides whether any are due at all. So this is
+   * usually a single indexed query that returns nothing, and the actual polling
+   * happens at whatever pace the subscriptions were configured for.
+   *
+   * Deliberately the same `startLoop` every other recurring job uses. A feature
+   * that brings its own timer is a second scheduler, and the second one is
+   * always the one nobody remembers to stop.
+   */
+  const watchFeeds = async () => {
+    const outcomes = await pollDueFeeds();
+    const fresh = outcomes.reduce((total, outcome) => total + outcome.fresh.length, 0);
+    if (fresh > 0) log.info('feeds produced something new', { feeds: outcomes.length, entries: fresh });
+  };
+  const feedWatcher = startLoop('feed-watch', 60_000, watchFeeds);
+
+  /**
    * Publishes what each account's three tabs are doing.
    *
    * The API owns no browsers, so this process is the only one that can answer
@@ -240,6 +260,7 @@ async function main(): Promise<void> {
     log.info('shutting down', { signal });
     clearInterval(heartbeat);
     clearInterval(sweeper);
+    clearInterval(feedWatcher);
     if (tabReporter) clearInterval(tabReporter);
     // Withdraw immediately rather than waiting for the heartbeat to lapse: a
     // clean shutdown knows it is leaving.

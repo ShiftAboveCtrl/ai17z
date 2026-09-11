@@ -9,6 +9,7 @@ export * as agents from './repositories/agents';
 export * as accounts from './repositories/accounts';
 export * as accountCredentials from './repositories/accountCredentials';
 export * as providers from './repositories/providers';
+export * as feedSubscriptions from './repositories/feedSubscriptions';
 export * as pipelines from './repositories/pipelines';
 export * as events from './repositories/events';
 export * as conversations from './repositories/conversations';
