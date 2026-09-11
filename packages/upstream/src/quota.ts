@@ -37,6 +37,22 @@ export const QUOTA_SCOPES = ['INSTALLATION', 'MACHINE'] as const;
 export type QuotaScope = (typeof QUOTA_SCOPES)[number];
 
 export interface QuotaWindow {
+  /**
+   * Counts this window separately for each value this returns.
+   *
+   * Some operators publish a budget per *method* as well as an overall one --
+   * Solana's public RPC allows 100 requests per ten seconds per address and
+   * only 40 of any single RPC. Without this, a family respecting the overall
+   * rate can still spend it all on one method and break the tighter limit.
+   *
+   * Derived from the normalised query, so the discriminator is whatever the
+   * upstream's own limit is keyed by rather than something an adapter invents.
+   * Absent means one budget for everything, which is the common case.
+   *
+   * Deliberately central: the alternative is a private timer inside an adapter,
+   * which is exactly what this package exists to stop.
+   */
+  per?(query: unknown): string | null;
   /** Units that may be spent in one interval. */
   capacity: number;
   intervalMs: number;
@@ -115,6 +131,17 @@ export function perSecond(capacity: number, options: WindowOptions = {}): QuotaW
   return window(capacity, 1_000, 'second', options);
 }
 
+/**
+ * Ten seconds, which is the unit several operators actually publish in.
+ *
+ * Solana states its public limits per ten seconds, and expressing them as
+ * "per second divided by ten" would both round badly and stop the label
+ * matching the document somebody would check it against.
+ */
+export function perTenSeconds(capacity: number, options: WindowOptions = {}): QuotaWindow {
+  return window(capacity, 10_000, '10s', options);
+}
+
 export function perMinute(capacity: number, options: WindowOptions = {}): QuotaWindow {
   return window(capacity, 60_000, 'minute', options);
 }
@@ -136,8 +163,17 @@ export function perDay(capacity: number, options: WindowOptions = {}): QuotaWind
  * an implementation detail. A window belonging to the installation is counted
  * per upstream id, because that is what a key or an account maps to.
  */
-export function quotaKey(input: { upstreamId: string; origin: string; scope: QuotaScope }): string {
-  return input.scope === 'MACHINE' ? `origin:${input.origin}` : `upstream:${input.upstreamId}`;
+export function quotaKey(input: {
+  upstreamId: string;
+  origin: string;
+  scope: QuotaScope;
+  /** Set when the window is counted per method, per key, or per anything else. */
+  per?: string | null;
+}): string {
+  const base = input.scope === 'MACHINE' ? `origin:${input.origin}` : `upstream:${input.upstreamId}`;
+  // Appended rather than substituted, so a per-method budget is a budget
+  // *within* the address it belongs to and cannot collide with another host's.
+  return input.per ? `${base}:per:${input.per}` : base;
 }
 
 /** What a request costs against the windows, never less than one. */
