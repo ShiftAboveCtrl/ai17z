@@ -20,7 +20,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * proposes.
  */
 
-let replies: Record<string, { status?: number; body: string }> = {};
+type Reply = { status?: number; body: string };
+/** A key may hold one reply, or a sequence consumed in order. */
+let replies: Record<string, Reply | Reply[]> = {};
 let requested: string[] = [];
 
 vi.mock('undici', () => ({
@@ -31,7 +33,10 @@ vi.mock('undici', () => ({
     const url = String(input);
     requested.push(url);
     const key = Object.keys(replies).find((candidate) => url.includes(candidate));
-    const reply = key ? replies[key]! : { status: 404, body: '{}' };
+    const entry = key ? replies[key]! : { status: 404, body: '{}' };
+    // A sequence lets one key answer differently on successive calls -- needed
+    // where a capability looks up a proxy and then its implementation.
+    const reply = Array.isArray(entry) ? (entry.length > 1 ? entry.shift()! : entry[0]!) : entry;
     return new Response(reply.body, {
       status: reply.status ?? 200,
       headers: new Headers({ 'content-type': 'application/json' }),
@@ -296,5 +301,80 @@ describe('what it will not accept', () => {
     expect(answer.sourcesUnreachable).toContain('a curated signature database');
     // One source failing is a smaller answer, not no answer.
     expect(answer.candidates.length).toBe(1);
+  });
+});
+
+describe('asking whether a proxy is verified', () => {
+  /**
+   * The question people actually ask, and the answer that misleads them.
+   *
+   * USDC's address is a proxy. Answering "yes, verified" describes
+   * `FiatTokenProxy` -- forty lines of delegation -- while the person is asking
+   * about the token. The headline is true and useless on its own.
+   */
+  function proxyAnswer(implementationAddress: string, implementationName: string) {
+    return {
+      body: JSON.stringify({
+        chainId: '1',
+        address: USDC,
+        match: 'exact_match',
+        runtimeMatch: 'exact_match',
+        proxyResolution: {
+          isProxy: true,
+          proxyType: 'ZeppelinOSProxy',
+          implementations: [{ address: implementationAddress, name: implementationName }],
+        },
+      }),
+    };
+  }
+
+  it('reports the implementation separately, not just the proxy', async () => {
+    const IMPL = '0x43506849D7C04F9138D1A2050bbF3A0c054402dd';
+    // First the proxy, then the implementation's own verification.
+    replies['sourcify'] = [
+      proxyAnswer(IMPL, 'FiatTokenV2_2'),
+      { body: JSON.stringify({ chainId: '1', address: IMPL, match: 'exact_match', runtimeMatch: 'exact_match' }) },
+    ];
+
+    const answer = await run<{
+      verified: boolean;
+      isProxy: boolean;
+      implementations: { address: string; name: string | null; verified: boolean }[];
+      caveats: string[];
+    }>('contract.verification', { chain: 'ethereum', address: USDC });
+
+    expect(answer.isProxy).toBe(true);
+    expect(answer.implementations).toHaveLength(1);
+    expect(answer.implementations[0]!.address).toBe(IMPL);
+    expect(answer.implementations[0]!.verified).toBe(true);
+    // And it says the headline is about delegation, not about the logic.
+    expect(answer.caveats.join(' ')).toMatch(/its own source is delegation/i);
+  });
+
+  it('says so when the proxy is verified and the code that runs is not', async () => {
+    // The dangerous shape: a green headline over an unverified implementation.
+    const IMPL = '0x0000000000000000000000000000000000000123';
+    replies['sourcify'] = [proxyAnswer(IMPL, null as unknown as string), { status: 404, body: '{}' }];
+
+    const answer = await run<{ verified: boolean; implementations: { verified: boolean }[]; caveats: string[] }>(
+      'contract.verification',
+      { chain: 'ethereum', address: USDC },
+    );
+    expect(answer.verified).toBe(true);
+    expect(answer.implementations[0]!.verified).toBe(false);
+    expect(answer.caveats.join(' ')).toMatch(/no published source/i);
+  });
+
+  it('says nothing about proxies when the contract is not one', async () => {
+    replies['sourcify'] = {
+      body: JSON.stringify({ chainId: '1', address: USDC, match: 'exact_match', runtimeMatch: 'exact_match' }),
+    };
+    const answer = await run<{ isProxy: boolean; implementations: unknown[]; caveats: string[] }>(
+      'contract.verification',
+      { chain: 'ethereum', address: USDC },
+    );
+    expect(answer.isProxy).toBe(false);
+    expect(answer.implementations).toEqual([]);
+    expect(answer.caveats).toEqual([]);
   });
 });

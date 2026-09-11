@@ -164,7 +164,9 @@ const verification = defineCapability({
   name: 'Say how well a contract is verified',
   description:
     'Whether a contract at an exact address has verified source, how exactly the source matched the deployed code, ' +
-    'and when that was established. Use when the question is how much to trust what a contract claims to be.',
+    'and when that was established. If the address is a proxy it also reports the implementation behind it, ' +
+    'separately — a verified proxy says nothing about the code that actually runs. ' +
+    'Use when the question is how much to trust what a contract claims to be.',
   category: 'READ',
   effect: 'READ',
   risk: 'LOW',
@@ -178,12 +180,73 @@ const verification = defineCapability({
     creationMatch: z.string().nullable(),
     verifiedAt: z.string().nullable(),
     explanation: z.string(),
+    /** True when this address delegates to something else. */
+    isProxy: z.boolean(),
+    /**
+     * The code that actually runs, and whether *it* is verified.
+     *
+     * The distinction this capability exists to keep: a verified proxy is forty
+     * lines of delegation. Answering "yes, verified" about USDC describes
+     * `FiatTokenProxy` while the person is asking about the token.
+     */
+    implementations: z.array(
+      z.object({
+        address: z.string(),
+        name: z.string().nullable(),
+        verified: z.boolean(),
+        exact: z.boolean(),
+        explanation: z.string(),
+      }),
+    ),
+    /** Said whenever a proxy is involved, because the headline can mislead. */
+    caveats: z.array(z.string()),
     provenance: ProvenanceOut,
   }),
   modelCallable: true,
-  timeoutMs: 25_000,
+  timeoutMs: 40_000,
   async run(input) {
-    const { record, provenance } = await lookUp(input.chain, input.address, ['compilation']);
+    const { record, provenance } = await lookUp(input.chain, input.address, ['compilation', 'proxyResolution']);
+    const isProxy = record.proxy?.isProxy === true;
+
+    /**
+     * Each implementation looked up in its own right.
+     *
+     * Bounded at three: a proxy has one, and a diamond has several, but an
+     * answer that fans out without limit is a way to spend somebody's quota on
+     * a question nobody asked.
+     */
+    const behind = (record.proxy?.implementations ?? []).slice(0, 3);
+    const implementations = [];
+    for (const implementation of behind) {
+      const looked = await lookUp(input.chain, implementation.address, ['compilation']).catch(() => null);
+      implementations.push({
+        address: implementation.address,
+        name: implementation.name ?? null,
+        verified: looked?.record.found ?? false,
+        exact:
+          looked?.record.runtimeMatch === 'exact_match' || looked?.record.creationMatch === 'exact_match',
+        explanation: looked
+          ? describeMatch(looked.record.runtimeMatch, looked.record.creationMatch)
+          : 'This implementation could not be looked up, so nothing is known about its source.',
+      });
+    }
+
+    const caveats: string[] = [];
+    if (isProxy) {
+      caveats.push(
+        'This address is a proxy: its own source is delegation, not the logic anybody is asking about. ' +
+          'Whether the code that runs is verified is the implementation line, not the headline.',
+      );
+      const unverified = implementations.filter((entry) => !entry.verified);
+      if (unverified.length > 0) {
+        caveats.push(
+          `The proxy is ${record.found ? 'verified' : 'not verified'}, but ` +
+            `${unverified.length === implementations.length ? 'the implementation behind it is' : 'one of the implementations behind it is'} ` +
+            'not — so the code that actually runs has no published source.',
+        );
+      }
+    }
+
     return {
       chain: input.chain,
       address: input.address,
@@ -193,6 +256,9 @@ const verification = defineCapability({
       creationMatch: record.creationMatch,
       verifiedAt: record.verifiedAt,
       explanation: describeMatch(record.runtimeMatch, record.creationMatch),
+      isProxy,
+      implementations,
+      caveats,
       provenance,
     };
   },
