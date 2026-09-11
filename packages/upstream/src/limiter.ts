@@ -88,6 +88,8 @@ export async function takeSlot(input: {
   limit: UpstreamLimit;
   query: unknown;
   now: number;
+  /** Lets a caller that has given up stop waiting for room. */
+  signal?: AbortSignal;
 }): Promise<SlotOutcome> {
   const weight = weightOf(input.limit, input.query);
 
@@ -149,9 +151,38 @@ export async function takeSlot(input: {
     }
   }
 
+  /**
+   * Waiting for room, without leaving anything behind if the caller gives up.
+   *
+   * The queue used to be a bare list of resolvers with no way out: an
+   * invocation that timed out while waiting stayed in it, was eventually woken
+   * by somebody else's release, took a slot, and only then discovered its
+   * signal was aborted. That self-corrected -- the fetch failed immediately and
+   * the `finally` released the slot -- but it woke the wrong waiter and made
+   * the real one wait another turn.
+   *
+   * Now a waiter can be removed, and an abort removes it.
+   */
   const gauge = gaugeFor(input.upstreamId);
   while (gauge.active >= input.limit.concurrentPerProcess) {
-    await new Promise<void>((resolve) => gauge.queue.push(resolve));
+    if (input.signal?.aborted) {
+      return { granted: false, retryAfterMs: 0, why: 'the caller gave up before a slot was free' };
+    }
+
+    let waiter: (() => void) | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        waiter = resolve;
+        gauge.queue.push(resolve);
+        input.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    } catch {
+      // Taken out of the queue rather than left to be woken later, which would
+      // spend a release on a caller that has gone.
+      const at = waiter ? gauge.queue.indexOf(waiter) : -1;
+      if (at >= 0) gauge.queue.splice(at, 1);
+      return { granted: false, retryAfterMs: 0, why: 'the caller gave up while waiting for a slot' };
+    }
   }
   gauge.active += 1;
 

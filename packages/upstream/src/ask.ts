@@ -41,6 +41,15 @@ export interface AskOptions {
    */
   secretFor?(key: string): Promise<string | undefined>;
   log?(message: string, data?: Record<string, unknown>): void;
+  /**
+   * The caller's own signal, when it has one.
+   *
+   * Separate from the per-upstream timeout `ask` sets for itself: this is the
+   * invocation giving up. Passing it means a capability that has already been
+   * abandoned stops queueing for a concurrency slot it will not use, and gives
+   * its place to a caller that will.
+   */
+  signal?: AbortSignal;
   /** Overridden in tests. Everything here reads the clock exactly once. */
   now?: number;
 }
@@ -137,6 +146,9 @@ export async function ask<Q, R>(family: string, query: Q, options: AskOptions = 
           limit: upstream.limit,
           query,
           now: Date.now(),
+          // So a caller that has already given up stops queueing for room it
+          // will not use, and releases its place to somebody who will.
+          ...(options.signal ? { signal: options.signal } : {}),
         });
         if (!slot.granted) {
           // Ours, not theirs: `fromUpstream: false` keeps this out of the

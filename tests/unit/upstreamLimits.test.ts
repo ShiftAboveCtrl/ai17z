@@ -174,6 +174,76 @@ describe('what AI17Z allows itself against Solana', () => {
   });
 });
 
+describe('a caller that gives up while waiting for room', () => {
+  /** One in flight at a time, so the second caller has to wait. */
+  const narrow: UpstreamLimit = {
+    concurrentPerProcess: 1,
+    windows: [perMinute(1_000, { scope: 'MACHINE' })],
+  };
+
+  const take = (signal?: AbortSignal) =>
+    takeSlot({
+      upstreamId: 'narrow.one',
+      origin: 'narrow.test',
+      limit: narrow,
+      query: {},
+      now: Date.now(),
+      ...(signal ? { signal } : {}),
+    });
+
+  it('stops waiting, and leaves the room for somebody who wants it', async () => {
+    const first = await take();
+    expect(first.granted).toBe(true);
+
+    // A second caller queues behind it, then gives up.
+    const controller = new AbortController();
+    const waiting = take(controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controller.abort();
+
+    const outcome = await waiting;
+    expect(outcome.granted).toBe(false);
+    if (!outcome.granted) expect(outcome.why).toMatch(/gave up/i);
+
+    // The abandoned waiter is gone rather than queued: releasing the slot must
+    // hand it to a live caller, not spend it waking somebody who has left.
+    if (first.granted) first.slot.release();
+    const third = await take();
+    expect(third.granted).toBe(true);
+    if (third.granted) third.slot.release();
+  });
+
+  it('does not queue at all when the caller has already gone', async () => {
+    const first = await take();
+    const controller = new AbortController();
+    controller.abort();
+
+    const outcome = await take(controller.signal);
+    expect(outcome.granted).toBe(false);
+
+    // And the capacity is intact: releasing the one in flight makes room.
+    if (first.granted) first.slot.release();
+    const next = await take();
+    expect(next.granted).toBe(true);
+    if (next.granted) next.slot.release();
+  });
+
+  it('leaks nothing when several callers give up together', async () => {
+    const held = await take();
+    const controllers = [new AbortController(), new AbortController(), new AbortController()];
+    const waiters = controllers.map((controller) => take(controller.signal));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    for (const controller of controllers) controller.abort();
+    for (const outcome of await Promise.all(waiters)) expect(outcome.granted).toBe(false);
+
+    if (held.granted) held.slot.release();
+    // One slot, and it is available: none of the three took it on the way out.
+    const after = await take();
+    expect(after.granted).toBe(true);
+    if (after.granted) after.slot.release();
+  });
+});
+
 describe('a budget with no discriminator', () => {
   it('behaves exactly as it did before the idea existed', async () => {
     const plain: UpstreamLimit = {
