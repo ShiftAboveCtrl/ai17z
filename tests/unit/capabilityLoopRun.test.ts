@@ -177,6 +177,69 @@ describe('the capability loop', () => {
  * so this pins the half that was, and the integration suite pins the storage
  * and the reader that now feed it.
  */
+describe('the menu the model is shown', () => {
+  /** The system message the loop puts in front of the model. */
+  const menuFrom = (generate: { mock: { calls: unknown[][] } }): string =>
+    JSON.stringify(generate.mock.calls[0]?.[0] ?? []);
+
+  it('describes a capability the owner allowed', async () => {
+    const generate = vi.fn().mockResolvedValue('It is noon.');
+    await runCapabilityLoop({ ...base, generate, permissions: new Map([['test.clock', 'ALLOWED' as const]]) });
+    expect(menuFrom(generate)).toContain('test.clock');
+  });
+
+  it('does not describe one the owner switched off', async () => {
+    // It used to. An owner who turned a pack off still had every capability in
+    // it described to their agent, which could then choose one and be refused
+    // -- a step and a model call spent being told no. The menu is also prompt:
+    // 38 capabilities measured about 2,700 tokens on every generation.
+    const generate = vi.fn().mockResolvedValue('It is noon.');
+    await runCapabilityLoop({ ...base, generate, permissions: new Map([['test.clock', 'DISABLED' as const]]) });
+    expect(menuFrom(generate)).not.toContain('test.clock');
+  });
+
+  it('still describes one that asks first, because asking is the point of it', async () => {
+    const generate = vi.fn().mockResolvedValue('It is noon.');
+    await runCapabilityLoop({
+      ...base,
+      generate,
+      permissions: new Map([['test.clock', 'OWNER_APPROVAL' as const]]),
+    });
+    expect(menuFrom(generate)).toContain('test.clock');
+  });
+
+  it('sends no menu at all when everything is off', async () => {
+    const generate = vi.fn().mockResolvedValue('An ordinary answer.');
+    const result = await runCapabilityLoop({
+      ...base,
+      generate,
+      permissions: new Map([
+        ['test.clock', 'DISABLED' as const],
+        ['test.settings', 'DISABLED' as const],
+      ]),
+    });
+    // The agent answers the question it was always going to be asked, with no
+    // preamble and no wasted tokens.
+    expect(result.answer).toBe('An ordinary answer.');
+    expect(generate.mock.calls[0]![0]).toHaveLength(1);
+  });
+
+  it('refuses a disabled capability anyway if the model asks for one', async () => {
+    // Not offering it is a saving, not a security boundary. The permission
+    // check at invocation is the boundary and it still runs.
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call('test.clock'))
+      .mockResolvedValueOnce('Answered without it.');
+    const result = await runCapabilityLoop({
+      ...base,
+      generate,
+      permissions: new Map([['test.clock', 'DISABLED' as const]]),
+    });
+    expect(result.steps[0]!.outcome).toBe('REFUSED');
+  });
+});
+
 describe('what a capability is configured with', () => {
   it('hands over the settings recorded for that capability', async () => {
     const generate = vi
