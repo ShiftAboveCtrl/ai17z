@@ -61,7 +61,7 @@ function context() {
 async function invoke(id: string, input: unknown) {
   const capability = getCapability(id);
   if (!capability) throw new Error(`${id} is not registered`);
-  return capability.run(capability.input.parse(input) as never, context()) as Promise<Record<string, never>>;
+  return capability.run(capability.input.parse(input) as never, context()) as Promise<Record<string, unknown>>;
 }
 
 /** A Crossref single-record response. */
@@ -271,21 +271,47 @@ describe('integrity, and the difference between no record and a clean record', (
 });
 
 describe('two records are one work only on strong evidence', () => {
-  const base = { doi: null, arxivId: null, title: null } as never;
+  /** The fields identity is allowed to depend on, and nothing else. */
+  function work(over: { doi?: string | null; arxivId?: string | null; title?: string | null } = {}) {
+    return {
+      doi: null,
+      arxivId: null,
+      arxivVersion: null,
+      title: null,
+      authors: [],
+      authorCount: 0,
+      kind: 'OTHER' as const,
+      rawType: null,
+      container: null,
+      publisher: null,
+      publishedAt: null,
+      updatedAt: null,
+      abstract: null,
+      url: null,
+      journalReference: null,
+      subjects: [],
+      integrity: 'UNKNOWN' as const,
+      notices: [],
+      citations: null,
+      source: 'test',
+      sourceId: '',
+      ...over,
+    };
+  }
 
   it('joins on a shared DOI', () => {
-    expect(sameWork({ ...base, doi: '10.1/x' }, { ...base, doi: '10.1/x' })).toBe(true);
+    expect(sameWork(work({ doi: '10.1/x' }), work({ doi: '10.1/x' }))).toBe(true);
   });
 
   it('joins on a shared arXiv id', () => {
-    expect(sameWork({ ...base, arxivId: '2401.1' }, { ...base, arxivId: '2401.1' })).toBe(true);
+    expect(sameWork(work({ arxivId: '2401.1' }), work({ arxivId: '2401.1' }))).toBe(true);
   });
 
   it('does not join on title, however similar', () => {
     // "Attention Is All You Need" and "Is Attention All You Need?" are
     // different papers. So are a paper and its own erratum.
-    const a = { ...base, title: 'Attention Is All You Need' };
-    const b = { ...base, title: 'Attention Is All You Need' };
+    const a = work({ title: 'Attention Is All You Need' });
+    const b = work({ title: 'Attention Is All You Need' });
     expect(sameWork(a, b)).toBe(false);
   });
 
