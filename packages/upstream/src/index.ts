@@ -17,6 +17,7 @@ export * from './families/contract';
 export * from './families/market';
 export * from './families/defi';
 export * from './families/tokenRisk';
+export * from './families/webHistory';
 export * from './families/solana';
 export * from './exactNumbers';
 export * from './families/bitcoin';

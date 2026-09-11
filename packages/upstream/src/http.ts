@@ -54,6 +54,22 @@ export interface SafeFetchOptions {
   /** Refused past this, while it streams rather than after. */
   maxBytes?: number;
   /**
+   * Hands back the raw bytes instead of decoded text.
+   *
+   * For a body that is not text and would not survive being treated as it.
+   * A WARC record fetched from an archive is a gzip member, and decoding gzip
+   * through a TextDecoder does not fail -- it quietly produces replacement
+   * characters, and the corruption only surfaces later as a decompression
+   * error nobody can trace back to here.
+   *
+   * Everything else is unchanged: the address is still judged and pinned, the
+   * redirects are still re-judged, `maxBytes` still stops the read as it
+   * streams, and a response claiming more than one layer of compression is
+   * still refused. This decides what is done with the bytes, not which bytes
+   * are allowed.
+   */
+  binary?: boolean;
+  /**
    * Permits `http:` and addresses on this machine's own networks.
    *
    * For an upstream that is deliberately local -- somebody's own node on
@@ -105,7 +121,10 @@ export interface SafeResponse {
   /** The URL that actually answered, after any redirects. */
   url: string;
   headers: Headers;
+  /** Empty when `binary` was asked for; read `bytes` instead. */
   text: string;
+  /** Present only when `binary` was asked for. */
+  bytes?: Uint8Array;
 }
 
 export async function safeFetch(rawUrl: string, options: SafeFetchOptions): Promise<SafeResponse> {
@@ -152,11 +171,13 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions): Prom
         continue;
       }
 
+      const body = await read(response as unknown as Response, maxBytes);
       return {
         status: response.status,
         url: url.toString(),
         headers: response.headers as unknown as Headers,
-        text: await read(response as unknown as Response, maxBytes),
+        text: options.binary ? '' : new TextDecoder().decode(body),
+        ...(options.binary ? { bytes: body } : {}),
       };
     }
 
@@ -225,10 +246,14 @@ async function attempt(
  *
  * `await response.text()` on a response with no end is how a worker runs out of
  * memory reading one page.
+ *
+ * Returns bytes rather than text so the caller decides how to read them. A
+ * decode that happens in here cannot be undone by a caller that needed the
+ * original octets.
  */
-async function read(response: Response, maxBytes: number): Promise<string> {
+async function read(response: Response, maxBytes: number): Promise<Uint8Array> {
   const body = response.body;
-  if (!body) return '';
+  if (!body) return new Uint8Array(0);
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -247,5 +272,12 @@ async function read(response: Response, maxBytes: number): Promise<string> {
   } finally {
     reader.releaseLock?.();
   }
-  return new TextDecoder().decode(await new Blob(chunks as BlobPart[]).arrayBuffer());
+
+  const joined = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return joined;
 }

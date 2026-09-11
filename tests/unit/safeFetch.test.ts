@@ -322,3 +322,119 @@ describe('compression that is not compression', () => {
     );
   });
 });
+
+describe('binary mode is the same fetch, not a second one', () => {
+  /**
+   * Wave O added `binary` so a WARC record could be read without a TextDecoder
+   * quietly turning gzip into replacement characters. The risk in adding a mode
+   * is that it becomes a second path with its own, weaker rules -- so these
+   * prove it is the same path, by running the checks that already exist and
+   * asserting binary answers them identically.
+   */
+  const binary = { binary: true as const };
+
+  it('refuses a scheme that is not https, exactly as text mode does', async () => {
+    for (const url of ['file:///etc/passwd', 'data:text/plain,hello', 'ftp://example.com/x']) {
+      await expect(safeFetch(url, { signal: signal(), ...binary })).rejects.toThrow(UnsafeUrlError);
+    }
+  });
+
+  // No transport on these: the address judgement lives in the pinned Agent's
+  // connect hook, and a fake transport never opens a socket for it to run on.
+  // Handing one in would make these pass without proving anything, which is
+  // exactly what they did on the first attempt.
+  it('refuses a public name that resolves to loopback', async () => {
+    const { resolver } = resolverFor({ 'sneaky.example': ['127.0.0.1'] });
+    await expect(safeFetch('https://sneaky.example/x', { signal: signal(), resolver, ...binary })).rejects.toThrow(
+      /127\.0\.0\.1/,
+    );
+  });
+
+  it('refuses the cloud metadata address', async () => {
+    const { resolver } = resolverFor({ 'metadata.example': ['169.254.169.254'] });
+    await expect(safeFetch('https://metadata.example/', { signal: signal(), resolver, ...binary })).rejects.toThrow(
+      /metadata/i,
+    );
+  });
+
+  it('judges every redirect hop, so a public URL cannot redirect to a private one', async () => {
+    const { resolver } = resolverFor({ 'evil.example': PUBLIC });
+    const { transport } = transportFor([{ status: 302, location: 'http://169.254.169.254/latest/meta-data/' }]);
+    await expect(
+      safeFetch('https://evil.example/', { signal: signal(), resolver, transport, ...binary }),
+    ).rejects.toThrow(UnsafeUrlError);
+  });
+
+  it('judges a private literal without asking a resolver at all', async () => {
+    const { resolver, asked } = resolverFor({});
+    await expect(safeFetch('https://10.0.0.1/x', { signal: signal(), resolver, ...binary })).rejects.toThrow(
+      /not fetched/,
+    );
+    expect(asked).toEqual([]);
+  });
+
+  it('stops at the byte cap while it streams', async () => {
+    const { resolver } = resolverFor({ 'api.example.com': PUBLIC });
+    const { transport } = transportFor([{ status: 200, body: 'x'.repeat(5_000) }]);
+    await expect(
+      safeFetch('https://api.example.com/big', { signal: signal(), resolver, transport, maxBytes: 1_000, ...binary }),
+    ).rejects.toThrow(/larger than 1000 bytes/);
+  });
+
+  it('refuses a response compressed more than once', async () => {
+    const { resolver } = resolverFor({ 'api.example.com': PUBLIC });
+    const { transport } = transportFor([
+      { status: 200, body: 'small', headers: { 'content-encoding': 'gzip, gzip, gzip' } },
+    ]);
+    await expect(
+      safeFetch('https://api.example.com/bomb', { signal: signal(), resolver, transport, ...binary }),
+    ).rejects.toThrow(/3 layers of compression/);
+  });
+
+  it('gives up when the caller does', async () => {
+    const { resolver } = resolverFor({ 'api.example.com': PUBLIC });
+    const controller = new AbortController();
+    const transport = (async (_input: unknown, init?: Record<string, unknown>) => {
+      const inner = init?.signal as AbortSignal | undefined;
+      return new Promise((_resolve, reject) => {
+        inner?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    }) as never;
+    const pending = safeFetch('https://api.example.com/slow', {
+      signal: controller.signal,
+      resolver,
+      transport,
+      ...binary,
+    });
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+  });
+
+  it('hands back the original octets rather than anything a decoder touched', async () => {
+    // The reason the mode exists. These bytes are not valid UTF-8; decoding
+    // them produces replacement characters, and encoding those back does not
+    // give the original bytes.
+    const raw = new Uint8Array([0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe, 0xfd, 0xc0, 0x80]);
+    const { resolver } = resolverFor({ 'api.example.com': PUBLIC });
+    const transport = (async () => new Response(raw, { status: 200, headers: new Headers() })) as never;
+    const answer = await safeFetch('https://api.example.com/record', {
+      signal: signal(),
+      resolver,
+      transport,
+      ...binary,
+    });
+    expect(answer.bytes).toBeDefined();
+    expect(Array.from(answer.bytes!)).toEqual(Array.from(raw));
+    // And a round trip through the decoder would not have survived.
+    expect(Array.from(new TextEncoder().encode(new TextDecoder().decode(raw)))).not.toEqual(Array.from(raw));
+  });
+
+  it('leaves text mode exactly as it was for every existing caller', async () => {
+    const { resolver } = resolverFor({ 'api.example.com': PUBLIC });
+    const { transport } = transportFor([{ status: 200, body: 'small enough' }]);
+    const answer = await safeFetch('https://api.example.com/small', { signal: signal(), resolver, transport });
+    expect(answer.text).toBe('small enough');
+    // No bytes unless they were asked for, so nothing existing changes shape.
+    expect(answer.bytes).toBeUndefined();
+  });
+});
