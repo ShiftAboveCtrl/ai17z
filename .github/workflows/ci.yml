@@ -109,7 +109,7 @@ jobs:
         run: npm run migrate
 
       - name: Tests
-        run: npx vitest run --reporter=basic
+        run: npx vitest run --reporter=default
 
       - name: Build web
         run: npm run build:web
