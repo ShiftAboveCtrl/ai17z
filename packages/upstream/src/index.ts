@@ -24,5 +24,6 @@ export * from './families/governance';
 export * from './families/ipfs';
 export * from './families/reference';
 export * from './families/signatures';
+export * from './families/geckoterminal';
 export * from './cid';
 export * from './bitcoinAddress';
