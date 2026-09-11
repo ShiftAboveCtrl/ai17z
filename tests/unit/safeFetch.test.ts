@@ -42,7 +42,9 @@ function resolverFor(table: Record<string, string[]>) {
 }
 
 /** Answers without a socket, for the cases that are about scheme and redirects. */
-function transportFor(responses: { status: number; location?: string; body?: string }[]) {
+function transportFor(
+  responses: { status: number; location?: string; body?: string; headers?: Record<string, string> }[],
+) {
   const asked: string[] = [];
   const options: Record<string, unknown>[] = [];
   const transport = vi.fn(async (input: unknown, init?: Record<string, unknown>) => {
@@ -51,6 +53,7 @@ function transportFor(responses: { status: number; location?: string; body?: str
     const next = responses.shift() ?? { status: 200, body: 'ok' };
     const headers = new Headers();
     if (next.location) headers.set('location', next.location);
+    for (const [name, value] of Object.entries(next.headers ?? {})) headers.set(name, value);
     return new Response(next.body ?? '', { status: next.status, headers });
   }) as never;
   return { transport, asked, options };
@@ -252,5 +255,70 @@ describe('bounds on what comes back', () => {
     const pending = safeFetch('https://api.example.com/slow', { signal: controller.signal, resolver, transport });
     controller.abort();
     await expect(pending).rejects.toThrow(/abort/i);
+  });
+});
+
+describe('compression that is not compression', () => {
+  /**
+   * `maxBytes` counts what the reader pulls, and that is not a bound on this.
+   *
+   * `Content-Encoding: gzip, gzip, gzip, ...` makes the client build a chain of
+   * decompressors, and the work happens inside the transport before anything
+   * here has pulled a byte -- so a few kilobytes on the wire become gigabytes of
+   * memory somewhere the size cap cannot see it. GHSA-g9mf-h72j-4rw9 is that
+   * bug in undici; this check is here so the guarantee does not depend on the
+   * version of a library resolving underneath us.
+   */
+  it('refuses a response compressed more than once', async () => {
+    const { resolver } = resolverFor({ 'api.example.com': PUBLIC });
+    const { transport } = transportFor([
+      { status: 200, body: 'small', headers: { 'content-encoding': 'gzip, gzip, gzip' } },
+    ]);
+    await expect(safeFetch('https://api.example.com/bomb', { signal: signal(), resolver, transport })).rejects.toThrow(
+      /3 layers of compression/,
+    );
+  });
+
+  it('is not evaded by case or spacing', async () => {
+    const { resolver } = resolverFor({ 'api.example.com': PUBLIC });
+    const { transport } = transportFor([
+      { status: 200, body: 'small', headers: { 'content-encoding': '  GZIP ,   Br  ' } },
+    ]);
+    await expect(safeFetch('https://api.example.com/bomb', { signal: signal(), resolver, transport })).rejects.toThrow(
+      /2 layers of compression \(gzip, br\)/,
+    );
+  });
+
+  it('allows the ordinary single encoding', async () => {
+    // Refusing compression outright would be the easy answer and the wrong one:
+    // it costs a public endpoint several times the bandwidth on every call.
+    const { resolver } = resolverFor({ 'api.example.com': PUBLIC });
+    const { transport } = transportFor([{ status: 200, body: 'fine', headers: { 'content-encoding': 'gzip' } }]);
+    const answer = await safeFetch('https://api.example.com/ok', { signal: signal(), resolver, transport });
+    expect(answer.text).toBe('fine');
+  });
+
+  it('does not count identity as a layer', async () => {
+    const { resolver } = resolverFor({ 'api.example.com': PUBLIC });
+    const { transport } = transportFor([
+      { status: 200, body: 'fine', headers: { 'content-encoding': 'identity, gzip' } },
+    ]);
+    const answer = await safeFetch('https://api.example.com/ok', { signal: signal(), resolver, transport });
+    expect(answer.text).toBe('fine');
+  });
+
+  it('checks a redirect too, not only the response that carries the body', async () => {
+    const { resolver } = resolverFor({ 'moved.example': PUBLIC, 'api.example.com': PUBLIC });
+    const { transport } = transportFor([
+      {
+        status: 302,
+        location: 'https://api.example.com/second',
+        headers: { 'content-encoding': 'gzip, deflate' },
+      },
+      { status: 200, body: 'never reached' },
+    ]);
+    await expect(safeFetch('https://moved.example/first', { signal: signal(), resolver, transport })).rejects.toThrow(
+      /2 layers of compression/,
+    );
   });
 });

@@ -141,6 +141,8 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions): Prom
         dispatcher: agent as Dispatcher,
       });
 
+      refuseDecompressionChain(response.headers as unknown as Headers, url);
+
       const location = response.headers.get('location');
       if (response.status >= 300 && response.status < 400 && location) {
         if (hop === MAX_HOPS) throw new UnsafeUrlError(`${rawUrl} redirected more than ${MAX_HOPS} times.`);
@@ -163,6 +165,35 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions): Prom
     // One agent per call, closed with it. A shared pool would keep sockets open
     // to a host a later judgement might refuse.
     await agent.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Refuses a response that says it was compressed more than once.
+ *
+ * `maxBytes` counts bytes as the reader pulls them, which bounds an ordinary
+ * oversized answer. It does not bound this one. `Content-Encoding: gzip, gzip,
+ * gzip, ...` makes the client build a *chain* of decompressors, and the work
+ * happens inside the transport before anything here has pulled a byte -- so a
+ * few kilobytes on the wire become gigabytes of memory in a component the size
+ * cap cannot see. That is GHSA-g9mf-h72j-4rw9, fixed in undici 7.18.2, and this
+ * check is here anyway: the guarantee this file makes about size should not
+ * depend on the version of a library resolving underneath it.
+ *
+ * One coding is normal and stays allowed. Nothing legitimate compresses twice.
+ */
+function refuseDecompressionChain(headers: Headers, url: URL): void {
+  const encoding = headers.get('content-encoding');
+  if (!encoding) return;
+  const codings = encoding
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value.length > 0 && value !== 'identity');
+  if (codings.length > 1) {
+    throw new UnsafeUrlError(
+      `${url.host} answered with ${codings.length} layers of compression (${codings.join(', ')}). ` +
+        'Nothing legitimate compresses twice, and this is how a few kilobytes on the wire become gigabytes in memory.',
+    );
   }
 }
 
