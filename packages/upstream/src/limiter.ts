@@ -91,19 +91,46 @@ export async function takeSlot(input: {
 }): Promise<SlotOutcome> {
   const weight = weightOf(input.limit, input.query);
 
-  for (const window of input.limit.windows) {
-    const key = quotaKey({ upstreamId: input.upstreamId, origin: input.origin, scope: window.scope });
-    const blockedFor = await coordinator.blockedFor({ key, now: input.now });
+  /**
+   * The budget a window belongs to.
+   *
+   * Scope decides where it is counted; `per` decides how finely. A window with
+   * a discriminator gets its own budget inside that scope, which is how an
+   * operator's per-method limit is respected without an adapter keeping its own
+   * timer.
+   */
+  const keyFor = (window: (typeof input.limit.windows)[number]): string =>
+    quotaKey({
+      upstreamId: input.upstreamId,
+      origin: input.origin,
+      scope: window.scope,
+      per: window.per?.(input.query) ?? null,
+    });
+
+  // Checked at the **base** key for each scope, deliberately not at the
+  // discriminated one. A 429 is about the endpoint, so `recordRateLimit` writes
+  // it against the address rather than against whichever method happened to
+  // provoke it -- and a per-method budget that looked for a block under its own
+  // key would never find it, which would turn "they told us to wait" into
+  // "carry on" for every method-scoped window.
+  for (const scope of new Set(input.limit.windows.map((window) => window.scope))) {
+    const blockedFor = await coordinator.blockedFor({
+      key: quotaKey({ upstreamId: input.upstreamId, origin: input.origin, scope }),
+      now: input.now,
+    });
     if (blockedFor > 0) {
       return { granted: false, retryAfterMs: blockedFor, why: 'it asked us to wait' };
     }
   }
 
-  // Grouped by scope so one reservation covers every window that shares a
-  // budget, and the all-or-nothing rule inside the coordinator actually holds.
+  // Grouped by budget so one reservation covers every window that shares one,
+  // and the all-or-nothing rule inside the coordinator actually holds. Two
+  // windows with different discriminators are different budgets and are
+  // reserved separately, which is correct: spending the method budget must not
+  // be conditional on the overall one and vice versa.
   const byScope = new Map<string, typeof input.limit.windows>();
   for (const window of input.limit.windows) {
-    const key = quotaKey({ upstreamId: input.upstreamId, origin: input.origin, scope: window.scope });
+    const key = keyFor(window);
     byScope.set(key, [...(byScope.get(key) ?? []), window]);
   }
 

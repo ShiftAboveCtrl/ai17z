@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineUpstream, type Upstream } from '../contract';
-import { perMinute, perSecond } from '../quota';
+import { perMinute, perSecond, perTenSeconds } from '../quota';
 import { registerUpstream } from '../registry';
 import { safeFetch } from '../http';
 import { UpstreamFailure, classifyStatus, classifyThrown } from '../failures';
@@ -35,9 +35,10 @@ import { parseExactJson } from '../exactNumbers';
  * `getGenesisHash`. Only one answered:
  *
  *   `api.mainnet-beta.solana.com` -- 200, correct genesis hash, 81 bytes,
- *     429ms. It is also the only one that publishes its limits, in response
- *     headers: `rps-limit: 250`, `method-limit: 150`, `conn-limit: 40`,
- *     `tier: free`.
+ *     429ms. `api.mainnet.solana.com`, which is the host the current
+ *     documentation names, answers identically and serves the same genesis;
+ *     both work, and the beta hostname is kept because it is what has been
+ *     probed and proved here.
  *   `solana.drpc.org` -- 400, "chain is not available on free plan".
  *   `rpc.ankr.com/solana` -- 403, wants a key, exactly as its Ethereum
  *     endpoint now does.
@@ -59,6 +60,44 @@ import { parseExactJson } from '../exactNumbers';
  * So this family has one member and no fallback, which is a smaller claim
  * rather than a broken one: it answers, or it says it could not. Adding a
  * sibling that has not been reached would be worse than having none.
+ *
+ * ### What this endpoint is, said plainly
+ *
+ * Solana's own documentation states that the public endpoints are **not
+ * intended for production applications** and may be rate limited or blocked
+ * under heavy use. That is the honest description of what AI17Z gets here:
+ * low-volume, keyless, structured Solana reading that needs nothing from the
+ * owner. It is not production RPC and nothing here should imply it is. An owner
+ * who wants reliability at volume adds a dedicated provider later; no agent
+ * capability depends on their doing so.
+ *
+ * ### The published limits, and which of them AI17Z can actually reach
+ *
+ * From the documentation, September 2026 -- 100 requests per ten seconds per
+ * address, 40 per ten seconds for any single RPC, 40 concurrent connections, 40
+ * new connections per ten seconds, and 100 MB per thirty seconds. The endpoint's
+ * response headers advertise more than this (250 a second, 150 per method); the
+ * documented figures are stricter, so they are the contract and a header seen
+ * once is not.
+ *
+ * Audited one at a time in `tests/unit/upstreamLimits.test.ts`:
+ *
+ *   **overall rate** -- five a second is fifty in ten seconds, under a hundred.
+ *   **per method** -- the same five a second is *also* fifty of one RPC, over
+ *     the forty allowed. Reachable, and therefore enforced: the third window
+ *     below is counted per method by the central scheduler.
+ *   **bytes** -- the minute window caps us at a hundred requests in any thirty
+ *     seconds, so a 256 KB ceiling each is 25.6 MB against a hundred. Derived
+ *     from the request budget rather than picked; at the previous 2 MB the
+ *     worst case was 200 MB, over a published limit.
+ *   **concurrent connections** -- two per process, two processes per
+ *     installation, so the machine cap is not reached until ten installations
+ *     ask at once. Proved by arithmetic rather than by leases, because leases
+ *     for a limit that arithmetic already precludes are machinery nothing
+ *     needs. The test fails if that stops being comfortably true.
+ *   **connection rate** -- undici keeps connections alive, so new connections
+ *     are bounded by concurrency rather than by request count, and concurrency
+ *     is four per installation.
  *
  * ### It can only read
  *
@@ -253,14 +292,45 @@ function node(input: NodeOptions): Upstream<SolanaQuery, SolanaResult> {
     description: 'Reads the Solana mainnet-beta cluster.',
     origin: new URL(input.url).hostname,
     limit: {
-      concurrentPerProcess: 4,
-      // This endpoint publishes 250 requests a second and 150 per method in its
-      // own response headers, and Solana's documentation says plainly that it is
-      // not for production use. Both are true at once, so what AI17Z allows
-      // itself is far below what is offered -- these are ours, and say so.
+      /**
+       * Two, and the arithmetic matters more than the number.
+       *
+       * The published cap is 40 concurrent connections **per address**, which
+       * is a machine-wide budget this process cannot see. It is not enforced
+       * across processes, and it does not need to be: two in flight per
+       * process, two processes per installation (api and worker), is four per
+       * installation -- so the machine cap is not reached until ten AI17Z
+       * installations are asking Solana at once. `upstreamLimits.test.ts` pins
+       * that arithmetic so lowering it is a decision rather than an accident.
+       *
+       * Two also never binds: at roughly 200ms a call, two in flight sustains
+       * ten a second and the rate windows below cap us at five.
+       */
+      concurrentPerProcess: 2,
+      /**
+       * What Solana's documentation publishes, and what AI17Z allows itself.
+       *
+       * Checked against the current docs September 2026: 100 requests per ten
+       * seconds per address, **40 per ten seconds for any single RPC**, 40
+       * concurrent connections, 40 new connections per ten seconds, and 100 MB
+       * per thirty seconds. The endpoint's own response headers advertise more
+       * (250 a second, 150 per method) -- the documented figures are stricter,
+       * so those are the contract and the headers are ignored.
+       *
+       * The per-method window is the one that would otherwise be broken: five a
+       * second is fifty in ten seconds, which is under the overall hundred and
+       * **over the forty allowed for one method**. An adapter respecting only
+       * the overall rate can spend it all on `getBalance` and break a published
+       * limit while believing itself polite.
+       */
       windows: [
         perSecond(input.perSecondOurs, { scope: 'MACHINE' }),
         perMinute(input.perSecondOurs * 20, { scope: 'MACHINE' }),
+        {
+          ...perTenSeconds(20, { scope: 'MACHINE' }),
+          // Half of what is allowed, counted per method.
+          per: (query) => (query as SolanaQuery | undefined)?.method ?? null,
+        },
       ],
     },
     timeoutMs: 15_000,
