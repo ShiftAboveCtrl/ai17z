@@ -11,3 +11,4 @@ export * from './version';
 export * from './image';
 export * from './workerAbsence';
 export * from './installEnv';
+export * from './callSignal';

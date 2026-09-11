@@ -1,4 +1,4 @@
-import { PipelineError } from '@xbam/shared';
+import { PipelineError, currentCallSignal } from '@xbam/shared';
 import type { AnyUpstream, Answer, Provenance, Upstream, UpstreamHealth } from './contract';
 import { familyMembers } from './registry';
 import { recordRateLimit, takeSlot } from './limiter';
@@ -42,12 +42,13 @@ export interface AskOptions {
   secretFor?(key: string): Promise<string | undefined>;
   log?(message: string, data?: Record<string, unknown>): void;
   /**
-   * The caller's own signal, when it has one.
+   * The caller's own signal, when it wants to name one.
    *
    * Separate from the per-upstream timeout `ask` sets for itself: this is the
-   * invocation giving up. Passing it means a capability that has already been
-   * abandoned stops queueing for a concurrency slot it will not use, and gives
-   * its place to a caller that will.
+   * invocation giving up. Usually left unset -- the invocation's signal arrives
+   * ambiently through `currentCallSignal`, so every family gets cancellation
+   * without threading a parameter through its read helpers. Setting it here
+   * wins over the ambient one.
    */
   signal?: AbortSignal;
   /** Overridden in tests. Everything here reads the clock exactly once. */
@@ -99,6 +100,8 @@ async function unavailable(upstream: AnyUpstream, options: AskOptions, now: numb
 
 export async function ask<Q, R>(family: string, query: Q, options: AskOptions = {}): Promise<Answer<R>> {
   const now = options.now ?? Date.now();
+  // Explicit beats ambient; ambient is what every capability actually uses.
+  const callerSignal = options.signal ?? currentCallSignal();
   const members = familyMembers(family);
   if (members.length === 0) {
     throw PipelineError.permanent(
@@ -148,7 +151,7 @@ export async function ask<Q, R>(family: string, query: Q, options: AskOptions = 
           now: Date.now(),
           // So a caller that has already given up stops queueing for room it
           // will not use, and releases its place to somebody who will.
-          ...(options.signal ? { signal: options.signal } : {}),
+          ...(callerSignal ? { signal: callerSignal } : {}),
         });
         if (!slot.granted) {
           // Ours, not theirs: `fromUpstream: false` keeps this out of the

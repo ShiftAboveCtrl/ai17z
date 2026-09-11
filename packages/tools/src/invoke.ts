@@ -1,3 +1,4 @@
+import { withCallSignal } from '@xbam/shared';
 import type { InvocationOutcome } from '@xbam/shared/contracts';
 import type { CapabilityContext } from './capability';
 import { getCapability } from './capabilityRegistry';
@@ -101,8 +102,18 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
     }, capability.timeoutMs);
   });
   try {
+    /**
+     * The signal is put where everything downstream can find it.
+     *
+     * The capability gets it on its context as before. It also goes into
+     * ambient call scope, so the upstream runtime sees it without every family's
+     * read helper taking a parameter -- and so a family written next year is
+     * cancellable without its author doing anything. See `callSignal.ts`.
+     */
     const raw = await Promise.race([
-      capability.run(parsedInput.data as never, { ...context, signal: controller.signal }),
+      withCallSignal(controller.signal, () =>
+        capability.run(parsedInput.data as never, { ...context, signal: controller.signal }),
+      ),
       expired,
     ]);
     if (raw === TIMEOUT) {
