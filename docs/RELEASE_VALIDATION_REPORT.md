@@ -8,6 +8,81 @@ The release workflow attaches this file to the release.
 
 ---
 
+## AI17Z Beta 1.0.0 (15)
+
+One fix, and the reason it is a separate release: Beta 1.0.0 (14) published a
+`/INSTANCE=` flag that does not work, and said in its notes that it does.
+
+### What the gates said, and what they missed
+
+Every gate below passed for Beta 1.0.0 (14) as well. The defect was found after
+publishing, by running the published installer against a name that did not
+exist -- which is the check that had never been run, because until (14) there
+was no flag to run it against.
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean, from a deleted `tsconfig.tsbuildinfo` |
+| `npm run lint` | clean |
+| `npm test` | 246 files, 3013 tests, 0 failures |
+| `npm audit` | 0 vulnerabilities, with and without dev dependencies |
+| `npm --workspace @xbam/web run build` | built |
+| `npm run release:check` | 881 tracked files, nothing found |
+| `npm run verify:install -- --twice --upgrade` | passed, including side by side and upgrade over the top |
+| `/VERYSILENT /INSTANCE=` aims at the named instance | PENDING |
+
+### The installer defect, and how it was proved
+
+`/VERYSILENT /INSTANCE=AI17Z-probe`, on a machine holding AI17Z-test and
+AI17Z-main:
+
+    uninstall key    {8F3B...}_AI17Z-probe_is1
+    display name     AI17Z-probe Beta 1.0.0 (14)
+    Start Menu       AI17Z-probe
+    desktop icon     AI17Z-probe
+    files            ...\Programs\AI17Z-test          <-- not AI17Z-probe
+
+Everything built from `InstanceName` was right; only `{app}` was wrong. That is
+worse than the defect `/INSTANCE=` was added to fix: an installation named one
+thing, living inside another, whose uninstaller is registered to delete a
+program directory belonging to something else.
+
+The cause is that **Inno runs `InitializeWizard` and calls `NextButtonClick`
+for every page under `/VERYSILENT` as well** -- there is no window, and
+everything else happens. The found-installations page ran, its first radio was
+checked because it is the first, and `NextButtonClick` did what it exists to do
+on that page: assign `WizardForm.DirEdit.Text`. `DefaultDirName` had already
+resolved correctly and was overwritten afterwards.
+
+Proved with a twenty-line Inno script of the same shape, traced under
+`/VERYSILENT`. Before the guard:
+
+    1  InitializeWizard ran, radio checked -> "yes"
+    2  NextButtonClick on FoundPage, ChosenInstall -> "0"
+    3  DirEdit forced to -> "...\Programs\HIJACKED"
+    4  FINAL {app} -> "...\Programs\HIJACKED"
+
+After, with the same command line:
+
+    1  InitializeWizard ran, radio checked -> "yes"
+    2  FINAL {app} -> "...\Programs\ZZWanted2"
+
+and with no `/INSTANCE=` the radio still wins, because a wizard following its
+own radio is the behaviour that clause exists for and had to survive.
+
+Beta 1.0.0 (14) is unaffected for anyone not passing `/INSTANCE=`: without it
+the name and the directory derive from the same choice and agree.
+
+### What this says about the gates
+
+The clean-room harness installs by reproducing what the installer does to a
+disk rather than by running the installer, so no amount of `--twice --upgrade`
+would have found this. The gap is now named: a flag that changes where files go
+is checked by running the real installer against a name that does not exist,
+before it is pointed at anything that matters.
+
+---
+
 ## AI17Z Beta 1.0.0 (14)
 
 Fifty-six new capabilities, grouped so an owner makes one decision instead of
