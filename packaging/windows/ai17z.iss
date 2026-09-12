@@ -908,6 +908,14 @@ begin
   if UpdatingExisting() and (NamePage <> nil) and (PageID = NamePage.ID) then
     Result := True;
 
+  { A name given on the command line settles both of these, so asking would be
+    offering a choice that is already made and will be ignored. }
+  if InstanceOverride() <> '' then
+  begin
+    if (FoundPage <> nil) and (PageID = FoundPage.ID) then Result := True;
+    if (NamePage <> nil) and (PageID = NamePage.ID) then Result := True;
+  end;
+
   if UpdatingExisting() then
   begin
     if PageID = wpSelectDir then Result := True;
@@ -953,8 +961,21 @@ begin
 
   { Leaving the first page with an existing installation chosen points the whole
     wizard at it, so the pages that follow are about that installation rather
-    than about a new one in the default folder. }
-  if (FoundPage <> nil) and (CurPageID = FoundPage.ID) then
+    than about a new one in the default folder.
+
+    Never when a name was given on the command line, and that condition is the
+    whole point of this clause. Inno runs InitializeWizard and calls
+    NextButtonClick for every page under /VERYSILENT as well -- there is simply
+    no window -- so a radio button nobody could see, checked by default because
+    it is the first, reached in and moved the directory. Measured: a
+    `/INSTANCE=AI17Z-probe` install put its uninstall entry, Start Menu group
+    and desktop icon under AI17Z-probe, and its *files* into AI17Z-test.
+
+    That is worse than the defect /INSTANCE was added to fix. Before it, the
+    name and the directory at least agreed on the wrong answer; this way an
+    installation is named one thing and lives inside another, and its
+    uninstaller deletes a program directory belonging to something else. }
+  if (FoundPage <> nil) and (CurPageID = FoundPage.ID) and (InstanceOverride() = '') then
   begin
     Chosen := ChosenInstall();
     if Chosen >= 0 then
