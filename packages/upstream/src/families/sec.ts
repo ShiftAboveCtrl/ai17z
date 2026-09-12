@@ -116,7 +116,8 @@ function userAgent(): string {
 
 export const UNSET_MESSAGE =
   'The SEC requires automated callers to declare a contact email, and none is configured. ' +
-  'Set an SEC contact address for this installation to read filings.';
+  'Set AI17Z_SEC_CONTACT in the environment file for this installation, to the address the SEC ' +
+  'should use to reach you, then restart. It is sent to the SEC and to nobody else.';
 
 /** Ten digits with leading zeros, which is what every EDGAR path expects. */
 export function padCik(value: string | number): string {

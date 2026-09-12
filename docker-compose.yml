@@ -74,6 +74,12 @@ services:
       # update screen offers an installer or `update-ai17z.ps1`. Only the API
       # answers that route, so only the API needs it.
       AI17Z_INSTALLED: ${AI17Z_INSTALLED:-}
+      # The contact the SEC is told to reach this installation on. Both
+      # services, because either can reach an upstream: the API runs a
+      # capability the interface invokes and the worker runs the ones a model
+      # asks for. Empty means the filings family sends nothing at all, which is
+      # the shipped state -- see .env.example.
+      AI17Z_SEC_CONTACT: ${AI17Z_SEC_CONTACT:-}
       XBAM_API_PORT: "8787"
       XBAM_API_HOST: 0.0.0.0
       AI17Z_CORS_ORIGINS: ${AI17Z_CORS_ORIGINS:-${XBAM_CORS_ORIGINS:-http://localhost:8080}}
@@ -131,6 +137,12 @@ services:
       AI17Z_BROWSER_ENABLED: ${AI17Z_BROWSER_ENABLED:-${XBAM_BROWSER_ENABLED:-1}}
       XBAM_BROWSER_HEADLESS: "1"
       AI17Z_WORKER_CONCURRENCY: ${AI17Z_WORKER_CONCURRENCY:-2}
+      # The contact the SEC is told to reach this installation on. Both
+      # services, because either can reach an upstream: the API runs a
+      # capability the interface invokes and the worker runs the ones a model
+      # asks for. Empty means the filings family sends nothing at all, which is
+      # the shipped state -- see .env.example.
+      AI17Z_SEC_CONTACT: ${AI17Z_SEC_CONTACT:-}
       # The container has no browser and no display. Browser-backed channels are
       # served by a worker running natively; see docs/operations/BROWSER_SESSIONS.md.
       AI17Z_WORKER_ROLE: ${AI17Z_WORKER_ROLE:-jobs}
