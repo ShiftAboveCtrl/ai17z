@@ -117,6 +117,23 @@ async function killAnythingUnder(root: string): Promise<number> {
   return pids.length;
 }
 
+/**
+ * Longer than the suite's sixty seconds, because this hook is not doing suite
+ * work -- it is waiting on Windows to end process trees.
+ *
+ * Every launch here is detached, so each one is killed by tree, and `taskkill`
+ * on a Chrome tree is slow in proportion to how many Chrome processes the
+ * machine already has. On a developer's machine with a signed-in browser and a
+ * running AI17Z instance that is comfortably thirty processes before this file
+ * starts, and the teardown overran sixty seconds three runs in a row -- every
+ * one of them with all eighteen tests passing. A red suite whose tests all
+ * passed teaches people to ignore a red suite.
+ *
+ * Four minutes is not an expectation, it is headroom. The work itself finishes
+ * in seconds on an idle machine.
+ */
+const TEARDOWN_TIMEOUT_MS = 240_000;
+
 afterAll(async () => {
   // Everything launched here is detached, so it has to be cleaned up by pid --
   // and by tree, or the renderers outlive the run holding the profile.
@@ -128,7 +145,7 @@ afterAll(async () => {
   // Give the renderers a moment to release the directory before removing it.
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   if (profileRoot) await rm(profileRoot, { recursive: true, force: true }).catch(() => undefined);
-});
+}, TEARDOWN_TIMEOUT_MS);
 
 describe('finding real Google Chrome', () => {
   it('locates an installation and reads its identity from the binary', () => {

@@ -234,6 +234,44 @@ var
 { Where the owner's data lives. Read back on later runs so an upgrade offers
   the folder already in use rather than silently proposing a new one. }
 { Which installation the person chose on the first page, or -1 for a new one. }
+{ An instance named on the command line.
+
+  Silent installation has no wizard, so it has no radio buttons and no name
+  page -- and until this existed, `InstanceName` fell through both of those to
+  the default. That is the Beta 13 defect: `/VERYSILENT` upgrading AI17Z-test
+  installed itself as AI17Z instead, into the wrong folder, under the default
+  instance's AppId, overwriting that instance's uninstall entry. Nothing
+  failed; the wrong installation was simply replaced.
+
+  An explicit name therefore wins over everything, including a radio button,
+  because somebody who typed it meant it. Read once and cached. }
+var
+  InstanceArg: String;
+  InstanceArgRead: Boolean;
+
+function InstanceOverride(): String;
+var
+  I: Integer;
+  Arg: String;
+begin
+  if not InstanceArgRead then
+  begin
+    InstanceArgRead := True;
+    InstanceArg := '';
+    for I := 1 to ParamCount do
+    begin
+      Arg := ParamStr(I);
+      if Pos('/INSTANCE=', Uppercase(Arg)) = 1 then
+        InstanceArg := Trim(Copy(Arg, 11, Length(Arg)));
+    end;
+  end;
+  Result := InstanceArg;
+end;
+
+{ Implemented after FindInstalls, which it needs, and declared here because
+  DataDir and UpdatingExisting are both above that point. }
+function IndexOfInstanceNamed(Name: String): Integer; forward;
+
 function ChosenInstall(): Integer;
 var
   I: Integer;
@@ -249,13 +287,39 @@ end;
 
 function UpdatingExisting(): Boolean;
 begin
+  { A named instance that already exists is an upgrade, even with no wizard. }
+  if InstanceOverride() <> '' then
+  begin
+    Result := IndexOfInstanceNamed(InstanceOverride()) >= 0;
+    Exit;
+  end;
   Result := ChosenInstall() >= 0;
 end;
 
 function DataDir(): String;
 var
   Chosen: Integer;
+  Named: String;
+  Found: Integer;
 begin
+  { A named instance keeps its own data, which is the whole point of naming it.
+    An upgrade pointed at a different directory would come up against an empty
+    volume -- indistinguishable, from the outside, from having lost every
+    agent, memory and credential. }
+  Named := InstanceOverride();
+  if Named <> '' then
+  begin
+    Found := IndexOfInstanceNamed(Named);
+    if Found >= 0 then
+    begin
+      Result := Installs[Found].Data;
+      Exit;
+    end;
+    { Named but not present: a fresh installation under that name, rather than
+      the silent fall back to the default one that this fixes. }
+    Result := ExpandConstant('{localappdata}') + '\' + Named;
+    Exit;
+  end;
   { Updating an existing installation keeps its data exactly where it is. Asking
     again would be the one question with a wrong answer available. }
   Chosen := ChosenInstall();
@@ -324,7 +388,17 @@ end;
 function InstanceName(Param: String): String;
 var
   Chosen: Integer;
+  Named: String;
 begin
+  { Everything Windows uses to tell two copies apart is built from this, so a
+    name given on the command line settles the program folder, the Start Menu
+    group and the uninstall identity together. }
+  Named := InstanceOverride();
+  if Named <> '' then
+  begin
+    Result := Named;
+    Exit;
+  end;
   Chosen := ChosenInstall();
   if Chosen >= 0 then
   begin
@@ -471,6 +545,27 @@ begin
   finally
     FindClose(Rec);
   end;
+end;
+
+{ The installation with this name, or -1.
+
+  Discovery is lazy because this is reachable before the wizard has run: in
+  silent mode nothing calls FindInstalls, and an empty list would make an
+  existing instance look like a new one -- which is the failure being fixed
+  rather than a smaller version of it. }
+function IndexOfInstanceNamed(Name: String): Integer;
+var
+  I: Integer;
+begin
+  Result := -1;
+  if Name = '' then Exit;
+  if GetArrayLength(Installs) = 0 then FindInstalls();
+  for I := 0 to GetArrayLength(Installs) - 1 do
+    if CompareText(ExtractFileName(RemoveBackslash(Installs[I].Program_)), Name) = 0 then
+    begin
+      Result := I;
+      Exit;
+    end;
 end;
 
 function PreviousDataDir(): String;
