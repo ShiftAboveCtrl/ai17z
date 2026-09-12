@@ -10,7 +10,12 @@ import {
   setToolpack,
   toolpackViews,
 } from '@xbam/runtime';
-import { TOOLPACKS, capabilitiesInPack, resetCapabilitiesForTest } from '@xbam/tools';
+import {
+  TOOLPACKS,
+  capabilitiesInPack,
+  capabilitiesOutsideAnyPack,
+  resetCapabilitiesForTest,
+} from '@xbam/tools';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -173,6 +178,26 @@ describe('what a pack says about itself', () => {
       }
     }
     expect(seen.size).toBeGreaterThan(0);
+  });
+
+  it('leaves no capability out of every pack', async () => {
+    // The mirror of the test above, and the one that was missing. Claiming a
+    // capability twice is a contradiction an owner would notice; claiming it
+    // never is a capability that exists, works, and appears nowhere on the
+    // normal screen. Ten of them accumulated that way before this existed --
+    // web history, feeds, scholarly search, entities and filings were all
+    // reachable by a model and invisible to the person who owns it.
+    //
+    // The exempt list is short and each entry earns its place: these are always
+    // available, reach no outside source, and are not a decision anybody makes.
+    const ALWAYS_ON = ['agent.diagnostics', 'memory.search', 'time.now'];
+
+    registerEverything();
+    const orphans = capabilitiesOutsideAnyPack()
+      .map((capability) => capability.id)
+      .filter((id) => !ALWAYS_ON.includes(id));
+
+    expect(orphans, `these capabilities are in no pack: ${orphans.join(', ')}`).toEqual([]);
   });
 
   it('refuses a pack that does not exist rather than doing nothing quietly', async () => {

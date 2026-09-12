@@ -83,6 +83,7 @@ export * from './tokenRiskCapabilities';
 export * from './entityCapabilities';
 export * from './feedCapabilities';
 export * from './scholarCapabilities';
+export * from './secCapabilities';
 export * from './feedWatcher';
 export * from './webHistoryCapabilities';
 export * from './solanaCapabilities';

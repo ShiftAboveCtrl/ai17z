@@ -20,6 +20,7 @@ export * from './families/tokenRisk';
 export * from './families/entities';
 export * from './families/feed';
 export * from './families/scholar';
+export * from './families/sec';
 export * from './families/webHistory';
 export * from './families/solana';
 export * from './exactNumbers';

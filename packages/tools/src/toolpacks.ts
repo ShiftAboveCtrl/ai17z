@@ -71,17 +71,58 @@ export const TOOLPACKS: Toolpack[] = [
     // things up on chains" is one decision a person makes once; a pack per
     // chain would turn it into a decision per chain, which is the flat list of
     // switches these exist to replace.
-    prefixes: ['bitcoin.', 'chain.', 'contract.', 'defi.', 'governance.', 'market.', 'solana.', 'storage.', 'token.'],
+    prefixes: [
+      'address.',
+      'bitcoin.',
+      'chain.',
+      'contract.',
+      'defi.',
+      'governance.',
+      'market.',
+      'solana.',
+      'storage.',
+      'token.',
+    ],
   },
   {
     id: 'reference',
     name: 'Reference & Knowledge',
-    summary: 'Look up what an established term, person or project is, from reference works that cite their source.',
+    summary:
+      'Look up what an established term, person, project or paper is, from reference works, scholarly indexes ' +
+      'and structured encyclopedias that cite their source.',
     // Deliberately separate from the crypto pack rather than folded into it.
     // "Let my agent look things up on chains" and "let my agent check what a
     // word means" are different decisions, and somebody may well want the
     // second without the first.
-    prefixes: ['reference.'],
+    //
+    // Scholarly works and structured entities live here rather than in packs of
+    // their own: an owner deciding "my agent may look things up in reference
+    // sources" is making one decision, and splitting it into three would turn a
+    // simple screen back into the flat list of switches these exist to replace.
+    prefixes: ['reference.', 'research.', 'entity.'],
+  },
+  {
+    id: 'web',
+    name: 'Web & Feeds',
+    summary:
+      'Read what a page said in the past, and follow sites that publish a feed. ' +
+      'Historical pages are always reported with the date they were captured.',
+    // Separate from reference because it is a different kind of permission.
+    // Reference sources answer about established things; these two reach
+    // whatever URL somebody points them at, which is a decision an owner may
+    // reasonably want to make on its own.
+    prefixes: ['web.', 'feed.'],
+  },
+  {
+    id: 'filings',
+    name: 'Company Filings',
+    summary:
+      'Read what a public company has filed with its regulator. ' +
+      'Needs a contact address before it will work, because the regulator requires one.',
+    // Its own pack because it is the only one that cannot work until somebody
+    // configures something. Folded into another pack, that pack would show as
+    // partly broken on every installation that never wanted filings at all.
+    prefixes: ['company.'],
   },
 ];
 
