@@ -541,3 +541,45 @@ describe('the launcher tells the application which commit it is running', () => 
     expect(launcher).toMatch(/AI17Z_BUILD_STAMP\s*=\s*Get-SourceStamp/);
   });
 });
+
+/**
+ * A silent install goes where it was told, not where a hidden radio points.
+ *
+ * `/INSTANCE=` was added so a silent upgrade could say which installation it
+ * means. It settled the AppId, the name, the Start Menu group and the desktop
+ * icon -- and not the directory, because Inno runs `InitializeWizard` and calls
+ * `NextButtonClick` for every page under `/VERYSILENT` too. There is no window;
+ * everything else happens. So the first radio button on the found-installations
+ * page, checked by default because it is the first, reached in and moved
+ * `WizardForm.DirEdit`.
+ *
+ * Measured before the guard existed: `/INSTANCE=AI17Z-probe` wrote its
+ * uninstall entry, Start Menu group and desktop icon under AI17Z-probe, and its
+ * files into AI17Z-test. That is worse than the defect it was added to fix --
+ * an installation named one thing, living inside another, whose uninstaller
+ * deletes a program directory belonging to something else.
+ *
+ * Pinned as text because the alternative is compiling and running an installer
+ * in a unit test, and because what went wrong is one missing condition.
+ */
+describe('an explicit instance name settles the directory too', () => {
+  const iss = readFileSync(resolve(root, 'packaging/windows/ai17z.iss'), 'utf8');
+
+  it('does not let the found-installations page move the directory', () => {
+    expect(iss).toContain(
+      "if (FoundPage <> nil) and (CurPageID = FoundPage.ID) and (InstanceOverride() = '') then",
+    );
+  });
+
+  it('skips the pages that would ask what the command line already said', () => {
+    const skip = iss.slice(iss.indexOf('function ShouldSkipPage'), iss.indexOf('{ Ports that are already right'));
+    expect(skip).toContain("if InstanceOverride() <> '' then");
+    expect(skip).toContain('if (FoundPage <> nil) and (PageID = FoundPage.ID) then Result := True;');
+  });
+
+  it('still lets the wizard follow the radio when nobody named an instance', () => {
+    // The guard is a condition, not a removal: choosing an installation on the
+    // first page must still point the rest of the wizard at it.
+    expect(iss).toContain('WizardForm.DirEdit.Text := Installs[Chosen].Program_;');
+  });
+});
