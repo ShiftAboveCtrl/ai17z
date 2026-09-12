@@ -20,7 +20,9 @@ import {
   registerEntityUpstreams,
   registerSecUpstreams,
   registerWebHistoryUpstreams,
+  secContact,
   useQuotaCoordinator,
+  useSecContact,
 } from '@xbam/upstream';
 import { InstallationQuotaCoordinator } from './upstreamQuota';
 import { registerChainCapabilities } from './chainCapabilities';
@@ -105,6 +107,25 @@ export async function bootstrapRuntime(): Promise<void> {
   registerScholarUpstreams();
   registerEntityUpstreams();
   registerSecUpstreams();
+
+  /*
+   * The one upstream that cannot work until somebody says who is calling.
+   *
+   * EDGAR refuses automated callers that do not declare a contact email, and
+   * `sec.ts` refuses to invent one -- a developer's address compiled into a
+   * release names the wrong person to a regulator on every machine that runs
+   * it. So the address has to come from the installation, and until this line
+   * existed nothing called `useSecContact`: the family shipped permanently
+   * unavailable, telling owners to set a contact with no way to set one.
+   *
+   * The environment file rather than a database row, because it is a property
+   * of the installation and not of an agent, and because it has to be readable
+   * before anything asks -- the same place the master key and the ports live.
+   * Unset stays unset: readiness says so, and no request leaves.
+   */
+  useSecContact(process.env.AI17Z_SEC_CONTACT?.trim() || null);
+  log.info('sec contact', { configured: secContact() !== null });
+
   // The capabilities that read a chain, registered after the upstreams they
   // ask. The model asks `chain.read_balance`; which node answers is provenance.
   registerChainCapabilities();

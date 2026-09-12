@@ -105,12 +105,18 @@ export const TOOLPACKS: Toolpack[] = [
     id: 'web',
     name: 'Web & Feeds',
     summary:
-      'Read what a page said in the past, and follow sites that publish a feed. ' +
+      'Read what a page said in the past, and read what a site has published to its feed. ' +
       'Historical pages are always reported with the date they were captured.',
     // Separate from reference because it is a different kind of permission.
     // Reference sources answer about established things; these two reach
     // whatever URL somebody points them at, which is a decision an owner may
     // reasonably want to make on its own.
+    //
+    // "read what a site has published", not "follow": reading a feed on demand
+    // is what this pack gives an agent. There is a durable watcher underneath
+    // -- cursors, backoff, a poll loop in the worker -- and nothing yet that
+    // can create a subscription for it, so a summary promising to follow a site
+    // would describe a screen that does not exist.
     prefixes: ['web.', 'feed.'],
   },
   {

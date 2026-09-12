@@ -387,3 +387,42 @@ describe('nothing relative resolves against the program directory', () => {
     expect(verify).toContain('const installed = new Set(await readdir(program))');
   });
 });
+
+/**
+ * A setting that only exists in the file that reads it is not a setting.
+ *
+ * The SEC family shipped with `useSecContact` written, documented, and called
+ * by nothing. Company Filings was therefore permanently unavailable on every
+ * installation, telling owners to configure a contact with no way to do it --
+ * and the readiness message made it read like an outage rather than a hole.
+ *
+ * Four places have to agree, and they are in four different languages, which
+ * is why this is a test and not a comment: the template so somebody can find
+ * it, both compose services so it reaches a containerised process, and
+ * bootstrap so the value gets to the family before anything asks.
+ */
+describe('the SEC contact reaches the process that needs it', () => {
+  const compose = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
+  const bootstrap = readFileSync(resolve(root, 'packages/runtime/src/bootstrap.ts'), 'utf8');
+
+  it('is in the template, and empty', () => {
+    // Empty is the shipped state: the address is the owner's and is never
+    // invented. A default here would name somebody to a regulator.
+    expect(template).toMatch(/^AI17Z_SEC_CONTACT=$/m);
+  });
+
+  it('is forwarded to both services, because either can reach an upstream', () => {
+    const occurrences = compose.match(/AI17Z_SEC_CONTACT: \$\{AI17Z_SEC_CONTACT:-\}/g) ?? [];
+    expect(occurrences).toHaveLength(2);
+  });
+
+  it('is read at bootstrap, so the family has it before anything asks', () => {
+    expect(bootstrap).toContain('useSecContact(process.env.AI17Z_SEC_CONTACT');
+  });
+
+  it('is named by the message an owner reads when it is unset', () => {
+    const sec = readFileSync(resolve(root, 'packages/upstream/src/families/sec.ts'), 'utf8');
+    const message = sec.slice(sec.indexOf('export const UNSET_MESSAGE'));
+    expect(message.slice(0, 400)).toContain('AI17Z_SEC_CONTACT');
+  });
+});
