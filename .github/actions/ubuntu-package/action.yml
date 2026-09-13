@@ -1,5 +1,10 @@
 # @release-check-fixtures -- the `owner` home this file mentions belongs to a
 # user the action creates on a disposable runner. It is nobody's.
+# Every step here traps its own failure and prints it as an `::error::`
+# annotation. Actions logs need admin rights on the repository to read --
+# through the API and in the web interface both -- so without this, "Process
+# completed with exit code 1" is all most people ever see of a broken job.
+# Annotations are public.
 name: Build and prove the Ubuntu package
 description: >
   Stages, packages, installs and then actually runs an AI17Z .deb on the machine
@@ -29,6 +34,13 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # A failure that says what failed.
+        #
+        # Actions logs need admin rights on the repository to read, through the
+        # API and in the web interface both, so "Process completed with exit
+        # code 1" is all most people ever see of a broken job. An `::error::`
+        # line becomes an annotation, and annotations are public.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         # An arm64 package assembled on an x86_64 machine carries the wrong
         # native modules under the right name. It installs, and fails on
         # somebody else's machine with "cannot load".
@@ -40,12 +52,20 @@ runs:
 
     - name: Stage the application
       shell: bash
-      run: npm run package:unix -- --platform ubuntu --stage "$RUNNER_TEMP/stage"
+      run: |
+        set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s
+" "staging failed: $BASH_COMMAND"' ERR
+        echo "node $(node -v), npm $(npm -v), on $(uname -sm)"
+        npm run package:unix -- --platform ubuntu --stage "$RUNNER_TEMP/stage"
 
     - name: Build the package
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         bash packaging/ubuntu/build-deb.sh \
           --stage "$RUNNER_TEMP/stage" \
           --version "${{ inputs.version }}" \
@@ -57,6 +77,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         sudo apt-get update -qq
         sudo apt-get install -y -qq lintian
         # Errors fail. Warnings are printed rather than suppressed wholesale:
@@ -69,6 +91,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         DEB="${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
         dpkg -I "$DEB"
         said="$(dpkg-deb -f "$DEB" Architecture)"
@@ -81,6 +105,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         sudo apt-get install -y "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
 
         NODE=/usr/lib/ai17z/runtime/node/bin/node
@@ -118,6 +144,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         NODE=/usr/lib/ai17z/runtime/node/bin/node
         TSX=/usr/lib/ai17z/app/node_modules/tsx/dist/cli.mjs
         cd /usr/lib/ai17z/app
@@ -142,6 +170,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         id -u owner >/dev/null 2>&1 || sudo useradd -m -s /bin/bash owner
 
         echo "--- version and the bundled node, through the launcher ---"
@@ -182,6 +212,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         NODE=/usr/lib/ai17z/runtime/node/bin/node
         APP=/usr/lib/ai17z/app
         . /etc/os-release
@@ -228,6 +260,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         sudo -u owner -H bash -lc 'printf "a thing the owner made\n" > ~/.local/share/ai17z/owner.txt'
         sudo apt-get purge -y ai17z
         [ ! -d /usr/lib/ai17z ] || { echo "purge left the program behind" >&2; exit 1; }
@@ -240,6 +274,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         sudo apt-get purge -y ai17z
         [ ! -d /usr/lib/ai17z ] || { echo "purge left files behind" >&2; exit 1; }
 
@@ -247,6 +283,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         bash .github/scripts/scan-artifact.sh \
           "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb" ubuntu
 
@@ -254,6 +292,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         DEB="${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
         ls -l "$DEB"
         sha256sum "$DEB"

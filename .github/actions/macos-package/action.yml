@@ -1,3 +1,8 @@
+# Every step here traps its own failure and prints it as an `::error::`
+# annotation. Actions logs need admin rights on the repository to read --
+# through the API and in the web interface both -- so without this, "Process
+# completed with exit code 1" is all most people ever see of a broken job.
+# Annotations are public.
 name: Build and prove the macOS package
 description: >
   Stages, packages and then actually runs an AI17Z macOS package on the Mac that
@@ -29,6 +34,13 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # A failure that says what failed.
+        #
+        # Actions logs need admin rights on the repository to read, through the
+        # API and in the web interface both, so "Process completed with exit
+        # code 1" is all most people ever see of a broken job. An `::error::`
+        # line becomes an annotation, and annotations are public.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         # Asserted rather than assumed. A matrix entry pointing at the wrong
         # runner would otherwise ship a mislabelled package: an arm64 name over
         # x86_64 native modules, which installs happily and fails on somebody
@@ -43,12 +55,20 @@ runs:
 
     - name: Stage the application
       shell: bash
-      run: npm run package:unix -- --platform macos --stage "$RUNNER_TEMP/stage"
+      run: |
+        set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s
+" "staging failed: $BASH_COMMAND"' ERR
+        echo "node $(node -v), npm $(npm -v), on $(uname -sm)"
+        npm run package:unix -- --platform macos --stage "$RUNNER_TEMP/stage"
 
     - name: Build the package
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         bash packaging/macos/build-tarball.sh \
           --stage "$RUNNER_TEMP/stage" \
           --version "${{ inputs.version }}" \
@@ -60,6 +80,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         TARBALL="${{ inputs.out }}/AI17Z-macos-${{ inputs.arch }}-${{ inputs.version }}.tar.gz"
         # A path with a space, because the real install directory is
         # "Application Support" and an unquoted variable anywhere in the chain
@@ -119,6 +141,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         HOME_OF_IT="$RUNNER_TEMP/with space/room/AI17Z"
         NODE="$HOME_OF_IT/runtime/node/bin/node"
         TSX="$HOME_OF_IT/app/node_modules/tsx/dist/cli.mjs"
@@ -157,6 +181,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         HOME_OF_IT="$RUNNER_TEMP/with space/room/AI17Z"
 
         echo "--- version, through the launcher ---"
@@ -197,6 +223,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         HOME_OF_IT="$RUNNER_TEMP/with space/room/AI17Z"
         # The launcher creates these on first run. They are what an update must
         # never touch, and they live beside `app` rather than inside it.
@@ -217,6 +245,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         HOME_OF_IT="$RUNNER_TEMP/with space/room/AI17Z"
         NODE="$HOME_OF_IT/runtime/node/bin/node"
         APP="$HOME_OF_IT/app"
@@ -265,6 +295,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         TARBALL="${{ inputs.out }}/AI17Z-macos-${{ inputs.arch }}-${{ inputs.version }}.tar.gz"
         bash .github/scripts/scan-artifact.sh "$TARBALL" macos
 
@@ -272,6 +304,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # Named rather than "exit code 1"; see the note at the top of this file.
+        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         TARBALL="${{ inputs.out }}/AI17Z-macos-${{ inputs.arch }}-${{ inputs.version }}.tar.gz"
         ls -l "$TARBALL"
         shasum -a 256 "$TARBALL"
