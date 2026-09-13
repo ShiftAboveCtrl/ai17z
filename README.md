@@ -32,11 +32,14 @@ interesting part is the agent, not the plumbing.
 
 ## What you need
 
-Three things, and the installer checks all of them before it does anything:
+On Windows, nothing: **AI17Z Setup** checks for all of these and installs the
+ones that are missing, through Microsoft's own package manager. This is what it
+is checking for, so you can install them yourself first if you would rather.
 
 | | Why | Where |
 | --- | --- | --- |
 | **Docker Desktop** | Postgres, the API and the web app run in containers | [docker.com](https://www.docker.com/products/docker-desktop/) |
+| **WSL 2** | what Docker Desktop runs on. AI17Z installs no Linux distribution of its own | [Microsoft](https://learn.microsoft.com/windows/wsl/install) |
 | **Node 22 or newer** | The worker that drives a real browser runs on your machine, not in a container | [nodejs.org](https://nodejs.org) |
 | **Google Chrome** | Only for connecting an X account. Everything else works without it | [google.com/chrome](https://www.google.com/chrome/) |
 
@@ -53,20 +56,40 @@ costs less.
 
 ---
 
-## Download
+## Install on Windows
 
-**Windows installer:** [`AI17Z-Setup-<version>.exe`](https://github.com/ShiftAboveCtrl/ai17z/releases)
-from the releases page. Verify it against `SHA256SUMS.txt` published beside it.
+1. Download **`Install-AI17Z-<version>.exe`** from
+   [the releases page](https://github.com/ShiftAboveCtrl/ai17z/releases).
+2. Run it.
+3. Watch the status screen. It checks what this PC has, installs what is
+   missing, installs AI17Z, starts it, and checks it works.
+4. AI17Z opens when it is ready.
 
-See [Installing on Windows](docs/WINDOWS_INSTALL.md) and
-[Uninstalling](docs/WINDOWS_UNINSTALL.md).
+**Only install AI17Z from the official repository above.** Nowhere else
+distributes it.
 
-It needs Node.js 20+, Docker Desktop and Google Chrome, which it does not
-install for you. It checks for them and says what is missing.
+That download can install Windows features and system software, which is a lot
+to ask of a file off the internet. So the whole of it is one PowerShell script
+in this repository — [`packaging/windows/Setup-AI17Z.ps1`](packaging/windows/Setup-AI17Z.ps1)
+— and the `.exe` is a wrapper that extracts and runs exactly that. Both are
+published, both are hashed in `SHA256SUMS.txt`, and it will show you what it
+would do without doing any of it:
+
+```powershell
+.\Install-AI17Z-<version>.exe /WHATIF
+```
+
+**[How to audit it](docs/SETUP_AUDIT.md)** — every privileged action, every
+download, everything it writes, and how to check the hash and the signature
+yourself. Read that before you run it. It is the point of the thing being a
+script.
+
+Also: [Installing on Windows](docs/WINDOWS_INSTALL.md) ·
+[Uninstalling](docs/WINDOWS_UNINSTALL.md)
 
 ### Code signing policy
 
-AI17Z's Windows installer is currently **unsigned**, while our
+AI17Z's Windows downloads are currently **unsigned**, while our
 [SignPath Foundation](https://signpath.org) application is pending. Windows will
 warn you, and you should treat every unsigned download that way. Check the
 SHA-256 against the release page before running it.
@@ -87,9 +110,20 @@ configure, with the credentials you supply. See [docs/PRIVACY.md](docs/PRIVACY.m
 
 ---
 
-## Install from source
+## Other ways to install
 
-### Windows
+Three, and none of them is the one above. Use these if you are working on AI17Z,
+running it somewhere other than Windows, or would rather not run an installer at
+all.
+
+**The full Windows installer**, `AI17Z-Setup-<version>.exe`, is also on the
+releases page. It carries the application inside it rather than downloading it,
+and it is what installations made before AI17Z Setup existed update with. It does
+not install Docker, Node or Chrome for you beyond offering to; the wizard is a
+wizard. Both kinds of installation end up with the same program directory, the
+same data directory and the same updates.
+
+### From source, on Windows
 
 > **Not inside OneDrive, Dropbox or Google Drive.** npm links every package into
 > `node_modules` with a symlink, and a syncing folder refuses those while it is
@@ -228,6 +262,27 @@ that is not a container change.
 
 ## Updating
 
+AI17Z tells you when there is a new version on the **Version** panel in
+Settings, with the release notes, and never updates itself. How you take one
+depends on how it was installed, and the panel says which of these applies to
+your copy.
+
+**Installed with AI17Z Setup:** *Update AI17Z* in the Start Menu, or
+
+```powershell
+.\update-ai17z.ps1
+```
+
+which is the same thing. It hands over to the setup script that installed this
+copy: stop, download the new release, check it against its published SHA-256,
+replace the program, migrate, start, verify. If the hash does not match, nothing
+is replaced.
+
+**Installed with the full Windows installer:** download the new
+`AI17Z-Setup-<version>.exe` and run it over your existing copy.
+
+**A checkout:**
+
 ```powershell
 .\update-ai17z.ps1 -Check
 .\update-ai17z.ps1
@@ -240,11 +295,13 @@ that is not a container change.
 
 `-Check` / `--check` says what an update would bring and changes nothing: the
 commits, and any database migrations, which are the part that cannot be undone.
+It refuses to run over uncommitted changes rather than discarding them, and works
+out whether the update can be applied *before* stopping anything, so a checkout
+it cannot update is left running rather than left down.
 
-Your data and your `.env` are never touched. It refuses to run over uncommitted
-changes rather than discarding them, and it works out whether the update can be
-applied *before* stopping anything, so a checkout it cannot update is left
-running rather than left down.
+**However it was installed, your data and your `.env` are never touched.** The
+program directory is replaced; the data directory — agents, memories, provider
+keys, browser session, master key — is not.
 
 ---
 
@@ -463,6 +520,7 @@ npm run typecheck
 Installing and running it:
 
 - [Installing on Windows](docs/WINDOWS_INSTALL.md)
+- [Auditing AI17Z Setup](docs/SETUP_AUDIT.md) — everything the installer can change, and how to check it yourself
 - [Uninstalling, and removing your data](docs/WINDOWS_UNINSTALL.md)
 - [Why Windows warns about the download](docs/WINDOWS_TRUST.md)
 - [Privacy: what leaves your machine](docs/PRIVACY.md)

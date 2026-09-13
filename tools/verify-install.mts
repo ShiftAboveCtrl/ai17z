@@ -31,16 +31,24 @@
  *     makes the owner account, signs in through a real headless browser, and
  *     waits for the agent list to draw.
  *
- * It never touches the registry, the desktop, the Start Menu, or any Docker
- * project but its own. It cannot disturb an installation or a checkout.
+ * It never touches the desktop or any Docker project but its own, and it cannot
+ * disturb an installation or a checkout.
  *
- * Run: npm run verify:install [-- --twice] [--upgrade] [--keep]
+ * One exception, named because an exception nobody wrote down is a promise that
+ * quietly stopped being true: `--bootstrap` runs the real setup script, and a
+ * real install registers itself with Windows -- a Start Menu group, an
+ * Add/Remove Programs entry, and `Software\AI17Z\DataDir`, which is what an
+ * uninstaller reads to decide whose data to offer to delete. That phase takes
+ * the value before it starts, removes everything it created by name, and puts
+ * the value back.
+ *
+ * Run: npm run verify:install [-- --twice] [--upgrade] [--bootstrap] [--keep]
  */
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -50,6 +58,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const twice = process.argv.includes('--twice');
 const keep = process.argv.includes('--keep');
 const alsoUpgrade = process.argv.includes('--upgrade');
+/** Also install once through the real AI17Z Setup script, rather than only through the installer's steps. */
+const alsoBootstrap = process.argv.includes('--bootstrap');
 
 /** Somewhere no sync client and no existing installation can reach. */
 const ROOM = resolve('C:/ai17z-verify-room');
@@ -177,15 +187,49 @@ async function install(stage: string, program: string, data: string, ports: Port
   ].join('');
   if (additions) await writeFile(envPath, env + additions, 'utf8');
   await writeFile(join(program, 'data-location.txt'), data, 'utf8');
+
+  // What WriteInstallInfo writes, and the reason it exists: the application
+  // reads this to say how it should be updated, and an installation with no
+  // marker is one the update screen has to guess about.
+  await writeFile(
+    join(program, 'INSTALL_INFO.json'),
+    `${JSON.stringify(
+      { schema: 1, channel: 'INSTALLER', instance: basename(program), programDir: program, dataDir: data },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+}
+
+/** One PowerShell command, for the small amount of Windows state this has to read and put back. */
+async function powershell(command: string): Promise<string> {
+  try {
+    const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    return '';
+  }
 }
 
 /** Drive a shortcut: powershell.exe, a script path, and no AI17Z environment. */
 async function shortcut(program: string, script: string): Promise<{ stdout: string; code: number }> {
+  return shortcutWith(program, script, []);
+}
+
+/** The same, for the two entry points that take an argument. */
+async function shortcutWith(
+  program: string,
+  script: string,
+  args: string[],
+): Promise<{ stdout: string; code: number }> {
   return new Promise((done) => {
     const child = spawn(
       'powershell.exe',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(program, script)],
-      { cwd: program, env: bareEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] },
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(program, script), ...args],
+      { cwd: program, env: { ...bareEnvironment(), AI17Z_NO_BROWSER: '1' }, stdio: ['ignore', 'pipe', 'pipe'] },
     );
     let stdout = '';
     child.stdout.on('data', (d) => (stdout += String(d)));
@@ -557,6 +601,236 @@ async function teardown(label: string): Promise<void> {
 }
 
 /**
+ * The other way AI17Z gets installed, run for real.
+ *
+ * Every phase above reproduces what the Windows installer does to a disk. That
+ * is deliberate -- it is fast and it cannot be defeated by an installer that
+ * refuses to run unattended -- but it means the code being checked is this
+ * file's, not the installer's.
+ *
+ * AI17Z Setup has no such problem: it is a script, it takes the program
+ * directory, the data directory and the package as arguments, and it installs
+ * without touching a wizard, the network, or anything outside the directories
+ * it was given. So this runs **the shipped script**, against **the same staged
+ * application**, zipped exactly as the release workflow zips it.
+ *
+ * Four properties, and each of them is something that has gone wrong somewhere
+ * in this project's history:
+ *
+ *   - the name asked for is the name installed. A published installer once
+ *     named an installation one thing and put its files inside another's
+ *     directory, and its uninstaller was registered to delete that other
+ *     directory
+ *   - a second run over the top changes the program and nothing else. The
+ *     master key, the ports and everything in the data directory survive, and
+ *     losing the master key makes every stored credential unreadable
+ *   - the package is refused when its hash does not match, with nothing
+ *     installed
+ *   - what it installed actually runs, and says so only after checking
+ */
+async function bootstrap(stage: string): Promise<void> {
+  const label = 'bootstrap';
+  const instance = 'ai17z-verify-boot';
+  const program = join(ROOM, label, 'program');
+  const data = join(ROOM, label, 'data');
+  const setup = join(root, 'packaging', 'windows', 'Setup-AI17Z.ps1');
+
+  // This phase runs the real setup script, and a real install registers itself
+  // with Windows: a Start Menu group, an Add/Remove Programs entry, and the
+  // list of installations the next installer reads. That is correct of the
+  // script and unacceptable of this harness, which promises to touch nothing
+  // outside its own room -- and one of those values, `Software\AI17Z\DataDir`,
+  // is what an uninstaller reads to decide which data directory to offer to
+  // delete. Left pointing at a directory in this room, it would name the wrong
+  // folder to somebody uninstalling a real copy.
+  //
+  // So the value is taken before and put back after, and everything else this
+  // creates is removed by name.
+  const previousDataDir = (
+    await powershell(
+      `(Get-ItemProperty 'HKCU:\\Software\\AI17Z' -ErrorAction SilentlyContinue).DataDir`,
+    )
+  ).trim();
+  const restoreMachineState = async () => {
+    const group = `$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\${instance}`;
+    const key = `HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}_${instance}_setup`;
+    const restore = previousDataDir
+      ? `Set-ItemProperty -Path 'HKCU:\\Software\\AI17Z' -Name DataDir -Value '${previousDataDir}' -ErrorAction SilentlyContinue`
+      : `Remove-ItemProperty -Path 'HKCU:\\Software\\AI17Z' -Name DataDir -ErrorAction SilentlyContinue`;
+    await powershell(
+      [
+        `Remove-Item -LiteralPath "${group}" -Recurse -Force -ErrorAction SilentlyContinue`,
+        `Remove-Item -Path '${key}' -Recurse -Force -ErrorAction SilentlyContinue`,
+        `Remove-ItemProperty -Path 'HKCU:\\Software\\AI17Z\\Installs' -Name '${program}' -Force -ErrorAction SilentlyContinue`,
+        restore,
+      ].join('; '),
+    );
+  };
+
+  await rm(join(ROOM, label), { recursive: true, force: true });
+  await mkdir(data, { recursive: true });
+
+  say(`${label}: zipping the staged application`);
+  const { createZip, sha256 } = await import('./zip');
+  const zip = join(ROOM, 'AI17Z-App-verify.zip');
+  const files = await createZip(stage, zip);
+  const digest = await sha256(zip);
+  say(`${label}: ${files} files, sha256 ${digest.slice(0, 16)}...`);
+
+  const ports: Ports = {
+    web: await freePort(PORT_BASE.web + 40),
+    api: await freePort(PORT_BASE.api + 40),
+    db: await freePort(PORT_BASE.db + 40),
+  };
+  // The ports are written before setup runs, because an installation that
+  // already has an environment file keeps the ports in it -- which is the rule
+  // that stops an update moving somebody's database. Writing them here is how
+  // this phase gets ports that cannot collide with the developer's own copy.
+  await writeFile(
+    join(data, '.env'),
+    `AI17Z_WEB_PORT=${ports.web}\r\nAI17Z_API_PORT=${ports.api}\r\nPOSTGRES_PORT=${ports.db}\r\n` +
+      `DATABASE_URL=postgres://xbam:xbam@localhost:${ports.db}/xbam\r\n` +
+      `AI17Z_MASTER_KEY=dGVzdC1vbmx5LW1hc3Rlci1rZXktMzItYnl0ZXMhISE=\r\n` +
+      `AI17Z_INSTANCE=${instance}\r\n`,
+    'utf8',
+  );
+  // Something of the owner's, in the place an update must never touch.
+  await mkdir(join(data, 'storage'), { recursive: true });
+  await writeFile(join(data, 'storage', 'owner-file.txt'), 'this must survive an update', 'utf8');
+
+  const runSetup = async (args: string[]): Promise<{ out: string; code: number }> =>
+    new Promise((done) => {
+      const child = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', setup, ...args],
+        { cwd: ROOM, env: { ...bareEnvironment(), AI17Z_NO_BROWSER: '1' }, stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      let out = '';
+      child.stdout.on('data', (d) => (out += String(d)));
+      child.stderr.on('data', (d) => (out += String(d)));
+      child.on('exit', (code) => done({ out, code: code ?? -1 }));
+    });
+
+  const base = [
+    '-InstanceName', instance,
+    '-ProgramDir', program,
+    '-DataDir', data,
+    // Docker, Node, WSL and Chrome are this machine's, not this test's. The
+    // harness is not a place to install system software.
+    '-SkipDependencies',
+    '-NoBrowser',
+  ];
+
+  try {
+    // ---- 1. A package whose hash is wrong is refused ---------------------
+    //
+    // Run first, and against a program directory that does not exist yet, so
+    // "nothing was installed" is something this can check rather than assert.
+    const wrong = await runSetup([...base, '-LocalPackage', zip, '-ExpectedSha256', 'f'.repeat(64), '-NoStart']);
+    if (wrong.code === 0) {
+      fail(`${label}: a package whose hash does not match was installed anyway`, wrong.out.slice(-1500));
+    }
+    if (existsSync(join(program, 'package.json'))) {
+      fail(`${label}: it wrote a program directory before the hash was checked`, wrong.out.slice(-1500));
+    }
+    say(`${label}: a package with the wrong hash was refused, and nothing was written`);
+
+    // ---- 2. Install, for real, from the package --------------------------
+    //
+    // Without -NoStart, so the script does what it does for a person: builds
+    // the images, applies the migrations, waits, and then checks AI17Z works
+    // before it says so. That last part is the reason the flag is not passed
+    // here -- a setup program that reports success without looking is the thing
+    // this whole gate exists to stop shipping.
+    say(`${label}: installing ${instance} to ${program}, and letting it start`);
+    const installed = await runSetup([...base, '-LocalPackage', zip]);
+    if (installed.code !== 0) fail(`${label}: the setup script failed`, installed.out.slice(-2000));
+    if (!installed.out.includes('is ready')) {
+      fail(`${label}: it finished without saying it had checked anything`, installed.out.slice(-2000));
+    }
+    if (!installed.out.includes(`localhost:${ports.web}`)) {
+      fail(`${label}: it pointed at the wrong address`, installed.out.slice(-800));
+    }
+
+    for (const proof of ['package.json', 'AI17Z.cmd', 'data-location.txt', 'INSTALL_INFO.json', 'node_modules']) {
+      if (!existsSync(join(program, proof))) {
+        fail(`${label}: ${proof} is not in the installed program`, installed.out.slice(-1500));
+      }
+    }
+
+    const info = JSON.parse(await readFile(join(program, 'INSTALL_INFO.json'), 'utf8')) as {
+      channel: string;
+      instance: string;
+      programDir: string;
+      dataDir: string;
+    };
+    if (info.channel !== 'BOOTSTRAP') fail(`${label}: the marker says ${info.channel}`, JSON.stringify(info));
+    // The regression that matters: what was asked for is what was installed.
+    if (info.instance !== instance) fail(`${label}: asked for ${instance}, installed ${info.instance}`, '');
+    if (resolve(info.programDir) !== resolve(program)) {
+      fail(`${label}: the name and the directory disagree`, `${info.programDir}\n${program}`);
+    }
+    if (resolve(info.dataDir) !== resolve(data)) {
+      fail(`${label}: it pointed at the wrong data directory`, `${info.dataDir}\n${data}`);
+    }
+    const pointer = (await readFile(join(program, 'data-location.txt'), 'utf8')).trim();
+    if (resolve(pointer) !== resolve(data)) fail(`${label}: data-location.txt points elsewhere`, pointer);
+
+    // ---- 3. Start it, and prove it works ---------------------------------
+    await start(label, program, ports);
+
+    const expected = await migrationsOnDisk();
+    const counted = await compose(program, data, [
+      'exec', '-T', 'postgres', 'psql', '-U', 'xbam', '-d', 'xbam', '-tAc',
+      'select count(*) from schema_migrations',
+    ]);
+    const applied = Number(counted.trim().split(/\r?\n/).pop());
+    if (applied !== expected) fail(`${label}: ${applied} migrations applied, ${expected} on disk`, counted.trim());
+
+    const health = await get(`http://localhost:${ports.api}/api/health`);
+    if (health.status !== 200 || !health.body.includes('"status":"healthy"')) {
+      fail(`${label}: the API is not healthy`, health.body.slice(0, 600));
+    }
+    await signInAndLook(label, ports);
+
+    // ---- 4. Update over the top, and lose nothing ------------------------
+    //
+    // Through the installed `update-ai17z.ps1` rather than by calling the setup
+    // script directly, because that is the whole chain a person sets off from
+    // the Start Menu: read the marker, find the channel, hand over to the setup
+    // script that installed this copy, naming it rather than discovering it.
+    //
+    // It is also the only way to exercise the part that cannot be reasoned
+    // about from the outside -- the script doing the updating lives inside the
+    // directory being replaced, and replaces itself.
+    const before = await readFile(join(data, '.env'), 'utf8');
+    say(`${label}: updating through the installed updater`);
+    const updated = await shortcutWith(program, 'update-ai17z.ps1', ['-Package', zip, '-SkipStart']);
+    if (updated.code !== 0) fail(`${label}: the update failed`, updated.stdout.slice(-2000));
+    if (!updated.stdout.includes('AI17Z Setup')) {
+      fail(`${label}: the updater did not hand over to the setup script`, updated.stdout.slice(-1500));
+    }
+    for (const proof of ['package.json', 'INSTALL_INFO.json', 'packaging']) {
+      if (!existsSync(join(program, proof))) {
+        fail(`${label}: the update left no ${proof}`, updated.stdout.slice(-1500));
+      }
+    }
+
+    const after = await readFile(join(data, '.env'), 'utf8');
+    if (after !== before) fail(`${label}: the update rewrote .env`, `before:\n${before}\nafter:\n${after}`);
+    if (!existsSync(join(data, 'storage', 'owner-file.txt'))) {
+      fail(`${label}: the update removed something from the data directory`, '');
+    }
+    if (!existsSync(join(program, 'package.json'))) fail(`${label}: the update left no program`, '');
+  } finally {
+    await teardown(label);
+    await restoreMachineState();
+    await rm(zip, { force: true }).catch(() => undefined);
+  }
+  say(`${label}: installed, updated, and nothing of the owner's was touched`);
+}
+
+/**
  * Two installations, up at the same time, each still pointing at its own data.
  *
  * The two attempts above prove an installation works. They cannot prove two of
@@ -819,6 +1093,9 @@ async function main(): Promise<void> {
   // Two at once, which the two attempts above cannot show: each tears down
   // before the next begins, and coexisting is the case that broke.
   if (twice) await sideBySide(stage);
+
+  // The same application, installed by the script people actually download.
+  if (alsoBootstrap) await bootstrap(stage);
 
   // The path where a mistake is worst, and the last one that was untested.
   if (alsoUpgrade) await upgrade(stage);

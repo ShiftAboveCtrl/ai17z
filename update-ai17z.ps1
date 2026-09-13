@@ -24,11 +24,19 @@
 
 .PARAMETER Check
   Say what an update would bring and change nothing at all.
+
+.PARAMETER Package
+  Update from an AI17Z-App-<version>.zip already on this machine instead of
+  downloading one. For a machine with no internet, and for the installation
+  verifier, which must not reach GitHub to prove that updating works.
+
+  Only for an installation AI17Z Setup made; a checkout updates from git.
 #>
 [CmdletBinding()]
 param(
   [switch] $SkipStart,
-  [switch] $Check
+  [switch] $Check,
+  [string] $Package = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -116,12 +124,72 @@ Write-Host ''
 Write-Host 'AI17Z update' -ForegroundColor White
 Write-Host ''
 
+# -- Which kind of installation is this? -------------------------------------
+#
+# Three layouts, and they take an update in different ways. A checkout pulls. An
+# installation AI17Z Setup made runs that same setup script again, which is the
+# one place that knows how to fetch a release, check it against its published
+# hash and lay it down without touching the data directory. An installation from
+# the Windows package has neither and is told so.
+#
+# Read from the marker whichever program installed this wrote, rather than
+# inferred from whether a `.git` directory happens to be here. The inference was
+# the reason this script used to refuse to run for everybody who had installed
+# AI17Z rather than cloned it -- which was, by then, most people.
+$installChannel = ''
+$installInstance = ''
+$installInfo = Join-Path $PSScriptRoot 'INSTALL_INFO.json'
+if (Test-Path $installInfo) {
+  try {
+    $parsedInfo = Get-Content -Raw $installInfo | ConvertFrom-Json
+    $installChannel = '' + $parsedInfo.channel
+    $installInstance = '' + $parsedInfo.instance
+  } catch {
+    # A marker that cannot be read is the same as not having one: fall through
+    # to the checks below, which ask the directory itself.
+  }
+}
+
+$setupScript = Join-Path $PSScriptRoot 'packaging\windows\Setup-AI17Z.ps1'
+$isCheckout = Test-Path (Join-Path $PSScriptRoot '.git')
+
+if (($installChannel -eq 'BOOTSTRAP') -or ((-not $isCheckout) -and (Test-Path $setupScript))) {
+  if (-not (Test-Path $setupScript)) {
+    Stop-WithReason 'This installation says it was made by AI17Z Setup, but the setup script is not here.' `
+      'Download AI17Z Setup again from https://github.com/ShiftAboveCtrl/ai17z/releases and run it. It will update this copy in place.'
+  }
+  Write-Step 'Handing over to AI17Z Setup, which is what installed this copy...'
+  Write-Host ''
+
+  # Exactly this installation, named rather than discovered. The setup script
+  # derives the program folder, the data folder and the Start Menu group from
+  # one name, and passing all three means nothing can be discovered on the
+  # machine that moves any of them -- which is the property that a published
+  # installer once got wrong, and installed one instance inside another.
+  $arguments = @('-Update', '-ProgramDir', $PSScriptRoot, '-DataDir', (Split-Path -Parent $EnvFile))
+  if ($installInstance) { $arguments += @('-InstanceName', $installInstance) }
+  if ($Check) { $arguments += '-WhatIfOnly' }
+  if ($SkipStart) { $arguments += '-NoStart' }
+  if ($Package) {
+    if (-not (Test-Path $Package)) {
+      Stop-WithReason "There is no package at $Package." 'Check the path, or run without -Package to download the newest release.'
+    }
+    $arguments += @('-LocalPackage', (Resolve-Path $Package).Path)
+  }
+
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $setupScript @arguments
+  exit $LASTEXITCODE
+}
+
 # -- Is this something that can be updated at all? ---------------------------
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
   Stop-WithReason 'Git is not installed, so there is nothing to update from.' 'Install Git, or download the new version and copy your .env into it.'
 }
-if (-not (Test-Path (Join-Path $PSScriptRoot '.git'))) {
-  Stop-WithReason 'This folder is not a git checkout, so there is nothing to update from.' 'Download the new version and copy your .env and storage folder into it.'
+if (-not $isCheckout) {
+  Stop-WithReason 'This folder is not a git checkout, so there is nothing to update from.' `
+    ("This copy came from the Windows installer. Take an update by downloading the new one from`n" +
+     '  https://github.com/ShiftAboveCtrl/ai17z/releases' + "`n" +
+     'and running it over this copy. Your data folder is not touched.')
 }
 
 # -- Anything of yours that an update would destroy --------------------------

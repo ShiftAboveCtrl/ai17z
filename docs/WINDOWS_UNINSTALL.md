@@ -10,8 +10,8 @@ purpose.
 
 ## Removing the application
 
-**Settings → Apps → Installed apps → AI17Z → Uninstall**, or run
-`unins000.exe` from `%LOCALAPPDATA%\Programs\AI17Z`.
+**Settings → Apps → Installed apps → AI17Z → Uninstall**, or **Uninstall AI17Z**
+in the Start Menu.
 
 It stops AI17Z first, then removes the program. Before finishing it asks whether
 to remove your data as well, and **keeps it unless you say otherwise** — that is
@@ -19,8 +19,19 @@ the choice you can still reverse.
 
 Reinstalling afterwards picks up exactly where you left off.
 
-A silent uninstall (`/SILENT`) never asks and always keeps the data, because an
-unanswered question should not delete anything.
+An unattended uninstall never asks and always keeps the data, because an
+unanswered question should not delete anything. Which one you have makes no
+difference to any of that:
+
+| Installed with | What Add/Remove Programs runs | Unattended |
+| --- | --- | --- |
+| AI17Z Setup | `packaging\windows\Uninstall-AI17Z.ps1` | `-Quiet`, and `-RemoveData` to take the data too |
+| The full installer | `unins000.exe` in `%LOCALAPPDATA%\Programs\AI17Z` | `/SILENT` |
+
+**Docker, Node.js, Chrome and WSL are left alone**, whichever you used. AI17Z may
+have installed them for you; that is not the same as owning them, and something
+else on this machine may be using any of them. Removing them is a separate,
+deliberate decision — see the last section.
 
 ## Removing your data
 

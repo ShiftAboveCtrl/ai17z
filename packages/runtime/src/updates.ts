@@ -69,8 +69,17 @@ export interface ReleaseInfo {
   /** The release notes, as written. Markdown. */
   notes: string;
   url: string;
-  /** The Windows installer, when the release has one. */
+  /** The full Windows installer, when the release has one. */
   installerUrl: string | null;
+  /**
+   * AI17Z Setup, which is the recommended download and a different artifact
+   * from the installer above.
+   *
+   * Both are published, because an installation made by the older installer
+   * updates by running a new one of those, and telling it to run the bootstrap
+   * instead would be telling it to take a different layout than the one it has.
+   */
+  setupUrl: string | null;
   publishedAt: string;
   prerelease: boolean;
 }
@@ -98,14 +107,19 @@ export interface UpdateState {
   /**
    * How this installation would take the update.
    *
-   * `INSTALLER` means it was installed from the Windows package and the update
-   * is a new installer to run. `CHECKOUT` means it is a clone and the update is
-   * `update-ai17z.ps1`. The difference decides which button makes sense, and
-   * offering the wrong one is how somebody ends up running `git pull` on a
-   * directory with no repository in it.
+   * `INSTALLER` means it came from the Windows package and the update is a new
+   * installer to run. `BOOTSTRAP` means AI17Z Setup put it there and the update
+   * is the Start Menu's "Update AI17Z", which runs the same setup script that
+   * installed it. `CHECKOUT` means it is a clone and the update is a pull.
+   *
+   * The difference decides which button makes sense, and offering the wrong one
+   * is how somebody ends up running `git pull` on a directory with no
+   * repository in it.
    */
-  method: 'INSTALLER' | 'CHECKOUT';
+  method: UpdateMethod;
 }
+
+export type UpdateMethod = 'INSTALLER' | 'BOOTSTRAP' | 'CHECKOUT';
 
 interface CachedCheck {
   checkedAt: string;
@@ -169,7 +183,21 @@ function toRelease(raw: GitHubRelease): ReleaseInfo | null {
   const tag = raw.tag_name?.trim();
   if (!tag) return null;
   const version = tag.replace(/^v/, '');
-  const installer = (raw.assets ?? []).find((asset) => asset.name?.toLowerCase().endsWith('.exe'));
+
+  // By name, not by position.
+  //
+  // This took "the first asset ending in .exe", which was unambiguous while
+  // there was one. There are now two, and which one an installation should be
+  // offered depends on how it was installed -- so handing out whichever GitHub
+  // happened to list first would tell half of them to run the wrong one. The
+  // old rule survives as a fallback so a release published before either name
+  // existed still resolves to something.
+  const assets = raw.assets ?? [];
+  const byPrefix = (prefix: string) =>
+    assets.find((asset) => asset.name?.toLowerCase().startsWith(prefix) && asset.name.toLowerCase().endsWith('.exe'));
+  const anyExe = assets.find((asset) => asset.name?.toLowerCase().endsWith('.exe'));
+  const installer = byPrefix('ai17z-setup-') ?? anyExe;
+  const setup = byPrefix('install-ai17z-') ?? null;
 
   // GitHub defaults a release's name to its tag, and a heading that reads
   // `v1.0.0-beta.2` above the notes tells somebody nothing they did not get
@@ -187,6 +215,7 @@ function toRelease(raw: GitHubRelease): ReleaseInfo | null {
     notes: raw.body?.trim() ?? '',
     url: raw.html_url ?? `https://github.com/${REPOSITORY}/releases/tag/${tag}`,
     installerUrl: installer?.browser_download_url ?? null,
+    setupUrl: setup?.browser_download_url ?? null,
     publishedAt: raw.published_at ?? nowIso(),
     prerelease: Boolean(raw.prerelease),
   };
@@ -255,14 +284,28 @@ export async function skipVersion(version: string): Promise<void> {
  * like any other image, so that test told a developer to go and download an
  * installer.
  *
- * The honest signal is the stamp the packager writes: `BUILD_INFO.json` exists
- * beside an installed application and nowhere else. The launcher passes it on
- * as `AI17Z_INSTALLED`, because a container has neither that file nor a
- * repository to ask.
+ * Three layouts and one marker. Whichever program put the installation there --
+ * the Windows installer or AI17Z Setup -- writes `INSTALL_INFO.json` beside it
+ * saying which it was, and the launcher passes the channel on because a
+ * container has neither that file nor a repository to ask.
+ *
+ * The fallback is what this did before that file existed, and it stays: an
+ * installation made by an older release has no marker and must keep being
+ * offered the installer rather than being told it is a checkout.
  */
-function updateMethod(): 'INSTALLER' | 'CHECKOUT' {
-  if (process.env.AI17Z_INSTALLED === '1') return 'INSTALLER';
-  return existsSync(resolve(process.cwd(), 'BUILD_INFO.json')) ? 'INSTALLER' : 'CHECKOUT';
+export function updateMethodFrom(env: NodeJS.ProcessEnv, hasBuildInfo: boolean): UpdateMethod {
+  const channel = (env.AI17Z_INSTALL_CHANNEL ?? '').trim().toUpperCase();
+  if (channel === 'BOOTSTRAP') return 'BOOTSTRAP';
+  if (channel === 'INSTALLER') return 'INSTALLER';
+  // An unknown channel is not a third answer. Something wrote a value nothing
+  // here understands, and guessing from it would be worse than falling back to
+  // the signal that has always worked.
+  if (env.AI17Z_INSTALLED === '1') return 'INSTALLER';
+  return hasBuildInfo ? 'INSTALLER' : 'CHECKOUT';
+}
+
+function updateMethod(): UpdateMethod {
+  return updateMethodFrom(process.env, existsSync(resolve(process.cwd(), 'BUILD_INFO.json')));
 }
 
 /**

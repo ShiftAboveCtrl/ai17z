@@ -57,7 +57,31 @@ There is one request AI17Z makes that you did not configure, and this is it:
 
   **AI17Z never updates itself.** There is no updater process, no scheduled
   restart, and no code path that replaces a running installation. Taking an
-  update is you running an installer.
+  update is you asking for it.
+
+## The setup program
+
+AI17Z Setup runs once, before there is an AI17Z to have a privacy policy. What it
+sends is the same nothing:
+
+- It asks **GitHub** which release to install and downloads two files from that
+  release — the application, and the list of hashes to check it against. Ordinary
+  anonymous reads of public URLs, with a `User-Agent` of `AI17Z-Setup`.
+- It asks **winget**, Microsoft's package manager, to install anything missing.
+  Those downloads are between winget and the vendors, exactly as if you had run
+  `winget install` yourself.
+- It sends **nothing about you, this machine, or what it found on it**, anywhere.
+  There is no telemetry, no ping, no "setup completed" call, and no identifier of
+  any kind.
+
+It writes a log, on your disk, in `%LOCALAPPDATA%\AI17Z-setup`, so a failed
+install can be diagnosed. Anything that looks like a key, a token or a password
+is blanked as it is written rather than as it is read. You can delete that folder
+whenever you like.
+
+Everything it does is in one file you can read before running it:
+[`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/Setup-AI17Z.ps1). See
+[Auditing AI17Z Setup](SETUP_AUDIT.md).
 
 ## Credentials
 

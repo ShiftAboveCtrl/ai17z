@@ -183,6 +183,7 @@ Type: filesandordirs; Name: "{app}\packages"
 ; know about it and an uninstall left the program directory behind holding one
 ; orphaned file.
 Type: files; Name: "{app}\data-location.txt"
+Type: files; Name: "{app}\INSTALL_INFO.json"
 
 [Code]
 { ---------------------------------------------------------------------------
@@ -1034,6 +1035,47 @@ end;
   program directory is replaced on every upgrade and these are the owner's
   choices, not the build's. Existing values are left alone: somebody who edited
   their .env by hand did so on purpose. }
+{ A Windows path in JSON.
+
+  Every path here has backslashes in it and a backslash is JSON's escape
+  character, so `C:\Users` written verbatim produces a document that either
+  fails to parse or contains a tab. The application reads this file on every
+  start; a malformed one would make an installation unable to say what it is. }
+function JsonEscape(Value: String): String;
+begin
+  StringChangeEx(Value, '\', '\\', True);
+  StringChangeEx(Value, '"', '\"', True);
+  Result := Value;
+end;
+
+{ What this installation is, written where start-ai17z.ps1 reads it.
+
+  The same file AI17Z Setup writes, with INSTALLER rather than BOOTSTRAP in it,
+  so one reader serves both and neither has to guess. }
+procedure WriteInstallInfo();
+var
+  Path: String;
+  Body: String;
+begin
+  Path := ExpandConstant('{app}') + '\INSTALL_INFO.json';
+  Body :=
+    '{' + #13#10 +
+    '  "schema": 1,' + #13#10 +
+    '  "channel": "INSTALLER",' + #13#10 +
+    '  "instance": "' + JsonEscape(InstanceName('')) + '",' + #13#10 +
+    '  "programDir": "' + JsonEscape(ExpandConstant('{app}')) + '",' + #13#10 +
+    '  "dataDir": "' + JsonEscape(DataDir()) + '",' + #13#10 +
+    '  "version": "' + JsonEscape('{#AppVersion}') + '",' + #13#10 +
+    '  "release": "v' + JsonEscape('{#AppVersion}') + '",' + #13#10 +
+    { Local time, and unlabelled rather than stamped with a Z it has not earned:
+      Inno has no UTC clock, and a local time claiming to be UTC is a wrong
+      answer that looks like a right one. Nothing parses this; it is for a
+      person reading the file. }
+    '  "installedAt": "' + GetDateTimeString('yyyy-mm-dd', '-', ':') + 'T' + GetDateTimeString('hh:nn:ss', '-', ':') + '"' + #13#10 +
+    '}' + #13#10;
+  SaveStringToFile(Path, Body, False);
+end;
+
 procedure WriteSettings();
 var
   EnvPath: String;
@@ -1061,6 +1103,16 @@ begin
   { The launcher reads this to find the data directory, which is why it is a
     file next to the program rather than a value baked into the .cmd. }
   SaveStringToFile(ExpandConstant('{app}') + '\data-location.txt', DataDir(), False);
+
+  { How this installation was installed, so the application can say how to
+    update it rather than inferring it from the shape of the directory.
+
+    The inference was wrong in the direction that matters: a developer's
+    containers are built from a checkout and look like any other build, so the
+    update screen offered an installer to somebody with a repository, and a
+    `git pull` to somebody without one. Both kinds of installation now write the
+    same file with a different channel in it, and AI17Z Setup writes it too. }
+  WriteInstallInfo();
 
   { And the registry, so the next installer offers the same folder. }
   RegWriteStringValue(HKCU, 'Software\AI17Z', 'DataDir', DataDir());

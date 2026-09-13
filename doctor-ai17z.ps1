@@ -165,6 +165,29 @@ if ($busy.Count -eq 0) {
   Add-Result 'Ports' 'INFO' "In use: $($busy -join ', '). Fine if that is AI17Z already running." 'If it is something else, set AI17Z_API_PORT / AI17Z_WEB_PORT / POSTGRES_PORT in .env.'
 }
 
+# -- What kind of installation this is ---------------------------------------
+#
+# The first question support asks, and until this file existed it had to be
+# answered by looking at the directory and guessing. It decides how an update is
+# taken, so getting it wrong sends somebody to download an installer for a copy
+# that updates itself from the Start Menu.
+$installInfoPath = Join-Path $PSScriptRoot 'INSTALL_INFO.json'
+if (Test-Path $installInfoPath) {
+  try {
+    $installInfo = Get-Content -Raw $installInfoPath | ConvertFrom-Json
+    $how = switch ('' + $installInfo.channel) {
+      'BOOTSTRAP' { 'Installed by AI17Z Setup. Update it from "Update AI17Z" in the Start Menu.' }
+      'INSTALLER' { 'Installed by the Windows installer. Update it by running a newer one over this copy.' }
+      default     { "Installed by something that calls itself '$($installInfo.channel)'." }
+    }
+    Add-Result 'Installation' 'INFO' "$($installInfo.instance), version $($installInfo.version)." $how
+  } catch {
+    Add-Result 'Installation' 'INFO' 'INSTALL_INFO.json could not be read.' 'Harmless: the update screen falls back to what it did before that file existed.'
+  }
+} elseif (Test-Path (Join-Path $PSScriptRoot '.git')) {
+  Add-Result 'Installation' 'INFO' 'A git checkout.' 'Update it with .\update-ai17z.ps1, which pulls.'
+}
+
 # -- Services ----------------------------------------------------------------
 function Test-Endpoint($Url) {
   try {

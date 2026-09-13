@@ -260,3 +260,62 @@ describe('what a release is called on the screen', () => {
     expect(state.latest?.version).toBe('9.9.9-rc.3');
   });
 });
+
+/**
+ * Which download an installation is pointed at.
+ *
+ * A release now carries two executables -- the full installer, and AI17Z Setup
+ * -- and which one a copy should be offered depends on how it was installed.
+ * This used to take "the first asset ending in .exe", which was unambiguous
+ * while there was one of those and is a coin toss now: GitHub lists assets in
+ * upload order, and half the installations would be handed the wrong one.
+ */
+describe('picking the right download out of a release', () => {
+  const both = (tag: string) =>
+    release(tag, {
+      assets: [
+        { name: `Install-AI17Z-${tag.replace(/^v/, '')}.exe`, browser_download_url: 'https://example.invalid/setup.exe' },
+        { name: `AI17Z-Setup-${tag.replace(/^v/, '')}.exe`, browser_download_url: 'https://example.invalid/installer.exe' },
+        { name: `AI17Z-App-${tag.replace(/^v/, '')}.zip`, browser_download_url: 'https://example.invalid/app.zip' },
+        { name: 'SHA256SUMS.txt', browser_download_url: 'https://example.invalid/sums.txt' },
+      ],
+    });
+
+  it('names them rather than taking whichever is listed first', async () => {
+    serve([both('v9.9.9')]);
+    const latest = await fetchLatestRelease('9.0.0');
+    // Deliberately listed with AI17Z Setup first, which is what would break a
+    // positional rule.
+    expect(latest?.installerUrl).toBe('https://example.invalid/installer.exe');
+    expect(latest?.setupUrl).toBe('https://example.invalid/setup.exe');
+  });
+
+  it('still answers for a release published before either name existed', async () => {
+    serve([
+      release('v9.9.9', {
+        assets: [{ name: 'AI17Z-Setup-9.9.9.exe', browser_download_url: 'https://example.invalid/old.exe' }],
+      }),
+    ]);
+    const latest = await fetchLatestRelease('9.0.0');
+    expect(latest?.installerUrl).toBe('https://example.invalid/old.exe');
+    expect(latest?.setupUrl).toBeNull();
+  });
+
+  it('says so rather than guessing when a release has no installer at all', async () => {
+    serve([release('v9.9.9', { assets: [{ name: 'SHA256SUMS.txt', browser_download_url: 'https://example.invalid/s' }] })]);
+    const latest = await fetchLatestRelease('9.0.0');
+    expect(latest?.installerUrl).toBeNull();
+    expect(latest?.setupUrl).toBeNull();
+  });
+
+  it('carries the route through to the screen', async () => {
+    serve([both('v9.9.9')]);
+    const state = await updateState({ refresh: true });
+    expect(state.updateAvailable).toBe(true);
+    // The method is whatever this process's environment says, and what matters
+    // here is that both links reach the screen so it can offer the right one.
+    expect(state.latest?.setupUrl).toBeTruthy();
+    expect(state.latest?.installerUrl).toBeTruthy();
+    expect(['INSTALLER', 'BOOTSTRAP', 'CHECKOUT']).toContain(state.method);
+  });
+});
