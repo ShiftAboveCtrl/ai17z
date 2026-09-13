@@ -14,6 +14,19 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Where this installation's data is. One resolver, shared with every other
+# shipped script: AI17Z_ENV_FILE, then data-location.txt beside the program,
+# then the .env beside this script for a checkout.
+if [ -f "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh" ]; then
+  # shellcheck source=packaging/unix/ai17z-paths.sh
+  . "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh"
+  ai17z_resolve_paths "$(dirname "${BASH_SOURCE[0]:-$0}")"
+else
+  echo "  packaging/unix/ai17z-paths.sh is missing from this installation." >&2
+  exit 1
+fi
+
+
 GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; GREY=$'\033[90m'; OFF=$'\033[0m'
 
 step() { echo "  ${CYAN}$1${OFF}"; }
@@ -69,38 +82,63 @@ else
 fi
 
 # -- Configuration -----------------------------------------------------------
-if [ -f .env ]; then
+if [ -f "$AI17Z_ENV_FILE" ]; then
   done_ ".env already exists, leaving it alone."
   warn "It holds the key your stored provider credentials are encrypted with."
 else
   step "Creating .env with a fresh master key..."
-  [ -f .env.example ] || stop_with_reason \
+  [ -f "$AI17Z_APP_DIR/.env.example" ] || stop_with_reason \
     ".env.example is missing." \
-    "This checkout looks incomplete. Clone the repository again."
+    "This installation looks incomplete. Install AI17Z again."
+
+  # The directory first, and private before anything is written into it: the
+  # first thing this file holds is the key every stored provider credential is
+  # sealed with.
+  mkdir -p "$AI17Z_DATA_DIR"
+  chmod 700 "$AI17Z_DATA_DIR" 2>/dev/null || true
 
   # Generated here, never shipped. Every installation gets its own.
   key="$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
 
-  if grep -qE '^[[:space:]]*#?[[:space:]]*AI17Z_MASTER_KEY[[:space:]]*=' .env.example; then
-    sed -E "s|^[[:space:]]*#?[[:space:]]*AI17Z_MASTER_KEY[[:space:]]*=.*|AI17Z_MASTER_KEY=${key}|" .env.example > .env
+  # The database password, likewise. A packaged installation publishes Postgres
+  # on a loopback port, and a shipped default password would be the same one on
+  # every machine that ever installed AI17Z.
+  dbpass="$(head -c 24 /dev/urandom | base64 | tr -d '\n=+/' | head -c 32)"
+
+  umask 077
+  if grep -qE '^[[:space:]]*#?[[:space:]]*AI17Z_MASTER_KEY[[:space:]]*=' "$AI17Z_APP_DIR/.env.example"; then
+    sed -E "s|^[[:space:]]*#?[[:space:]]*AI17Z_MASTER_KEY[[:space:]]*=.*|AI17Z_MASTER_KEY=${key}|" \
+      "$AI17Z_APP_DIR/.env.example" > "$AI17Z_ENV_FILE"
   else
-    cp .env.example .env
-    printf '\nAI17Z_MASTER_KEY=%s\n' "$key" >> .env
+    cp "$AI17Z_APP_DIR/.env.example" "$AI17Z_ENV_FILE"
+    printf '\nAI17Z_MASTER_KEY=%s\n' "$key" >> "$AI17Z_ENV_FILE"
   fi
+
+  # Written once, and only into a new file. Regenerating either of these on an
+  # update points a working installation at an empty database, which looks
+  # exactly like having lost everything.
+  if ! grep -qE '^[[:space:]]*POSTGRES_PASSWORD[[:space:]]*=[[:space:]]*[^[:space:]]' "$AI17Z_ENV_FILE"; then
+    {
+      echo
+      echo "# This installation's own database password. Generated once."
+      echo "POSTGRES_PASSWORD=$dbpass"
+    } >> "$AI17Z_ENV_FILE"
+  fi
+  chmod 600 "$AI17Z_ENV_FILE" 2>/dev/null || true
 
   # Named after the folder it was installed into: the compose project name
   # decides which volumes an installation uses, and defaulting it to `xbam` for
   # everybody meant two checkouts silently shared one database and one signed-in
   # browser profile. Only ever written into a new .env, so updating in place
   # keeps the name -- and the data -- it already had.
-  folder="$(basename "$(pwd)" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')"
+  folder="$(basename "${AI17Z_INSTANCE_NAME:-$AI17Z_DATA_DIR}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')"
   [ -n "$folder" ] || folder="ai17z"
-  if ! grep -qE '^[[:space:]]*AI17Z_INSTANCE[[:space:]]*=[[:space:]]*[^[:space:]]' .env; then
+  if ! grep -qE '^[[:space:]]*AI17Z_INSTANCE[[:space:]]*=[[:space:]]*[^[:space:]]' "$AI17Z_ENV_FILE"; then
     {
       echo
       echo "# This installation's own Docker volumes and container names."
       echo "AI17Z_INSTANCE=$folder"
-    } >> .env
+    } >> "$AI17Z_ENV_FILE"
   fi
 
   done_ ".env created. This installation is named '$folder'."

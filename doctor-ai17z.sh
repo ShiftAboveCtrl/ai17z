@@ -17,6 +17,19 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Where this installation's data is. One resolver, shared with every other
+# shipped script: AI17Z_ENV_FILE, then data-location.txt beside the program,
+# then the .env beside this script for a checkout.
+if [ -f "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh" ]; then
+  # shellcheck source=packaging/unix/ai17z-paths.sh
+  . "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh"
+  ai17z_resolve_paths "$(dirname "${BASH_SOURCE[0]:-$0}")"
+else
+  echo "  packaging/unix/ai17z-paths.sh is missing from this installation." >&2
+  exit 1
+fi
+
+
 GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; GREY=$'\033[90m'; OFF=$'\033[0m'
 failures=(); todo=()
 
@@ -31,8 +44,7 @@ row() { # name status detail
 }
 
 env_value() { # key
-  [ -f .env ] || return 0
-  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" .env | head -1 | tr -d '"' | tr -d "'"
+  ai17z_env_value "$1" ""
 }
 
 echo
@@ -74,7 +86,7 @@ else
 fi
 
 # -- Configuration -----------------------------------------------------------
-if [ -f .env ]; then
+if [ -f "$AI17Z_ENV_FILE" ]; then
   row "Configuration" "PASS" ".env present."
 else
   row "Configuration" "NOT CONFIGURED" "No .env file yet."
