@@ -9,80 +9,83 @@ const policy = readFileSync(resolve(root, 'docs/CODE_SIGNING_POLICY.md'), 'utf8'
 const readme = readFileSync(resolve(root, 'README.md'), 'utf8');
 
 /**
- * The one property of the release pipeline that must never quietly regress.
+ * The signing lane, and the fact that there is not one.
  *
- * A workflow that expected a signature, did not get one, and published anyway
- * would be worse than one that never signed at all: it attaches the project's
- * name to an artifact nobody checked. The guard is three lines of shell, which
- * is exactly the kind of thing that gets refactored away by somebody tidying up.
+ * There was: a job that sent the installer to a signing service, a guard that
+ * refused to publish unsigned when a repository variable said a signature was
+ * required, and two artifact names for the two outcomes. The application for a
+ * free open-source certificate was declined -- AI17Z does not yet have the user
+ * base those are granted on -- and the whole lane came out rather than sitting
+ * there disabled.
+ *
+ * What has to hold now is the honest version: nothing signs, and nothing claims
+ * to. A workflow that kept a half-removed guard would fail every release on a
+ * job that no longer exists, and one that kept the wording without the job would
+ * attach the project's name to a claim that is not true.
  */
-describe('the release refuses to publish unsigned when signing was required', () => {
-  it('has a guard that reads both the requirement and the outcome', () => {
-    expect(workflow).toContain('vars.SIGNING_REQUIRED');
-    expect(workflow).toContain('needs.sign.result');
-    expect(workflow).toMatch(/Refusing to publish an unsigned installer/);
-  });
-
-  it('fails rather than warns', () => {
-    const guard = workflow.slice(workflow.indexOf('Refuse to publish unsigned'));
-    expect(guard.slice(0, 900)).toContain('exit 1');
-  });
-
-  it('publishes whichever artifact matches the lane', () => {
-    // Downloading the unsigned artifact while claiming to be signed is the same
-    // failure wearing a different hat.
-    expect(workflow).toMatch(/signed-installer.*unsigned-installer/s);
-  });
-
-  it('names each missing SignPath setting rather than failing vaguely', () => {
-    // "Signing failed" is not something anybody can act on.
-    for (const setting of [
+describe('the release does not pretend to sign anything', () => {
+  it('has no signing job and no gate that waits for one', () => {
+    for (const leftover of [
+      'SIGNING_REQUIRED',
+      'needs.sign',
+      'signed-installer',
+      'unsigned-installer',
+      'Refuse to publish unsigned',
       'SIGNPATH_API_TOKEN',
-      'SIGNPATH_ORGANIZATION_ID',
-      'SIGNPATH_PROJECT_SLUG',
-      'SIGNPATH_SIGNING_POLICY_SLUG',
     ]) {
-      expect(workflow, `${setting} is not checked for`).toContain(setting);
+      expect(workflow.includes(leftover), `${leftover} is left over from the signing lane`).toBe(false);
     }
+    expect(/signpath/i.test(workflow)).toBe(false);
   });
 
-  it('never puts a SignPath credential in the file', () => {
-    // Tokens come from secrets. A literal here would be committed history.
-    const secretish = workflow.match(/api-token:\s*(.+)/);
-    expect(secretish?.[1]).toContain('secrets.SIGNPATH_API_TOKEN');
-    expect(workflow).not.toMatch(/api-token:\s*['"][A-Za-z0-9+/=]{16,}/);
-  });
-});
-
-/**
- * SignPath does not take our word for it that a signature came back, and
- * neither should we. It signs what it is given; whether the file we are about
- * to publish is the right product, the right version and actually valid is a
- * separate question.
- */
-describe('the signature is verified before anything is published', () => {
-  it('checks the signature status on the returned file', () => {
-    expect(workflow).toContain('Get-AuthenticodeSignature');
-    expect(workflow).toMatch(/Signature is not valid/);
+  it('declares every job it has, and none of them is signing', () => {
+    // Read off the file rather than asserted as an absence, so a signing job
+    // reappearing under another name fails here rather than passing quietly.
+    const section = workflow.slice(workflow.indexOf('\njobs:'));
+    const jobs = [...section.matchAll(/^ {2}([a-z][a-z0-9-]*):\r?$/gm)].map((match) => match[1]);
+    expect(jobs).toEqual(['validate', 'build', 'publish']);
   });
 
-  it('checks the product and version, not just that something was signed', () => {
-    const verify = workflow.slice(workflow.indexOf('Verify the signature on what came back'));
-    expect(verify).toContain('Signed the wrong product');
-    expect(verify).toContain('Signed the wrong version');
+  it('says unsigned where somebody reading the release page will see it', () => {
+    const notes = workflow.slice(workflow.indexOf('- name: Release notes'));
+    expect(notes).toMatch(/unsigned/i);
+    // And never the other way round.
+    expect(/\bis signed\b|signature is valid/i.test(notes)).toBe(false);
   });
 
-  it('uses signtool as a second opinion where the runner has it', () => {
-    expect(workflow).toContain('signtool');
-    expect(workflow).toContain('verify /pa');
+  it('records in the audit document that it was not signed', () => {
+    // The field stays, because a consumer reading `signed: false` learns
+    // something and a consumer reading a missing field learns nothing.
+    expect(workflow).toContain('--argjson signed false');
   });
 });
 
 /**
- * SignPath requires signed binaries to carry product and version attributes,
- * and the build checks its own output before handing it over.
+ * What replaces a signature: a hash, published by the release, checked before
+ * anything is written and again before anything is run.
  */
-describe('the installer carries the metadata SignPath requires', () => {
+describe('every published file has a hash beside it', () => {
+  it('hashes the command, the setup script, the installer and the package', () => {
+    const checksums = workflow.slice(workflow.indexOf('- name: Checksums'), workflow.indexOf('- name: Release notes'));
+    for (const asset of ['install.ps1', 'Install-AI17Z-*.ps1', 'AI17Z-Setup-*.exe', 'AI17Z-App-*.zip']) {
+      expect(checksums, `${asset} is published without a checksum`).toContain(asset);
+    }
+    expect(checksums).toContain('SHA256SUMS.txt');
+  });
+
+  it('publishes the checksums themselves', () => {
+    const files = workflow.slice(workflow.lastIndexOf('files: |'));
+    expect(files).toContain('dist/SHA256SUMS.txt');
+  });
+});
+
+/**
+ * The installer's version resource. It was there for a signing service's
+ * requirements; it stays because it is what a person reads in the file
+ * properties of an unsigned executable, which is now the only thing it says
+ * about itself before it runs.
+ */
+describe('the installer carries product and version metadata', () => {
   it('sets product, version and publisher', () => {
     // Through the preprocessor macros, so the version comes from one place and
     // the compiler command line cannot disagree with the file.
@@ -91,7 +94,7 @@ describe('the installer carries the metadata SignPath requires', () => {
   });
 
   it('is checked in CI rather than assumed', () => {
-    expect(workflow).toContain('Check the metadata SignPath requires');
+    expect(workflow).toContain("Check the legacy installer's metadata");
     expect(workflow).toContain('Wrong product name');
   });
 
@@ -214,30 +217,52 @@ describe('the uninstaller cannot hang', () => {
   });
 });
 
-describe('what SignPath will read', () => {
-  it('carries the exact attribution their programme requires', () => {
-    const required = 'Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org)';
-    const flatten = (text: string) => text.replace(/\s+/g, ' ');
-    expect(flatten(policy)).toContain(flatten(required));
-    expect(flatten(readme)).toContain(flatten(required));
+describe('the code signing policy is honest about there being no signature', () => {
+  it('says so before it says anything else', () => {
+    // A code signing policy that buries "not signed" under three paragraphs of
+    // process is a document written to look reassuring rather than to be read.
+    expect(policy.slice(0, 600)).toMatch(/\*\*AI17Z is not code signed\.\*\*/);
   });
 
-  it('has a "Code signing policy" heading on the download page', () => {
-    // Their condition names the wording, not just the presence of a link.
-    expect(readme).toMatch(/#+\s*Code signing policy/i);
+  it('says the free route was applied for and declined', () => {
+    expect(policy).toMatch(/declined/i);
+    expect(policy).toMatch(/SignPath Foundation/);
+    expect(policy).toMatch(/enough\s+users|user base/i);
   });
 
-  it('names who may approve a signing request', () => {
-    for (const role of ['Authors', 'Reviewers', 'Approvers']) {
-      expect(policy, `${role} is not documented`).toContain(role);
+  it('offers no way around a Windows warning', () => {
+    // Both documents promise never to ask for any of this, and a promise not to
+    // says the same words as the instruction. So a line only counts when it is
+    // not a refusal -- which is also the check that would catch somebody adding
+    // the instruction back underneath the promise.
+    const telling = /run anyway|add an exclusion|exclude .* from Defender|turn off (Defender|SmartScreen)|disable (Defender|SmartScreen|Smart App Control|your antivirus)|Set-ExecutionPolicy|ExecutionPolicy Bypass|-Force\b/i;
+    const refusing = /\bnever\b|\bnot\b|\bwill not\b|\bdo not\b|\bwithout\b|\brather than\b/i;
+    for (const [name, text] of [
+      ['the signing policy', policy],
+      ['the README', readme],
+    ] as const) {
+      for (const line of text.split(/\r?\n/)) {
+        if (!telling.test(line)) continue;
+        expect(refusing.test(line), `${name} tells somebody to weaken Windows: ${line.trim()}`).toBe(true);
+      }
     }
   });
 
-  it('says signing requires a person', () => {
-    expect(policy).toMatch(/approved \*\*manually\*\*|approved manually/i);
+  it('names what stands in place of a signature', () => {
+    expect(policy).toContain('SHA256SUMS.txt');
+    expect(policy).toMatch(/no flag to skip/i);
   });
 
-  it('states the MFA requirement', () => {
+  it('has a "Code signing" heading on the download page', () => {
+    expect(readme).toMatch(/#+\s*Code signing/i);
+    expect(readme).toContain('docs/CODE_SIGNING_POLICY.md');
+  });
+
+  it('still names who would approve one, and that a person would', () => {
+    for (const role of ['Authors', 'Reviewers', 'Approvers']) {
+      expect(policy, `${role} is not documented`).toContain(role);
+    }
+    expect(policy).toMatch(/approved \*\*manually\*\*|approved manually/i);
     expect(policy).toMatch(/multi-factor/i);
   });
 });

@@ -314,6 +314,232 @@ describe('what AI17Z Setup decides about a machine', () => {
     expect(call<boolean>('Test-Ai17zLayoutConsistent', 'ai17z-Test', 'C:\\L\\Programs\\AI17Z-test', false)).toBe(true);
   });
 
+  // ---- Which installation a run is about -----------------------------------
+  //
+  // A machine can hold several AI17Z installations. They are not variations of
+  // one thing: each has its own agents, its own database and its own signed-in
+  // browser, and the two operations somebody could mean are opposites --
+  // "update this one" replaces a program directory and keeps everything else,
+  // "install another" makes a new everything. Collapsing them is how an owner
+  // loses an agent.
+
+  interface Decision {
+    Action: string;
+    Instance: string;
+    Reason: string;
+  }
+
+  const installed = (...names: string[]) => names.map((Instance) => ({ Instance }));
+
+  it('installs the default one when there is nothing here', () => {
+    if (!shell) return;
+    const decision = call<Decision>('Select-Ai17zTarget', [], '', false, false, false, false);
+    expect(decision.Action).toBe('INSTALL_NEW');
+    expect(decision.Instance).toBe('AI17Z');
+  });
+
+  it('updates the only one rather than quietly making a second', () => {
+    if (!shell) return;
+    // The ordinary case: somebody runs the install command again on a machine
+    // that already has AI17Z. Making a second installation there would be a
+    // surprise, and the surprise would come with its own empty database.
+    const decision = call<Decision>('Select-Ai17zTarget', installed('AI17Z'), '', false, false, false, false);
+    expect(decision.Action).toBe('UPDATE');
+    expect(decision.Instance).toBe('AI17Z');
+  });
+
+  it('asks, when there is one installation and somebody is there to answer', () => {
+    if (!shell) return;
+    const decision = call<Decision>('Select-Ai17zTarget', installed('AI17Z'), '', false, false, true, false);
+    expect(decision.Action).toBe('ASK');
+  });
+
+  it('refuses to guess between several, and says how to say which', () => {
+    if (!shell) return;
+    // Nobody there to ask, and more than one answer: the only safe move is to
+    // stop. Picking the first, the newest or the default is how the wrong
+    // installation gets updated.
+    const decision = call<Decision>(
+      'Select-Ai17zTarget',
+      installed('AI17Z', 'AI17Z-test', 'AI17Z-research'),
+      '',
+      false,
+      false,
+      false,
+      false,
+    );
+    expect(decision.Action).toBe('REFUSE');
+    expect(decision.Reason).toContain('3');
+  });
+
+  it('offers the choice when somebody is there', () => {
+    if (!shell) return;
+    const decision = call<Decision>('Select-Ai17zTarget', installed('AI17Z', 'AI17Z-test'), '', false, false, true, false);
+    expect(decision.Action).toBe('CHOOSE');
+  });
+
+  it('updates the one that was named', () => {
+    if (!shell) return;
+    const decision = call<Decision>(
+      'Select-Ai17zTarget',
+      installed('AI17Z', 'AI17Z-test'),
+      'AI17Z-test',
+      false,
+      false,
+      false,
+      false,
+    );
+    expect(decision.Action).toBe('UPDATE');
+    expect(decision.Instance).toBe('AI17Z-test');
+  });
+
+  it('installs a new one under a name nothing is using', () => {
+    if (!shell) return;
+    const decision = call<Decision>(
+      'Select-Ai17zTarget',
+      installed('AI17Z'),
+      'AI17Z-research',
+      false,
+      false,
+      false,
+      false,
+    );
+    expect(decision.Action).toBe('INSTALL_NEW');
+    expect(decision.Instance).toBe('AI17Z-research');
+  });
+
+  it('will not install another one on top of a name that is taken', () => {
+    if (!shell) return;
+    // "Install another" and "update this one" are different requests. Asked to
+    // install another *called something that already exists*, the only honest
+    // answer is no -- doing it would replace the one that is there.
+    const decision = call<Decision>('Select-Ai17zTarget', installed('AI17Z'), 'AI17Z', false, true, false, false);
+    expect(decision.Action).toBe('REFUSE');
+    expect(decision.Reason).toContain('already');
+  });
+
+  it('will not update one that is not there', () => {
+    if (!shell) return;
+    const decision = call<Decision>('Select-Ai17zTarget', installed('AI17Z'), 'ghost', true, false, false, false);
+    expect(decision.Action).toBe('REFUSE');
+    expect(decision.Reason).toContain('no AI17Z called ghost');
+  });
+
+  it('counts up to a free name when asked for another and given none', () => {
+    if (!shell) return;
+    const decision = call<Decision>('Select-Ai17zTarget', installed('AI17Z', 'AI17Z-2'), '', false, true, false, false);
+    expect(decision.Action).toBe('INSTALL_NEW');
+    expect(decision.Instance).toBe('AI17Z-3');
+  });
+
+  it('lets a caller who named the directory have it, and asks nothing', () => {
+    if (!shell) return;
+    // The verification harness and anybody scripting an install name the
+    // program directory outright. Discovery has nothing to add there, and
+    // prompting would hang a machine with nobody at it.
+    const decision = call<Decision>(
+      'Select-Ai17zTarget',
+      installed('AI17Z', 'AI17Z-test'),
+      'somewhere-else',
+      false,
+      false,
+      false,
+      true,
+    );
+    expect(decision.Action).toBe('INSTALL_NEW');
+    expect(decision.Instance).toBe('somewhere-else');
+  });
+
+  // ---- Metadata is about how, never about where ----------------------------
+
+  it('refuses to act on a record that describes a different folder', () => {
+    if (!shell) return;
+    // This is the Beta 1.0.0 (14) defect as a rule. That installer took a name,
+    // built the uninstall entry and the Start Menu group from it, and wrote the
+    // files into a different installation's directory -- so an installation was
+    // named one thing, lived inside another, and its uninstaller was registered
+    // to delete a program directory belonging to something else.
+    //
+    // What decides the target is where we are. A file claiming somewhere else
+    // has been moved or copied, and neither is a reason to start replacing
+    // program files.
+    const mismatch = call<{ Ok: boolean; Reason: string }>(
+      'Test-Ai17zInstallInfoTrustworthy',
+      { programDir: 'C:\\L\\Programs\\AI17Z-test', instance: 'AI17Z-test' },
+      'C:\\L\\Programs\\AI17Z',
+    );
+    expect(mismatch.Ok).toBe(false);
+    expect(mismatch.Reason).toContain('AI17Z-test');
+  });
+
+  it('accepts the same folder however it is spelled', () => {
+    if (!shell) return;
+    const answers = askValues<{ Ok: boolean }>([
+      { fn: 'Test-Ai17zInstallInfoTrustworthy', args: [{ programDir: 'C:\\L\\AI17Z' }, 'C:\\L\\AI17Z'] },
+      { fn: 'Test-Ai17zInstallInfoTrustworthy', args: [{ programDir: 'C:\\L\\AI17Z\\' }, 'C:\\L\\AI17Z'] },
+      { fn: 'Test-Ai17zInstallInfoTrustworthy', args: [{ programDir: 'c:\\l\\ai17z' }, 'C:\\L\\AI17Z'] },
+    ]);
+    expect(answers.map((answer) => answer.Ok)).toEqual([true, true, true]);
+  });
+
+  it('does not mind a folder called something other than the instance', () => {
+    if (!shell) return;
+    // Somebody who installed to a directory of their choosing has a folder
+    // named whatever they named it. Refusing to update those would be inventing
+    // a rule nobody agreed to -- and the path check is what actually catches a
+    // record describing somewhere else.
+    const answer = call<{ Ok: boolean }>(
+      'Test-Ai17zInstallInfoTrustworthy',
+      { programDir: 'D:\\apps\\work', instance: 'research' },
+      'D:\\apps\\work',
+    );
+    expect(answer.Ok).toBe(true);
+  });
+
+  it('has nothing to disagree with when there is no record at all', () => {
+    if (!shell) return;
+    // An installation from before the marker existed. The fallback is what it
+    // always did, and that has to keep working.
+    expect(call<{ Ok: boolean }>('Test-Ai17zInstallInfoTrustworthy', null, 'C:\\L\\AI17Z').Ok).toBe(true);
+  });
+
+  // ---- A tag off the network never becomes a path --------------------------
+  //
+  // The release tag is the one value in this program that arrives from a remote
+  // document and turns into a local filename -- `AI17Z-App-<version>.zip`, and
+  // then the path under the setup folder that file is written to. GitHub will
+  // not publish a tag with a separator in it today; that is a fact about GitHub
+  // rather than a property of this program.
+
+  it('takes the shapes this project actually tags with', () => {
+    if (!shell) return;
+    const answers = askValues<boolean>(
+      ['v1.0.0', 'v1.0.0-beta.16', 'v1.0.0-rc.1', '1.2.3', 'v10.20.30-alpha.1'].map((tag) => ({
+        fn: 'Test-Ai17zReleaseTag',
+        args: [tag],
+      })),
+    );
+    expect(answers).toEqual([true, true, true, true, true]);
+  });
+
+  it('refuses anything that could be a path', () => {
+    if (!shell) return;
+    const answers = askValues<boolean>(
+      [
+        'v1.0.0/../../evil',
+        'v1.0.0\\..\\evil',
+        '../../etc',
+        'C:\\Windows',
+        'v1.0.0:stream',
+        '',
+        'latest',
+        'v1.0.0 ',
+        `v1.0.0-${'x'.repeat(80)}`,
+      ].map((tag) => ({ fn: 'Test-Ai17zReleaseTag', args: [tag] })),
+    );
+    expect(answers).toEqual([false, false, false, false, false, false, false, false, false]);
+  });
+
   // ---- The package ---------------------------------------------------------
 
   it('refuses an archive entry that would be written outside the installation', () => {

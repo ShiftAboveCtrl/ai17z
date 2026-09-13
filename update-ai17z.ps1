@@ -36,7 +36,15 @@
 param(
   [switch] $SkipStart,
   [switch] $Check,
-  [string] $Package = ''
+  [string] $Package = '',
+  # The installation this is expected to be.
+  #
+  # Not a way to choose one: this script updates the copy it is sitting in and
+  # nothing else, which is what makes the Start Menu entry of each installation
+  # unambiguous. Passing a name that is not this copy's is refused rather than
+  # redirected -- a script that quietly updated a different installation than
+  # the one it was asked about is the defect this whole guard exists for.
+  [string] $Instance = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -138,6 +146,11 @@ Write-Host ''
 # AI17Z rather than cloned it -- which was, by then, most people.
 $installChannel = ''
 $installInstance = ''
+# Declared before the try, because a marker that fails to parse must leave this
+# null rather than undefined -- the checks below ask whether it has anything in
+# it, and an undefined variable under Set-StrictMode is an error rather than an
+# answer.
+$parsedInfo = $null
 $installInfo = Join-Path $PSScriptRoot 'INSTALL_INFO.json'
 if (Test-Path $installInfo) {
   try {
@@ -153,11 +166,45 @@ if (Test-Path $installInfo) {
 $setupScript = Join-Path $PSScriptRoot 'packaging\windows\Setup-AI17Z.ps1'
 $isCheckout = Test-Path (Join-Path $PSScriptRoot '.git')
 
+# This copy, and only this copy.
+#
+# Two things are checked before anything is replaced, and they are the same
+# rule from two directions: what this installation says about itself has to be
+# about *this* directory, and a name somebody passes in has to be this one.
+#
+# The comparison is the path, not the folder name. An installation put
+# somewhere of the owner's choosing has a folder called whatever they called
+# it; what detects a record describing somewhere else is the directory it
+# names.
+$here = $installInstance
+if (-not $here) { $here = Split-Path -Leaf $PSScriptRoot.TrimEnd('\') }
+
+if ($parsedInfo -and $parsedInfo.programDir) {
+  $claimed = (('' + $parsedInfo.programDir) -replace '[\\/]+$', '') -replace '/', '\'
+  $actual = ($PSScriptRoot -replace '[\\/]+$', '') -replace '/', '\'
+  if ($claimed -ine $actual) {
+    Stop-WithReason "This installation's own record describes a different folder." `
+      ("It says:  $claimed`n  It is in: $actual`n`n" +
+       "Nothing was changed. That happens when an installation folder has been copied or moved," + "`n" +
+       'and AI17Z will not update one installation while its own record points at another.')
+  }
+}
+
+if ($Instance -and ($Instance -ine $here)) {
+  Stop-WithReason "This is $here, not $Instance." `
+    (".\update-ai17z.ps1 updates the installation it is in, and never another one.`n" +
+     "Nothing was changed.`n`n" +
+     "To update $Instance, run its own Start Menu entry, or the update script in its folder.")
+}
+
 if (($installChannel -eq 'BOOTSTRAP') -or ((-not $isCheckout) -and (Test-Path $setupScript))) {
   if (-not (Test-Path $setupScript)) {
     Stop-WithReason 'This installation says it was made by AI17Z Setup, but the setup script is not here.' `
-      'Download AI17Z Setup again from https://github.com/ShiftAboveCtrl/ai17z/releases and run it. It will update this copy in place.'
+      ("Run the AI17Z install command again and name this installation. It will update this copy in place:`n" +
+       "  `$s = irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1`n" +
+       '  & ([scriptblock]::Create($s)) -Instance ' + $here)
   }
+  Write-Step ('Updating ' + $here + ', and nothing else on this machine.')
   Write-Step 'Handing over to AI17Z Setup, which is what installed this copy...'
   Write-Host ''
 

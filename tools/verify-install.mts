@@ -42,13 +42,13 @@
  * the value before it starts, removes everything it created by name, and puts
  * the value back.
  *
- * Run: npm run verify:install [-- --twice] [--upgrade] [--bootstrap] [--keep]
+ * Run: npm run verify:install [-- --twice] [--upgrade] [--bootstrap] [--instances] [--keep]
  */
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -60,6 +60,11 @@ const keep = process.argv.includes('--keep');
 const alsoUpgrade = process.argv.includes('--upgrade');
 /** Also install once through the real AI17Z Setup script, rather than only through the installer's steps. */
 const alsoBootstrap = process.argv.includes('--bootstrap');
+/** Also make three independent installations and prove that updating one leaves the others alone. */
+const alsoInstances = process.argv.includes('--instances');
+
+/** The version the second package calls itself, so an update is visible from the outside. */
+const UPDATED_VERSION = '9.9.9-verify';
 
 /** Somewhere no sync client and no existing installation can reach. */
 const ROOM = resolve('C:/ai17z-verify-room');
@@ -601,6 +606,37 @@ async function teardown(label: string): Promise<void> {
 }
 
 /**
+ * Every file under a directory and what it hashes to.
+ *
+ * The only way to answer "was this installation touched" without deciding in
+ * advance which file to look at -- and the files that mattered were never the
+ * ones anybody would have listed.
+ */
+async function hashTree(dir: string): Promise<Map<string, string>> {
+  const { createHash } = await import('node:crypto');
+  const out = new Map<string, string>();
+  const walk = async (current: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(current, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.isFile()) {
+        const hash = createHash('sha256');
+        hash.update(await readFile(full));
+        out.set(relative(dir, full), hash.digest('hex'));
+      }
+    }
+  };
+  await walk(dir);
+  return out;
+}
+
+/**
  * The other way AI17Z gets installed, run for real.
  *
  * Every phase above reproduces what the Windows installer does to a disk. That
@@ -828,6 +864,207 @@ async function bootstrap(stage: string): Promise<void> {
     await rm(zip, { force: true }).catch(() => undefined);
   }
   say(`${label}: installed, updated, and nothing of the owner's was touched`);
+}
+
+/**
+ * Three AI17Z installations, and an update to exactly one of them.
+ *
+ * This is the phase the whole multi-instance design exists for, and it is here
+ * rather than in a unit test because the property is about files on a disk: not
+ * "does the path helper return the right string" but "after updating B, are A
+ * and C the same bytes they were".
+ *
+ * What went wrong once, and must stay impossible: a published installer took an
+ * instance name, built the uninstall entry, the Start Menu group and the
+ * desktop icon from it, and wrote the *files* into a different installation's
+ * directory. Everything downstream believed the name. The disk disagreed.
+ *
+ * So this asserts against the disk. Three installations are made, each with its
+ * own version marker, its own environment file, its own data and a file of its
+ * owner's. One is updated. The other two are hashed before and after, file by
+ * file, and any difference at all fails.
+ *
+ * No containers: what is under test is which directory gets replaced, and
+ * starting three Docker projects to find that out would treble the time for
+ * nothing. The bootstrap phase already proves an installation that starts.
+ */
+async function instances(stage: string): Promise<void> {
+  const label = 'instances';
+  const room = join(ROOM, label);
+  await rm(room, { recursive: true, force: true });
+  await mkdir(room, { recursive: true });
+
+  const setup = join(root, 'packaging', 'windows', 'Setup-AI17Z.ps1');
+  const { createZip, sha256 } = await import('./zip');
+
+  // Two packages from one stage: the same application, and the same
+  // application calling itself a different version. The second is what an
+  // update looks like from the outside, and the version marker is how each
+  // installation says which of the two it is holding.
+  say(`${label}: building two packages from the staged application`);
+  const stamp = join(stage, 'BUILD_INFO.json');
+  const original = await readFile(stamp, 'utf8');
+  const before = join(room, 'AI17Z-App-before.zip');
+  const after = join(room, 'AI17Z-App-after.zip');
+  await createZip(stage, before);
+  try {
+    const patched = JSON.parse(original) as Record<string, unknown>;
+    patched.version = UPDATED_VERSION;
+    patched.name = `AI17Z ${UPDATED_VERSION}`;
+    await writeFile(stamp, `${JSON.stringify(patched, null, 2)}\n`, 'utf8');
+    await createZip(stage, after);
+  } finally {
+    await writeFile(stamp, original, 'utf8');
+  }
+  say(`${label}: before ${(await sha256(before)).slice(0, 12)}, after ${(await sha256(after)).slice(0, 12)}`);
+
+  const names = ['AI17Z-alpha', 'AI17Z-beta', 'AI17Z-gamma'];
+  const where = (name: string) => ({
+    program: join(room, name, 'program'),
+    data: join(room, name, 'data'),
+  });
+
+  const runSetup = async (args: string[]): Promise<{ out: string; code: number }> =>
+    new Promise((done) => {
+      const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', setup, ...args], {
+        cwd: room,
+        env: { ...bareEnvironment(), AI17Z_NO_BROWSER: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      child.stdout.on('data', (d) => (out += String(d)));
+      child.stderr.on('data', (d) => (out += String(d)));
+      child.on('exit', (code) => setTimeout(() => done({ out, code: code ?? -1 }), 300));
+    });
+
+  // ---- Three installations, each its own everything ----------------------
+  for (const name of names) {
+    const { program, data } = where(name);
+    await mkdir(data, { recursive: true });
+    // Its own environment file, with its own ports, its own Docker project and
+    // its own master key. These are the bytes an update must not touch.
+    await writeFile(
+      join(data, '.env'),
+      [
+        `AI17Z_WEB_PORT=${18500 + names.indexOf(name)}`,
+        `AI17Z_API_PORT=${18600 + names.indexOf(name)}`,
+        `POSTGRES_PORT=${55700 + names.indexOf(name)}`,
+        `DATABASE_URL=postgres://xbam:xbam@localhost:${55700 + names.indexOf(name)}/xbam`,
+        `AI17Z_MASTER_KEY=key-for-${name}-which-must-survive-everything`,
+        `AI17Z_INSTANCE=${name.toLowerCase()}`,
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    await mkdir(join(data, 'storage'), { recursive: true });
+    await writeFile(join(data, 'storage', 'owner.txt'), `this belongs to ${name}`, 'utf8');
+
+    const installed = await runSetup([
+      '-InstanceName', name,
+      '-ProgramDir', program,
+      '-DataDir', data,
+      '-LocalPackage', before,
+      '-SkipDependencies', '-NoStart', '-NoBrowser',
+    ]);
+    if (installed.code !== 0) fail(`${label}: installing ${name} failed`, installed.out.slice(-1500));
+
+    const info = JSON.parse(await readFile(join(program, 'INSTALL_INFO.json'), 'utf8')) as {
+      instance: string;
+      programDir: string;
+      version: string;
+    };
+    if (info.instance !== name) fail(`${label}: ${name} installed itself as ${info.instance}`, '');
+    if (resolve(info.programDir) !== resolve(program)) {
+      fail(`${label}: ${name} recorded ${info.programDir}`, program);
+    }
+  }
+  say(`${label}: ${names.join(', ')} installed, each with its own program, data and .env`);
+
+  // ---- What the two that are not being updated look like now -------------
+  const [alpha, target, gamma] = names as [string, string, string];
+  const untouched = [alpha, gamma];
+  const fingerprints = new Map<string, Map<string, string>>();
+  for (const name of untouched) {
+    const { program, data } = where(name);
+    fingerprints.set(name, new Map([...(await hashTree(program)), ...(await hashTree(data))]));
+  }
+
+  // ---- Update exactly one, through its own updater -----------------------
+  //
+  // Not by calling the setup script: `update-ai17z.ps1` in an installation's
+  // own folder is what its Start Menu entry runs and what the update screen
+  // tells somebody to use, and it is the thing that has to target itself.
+  say(`${label}: updating ${target} through its own update-ai17z.ps1`);
+  const updated = await shortcutWith(where(target).program, 'update-ai17z.ps1', [
+    '-Package', after,
+    '-SkipStart',
+  ]);
+  if (updated.code !== 0) fail(`${label}: updating ${target} failed`, updated.stdout.slice(-2000));
+  if (!updated.stdout.includes(target)) {
+    fail(`${label}: the updater never said which installation it was updating`, updated.stdout.slice(-1200));
+  }
+
+  // ---- The one that was updated --------------------------------------------
+  {
+    const { program, data } = where(target);
+    const stampNow = JSON.parse(await readFile(join(program, 'BUILD_INFO.json'), 'utf8')) as { version: string };
+    if (stampNow.version !== UPDATED_VERSION) {
+      fail(`${label}: ${target} still holds ${stampNow.version}`, `expected ${UPDATED_VERSION}`);
+    }
+    const env = await readFile(join(data, '.env'), 'utf8');
+    if (!env.includes(`key-for-${target}-which-must-survive-everything`)) {
+      fail(`${label}: ${target} lost its master key`, env);
+    }
+    if (!env.includes(`AI17Z_INSTANCE=${target.toLowerCase()}`)) {
+      fail(`${label}: ${target} lost its Docker project name`, env);
+    }
+    if (!existsSync(join(data, 'storage', 'owner.txt'))) fail(`${label}: ${target} lost the owner's file`, '');
+    const info = JSON.parse(await readFile(join(program, 'INSTALL_INFO.json'), 'utf8')) as { instance: string };
+    if (info.instance !== target) fail(`${label}: ${target} is now called ${info.instance}`, '');
+  }
+
+  // ---- The two that were not ----------------------------------------------
+  for (const name of untouched) {
+    const { program, data } = where(name);
+    const now = new Map([...(await hashTree(program)), ...(await hashTree(data))]);
+    const then = fingerprints.get(name)!;
+    const differences: string[] = [];
+    for (const [file, hash] of then) {
+      const current = now.get(file);
+      if (current === undefined) differences.push(`gone:    ${file}`);
+      else if (current !== hash) differences.push(`changed: ${file}`);
+    }
+    for (const file of now.keys()) if (!then.has(file)) differences.push(`added:   ${file}`);
+    if (differences.length > 0) {
+      fail(
+        `${label}: updating ${target} changed ${differences.length} file(s) in ${name}`,
+        differences.slice(0, 20).join('\n'),
+      );
+    }
+    say(`${label}: ${name} is byte for byte what it was (${then.size} files)`);
+  }
+
+  // ---- The guard itself ----------------------------------------------------
+  //
+  // The updater updates the installation it is in. Asked for another one by
+  // name, it must refuse rather than redirect -- the whole defect being guarded
+  // against is a request for one identity acting on another.
+  const misdirected = await shortcutWith(where(target).program, 'update-ai17z.ps1', [
+    '-Instance', alpha,
+    '-Package', after,
+    '-SkipStart',
+  ]);
+  if (misdirected.code === 0) {
+    fail(`${label}: ${target}'s updater accepted an instruction meant for ${alpha}`, misdirected.stdout.slice(-1200));
+  }
+  const alphaNow = new Map([...(await hashTree(where(alpha).program)), ...(await hashTree(where(alpha).data))]);
+  for (const [file, hash] of fingerprints.get(alpha)!) {
+    if (alphaNow.get(file) !== hash) fail(`${label}: the refused update still touched ${alpha}`, file);
+  }
+  say(`${label}: asked to update ${alpha} from inside ${target}, it refused and touched neither`);
+
+  if (!keep) await rm(room, { recursive: true, force: true }).catch(() => undefined);
+  say(`${label}: one installation updated, two untouched, and the wrong-target request refused`);
 }
 
 /**
@@ -1094,8 +1331,11 @@ async function main(): Promise<void> {
   // before the next begins, and coexisting is the case that broke.
   if (twice) await sideBySide(stage);
 
-  // The same application, installed by the script people actually download.
+  // The same application, installed by the script the install command fetches.
   if (alsoBootstrap) await bootstrap(stage);
+
+  // Three of them, and an update to one.
+  if (alsoInstances) await instances(stage);
 
   // The path where a mistake is worst, and the last one that was untested.
   if (alsoUpgrade) await upgrade(stage);
