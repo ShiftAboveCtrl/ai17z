@@ -47,7 +47,11 @@ $Allowed = @(
   # meant. Both fail open, and a test machine cannot be an installation from
   # before the gate existed.
   'Test-Ai17zGateAskable',
-  'Read-Ai17zGateVerdict'
+  'Read-Ai17zGateVerdict',
+  # Which era an installation is from, which is what decides whether a gate
+  # that said nothing is an era or a fault.
+  'Get-Ai17zRecordedSchema',
+  'Get-Ai17zGateSchema'
 )
 
 # Not $input: that is PowerShell's own pipeline enumerator, and assigning to it

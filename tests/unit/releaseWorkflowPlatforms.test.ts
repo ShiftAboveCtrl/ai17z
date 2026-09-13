@@ -21,6 +21,9 @@ import {
 const root = resolve(__dirname, '../..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 const workflow = read('.github/workflows/release.yml');
+const validation = read('.github/workflows/platform-packaging.yml');
+const macosAction = read('.github/actions/macos-package/action.yml');
+const ubuntuAction = read('.github/actions/ubuntu-package/action.yml');
 const VERSION = '9.9.9';
 
 describe('the release builds every platform from one tag', () => {
@@ -30,48 +33,93 @@ describe('the release builds every platform from one tag', () => {
     expect(workflow).toContain('needs: [build, macos, ubuntu]');
   });
 
-  it('builds each architecture on a runner that really is it', () => {
-    // macos-14 is Apple Silicon; macos-13 is Intel. Reading them off the file
-    // rather than trusting a comment about them.
-    expect(workflow).toMatch(/runner: macos-14, arch: arm64/);
-    expect(workflow).toMatch(/runner: macos-13, arch: x64/);
-    expect(workflow).toMatch(/runner: ubuntu-latest, arch: amd64/);
-    expect(workflow).toMatch(/runner: ubuntu-24\.04-arm, arch: arm64/);
+  it('names runner labels that GitHub still has', () => {
+    // Read off the file rather than trusted from a comment, and named exactly
+    // rather than through `macos-latest`, which moves between major versions
+    // *and* between architectures -- which is the opposite of what a job whose
+    // whole purpose is to be on a particular architecture wants.
+    //
+    // These two were `macos-14` and `macos-13` until it turned out `macos-13`
+    // had been retired in December 2025 and `macos-14` deprecated. The release
+    // workflow had never run since they were written, so it was asking for a
+    // runner that no longer answers and nothing said so.
+    for (const file of [workflow, validation]) {
+      expect(file).toMatch(/runner: macos-15, arch: arm64/);
+      expect(file).toMatch(/runner: macos-15-intel, arch: x64/);
+      expect(file).toMatch(/runner: ubuntu-24\.04, arch: amd64/);
+      expect(file).toMatch(/runner: ubuntu-24\.04-arm, arch: arm64/);
+    }
+  });
+
+  it('asks for no runner image that has been retired', () => {
+    // A label that no longer exists does not fail loudly: the job sits waiting
+    // for a runner that will never come, or fails with a message about labels
+    // rather than about this project.
+    const retired = ['macos-11', 'macos-12', 'macos-13', 'ubuntu-18.04', 'ubuntu-20.04'];
+    for (const file of [workflow, validation]) {
+      for (const label of retired) {
+        // `runs-on:` and matrix entries only -- the strings also appear in
+        // prose about what was retired, which is worth keeping.
+        expect(file, `${label} is asked for as a runner`).not.toMatch(
+          new RegExp(`(runs-on:\\s*${label}\\b|runner: ${label}\\b)`),
+        );
+      }
+    }
+  });
+
+  it('builds through the shared actions rather than its own copy of the steps', () => {
+    // Two lists of build steps is how one of them stops being true. The release
+    // workflow and the packaging validation workflow call the same actions, so
+    // what validation proves on every push is what a release ships.
+    for (const file of [workflow, validation]) {
+      expect(file).toContain('uses: ./.github/actions/macos-package');
+      expect(file).toContain('uses: ./.github/actions/ubuntu-package');
+    }
+    // And neither has grown a second implementation beside the action.
+    for (const file of [workflow, validation]) {
+      expect(file).not.toContain('build-tarball.sh');
+      expect(file).not.toContain('build-deb.sh');
+    }
   });
 
   it('refuses to build if the runner is not the architecture claimed', () => {
     // The guard that turns a matrix typo into a failed build rather than a
-    // mislabelled package.
-    const macos = workflow.slice(workflow.indexOf('  macos:'), workflow.indexOf('  ubuntu:'));
-    expect(macos).toContain('The architecture this runner really is');
-    expect(macos).toMatch(/arm64:arm64\|x64:x86_64/);
-    const ubuntu = workflow.slice(workflow.indexOf('  ubuntu:'), workflow.indexOf('  publish:'));
-    expect(ubuntu).toContain('dpkg --print-architecture');
+    // mislabelled package that installs and cannot run.
+    expect(macosAction).toContain('The architecture this runner really is');
+    expect(macosAction).toMatch(/arm64:arm64\|x64:x86_64/);
+    expect(macosAction).toContain('uname -s');
+    expect(ubuntuAction).toContain('dpkg --print-architecture');
   });
 
   it('proves the bundled runtime starts, on the machine it was built for', () => {
     // A package whose Node cannot start is one that installs and then does
     // nothing, and that is only visible by running it.
-    for (const job of ['macos', 'ubuntu'] as const) {
-      const section = workflow.slice(
-        workflow.indexOf(`  ${job}:`),
-        job === 'macos' ? workflow.indexOf('  ubuntu:') : workflow.indexOf('  publish:'),
-      );
-      // The bundled runtime specifically, not whatever node the runner has.
-      expect(section, `${job} does not reference its own runtime`).toContain('runtime/node/bin/node');
-      expect(section, `${job} does not run it`).toContain('--version');
-      expect(section, `${job} does not check process.arch`).toContain("process.arch");
-      expect(section, `${job} does not prove tsx transforms`).toContain('tsx ok');
+    for (const [name, action] of [['macos', macosAction], ['ubuntu', ubuntuAction]] as const) {
+      expect(action, `${name} does not reference its own runtime`).toContain('runtime/node/bin/node');
+      expect(action, `${name} does not run it`).toContain('--version');
+      expect(action, `${name} does not check process.arch`).toContain('process.arch');
+      expect(action, `${name} does not prove tsx transforms`).toContain('tsx ok');
+      // `file` rather than the runtime's own opinion: a translated binary
+      // reports the architecture you asked about, not the one it is.
+      expect(action, `${name} trusts the runtime about its own architecture`).toContain('file -b');
+      // The native module that shipped wrong four times.
+      expect(action, `${name} does not check esbuild`).toContain('@esbuild');
     }
   });
 
-  it('lints the package and fails on an error', () => {
-    const ubuntu = workflow.slice(workflow.indexOf('  ubuntu:'), workflow.indexOf('  publish:'));
-    expect(ubuntu).toContain('lintian --fail-on error');
-    // And proves the package removes cleanly, which is the half of packaging
-    // nobody tests until somebody tries it.
-    expect(ubuntu).toContain('apt-get purge -y ai17z');
-    expect(ubuntu).toContain('purge left files behind');
+  it('lints the package and proves it removes cleanly', () => {
+    expect(ubuntuAction).toContain('lintian --fail-on error');
+    expect(ubuntuAction).toContain('apt-get purge -y ai17z');
+    // And that a purge is not allowed to take the owner's data with it.
+    expect(ubuntuAction).toContain('purge took the owner');
+  });
+
+  it('scans the finished artifact rather than the staging directory', () => {
+    // A stage is what the packager was handed; a package is what it produced,
+    // after npm ci has run and after a postinstall has fetched a binary.
+    for (const action of [macosAction, ubuntuAction]) {
+      expect(action).toContain('scan-artifact.sh');
+    }
   });
 
   it('publishes every platform asset, named the one way they are named', () => {
@@ -124,7 +172,7 @@ describe('the release builds every platform from one tag', () => {
     // would find until one of them behaved differently.
     const runtime = JSON.parse(read('packaging/node-runtime.json')) as { version: string };
     expect(runtime.version).toMatch(/^v\d+\.\d+\.\d+$/);
-    expect(workflow).toContain("require('./packaging/node-runtime.json').version");
+    expect(macosAction + ubuntuAction).toContain("require('./packaging/node-runtime.json').version");
     // And it is the line the rest of the project already requires.
     const engines = JSON.parse(read('package.json')) as { engines?: { node?: string } };
     const major = Number.parseInt(runtime.version.replace(/^v/, '').split('.')[0]!, 10);

@@ -1,0 +1,272 @@
+# Builds every platform's real package, on real hardware, and publishes nothing.
+#
+# This exists because for a long time the only way to find out whether the macOS
+# and Ubuntu jobs worked was to publish a release and see. That is the shape this
+# repository has already paid for six times -- a release used as the test, with
+# somebody else's machine as the test bed -- and it is what `verify:install`
+# exists to stop on Windows. The other two platforms had no equivalent, because
+# their build *is* the workflow.
+#
+# It runs automatically. Nothing here needs anybody to remember to trigger it.
+#
+# It shares its implementation with the release workflow: both call the actions
+# under `.github/actions/`, so what this proves is what a release ships. A second
+# set of build steps written just for CI would prove something else that happens
+# to look similar.
+name: Platform packaging
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'packaging/**'
+      - 'tools/package-*.mts'
+      - 'tools/release-manifest.mts'
+      - 'packages/shared/src/releaseManifest.ts'
+      - 'packages/shared/src/installLayout.ts'
+      - 'install-ai17z-*.sh'
+      - '.github/workflows/platform-packaging.yml'
+      - '.github/workflows/release.yml'
+      - '.github/actions/**'
+      - '.github/scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+  pull_request:
+    paths:
+      - 'packaging/**'
+      - 'tools/package-*.mts'
+      - 'tools/release-manifest.mts'
+      - 'packages/shared/src/releaseManifest.ts'
+      - 'packages/shared/src/installLayout.ts'
+      - 'install-ai17z-*.sh'
+      - '.github/workflows/platform-packaging.yml'
+      - '.github/workflows/release.yml'
+      - '.github/actions/**'
+      - '.github/scripts/**'
+
+concurrency:
+  group: platform-packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # A version to build, which on a non-tag branch is this checkout's own.
+  # ---------------------------------------------------------------------------
+  version:
+    name: what to call it
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.it.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: it
+        run: |
+          set -euo pipefail
+          v="$(node -p "require('./package.json').version")"
+          [ -n "$v" ] || { echo "package.json has no version" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "building $v"
+
+  # ---------------------------------------------------------------------------
+  # macOS, on both architectures GitHub still offers.
+  #
+  # `macos-15` is Apple Silicon. `macos-15-intel` is the last x86_64 image
+  # Actions will have -- macos-13 was retired in December 2025 and macos-14 is
+  # deprecated -- so it is named explicitly rather than reached through an alias
+  # that will move out from under this.
+  # ---------------------------------------------------------------------------
+  macos:
+    name: macOS ${{ matrix.arch }} on ${{ matrix.runner }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, arch: arm64 }
+          - { runner: macos-15-intel, arch: x64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - uses: ./.github/actions/macos-package
+        with:
+          version: ${{ needs.version.outputs.version }}
+          arch: ${{ matrix.arch }}
+          out: ${{ runner.temp }}/out
+          deep: 'true'
+
+      - name: The installer, against the package this job just built
+        run: |
+          set -euo pipefail
+          bash .github/scripts/prove-macos-installer.sh \
+            "${{ runner.temp }}/out/AI17Z-macos-${{ matrix.arch }}-${{ needs.version.outputs.version }}.tar.gz" \
+            "${{ needs.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: ${{ runner.temp }}/out/AI17Z-macos-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Ubuntu, on both architectures, each built on a machine that really is one.
+  # ---------------------------------------------------------------------------
+  ubuntu:
+    name: Ubuntu ${{ matrix.arch }} on ${{ matrix.runner }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - uses: ./.github/actions/ubuntu-package
+        with:
+          version: ${{ needs.version.outputs.version }}
+          arch: ${{ matrix.arch }}
+          out: ${{ runner.temp }}/out
+          deep: 'true'
+
+      - name: The installer, against the package this job just built
+        run: |
+          set -euo pipefail
+          bash .github/scripts/prove-ubuntu-installer.sh \
+            "${{ runner.temp }}/out/ai17z_${{ needs.version.outputs.version }}_${{ matrix.arch }}.deb" \
+            "${{ needs.version.outputs.version }}" \
+            "${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-${{ matrix.arch }}
+          path: ${{ runner.temp }}/out/ai17z_*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Every Ubuntu this project claims to support, against the package amd64 built.
+  #
+  # A claim in a document is not evidence. If one of these cannot run the
+  # package, the honest options are to fix the package or to stop claiming the
+  # release -- never to leave the claim standing and the test out.
+  # ---------------------------------------------------------------------------
+  ubuntu-versions:
+    name: Ubuntu ${{ matrix.release }} takes the package
+    needs: [version, ubuntu]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ['22.04', '24.04', '26.04']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ubuntu-amd64
+          path: dist
+      - name: Install and exercise it on Ubuntu ${{ matrix.release }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD:/repo:ro" \
+            -v "$PWD/dist:/dist:ro" \
+            -e "WANT_VERSION=${{ needs.version.outputs.version }}" \
+            "ubuntu:${{ matrix.release }}" \
+            bash /repo/.github/scripts/prove-ubuntu-release.sh \
+              "/dist/ai17z_${{ needs.version.outputs.version }}_amd64.deb"
+
+  # ---------------------------------------------------------------------------
+  # The release manifest, the checksums, and the names every installer composes.
+  # ---------------------------------------------------------------------------
+  contract:
+    name: the release contract
+    needs: [version, macos, ubuntu]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: What was built
+        run: ls -l dist
+
+      - name: The checksums, over the real files
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum AI17Z-macos-*.tar.gz ai17z_*.deb | tee SHA256SUMS.txt
+
+      - name: The release manifest, from the one place a name is composed
+        run: |
+          set -euo pipefail
+          npx tsx tools/release-manifest.mts \
+            --dist dist \
+            --version "${{ needs.version.outputs.version }}" \
+            --commit "${{ github.sha }}" \
+            --run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          cat dist/release-manifest.json
+
+      - name: Every name the manifest gives is a file that exists
+        run: |
+          set -euo pipefail
+          # The manifest is what an updater reads to decide what to download. A
+          # name in it that is not a file is a release that cannot be installed
+          # by the thing that reads it.
+          node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync("dist/release-manifest.json", "utf8"));
+            let missing = 0;
+            for (const artifact of manifest.artifacts) {
+              // The Windows assets are built by the other workflow and are not
+              // in this directory; the platform packages are what this proves.
+              if (artifact.platform !== "macos" && artifact.platform !== "ubuntu") continue;
+              if (artifact.kind !== "app-package") continue;
+              if (!fs.existsSync(`dist/${artifact.name}`)) { console.error(`  missing: ${artifact.name}`); missing++; }
+              else console.log(`  present: ${artifact.name}  ${artifact.sha256.slice(0, 16)}...`);
+            }
+            if (missing) { console.error(`${missing} artifact(s) named and not built`); process.exit(1); }
+          '
+
+      - name: The architectures are what the names claim
+        run: |
+          set -euo pipefail
+          bash .github/scripts/prove-architectures.sh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-contract
+          path: |
+            dist/SHA256SUMS.txt
+            dist/release-manifest.json
+          retention-days: 14

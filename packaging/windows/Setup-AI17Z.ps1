@@ -1184,11 +1184,64 @@ function Test-Ai17zGateAskable {
     [bool] $TsxPresent,
     [bool] $NodePresent
   )
-  if (-not $ManifestPublished) { return [pscustomobject]@{ Askable = $false; Why = 'the release publishes no manifest' } }
-  if (-not $BridgePresent) { return [pscustomobject]@{ Askable = $false; Why = 'this installation predates the gate' } }
-  if (-not $TsxPresent) { return [pscustomobject]@{ Askable = $false; Why = 'this installation has no runtime to ask with' } }
-  if (-not $NodePresent) { return [pscustomobject]@{ Askable = $false; Why = 'there is no node to ask with' } }
-  return [pscustomobject]@{ Askable = $true; Why = '' }
+  # `Cause` is the word @xbam/shared uses, so that what Windows reports and what
+  # the shared decision is asked about cannot drift into two vocabularies.
+  if (-not $ManifestPublished) { return [pscustomobject]@{ Askable = $false; Cause = 'no-manifest'; Why = 'the release publishes no manifest' } }
+  if (-not $BridgePresent) { return [pscustomobject]@{ Askable = $false; Cause = 'no-bridge'; Why = 'this installation has no compatibility check in it' } }
+  if (-not $TsxPresent) { return [pscustomobject]@{ Askable = $false; Cause = 'no-runtime'; Why = 'this installation has no runtime to ask with' } }
+  if (-not $NodePresent) { return [pscustomobject]@{ Askable = $false; Cause = 'no-runtime'; Why = 'there is no node to ask with' } }
+  return [pscustomobject]@{ Askable = $true; Cause = ''; Why = '' }
+}
+
+<#
+  What an installation records about itself.
+
+  The fact that separates an installation from before the compatibility gate
+  from a current one whose gate is broken. Both look like a missing file; only
+  one of them is allowed to carry on.
+
+  Absent, unreadable or without a schema all mean the same thing and it is the
+  honest one: this copy is older than any record that would say otherwise.
+#>
+<#
+  The schema from which the compatibility gate is part of the protocol.
+
+  Read out of @xbam/shared rather than typed here, because a threshold in two
+  places is a threshold that will one day be two different numbers. The fallback
+  is the current value and is used only where the module cannot be read at all --
+  which is itself one of the states this decides about.
+#>
+function Get-Ai17zGateSchema {
+  if ($null -ne $script:Ai17zGateSchemaCache) { return $script:Ai17zGateSchemaCache }
+  $value = 3
+  try {
+    $source = [System.IO.Path]::Combine($PSScriptRoot, '..', '..', 'packages', 'shared', 'src', 'releaseManifest.ts')
+    if (Test-Path -LiteralPath $source) {
+      $match = [regex]::Match((Get-Content -LiteralPath $source -Raw), 'UPDATER_GATE_SCHEMA\s*=\s*([0-9]+)')
+      if ($match.Success) { $value = [int]$match.Groups[1].Value }
+    }
+  } catch { }
+  $script:Ai17zGateSchemaCache = $value
+  return $value
+}
+
+function Get-Ai17zRecordedSchema {
+  param([string] $ProgramDir)
+  # [IO.Path]::Combine rather than Join-Path, like everything else above the
+  # -LoadOnly return: Join-Path resolves the drive qualifier through
+  # PowerShell's provider, and the tests call this one on Linux, where no such
+  # drive exists.
+  $path = [System.IO.Path]::Combine($ProgramDir, 'INSTALL_INFO.json')
+  if (-not (Test-Path -LiteralPath $path)) { return $null }
+  try {
+    $parsed = (Get-Content -LiteralPath $path -Raw) | ConvertFrom-Json
+    $value = $parsed.schema
+    if ($null -eq $value) { return $null }
+    return [int]$value
+  } catch {
+    # A record that cannot be parsed says nothing about which era this is.
+    return $null
+  }
 }
 
 <#
@@ -1972,7 +2025,7 @@ function Test-Ai17zReleaseFits {
     (Test-Path -LiteralPath $tsx) `
     (Test-Ai17zCommand 'node')
   if (-not $askable.Askable) {
-    Write-Ai17zLog ('compatibility: ' + $askable.Why + '; carrying on')
+    Resolve-Ai17zSilentGate $Layout $askable.Cause $askable.Why $bridge $tsx
     return
   }
 
@@ -2023,8 +2076,63 @@ function Test-Ai17zReleaseFits {
     Write-Ai17zLog 'compatibility: this PC meets what the new version needs'
     foreach ($note in @($read.Reasons)) { Write-Ai17zLog ('compatibility note: ' + $note) }
   } else {
-    Write-Ai17zLog 'compatibility: the gate did not answer; carrying on'
+    # Neither OK nor NO. A bridge that could not start prints nothing, and
+    # nothing is not a blessing.
+    Resolve-Ai17zSilentGate $Layout 'unreadable' 'the check produced nothing that could be read' $bridge $tsx
   }
+}
+
+<#
+  The gate could not answer. Does that stop this update?
+
+  Two situations produce the same silence and they are not the same thing. An
+  installation made before the gate existed, offered a release published before
+  manifests existed, has nothing to ask and nothing to ask it with -- refusing
+  there would strand exactly the installations an update exists to move forward.
+  An installation new enough to ship the gate, whose gate did not answer, is a
+  copy with something wrong with it, and the next thing this program does is
+  stop it and replace it.
+
+  The decision lives in @xbam/shared, asked through the same bridge, so that
+  three updaters cannot drift about it. Where even the bridge cannot run, the
+  fallback here is the cautious half of the same rule.
+#>
+function Resolve-Ai17zSilentGate {
+  param([psobject] $Layout, [string] $Cause, [string] $Why, [string] $Bridge, [string] $Tsx)
+
+  $schema = Get-Ai17zRecordedSchema $Layout.ProgramDir
+  $decision = ''
+  if ((Test-Path -LiteralPath $Bridge) -and (Test-Path -LiteralPath $Tsx) -and (Test-Ai17zCommand 'node')) {
+    $asked = Invoke-Ai17zNative 'node' `
+      @($Tsx, $Bridge, '--decide', ('' + $schema), $Cause) -WorkingDirectory $Layout.ProgramDir
+    if ($asked.Code -eq 0) { $decision = '' + $asked.Output }
+  }
+
+  $lines = @()
+  if ($decision) { $lines = @(($decision -split "`r?`n") | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+
+  if ($lines.Count -eq 0) {
+    # The bridge itself could not run. An installation that predates it has no
+    # recorded schema to say otherwise; anything that does record one is a fault.
+    if ($null -eq $schema -or $schema -lt (Get-Ai17zGateSchema)) {
+      Write-Ai17zLog ('compatibility: ' + $Why + '; this installation predates the check, carrying on')
+      return
+    }
+    Set-Ai17zStep 'app' 'failed' 'the compatibility check could not run'
+    Stop-Ai17z 'AI17Z could not check whether this release can run on this PC.' `
+      ($Why + "`nThe check is part of how this installation updates, and it did not run." + "`n`nNothing was changed. The AI17Z you have is still installed and still running.") `
+      'Run AI17Z Setup again. If it happens twice, reinstall this copy from the command on the README.'
+  }
+
+  if ($lines[0] -eq 'GO') {
+    foreach ($line in @($lines | Select-Object -Skip 1)) { Write-Ai17zLog ('compatibility: ' + $line) }
+    return
+  }
+
+  Set-Ai17zStep 'app' 'failed' 'the compatibility check could not run'
+  Stop-Ai17z 'AI17Z could not check whether this release can run on this PC.' `
+    ((@($lines | Select-Object -Skip 1) -join "`n") + "`n`nNothing was changed. The AI17Z you have is still installed and still running.") `
+    'Run AI17Z Setup again. If it happens twice, reinstall this copy from the command on the README.'
 }
 
 <#

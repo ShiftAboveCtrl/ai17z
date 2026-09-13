@@ -1,0 +1,259 @@
+# @release-check-fixtures -- the `owner` home this file mentions belongs to a
+# user the action creates on a disposable runner. It is nobody's.
+name: Build and prove the Ubuntu package
+description: >
+  Stages, packages, installs and then actually runs an AI17Z .deb on the machine
+  that built it. One implementation, used by both the release workflow and the
+  packaging validation workflow, so that what validation proves is what a
+  release ships.
+
+inputs:
+  version:
+    description: Version without the leading v
+    required: true
+  arch:
+    description: amd64 or arm64
+    required: true
+  out:
+    description: Where the finished .deb goes
+    required: true
+  deep:
+    description: Run the full proof rather than the build and smoke test
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: The architecture this runner really is
+      shell: bash
+      run: |
+        set -euo pipefail
+        # An arm64 package assembled on an x86_64 machine carries the wrong
+        # native modules under the right name. It installs, and fails on
+        # somebody else's machine with "cannot load".
+        actual="$(dpkg --print-architecture)"
+        [ "$actual" = "${{ inputs.arch }}" ] \
+          || { echo "runner is $actual, job builds ${{ inputs.arch }}" >&2; exit 1; }
+        echo "runner is $actual, as expected"
+        . /etc/os-release && echo "on Ubuntu ${VERSION_ID}"
+
+    - name: Stage the application
+      shell: bash
+      run: npm run package:unix -- --platform ubuntu --stage "$RUNNER_TEMP/stage"
+
+    - name: Build the package
+      shell: bash
+      run: |
+        set -euo pipefail
+        bash packaging/ubuntu/build-deb.sh \
+          --stage "$RUNNER_TEMP/stage" \
+          --version "${{ inputs.version }}" \
+          --arch "${{ inputs.arch }}" \
+          --node "$(node -p "require('./packaging/node-runtime.json').version")" \
+          --out "${{ inputs.out }}"
+
+    - name: lintian
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq lintian
+        # Errors fail. Warnings are printed rather than suppressed wholesale:
+        # the ones that are upstream Node being upstream Node have named
+        # overrides inside the package, each with its reason.
+        lintian --fail-on error \
+          "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
+
+    - name: What the package says it is
+      shell: bash
+      run: |
+        set -euo pipefail
+        DEB="${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
+        dpkg -I "$DEB"
+        said="$(dpkg-deb -f "$DEB" Architecture)"
+        [ "$said" = "${{ inputs.arch }}" ] || { echo "the package says $said" >&2; exit 1; }
+        said="$(dpkg-deb -f "$DEB" Version)"
+        [ "$said" = "${{ inputs.version }}" ] || { echo "the package says version $said" >&2; exit 1; }
+        echo "metadata agrees: ${{ inputs.arch }} ${{ inputs.version }}"
+
+    - name: Install it, and run what was installed
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get install -y "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
+
+        NODE=/usr/lib/ai17z/runtime/node/bin/node
+        echo "--- the bundled runtime ---"
+        "$NODE" --version
+        want="$([ "${{ inputs.arch }}" = amd64 ] && echo x64 || echo arm64)"
+        [ "$("$NODE" -p 'process.arch')" = "$want" ] \
+          || { echo "node reports $("$NODE" -p 'process.arch'), wanted $want" >&2; exit 1; }
+        [ "$("$NODE" -p 'process.platform')" = linux ] || { echo "not a linux build" >&2; exit 1; }
+
+        echo "--- the binary really is this architecture ---"
+        says="$(file -b "$NODE")"
+        echo "$says"
+        case "${{ inputs.arch }}:$says" in
+          amd64:*x86-64*|arm64:*aarch64*) : ;;
+          *) echo "the bundled node is not ${{ inputs.arch }}" >&2; exit 1 ;;
+        esac
+
+        echo "--- tsx transforms ---"
+        "$NODE" /usr/lib/ai17z/app/node_modules/tsx/dist/cli.mjs -e 'const n: number = 1; console.log(`tsx ok ${n}`)'
+
+        echo "--- esbuild's native binary is this architecture too ---"
+        ESBUILD="$(find /usr/lib/ai17z/app/node_modules/@esbuild -type f -name esbuild -perm -u+x | head -1)"
+        [ -n "$ESBUILD" ] || { echo "no esbuild binary in the package" >&2; exit 1; }
+        says="$(file -b "$ESBUILD")"
+        echo "$says"
+        case "${{ inputs.arch }}:$says" in
+          amd64:*x86-64*|arm64:*aarch64*) : ;;
+          *) echo "esbuild is not ${{ inputs.arch }}" >&2; exit 1 ;;
+        esac
+        "$ESBUILD" --version
+
+    - name: The entry points an installed copy loads
+      if: ${{ inputs.deep == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        NODE=/usr/lib/ai17z/runtime/node/bin/node
+        TSX=/usr/lib/ai17z/app/node_modules/tsx/dist/cli.mjs
+        cd /usr/lib/ai17z/app
+        # Importing is the test: a package can hold every file and still be one
+        # where nothing loads.
+        "$NODE" "$TSX" -e '
+          const load = async (what: string) => { await import(what); console.log(`  loaded ${what}`); };
+          await load("@xbam/shared");
+          await load("@xbam/database");
+          await load("@xbam/jobs");
+          await load("@xbam/runtime");
+          await load("@xbam/channels");
+          await load("@xbam/models");
+          await load("@xbam/memory");
+          await load("@xbam/prompts");
+          await load("@xbam/tools");
+          await load("@xbam/persona");
+        '
+
+    - name: The launcher, as an ordinary person, in a disposable home
+      if: ${{ inputs.deep == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        id -u owner >/dev/null 2>&1 || sudo useradd -m -s /bin/bash owner
+
+        echo "--- version and the bundled node, through the launcher ---"
+        sudo -u owner -H bash -lc 'ai17z version'
+        sudo -u owner -H bash -lc "ai17z node -p 'process.arch'"
+
+        echo "--- root is refused ---"
+        if sudo -H bash -lc 'ai17z version' >/dev/null 2>&1; then
+          echo "the launcher ran as root" >&2; exit 1
+        fi
+        echo "  refused, as it should be"
+
+        echo "--- XDG directories, created private ---"
+        sudo -u owner -H bash -lc 'ai17z doctor' > "$RUNNER_TEMP/doctor.txt" 2>&1 || true
+        sed 's/^/  /' "$RUNNER_TEMP/doctor.txt"
+        for dir in .config/ai17z .local/share/ai17z .local/state/ai17z; do
+          mode="$(sudo -u owner stat -c '%a' "/home/owner/$dir")"
+          [ "$mode" = 700 ] || { echo "$dir is mode $mode, not 700" >&2; exit 1; }
+          echo "  $dir 700"
+        done
+
+        echo "--- XDG overrides are honoured ---"
+        sudo -u owner -H bash -lc 'XDG_CONFIG_HOME=/tmp/xc ai17z doctor >/dev/null 2>&1 || true; stat -c "%a %n" /tmp/xc/ai17z'
+
+        echo "--- no screen means browser support is unavailable, not failed ---"
+        # A container and a hosted runner are both servers. That is the ordinary
+        # Ubuntu Server case, and the whole point is that AI17Z says so in those
+        # words rather than reporting a failure somebody would try to fix.
+        if grep -qiE 'not available|unavailable' "$RUNNER_TEMP/doctor.txt"; then
+          echo "  reported as not available"
+        else
+          echo "doctor did not report browser support as unavailable on a headless machine" >&2
+          exit 1
+        fi
+
+    - name: The compatibility gate answers, on this machine, both ways
+      if: ${{ inputs.deep == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        NODE=/usr/lib/ai17z/runtime/node/bin/node
+        APP=/usr/lib/ai17z/app
+        . /etc/os-release
+
+        cat > "$RUNNER_TEMP/manifest.json" <<JSON
+        {"schemaVersion":1,"version":"9.9.9","tag":"v9.9.9",
+         "commit":"0000000000000000000000000000000000000000",
+         "builtAt":"2026-01-01T00:00:00.000Z",
+         "signed":{"windows":false,"macos":false,"ubuntu":false},
+         "minimumUpdaterSchema":1,"installLayoutSchema":3,
+         "platforms":{"ubuntu":{"supported":true,"architectures":["x64","arm64"],
+           "methods":["UBUNTU_DEB"],
+           "requirements":{"minimumDocker":"26.0.0","minimumChromeMajor":120,
+             "bundledNode":"v22.23.2","os":{"releases":["${VERSION_ID}"]}}}},
+         "artifacts":[],"migrations":{"latest":"probe","count":0}}
+        JSON
+
+        want="$([ "${{ inputs.arch }}" = amd64 ] && echo x64 || echo arm64)"
+        ask() { (cd "$APP" && "$NODE" "$APP/node_modules/tsx/dist/cli.mjs" \
+          "$APP/packaging/preflight.mts" "$RUNNER_TEMP/manifest.json" ubuntu "$@"); }
+
+        echo "--- this machine, which the release supports ---"
+        said="$(ask "$want" "$VERSION_ID" 27.0.0 130)"
+        printf '%s\n' "$said" | sed 's/^/  /'
+        [ "${said%%$'\n'*}" = OK ] || { echo "a supported machine was not accepted" >&2; exit 1; }
+
+        echo "--- an Ubuntu the release does not support ---"
+        said="$(ask "$want" 18.04 27.0.0 130)"
+        printf '%s\n' "$said" | sed 's/^/  /'
+        [ "${said%%$'\n'*}" = NO ] || { echo "an unsupported Ubuntu was not refused" >&2; exit 1; }
+
+        echo "--- Docker too old ---"
+        said="$(ask "$want" "$VERSION_ID" 25.0.0 130)"
+        printf '%s\n' "$said" | sed 's/^/  /'
+        [ "${said%%$'\n'*}" = NO ] || { echo "an old Docker was not refused" >&2; exit 1; }
+
+        echo "--- no Chrome is a note, never a refusal ---"
+        said="$(ask "$want" "$VERSION_ID" 27.0.0 '')"
+        printf '%s\n' "$said" | sed 's/^/  /'
+        [ "${said%%$'\n'*}" = OK ] || { echo "a machine with no Chrome was refused" >&2; exit 1; }
+
+    - name: Purge keeps the owner's data
+      if: ${{ inputs.deep == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo -u owner -H bash -lc 'printf "a thing the owner made\n" > ~/.local/share/ai17z/owner.txt'
+        sudo apt-get purge -y ai17z
+        [ ! -d /usr/lib/ai17z ] || { echo "purge left the program behind" >&2; exit 1; }
+        sudo -u owner test -f /home/owner/.local/share/ai17z/owner.txt \
+          || { echo "purge took the owner's data with it" >&2; exit 1; }
+        echo "  the program is gone and the owner's data is not"
+
+    - name: Remove it again for the shallow path
+      if: ${{ inputs.deep != 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get purge -y ai17z
+        [ ! -d /usr/lib/ai17z ] || { echo "purge left files behind" >&2; exit 1; }
+
+    - name: Nothing of an owner's is in the package
+      shell: bash
+      run: |
+        set -euo pipefail
+        bash .github/scripts/scan-artifact.sh \
+          "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb" ubuntu
+
+    - name: What this package is
+      shell: bash
+      run: |
+        set -euo pipefail
+        DEB="${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
+        ls -l "$DEB"
+        sha256sum "$DEB"

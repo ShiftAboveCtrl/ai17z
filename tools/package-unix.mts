@@ -18,7 +18,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { releaseName } from '@xbam/shared';
 import { INCLUDE, copyFiltered, proveCompatibilityGate } from './package-windows.mjs';
@@ -38,6 +38,32 @@ if (requested !== 'ubuntu' && requested !== 'macos') {
   process.exit(2);
 }
 const platform: 'ubuntu' | 'macos' = requested;
+
+/**
+ * A package for this machine, built on this machine.
+ *
+ * npm installs exactly one platform package out of an optional set, and which
+ * one depends on the machine that ran `npm ci`. Staging an Ubuntu package on
+ * Windows produces a tree carrying `@esbuild/win32-x64` under a Linux name: it
+ * builds, it installs, and then every `tsx` process an installed copy runs --
+ * the migration on every start, the API, the worker -- dies on a binary that is
+ * not for that machine. Nothing in the build log says so.
+ *
+ * The release and validation workflows both build each platform on a runner
+ * that really is that platform, so this refuses the one case that cannot be
+ * right rather than constraining anything that is.
+ */
+const hostSuits: Record<'ubuntu' | 'macos', NodeJS.Platform[]> = {
+  ubuntu: ['linux'],
+  macos: ['darwin'],
+};
+if (!hostSuits[platform].includes(process.platform)) {
+  console.error(`  a ${platform} package cannot be staged on ${process.platform}.`);
+  console.error('  npm would install this machine\'s native binaries under that platform\'s name,');
+  console.error('  and the package would install and then fail to run a single script.');
+  console.error(`  Build it on ${hostSuits[platform].join(' or ')}, as the workflows do.`);
+  process.exit(2);
+}
 const stage = resolve(flag('stage') ?? join(root, 'build', platform, 'app'));
 
 /**
@@ -140,9 +166,13 @@ async function main(): Promise<void> {
   console.log('  proving the staged runtime can transform TypeScript');
   await writeFile(join(stage, '.probe.ts'), 'export const ok: number = 1;\n', 'utf8');
   try {
+    // No `shell: true`. A shell eats the double quotes in `import("./.probe.ts")`
+    // and tsx is handed `import(./.probe.ts)`, which fails as a syntax error
+    // about a dot. This repository already has the same trap written down for
+    // PowerShell's native argument passing. `execFile` hands argv over
+    // directly, so the quotes survive and nothing needs escaping.
     await run('node', ['node_modules/tsx/dist/cli.mjs', '--eval', 'import("./.probe.ts").then(m=>console.log(m.ok))'], {
       cwd: stage,
-      shell: true,
       maxBuffer: 8 * 1024 * 1024,
     });
   } finally {
@@ -156,4 +186,7 @@ async function main(): Promise<void> {
   console.log(`AI17Z_STAGE=${stage}`);
 }
 
-await main();
+// The same guard as the Windows packager, for the same reason in reverse:
+// nothing imports this today, and the day something does is the day it matters
+// and nobody is looking.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) await main();

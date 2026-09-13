@@ -352,8 +352,18 @@ jobs:
   #
   # A matrix rather than one job that relabels: an arm64 package built on an
   # Intel runner carries x86_64 native modules under an arm64 name, and the
-  # failure lands on somebody else's Mac as "cannot load". `macos-14` is Apple
-  # Silicon and `macos-13` is Intel, which is how the two are actually got.
+  # failure lands on somebody else's Mac as "cannot load".
+  #
+  # The labels are named exactly, never through `macos-latest`, because that
+  # alias moves between major versions and between architectures and this job's
+  # whole purpose is to be on a particular one. `macos-15` is Apple Silicon;
+  # `macos-15-intel` is the last x86_64 image Actions will have -- `macos-13`
+  # was retired in December 2025 and `macos-14` is deprecated, so both of those
+  # were asking for runners that no longer answer.
+  #
+  # The steps live in `.github/actions/macos-package`, shared with the packaging
+  # validation workflow, so what runs before a release is what runs on every
+  # push. Two lists of build steps is how one of them stops being true.
   # ---------------------------------------------------------------------------
   macos:
     name: build macOS ${{ matrix.arch }}
@@ -362,8 +372,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-14, arch: arm64 }
-          - { runner: macos-13, arch: x64 }
+          - { runner: macos-15, arch: arm64 }
+          - { runner: macos-15-intel, arch: x64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -385,44 +395,12 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
-      - name: The architecture this runner really is
-        run: |
-          # Asserted rather than assumed. A matrix entry pointing at the wrong
-          # runner would otherwise ship a mislabelled package.
-          actual="$(uname -m)"
-          want="${{ matrix.arch }}"
-          case "$want:$actual" in
-            arm64:arm64|x64:x86_64) echo "runner is $actual, as expected" ;;
-            *) echo "runner is $actual but this job builds $want"; exit 1 ;;
-          esac
-
-      - name: Stage the application
-        run: npm run package:unix -- --platform macos --stage "$RUNNER_TEMP/stage"
-
-      - name: Build the package
-        run: |
-          bash packaging/macos/build-tarball.sh \
-            --stage "$RUNNER_TEMP/stage" \
-            --version "${{ steps.version.outputs.version }}" \
-            --arch "${{ matrix.arch }}" \
-            --node "$(node -p "require('./packaging/node-runtime.json').version")" \
-            --out "$RUNNER_TEMP/out"
-
-      - name: Prove the package runs its own Node
-        run: |
-          # The smoke test that matters: the bundled runtime, on the machine the
-          # package was built for, reporting the version and architecture it is
-          # supposed to be. A package whose Node cannot start is one that
-          # installs happily and then does nothing.
-          tar -xzf "$RUNNER_TEMP/out/AI17Z-macos-${{ matrix.arch }}-${{ steps.version.outputs.version }}.tar.gz" \
-            -C "$RUNNER_TEMP"
-          NODE="$RUNNER_TEMP/AI17Z/runtime/node/bin/node"
-          "$NODE" --version
-          echo "arch: $("$NODE" -p 'process.arch')"
-          [ "$("$NODE" -p 'process.arch')" = "${{ matrix.arch }}" ] || { echo "wrong arch"; exit 1; }
-          # And that tsx transforms, which is every npm script an installed copy runs.
-          "$NODE" "$RUNNER_TEMP/AI17Z/app/node_modules/tsx/dist/cli.mjs" \
-            -e 'console.log("tsx ok")'
+      - uses: ./.github/actions/macos-package
+        with:
+          version: ${{ steps.version.outputs.version }}
+          arch: ${{ matrix.arch }}
+          out: ${{ runner.temp }}/out
+          deep: 'true'
 
       - uses: actions/upload-artifact@v4
         with:
@@ -445,7 +423,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest, arch: amd64 }
+          - { runner: ubuntu-24.04, arch: amd64 }
           - { runner: ubuntu-24.04-arm, arch: arm64 }
     runs-on: ${{ matrix.runner }}
     steps:
@@ -463,50 +441,17 @@ jobs:
           [ -n "$v" ] || { echo "no version"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
-      - name: The architecture this runner really is
-        run: |
-          actual="$(dpkg --print-architecture)"
-          [ "$actual" = "${{ matrix.arch }}" ] || { echo "runner is $actual, job builds ${{ matrix.arch }}"; exit 1; }
-          echo "runner is $actual, as expected"
-
       - name: Install
         run: npm ci
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
-      - name: Stage the application
-        run: npm run package:unix -- --platform ubuntu --stage "$RUNNER_TEMP/stage"
-
-      - name: Build the package
-        run: |
-          bash packaging/ubuntu/build-deb.sh \
-            --stage "$RUNNER_TEMP/stage" \
-            --version "${{ steps.version.outputs.version }}" \
-            --arch "${{ matrix.arch }}" \
-            --node "$(node -p "require('./packaging/node-runtime.json').version")" \
-            --out "$RUNNER_TEMP/out"
-
-      - name: lintian
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq lintian
-          # Errors fail the build. Warnings are printed and not suppressed
-          # wholesale: the three that are upstream Node being upstream Node have
-          # named overrides inside the package, with reasons.
-          lintian --fail-on error \
-            "$RUNNER_TEMP/out/ai17z_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb"
-
-      - name: Install it, and prove the bundled runtime works
-        run: |
-          sudo apt-get install -y "$RUNNER_TEMP/out/ai17z_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb"
-          /usr/lib/ai17z/runtime/node/bin/node --version
-          [ "$(/usr/lib/ai17z/runtime/node/bin/node -p 'process.arch')" = \
-            "$([ "${{ matrix.arch }}" = amd64 ] && echo x64 || echo arm64)" ] || { echo "wrong arch"; exit 1; }
-          /usr/lib/ai17z/runtime/node/bin/node \
-            /usr/lib/ai17z/app/node_modules/tsx/dist/cli.mjs -e 'console.log("tsx ok")'
-          # The package removes cleanly and leaves nothing of the program behind.
-          sudo apt-get purge -y ai17z
-          [ ! -d /usr/lib/ai17z ] || { echo "purge left files behind"; exit 1; }
+      - uses: ./.github/actions/ubuntu-package
+        with:
+          version: ${{ steps.version.outputs.version }}
+          arch: ${{ matrix.arch }}
+          out: ${{ runner.temp }}/out
+          deep: 'true'
 
       - uses: actions/upload-artifact@v4
         with:
@@ -515,8 +460,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # ---------------------------------------------------------------------------
-  # Publish.
   # ---------------------------------------------------------------------------
   publish:
     name: publish the release
