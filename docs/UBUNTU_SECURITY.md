@@ -116,3 +116,12 @@ On a machine with no graphical session, the browser worker is not started at
 all. A worker restarting for ever against a screen that does not exist is worse
 than one that never began, and `ai17z doctor` reports **not available** rather
 than a failure.
+
+## What has been tested, and where
+
+The package, the installer and the lifecycle are exercised against a real
+Ubuntu 24.04. A container has no screen and is one release, so Chrome,
+Docker Engine, 22.04, 26.04 and arm64 hardware are described here from
+their vendors' documentation rather than from having been run.
+
+[What still needs a real machine](UBUNTU_TEST_CHECKLIST.md) lists each one.

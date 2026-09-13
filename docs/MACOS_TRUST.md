@@ -118,3 +118,14 @@ If a hash does not match, or AI17Z does something this page does not describe:
 **stop, and open an issue** at
 <https://github.com/ShiftAboveCtrl/ai17z/issues>. For anything you believe is a
 security problem, [SECURITY.md](../SECURITY.md) says how to report it privately.
+
+## What is written here has not been watched happen
+
+Every prompt described above is derived from Apple's documented behaviour
+and from how the package is built -- not from somebody sitting at a Mac
+watching it. No Mac has been available. The difference matters, so it is
+stated rather than glossed over.
+
+[What still needs a Mac](MACOS_TEST_CHECKLIST.md) lists each unobserved
+item. If you run it and something here is wrong, that document is where to
+record it.
