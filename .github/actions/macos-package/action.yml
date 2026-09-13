@@ -188,11 +188,13 @@ runs:
         trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
         HOME_OF_IT="$RUNNER_TEMP/with space/room/AI17Z"
 
+        say() { bash .github/scripts/say-on-fail.sh "$@"; }
+
         echo "--- version, through the launcher ---"
-        "$HOME_OF_IT/ai17z" version
+        say 'ai17z version' -- "$HOME_OF_IT/ai17z" version
 
         echo "--- node, through the launcher ---"
-        "$HOME_OF_IT/ai17z" node -p 'process.arch'
+        say 'ai17z node' -- "$HOME_OF_IT/ai17z" node -p 'process.arch'
 
         echo "--- an unknown command is refused rather than guessed ---"
         if "$HOME_OF_IT/ai17z" wibble >/dev/null 2>&1; then
@@ -210,16 +212,20 @@ runs:
 
         echo "--- doctor says what it can see ---"
         # Docker is not running on a hosted Mac runner, so this is expected to
-        # report that and carry on rather than crash. What is under test is that
-        # it produces a report at all, from a packaged layout, with spaces in
-        # every path it resolves.
-        set +e
-        "$HOME_OF_IT/ai17z" doctor > "$RUNNER_TEMP/doctor.txt" 2>&1
-        code=$?
-        set -e
+        # report that and carry on rather than to succeed. What is under test is
+        # that it produces a report at all, from a packaged layout, with spaces
+        # in every path it resolves.
+        #
+        # `|| true` rather than `set +e`: the ERR trap above fires on a failing
+        # command whether errexit is on or not, and `$?` read on the line after
+        # a trap has run is not reliably the failing command's.
+        "$HOME_OF_IT/ai17z" doctor > "$RUNNER_TEMP/doctor.txt" 2>&1 || true
         sed 's/^/  /' "$RUNNER_TEMP/doctor.txt"
-        echo "  doctor exited $code"
-        grep -qi 'ai17z' "$RUNNER_TEMP/doctor.txt" || { echo "doctor produced nothing recognisable" >&2; exit 1; }
+        grep -qi 'ai17z' "$RUNNER_TEMP/doctor.txt" || {
+          printf '::error::doctor produced nothing recognisable%%0A%s\n' \
+            "$(head -20 "$RUNNER_TEMP/doctor.txt" | awk '{ printf "%s%%0A", $0 }')"
+          exit 1
+        }
 
     - name: App and data are separate, and the data is the owner's
       if: ${{ inputs.deep == 'true' }}
