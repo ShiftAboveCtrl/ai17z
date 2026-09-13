@@ -55,7 +55,7 @@ const stageDir = process.env.AI17Z_STAGE_DIR
  * indexer uses one: a deny-list is a promise to have thought of everything, and
  * the thing nobody thinks of is the one that ships somebody's `.env`.
  */
-const INCLUDE = [
+export const INCLUDE = [
   'package.json',
   'package-lock.json',
   // The template the first run builds its .env from. Without it, a fresh

@@ -4,7 +4,7 @@
   "version": "1.0.0-beta.16",
   "license": "MIT",
   "type": "module",
-  "description": "XBAM — a local-first universal autonomous-agent platform.",
+  "description": "XBAM \u2014 a local-first universal autonomous-agent platform.",
   "engines": {
     "node": ">=22"
   },
@@ -48,7 +48,8 @@
     "release:check": "tsx tools/release-check.mts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "worker:present": "tsx scripts/browser-worker-present.mts"
+    "worker:present": "tsx scripts/browser-worker-present.mts",
+    "package:unix": "tsx tools/package-unix.mts"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

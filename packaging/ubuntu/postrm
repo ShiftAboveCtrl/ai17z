@@ -1,0 +1,22 @@
+#!/bin/sh
+#
+# After the package files are removed.
+#
+# **No owner data is touched, on any path through this script, ever.**
+#
+# apt purge removes what the package installed. It does not remove what the
+# owner made: their agents, their memories, the key their provider credentials
+# are sealed with, and their signed-in browser session all live under their own
+# home. `ai17z uninstall` is what explains how to remove those, to the person
+# who owns them, after asking.
+set -e
+
+case "$1" in
+  remove|purge|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    if command -v update-desktop-database >/dev/null 2>&1; then
+      update-desktop-database -q /usr/share/applications 2>/dev/null || true
+    fi
+    ;;
+esac
+
+exit 0
