@@ -42,7 +42,12 @@ $Allowed = @(
   'Test-Ai17zInstallInfoTrustworthy',
   'New-Ai17zInstanceName',
   # Whether a release tag may become a filename.
-  'Test-Ai17zReleaseTag'
+  'Test-Ai17zReleaseTag',
+  # Whether an update can be asked if it may proceed, and what the answer
+  # meant. Both fail open, and a test machine cannot be an installation from
+  # before the gate existed.
+  'Test-Ai17zGateAskable',
+  'Read-Ai17zGateVerdict'
 )
 
 # Not $input: that is PowerShell's own pipeline enumerator, and assigning to it

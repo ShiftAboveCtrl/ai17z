@@ -21,7 +21,7 @@ from anywhere else is not AI17Z, whatever it is called.
 | What is not involved | no executable, no download to double-click, and no change to SmartScreen, Defender, UAC or your execution policy |
 | What it installs | WSL 2, Docker Desktop, Node.js and Google Chrome — only the ones you do not already have |
 | Where those come from | `wsl --install`, and **winget**, Microsoft's own package manager. Never a URL of ours |
-| What it downloads itself | one file, `AI17Z-App-<version>.zip`, from this repository's release, checked against a SHA-256 |
+| What it downloads itself | one file, `AI17Z-App-<version>.zip`, from this repository's release, checked against a SHA-256 -- plus, when updating, `release-manifest.json`, which is read to decide whether the new version can run here at all |
 | When it asks for administrator rights | once, for WSL 2 and Docker Desktop, with an explanation on screen first |
 | What it leaves running | nothing. No service, no scheduled task, no startup entry |
 | What it sends anywhere | nothing about you, this machine, or your agents |
@@ -374,6 +374,18 @@ between the check and the run does not get it executed.
 `AI17Z-App-<version>.zip`, and checks it the same way against the same
 `SHA256SUMS.txt`. A mismatch deletes the file. There is **no flag to skip either
 check**, in either script.
+
+**The compatibility manifest, on an update only.** `release-manifest.json` from
+the same release, read to answer one question: can this PC run the version that
+is arriving? It is asked *before* the running AI17Z is stopped, because a
+refusal after that point has already taken somebody's working installation away.
+It is data and never code -- nothing in it becomes a filename, a path, or
+something that runs -- and the decision is made by the same function macOS and
+Ubuntu use.
+
+A release that publishes no manifest, and an installation made before this
+existed, both simply carry on. The only outcome this adds is a refusal that can
+say what is wrong, and a refusal changes nothing on the PC.
 
 Both catch a truncated download, a corrupted one, and a mismatched asset.
 Neither is a defence against a compromised release: a checksum published by the

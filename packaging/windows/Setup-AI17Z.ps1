@@ -1157,6 +1157,62 @@ function Test-Ai17zResumeUsable {
   return (($Now - $saved).TotalHours -lt 24)
 }
 
+<#
+  Is there anything to ask, before an update stops a working installation?
+
+  Four ways there is not, and all four carry on rather than refuse:
+
+    - the release publishes no manifest, which every release before this one
+      did not
+    - this installation has no gate to run, which every installation made
+      before this one has not
+    - there is no tsx to run it with
+    - there is no Node to run that
+
+  A refusal in any of those refuses every update for every copy already on
+  somebody's machine, which is the opposite of what a compatibility gate is
+  for. The only new outcome the gate adds is a refusal it can justify.
+
+  Pure, and above -LoadOnly, because the states worth testing are states a test
+  machine cannot be in: an installation from before the gate existed, a release
+  from before manifests existed, a PC with no Node.
+#>
+function Test-Ai17zGateAskable {
+  param(
+    [bool] $ManifestPublished,
+    [bool] $BridgePresent,
+    [bool] $TsxPresent,
+    [bool] $NodePresent
+  )
+  if (-not $ManifestPublished) { return [pscustomobject]@{ Askable = $false; Why = 'the release publishes no manifest' } }
+  if (-not $BridgePresent) { return [pscustomobject]@{ Askable = $false; Why = 'this installation predates the gate' } }
+  if (-not $TsxPresent) { return [pscustomobject]@{ Askable = $false; Why = 'this installation has no runtime to ask with' } }
+  if (-not $NodePresent) { return [pscustomobject]@{ Askable = $false; Why = 'there is no node to ask with' } }
+  return [pscustomobject]@{ Askable = $true; Why = '' }
+}
+
+<#
+  What a verdict off the gate means.
+
+  Also pure, and also above -LoadOnly, because the case that matters is the one
+  no test machine can produce: a bridge that printed nothing at all. That is
+  what a broken gate looks like, it is indistinguishable from an old release at
+  runtime, and reading it as anything but "carry on" would be a refusal nobody
+  could explain.
+#>
+function Read-Ai17zGateVerdict {
+  param([int] $Code, [string] $Output)
+  $lines = @(('' + $Output) -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($Code -ne 0 -or $lines.Count -eq 0) {
+    return [pscustomobject]@{ Verdict = 'UNKNOWN'; Reasons = @() }
+  }
+  $rest = @($lines | Select-Object -Skip 1)
+  if ($lines[0] -eq 'NO') { return [pscustomobject]@{ Verdict = 'NO'; Reasons = $rest } }
+  if ($lines[0] -eq 'OK') { return [pscustomobject]@{ Verdict = 'OK'; Reasons = $rest } }
+  # SKIP, or anything else it might grow. Neither a refusal nor a blessing.
+  return [pscustomobject]@{ Verdict = 'UNKNOWN'; Reasons = $rest }
+}
+
 if ($LoadOnly) { return }
 
 # ---------------------------------------------------------------------------
@@ -1872,6 +1928,103 @@ function Find-Ai17zAsset {
     if ($asset.name -ieq $Name) { return $asset }
   }
   return $null
+}
+
+<#
+  Can this PC run the release that is arriving?
+
+  Asked before anything stops, because "no" has to be survivable: an update
+  that discovers the problem after replacing the application has already taken
+  the working version away from somebody.
+
+  The decision is not made here. It is the same function macOS and Ubuntu ask,
+  reached the same way -- this installation's own Node running its own tsx over
+  packaging\preflight.mts, which calls preflight() in @xbam/shared. A second
+  implementation in PowerShell would be a second thing to keep in step, and the
+  one that drifted would be the one nobody ran.
+
+  Everything that is not a clear refusal carries on. Releases published before
+  manifests existed have none; installations made before this existed have no
+  gate to run; a machine with no Node cannot be asked. An updater that stopped
+  for any of those would strand exactly the installations it exists to move
+  forward. The refusal is the only new outcome this adds.
+#>
+function Test-Ai17zReleaseFits {
+  param(
+    [psobject] $Release,
+    [psobject] $Layout,
+    [int] $WindowsBuild,
+    [string] $ChromeVersion = ''
+  )
+
+  # Deliberately not $manifest. -Manifest is a [switch] parameter of this
+  # script, PowerShell variable names are case-insensitive, and assigning a
+  # document to $manifest would set the switch rather than hold the document.
+  # That exact collision has already cost this repository a download path that
+  # never worked once.
+  $gateAsset = Find-Ai17zAsset $Release 'release-manifest.json'
+  $bridge = Join-Path $Layout.ProgramDir 'packaging\preflight.mts'
+  $tsx = Join-Path $Layout.ProgramDir 'node_modules\tsx\dist\cli.mjs'
+
+  $askable = Test-Ai17zGateAskable `
+    ([bool]$gateAsset) `
+    (Test-Path -LiteralPath $bridge) `
+    (Test-Path -LiteralPath $tsx) `
+    (Test-Ai17zCommand 'node')
+  if (-not $askable.Askable) {
+    Write-Ai17zLog ('compatibility: ' + $askable.Why + '; carrying on')
+    return
+  }
+
+  $answer = Get-Ai17zText $gateAsset.browser_download_url 'application/json'
+  if (-not $answer.Ok) { Write-Ai17zLog 'compatibility: the manifest could not be fetched; carrying on'; return }
+
+  # No BOM. A byte order mark in front of a JSON document is a parse error in
+  # every reader that is not PowerShell's own.
+  $gatePath = Join-Path $script:Ai17zSetupHome 'release-manifest.json'
+  [System.IO.File]::WriteAllText($gatePath, $answer.Body, (New-Object System.Text.UTF8Encoding($false)))
+
+  # Single quotes around the Go template, and no double quote anywhere in it: a
+  # double quote cannot cross Windows PowerShell's native argument passing, and
+  # the guard that learned this the hard way concluded the opposite of the truth
+  # from an empty line.
+  $dockerVersion = ''
+  $probe = Invoke-Ai17zNative 'docker' @('version', '--format', '{{.Server.Version}}')
+  if ($probe.Code -eq 0) {
+    $first = @(($probe.Output -split "`r?`n") | Where-Object { $_.Trim() }) | Select-Object -First 1
+    if ($first) { $dockerVersion = $first.Trim() }
+  }
+
+  $chromeMajor = ''
+  if ($ChromeVersion) {
+    $found = [regex]::Match($ChromeVersion, '^(\d+)')
+    if ($found.Success) { $chromeMajor = $found.Groups[1].Value }
+  }
+
+  # x64 always. The Windows package carries x64 native modules -- esbuild's
+  # binary among them -- and an ARM64 machine runs them under emulation.
+  # Reporting ARM64 here would be refused for a build that does not exist, on a
+  # PC the x64 one runs on perfectly well.
+  $verdict = Invoke-Ai17zNative 'node' `
+    @($tsx, $bridge, $gatePath, 'windows', 'x64', ('' + $WindowsBuild), $dockerVersion, $chromeMajor) `
+    -WorkingDirectory $Layout.ProgramDir
+  Remove-Item -LiteralPath $gatePath -Force -ErrorAction SilentlyContinue
+
+  $read = Read-Ai17zGateVerdict $verdict.Code $verdict.Output
+
+  if ($read.Verdict -eq 'NO') {
+    Set-Ai17zStep 'app' 'failed' 'this PC does not meet what the new version needs'
+    Stop-Ai17z ('AI17Z ' + (('' + $Release.tag_name) -replace '^v', '') + ' cannot run on this PC.') `
+      ((@($read.Reasons) -join "`n") + "`n`nNothing was changed. The AI17Z you have is still installed and still running.") `
+      'Fix what is listed above and run the update again.'
+  }
+
+  if ($read.Verdict -eq 'OK') {
+    Write-Ai17zLog 'compatibility: this PC meets what the new version needs'
+    foreach ($note in @($read.Reasons)) { Write-Ai17zLog ('compatibility note: ' + $note) }
+  } else {
+    Write-Ai17zLog 'compatibility: the gate did not answer; carrying on'
+  }
 }
 
 <#
@@ -2737,6 +2890,19 @@ if ($LocalPackage) {
 
 Set-Ai17zStep 'app' 'active' 'installing'
 $existingInstall = Test-Path (Join-Path $layout.ProgramDir 'package.json')
+
+# The last moment at which "no" is free.
+#
+# Everything that could refuse has refused by now: the PC, WSL, Docker, the
+# download, the hash. The next line stops a running AI17Z, and after it a
+# refusal costs somebody their working installation instead of a download. Only
+# an update can lose anything here, so only an update is asked -- a first
+# install has nothing to take away.
+#
+# $chosen is null for a local package, which is the offline path and carries no
+# release to read a manifest from.
+if ($existingInstall -and $chosen) { Test-Ai17zReleaseFits $chosen $layout $machine.Build $chrome.Version }
+
 if ($existingInstall) { Stop-Ai17zForUpdate $layout }
 
 foreach ($directory in @($layout.DataDir, (Join-Path $layout.DataDir 'storage'), (Join-Path $layout.DataDir 'browser-profiles'))) {

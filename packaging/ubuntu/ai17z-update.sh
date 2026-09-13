@@ -113,7 +113,7 @@ if [ -n "$MANIFEST_URL" ]; then
     # Through the bundled tsx, against the shared decision in @xbam/shared, so
     # three platforms cannot drift apart about what "compatible" means.
     VERDICT="$(cd "$APP_ROOT" && "$NODE_BIN" "$APP_ROOT/node_modules/tsx/dist/cli.mjs" \
-      "$APP_ROOT/packaging/unix/preflight.mts" \
+      "$APP_ROOT/packaging/preflight.mts" \
       "$WORK/manifest.json" ubuntu "$([ "$ARCH" = amd64 ] && echo x64 || echo arm64)" \
       "$UBUNTU_VERSION" "$DOCKER_VERSION" "$CHROME_MAJOR" 2>/dev/null || echo SKIP)"
     case "$VERDICT" in

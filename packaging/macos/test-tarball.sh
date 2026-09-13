@@ -31,7 +31,8 @@ NODE_VERSION="${NODE_VERSION:-v22.23.2}"
 STAGE=/tmp/macstage
 rm -rf "$STAGE"; mkdir -p "$STAGE/packaging/macos" "$STAGE/packaging/unix" "$STAGE/node_modules"
 cp packaging/macos/ai17z packaging/macos/ai17z-lifecycle.sh packaging/macos/ai17z-update.sh "$STAGE/packaging/macos/"
-cp packaging/unix/ai17z-paths.sh packaging/unix/preflight.mts "$STAGE/packaging/unix/"
+cp packaging/unix/ai17z-paths.sh "$STAGE/packaging/unix/"
+cp packaging/preflight.mts "$STAGE/packaging/"
 cp LICENSE "$STAGE/"
 printf '{"version":"%s","name":"AI17Z Beta 1.0.0 (16)"}\n' "$VERSION" > "$STAGE/BUILD_INFO.json"
 # A file with the executable bit set for no reason, to prove permissions are

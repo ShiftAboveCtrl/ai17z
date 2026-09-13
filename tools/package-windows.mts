@@ -29,7 +29,8 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { releaseName } from '@xbam/shared';
+import { releaseName, releaseManifestSchema } from '@xbam/shared';
+import type { Platform } from '@xbam/shared';
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -117,6 +118,10 @@ export const INCLUDE = [
   // downloading and verifying a release. The Windows installer puts the same
   // files in the same places from its own [Files] section, so both kinds of
   // installation have the same program directory afterwards.
+  // The update compatibility gate, asked before any platform stops anything.
+  // One file above `packaging/<platform>/` because all three updaters run it:
+  // while it lived under `unix/`, Windows shipped no gate at all.
+  'packaging/preflight.mts',
   'packaging/windows/Setup-AI17Z.ps1',
   'packaging/windows/Uninstall-AI17Z.ps1',
   'packaging/windows/Stop-ForUninstall.ps1',
@@ -125,6 +130,110 @@ export const INCLUDE = [
   'packaging/windows/AI17Z.cmd',
   'packaging/windows/ai17z.ico',
 ];
+
+
+/**
+ * A manifest good enough to decide with, for the proof below.
+ *
+ * Built through the real schema rather than typed as a literal, so that a
+ * schema change cannot quietly turn the proof into a test of nothing: an
+ * unparseable manifest makes the bridge print SKIP, and a check that only
+ * asked whether it printed *something* would go on passing while the gate was
+ * dead.
+ */
+function probeManifest(version: string, platform: Platform): string {
+  const os: Record<string, unknown> =
+    platform === 'ubuntu' ? { releases: ['24.04'] } : platform === 'macos' ? { minimumMajor: 13 } : { minimumBuild: 19045 };
+  const document = {
+    schemaVersion: 1,
+    version,
+    tag: `v${version}`,
+    commit: '0'.repeat(40),
+    builtAt: new Date().toISOString(),
+    signed: { windows: false, macos: false, ubuntu: false },
+    minimumUpdaterSchema: 1,
+    installLayoutSchema: 3,
+    platforms: {
+      [platform]: {
+        supported: true,
+        architectures: ['x64', 'arm64'],
+        methods: [platform === 'ubuntu' ? 'UBUNTU_DEB' : platform === 'macos' ? 'MACOS_PKG' : 'BOOTSTRAP'],
+        requirements: { minimumDocker: '26.0.0', minimumChromeMajor: 120, bundledNode: 'v22.23.2', os },
+      },
+    },
+    artifacts: [],
+    migrations: { latest: 'probe', count: 0 },
+  };
+  const checked = releaseManifestSchema.safeParse(document);
+  if (!checked.success) {
+    throw new Error(
+      'the probe manifest no longer matches the release manifest schema, so this check would prove ' +
+        `nothing: ${checked.error.issues[0]?.message ?? 'unknown'}`,
+    );
+  }
+  return JSON.stringify(checked.data);
+}
+
+/**
+ * The update compatibility gate actually answers, from inside this package.
+ *
+ * `packaging/preflight.mts` is what every updater runs before it stops
+ * anything, and the way they all run it is `node node_modules/tsx/dist/cli.mjs`
+ * against a file that imports `@xbam/shared`. Each of those has to resolve
+ * inside an installed copy, and if any one does not, the updater swallows the
+ * failure and carries on -- correct behaviour for a release published before
+ * manifests existed, and indistinguishable from the gate being dead.
+ *
+ * So it is run here, in the stage, the way an updater runs it. Twice: once on
+ * a machine the release supports and once on one it does not. The refusal is
+ * the half that matters, because a bridge that cannot start at all prints
+ * nothing, and nothing is not `NO`.
+ */
+export async function proveCompatibilityGate(stageDir: string, platform: Platform, version: string): Promise<void> {
+  console.log('  proving the update compatibility gate answers');
+  const probePath = join(stageDir, '.preflight-probe.json');
+  await writeFile(probePath, probeManifest(version, platform), 'utf8');
+
+  // Each platform's own spelling of "this machine is fine" and "this machine is
+  // not", in the argument order the bridge takes: arch, OS version, Docker,
+  // Chrome. The refused case differs only in the OS, so nothing else can be
+  // what produced the refusal.
+  const cases: Record<Platform, { supported: string[]; refused: string[] }> = {
+    ubuntu: { supported: ['x64', '24.04', '27.0.0', '130'], refused: ['x64', '20.04', '27.0.0', '130'] },
+    macos: { supported: ['arm64', '14.5', '27.0.0', '130'], refused: ['arm64', '12.7', '27.0.0', '130'] },
+    windows: { supported: ['x64', '26100', '27.0.0', '130'], refused: ['x64', '18363', '27.0.0', '130'] },
+  };
+
+  const ask = async (args: string[]): Promise<string> => {
+    const { stdout } = await run(
+      'node',
+      [join('node_modules', 'tsx', 'dist', 'cli.mjs'), join('packaging', 'preflight.mts'), probePath, platform, ...args],
+      { cwd: stageDir, maxBuffer: 8 * 1024 * 1024 },
+    );
+    return stdout.trim();
+  };
+
+  try {
+    const yes = await ask(cases[platform].supported);
+    if (!yes.startsWith('OK')) throw new Error(`a machine this release supports was not accepted; it said:\n${yes}`);
+
+    const no = await ask(cases[platform].refused);
+    if (!no.startsWith('NO')) {
+      throw new Error(
+        `a machine this release does not support was not refused; it said:\n${no}\n` +
+          'A SKIP here means the bridge could not run at all, which is how an update gate stops ' +
+          'working without anybody being told.',
+      );
+    }
+  } catch (error) {
+    throw new Error(
+      'the staged application cannot decide whether a release can run on a machine, so every update ' +
+        `would proceed unchecked:\n  ${(error as Error).message}`,
+    );
+  } finally {
+    await rm(probePath, { force: true });
+  }
+}
 
 /**
  * The npm scripts an installed copy can actually run.
@@ -372,6 +481,8 @@ async function main(): Promise<void> {
         `first migration and never start a native worker:\n  ${(error as Error).message}`,
     );
   }
+
+  await proveCompatibilityGate(stageDir, 'windows', version);
 
   // A stamp the running application can report, so "which version is this?" is
   // answerable on a machine with no git.

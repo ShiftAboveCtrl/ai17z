@@ -2,13 +2,15 @@
 /**
  * Can this machine run the release it is being offered?
  *
- * Asked by the Unix updaters before they stop anything, because "no" has to be
+ * Asked by all three updaters before they stop anything, because "no" has to be
  * survivable: an update that discovers the problem after replacing the
  * application has already taken the working version away from somebody.
  *
- * The decision itself lives in `@xbam/shared` and is shared with every other
- * platform. This is only the part that reads a machine and prints a verdict a
- * shell script can branch on.
+ * The decision itself lives in `@xbam/shared`. This is only the part that turns
+ * a machine into arguments and a verdict into a line something else can branch
+ * on -- a shell `case` on macOS and Ubuntu, a PowerShell `switch` on Windows.
+ * It sits above `packaging/<platform>/` on purpose: the moment it lived under
+ * `unix/`, Windows had no gate at all and nothing said so.
  *
  *   preflight.mts <manifest.json> <platform> <arch> <osVersion> [dockerVersion] [chromeMajor]
  *
