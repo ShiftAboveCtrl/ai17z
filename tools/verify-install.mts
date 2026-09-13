@@ -42,7 +42,7 @@
  * the value before it starts, removes everything it created by name, and puts
  * the value back.
  *
- * Run: npm run verify:install [-- --twice] [--upgrade] [--bootstrap] [--instances] [--keep]
+ * Run: npm run verify:install [-- --twice] [--upgrade] [--bootstrap] [--instances] [--no-git] [--keep]
  */
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -62,6 +62,8 @@ const alsoUpgrade = process.argv.includes('--upgrade');
 const alsoBootstrap = process.argv.includes('--bootstrap');
 /** Also make three independent installations and prove that updating one leaves the others alone. */
 const alsoInstances = process.argv.includes('--instances');
+/** Take Git off PATH first, so "a normal install needs no Git" is a result rather than a claim. */
+const noGit = process.argv.includes('--no-git');
 
 /** The version the second package calls itself, so an update is visible from the outside. */
 const UPDATED_VERSION = '9.9.9-verify';
@@ -142,9 +144,38 @@ function bareEnvironment(): NodeJS.ProcessEnv {
   const clean: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (/^(AI17Z|XBAM|VITE_XBAM)_/i.test(key)) continue;
+    if (noGit && /^GIT_/i.test(key)) continue;
     clean[key] = value;
   }
+  if (noGit) {
+    // Every directory holding a git.exe taken off PATH.
+    //
+    // The recommended Windows install is a release package, not a clone, and a
+    // person who has never written code has no reason to own Git. That claim is
+    // worth exactly as much as the proof behind it, and grepping for `git` only
+    // proves what the callers look like -- `Invoke-Quiet git` is *designed* to
+    // tolerate git being absent, so the way to find out is to take it away.
+    const key = Object.keys(clean).find((name) => name.toUpperCase() === 'PATH') ?? 'PATH';
+    const kept = (clean[key] ?? '')
+      .split(';')
+      .filter((entry) => entry && !existsSync(join(entry, 'git.exe')));
+    clean[key] = kept.join(';');
+  }
   return clean;
+}
+
+/** Whether `git` resolves at all in the environment the shortcuts are given. */
+async function gitIsReachable(): Promise<boolean> {
+  const probe = await new Promise<string>((done) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-Command', '(Get-Command git -ErrorAction SilentlyContinue).Source'], {
+      env: bareEnvironment(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (d) => (out += String(d)));
+    child.on('exit', () => done(out.trim()));
+  });
+  return probe.length > 0;
 }
 
 /**
@@ -1300,6 +1331,16 @@ async function upgradeBody(stage: string): Promise<void> {
 
 async function main(): Promise<void> {
   process.stdout.write('\nAI17Z: installing from scratch and driving every entry point\n\n');
+
+  if (noGit) {
+    // Asserted before anything installs, because a run that quietly kept Git on
+    // PATH would pass and prove nothing -- which is the failure mode of every
+    // test that checks an absence.
+    if (await gitIsReachable()) {
+      fail('--no-git was asked for and git is still on PATH', 'the rest of this run would prove nothing');
+    }
+    say('no-git: git does not resolve in the environment every shortcut is given');
+  }
 
   const stage = join(ROOM, 'stage');
   await rm(ROOM, { recursive: true, force: true });

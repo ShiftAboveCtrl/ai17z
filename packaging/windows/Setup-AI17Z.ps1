@@ -3,10 +3,16 @@
   Installs AI17Z on Windows, and everything AI17Z needs, in one action.
 
 .DESCRIPTION
-  This file is the whole installer. There is no compiled logic anywhere else:
-  the .exe on the releases page is a wrapper that extracts this exact script and
-  runs it, and its SHA-256 is published beside it so you can prove the two are
-  the same. Read it before you run it. That is the point of it being a script.
+  This file is the whole installer. There is no compiled logic anywhere else,
+  and the recommended way in never downloads an executable at all:
+
+      irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+
+  That command fetches `install.ps1`, which resolves an exact GitHub release,
+  reads that release's SHA256SUMS.txt, downloads this file from it as
+  Install-AI17Z-<version>.ps1, checks its SHA-256 before writing it anywhere,
+  and runs the bytes it checked. Read it before you run it. That is the point
+  of it being a script.
 
   What it does, in order, and nothing else:
 
@@ -32,15 +38,18 @@
   quote from a pasted em dash terminates a string somewhere unrelated.
 
 .PARAMETER Release
-  The release tag to install, for example v1.0.0-beta.16. The wrapper .exe
-  passes the tag it was built for, so an .exe installs exactly one version.
-  Given nothing, this asks GitHub for the newest published release.
+  The release tag to install, for example v1.0.0-beta.16. `install.ps1` passes
+  the release it resolved and checked this file against, so a run installs the
+  version it was fetched from. Given nothing, this asks GitHub for the newest
+  published release.
 
 .PARAMETER ExpectedSha256
-  The SHA-256 the downloaded AI17Z package must have. The wrapper .exe passes
-  the hash of the package built alongside it, which is what makes a signed .exe
-  a pin on the payload rather than a pin on a filename. Given nothing, the hash
-  is read from the release's own SHA256SUMS.txt, which is weaker and says so.
+  The SHA-256 the downloaded AI17Z package must have, for a caller that already
+  knows it -- an offline install from a package somebody downloaded themselves,
+  or the verification harness. Given nothing, the hash is read from the
+  release's own SHA256SUMS.txt, which catches a corrupt or substituted download
+  and is not a defence against a tampered release. Neither path will install a
+  package whose hash it cannot establish.
 
 .PARAMETER InstanceName
   What this installation is called. Decides the program folder, the data folder,
@@ -1870,8 +1879,10 @@ function Find-Ai17zAsset {
 
   Three sources, in the order they are worth anything:
 
-    1. -ExpectedSha256, passed by the signed .exe and fixed at build time. A
-       signature on the .exe is then a signature on the payload as well.
+    1. -ExpectedSha256, passed by a caller that already knows which bytes it
+       wants: an offline install from a package somebody downloaded themselves,
+       or the verification harness. Fixed before this runs, so it cannot be
+       talked out of it by anything on the network.
     2. SHA256SUMS.txt from the same release. This catches a truncated or
        corrupted download and a mismatched asset. It is published by the same
        release as the package, so it is not a defence against a release that has

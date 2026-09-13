@@ -8,6 +8,132 @@ The release workflow attaches this file to the release.
 
 ---
 
+## AI17Z Beta 1.0.0 (16)
+
+The first release the terminal install command can actually install. Beta
+1.0.0 (15) and everything before it predate the assets it looks for, so the
+command refused them -- correctly, and with a PowerShell stack trace printed
+underneath the refusal, which is the other half of what this release fixes.
+
+### What a real person saw, and why
+
+Pasting the command against Beta 1.0.0 (15) produced the right decision and the
+wrong presentation:
+
+    Release v1.0.0-beta.15 does not contain Install-AI17Z-1.0.0-beta.15.ps1.
+    Nothing on this PC was changed.
+
+    At line:152 char:3
+    + throw $What
+        + CategoryInfo          : OperationStopped: (...)
+        + FullyQualifiedErrorId : ...
+
+The refusal was correct: that release carries no setup script, and a command
+that installs whatever it finds would be worse than one that stops. The stack
+trace was not. `Stop-Install` threw to unwind -- `exit` would close the terminal
+the command was pasted into -- and nothing caught it, so PowerShell rendered a
+crash for something the program decided on purpose.
+
+`Stop-Install` now throws a sentinel that an outermost boundary recognises by
+`$_.TargetObject`, which a real fault leaves empty. Refusals print their own
+explanation and nothing else. Genuine faults print one sentence and write the
+detail to `%LOCALAPPDATA%\AI17Z-setup\install-command.log`. Both set
+`$global:LASTEXITCODE`, so automation still sees a failure, and neither ends the
+session.
+
+The advice was wrong as well. "Install an earlier release" was impossible
+during this migration -- no earlier release carries the asset either. The list
+is now read and an earlier release is only ever named when its own assets prove
+it would work.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean, from a deleted `tsconfig.tsbuildinfo` |
+| `npm run lint` | clean |
+| `npm test` | 251 files, 3165 tests, 0 failures |
+| `npm audit` | 0 vulnerabilities |
+| `npm --workspace @xbam/web run build` | built |
+| `npm run release:check` | 893 tracked files, nothing found, run after `git add` |
+
+### Installing without Git
+
+The recommended install is a release package that is downloaded and
+hash-checked, never a clone, and this is the release that proves it rather than
+asserting it. `npm run verify:install -- --no-git` removes every directory
+holding a `git.exe` from the environment each shortcut is given, asserts
+`Get-Command git` resolves to nothing, and only then installs.
+
+    no-git: git does not resolve in the environment every shortcut is given
+
+The whole run passed underneath that: two clean installs, two installations side
+by side, the bootstrap install and update, the three-instance regression, and
+the upgrade-over-the-top. Exit 0.
+
+The one place `git` is still invoked on an installed copy is `Get-SourceStamp`
+in `start-ai17z.ps1`, through `Invoke-Quiet`, which is written to return
+`$null` when a command does not exist and falls back to the packager's stamp.
+That is why grepping for `git` proves nothing here and taking it away proves
+everything.
+
+Git remains what a *source checkout* updates with. That is a different thing,
+for people working on AI17Z.
+
+### The release asset contract
+
+Three files have to agree on names that nothing connects except somebody typing
+the same string into all of them: the workflow decides what a release contains,
+`install.ps1` decides what it goes looking for, and `Setup-AI17Z.ps1` decides
+what it downloads next. A mismatch is invisible until a stranger pastes the
+command.
+
+`tests/unit/releaseAssetContract.test.ts` holds them to each other in both
+directions -- every asset the install path verifies is hashed, and every asset
+hashed is attached.
+
+The artifacts were then built locally with the exact packaging the workflow
+runs, and the chain driven against them:
+
+    ok  every asset the install chain needs is present
+    ok  SHA256SUMS.txt parses, and names both files the chain verifies
+    ok  the setup script matches its published SHA-256
+    ok  the published setup script is the file in the repository, byte for byte
+    ok  installed 1.0.0-beta.16 from the release package, hash-checked
+
+The setup script was executed the way `install.ps1` executes it -- read as bytes
+and run as a scriptblock, never launched as a file -- because that is the
+difference Windows' default execution policy cares about.
+
+`sha256sum` writes `<hash> *<name>` on Windows and `<hash>  <name>` on the Linux
+runner that produces the real file. Both parse.
+
+### Multi-instance, unchanged and re-proved
+
+    instances: AI17Z-alpha, AI17Z-beta, AI17Z-gamma installed, each with its
+               own program, data and .env
+    instances: updating AI17Z-beta through its own update-ai17z.ps1
+    instances: AI17Z-alpha is byte for byte what it was (4779 files)
+    instances: AI17Z-gamma is byte for byte what it was (4779 files)
+    instances: asked to update AI17Z-alpha from inside AI17Z-beta, it refused
+               and touched neither
+
+### Not verified
+
+- **A clean Windows machine.** Everything above ran on a developer machine that
+  already had WSL, Docker Desktop, Node and Chrome, so every dependency step
+  reported "already present" rather than installing anything. The install of a
+  missing dependency, the restart-and-resume path, and Docker's own first-run
+  terms are unexercised here and always have been.
+- **The published command against the published release.** By definition this
+  could not run before the release existed. What ran is the same chain against
+  locally built artifacts with the same names and hashes.
+- **The legacy `.exe`.** Inno Setup is not installed locally, so
+  `AI17Z-Setup-<version>.exe` was not compiled or run here. The workflow builds
+  and checks it, and it is not the recommended route.
+
+---
+
 ## AI17Z Beta 1.0.0 (15)
 
 One fix, and the reason it is a separate release: Beta 1.0.0 (14) published a
