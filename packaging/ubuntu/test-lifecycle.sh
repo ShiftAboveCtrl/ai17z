@@ -36,7 +36,8 @@ cp packaging/windows/ai17z-256.png "$STAGE/packaging/windows/" 2>/dev/null || tr
 cp LICENSE README.md docker-compose.yml "$STAGE/" 2>/dev/null || true
 printf '{"version":"%s","name":"AI17Z Beta 1.0.0 (16)"}\n' "$VERSION" > "$STAGE/BUILD_INFO.json"
 printf '#!/usr/bin/env bash\necho setup ran\n' > "$STAGE/install-ai17z.sh"
-printf '#!/usr/bin/env bash\necho "doctor ran for $AI17Z_ENV_FILE"\n' > "$STAGE/doctor-ai17z.sh"
+# The real doctor, not a stub: what is under test is what it reports.
+cp doctor-ai17z.sh "$STAGE/"
 chmod +x "$STAGE"/*.sh
 
 bash packaging/ubuntu/build-deb.sh --stage "$STAGE" --version "$VERSION" --arch "$ARCH" \
@@ -69,7 +70,20 @@ says "browser support unavailable"   "$out" "not available"
 
 echo
 echo "### doctor is reached, with this installation's own environment file"
-says "doctor runs against the owner's config" "$(as_owner 'ai17z doctor')" "[.]config/ai17z/[.]env$"
+says "doctor names the owner's own data directory" "$(as_owner 'ai17z doctor')" "[.]config/ai17z"
+
+echo
+echo "### doctor tells the truth about a server rather than failing"
+out="$(as_owner 'ai17z doctor' || true)"
+says "it names the machine"           "$out" "Ubuntu"
+says "it names the install method"    "$out" "UBUNTU_DEB\|checkout"
+says "no screen is NOT AVAILABLE"     "$out" "NOT AVAILABLE"
+says "and browser support says why"   "$out" "backend-only\|Expected on a server"
+if printf '%s' "$out" | grep -q "Browser support   FAIL"; then
+  bad "a server with no screen is reported as a failure"
+else
+  ok "a server with no screen is not a failure"
+fi
 
 echo
 echo "### uninstall explains before it removes, and keeps data by default"
