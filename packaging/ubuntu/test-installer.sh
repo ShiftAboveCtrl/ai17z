@@ -16,6 +16,24 @@ pass=0; fail=0
 ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
 
+# What the installer checks for before it checks anything interesting: sudo,
+# then curl. A bare ubuntu image has neither, so without this the run stops at
+# "sudo is not installed" and every case below it reports a refusal that is real
+# but is not the one being tested.
+#
+# This file used to pass only when something else had installed them first --
+# test-lifecycle.sh does, and running the two in one container hid it. A suite
+# whose result depends on what ran before it will one day say "passed" about
+# code nobody exercised.
+apt-get update -qq >/dev/null 2>&1
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo curl ca-certificates >/dev/null 2>&1
+for tool in sudo curl sha256sum; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "FAIL: this container has no ${tool}, so nothing below would be testing what it says"
+    exit 1
+  }
+done
+
 # The installer reads /etc/os-release directly, which a test cannot replace. So
 # a copy is made with that one read pointed at a fixture, and nothing else about
 # it is changed. Done here, as root, because the sandbox is not writable by the

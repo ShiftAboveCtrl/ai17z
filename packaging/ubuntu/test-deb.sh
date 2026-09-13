@@ -26,10 +26,20 @@ cp packaging/ubuntu/ai17z packaging/ubuntu/ai17z.desktop packaging/ubuntu/postin
 cp packaging/windows/ai17z-256.png "$STAGE/packaging/windows/" 2>/dev/null || true
 cp LICENSE README.md "$STAGE/"
 printf '{"version":"%s","name":"AI17Z Beta 1.0.0 (16)"}\n' "$VERSION" > "$STAGE/BUILD_INFO.json"
-for c in start stop restart doctor update uninstall; do
-  printf '#!/usr/bin/env bash\necho "ai17z %s ran"\necho "env=$AI17Z_ENV_FILE"\necho "node=$AI17Z_RUNTIME_NODE"\n' "$c" \
-    > "$STAGE/packaging/ubuntu/ai17z-$c.sh"
-  chmod +x "$STAGE/packaging/ubuntu/ai17z-$c.sh"
+for target in lifecycle update; do
+  printf '#!/usr/bin/env bash\necho "ai17z %s ran: $1"\necho "env=$AI17Z_ENV_FILE"\necho "node=$AI17Z_RUNTIME_NODE"\n' "$target" \
+    > "$STAGE/packaging/ubuntu/ai17z-$target.sh"
+  chmod +x "$STAGE/packaging/ubuntu/ai17z-$target.sh"
+done
+
+# Taken from the launcher rather than from memory. The stub list used to be one
+# script per command, which is what the launcher dispatched to before the
+# lifecycle was consolidated into a single file. Nothing noticed, because every
+# case after the install ran against a launcher that could not find anything and
+# this file had no pass/fail accounting -- its exit code was whatever happened to
+# run last.
+for wanted in $(grep -o 'packaging/ubuntu/ai17z-[a-z]*\.sh' packaging/ubuntu/ai17z | sort -u); do
+  [ -f "$STAGE/$wanted" ] || { echo "FAIL: the launcher execs $wanted and the stage has no such file"; exit 1; }
 done
 
 echo "### building the package"
@@ -77,7 +87,16 @@ grep -q "runs as you, not as root" /tmp/root.log && echo "  ok    refused, with 
 echo
 echo "### as an ordinary user"
 useradd -m -s /bin/bash owner 2>/dev/null || true
-su - owner -c 'ai17z doctor' | sed 's/^/  /'
+# Checked rather than printed. The launcher reaching its lifecycle script is the
+# one thing an installed package has to be able to do, and printing the failure
+# without failing is how it went unnoticed through several releases.
+if su - owner -c 'ai17z doctor' 2>&1 | tee /tmp/doctor.out | sed 's/^/  /'; then :; fi
+if grep -q 'lifecycle ran' /tmp/doctor.out; then
+  echo "  ok    the launcher reached its lifecycle script"
+else
+  echo "  FAIL  the installed launcher could not run a command"
+  BROKEN=1
+fi
 
 echo
 echo "### XDG layout, created as the user, and private"
@@ -96,3 +115,10 @@ su - owner -c 'test -d ~/.config/ai17z && test -d ~/.local/share/ai17z' \
 
 echo
 echo "### DONE"
+
+echo
+if [ "${BROKEN:-0}" = "1" ]; then
+  echo "  something above failed"
+  exit 1
+fi
+echo "  the package built, installed, ran and purged"
