@@ -15,7 +15,7 @@
 # Reads only. Starts nothing, changes nothing.
 
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")"
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 # Where this installation's data is. One resolver, shared with every other
 # shipped script: AI17Z_ENV_FILE, then data-location.txt beside the program,

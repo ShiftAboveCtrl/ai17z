@@ -15,7 +15,7 @@
 # close a window somebody is signing into.
 
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")"
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 # Where this installation's data is. One resolver, shared with every other
 # shipped script: AI17Z_ENV_FILE, then data-location.txt beside the program,
@@ -30,7 +30,7 @@ else
 fi
 
 
-GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
+GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
 step() { echo "  ${CYAN}$1${OFF}"; }
 done_() { echo "  ${GREEN}$1${OFF}"; }
 warn() { echo "  ${YELLOW}$1${OFF}"; }

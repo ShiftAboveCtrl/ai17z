@@ -115,10 +115,17 @@ else
   mkdir -p "$AI17Z_STORAGE_DIR"
   # Only browser work. The containerised worker takes everything else, and two
   # workers claiming the same jobs is just contention.
-  AI17Z_WORKER_ROLE=browser \
-  # The pid matters: two native workers sharing an id is two processes with one
-  # identity, and both the job lease and the account lease stop separating them.
-  AI17Z_WORKER_ID="native-$(hostname)-$$" \
+  #
+  # The id matters as much: two native workers sharing one is two processes
+  # with a single identity, and both the job lease and the account lease stop
+  # separating them.
+  #
+  # Every assignment on one line, deliberately. A backslash continuation
+  # followed by a *comment* ends the command -- the next line is then read as a
+  # command of its own -- so the comments that used to sit between these lines
+  # meant `AI17Z_WORKER_ROLE=browser` was a standalone assignment that never
+  # reached the worker. The native worker was claiming every kind of job.
+  AI17Z_WORKER_ROLE=browser AI17Z_WORKER_ID="native-$(hostname)-$$" \
     nohup npm run dev:worker >"$LOG_FILE" 2>"${LOG_FILE}.err" &
   echo $! > "$PID_FILE"
   sleep 2

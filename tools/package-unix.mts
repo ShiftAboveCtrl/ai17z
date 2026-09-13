@@ -52,6 +52,7 @@ const SHARED_UNIX = [
   // one of them exits on its first line saying so -- which is the right
   // failure, and one that must never actually happen.
   'packaging/unix/ai17z-paths.sh',
+  'packaging/unix/preflight.mts',
   'start-ai17z.sh',
   'stop-ai17z.sh',
   'restart-ai17z.sh',
@@ -64,6 +65,8 @@ const PLATFORM_FILES: Record<'ubuntu' | 'macos', string[]> = {
   ubuntu: [
     'install-ai17z-ubuntu.sh',
     'packaging/ubuntu/ai17z',
+    'packaging/ubuntu/ai17z-lifecycle.sh',
+    'packaging/ubuntu/ai17z-update.sh',
     'packaging/ubuntu/ai17z.desktop',
     'packaging/ubuntu/postinst',
     'packaging/ubuntu/postrm',
