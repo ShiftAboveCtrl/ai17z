@@ -22,6 +22,7 @@ macOS and Ubuntu platforms, and -- more importantly -- what was not.
 | `packaging/ubuntu/test-lifecycle.sh` | Ubuntu 24.04 container, real `.deb` | 19 passed |
 | `packaging/ubuntu/test-deb.sh` | Ubuntu 24.04 container, real `.deb` | lintian 0 errors |
 | `packaging/macos/test-tarball.sh` | Ubuntu container (packaging only) | 39 passed |
+| `packaging/ubuntu/test-deb.sh` | bare Ubuntu 24.04 container | builds, installs, runs, purges |
 | `shellcheck -S warning -x` | every shell file, both platforms | clean |
 | `verify:install --twice --upgrade --bootstrap --instances --no-git` | Windows | exit 0 |
 
@@ -62,6 +63,60 @@ knows exactly what to look at: [what still needs a
 Mac](MACOS_TEST_CHECKLIST.md) and [what still needs a real Ubuntu
 machine](UBUNTU_TEST_CHECKLIST.md). Record what you observe in this file,
 under the release you observed it on, with the OS version and the hardware.
+
+### The update gate that had never been run
+
+`preflight` in `@xbam/shared` decides whether a release can run on a machine,
+and every updater is meant to ask it before it stops anything, so that "no"
+costs a download rather than somebody's working installation.
+
+Two faults, found by looking for who actually called it:
+
+**Windows never asked.** macOS and Ubuntu both did; Windows checked its own
+compiled-in floors, downloaded, stopped the running AI17Z, and found out
+afterwards. Worse, an installed copy updates by running its *own* setup script,
+which carries the *old* floors -- so a release that raised one could stop a
+working installation and then fail. The bridge lived under `packaging/unix/`,
+which is why. It now sits above the platform directories and all three run it.
+
+**Nothing had ever executed the bridge at all.** It reaches `@xbam/shared`
+through the packaged tsx from inside an installed copy, and every updater
+swallows a failure there and prints "could not read this release's compatibility
+manifest; continuing". That sentence is correct for a release published before
+manifests existed, so at runtime a missing manifest and a dead gate are
+indistinguishable. It fails open and reassures you while it does.
+
+Both packagers now run the real bridge in the real stage, with a manifest built
+through the real schema, and assert **both** verdicts. The refusal is the half
+that matters: a bridge that cannot start prints nothing, and an OK-only check
+would pass on it. This is the same reasoning as the TypeScript transform the
+Windows packager runs -- a guard that lists files cannot catch a missing binary.
+
+Proved on this tree: the Windows stage built by `npm run package:windows`
+answers `OK` for a supported machine and `NO` for an unsupported one, which is
+`verify:install` staging successfully.
+
+### Two Ubuntu suites that were not testing what they said
+
+Found by running each one alone in a bare `ubuntu:24.04`, which is how they are
+documented to run.
+
+`test-deb.sh` stubbed one script per command -- the shape the launcher used
+before the lifecycle was consolidated into one file. The package it built
+carried a launcher that could not find anything, and every case after the
+install ran against it. It had no pass/fail accounting, so it printed its
+findings and exited with whatever ran last: `No such file or directory`, exit
+127, unread. The dead half covers the launcher reaching its lifecycle script,
+the env file resolving to the XDG config, the bundled runtime being the one
+used, 0700 directories, XDG overrides, and a purge that keeps the owner's data.
+
+`test-installer.sh` passed only when something else had installed `sudo` and
+`curl` first. `test-lifecycle.sh` does, and running the two in one container hid
+it; alone, four cases reported a refusal that was real and was not the one under
+test.
+
+Both are self-contained now, and both were mutation-tested to confirm they go
+red for the right reason.
 
 ### Nothing an owner made can reach a package
 
