@@ -1,0 +1,6 @@
+{
+  "_comment": "The Node every platform package carries. One place, so an Ubuntu package and a macOS package can never be built against different runtimes. Verified against nodejs.org's published SHASUMS256.txt at build time; changing this version changes what every package ships.",
+  "version": "v22.23.2",
+  "line": "22",
+  "why": "matches engines.node >=22, the Node CI builds and tests with, and Setup-AI17Z.ps1's MinimumNodeMajor"
+}

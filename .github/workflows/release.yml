@@ -45,6 +45,10 @@ on:
 
 permissions:
   contents: write
+  # What actions/attest-build-provenance needs to sign a statement about the
+  # artifacts. Nothing else in this workflow uses either.
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -250,6 +254,25 @@ jobs:
           & "$env:ISCC" "/DAppVersion=${{ steps.version.outputs.version }}" packaging\windows\ai17z.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with $LASTEXITCODE" }
 
+      - name: Attest what was built
+        # GitHub's own artifact attestation: a signed statement that these exact
+        # bytes came out of this workflow, at this commit, in this repository.
+        #
+        # It is **not** Apple notarization and **not** Debian archive signing,
+        # and the documentation says so in those words. It answers "did this
+        # come from where it claims", not "has a platform vendor vouched for
+        # it". Verification needs the GitHub CLI and is never required to
+        # install AI17Z.
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            dist/AI17Z-Setup-*.exe
+            dist/Install-AI17Z-*.ps1
+            dist/AI17Z-App-*.zip
+            dist/AI17Z-macos-*.tar.gz
+            dist/ai17z_*.deb
+        continue-on-error: true
+
       - name: Publish the setup script and its audit manifest beside it
         shell: pwsh
         run: |
@@ -320,11 +343,179 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
+  # macOS, natively, once per architecture.
+  #
+  # A matrix rather than one job that relabels: an arm64 package built on an
+  # Intel runner carries x86_64 native modules under an arm64 name, and the
+  # failure lands on somebody else's Mac as "cannot load". `macos-14` is Apple
+  # Silicon and `macos-13` is Intel, which is how the two are actually got.
+  # ---------------------------------------------------------------------------
+  macos:
+    name: build macOS ${{ matrix.arch }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14, arch: arm64 }
+          - { runner: macos-13, arch: x64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Work out the version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then v="${{ inputs.version }}"
+          else v="${GITHUB_REF_NAME#v}"; fi
+          [ -n "$v" ] || { echo "no version"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - name: The architecture this runner really is
+        run: |
+          # Asserted rather than assumed. A matrix entry pointing at the wrong
+          # runner would otherwise ship a mislabelled package.
+          actual="$(uname -m)"
+          want="${{ matrix.arch }}"
+          case "$want:$actual" in
+            arm64:arm64|x64:x86_64) echo "runner is $actual, as expected" ;;
+            *) echo "runner is $actual but this job builds $want"; exit 1 ;;
+          esac
+
+      - name: Stage the application
+        run: npm run package:unix -- --platform macos --stage "$RUNNER_TEMP/stage"
+
+      - name: Build the package
+        run: |
+          bash packaging/macos/build-tarball.sh \
+            --stage "$RUNNER_TEMP/stage" \
+            --version "${{ steps.version.outputs.version }}" \
+            --arch "${{ matrix.arch }}" \
+            --node "$(node -p "require('./packaging/node-runtime.json').version")" \
+            --out "$RUNNER_TEMP/out"
+
+      - name: Prove the package runs its own Node
+        run: |
+          # The smoke test that matters: the bundled runtime, on the machine the
+          # package was built for, reporting the version and architecture it is
+          # supposed to be. A package whose Node cannot start is one that
+          # installs happily and then does nothing.
+          tar -xzf "$RUNNER_TEMP/out/AI17Z-macos-${{ matrix.arch }}-${{ steps.version.outputs.version }}.tar.gz" \
+            -C "$RUNNER_TEMP"
+          NODE="$RUNNER_TEMP/AI17Z/runtime/node/bin/node"
+          "$NODE" --version
+          echo "arch: $("$NODE" -p 'process.arch')"
+          [ "$("$NODE" -p 'process.arch')" = "${{ matrix.arch }}" ] || { echo "wrong arch"; exit 1; }
+          # And that tsx transforms, which is every npm script an installed copy runs.
+          "$NODE" "$RUNNER_TEMP/AI17Z/app/node_modules/tsx/dist/cli.mjs" \
+            -e 'console.log("tsx ok")'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: ${{ runner.temp }}/out/AI17Z-macos-*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Ubuntu, once per architecture.
+  #
+  # arm64 is built on an arm64 runner for the same reason macOS is: the native
+  # modules and the bundled Node are architecture-specific, and relabelling
+  # produces a package that installs and cannot run.
+  # ---------------------------------------------------------------------------
+  ubuntu:
+    name: build Ubuntu ${{ matrix.arch }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Work out the version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then v="${{ inputs.version }}"
+          else v="${GITHUB_REF_NAME#v}"; fi
+          [ -n "$v" ] || { echo "no version"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: The architecture this runner really is
+        run: |
+          actual="$(dpkg --print-architecture)"
+          [ "$actual" = "${{ matrix.arch }}" ] || { echo "runner is $actual, job builds ${{ matrix.arch }}"; exit 1; }
+          echo "runner is $actual, as expected"
+
+      - name: Install
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - name: Stage the application
+        run: npm run package:unix -- --platform ubuntu --stage "$RUNNER_TEMP/stage"
+
+      - name: Build the package
+        run: |
+          bash packaging/ubuntu/build-deb.sh \
+            --stage "$RUNNER_TEMP/stage" \
+            --version "${{ steps.version.outputs.version }}" \
+            --arch "${{ matrix.arch }}" \
+            --node "$(node -p "require('./packaging/node-runtime.json').version")" \
+            --out "$RUNNER_TEMP/out"
+
+      - name: lintian
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lintian
+          # Errors fail the build. Warnings are printed and not suppressed
+          # wholesale: the three that are upstream Node being upstream Node have
+          # named overrides inside the package, with reasons.
+          lintian --fail-on error \
+            "$RUNNER_TEMP/out/ai17z_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb"
+
+      - name: Install it, and prove the bundled runtime works
+        run: |
+          sudo apt-get install -y "$RUNNER_TEMP/out/ai17z_${{ steps.version.outputs.version }}_${{ matrix.arch }}.deb"
+          /usr/lib/ai17z/runtime/node/bin/node --version
+          [ "$(/usr/lib/ai17z/runtime/node/bin/node -p 'process.arch')" = \
+            "$([ "${{ matrix.arch }}" = amd64 ] && echo x64 || echo arm64)" ] || { echo "wrong arch"; exit 1; }
+          /usr/lib/ai17z/runtime/node/bin/node \
+            /usr/lib/ai17z/app/node_modules/tsx/dist/cli.mjs -e 'console.log("tsx ok")'
+          # The package removes cleanly and leaves nothing of the program behind.
+          sudo apt-get purge -y ai17z
+          [ ! -d /usr/lib/ai17z ] || { echo "purge left files behind"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-${{ matrix.arch }}
+          path: ${{ runner.temp }}/out/ai17z_*.deb
+          if-no-files-found: error
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
   # Publish.
   # ---------------------------------------------------------------------------
   publish:
     name: publish the release
-    needs: build
+    needs: [build, macos, ubuntu]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -338,8 +529,16 @@ jobs:
       - name: Download what was built
         uses: actions/download-artifact@v4
         with:
-          name: release-artifacts
+          # Every platform's artifacts, flattened into one directory below.
           path: dist
+
+      - name: The readable installers, from this tag
+        run: |
+          set -euo pipefail
+          # Repository files rather than build outputs, copied in before the
+          # checksums so they are covered like everything else. What a person
+          # downloads and reads is exactly what this tag holds.
+          cp install-ai17z-macos.sh install-ai17z-ubuntu.sh dist/
 
       - name: Checksums
         run: |
@@ -357,7 +556,24 @@ jobs:
           # a byte. A SHA256SUMS.txt missing either name is a release that
           # cannot be installed at all -- deliberately, because neither script
           # will accept a payload whose hash it cannot establish.
-          sha256sum AI17Z-Setup-*.exe install.ps1 Install-AI17Z-*.ps1 AI17Z-App-*.zip | tee SHA256SUMS.txt
+          sha256sum AI17Z-Setup-*.exe install.ps1 Install-AI17Z-*.ps1 AI17Z-App-*.zip \
+            install-ai17z-macos.sh install-ai17z-ubuntu.sh \
+            AI17Z-macos-*.tar.gz ai17z_*.deb | tee SHA256SUMS.txt
+
+      - name: The release manifest
+        run: |
+          set -euo pipefail
+          # Built here, from the directory the release is attached out of, so
+          # its hashes are the ones somebody will actually get. Every asset name
+          # in it comes from @xbam/shared, which is the only place one is
+          # composed -- the alternative is the same string typed into a
+          # workflow, two shell scripts and a PowerShell file, disagreeing.
+          npx tsx tools/release-manifest.mts \
+            --dist dist \
+            --version "${{ needs.build.outputs.version }}" \
+            --commit "${{ github.sha }}" \
+            --run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          cat dist/release-manifest.json
 
       - name: The audit document for this release
         run: |
@@ -373,6 +589,7 @@ jobs:
           # published out of -- an audit document is only worth anything if its
           # hashes are the ones somebody will get.
           ARTIFACTS=$(cd dist && sha256sum AI17Z-Setup-*.exe install.ps1 Install-AI17Z-*.ps1 AI17Z-App-*.zip \
+            install-ai17z-macos.sh install-ai17z-ubuntu.sh AI17Z-macos-*.tar.gz ai17z_*.deb \
             | jq -R -s 'split("\n") | map(select(length > 0) | split("  ") | {name: .[1], sha256: .[0]})')
 
           jq -n \
@@ -580,6 +797,11 @@ jobs:
             dist/install.ps1
             dist/Install-AI17Z-*.ps1
             dist/AI17Z-App-*.zip
+            dist/AI17Z-macos-*.tar.gz
+            dist/ai17z_*.deb
+            dist/install-ai17z-macos.sh
+            dist/install-ai17z-ubuntu.sh
+            dist/release-manifest.json
             dist/AI17Z-Setup-Audit-*.json
             dist/SHA256SUMS.txt
             docs/RELEASE_VALIDATION_REPORT.md
