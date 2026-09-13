@@ -96,7 +96,9 @@ describe('the files GitHub reads before anything runs', () => {
     for (const path of everyFile) {
       const lines = readFileSync(resolve(root, path), 'utf8').split(/\r?\n/);
       lines.forEach((line, index) => {
-        if (!line.includes('trap ')) return;
+        // A `trap` that runs, not a comment explaining one.
+        if (/^\s*#/.test(line)) return;
+        if (!/^\s*trap /.test(line)) return;
         expect(line.trimEnd().endsWith("' ERR"), `${path}:${index + 1} has a trap that does not end: ${line.trim()}`).toBe(
           true,
         );

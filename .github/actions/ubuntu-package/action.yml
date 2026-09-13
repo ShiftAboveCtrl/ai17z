@@ -178,8 +178,9 @@ runs:
         id -u owner >/dev/null 2>&1 || sudo useradd -m -s /bin/bash owner
 
         echo "--- version and the bundled node, through the launcher ---"
-        sudo -u owner -H bash -lc 'ai17z version'
-        sudo -u owner -H bash -lc "ai17z node -p 'process.arch'"
+        say() { bash .github/scripts/say-on-fail.sh "$@"; }
+        say 'ai17z version' -- sudo -u owner -H bash -lc 'ai17z version'
+        say 'ai17z node' -- sudo -u owner -H bash -lc "ai17z node -p 'process.arch'"
 
         echo "--- root is refused ---"
         if sudo -H bash -lc 'ai17z version' >/dev/null 2>&1; then
@@ -188,7 +189,11 @@ runs:
         echo "  refused, as it should be"
 
         echo "--- XDG directories, created private ---"
+        # Docker is not running for this user on a runner, so doctor is expected
+        # to report that rather than to succeed. What is under test is that it
+        # produces a report at all, from a packaged layout.
         sudo -u owner -H bash -lc 'ai17z doctor' > "$RUNNER_TEMP/doctor.txt" 2>&1 || true
+        sed 's/^/    /' "$RUNNER_TEMP/doctor.txt" | head -40
         sed 's/^/  /' "$RUNNER_TEMP/doctor.txt"
         for dir in .config/ai17z .local/share/ai17z .local/state/ai17z; do
           mode="$(sudo -u owner stat -c '%a' "/home/owner/$dir")"
