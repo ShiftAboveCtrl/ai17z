@@ -96,7 +96,7 @@ if [ -n "$MANIFEST_URL" ] && fetch "$WORK/manifest.json" "$MANIFEST_URL"; then
   CHROME_APP="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
   CHROME_MAJOR="$("$CHROME_APP" --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo '')"
   VERDICT="$(cd "$APP_ROOT" && "$NODE_BIN" "$APP_ROOT/node_modules/tsx/dist/cli.mjs" \
-    "$APP_ROOT/packaging/unix/preflight.mts" "$WORK/manifest.json" macos "$ARCH" \
+    "$APP_ROOT/packaging/preflight.mts" "$WORK/manifest.json" macos "$ARCH" \
     "$(sw_vers -productVersion)" "$DOCKER_VERSION" "$CHROME_MAJOR" 2>/dev/null || echo SKIP)"
   case "$VERDICT" in
     NO*) oops "AI17Z ${VERSION} cannot run on this Mac." "$(printf '%s' "$VERDICT" | tail -n +2)" \

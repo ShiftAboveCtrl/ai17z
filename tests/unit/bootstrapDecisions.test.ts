@@ -719,4 +719,58 @@ describe('what AI17Z Setup decides about a machine', () => {
       expect(point).toBeLessThan(0x7f);
     }
   });
+
+  /**
+   * The gate that stops an update this PC cannot survive.
+   *
+   * Its refusal is the easy half. The half worth testing is everything that is
+   * not a refusal: a release published before manifests existed, an
+   * installation made before the gate existed, a PC with no Node. Each of those
+   * has to carry on, because a refusal there refuses every update for every
+   * copy already on somebody's machine -- the opposite of what the gate is for.
+   *
+   * The refusing branch needs a release on the network and a Node to ask with.
+   * The packagers prove that one, in a real stage, both verdicts.
+   */
+  describe('whether an update can even be asked whether it fits', () => {
+    it('carries on through every way of having nothing to ask', () => {
+      if (!shell) return;
+      const [noManifest, noBridge, noTsx, noNode, ready] = askValues<{ Askable: boolean; Why: string }>([
+        { fn: 'Test-Ai17zGateAskable', args: [false, true, true, true] },
+        { fn: 'Test-Ai17zGateAskable', args: [true, false, true, true] },
+        { fn: 'Test-Ai17zGateAskable', args: [true, true, false, true] },
+        { fn: 'Test-Ai17zGateAskable', args: [true, true, true, false] },
+        { fn: 'Test-Ai17zGateAskable', args: [true, true, true, true] },
+      ]);
+      for (const answer of [noManifest, noBridge, noTsx, noNode]) {
+        expect(answer!.Askable).toBe(false);
+        // Said, not shrugged. A log line nobody can act on is still the
+        // difference between a diagnosis and a guess.
+        expect(answer!.Why.length).toBeGreaterThan(0);
+      }
+      expect(ready!.Askable).toBe(true);
+      expect(ready!.Why).toBe('');
+    });
+
+    it('reads a refusal, a blessing, and nothing at all', () => {
+      if (!shell) return;
+      const [refused, blessed, silent, failed, unknown] = askValues<{ Verdict: string; Reasons: unknown }>([
+        { fn: 'Read-Ai17zGateVerdict', args: [0, 'NO\nAI17Z 9.9.9 needs Docker 26.0.0 or newer. This is 25.0.0.'] },
+        { fn: 'Read-Ai17zGateVerdict', args: [0, 'OK\nGoogle Chrome was not found.'] },
+        // A bridge that could not start prints nothing. That is exactly what a
+        // dead gate looks like, and reading it as a blessing or a refusal would
+        // both be wrong.
+        { fn: 'Read-Ai17zGateVerdict', args: [0, ''] },
+        { fn: 'Read-Ai17zGateVerdict', args: [1, 'Cannot find module tsx'] },
+        { fn: 'Read-Ai17zGateVerdict', args: [0, 'SKIP\nthe release manifest is not JSON'] },
+      ]);
+      expect(refused!.Verdict).toBe('NO');
+      expect(([] as string[]).concat(refused!.Reasons as string[])[0]).toContain('Docker');
+      expect(blessed!.Verdict).toBe('OK');
+      expect(silent!.Verdict).toBe('UNKNOWN');
+      expect(failed!.Verdict).toBe('UNKNOWN');
+      expect(unknown!.Verdict).toBe('UNKNOWN');
+    });
+  });
+
 });
