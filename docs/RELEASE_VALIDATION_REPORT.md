@@ -8,6 +8,66 @@ The release workflow attaches this file to the release.
 
 ---
 
+## Cross-platform: macOS and Ubuntu
+
+Not a release of its own yet. This records what was proved while building the
+macOS and Ubuntu platforms, and -- more importantly -- what was not.
+
+### What ran, on what
+
+| Suite | Platform | Result |
+| --- | --- | --- |
+| `packaging/unix/test-paths.sh` | Ubuntu 24.04 container | 15 passed |
+| `packaging/ubuntu/test-installer.sh` | Ubuntu 24.04 container | 15 passed |
+| `packaging/ubuntu/test-lifecycle.sh` | Ubuntu 24.04 container, real `.deb` | 19 passed |
+| `packaging/ubuntu/test-deb.sh` | Ubuntu 24.04 container, real `.deb` | lintian 0 errors |
+| `packaging/macos/test-tarball.sh` | Ubuntu container (packaging only) | 36 passed |
+| `shellcheck -S warning -x` | every shell file, both platforms | clean |
+| `verify:install --twice --upgrade --bootstrap --instances --no-git` | Windows | exit 0 |
+
+The Ubuntu cases install, exercise and purge a package built by the real build
+script, with a Node runtime really fetched from nodejs.org and really verified.
+
+### Git is not required
+
+`--no-git` removes every directory holding a `git.exe` from the environment each
+shortcut is given, asserts `Get-Command git` resolves to nothing, and only then
+installs. The whole Windows run passed underneath that.
+
+Grepping for `git` proves nothing here: the one caller on the release path is
+`Invoke-Quiet git`, written to tolerate git being absent. The only way to find
+out is to take it away.
+
+### BLOCKED, and not claimed
+
+- **Anything requiring a Mac.** That the Mach-O binaries run; Gatekeeper;
+  quarantine; Terminal paste protection; Docker Desktop's first-run behaviour;
+  Chrome's DMG flow. No Mac hardware or runner is available here. The macOS
+  packages are built and their *shape* is verified on Linux -- including that
+  `file` confirms each carries the architecture it claims -- but nothing has
+  executed them.
+- **Ubuntu with a graphical session.** Containers have no screen, so the browser
+  worker's start, crash-recovery and Chrome handling on a real desktop are
+  unexercised. What is proved is the path a server takes: reported NOT
+  AVAILABLE, nothing started, everything else running.
+- **Ubuntu 22.04 and 26.04.** Tested on 24.04 only. The other two are declared
+  supported on Docker Engine's own list; that is source-inspected, not run.
+- **arm64.** Both arm64 packages build, and the build refuses a runner whose
+  architecture disagrees. Neither has been installed on arm64 hardware.
+- **A real multi-platform release.** The workflow builds five jobs and has not
+  yet run: no tag has been pushed since it was written.
+
+### A bug found by shellcheck, not by reading
+
+`start-ai17z.sh` set `AI17Z_WORKER_ROLE=browser` on a line whose continuation was
+broken by a comment. A backslash continuation followed by a comment ends the
+command, so the assignment was standalone and never reached the worker -- every
+native worker started on Unix has been claiming jobs of every kind and competing
+with the containerised one. This repository already had that trap written down
+for backticks. It is the same trap.
+
+---
+
 ## AI17Z Beta 1.0.0 (16)
 
 The first release the terminal install command can actually install. Beta

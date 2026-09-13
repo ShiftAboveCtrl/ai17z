@@ -15,13 +15,13 @@
  *   npm run package:unix -- --platform ubuntu --stage <dir>
  */
 import { execFile } from 'node:child_process';
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { releaseName } from '@xbam/shared';
-import { INCLUDE } from './package-windows.mjs';
+import { INCLUDE, copyFiltered } from './package-windows.mjs';
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -105,7 +105,13 @@ async function main(): Promise<void> {
     }
     const to = join(stage, entry);
     await mkdir(dirname(to), { recursive: true });
-    await cp(from, to, { recursive: true });
+    // Filtered, exactly as the Windows packager filters. `cp` on its own copies
+    // whatever is inside an included directory, and what is inside somebody's
+    // checkout includes their `.env`, their `storage`, and the browser profile
+    // they are signed into X with. A deny-list is a promise to have thought of
+    // everything; sharing one with the other packager is how that promise stays
+    // kept in both places at once.
+    await copyFiltered(from, to);
   }
 
   console.log('  installing production dependencies');

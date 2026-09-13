@@ -37,6 +37,21 @@ case "$ARCH" in arm64|x64) ;; *) echo "unsupported architecture: $ARCH" >&2; exi
 
 say() { printf '  %s\n' "$1"; }
 
+# Whatever the stage was handed, nothing of an owner's leaves here.
+#
+# The stager filters these already. This is the second gate on purpose: a
+# packaging script that ships somebody's master key because its input was dirty
+# is still a packaging script that shipped somebody's master key. `.env.example`
+# is deliberately kept -- it is the template the first run builds from, its key
+# line is empty, and leaving it out was an installed build's very first failure.
+prune_owner_files() { # root
+  find "$1" -name '.env' -delete
+  find "$1" -name '.env.local' -delete
+  find "$1" -name '.env.*' ! -name '.env.example' -delete
+  find "$1" -type d \( -name storage -o -name browser-profiles -o -name .git \) -prune -exec rm -rf {} + 2>/dev/null || true
+  find "$1" -name '*.tsbuildinfo' -delete
+}
+
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
 PKG="$ROOT/AI17Z"
@@ -48,6 +63,7 @@ mkdir -p "$PKG"
 # The application
 # ---------------------------------------------------------------------------
 cp -R "$STAGE" "$PKG/app"
+prune_owner_files "$PKG/app"
 
 # Permissions from what each file is, never from what the build host said.
 find "$PKG/app" -type d -exec chmod 0755 {} +

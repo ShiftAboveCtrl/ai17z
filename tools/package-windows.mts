@@ -146,7 +146,7 @@ const SHIPPED_SCRIPTS = [
 ];
 
 /** Never shipped, even when it sits inside something that is. */
-const EXCLUDE_NAMES = new Set([
+export const EXCLUDE_NAMES = new Set([
   'node_modules',
   '.git',
   '.env',
@@ -161,7 +161,7 @@ const EXCLUDE_NAMES = new Set([
   '.vite',
 ]);
 
-async function copyFiltered(from: string, to: string): Promise<void> {
+export async function copyFiltered(from: string, to: string): Promise<void> {
   await cp(from, to, {
     recursive: true,
     force: true,
