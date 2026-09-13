@@ -55,8 +55,7 @@ runs:
       run: |
         set -euo pipefail
         # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s
-" "staging failed: $BASH_COMMAND"' ERR
+        trap 'printf "::error::%s\n" "staging failed: $BASH_COMMAND"' ERR
         echo "node $(node -v), npm $(npm -v), on $(uname -sm)"
         npm run package:unix -- --platform ubuntu --stage "$RUNNER_TEMP/stage"
 
