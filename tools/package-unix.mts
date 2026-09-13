@@ -62,6 +62,7 @@ const SHARED_UNIX = [
 
 const PLATFORM_FILES: Record<'ubuntu' | 'macos', string[]> = {
   ubuntu: [
+    'install-ai17z-ubuntu.sh',
     'packaging/ubuntu/ai17z',
     'packaging/ubuntu/ai17z.desktop',
     'packaging/ubuntu/postinst',
