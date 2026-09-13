@@ -578,7 +578,7 @@ function Invoke-Ai17zWatched {
     [int] $TimeoutSeconds = 3600
   )
   Write-Ai17zLog ('run: ' + $Exe + ' ' + ($Arguments -join ' '))
-  $stdout = Join-Path $script:Ai17zSetupHome ('run-' + [guid]::NewGuid().ToString('N') + '.out')
+  $stdout = [System.IO.Path]::Combine($script:Ai17zSetupHome, 'run-' + [guid]::NewGuid().ToString('N') + '.out')
   $stderr = $stdout + '.err'
 
   $options = @{
@@ -858,10 +858,15 @@ function Get-Ai17zLayout {
   $name = ($name -replace '[\\/:*?"<>|]', '').Trim()
   if (-not $name) { throw 'The instance name is empty once the characters Windows forbids in a folder name are removed.' }
 
+  # [IO.Path]::Combine rather than Join-Path: Join-Path resolves the drive
+  # qualifier through PowerShell's provider, so `C:\...` is an error anywhere
+  # there is no C: drive -- which is every Linux machine, including the one CI
+  # runs these functions on. Combine is string arithmetic and gives the same
+  # answer on Windows, where this actually runs.
   $program = $ProgramDir
-  if (-not $program) { $program = Join-Path (Join-Path $LocalAppData 'Programs') $name }
+  if (-not $program) { $program = [System.IO.Path]::Combine($LocalAppData, 'Programs', $name) }
   $data = $DataDir
-  if (-not $data) { $data = Join-Path $LocalAppData $name }
+  if (-not $data) { $data = [System.IO.Path]::Combine($LocalAppData, $name) }
 
   return [pscustomobject]@{
     Instance = $name

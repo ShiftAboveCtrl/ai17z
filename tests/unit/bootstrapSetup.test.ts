@@ -101,6 +101,23 @@ describe('the setup program is a file somebody can read', () => {
     expect(setup.indexOf('if ($LoadOnly) { return }')).toBeLessThan(setup.indexOf('function Measure-Ai17zMachine'));
   });
 
+  it('the part the tests call does not need a Windows drive to exist', () => {
+    // `Join-Path` resolves the drive qualifier through PowerShell's provider, so
+    // `C:\Users\...` is an error on any machine with no C: drive -- which is
+    // every Linux one, including the machine CI runs these functions on. It
+    // passed on Windows and failed on CI, which is the same shape as the
+    // `node:path` trap this repository has been caught by before.
+    //
+    // Only the decision half is held to this. Everything below the LoadOnly
+    // return runs on Windows by definition.
+    const decisions = setup.slice(0, setup.indexOf('if ($LoadOnly) { return }'));
+    for (const line of decisions.split(/\r?\n/)) {
+      if (/^\s*#/.test(line)) continue;
+      expect(/\bJoin-Path\b/.test(line), `Join-Path in a function the tests call: ${line.trim()}`).toBe(false);
+    }
+    expect(setup).toContain('[System.IO.Path]::Combine(');
+  });
+
   it('can say what it is allowed to do without doing any of it', () => {
     if (!shell) {
       console.log('SKIPPED: no PowerShell here, so the manifest was not read from the program. This is not a pass.');
