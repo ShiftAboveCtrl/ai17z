@@ -33,14 +33,72 @@ fi
 GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; GREY=$'\033[90m'; OFF=$'\033[0m'
 failures=(); todo=()
 
+# Five states, because two of them lie.
+#
+#   PASS            it works
+#   NOT CONFIGURED  it works, you have not set it up yet
+#   NOT AVAILABLE   it cannot work here, and that is fine -- a server has no
+#                   screen, and reporting that as a failure is how somebody
+#                   concludes the software is broken when it is doing its job
+#   NEEDS ACTION    you have to do something, and it says what
+#   UNSUPPORTED     this machine is outside what AI17Z supports
+#   FAIL            it is broken, and here is what to do
+#
+# Only FAIL and NEEDS ACTION are counted against the installation.
 row() { # name status detail
   local colour="$GREY"
   case "$2" in
     PASS) colour="$GREEN" ;;
-    FAIL) colour="$RED" ;;
-    "NOT CONFIGURED"|"NOT RUNNING") colour="$YELLOW" ;;
+    FAIL|UNSUPPORTED) colour="$RED" ;;
+    "NOT CONFIGURED"|"NOT RUNNING"|"NEEDS ACTION") colour="$YELLOW" ;;
+    "NOT AVAILABLE") colour="$GREY" ;;
   esac
-  printf '  %-16s%s%-16s%s%s\n' "$1" "$colour" "$2" "$OFF" "${GREY}$3${OFF}"
+  printf '  %-18s%s%-16s%s%s\n' "$1" "$colour" "$2" "$OFF" "${GREY}$3${OFF}"
+}
+
+# What this machine is, and how AI17Z got here. Printed first, because every
+# answer below is conditional on it and somebody reading a pasted report needs
+# to know which platform produced it.
+ai17z_platform() {
+  case "$(uname -s)" in
+    Darwin) printf 'macos' ;;
+    Linux) printf 'ubuntu' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+ai17z_os_description() {
+  case "$(uname -s)" in
+    Darwin) printf 'macOS %s' "$(sw_vers -productVersion 2>/dev/null || echo '?')" ;;
+    Linux) if [ -r /etc/os-release ]; then
+             ( . /etc/os-release && printf '%s' "${PRETTY_NAME:-Linux}" )
+           else printf 'Linux'; fi ;;
+    *) uname -s ;;
+  esac
+}
+
+# Whether a browser could be driven here at all. A machine with no graphical
+# session is not a broken desktop.
+ai17z_has_screen() {
+  case "$(uname -s)" in
+    Darwin) launchctl print "gui/$(id -u)" >/dev/null 2>&1 ;;
+    *) [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ] ;;
+  esac
+}
+
+ai17z_chrome() {
+  case "$(uname -s)" in
+    Darwin)
+      for c in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+               "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+        [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+      done ;;
+    *)
+      for c in google-chrome google-chrome-stable; do
+        command -v "$c" >/dev/null 2>&1 && { command -v "$c"; return 0; }
+      done ;;
+  esac
+  return 1
 }
 
 env_value() { # key
@@ -48,7 +106,46 @@ env_value() { # key
 }
 
 echo
-echo "AI17Z Doctor"
+printf '  %sAI17Z%s\n\n' "$GREEN" "$OFF"
+
+row "Machine" "PASS" "$(ai17z_os_description) ($(uname -m))"
+
+# How this copy got here, and what it therefore updates with. Read from the
+# marker beside the program; absent means a checkout, which is the honest answer
+# rather than a guess.
+# The launcher of a packaged installation says so outright, and on Ubuntu that
+# is the only way it can: the program directory is root-owned, so nothing there
+# is written by the person running this. A marker file beside the program is how
+# Windows records it, and is read when there is one. Absent both, this is a
+# checkout -- which is the honest answer rather than a guess.
+_install_method="${AI17Z_INSTALL_CHANNEL:-}"
+if [ -z "$_install_method" ] && [ -f "$AI17Z_APP_DIR/INSTALL_INFO.json" ]; then
+  _install_method="$(sed -n 's/.*"\(channel\|installMethod\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' \
+    "$AI17Z_APP_DIR/INSTALL_INFO.json" | head -1)"
+fi
+_install_method="${_install_method:-checkout}"
+row "Install" "PASS" "$_install_method"
+
+if [ -f "$AI17Z_APP_DIR/BUILD_INFO.json" ]; then
+  row "Version" "PASS" "$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$AI17Z_APP_DIR/BUILD_INFO.json" | head -1)"
+else
+  row "Version" "NOT CONFIGURED" "no BUILD_INFO.json; this looks like a checkout"
+fi
+
+# The private runtime, which is what a packaged installation runs. A checkout
+# has none and uses whatever the developer has, which is the point of a
+# checkout rather than a fault.
+if [ -n "${AI17Z_RUNTIME_NODE:-}" ] && [ -x "${AI17Z_RUNTIME_NODE}" ]; then
+  row "Runtime" "PASS" "bundled Node $("$AI17Z_RUNTIME_NODE" --version 2>/dev/null)"
+elif command -v node >/dev/null 2>&1; then
+  row "Runtime" "PASS" "system Node $(node --version 2>/dev/null) (checkout)"
+else
+  row "Runtime" "FAIL" "no Node runtime found"
+  failures+=("Runtime: this installation has no Node. Install AI17Z again.")
+fi
+
+row "Data" "PASS" "$AI17Z_DATA_DIR"
+
 echo
 
 instance="$(env_value AI17Z_INSTANCE)"
@@ -71,19 +168,12 @@ else
   fi
 fi
 
-# -- Node --------------------------------------------------------------------
-if ! command -v node >/dev/null 2>&1; then
-  row "Node" "FAIL" "Not installed."
-  failures+=("Node: AI17Z needs Node 22 or newer for the worker that drives Chrome.")
-else
-  node_major="$(node --version | sed 's/^v//' | cut -d. -f1)"
-  if [ "$node_major" -lt 22 ]; then
-    row "Node" "FAIL" "$(node --version) is too old."
-    failures+=("Node: AI17Z needs Node 22 or newer.")
-  else
-    row "Node" "PASS" "$(node --version)"
-  fi
-fi
+# Node is reported once, by the Runtime row above.
+#
+# It used to be checked again here, against whatever is on PATH -- which on a
+# packaged installation is nothing at all, because the package carries its own.
+# That reported a failure for a machine working exactly as designed. The runtime
+# an installation actually uses is the only one worth asking about.
 
 # -- Configuration -----------------------------------------------------------
 if [ -f "$AI17Z_ENV_FILE" ]; then
@@ -127,36 +217,49 @@ else
   todo+=("Web: run ./start-ai17z.sh.")
 fi
 
-# -- Native worker -----------------------------------------------------------
-if [ -f storage/native-worker.pid ] && kill -0 "$(cat storage/native-worker.pid 2>/dev/null)" 2>/dev/null; then
-  row "Native worker" "PASS" "Running. This is the one that can see Chrome."
-else
-  row "Native worker" "NOT RUNNING" "Not started."
-  todo+=("Native worker: run ./start-ai17z.sh. Without it X accounts cannot be used -- a container cannot drive a browser on your machine.")
-fi
-
-# -- Google Chrome -----------------------------------------------------------
+# -- Browser support ---------------------------------------------------------
+#
+# Three states, and only one of them is a fault.
+#
+# A machine with no graphical session cannot drive a browser and never will --
+# that is Ubuntu Server, and a headless Mac over ssh, and reporting it as FAIL
+# is how somebody concludes AI17Z is broken when it is working exactly as
+# intended. It is NOT AVAILABLE: everything else runs, and browser-backed
+# channels do not.
+#
 # Chromium is not Google Chrome, and AI17Z never substitutes one for the other.
-chrome=""
-for candidate in /usr/bin/google-chrome /usr/bin/google-chrome-stable /opt/google/chrome/chrome; do
-  [ -x "$candidate" ] && chrome="$candidate" && break
-done
-if [ -n "$chrome" ]; then
-  row "Google Chrome" "PASS" "$("$chrome" --version 2>/dev/null | head -1)"
+_screen=no; ai17z_has_screen && _screen=yes
+chrome="$(ai17z_chrome || true)"
+
+if [ "$_screen" = "no" ]; then
+  row "Graphical session" "NOT AVAILABLE" "No screen. AI17Z runs backend-only."
+  row "Google Chrome" "NOT AVAILABLE" "Not useful without a graphical session."
+  row "Browser support" "NOT AVAILABLE" "Expected on a server. Everything else works."
+elif [ -z "$chrome" ]; then
+  row "Graphical session" "PASS" "${WAYLAND_DISPLAY:-${DISPLAY:-yes}}"
+  row "Google Chrome" "NEEDS ACTION" "Not installed."
+  row "Browser support" "NOT AVAILABLE" "Needs Google Chrome."
+  todo+=("Google Chrome: install the real thing from google.com/chrome to use X and other browser-backed channels. Chromium is a different browser and is not used as a substitute. Everything else works without it.")
 else
-  row "Google Chrome" "FAIL" "Not found."
-  failures+=("Google Chrome: install the real thing from google.com/chrome. Chromium is a different browser and is not used as a substitute.")
+  row "Graphical session" "PASS" "${WAYLAND_DISPLAY:-${DISPLAY:-yes}}"
+  row "Google Chrome" "PASS" "$("$chrome" --version 2>/dev/null | head -1)"
+  if [ -f "$AI17Z_STORAGE_DIR/native-worker.pid" ] \
+     && kill -0 "$(cat "$AI17Z_STORAGE_DIR/native-worker.pid" 2>/dev/null)" 2>/dev/null; then
+    row "Browser support" "PASS" "Running. This is the worker that can see Chrome."
+  else
+    row "Browser support" "NOT RUNNING" "Not started."
+    todo+=("Browser support: run 'ai17z start'. Without it browser-backed channels cannot be used -- a container cannot drive a browser on your machine.")
+  fi
 fi
 
-# -- Display -----------------------------------------------------------------
-# Signing in to X means somebody types a password into a real window. Saying so
-# here is better than letting an account connection fail mysteriously later.
-if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
-  row "Display" "PASS" "${DISPLAY:-$WAYLAND_DISPLAY}"
+# Where the signed-in session lives. Under the data directory, never beside the
+# program: the program directory is replaced on every update.
+if [ -d "$AI17Z_BROWSER_PROFILES" ]; then
+  row "Browser profile" "PASS" "$AI17Z_BROWSER_PROFILES"
 else
-  row "Display" "NOT CONFIGURED" "No display detected."
-  todo+=("Display: connecting an X account opens a real Chrome window for you to sign in. On a headless server that needs a desktop session, X forwarding or a virtual display.")
+  row "Browser profile" "NOT CONFIGURED" "Created when a browser account is first connected."
 fi
+
 
 # -- Storage -----------------------------------------------------------------
 profile_root="$(env_value XBAM_BROWSER_PROFILE_DIR)"
