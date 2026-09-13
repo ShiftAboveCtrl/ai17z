@@ -129,7 +129,7 @@ export default tseslint.config(
 
   // -- Scripts and tooling -----------------------------------------------------
   {
-    files: ['tools/**/*.{js,mjs,ts,mts}', 'scripts/**/*.{js,mjs,ts,mts}'],
+    files: ['tools/**/*.{js,mjs,ts,mts}', 'scripts/**/*.{js,mjs,ts,mts}', 'packaging/**/*.{js,mjs,ts,mts}'],
     rules: {
       // These are command-line tools. Their entire user interface is stdout,
       // and routing it through the application logger would put a JSON line

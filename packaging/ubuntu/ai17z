@@ -78,8 +78,11 @@ command="${1:-start}"
 [ $# -gt 0 ] && shift
 
 case "$command" in
-  start|stop|restart|doctor|update|uninstall)
-    exec "$APP_ROOT/packaging/ubuntu/ai17z-$command.sh" "$@"
+  start|stop|restart|launch|status|logs|doctor|uninstall)
+    exec bash "$APP_ROOT/packaging/ubuntu/ai17z-lifecycle.sh" "$command" "$@"
+    ;;
+  update)
+    exec bash "$APP_ROOT/packaging/ubuntu/ai17z-update.sh" "$@"
     ;;
   version)
     exec "$NODE" -e 'console.log(require("/usr/lib/ai17z/app/BUILD_INFO.json").version)'
@@ -92,9 +95,12 @@ case "$command" in
     cat <<'USAGE'
   AI17Z
 
-    ai17z start        start AI17Z and open it
+    ai17z start        start AI17Z
+    ai17z launch       start AI17Z and open it in your browser
     ai17z stop         stop this installation
     ai17z restart      stop, then start
+    ai17z status       what is running right now
+    ai17z logs         follow the logs (ai17z logs worker for browser support)
     ai17z doctor       what is installed, running, healthy or missing
     ai17z update       check for a newer AI17Z and install it
     ai17z uninstall    how to remove AI17Z, and what that keeps

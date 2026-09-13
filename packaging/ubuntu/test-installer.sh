@@ -8,25 +8,13 @@
 # somebody from a half-installed machine, and each one has to be reachable
 # without a release existing.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$PWD"
 INSTALLER="$REPO/install-ai17z-ubuntu.sh"
 
 pass=0; fail=0
 ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
-
-# Runs the installer in a sandbox with a chosen /etc/os-release and PATH.
-attempt() { # os_release_body  extra_env...  -> sets OUT / CODE
-  local body="$1"; shift
-  local room; room="$(mktemp -d)"
-  printf '%s\n' "$body" > "$room/os-release"
-  OUT="$(env "$@" \
-    AI17Z_TEST_OS_RELEASE="$room/os-release" \
-    bash "$room/runner.sh" 2>&1)"
-  CODE=$?
-  rm -rf "$room"
-}
 
 # The installer reads /etc/os-release directly, which a test cannot replace. So
 # a copy is made with that one read pointed at a fixture, and nothing else about
