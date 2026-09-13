@@ -41,9 +41,11 @@ describe('the release does not pretend to sign anything', () => {
   it('declares every job it has, and none of them is signing', () => {
     // Read off the file rather than asserted as an absence, so a signing job
     // reappearing under another name fails here rather than passing quietly.
+    // The platform jobs are named for what they build, and a fourth would have
+    // to be added here deliberately.
     const section = workflow.slice(workflow.indexOf('\njobs:'));
     const jobs = [...section.matchAll(/^ {2}([a-z][a-z0-9-]*):\r?$/gm)].map((match) => match[1]);
-    expect(jobs).toEqual(['validate', 'build', 'publish']);
+    expect(jobs).toEqual(['validate', 'build', 'macos', 'ubuntu', 'publish']);
   });
 
   it('says unsigned where somebody reading the release page will see it', () => {
