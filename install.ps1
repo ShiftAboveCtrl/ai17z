@@ -135,6 +135,13 @@ function Write-Line {
   if ($Text) { Write-Host ('  ' + $Text) -ForegroundColor $Colour } else { Write-Host '' }
 }
 
+# What a deliberate refusal throws, so the boundary at the bottom can tell one
+# from a genuine bug. `throw 'a string'` puts that string in .TargetObject and
+# a real fault leaves it empty, so nothing has to be remembered between runs --
+# a flag set by a refusal would still be set the next time somebody pasted the
+# command into the same session.
+$StopSentinel = 'AI17Z_SETUP_STOPPED'
+
 function Stop-Install {
   param([string] $What, [string] $Why = '', [string] $Do = '')
   Write-Host ''
@@ -147,9 +154,35 @@ function Stop-Install {
     foreach ($line in ($Do -split "`n")) { Write-Host ('  ' + $line) -ForegroundColor Yellow }
   }
   Write-Host ''
-  # `throw`, not `exit`: this runs inside somebody's own PowerShell session, and
-  # `exit` from a piped-in command closes the window they were working in.
-  throw $What
+  # Not `exit`: this runs inside somebody's own PowerShell session, and `exit`
+  # from a piped-in command closes the window they were working in.
+  #
+  # Not a bare `throw` left to reach the top either. Unhandled, it prints
+  # `At line:`, `CategoryInfo` and `FullyQualifiedErrorId` underneath the
+  # message above -- a stack trace for something that is not a crash. A refusal
+  # is a decision this program made on purpose, and it should read like one.
+  # The sentinel unwinds to the boundary, which knows the message is already on
+  # screen and says nothing more.
+  throw $StopSentinel
+}
+
+# The releases that could be installed with this command, newest first.
+#
+# An older release only counts if its own assets say so. Suggesting "try an
+# earlier one" without checking is advice that wastes somebody's afternoon:
+# during the move to the terminal command, no earlier release has the asset at
+# all, and every one of them would fail exactly the same way.
+function Get-CompatibleTags {
+  param($Releases)
+  $tags = @()
+  foreach ($candidate in @($Releases)) {
+    if ($candidate.draft) { continue }
+    $candidateTag = '' + $candidate.tag_name
+    if (-not (Test-ReleaseTag $candidateTag)) { continue }
+    $wanted = [string]::Format($SetupAssetPattern, ($candidateTag -replace '^v', ''))
+    foreach ($asset in $candidate.assets) { if ($asset.name -ieq $wanted) { $tags += $candidateTag; break } }
+  }
+  return $tags
 }
 
 # Whether a release tag is one this will build a name from.
@@ -197,6 +230,18 @@ function Get-Text {
 }
 
 # ---------------------------------------------------------------------------
+# Everything below runs inside one boundary
+#
+# Deliberately not indented. `try` is not a scope in PowerShell, so every
+# variable assigned inside this block is the same variable it would be without
+# it -- and leaving the body where it was keeps this change readable as what it
+# is, which matters for a file whose whole argument is that you can read it.
+#
+# The boundary exists so a refusal reads like a decision instead of a crash.
+# ---------------------------------------------------------------------------
+try {
+
+# ---------------------------------------------------------------------------
 # Enough of a machine to install on
 # ---------------------------------------------------------------------------
 
@@ -242,13 +287,29 @@ $base = 'https://api.github.com/repos/' + $Repository + '/releases'
 # to it converts the object to a string without complaining, and every field
 # read afterwards is empty. It fails as a wrong answer rather than as an error.
 $chosen = $null
+$all = @()
 try {
   if ($Release) {
     $chosen = Get-Text ($base + '/tags/' + $Release) | ConvertFrom-Json
+    # The list as well, but only to answer "was there one that would have
+    # worked" if the named release turns out not to carry what this needs.
+    # Advice is not worth failing an install over, so this one is allowed to
+    # come back empty.
+    try {
+      $fetched = Get-Text ($base + '?per_page=20') | ConvertFrom-Json
+      $all = @($fetched)
+    } catch { $all = @() }
   } else {
     # Not /releases/latest: that hides prereleases, and every AI17Z release so
     # far is one.
-    $all = Get-Text ($base + '?per_page=10') | ConvertFrom-Json
+    #
+    # Assigned first and wrapped second, never `@(... | ConvertFrom-Json)`:
+    # Windows PowerShell hands an array down the pipeline as one object, so
+    # wrapping in the same statement produces a one-element array containing
+    # the array -- and every release then reads as a single release with
+    # twenty of everything.
+    $fetched = Get-Text ($base + '?per_page=20') | ConvertFrom-Json
+    $all = @($fetched)
     $chosen = @($all | Where-Object { -not $_.draft } | Select-Object -First 1)[0]
   }
 } catch {
@@ -279,9 +340,33 @@ foreach ($asset in $chosen.assets) {
   if ($asset.name -ieq $ChecksumAsset) { $sumsAsset = $asset }
 }
 if (-not $setupAsset) {
-  Stop-Install ('Release ' + $tag + ' does not contain ' + $setupName + '.') `
-    'Nothing on this PC was changed.' `
-    ('Install an earlier release with -Release <tag>, or see https://github.com/' + $Repository + '/releases')
+  # Two different situations wearing the same shape, and telling somebody the
+  # wrong one sends them looking for a release that does not exist.
+  $compatible = @(Get-CompatibleTags $all | Where-Object { $_ -ine $tag })
+  $advice = ''
+  if ($compatible.Count -gt 0) {
+    $advice = 'Install the newest one that does with:' + "`n  -Release " + $compatible[0]
+  }
+  if ($Release) {
+    # Somebody named this release. It exists; it just predates the command.
+    if (-not $advice) { $advice = 'See https://github.com/' + $Repository + '/releases' }
+    Stop-Install ('Release ' + $tag + ' cannot be installed with this command.') `
+      ("It does not contain " + $setupName + ", which is the setup program this`ncommand checks and runs." +
+       "`n`nReleases from before the terminal install command carry an installer on`ntheir own page instead." +
+       "`n`nNothing on this PC was changed.") `
+      $advice
+  }
+  # No release was named, so this is the newest there is. Nothing newer exists
+  # to suggest, and saying "try an earlier one" would be worse than saying
+  # nothing: every earlier one fails here for the same reason.
+  if (-not $advice) {
+    $advice = 'Watch https://github.com/' + $Repository + '/releases'
+  }
+  Stop-Install 'AI17Z Setup is newer than the latest published release.' `
+    ("The latest release is " + $tag + ", which does not contain the new terminal`nsetup package (" + $setupName + ")." +
+     "`n`nNothing on this PC was changed." +
+     "`n`nA compatible AI17Z release has not been published yet.") `
+    $advice
 }
 if (-not $sumsAsset) {
   Stop-Install ('Release ' + $tag + ' publishes no SHA256SUMS.txt.') `
@@ -423,4 +508,51 @@ if ($code -ne 0) {
   Write-Line 'AI17Z Setup did not finish. The message above says why.' 'Yellow'
   Write-Line ('What ran is still at ' + $setupPath) 'DarkGray'
   Write-Line
+  $global:LASTEXITCODE = $code
+}
+
+} catch {
+  if ($_.TargetObject -eq $StopSentinel) {
+    # A refusal. Stop-Install has already said what happened, why, and what to
+    # do about it; anything printed here would be a second version of that, and
+    # an error record would be the thing this boundary exists to prevent.
+  } else {
+    # Not a refusal: something went wrong that nobody planned for. Say so in a
+    # sentence, and keep the detail rather than swallowing it -- a silent catch
+    # here would turn a bug into "the command did nothing".
+    $detail = ('' + $_.Exception.Message)
+    Write-Host ''
+    Write-Host '  AI17Z could not finish, and not for a reason it recognises.' -ForegroundColor Red
+    if ($detail) { Write-Host ('  ' + $detail.Split("`n")[0]) -ForegroundColor Gray }
+    Write-Host '  Nothing was installed.' -ForegroundColor Gray
+    try {
+      $logHome = Join-Path $env:LOCALAPPDATA 'AI17Z-setup'
+      if (-not (Test-Path $logHome)) { New-Item -ItemType Directory -Path $logHome -Force | Out-Null }
+      $logPath = Join-Path $logHome 'install-command.log'
+      # Bytes rather than Out-File: `-Encoding utf8` in Windows PowerShell puts
+      # a byte-order mark on the front, and this repository has been caught by
+      # that in a file another program had to read.
+      $entry = @(
+        '--- ' + (Get-Date).ToUniversalTime().ToString('o'),
+        $detail,
+        ('' + $_.ScriptStackTrace),
+        ('' + $_.InvocationInfo.PositionMessage),
+        ''
+      ) -join "`r`n"
+      [System.IO.File]::AppendAllText($logPath, $entry, (New-Object System.Text.UTF8Encoding($false)))
+      Write-Host ''
+      Write-Host ('  Written down in full at ' + $logPath) -ForegroundColor DarkGray
+      Write-Host ('  Please report it at https://github.com/' + $Repository + '/issues') -ForegroundColor Yellow
+    } catch {
+      # Could not write the log. The sentence above is still on screen, which is
+      # the part that matters; failing to record a failure must not become a
+      # second failure.
+    }
+    Write-Host ''
+  }
+  # An observable result for anything driving this, without ending the session
+  # somebody is sitting in: `exit` here would close their terminal. A caller
+  # that wants a process exit code asks for one --
+  #   powershell -Command "irm ... | iex; exit $LASTEXITCODE"
+  $global:LASTEXITCODE = 1
 }

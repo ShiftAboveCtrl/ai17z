@@ -60,8 +60,16 @@ describe('the install command', () => {
     // The help block is not counted: it is the explanation somebody gets when
     // they look before they paste, and making it shorter would be the wrong
     // saving.
+    //
+    // The number was 200 while this only resolved a release and checked a hash.
+    // It went up once, deliberately, for three things that are not padding: a
+    // boundary that stops a refusal printing a stack trace at somebody, a scan
+    // of the release list so "try an earlier one" is never advice given without
+    // evidence, and the two different explanations those two situations need.
+    // Raising it again wants the same kind of argument -- a budget that moves
+    // whenever it is inconvenient is not a budget.
     const lines = installCode.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith('#'));
-    expect(lines.length, 'install.ps1 has grown past being readable in one sitting').toBeLessThan(200);
+    expect(lines.length, 'install.ps1 has grown past being readable in one sitting').toBeLessThan(280);
   });
 
   it('is ASCII, like every other PowerShell file here', () => {

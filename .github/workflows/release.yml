@@ -351,11 +351,12 @@ jobs:
 
           # Every published file, not only the installer.
           #
-          # AI17Z Setup checks the application package against this list when it
-          # is run as a script rather than as the compiled executable, so a
-          # SHA256SUMS.txt that does not name the package is a release the
-          # script will refuse to install from -- deliberately, because it does
-          # not install a payload whose hash it cannot establish.
+          # This list is the whole trust chain: `install.ps1` checks the setup
+          # program against it before running a line of it, and the setup
+          # program checks the application package against it before extracting
+          # a byte. A SHA256SUMS.txt missing either name is a release that
+          # cannot be installed at all -- deliberately, because neither script
+          # will accept a payload whose hash it cannot establish.
           sha256sum AI17Z-Setup-*.exe install.ps1 Install-AI17Z-*.ps1 AI17Z-App-*.zip | tee SHA256SUMS.txt
 
       - name: The audit document for this release
