@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=AI17Z
+GenericName=Autonomous agent platform
+Comment=Run autonomous agents on your own machine
+Exec=ai17z start
+Icon=ai17z
+Terminal=true
+Categories=Development;Utility;
+Keywords=agent;automation;ai;
+StartupNotify=false

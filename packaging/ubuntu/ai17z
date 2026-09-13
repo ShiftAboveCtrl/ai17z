@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#
+# AI17Z on Ubuntu.
+#
+# The package puts the application under /usr/lib/ai17z, which is root-owned and
+# replaced wholesale by apt. Nothing an owner makes lives there. Everything they
+# make lives under their own home, in the directories XDG says to use, and this
+# is the only place those paths are decided:
+#
+#   ~/.config/ai17z          .env, and the master key their provider
+#                            credentials are sealed with
+#   ~/.local/share/ai17z     storage, browser profiles, the signed-in session
+#   ~/.local/state/ai17z     logs
+#   ~/.cache/ai17z           throwaway
+#
+# Every one of those honours its XDG_* override, because somebody who has moved
+# their home layout has done so on purpose.
+#
+# Run as an ordinary user. This refuses to run as root: a browser profile owned
+# by root is one the owner cannot read afterwards, and a stack started as root
+# writes files into their home they then cannot delete.
+
+set -euo pipefail
+
+readonly APP_ROOT=/usr/lib/ai17z/app
+readonly RUNTIME_ROOT=/usr/lib/ai17z/runtime
+
+if [ "$(id -u)" = "0" ] && [ -z "${AI17Z_ALLOW_ROOT:-}" ]; then
+  echo "  AI17Z runs as you, not as root." >&2
+  echo "  Run 'ai17z' without sudo. The package is already installed; your agents," >&2
+  echo "  keys and browser session belong in your own home directory." >&2
+  exit 1
+fi
+
+# XDG defaults, spelled out rather than assumed: a login shell that never set
+# them is the ordinary case, not an error.
+readonly CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}/ai17z"
+readonly DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/ai17z"
+readonly STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}/ai17z"
+readonly CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/ai17z"
+
+# The private Node the package carries. Never `node` from PATH: an installation
+# must not change behaviour because somebody installed, removed or switched a
+# global Node, and most Ubuntu users have none at all.
+readonly NODE="$RUNTIME_ROOT/node/bin/node"
+
+if [ ! -x "$NODE" ]; then
+  echo "  AI17Z's bundled Node runtime is missing from $RUNTIME_ROOT/node." >&2
+  echo "  Reinstall the package:  sudo apt install --reinstall ai17z" >&2
+  exit 1
+fi
+
+# Created with restrictive permissions the first time, because the first of
+# these to exist holds a key. Applied before anything is written into them.
+for dir in "$CONFIG_HOME" "$DATA_HOME" "$STATE_HOME" "$CACHE_HOME"; do
+  if [ ! -d "$dir" ]; then
+    mkdir -p "$dir"
+    chmod 700 "$dir"
+  fi
+done
+
+export AI17Z_CONFIG_HOME="$CONFIG_HOME"
+export AI17Z_DATA_HOME="$DATA_HOME"
+export AI17Z_STATE_HOME="$STATE_HOME"
+export AI17Z_CACHE_HOME="$CACHE_HOME"
+export AI17Z_ENV_FILE="$CONFIG_HOME/.env"
+export AI17Z_APP_ROOT="$APP_ROOT"
+export AI17Z_RUNTIME_NODE="$NODE"
+export AI17Z_INSTALL_CHANNEL=UBUNTU_DEB
+export AI17Z_INSTANCE_NAME="${AI17Z_INSTANCE_NAME:-AI17Z}"
+export AI17Z_PROGRAM_DIR="$APP_ROOT"
+
+# The private Node first on PATH for anything the stack shells out to, without
+# touching the login environment: this export dies with the process.
+export PATH="$RUNTIME_ROOT/node/bin:$PATH"
+
+command="${1:-start}"
+[ $# -gt 0 ] && shift
+
+case "$command" in
+  start|stop|restart|doctor|update|uninstall)
+    exec "$APP_ROOT/packaging/ubuntu/ai17z-$command.sh" "$@"
+    ;;
+  version)
+    exec "$NODE" -e 'console.log(require("/usr/lib/ai17z/app/BUILD_INFO.json").version)'
+    ;;
+  node)
+    # The bundled runtime, for anybody who wants to prove which Node this is.
+    exec "$NODE" "$@"
+    ;;
+  -h|--help|help)
+    cat <<'USAGE'
+  AI17Z
+
+    ai17z start        start AI17Z and open it
+    ai17z stop         stop this installation
+    ai17z restart      stop, then start
+    ai17z doctor       what is installed, running, healthy or missing
+    ai17z update       check for a newer AI17Z and install it
+    ai17z uninstall    how to remove AI17Z, and what that keeps
+    ai17z version      the version installed
+    ai17z node         the bundled Node runtime
+
+  Your data:
+    config   ${XDG_CONFIG_HOME:-$HOME/.config}/ai17z
+    data     ${XDG_DATA_HOME:-$HOME/.local/share}/ai17z
+    state    ${XDG_STATE_HOME:-$HOME/.local/state}/ai17z
+USAGE
+    ;;
+  *)
+    echo "  Unknown command: $command" >&2
+    echo "  Try: ai17z --help" >&2
+    exit 2
+    ;;
+esac
