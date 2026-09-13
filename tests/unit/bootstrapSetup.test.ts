@@ -103,10 +103,11 @@ describe('the setup program is a file somebody can read', () => {
 
   it('the part the tests call does not need a Windows drive to exist', () => {
     // `Join-Path` resolves the drive qualifier through PowerShell's provider, so
-    // `C:\Users\...` is an error on any machine with no C: drive -- which is
-    // every Linux one, including the machine CI runs these functions on. It
-    // passed on Windows and failed on CI, which is the same shape as the
-    // `node:path` trap this repository has been caught by before.
+    // any path beginning with a drive letter is an error on a machine with no
+    // such drive -- which is every Linux one, including the machine CI runs
+    // these functions on. It passed on Windows and failed on CI, which is the
+    // same shape as the `node:path` trap this repository has been caught by
+    // before.
     //
     // Only the decision half is held to this. Everything below the LoadOnly
     // return runs on Windows by definition.
