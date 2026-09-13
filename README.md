@@ -32,16 +32,24 @@ interesting part is the agent, not the plumbing.
 
 ## What you need
 
-On Windows, nothing: **AI17Z Setup** checks for all of these and installs the
-ones that are missing, through Microsoft's own package manager. This is what it
-is checking for, so you can install them yourself first if you would rather.
+**The installer for your platform checks for all of this and handles what is
+missing.** This is what it looks for, so you can install it yourself first if
+you would rather.
 
-| | Why | Where |
+| | Why | Who provides it |
 | --- | --- | --- |
-| **Docker Desktop** | Postgres, the API and the web app run in containers | [docker.com](https://www.docker.com/products/docker-desktop/) |
-| **WSL 2** | what Docker Desktop runs on. AI17Z installs no Linux distribution of its own | [Microsoft](https://learn.microsoft.com/windows/wsl/install) |
-| **Node 22 or newer** | The worker that drives a real browser runs on your machine, not in a container | [nodejs.org](https://nodejs.org) |
-| **Google Chrome** | Only for connecting an X account. Everything else works without it | [google.com/chrome](https://www.google.com/chrome/) |
+| **Docker** | Postgres, the API and the interface run in containers | Docker Desktop on Windows and macOS; Docker Engine on Ubuntu |
+| **WSL 2** | what Docker Desktop runs on. **Windows only** — macOS and Ubuntu have no use for it | Microsoft, via `wsl --install` |
+| **Node 22** | the worker that drives a real browser runs on your machine, not in a container | **bundled** on macOS and Ubuntu; from winget on Windows |
+| **Google Chrome** | only for browser-backed channels such as X. Everything else works without it | Google |
+
+**macOS and Ubuntu need no Node of their own.** Those packages carry the exact
+Node they were built against, verified against nodejs.org's published checksums,
+and never consult your `PATH`. Installing, removing or switching a system Node
+cannot change how AI17Z behaves.
+
+**No platform needs Git** for a normal install. The application arrives as a
+release package that is downloaded and hash-checked, not cloned.
 
 Chrome means Google Chrome. Not Chromium, not Edge. AI17Z spawns it and attaches
 over the debugging protocol, and refuses to substitute another browser rather
@@ -56,7 +64,26 @@ costs less.
 
 ---
 
-## Install on Windows
+## Install
+
+AI17Z installs on Windows, macOS and Ubuntu. Pick yours.
+
+| | |
+| --- | --- |
+| **Windows** | one command in Windows Terminal — [below](#windows) |
+| **macOS 13+** | download a short installer, read it, run it — [below](#macos) |
+| **Ubuntu 22.04+** | download a short installer, read it, run it — [below](#ubuntu) |
+| From source | any of the three, plus Git and Node — [Other ways to install](#other-ways-to-install) |
+
+None of them needs Git. None needs a system Node: the macOS and Ubuntu packages
+carry their own, verified against nodejs.org at build time.
+
+All three need **Docker** for the database, and all three treat it as software
+you own rather than software AI17Z manages. **Google Chrome** is optional
+everywhere and enables browser-backed channels.
+
+<a id="windows"></a>
+## Windows
 
 Open **Windows Terminal** and paste this:
 
@@ -141,6 +168,61 @@ for what those warnings actually mean, and
 The one file on the releases page that is still an executable — the older full
 installer, kept for installations made with it — is unsigned and labelled as
 such. You do not need it.
+
+<a id="macos"></a>
+## macOS
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh
+less install-ai17z-macos.sh
+bash install-ai17z-macos.sh
+```
+
+Reading it first is the documented route, not a fallback: macOS warns about long
+commands pasted from web pages, and it is right to. The file is short so that
+looking at it is reasonable.
+
+It resolves the newest release, downloads the package for your architecture —
+Apple Silicon or Intel, built natively, never relabelled — **checks its SHA-256
+against the hash that release published**, and extracts it into your own Library.
+
+**No `sudo`, ever, for AI17Z itself.** Everything lives in
+`~/Library/Application Support/AI17Z/`, which is also why updates need no
+authorization.
+
+**AI17Z's macOS packages are not signed with an Apple Developer ID and are not
+notarized**, and AI17Z does not disable Gatekeeper or strip quarantine
+attributes to get around that. [What that actually means](docs/MACOS_TRUST.md)
+is written out in full, including which prompts are Docker's or Google's rather
+than AI17Z's.
+
+Also: [Installing on macOS](docs/MACOS_INSTALL.md)
+
+<a id="ubuntu"></a>
+## Ubuntu
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-ubuntu.sh
+less install-ai17z-ubuntu.sh
+bash install-ai17z-ubuntu.sh
+```
+
+Ubuntu 22.04, 24.04 and 26.04 LTS, on amd64 and arm64. It downloads the `.deb`
+for your architecture, checks its SHA-256, and installs it with `apt`.
+
+Run it as yourself. It asks for `sudo` exactly where installing a system package
+needs it, and refuses to run as root — your agents, keys and browser session
+belong to you, and a root install makes files in your home you cannot then
+delete.
+
+**Ubuntu Server works and is a supported arrangement.** Everything runs except
+browser-backed channels, which need a graphical session and Chrome; `ai17z
+doctor` reports that as *not available* rather than as a failure, and nothing
+installs a desktop to pretend otherwise. AI17Z binds to loopback and the docs
+recommend an SSH tunnel rather than exposing it.
+
+Also: [Installing on Ubuntu](docs/UBUNTU_INSTALL.md) ·
+[What it touches](docs/UBUNTU_SECURITY.md)
 
 ### Privacy
 
