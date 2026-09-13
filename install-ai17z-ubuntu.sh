@@ -33,9 +33,22 @@ SUPPORTED_UBUNTU="22.04 24.04 26.04"
 RELEASE=""            # --release vX.Y.Z
 ASSUME_YES=0          # --yes
 SKIP_START=0          # --no-start
+# A package somebody already has, and the hash they expect it to have.
+#
+# The offline route, and the one the packaging workflow uses to test this script
+# against the package a run has just built -- which is the only way to exercise
+# an installer without publishing a release first. Windows' setup program has had
+# -LocalPackage and -ExpectedSha256 for the same two reasons.
+#
+# --sha256 is required with it. An installer that will install a local file
+# without checking it is a different program from this one.
+LOCAL_PACKAGE=""      # --package <file>
+EXPECT_SHA=""         # --sha256 <hex>
 while [ $# -gt 0 ]; do
   case "$1" in
     --release) RELEASE="$2"; shift 2 ;;
+    --package) LOCAL_PACKAGE="$2"; shift 2 ;;
+    --sha256) EXPECT_SHA="$2"; shift 2 ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     --no-start) SKIP_START=1; shift ;;
     -h|--help)
@@ -171,7 +184,26 @@ step "Finding the newest AI17Z release"
 WORK="$(mktemp -d)"
 chmod 700 "$WORK"
 
-if [ -n "$RELEASE" ]; then
+if [ -n "$LOCAL_PACKAGE" ]; then
+  [ -n "$EXPECT_SHA" ] || stop "--package needs --sha256." \
+    "AI17Z will not install a file it cannot check, wherever the file came from." \
+    "Pass the hash you expect:
+  bash $0 --package <file> --sha256 <hex>"
+  [ -f "$LOCAL_PACKAGE" ] || stop "There is no file at ${LOCAL_PACKAGE}." "" ""
+  DEB_NAME="$(basename "$LOCAL_PACKAGE")"
+  case "$DEB_NAME" in
+    ai17z_*_"${ARCH}".deb) ;;
+    ai17z_*) stop "That package is not for this computer." \
+      "It is named ${DEB_NAME}, and this computer is ${ARCH}." "" ;;
+    *) stop "That does not look like an AI17Z package." "${DEB_NAME}" "" ;;
+  esac
+  VERSION="${DEB_NAME#ai17z_}"; VERSION="${VERSION%_${ARCH}.deb}"
+  TAG="v${VERSION}"
+  cp "$LOCAL_PACKAGE" "$WORK/$DEB_NAME"
+  EXPECTED="$EXPECT_SHA"
+  note "Installing from a file rather than from a release: ${LOCAL_PACKAGE}"
+  good "AI17Z ${VERSION}"
+elif [ -n "$RELEASE" ]; then
   case "$RELEASE" in
     v[0-9]*|[0-9]*) ;;
     *) stop "\"$RELEASE\" is not a release version." "Releases are named like v1.0.0 or v1.0.0-beta.1." "" ;;
@@ -187,6 +219,7 @@ else
     "Check your internet connection and run this again."
 fi
 
+if [ -z "$LOCAL_PACKAGE" ]; then
 # One python-free pass over the JSON. `grep -o` on the fields wanted rather than
 # a parser, because the only thing here that must be exact is a name and a URL,
 # and both are checked against what this asked for afterwards.
@@ -209,18 +242,23 @@ fi
 [ -n "$SUMS_URL" ] || stop "Release ${TAG} publishes no SHA256SUMS.txt." \
   "AI17Z will not install a package it cannot check." ""
 good "AI17Z ${VERSION}"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Download, and check before anything is installed
 # ---------------------------------------------------------------------------
 step "Downloading and checking the package"
 
-fetch "$WORK/$DEB_NAME" "$DEB_URL"
-fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
+if [ -z "$LOCAL_PACKAGE" ]; then
+  fetch "$WORK/$DEB_NAME" "$DEB_URL"
+  fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
 
-EXPECTED="$(grep -E "[[:space:]]\*?${DEB_NAME}\$" "$WORK/SHA256SUMS.txt" | awk '{print $1}' | head -1)"
-[ -n "$EXPECTED" ] || stop "Release ${TAG} publishes no hash for ${DEB_NAME}." \
-  "AI17Z will not install a package it cannot check." ""
+  EXPECTED="$(grep -E "[[:space:]]\*?${DEB_NAME}\$" "$WORK/SHA256SUMS.txt" | awk '{print $1}' | head -1)"
+  [ -n "$EXPECTED" ] || stop "Release ${TAG} publishes no hash for ${DEB_NAME}." \
+    "AI17Z will not install a package it cannot check." ""
+fi
+
+# One check, whichever route the bytes arrived by.
 ACTUAL="$(sha256sum "$WORK/$DEB_NAME" | awk '{print $1}')"
 if [ "$EXPECTED" != "$ACTUAL" ]; then
   rm -f "$WORK/$DEB_NAME"
@@ -232,7 +270,11 @@ The file has been deleted and nothing was installed." \
     "Do not try again on the same network without thinking about why.
 If it happens twice, stop and report it at https://github.com/${REPOSITORY}/issues"
 fi
-good "SHA-256 matches what ${TAG} published"
+if [ -n "$LOCAL_PACKAGE" ]; then
+  good "SHA-256 matches what was asked for"
+else
+  good "SHA-256 matches what ${TAG} published"
+fi
 
 # Downgrades are refused rather than attempted: apt would take it, and an older
 # application against a newer database is a failure mode with no good ending.

@@ -30,10 +30,24 @@ ALLOWED_HOSTS="api.github.com github.com objects.githubusercontent.com release-a
 MIN_MACOS_MAJOR=13
 
 RELEASE=""; ASSUME_YES=0; SKIP_START=0; INSTANCE="AI17Z"
+# A package somebody already has, and the hash they expect it to have.
+#
+# The offline route, and the one the packaging workflow uses to test this script
+# against the package a run has just built -- which is the only way to exercise
+# an installer without publishing a release first. Windows' setup program has had
+# -LocalPackage and -ExpectedSha256 for the same two reasons.
+#
+# --sha256 is required with it. An installer that will unpack a local file
+# without checking it is a different program from this one: the hash is not a
+# formality it can be talked out of, it is the whole reason there is a check.
+LOCAL_PACKAGE=""; EXPECT_SHA=""; TARGET_OVERRIDE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --release) RELEASE="$2"; shift 2 ;;
     --instance) INSTANCE="$2"; shift 2 ;;
+    --package) LOCAL_PACKAGE="$2"; shift 2 ;;
+    --sha256) EXPECT_SHA="$2"; shift 2 ;;
+    --into) TARGET_OVERRIDE="$2"; shift 2 ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     --no-start) SKIP_START=1; shift ;;
     -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -114,13 +128,34 @@ good "macOS ${MACOS_VERSION} ($([ "$ARCH" = arm64 ] && echo "Apple Silicon" || e
 step "Finding the newest AI17Z release"
 WORK="$(mktemp -d)"; chmod 700 "$WORK"
 
-if [ -n "$RELEASE" ]; then
+if [ -n "$LOCAL_PACKAGE" ]; then
+  [ -n "$EXPECT_SHA" ] || stop "--package needs --sha256." \
+    "AI17Z will not unpack a file it cannot check, wherever the file came from." \
+    "Pass the hash you expect:
+  bash $0 --package <file> --sha256 <hex>"
+  [ -f "$LOCAL_PACKAGE" ] || stop "There is no file at ${LOCAL_PACKAGE}." "" ""
+  TAR_NAME="$(basename "$LOCAL_PACKAGE")"
+  case "$TAR_NAME" in
+    AI17Z-macos-"${ARCH}"-*.tar.gz) ;;
+    AI17Z-macos-*) stop "That package is not for this Mac." \
+      "It is named ${TAR_NAME}, and this Mac is ${ARCH}." "" ;;
+    *) stop "That does not look like an AI17Z macOS package." "${TAR_NAME}" "" ;;
+  esac
+  VERSION="${TAR_NAME#AI17Z-macos-"${ARCH}"-}"; VERSION="${VERSION%.tar.gz}"
+  TAG="v${VERSION}"
+  cp "$LOCAL_PACKAGE" "$WORK/$TAR_NAME"
+  EXPECTED="$EXPECT_SHA"
+  note "Installing from a file rather than from a release: ${LOCAL_PACKAGE}"
+  good "AI17Z ${VERSION}"
+elif [ -n "$RELEASE" ]; then
   case "$RELEASE" in v[0-9]*|[0-9]*) ;; *) stop "\"$RELEASE\" is not a release version." "" "" ;; esac
   RELEASE_JSON="$(fetch_stdout "${API}/tags/${RELEASE}")" || stop "Release ${RELEASE} could not be read." "" ""
 else
   RELEASE_JSON="$(fetch_stdout "${API}?per_page=10")" || stop "AI17Z could not be reached." \
     "Nothing on this Mac was changed." "Check your internet connection and try again."
 fi
+
+if [ -z "$LOCAL_PACKAGE" ]; then
 TAG="$(printf '%s' "$RELEASE_JSON" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
 [ -n "$TAG" ] || stop "That release does not exist." "" ""
 VERSION="${TAG#v}"
@@ -140,11 +175,18 @@ good "AI17Z ${VERSION}"
 # 3. Download and check before anything is unpacked
 # ---------------------------------------------------------------------------
 step "Downloading and checking"
-fetch "$WORK/$TAR_NAME" "$TAR_URL"
-fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
+if [ -z "$LOCAL_PACKAGE" ]; then
+  fetch "$WORK/$TAR_NAME" "$TAR_URL"
+  fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
+fi
 
 EXPECTED="$(grep -E "[[:space:]]\*?${TAR_NAME}\$" "$WORK/SHA256SUMS.txt" | awk '{print $1}' | head -1)"
 [ -n "$EXPECTED" ] || stop "Release ${TAG} publishes no hash for ${TAR_NAME}." "" ""
+fi
+
+# One check, whichever route the bytes arrived by. A local file is not trusted
+# more than a downloaded one -- it is only a file whose hash the caller already
+# knew.
 ACTUAL="$(shasum -a 256 "$WORK/$TAR_NAME" | awk '{print $1}')"
 if [ "$EXPECTED" != "$ACTUAL" ]; then
   rm -f "$WORK/$TAR_NAME"
@@ -155,7 +197,11 @@ got       ${ACTUAL}
 The file has been deleted and nothing was unpacked." \
     "If this happens twice, stop and report it at https://github.com/${REPOSITORY}/issues"
 fi
-good "SHA-256 matches what ${TAG} published"
+if [ -n "$LOCAL_PACKAGE" ]; then
+  good "SHA-256 matches what was asked for"
+else
+  good "SHA-256 matches what ${TAG} published"
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Docker Desktop, which AI17Z needs and does not own
@@ -215,7 +261,13 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Install, into the owner's own Library
 # ---------------------------------------------------------------------------
-TARGET="$HOME/Library/Application Support/AI17Z/${INSTANCE}"
+# Somewhere else entirely, for a test that must not write into the person's own
+# Library. Never used by the documented route.
+if [ -n "$TARGET_OVERRIDE" ]; then
+  TARGET="$TARGET_OVERRIDE"
+else
+  TARGET="$HOME/Library/Application Support/AI17Z/${INSTANCE}"
+fi
 step "Installing to ${TARGET}"
 
 if [ -d "$TARGET/app" ]; then

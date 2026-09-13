@@ -101,6 +101,56 @@ good "AI17Z ${VERSION} is available"
 # discovers the problem after replacing the application has already taken the
 # working version away from somebody.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# What it means when the check could not answer
+#
+# Two completely different situations produce the same silence. An installation
+# made before the gate existed, offered a release published before manifests
+# existed, has nothing to ask and nothing to ask it with -- and refusing there
+# would strand exactly the installations this exists to move forward. An
+# installation new enough to ship the gate, whose gate did not answer, is a copy
+# with something wrong with it, and the next thing this script does is stop it
+# and replace it.
+#
+# The schema this installation recorded about itself is what separates them, and
+# the decision lives in @xbam/shared so that three updaters cannot drift about
+# it. Where even the bridge cannot run, the fallback is the cautious half: an
+# installation that records the gate's schema and cannot run the gate is exactly
+# the case that must not proceed.
+# ---------------------------------------------------------------------------
+installed_schema() {
+  info="$APP_ROOT/INSTALL_INFO.json"
+  [ -f "$info" ] || { printf ''; return; }
+  sed -n 's/.*"schema"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$info" | head -1
+}
+
+gate_said_nothing() { # why
+  schema="$(installed_schema)"
+  decision=""
+  if [ -f "$APP_ROOT/node_modules/tsx/dist/cli.mjs" ] && [ -f "$APP_ROOT/packaging/preflight.mts" ]; then
+    decision="$(cd "$APP_ROOT" && "$(ai17z_node)" "$APP_ROOT/node_modules/tsx/dist/cli.mjs" \
+      "$APP_ROOT/packaging/preflight.mts" --decide "$schema" "$1" 2>/dev/null || printf '')"
+  fi
+  if [ -z "$decision" ]; then
+    # The bridge itself could not run. An installation that predates it says so
+    # by having no schema at all; anything else is a fault, and a fault here
+    # stops the update rather than finding out afterwards.
+    if [ -z "$schema" ] || [ "$schema" -lt 3 ] 2>/dev/null; then
+      note "This installation predates the compatibility check; continuing."
+      return 0
+    fi
+    oops "AI17Z could not check whether ${VERSION} can run on this machine." \
+      "The check is part of how this installation updates, and it did not run." \
+      "Nothing was changed. AI17Z ${CURRENT} is still installed and still running."
+  fi
+  case "$decision" in
+    GO*) printf '%s' "$decision" | tail -n +2 | while IFS= read -r l; do [ -n "$l" ] && note "$l"; done ;;
+    *)   oops "AI17Z could not check whether ${VERSION} can run on this machine." \
+           "$(printf '%s' "$decision" | tail -n +2)" \
+           "Nothing was changed. AI17Z ${CURRENT} is still installed and still running." ;;
+  esac
+}
+
 step "Checking compatibility"
 MANIFEST_URL="$(printf '%s' "$RELEASE_JSON" | grep -o 'https://[^"]*/release-manifest\.json' | head -1)"
 if [ -n "$MANIFEST_URL" ]; then
@@ -122,11 +172,13 @@ if [ -n "$MANIFEST_URL" ]; then
              "Nothing was changed. AI17Z ${CURRENT} is still installed and still running." ;;
       OK*) good "This machine meets what ${VERSION} needs"
            printf '%s' "$VERDICT" | tail -n +2 | while IFS= read -r l; do [ -n "$l" ] && note "$l"; done ;;
-      *)   note "Could not read this release's compatibility manifest; continuing." ;;
+      *)   gate_said_nothing unreadable ;;
     esac
+  else
+    gate_said_nothing no-manifest
   fi
 else
-  note "This release publishes no compatibility manifest; continuing."
+  gate_said_nothing no-manifest
 fi
 
 if [ "$CHECK_ONLY" = "1" ]; then

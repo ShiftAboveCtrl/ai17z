@@ -44,9 +44,15 @@ describe('the compatibility gate speaks one language', () => {
   it.each(Object.entries(updaters))('%s branches on all three', (_platform, script) => {
     expect(script).toContain('NO*)');
     expect(script).toContain('OK*)');
-    // The catch-all. Written as `*)` rather than `SKIP*)` on purpose: a bridge
+    // The catch-all, written as `*)` rather than `SKIP*)` on purpose: a bridge
     // that cannot run prints nothing at all, and that has to land somewhere.
-    expect(script).toMatch(/\*\)\s+note "Could not read this release's compatibility manifest/);
+    //
+    // Where it lands is the part that changed. It used to carry on with a
+    // reassuring sentence, which is right for a release published before
+    // manifests existed and wrong for a current installation whose gate is
+    // broken -- and nothing at runtime could tell those apart. It now asks.
+    expect(script).toMatch(/\*\)\s+gate_said_nothing/);
+    expect(script).toContain('gate_said_nothing() {');
   });
 
   it.each(Object.entries(updaters))('%s asks before it stops anything', (_platform, script) => {

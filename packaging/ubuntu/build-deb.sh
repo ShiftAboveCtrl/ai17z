@@ -35,6 +35,9 @@ NODE_ARCH="$ARCH"; [ "$ARCH" = "amd64" ] && NODE_ARCH="x64"
 
 say() { printf '  %s\n' "$1"; }
 
+# shellcheck source=../unix/pack-permissions.sh
+. "$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../unix" && pwd)/pack-permissions.sh"
+
 # Whatever the stage was handed, nothing of an owner's leaves here.
 #
 # The stager filters these already. This is the second gate on purpose: a
@@ -42,6 +45,28 @@ say() { printf '  %s\n' "$1"; }
 # is still a packaging script that shipped somebody's master key. `.env.example`
 # is deliberately kept -- it is the template the first run builds from, its key
 # line is empty, and leaving it out was an installed build's very first failure.
+# Linter configuration, npm bookkeeping and CI descriptions that dependencies
+# publish to npm along with their code. Nothing loads any of it at runtime, and
+# every one of them is a lintian error in a Debian package.
+#
+# Pruned rather than overridden, because an override is a note saying a file
+# that should not be there is allowed to be there. These simply should not be
+# there: they make the package bigger and they are somebody else's repository
+# furniture.
+#
+# Named one by one, and only files nothing can read at runtime. Dependency
+# `test/` directories are deliberately left alone -- a package that loads a
+# fixture at runtime is rare and real, and a smaller package is not worth
+# finding out which one does.
+prune_dependency_cruft() { # root
+  find "$1" -path '*/node_modules/*' \( \
+    -name '.eslintrc' -o -name '.eslintrc.*' -o -name 'eslint.config.*' -o \
+    -name '.npmignore' -o -name '.editorconfig' -o -name '.travis.yml' -o \
+    -name '.jshintrc' -o -name '.prettierrc' -o -name '.prettierrc.*' \
+  \) -type f -delete 2>/dev/null || true
+  find "$1" -path '*/node_modules/*' -type d -name '.github' -prune -exec rm -rf {} + 2>/dev/null || true
+}
+
 prune_owner_files() { # root
   find "$1" -name '.env' -delete
   find "$1" -name '.env.local' -delete
@@ -69,22 +94,12 @@ install -d -m 0755 \
 # ---------------------------------------------------------------------------
 cp -a "$STAGE" "$PKG/usr/lib/ai17z/app"
 prune_owner_files "$PKG/usr/lib/ai17z/app"
+prune_dependency_cruft "$PKG/usr/lib/ai17z/app"
 
-# Permissions the build host cannot be trusted for.
-#
-# Everything on a Windows filesystem reads as executable, so a package built
-# from a mounted checkout ships an executable LICENSE and an executable PNG.
-# Set them from what the file *is* rather than from what the host said:
-# directories traversable, scripts executable, everything else plain data.
-find "$PKG/usr/lib/ai17z/app" -type d -exec chmod 0755 {} +
-find "$PKG/usr/lib/ai17z/app" -type f -exec chmod 0644 {} +
-find "$PKG/usr/lib/ai17z/app" -type f \( -name '*.sh' -o -name 'ai17z' \) -exec chmod 0755 {} +
-# Anything with a shebang is meant to be run, whatever it is called.
-grep -rlI --include='*' -m1 '^#!' "$PKG/usr/lib/ai17z/app" 2>/dev/null | while read -r script; do
-  chmod 0755 "$script"
-done
-# Except the ones that are data despite starting with one.
-find "$PKG/usr/lib/ai17z/app" -type f \( -name '*.md' -o -name '*.json' -o -name '*.png' -o -name 'LICENSE' \) -exec chmod 0644 {} +
+# Permissions the build host cannot be trusted for. One implementation, shared
+# with the macOS build, because both had the same gap and only one of them had
+# even the shebang half of the rule.
+ai17z_fix_permissions "$PKG/usr/lib/ai17z/app"
 
 # ---------------------------------------------------------------------------
 # The private Node runtime
@@ -149,6 +164,24 @@ cat > "$PKG/usr/share/lintian/overrides/ai17z" <<'OVERRIDES'
 # most desktop Ubuntu users have none at all. Depending on `nodejs` would let
 # apt decide which Node AI17Z runs, which is the thing being avoided.
 ai17z: missing-dep-for-interpreter node (does not satisfy nodejs:any) [usr/lib/ai17z/runtime/node/*]
+# The same reason, for the whole application tree: AI17Z's own supervisor script
+# and the command line entry points several dependencies ship, all carrying a
+# `#!/usr/bin/env node` line. Every one of them runs under AI17Z's own runtime,
+# which is on PATH ahead of anything else for every process AI17Z starts.
+# Declaring a dependency on the distribution's `nodejs` to satisfy a shebang
+# would hand apt the decision this package exists to keep -- and most desktop
+# Ubuntu machines have no system Node at all.
+ai17z: missing-dep-for-interpreter node (does not satisfy nodejs:any) [usr/lib/ai17z/app/*]
+# esbuild is written in Go and ships a statically linked binary. That is
+# upstream's build, fetched by npm, and the alternative is not having esbuild --
+# which means not having tsx, which means an installed copy that cannot run a
+# single script.
+ai17z: statically-linked-binary [usr/lib/ai17z/app/node_modules/esbuild/bin/esbuild]
+ai17z: statically-linked-binary [usr/lib/ai17z/app/node_modules/@esbuild/*/bin/esbuild]
+# A dependency's own test script, with its own shebang. Nothing here runs it,
+# and editing a file inside node_modules to satisfy a linter would make the tree
+# stop matching the lockfile that describes it.
+ai17z: wrong-path-for-interpreter /usr/bin/bash != /bin/bash [usr/lib/ai17z/app/node_modules/*]
 # Upstream Node's own binary, left exactly as downloaded. Stripping it, or
 # rebuilding it as a position-independent executable, would produce something
 # that no longer matches the checksum that proves what it is.
@@ -240,6 +273,11 @@ install -m 0755 "$STAGE/packaging/ubuntu/postrm" "$PKG/DEBIAN/postrm"
 # leaking into somebody else's filesystem.
 mkdir -p "$OUT"
 DEB="$OUT/ai17z_${VERSION}_${ARCH}.deb"
+# Checked before it is sealed. A file listing shows a binary present and
+# correct, and only its mode says it cannot be run -- which is invisible until
+# somebody's first start.
+ai17z_assert_executables_runnable "$PKG/usr/lib/ai17z"
+
 dpkg-deb --build --root-owner-group -Zxz "$PKG" "$DEB" >/dev/null
 say "built $(basename "$DEB") ($(du -h "$DEB" | awk '{print $1}'))"
 echo "AI17Z_DEB=$DEB"

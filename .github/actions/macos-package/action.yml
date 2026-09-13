@@ -1,0 +1,277 @@
+name: Build and prove the macOS package
+description: >
+  Stages, packages and then actually runs an AI17Z macOS package on the Mac that
+  built it. One implementation, used by both the release workflow and the
+  packaging validation workflow, so that what validation proves is what a
+  release ships.
+
+inputs:
+  version:
+    description: Version without the leading v
+    required: true
+  arch:
+    description: arm64 or x64
+    required: true
+  out:
+    description: Where the finished tarball goes
+    required: true
+  deep:
+    description: >
+      Run the full proof -- extraction, lifecycle, installer, update mechanics.
+      The release path builds and smoke-tests; validation does all of it.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: The architecture this runner really is
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Asserted rather than assumed. A matrix entry pointing at the wrong
+        # runner would otherwise ship a mislabelled package: an arm64 name over
+        # x86_64 native modules, which installs happily and fails on somebody
+        # else's Mac with "cannot load", and nothing in the build log says so.
+        actual="$(uname -m)"
+        case "${{ inputs.arch }}:$actual" in
+          arm64:arm64|x64:x86_64) echo "runner is $actual, as expected" ;;
+          *) echo "runner is $actual but this job builds ${{ inputs.arch }}" >&2; exit 1 ;;
+        esac
+        [ "$(uname -s)" = Darwin ] || { echo "not a Mac: $(uname -s)" >&2; exit 1; }
+        sw_vers
+
+    - name: Stage the application
+      shell: bash
+      run: npm run package:unix -- --platform macos --stage "$RUNNER_TEMP/stage"
+
+    - name: Build the package
+      shell: bash
+      run: |
+        set -euo pipefail
+        bash packaging/macos/build-tarball.sh \
+          --stage "$RUNNER_TEMP/stage" \
+          --version "${{ inputs.version }}" \
+          --arch "${{ inputs.arch }}" \
+          --node "$(node -p "require('./packaging/node-runtime.json').version")" \
+          --out "${{ inputs.out }}"
+
+    - name: Run what was built
+      shell: bash
+      run: |
+        set -euo pipefail
+        TARBALL="${{ inputs.out }}/AI17Z-macos-${{ inputs.arch }}-${{ inputs.version }}.tar.gz"
+        # A path with a space, because the real install directory is
+        # "Application Support" and an unquoted variable anywhere in the chain
+        # only ever shows up somewhere like this.
+        ROOM="$RUNNER_TEMP/with space/room"
+        rm -rf "$ROOM"; mkdir -p "$ROOM"
+        tar -xzf "$TARBALL" -C "$ROOM"
+        HOME_OF_IT="$ROOM/AI17Z"
+
+        NODE="$HOME_OF_IT/runtime/node/bin/node"
+        echo "--- the bundled runtime ---"
+        "$NODE" --version
+        [ "$("$NODE" -p 'process.arch')" = "${{ inputs.arch }}" ] \
+          || { echo "node reports $("$NODE" -p 'process.arch'), package says ${{ inputs.arch }}" >&2; exit 1; }
+        [ "$("$NODE" -p 'process.platform')" = darwin ] || { echo "not a darwin build" >&2; exit 1; }
+
+        echo "--- the binary is really this architecture ---"
+        # `file` rather than the runtime's own opinion: a Rosetta-translated
+        # x86_64 binary reports x64 happily while being the wrong package.
+        says="$(file -b "$NODE")"
+        echo "$says"
+        case "${{ inputs.arch }}:$says" in
+          arm64:*arm64*|x64:*x86_64*) : ;;
+          *) echo "the bundled node is not ${{ inputs.arch }}" >&2; exit 1 ;;
+        esac
+
+        echo "--- tsx transforms, which is every npm script an installed copy runs ---"
+        "$NODE" "$HOME_OF_IT/app/node_modules/tsx/dist/cli.mjs" -e 'const n: number = 1; console.log(`tsx ok ${n}`)'
+
+        echo "--- esbuild's native binary is this architecture too ---"
+        # The one that shipped wrong four times. It is fetched by a postinstall
+        # into esbuild's own lib directory, so a stage that works on the build
+        # machine is not evidence about the package.
+        ESBUILD="$(find "$HOME_OF_IT/app/node_modules/@esbuild" -type f -name esbuild -perm -u+x | head -1)"
+        [ -n "$ESBUILD" ] || { echo "no esbuild binary in the package" >&2; exit 1; }
+        echo "$ESBUILD"
+        says="$(file -b "$ESBUILD")"
+        echo "$says"
+        case "${{ inputs.arch }}:$says" in
+          arm64:*arm64*|x64:*x86_64*) : ;;
+          *) echo "esbuild is not ${{ inputs.arch }}" >&2; exit 1 ;;
+        esac
+        "$ESBUILD" --version
+
+        echo "--- BUILD_INFO says what this is ---"
+        "$NODE" -e '
+          const info = require(process.argv[1]);
+          const want = process.argv[2];
+          if (info.version !== want) { console.error(`BUILD_INFO says ${info.version}, package says ${want}`); process.exit(1); }
+          if (info.platform !== "macos") { console.error(`BUILD_INFO says platform ${info.platform}`); process.exit(1); }
+          console.log(`BUILD_INFO: ${info.version} ${info.platform}`);
+        ' "$HOME_OF_IT/app/BUILD_INFO.json" "${{ inputs.version }}"
+        [ "$(cat "$HOME_OF_IT/VERSION")" = "${{ inputs.version }}" ] || { echo "VERSION disagrees" >&2; exit 1; }
+
+    - name: The entry points an installed copy actually loads
+      if: ${{ inputs.deep == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        HOME_OF_IT="$RUNNER_TEMP/with space/room/AI17Z"
+        NODE="$HOME_OF_IT/runtime/node/bin/node"
+        TSX="$HOME_OF_IT/app/node_modules/tsx/dist/cli.mjs"
+        cd "$HOME_OF_IT/app"
+
+        # Importing is the test. A package can hold every file and still be one
+        # where nothing loads -- a native module for the wrong architecture, a
+        # dependency pruned by name, an export that moved. None of that is
+        # visible in a file listing, and all of it is fatal on first start.
+        echo "--- the shared contracts, the migrator, and the worker's own modules ---"
+        "$NODE" "$TSX" -e '
+          const load = async (what: string) => { await import(what); console.log(`  loaded ${what}`); };
+          await load("@xbam/shared");
+          await load("@xbam/database");
+          await load("@xbam/jobs");
+          await load("@xbam/runtime");
+          await load("@xbam/channels");
+          await load("@xbam/models");
+          await load("@xbam/memory");
+          await load("@xbam/prompts");
+          await load("@xbam/tools");
+          await load("@xbam/persona");
+        '
+
+        echo "--- the release manifest and install layout, which the updater needs ---"
+        "$NODE" "$TSX" -e '
+          import { preflight, parseReleaseManifest, macosPackageAsset, INSTALL_LAYOUT_SCHEMA } from "@xbam/shared";
+          if (typeof preflight !== "function") { throw new Error("preflight is not callable from the package"); }
+          if (typeof parseReleaseManifest !== "function") { throw new Error("parseReleaseManifest is not callable"); }
+          console.log(`  asset name: ${macosPackageAsset("9.9.9", "arm64")}`);
+          console.log(`  install layout schema: ${INSTALL_LAYOUT_SCHEMA}`);
+        '
+
+    - name: The lifecycle scripts run, and resolve their own paths
+      if: ${{ inputs.deep == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        HOME_OF_IT="$RUNNER_TEMP/with space/room/AI17Z"
+
+        echo "--- version, through the launcher ---"
+        "$HOME_OF_IT/ai17z" version
+
+        echo "--- node, through the launcher ---"
+        "$HOME_OF_IT/ai17z" node -p 'process.arch'
+
+        echo "--- an unknown command is refused rather than guessed ---"
+        if "$HOME_OF_IT/ai17z" wibble >/dev/null 2>&1; then
+          echo "an unknown command was accepted" >&2; exit 1
+        fi
+
+        echo "--- root is refused ---"
+        # Not with sudo -- the check is what is under test, and it reads id -u.
+        # Running the whole thing as root on a runner would prove nothing about
+        # anybody's Mac, so the refusal is exercised by asking for it directly.
+        if sudo -n "$HOME_OF_IT/ai17z" version >/dev/null 2>&1; then
+          echo "running as root was allowed" >&2; exit 1
+        fi
+        echo "  refused, as it should be"
+
+        echo "--- doctor says what it can see ---"
+        # Docker is not running on a hosted Mac runner, so this is expected to
+        # report that and carry on rather than crash. What is under test is that
+        # it produces a report at all, from a packaged layout, with spaces in
+        # every path it resolves.
+        set +e
+        "$HOME_OF_IT/ai17z" doctor > "$RUNNER_TEMP/doctor.txt" 2>&1
+        code=$?
+        set -e
+        sed 's/^/  /' "$RUNNER_TEMP/doctor.txt"
+        echo "  doctor exited $code"
+        grep -qi 'ai17z' "$RUNNER_TEMP/doctor.txt" || { echo "doctor produced nothing recognisable" >&2; exit 1; }
+
+    - name: App and data are separate, and the data is the owner's
+      if: ${{ inputs.deep == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        HOME_OF_IT="$RUNNER_TEMP/with space/room/AI17Z"
+        # The launcher creates these on first run. They are what an update must
+        # never touch, and they live beside `app` rather than inside it.
+        for dir in data logs browser-profiles; do
+          [ -d "$HOME_OF_IT/$dir" ] || { echo "$dir was not created" >&2; exit 1; }
+          mode="$(stat -f '%A' "$HOME_OF_IT/$dir")"
+          [ "$mode" = 700 ] || { echo "$dir is mode $mode, not 700" >&2; exit 1; }
+          echo "  $dir 700"
+        done
+        # And nothing an installation needs is written beside the program, which
+        # is the directory an update replaces wholesale.
+        [ ! -e "$HOME_OF_IT/app/.env" ] || { echo "an .env was written into app/" >&2; exit 1; }
+        [ ! -d "$HOME_OF_IT/app/storage" ] || { echo "storage was written into app/" >&2; exit 1; }
+        echo "  nothing of the owner's is inside app/"
+
+    - name: The compatibility gate answers, on this Mac, both ways
+      if: ${{ inputs.deep == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        HOME_OF_IT="$RUNNER_TEMP/with space/room/AI17Z"
+        NODE="$HOME_OF_IT/runtime/node/bin/node"
+        APP="$HOME_OF_IT/app"
+
+        # Exactly as ai17z-update.sh runs it, from inside a real installed
+        # package, on a real Mac. The refusal is the half that matters: a bridge
+        # that cannot start prints nothing, and nothing is not NO.
+        cat > "$RUNNER_TEMP/manifest.json" <<'JSON'
+        {"schemaVersion":1,"version":"9.9.9","tag":"v9.9.9",
+         "commit":"0000000000000000000000000000000000000000",
+         "builtAt":"2026-01-01T00:00:00.000Z",
+         "signed":{"windows":false,"macos":false,"ubuntu":false},
+         "minimumUpdaterSchema":1,"installLayoutSchema":3,
+         "platforms":{"macos":{"supported":true,"architectures":["x64","arm64"],
+           "methods":["MACOS_PKG"],
+           "requirements":{"minimumDocker":"26.0.0","minimumChromeMajor":120,
+             "bundledNode":"v22.23.2","os":{"minimumMajor":13}}}},
+         "artifacts":[],"migrations":{"latest":"probe","count":0}}
+        JSON
+
+        ask() { (cd "$APP" && "$NODE" "$APP/node_modules/tsx/dist/cli.mjs" \
+          "$APP/packaging/preflight.mts" "$RUNNER_TEMP/manifest.json" macos "$@"); }
+
+        echo "--- a Mac this release supports ---"
+        yes_said="$(ask "${{ inputs.arch }}" "$(sw_vers -productVersion)" 27.0.0 130)"
+        printf '%s\n' "$yes_said" | sed 's/^/  /'
+        [ "${yes_said%%$'\n'*}" = OK ] || { echo "a supported Mac was not accepted" >&2; exit 1; }
+
+        echo "--- a Mac too old for it ---"
+        no_said="$(ask "${{ inputs.arch }}" 12.7 27.0.0 130)"
+        printf '%s\n' "$no_said" | sed 's/^/  /'
+        [ "${no_said%%$'\n'*}" = NO ] || { echo "an unsupported Mac was not refused" >&2; exit 1; }
+
+        echo "--- no Docker at all ---"
+        none_said="$(ask "${{ inputs.arch }}" "$(sw_vers -productVersion)" '' '')"
+        printf '%s\n' "$none_said" | sed 's/^/  /'
+        [ "${none_said%%$'\n'*}" = NO ] || { echo "a machine with no Docker was not refused" >&2; exit 1; }
+
+        echo "--- no Chrome is a note, never a refusal ---"
+        # A headless machine has none and must still take updates.
+        chromeless="$(ask "${{ inputs.arch }}" "$(sw_vers -productVersion)" 27.0.0 '')"
+        printf '%s\n' "$chromeless" | sed 's/^/  /'
+        [ "${chromeless%%$'\n'*}" = OK ] || { echo "a machine with no Chrome was refused" >&2; exit 1; }
+
+    - name: Nothing of an owner's is in the package
+      shell: bash
+      run: |
+        set -euo pipefail
+        TARBALL="${{ inputs.out }}/AI17Z-macos-${{ inputs.arch }}-${{ inputs.version }}.tar.gz"
+        bash .github/scripts/scan-artifact.sh "$TARBALL" macos
+
+    - name: What this package is
+      shell: bash
+      run: |
+        set -euo pipefail
+        TARBALL="${{ inputs.out }}/AI17Z-macos-${{ inputs.arch }}-${{ inputs.version }}.tar.gz"
+        ls -l "$TARBALL"
+        shasum -a 256 "$TARBALL"

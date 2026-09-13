@@ -37,6 +37,9 @@ case "$ARCH" in arm64|x64) ;; *) echo "unsupported architecture: $ARCH" >&2; exi
 
 say() { printf '  %s\n' "$1"; }
 
+# shellcheck source=../unix/pack-permissions.sh
+. "$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../unix" && pwd)/pack-permissions.sh"
+
 # Whatever the stage was handed, nothing of an owner's leaves here.
 #
 # The stager filters these already. This is the second gate on purpose: a
@@ -66,10 +69,11 @@ cp -R "$STAGE" "$PKG/app"
 prune_owner_files "$PKG/app"
 
 # Permissions from what each file is, never from what the build host said.
-find "$PKG/app" -type d -exec chmod 0755 {} +
-find "$PKG/app" -type f -exec chmod 0644 {} +
-find "$PKG/app" -type f -name '*.sh' -exec chmod 0755 {} +
-find "$PKG/app" -type f -perm -u+x -name '*.mjs' -exec chmod 0755 {} + 2>/dev/null || true
+# One implementation, shared with the Ubuntu build. This used to be four `find`
+# lines that between them never restored the executable bit to a compiled
+# binary, so the package shipped `@esbuild/darwin-*/bin/esbuild` at 0644 and
+# every `tsx` process an installed copy runs died on it with EACCES.
+ai17z_fix_permissions "$PKG/app"
 
 # ---------------------------------------------------------------------------
 # The private Node runtime
@@ -127,6 +131,8 @@ printf '%s\n' "$VERSION" > "$PKG/VERSION"
 # Build
 # ---------------------------------------------------------------------------
 mkdir -p "$OUT"
+ai17z_assert_executables_runnable "$PKG"
+
 TARBALL="$OUT/AI17Z-macos-${ARCH}-${VERSION}.tar.gz"
 # `--no-xattrs` where tar supports it: macOS extended attributes in a tarball
 # are noise at best, and a quarantine flag travelling inside an archive is

@@ -27,7 +27,7 @@ import { execFile } from 'node:child_process';
 import { cp, mkdir, readFile, rm, writeFile, readdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { releaseName, releaseManifestSchema } from '@xbam/shared';
 import type { Platform } from '@xbam/shared';
@@ -544,4 +544,25 @@ async function gitCommit(): Promise<string> {
   }
 }
 
-await main();
+/**
+ * Run only when this file is what was asked for.
+ *
+ * `package-unix.mts` imports `INCLUDE`, `copyFiltered` and
+ * `proveCompatibilityGate` from here, and a bare top-level `await main()` made
+ * that import *run the Windows packager* -- a whole `npm ci` into
+ * `build/windows/app` -- before the Unix one had done anything. So
+ * `npm run package:unix` had never once worked, and it is the first step of
+ * both hosted platform jobs. On Windows it died on a locked symlink; on Linux
+ * it would have quietly built the wrong thing first.
+ *
+ * Sharing the deny-list is still right: two lists of what an installation needs
+ * is how one of them ends up missing the file that makes `docker compose build`
+ * fail on somebody else's machine. Sharing it just cannot mean running.
+ */
+function wasAskedFor(): boolean {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  return import.meta.url === pathToFileURL(invoked).href;
+}
+
+if (wasAskedFor()) await main();

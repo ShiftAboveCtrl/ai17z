@@ -319,3 +319,102 @@ export function preflight(manifest: ReleaseManifest, input: PreflightInput): Pre
 
   return { ok: blockers.length === 0, blockers, notes };
 }
+
+// ---------------------------------------------------------------------------
+// Whether an update may proceed when the gate could not answer
+// ---------------------------------------------------------------------------
+
+/**
+ * The install-layout schema from which the compatibility gate is part of the
+ * protocol.
+ *
+ * Schema 3 is the first that ships `packaging/preflight.mts`, a private Node to
+ * run it with, and a release manifest to run it against. An installation
+ * recording 3 therefore has every piece the gate needs, and the absence of any
+ * of them is a fault rather than an era.
+ */
+export const UPDATER_GATE_SCHEMA = 3;
+
+/** Why the gate produced no verdict. */
+export type GateUnavailable =
+  | 'no-manifest'
+  | 'no-bridge'
+  | 'no-runtime'
+  | 'crashed'
+  | 'unreadable';
+
+export type GateOutcome =
+  | { kind: 'allowed'; notes: string[] }
+  | { kind: 'refused'; blockers: string[] }
+  | { kind: 'unavailable'; why: GateUnavailable };
+
+export interface UpdateDecision {
+  proceed: boolean;
+  /** What to say. Empty when there is nothing worth saying. */
+  reasons: string[];
+  /** Whether the gate was required here, for a log line that explains itself. */
+  gateRequired: boolean;
+}
+
+/**
+ * May this update stop the working installation and replace it?
+ *
+ * The hard part is not the refusal. It is that "the gate said nothing" has two
+ * completely different meanings, and for a long time this treated them as one:
+ *
+ * **A release published before manifests existed, reaching an installation made
+ * before the gate existed.** There is nothing to ask and nothing to ask it
+ * with. Refusing would strand exactly the installations the update exists to
+ * move forward, so it carries on -- which is what the original design got right.
+ *
+ * **A current installation whose gate did not answer.** Schema 3 ships the
+ * bridge, the runtime and the manifest. If one of them is missing, corrupt, or
+ * crashed, something is wrong with this copy *right now*, and the next thing
+ * the updater does is stop a working installation and replace it. Carrying on
+ * means finding out afterwards, which is the one outcome the whole gate exists
+ * to prevent.
+ *
+ * The two are told apart by what the installation records about itself, never
+ * by "the file is missing so it is probably old". A missing file is the symptom
+ * both states share; the schema is the fact that separates them.
+ */
+export function decideUpdate(input: {
+  /** From INSTALL_INFO.json. Null when there is no record at all, which is itself pre-gate. */
+  installedSchema: number | null;
+  outcome: GateOutcome;
+}): UpdateDecision {
+  const gateRequired = input.installedSchema !== null && input.installedSchema >= UPDATER_GATE_SCHEMA;
+
+  if (input.outcome.kind === 'allowed') {
+    return { proceed: true, reasons: input.outcome.notes, gateRequired };
+  }
+  if (input.outcome.kind === 'refused') {
+    return { proceed: false, reasons: input.outcome.blockers, gateRequired };
+  }
+
+  if (!gateRequired) {
+    return {
+      proceed: true,
+      reasons: [`This installation predates the compatibility check (${WHY[input.outcome.why]}). Continuing.`],
+      gateRequired,
+    };
+  }
+
+  return {
+    proceed: false,
+    reasons: [
+      `AI17Z could not check whether this release can run here: ${WHY[input.outcome.why]}.`,
+      'This installation is new enough that the check is part of how it updates, so something is wrong with it.',
+      'Nothing was changed. The AI17Z you have is still installed and still running.',
+    ],
+    gateRequired,
+  };
+}
+
+const WHY: Record<GateUnavailable, string> = {
+  'no-manifest': 'the release published no compatibility manifest',
+  'no-bridge': 'the compatibility check is missing from this installation',
+  'no-runtime': 'this installation has no runtime to run the check with',
+  crashed: 'the check did not finish',
+  unreadable: 'the check produced nothing that could be read',
+};
