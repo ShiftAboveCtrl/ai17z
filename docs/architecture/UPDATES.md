@@ -90,23 +90,62 @@ looks like two builds installed at once.
 
 ## Which button an installation gets
 
-`BUILD_INFO.json` exists beside an installed application and nowhere else, and
-the launcher passes that on as `AI17Z_INSTALLED` for the containers, which have
-neither the file nor a repository to ask:
+Three layouts, three routes, and offering the wrong one is how somebody ends up
+running `git pull` in a directory with no repository in it.
 
-- **stamped** — installed from the Windows package. The update is the new
-  installer, run over the existing copy. The program directory is replaced; the
-  data directory, which holds the database, the master key and every setting, is
-  not touched.
-- **not stamped** — a checkout. The update is `.\update-ai17z.ps1`, which stops
-  the stack, fetches, migrates and starts it again.
+| Channel | How it got here | How it updates |
+| --- | --- | --- |
+| `BOOTSTRAP` | AI17Z Setup | **Update AI17Z** in the Start Menu, which is `update-ai17z.ps1`, which hands back to the setup script that installed it |
+| `INSTALLER` | `AI17Z-Setup-<version>.exe` | a newer one of those, run over the existing copy |
+| `CHECKOUT` | a clone | `.\update-ai17z.ps1`, which pulls |
+
+Whichever program installed it writes `INSTALL_INFO.json` beside the program
+saying which it was, and the launcher passes the channel through compose as
+`AI17Z_INSTALL_CHANNEL`, because a container has neither that file nor a
+repository to ask. `updateMethodFrom` in `updates.ts` is the whole of it.
+
+**The fallback is what this did before that file existed, and it stays.** An
+installation made by an earlier release has no marker, and must keep being
+offered the installer rather than suddenly being told it is a checkout: absent a
+channel, `AI17Z_INSTALLED` and then `BUILD_INFO.json` decide, exactly as before.
+An unrecognised channel is not a third answer either -- it falls through to the
+same fallback rather than being guessed at.
 
 Not `buildVersion().source`, which says how the *commit* was found: a
 developer's containers are built from a checkout and report `build` there like
 any other image, so that test told a developer to go and download an installer.
 
-Offering the wrong one is how somebody ends up running `git pull` in a directory
-with no repository in it.
+### What a bootstrap update actually does
+
+`update-ai17z.ps1` does not implement any of it. It reads the marker and runs
+`packaging\windows\Setup-AI17Z.ps1 -Update`, naming the program directory, the
+data directory and the instance, so nothing discovered on the machine can move
+where the update lands. One implementation of "fetch a release, check its hash,
+lay it down" serves both installing and updating.
+
+The setup script then: stops the native worker only -- the containers hold the
+database and an update has no reason to interrupt it -- downloads the release's
+package, **checks it against the SHA-256 compiled into the signed setup program
+or published in that release's `SHA256SUMS.txt`**, unpacks it beside the
+installation, and moves it into place only once it is whole. If the hash does not
+match, the file is deleted and nothing is replaced. There is no flag to skip
+that.
+
+The data directory is not touched: `.env`, the master key, the database volume,
+the browser profile and everything under `storage` survive by construction,
+because the only directories removed are the ones the package owns.
+
+### Two executables on a release, and which is which
+
+`AI17Z-Setup-<version>.exe` is the full installer and carries the application.
+`Install-AI17Z-<version>.exe` is AI17Z Setup, which carries a script.
+
+`toRelease` picks them **by name**. It used to take "the first asset ending in
+`.exe`", which was unambiguous while there was one -- and would now be a coin
+toss, handing half of all installations the wrong one. Releases still list the
+full installer first, because an installation published before this existed is
+still running that old rule and must keep resolving to the installer that
+matches the layout it has.
 
 ## What the check sends
 

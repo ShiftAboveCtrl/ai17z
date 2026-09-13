@@ -107,6 +107,23 @@ const INCLUDE = [
   // cannot tell, treats that as "do not start one", and browser-backed accounts
   // wait for a worker nothing will ever start.
   'scripts/browser-worker-present.mts',
+  // The Windows pieces an installation needs after it is installed, named one
+  // by one rather than shipping `packaging/` -- the rest of that folder is
+  // wizard artwork and the two Python scripts that draw it.
+  //
+  // `Setup-AI17Z.ps1` ships because it is also the updater: an installation
+  // made by the bootstrap updates itself by running the same script that
+  // installed it, with -Update, rather than by a second implementation of
+  // downloading and verifying a release. The Windows installer puts the same
+  // files in the same places from its own [Files] section, so both kinds of
+  // installation have the same program directory afterwards.
+  'packaging/windows/Setup-AI17Z.ps1',
+  'packaging/windows/Uninstall-AI17Z.ps1',
+  'packaging/windows/Stop-ForUninstall.ps1',
+  'packaging/windows/Uninstall-Data.ps1',
+  'packaging/windows/Install-Prerequisites.ps1',
+  'packaging/windows/AI17Z.cmd',
+  'packaging/windows/ai17z.ico',
 ];
 
 /**
@@ -378,6 +395,29 @@ async function main(): Promise<void> {
 
   const bytes = await directorySize(stageDir);
   console.log(`staged ${(bytes / 1024 / 1024).toFixed(0)}MB at ${stageDir}`);
+
+  // The same application, as one file, for the bootstrap.
+  //
+  // Not a second build: this is the directory the Windows installer ships,
+  // zipped. Two ways of installing AI17Z that laid down different bytes would
+  // be two products, and the one that got less use would be the one that broke.
+  //
+  // Its SHA-256 is printed so the release workflow can compile it into the
+  // setup program, which is what turns a signature on that executable into a
+  // pin on this payload.
+  if (process.argv.includes('--zip')) {
+    const zipPath = resolve(root, 'build', 'windows', `AI17Z-App-${version}.zip`);
+    await mkdir(dirname(zipPath), { recursive: true });
+    await rm(zipPath, { force: true });
+    const { createZip, sha256 } = await import('./zip');
+    const count = await createZip(stageDir, zipPath);
+    const digest = await sha256(zipPath);
+    const size = (await stat(zipPath)).size;
+    console.log(`zipped ${count} files, ${(size / 1024 / 1024).toFixed(0)}MB at ${zipPath}`);
+    console.log(`AI17Z_PACKAGE_FILE=${zipPath}`);
+    console.log(`AI17Z_PACKAGE_SHA256=${digest}`);
+  }
+
   console.log(`AI17Z_VERSION=${version}`);
   // Copy this into the GitHub release title. The installer derives the same
   // string for the uninstall list, and the app for its version screen.

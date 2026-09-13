@@ -90,6 +90,31 @@ knowing about the download. Verify the SHA-256 against the release page instead,
 and read [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for how our builds are
 produced and who can approve a signature.
 
+## Two downloads, and what that does not change
+
+A release carries two executables: `Install-AI17Z-<version>.exe`, which is the
+recommended one, and `AI17Z-Setup-<version>.exe`, the older full installer.
+
+Both start from zero reputation on every release while they are unsigned, and
+the smaller one gets no advantage for being smaller — SmartScreen weighs the
+publisher's certificate and how many people have downloaded *this exact file*
+without trouble, and neither of those has anything to do with size. Once signing
+is in place, reputation accrues to the certificate, so both files inherit it
+together and a new release starts from something rather than nothing.
+
+What AI17Z Setup does change is what you can check **before** you run it. The
+whole program is
+[`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/Setup-AI17Z.ps1) in
+this repository, published as a file beside the `.exe`, and
+`Install-AI17Z-<version>.exe /WHATIF` reports what it would do to the machine
+and changes nothing. That is not a substitute for a signature. It is the thing a
+compiled installer cannot offer at all. See [Auditing AI17Z Setup](SETUP_AUDIT.md).
+
+**We will not claim the warning has gone away when it has not.** A release is
+labelled unsigned on its own page while that is true, and the honest statement
+about a newly signed release is that Windows may still warn until reputation
+accrues.
+
 ## Why not the Microsoft Store
 
 Store apps are re-signed by Microsoft and never trigger SmartScreen, and

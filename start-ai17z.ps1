@@ -443,6 +443,28 @@ if (Test-Path $stamp) {
     # about release candidates.
   }
 }
+
+# How this installation was installed, handed to the containers.
+#
+# `AI17Z_INSTALLED` says only that this is not a checkout, and there are now two
+# kinds of installation with different update routes: one made by the Windows
+# installer, where an update is a new installer to run, and one made by AI17Z
+# Setup, where it is the Start Menu's "Update AI17Z" -- which runs
+# update-ai17z.ps1, which runs the same setup script that installed it.
+#
+# Written by whichever of the two put this program directory here. Absent means
+# a checkout, or an installation from before this existed, and the application
+# falls back to what it did then.
+$installInfo = Join-Path $PSScriptRoot 'INSTALL_INFO.json'
+if (Test-Path $installInfo) {
+  try {
+    $channel = (Get-Content -Raw $installInfo | ConvertFrom-Json).channel
+    if ($channel) { $env:AI17Z_INSTALL_CHANNEL = $channel }
+  } catch {
+    # An unreadable marker is not a reason to refuse to start. The update screen
+    # then says what it said before this file existed.
+  }
+}
 # Run a native command for its output, and tolerate it not being there.
 #
 # Everything below runs on every start, so none of it may stop one. Under

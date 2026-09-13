@@ -74,6 +74,11 @@ services:
       # update screen offers an installer or `update-ai17z.ps1`. Only the API
       # answers that route, so only the API needs it.
       AI17Z_INSTALLED: ${AI17Z_INSTALLED:-}
+      # Which of the two kinds of installation it is, when it is one: INSTALLER
+      # for the Windows package, BOOTSTRAP for one AI17Z Setup made. Written by
+      # whichever put the program directory there and read off INSTALL_INFO.json
+      # by the launcher, because a container has no such file to read.
+      AI17Z_INSTALL_CHANNEL: ${AI17Z_INSTALL_CHANNEL:-}
       # The contact the SEC is told to reach this installation on. Both
       # services, because either can reach an upstream: the API runs a
       # capability the interface invokes and the worker runs the ones a model

@@ -13,6 +13,7 @@ interface ReleaseInfo {
   notes: string;
   url: string;
   installerUrl: string | null;
+  setupUrl: string | null;
   publishedAt: string;
   prerelease: boolean;
 }
@@ -26,8 +27,34 @@ export interface UpdateState {
   enabled: boolean;
   checkedAt: string | null;
   error: string | null;
-  method: 'INSTALLER' | 'CHECKOUT';
+  method: 'INSTALLER' | 'BOOTSTRAP' | 'CHECKOUT';
 }
+
+/**
+ * What taking this update actually involves, for the way this copy was
+ * installed.
+ *
+ * Three layouts, three different true answers, and the screen says the one that
+ * applies rather than the one that applies most often. Offering "download the
+ * installer" to a checkout is how somebody ends up with two AI17Zs.
+ */
+const HOW_TO_UPDATE: Record<UpdateState['method'], { action: string; detail: string }> = {
+  BOOTSTRAP: {
+    action: 'Update AI17Z',
+    detail:
+      'Open "Update AI17Z" in the Start Menu. It stops this copy, fetches the new version, checks it against its published hash, applies any database migrations and starts it again. Your agents, memories, provider keys and browser session are in your data folder and are not touched.',
+  },
+  INSTALLER: {
+    action: 'Download the installer',
+    detail:
+      'Run the installer over this copy. Your agents, memories, provider keys and settings are in your data folder and are not touched.',
+  },
+  CHECKOUT: {
+    action: 'Read the release',
+    detail:
+      'This is a checkout, so the update is a pull. Run .\\update-ai17z.ps1, which stops the stack, fetches, migrates and starts it again.',
+  },
+};
 
 /**
  * Updates, and the fact that nobody is being made to take one.
@@ -132,15 +159,10 @@ export function UpdatePanel() {
           <ReleaseNotes markdown={latest.notes} />
 
           <div className="flex flex-wrap items-center gap-3">
-            {state.method === 'INSTALLER' ? (
-              <a
-                className="btn-primary"
-                href={latest.installerUrl ?? latest.url}
-                target="_blank"
-                rel="noreferrer"
-              >
+            {state.method === 'INSTALLER' && latest.installerUrl ? (
+              <a className="btn-primary" href={latest.installerUrl} target="_blank" rel="noreferrer">
                 <Download className="h-4 w-4" aria-hidden />
-                {latest.installerUrl ? 'Download the installer' : 'Open the release'}
+                {HOW_TO_UPDATE.INSTALLER.action}
               </a>
             ) : (
               <a className="btn-primary" href={latest.url} target="_blank" rel="noreferrer">
@@ -159,11 +181,22 @@ export function UpdatePanel() {
             </button>
           </div>
 
-          <p className="text-xs text-bone-faint">
-            {state.method === 'INSTALLER'
-              ? 'Run the installer over this copy. Your agents, memories, provider keys and settings are in your data folder and are not touched.'
-              : 'This is a checkout, so the update is a pull. Run .\\update-ai17z.ps1, which stops the stack, fetches, migrates and starts it again.'}
-          </p>
+          {/*
+            The phases an update goes through, named the same way the setup
+            program names them, so somebody who has installed AI17Z once
+            recognises what they are looking at. Not a progress bar: nothing
+            here runs the update, and a bar that cannot move is worse than a
+            sentence that tells the truth.
+          */}
+          {state.method === 'BOOTSTRAP' && (
+            <p className="break-words text-xs text-bone-faint">
+              Preparing, downloading, verifying, updating, starting, checking. AI17Z stays where it is
+              until the download has been checked against its published hash; if it does not match,
+              nothing is replaced.
+            </p>
+          )}
+
+          <p className="break-words text-xs text-bone-faint">{HOW_TO_UPDATE[state.method].detail}</p>
         </div>
       )}
 
