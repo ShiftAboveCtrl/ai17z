@@ -196,7 +196,13 @@ attributes to get around that. [What that actually means](docs/MACOS_TRUST.md)
 is written out in full, including which prompts are Docker's or Google's rather
 than AI17Z's.
 
-Also: [Installing on macOS](docs/MACOS_INSTALL.md)
+**The macOS packages are built and verified automatically, but nobody has yet
+run one on a Mac** -- no Mac hardware has been available. What has been proved
+and what has not is listed, item by item, in
+[what still needs a Mac](docs/MACOS_TEST_CHECKLIST.md). Treat macOS as new.
+
+Also: [Installing on macOS](docs/MACOS_INSTALL.md) ·
+[What still needs a Mac](docs/MACOS_TEST_CHECKLIST.md)
 
 <a id="ubuntu"></a>
 ## Ubuntu
@@ -221,8 +227,13 @@ doctor` reports that as *not available* rather than as a failure, and nothing
 installs a desktop to pretend otherwise. AI17Z binds to loopback and the docs
 recommend an SSH tunnel rather than exposing it.
 
+The package, the installer and the lifecycle are tested against a real Ubuntu
+24.04. Chrome, Docker Engine and the other releases are not yet --
+[what still needs a real machine](docs/UBUNTU_TEST_CHECKLIST.md) says which.
+
 Also: [Installing on Ubuntu](docs/UBUNTU_INSTALL.md) ·
-[What it touches](docs/UBUNTU_SECURITY.md)
+[What it touches](docs/UBUNTU_SECURITY.md) ·
+[What still needs a real machine](docs/UBUNTU_TEST_CHECKLIST.md)
 
 ### Privacy
 

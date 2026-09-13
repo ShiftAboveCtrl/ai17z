@@ -21,7 +21,7 @@ macOS and Ubuntu platforms, and -- more importantly -- what was not.
 | `packaging/ubuntu/test-installer.sh` | Ubuntu 24.04 container | 15 passed |
 | `packaging/ubuntu/test-lifecycle.sh` | Ubuntu 24.04 container, real `.deb` | 19 passed |
 | `packaging/ubuntu/test-deb.sh` | Ubuntu 24.04 container, real `.deb` | lintian 0 errors |
-| `packaging/macos/test-tarball.sh` | Ubuntu container (packaging only) | 36 passed |
+| `packaging/macos/test-tarball.sh` | Ubuntu container (packaging only) | 39 passed |
 | `shellcheck -S warning -x` | every shell file, both platforms | clean |
 | `verify:install --twice --upgrade --bootstrap --instances --no-git` | Windows | exit 0 |
 
@@ -56,6 +56,31 @@ out is to take it away.
   architecture disagrees. Neither has been installed on arm64 hardware.
 - **A real multi-platform release.** The workflow builds five jobs and has not
   yet run: no tag has been pushed since it was written.
+
+Each of those is broken down item by item, so that whoever gets the hardware
+knows exactly what to look at: [what still needs a
+Mac](MACOS_TEST_CHECKLIST.md) and [what still needs a real Ubuntu
+machine](UBUNTU_TEST_CHECKLIST.md). Record what you observe in this file,
+under the release you observed it on, with the OS version and the hardware.
+
+### Nothing an owner made can reach a package
+
+The Unix packager copied whole directories with `cp`. What is inside a
+developer's checkout includes their `.env` -- which holds the master key every
+provider credential is sealed under -- their `storage`, and the Chrome profile
+they are signed in to X with. The Windows packager had a deny-list; the Unix one
+had inherited none.
+
+Both now copy through the same filter, and both build scripts prune a second
+time after the copy. Two gates for one property, on purpose: the first is a
+promise that the input was clean, and a packaging script that ships somebody's
+master key because its input was dirty is still a packaging script that shipped
+somebody's master key.
+
+The test plants a `.env` at the root, a second one further down, and a file
+under a `storage` directory, then builds the real package and looks inside it.
+It also asserts `.env.example` survives -- filtering that out was an installed
+build's very first failure.
 
 ### A bug found by shellcheck, not by reading
 
