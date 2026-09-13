@@ -96,5 +96,25 @@ grep -q 'not.*notarized\|not\*\* signed\|not signed' install-ai17z-macos.sh \
   && ok "says plainly that it is not signed or notarized" || bad "does not disclose signing status"
 
 echo
+echo "### nothing an owner made can reach a package"
+# Planted where an unfiltered copy would pick them up. A deny-list is a promise
+# to have thought of everything, and the thing nobody thinks of is the one that
+# ships somebody's master key.
+mkdir -p "$STAGE/apps/api/storage" "$STAGE/packages/secret"
+printf 'AI17Z_MASTER_KEY=pretend-key\n' > "$STAGE/.env"
+printf 'AI17Z_MASTER_KEY=pretend-key\n' > "$STAGE/packages/secret/.env"
+printf 'a signed-in session\n' > "$STAGE/apps/api/storage/cookies"
+printf 'keep me\n' > "$STAGE/.env.example"
+bash packaging/macos/build-tarball.sh --stage "$STAGE" --version "$VERSION" \
+  --arch arm64 --node "$NODE_VERSION" --out /tmp/macout3 >/dev/null 2>&1
+rm -rf /tmp/unpack3; mkdir -p /tmp/unpack3
+tar -xzf "/tmp/macout3/AI17Z-macos-arm64-${VERSION}.tar.gz" -C /tmp/unpack3
+if find /tmp/unpack3 -name '.env' | grep -q .; then bad "a .env reached the package"; else ok "no .env anywhere in the package"; fi
+if find /tmp/unpack3 -path '*/storage/*' | grep -q .; then bad "a storage directory reached the package"; else ok "no storage directory reached the package"; fi
+if find /tmp/unpack3 -name '.env.example' | grep -q .; then ok ".env.example is kept, which the first run needs"; else bad ".env.example was filtered out; the first run cannot start without it"; fi
+rm -f "$STAGE/.env" "$STAGE/packages/secret/.env"
+
+
+echo
 printf '  %s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
