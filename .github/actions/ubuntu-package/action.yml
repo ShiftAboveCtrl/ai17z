@@ -150,18 +150,22 @@ runs:
         cd /usr/lib/ai17z/app
         # Importing is the test: a package can hold every file and still be one
         # where nothing loads.
+        # Static imports, not `await import(...)`. Top-level await needs an ES
+        # module, and `tsx -e` decides which it is from the source it is handed:
+        # a file whose only imports are dynamic has nothing to make it a module,
+        # so the await is a syntax error. Import statements settle it.
         "$NODE" "$TSX" -e '
-          const load = async (what: string) => { await import(what); console.log(`  loaded ${what}`); };
-          await load("@xbam/shared");
-          await load("@xbam/database");
-          await load("@xbam/jobs");
-          await load("@xbam/runtime");
-          await load("@xbam/channels");
-          await load("@xbam/models");
-          await load("@xbam/memory");
-          await load("@xbam/prompts");
-          await load("@xbam/tools");
-          await load("@xbam/persona");
+          import "@xbam/shared";
+          import "@xbam/database";
+          import "@xbam/jobs";
+          import "@xbam/runtime";
+          import "@xbam/channels";
+          import "@xbam/models";
+          import "@xbam/memory";
+          import "@xbam/prompts";
+          import "@xbam/tools";
+          import "@xbam/persona";
+          console.log("  every workspace package loads");
         '
 
     - name: The launcher, as an ordinary person, in a disposable home
