@@ -13,6 +13,19 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Where this installation's data is. One resolver, shared with every other
+# shipped script: AI17Z_ENV_FILE, then data-location.txt beside the program,
+# then the .env beside this script for a checkout.
+if [ -f "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh" ]; then
+  # shellcheck source=packaging/unix/ai17z-paths.sh
+  . "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh"
+  ai17z_resolve_paths "$(dirname "${BASH_SOURCE[0]:-$0}")"
+else
+  echo "  packaging/unix/ai17z-paths.sh is missing from this installation." >&2
+  exit 1
+fi
+
+
 GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; GREY=$'\033[90m'; OFF=$'\033[0m'
 step() { echo "  ${CYAN}$1${OFF}"; }
 done_() { echo "  ${GREEN}$1${OFF}"; }
@@ -26,8 +39,8 @@ stop_with_reason() {
   exit 1
 }
 
-PID_FILE="storage/native-worker.pid"
-LOG_FILE="storage/native-worker.log"
+PID_FILE="$AI17Z_STORAGE_DIR/native-worker.pid"
+LOG_FILE="$AI17Z_STORAGE_DIR/native-worker.log"
 
 echo
 echo "AI17Z"
@@ -38,7 +51,7 @@ command -v docker >/dev/null 2>&1 || stop_with_reason \
 docker info >/dev/null 2>&1 || stop_with_reason \
   "Docker is installed but not running." "Start it with 'sudo systemctl start docker', then run this again."
 
-[ -f .env ] || stop_with_reason \
+[ -f "$AI17Z_ENV_FILE" ] || stop_with_reason \
   "No .env file." "Run ./install-ai17z.sh first -- it creates one with a fresh master key."
 
 # -- Ports -------------------------------------------------------------------
@@ -46,11 +59,7 @@ docker info >/dev/null 2>&1 || stop_with_reason \
 # 127.0.0.1:55433 failed: port is already allocated" from a daemon, which tells
 # somebody running a second installation nothing they can act on.
 env_port() { # key default
-  local v=""
-  # tail, not head: a duplicated key in .env resolves last-wins, which is what
-  # docker compose does too.
-  [ -f .env ] && v="$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" .env | tail -1 | tr -d "'" )"
-  echo "${v:-$2}"
+  ai17z_env_value "$1" "$2"
 }
 
 port_taken() {
@@ -61,7 +70,7 @@ port_taken() {
 }
 
 # Ports held by this installation are not a conflict.
-if [ -z "$(docker compose ps -q 2>/dev/null)" ]; then
+if [ -z "$(ai17z_compose ps -q 2>/dev/null)" ]; then
   taken=""
   for pair in "API:AI17Z_API_PORT:8787" "Web:AI17Z_WEB_PORT:8080" "Postgres:POSTGRES_PORT:55432"; do
     name="${pair%%:*}"; rest="${pair#*:}"; key="${rest%%:*}"; def="${rest##*:}"
@@ -78,7 +87,7 @@ fi
 
 # -- The stack ---------------------------------------------------------------
 step "Starting the containers..."
-docker compose up -d
+ai17z_compose up -d
 done_ "Containers up."
 
 api_port="$(env_port AI17Z_API_PORT 8787)"
@@ -95,7 +104,7 @@ if [ "$ready" -eq 1 ]; then
   done_ "API is answering on ${api_port}."
 else
   warn "The API did not answer within two minutes."
-  warn "Check it with: docker compose logs api"
+  warn "Check it with: ai17z logs"
 fi
 
 # -- The native worker -------------------------------------------------------
@@ -103,7 +112,7 @@ if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; t
   done_ "Native worker already running (pid $(cat "$PID_FILE"))."
 else
   step "Starting the native worker (this one can see your Chrome)..."
-  mkdir -p storage
+  mkdir -p "$AI17Z_STORAGE_DIR"
   # Only browser work. The containerised worker takes everything else, and two
   # workers claiming the same jobs is just contention.
   AI17Z_WORKER_ROLE=browser \

@@ -10,14 +10,27 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Where this installation's data is. One resolver, shared with every other
+# shipped script: AI17Z_ENV_FILE, then data-location.txt beside the program,
+# then the .env beside this script for a checkout.
+if [ -f "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh" ]; then
+  # shellcheck source=packaging/unix/ai17z-paths.sh
+  . "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh"
+  ai17z_resolve_paths "$(dirname "${BASH_SOURCE[0]:-$0}")"
+else
+  echo "  packaging/unix/ai17z-paths.sh is missing from this installation." >&2
+  exit 1
+fi
+
+
 # The port this installation publishes on, which is not necessarily the default:
 # a machine running two installations moves one of them, and opening the other
 # one's window is worse than opening nothing.
 env_value() {
   local name="$1" fallback="$2"
-  if [ -f .env ]; then
+  if [ -f "$AI17Z_ENV_FILE" ]; then
     local found
-    found="$(grep -E "^[[:space:]]*${name}[[:space:]]*=" .env | head -1 | sed -E "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*//; s/[[:space:]]*$//")"
+    found="$(ai17z_env_value "$name" "")"
     [ -n "$found" ] && { printf '%s' "$found"; return; }
   fi
   printf '%s' "$fallback"

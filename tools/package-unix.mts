@@ -47,14 +47,21 @@ const stage = resolve(flag('stage') ?? join(root, 'build', platform, 'app'));
  * ignored: a package carrying scripts that cannot run on it invites somebody to
  * try, and the failure would be confusing rather than obvious.
  */
+const SHARED_UNIX = [
+  // The resolver every shipped .sh sources. Without it in the package, every
+  // one of them exits on its first line saying so -- which is the right
+  // failure, and one that must never actually happen.
+  'packaging/unix/ai17z-paths.sh',
+  'start-ai17z.sh',
+  'stop-ai17z.sh',
+  'restart-ai17z.sh',
+  'launch-ai17z.sh',
+  'doctor-ai17z.sh',
+  'install-ai17z.sh',
+];
+
 const PLATFORM_FILES: Record<'ubuntu' | 'macos', string[]> = {
   ubuntu: [
-    'start-ai17z.sh',
-    'stop-ai17z.sh',
-    'restart-ai17z.sh',
-    'launch-ai17z.sh',
-    'doctor-ai17z.sh',
-    'update-ai17z.sh',
     'packaging/ubuntu/ai17z',
     'packaging/ubuntu/ai17z.desktop',
     'packaging/ubuntu/postinst',
@@ -62,12 +69,6 @@ const PLATFORM_FILES: Record<'ubuntu' | 'macos', string[]> = {
     'packaging/windows/ai17z-256.png',
   ],
   macos: [
-    'start-ai17z.sh',
-    'stop-ai17z.sh',
-    'restart-ai17z.sh',
-    'launch-ai17z.sh',
-    'doctor-ai17z.sh',
-    'update-ai17z.sh',
     'packaging/macos/ai17z',
     'packaging/windows/ai17z-256.png',
   ],
@@ -85,7 +86,7 @@ async function main(): Promise<void> {
   await rm(stage, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
 
-  const wanted = [...INCLUDE.filter((entry) => !WINDOWS_ONLY.test(entry)), ...PLATFORM_FILES[platform]];
+  const wanted = [...INCLUDE.filter((entry) => !WINDOWS_ONLY.test(entry)), ...SHARED_UNIX, ...PLATFORM_FILES[platform]];
   for (const entry of wanted) {
     const from = join(root, entry);
     if (!existsSync(from)) {

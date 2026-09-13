@@ -17,6 +17,19 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Where this installation's data is. One resolver, shared with every other
+# shipped script: AI17Z_ENV_FILE, then data-location.txt beside the program,
+# then the .env beside this script for a checkout.
+if [ -f "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh" ]; then
+  # shellcheck source=packaging/unix/ai17z-paths.sh
+  . "$(dirname "${BASH_SOURCE[0]:-$0}")/packaging/unix/ai17z-paths.sh"
+  ai17z_resolve_paths "$(dirname "${BASH_SOURCE[0]:-$0}")"
+else
+  echo "  packaging/unix/ai17z-paths.sh is missing from this installation." >&2
+  exit 1
+fi
+
+
 GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
 step() { echo "  ${CYAN}$1${OFF}"; }
 done_() { echo "  ${GREEN}$1${OFF}"; }
@@ -82,16 +95,16 @@ elif [ "$volumes" -eq 1 ]; then
   printf '  Type DELETE to confirm: '
   read -r confirmation
   if [ "$confirmation" = "DELETE" ]; then
-    docker compose down --volumes
+    ai17z_compose down --volumes
     done_ "Containers and volumes removed."
   else
     warn "Nothing deleted."
-    docker compose down
+    ai17z_compose down
     done_ "Containers stopped; volumes kept."
   fi
 else
   step "Stopping the containers..."
-  docker compose down
+  ai17z_compose down
   done_ "Containers stopped. Data kept."
 fi
 
