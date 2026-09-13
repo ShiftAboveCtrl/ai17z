@@ -42,6 +42,11 @@ on:
         required: false
         default: true
         type: boolean
+      dry_run:
+        description: 'Build every platform and publish nothing'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -776,7 +781,46 @@ jobs:
           fi
           cat release-notes.md
 
+      # A dry run gets everything except the release.
+      #
+      # This workflow builds on four runners -- two of them macOS, which nothing
+      # here can otherwise reach -- and for a long time the only way to find out
+      # whether it worked was to publish and see. That is the shape this
+      # repository has already paid for six times over: a release used as the
+      # test, with somebody else's machine as the test bed.
+      #
+      # So: `dry_run` builds every platform, assembles the checksums and the
+      # manifest, and stops. The finished directory is uploaded as a workflow
+      # artifact, so what would have been published can be downloaded and
+      # looked at. Nothing is tagged, nothing is released, and nothing on the
+      # releases page changes.
+      - name: What a real run would have published
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          echo "This was a dry run. Nothing has been published."
+          echo
+          echo "Assets that would have been attached:"
+          ls -l dist | sed 's/^/  /'
+          echo
+          echo "SHA256SUMS.txt:"
+          cat dist/SHA256SUMS.txt | sed 's/^/  /'
+          echo
+          echo "release-manifest.json:"
+          cat dist/release-manifest.json
+
+      - name: Keep them, so a dry run can be inspected
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-${{ needs.build.outputs.version }}
+          path: dist
+          retention-days: 7
+
       - name: Publish
+        # Skipped only for an explicit dry run. A tag push has no `inputs` at
+        # all, so this has to read false there rather than blank.
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.build.outputs.version) }}
