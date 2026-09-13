@@ -73,7 +73,10 @@ const PLATFORM_FILES: Record<'ubuntu' | 'macos', string[]> = {
     'packaging/windows/ai17z-256.png',
   ],
   macos: [
+    'install-ai17z-macos.sh',
     'packaging/macos/ai17z',
+    'packaging/macos/ai17z-lifecycle.sh',
+    'packaging/macos/ai17z-update.sh',
     'packaging/windows/ai17z-256.png',
   ],
 };

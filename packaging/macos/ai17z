@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+#
+# AI17Z on macOS.
+#
+# Everything lives under one directory in the owner's own Library, and the two
+# halves of it are kept apart on purpose:
+#
+#   ~/Library/Application Support/AI17Z/<instance>/
+#       app/               replaced on every update
+#       runtime/node/      the private Node this installation runs
+#       data/              .env, the master key, storage -- never replaced
+#       browser-profiles/  the signed-in Chrome session
+#       logs/
+#
+# No sudo. Nothing here is installed system-wide, nothing is written outside the
+# owner's home, and an update replaces `app` and `runtime` and touches nothing
+# else. That is what makes a Mac update need no authorization at all.
+#
+# Paths with spaces work throughout, because "Application Support" has one and
+# every path below it inherits it.
+
+set -euo pipefail
+
+# Where this copy is: the launcher sits at the top of the installation.
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="$HERE/app"
+RUNTIME_ROOT="$HERE/runtime"
+NODE="$RUNTIME_ROOT/node/bin/node"
+
+if [ "$(id -u)" = "0" ] && [ -z "${AI17Z_ALLOW_ROOT:-}" ]; then
+  echo "  AI17Z runs as you, not as root." >&2
+  echo "  Run it without sudo. A browser profile owned by root is one you cannot" >&2
+  echo "  read afterwards." >&2
+  exit 1
+fi
+
+[ -x "$NODE" ] || {
+  echo "  AI17Z's bundled Node runtime is missing from $RUNTIME_ROOT/node." >&2
+  echo "  Install AI17Z again: https://github.com/ShiftAboveCtrl/ai17z" >&2
+  exit 1
+}
+
+DATA_DIR="$HERE/data"
+for dir in "$DATA_DIR" "$HERE/logs" "$HERE/browser-profiles"; do
+  [ -d "$dir" ] || { mkdir -p "$dir"; chmod 700 "$dir"; }
+done
+
+export AI17Z_APP_ROOT="$APP_ROOT"
+export AI17Z_RUNTIME_NODE="$NODE"
+export AI17Z_ENV_FILE="$DATA_DIR/.env"
+export AI17Z_STORAGE_DIR="$DATA_DIR/storage"
+export AI17Z_BROWSER_PROFILES="$HERE/browser-profiles"
+export AI17Z_STATE_DIR="$HERE/logs"
+export AI17Z_INSTALL_CHANNEL=MACOS_PKG
+export AI17Z_INSTANCE_NAME="${AI17Z_INSTANCE_NAME:-$(basename "$HERE")}"
+export AI17Z_PROGRAM_DIR="$APP_ROOT"
+export PATH="$RUNTIME_ROOT/node/bin:$PATH"
+
+command="${1:-start}"
+[ $# -gt 0 ] && shift
+
+case "$command" in
+  start|stop|restart|launch|status|logs|doctor|uninstall)
+    exec bash "$APP_ROOT/packaging/macos/ai17z-lifecycle.sh" "$command" "$@" ;;
+  update)
+    exec bash "$APP_ROOT/packaging/macos/ai17z-update.sh" "$@" ;;
+  version)
+    exec "$NODE" -e "console.log(require('$APP_ROOT/BUILD_INFO.json').version)" ;;
+  node)
+    exec "$NODE" "$@" ;;
+  -h|--help|help)
+    cat <<USAGE
+  AI17Z
+
+    ai17z start        start AI17Z
+    ai17z launch       start AI17Z and open it
+    ai17z stop         stop this installation
+    ai17z restart      stop, then start
+    ai17z status       what is running right now
+    ai17z logs         follow the logs
+    ai17z doctor       what is installed, running, healthy or missing
+    ai17z update       check for a newer AI17Z and install it
+    ai17z uninstall    how to remove AI17Z, and what that keeps
+    ai17z version      the version installed
+
+  This installation:
+    $HERE
+
+  Your data, which no update touches:
+    $DATA_DIR
+USAGE
+    ;;
+  *)
+    echo "  Unknown command: $command" >&2
+    echo "  Try: ai17z --help" >&2
+    exit 2 ;;
+esac
