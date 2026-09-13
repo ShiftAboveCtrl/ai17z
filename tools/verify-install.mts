@@ -713,26 +713,9 @@ async function bootstrap(stage: string): Promise<void> {
   //
   // So the value is taken before and put back after, and everything else this
   // creates is removed by name.
-  const previousDataDir = (
-    await powershell(
-      `(Get-ItemProperty 'HKCU:\\Software\\AI17Z' -ErrorAction SilentlyContinue).DataDir`,
-    )
-  ).trim();
-  const restoreMachineState = async () => {
-    const group = `$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\${instance}`;
-    const key = `HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}_${instance}_setup`;
-    const restore = previousDataDir
-      ? `Set-ItemProperty -Path 'HKCU:\\Software\\AI17Z' -Name DataDir -Value '${previousDataDir}' -ErrorAction SilentlyContinue`
-      : `Remove-ItemProperty -Path 'HKCU:\\Software\\AI17Z' -Name DataDir -ErrorAction SilentlyContinue`;
-    await powershell(
-      [
-        `Remove-Item -LiteralPath "${group}" -Recurse -Force -ErrorAction SilentlyContinue`,
-        `Remove-Item -Path '${key}' -Recurse -Force -ErrorAction SilentlyContinue`,
-        `Remove-ItemProperty -Path 'HKCU:\\Software\\AI17Z\\Installs' -Name '${program}' -Force -ErrorAction SilentlyContinue`,
-        restore,
-      ].join('; '),
-    );
-  };
+  const machine = machineStateOf([{ instance, program }]);
+  const previousDataDir = await machine.remember();
+  const restoreMachineState = async () => machine.restore(previousDataDir);
 
   await rm(join(ROOM, label), { recursive: true, force: true });
   await mkdir(data, { recursive: true });
@@ -919,6 +902,56 @@ async function bootstrap(stage: string): Promise<void> {
  * starting three Docker projects to find that out would treble the time for
  * nothing. The bootstrap phase already proves an installation that starts.
  */
+
+/**
+ * Everything a real install writes outside its own directories, put back.
+ *
+ * A real install registers itself with Windows -- a Start Menu group, an
+ * Add/Remove Programs entry, a line in the list of installations the next
+ * installer reads, and `Software\\AI17Z\\DataDir`, which is what an uninstaller
+ * reads to decide which data directory to offer to delete. That is correct of
+ * the setup script and unacceptable of this harness, which promises to touch
+ * nothing outside its own room.
+ *
+ * Shared by every phase that runs the real setup script, rather than written
+ * once per phase: the `--instances` phase installed three copies and cleaned up
+ * after none of them, which left three Start Menu groups, three Add/Remove
+ * entries, three registry lines, and a `DataDir` pointing into a directory the
+ * run had just deleted. Somebody uninstalling a real copy would have been
+ * offered the wrong folder, and this is the harness that exists so nothing else
+ * has to find that out.
+ */
+function machineStateOf(instances: { instance: string; program: string }[]) {
+  return {
+    /** Taken before anything is installed. */
+    async remember(): Promise<string> {
+      return (
+        await powershell(`(Get-ItemProperty 'HKCU:\\Software\\AI17Z' -ErrorAction SilentlyContinue).DataDir`)
+      ).trim();
+    },
+    async restore(previousDataDir: string): Promise<void> {
+      const commands: string[] = [];
+      for (const { instance, program } of instances) {
+        const group = `$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\${instance}`;
+        const key =
+          `HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\` +
+          `{8F3B2A41-6C7E-4E51-9C2B-AI17Z0000001}_${instance}_setup`;
+        commands.push(`Remove-Item -LiteralPath "${group}" -Recurse -Force -ErrorAction SilentlyContinue`);
+        commands.push(`Remove-Item -Path '${key}' -Recurse -Force -ErrorAction SilentlyContinue`);
+        commands.push(
+          `Remove-ItemProperty -Path 'HKCU:\\Software\\AI17Z\\Installs' -Name '${program}' -Force -ErrorAction SilentlyContinue`,
+        );
+      }
+      commands.push(
+        previousDataDir
+          ? `Set-ItemProperty -Path 'HKCU:\\Software\\AI17Z' -Name DataDir -Value '${previousDataDir}' -ErrorAction SilentlyContinue`
+          : `Remove-ItemProperty -Path 'HKCU:\\Software\\AI17Z' -Name DataDir -ErrorAction SilentlyContinue`,
+      );
+      await powershell(commands.join('; '));
+    },
+  };
+}
+
 async function instances(stage: string): Promise<void> {
   const label = 'instances';
   const room = join(ROOM, label);
@@ -954,6 +987,13 @@ async function instances(stage: string): Promise<void> {
     program: join(room, name, 'program'),
     data: join(room, name, 'data'),
   });
+
+  // Three real installs, so three of everything Windows is told about. Taken
+  // before the first one, put back after the last -- including on the way out
+  // of a failure, because a phase that fails halfway leaves the most of it
+  // behind and is the run somebody is already busy reading.
+  const machine = machineStateOf(names.map((name) => ({ instance: name, program: where(name).program })));
+  const previousDataDir = await machine.remember();
 
   const runSetup = async (args: string[]): Promise<{ out: string; code: number }> =>
     new Promise((done) => {
@@ -1094,8 +1134,10 @@ async function instances(stage: string): Promise<void> {
   }
   say(`${label}: asked to update ${alpha} from inside ${target}, it refused and touched neither`);
 
+  await machine.restore(previousDataDir);
   if (!keep) await rm(room, { recursive: true, force: true }).catch(() => undefined);
   say(`${label}: one installation updated, two untouched, and the wrong-target request refused`);
+  say(`${label}: what Windows was told about these three has been taken back`);
 }
 
 /**
