@@ -130,4 +130,51 @@ describe('the release builds every platform from one tag', () => {
     const major = Number.parseInt(runtime.version.replace(/^v/, '').split('.')[0]!, 10);
     expect(String(major)).toBe((engines.engines?.node ?? '>=22').replace(/[^\d]/g, ''));
   });
+
+  /**
+   * A dry run builds everything and publishes nothing.
+   *
+   * This workflow reaches four runners, two of them macOS, which nothing on a
+   * developer's machine can. Before this input the only way to find out whether
+   * it worked was to publish and see -- a release used as the test, with
+   * somebody else's machine as the test bed, which this repository has already
+   * paid for six times.
+   *
+   * The property worth pinning is not that the input exists. It is that the
+   * publishing step cannot run when it is set, and that it still runs on an
+   * ordinary tag push, where `inputs` does not exist at all.
+   */
+  describe('a dry run', () => {
+    it('is offered, and defaults to off', () => {
+      const dispatch = workflow.slice(workflow.indexOf('workflow_dispatch:'), workflow.indexOf('permissions:'));
+      expect(dispatch).toContain('dry_run:');
+      expect(dispatch).toMatch(/dry_run:[\s\S]*?default: false/);
+    });
+
+    it('cannot publish, and a tag push still can', () => {
+      const at = workflow.search(/^ *- name: Publish$/m);
+      expect(at).toBeGreaterThan(-1);
+      const step = workflow.slice(at, at + 600);
+      const guard = step.match(/if: \$\{\{([^}]+)\}\}/);
+      expect(guard).not.toBeNull();
+      const condition = guard![1]!;
+      // Both halves. `!inputs.dry_run` on its own is true for a tag push, which
+      // is right, and reads as "not set" for a dispatch that did set it only
+      // because GitHub coerces -- so the event is named rather than relied on.
+      expect(condition).toContain("github.event_name != 'workflow_dispatch'");
+      expect(condition).toContain('!inputs.dry_run');
+    });
+
+    it('leaves something to look at, since nothing is published', () => {
+      // A dry run that proves the build and then throws the result away has
+      // proved the build and nothing about what it produced.
+      const at = workflow.indexOf('- name: Keep them, so a dry run can be inspected');
+      expect(at).toBeGreaterThan(-1);
+      expect(workflow.slice(at, at + 400)).toContain('actions/upload-artifact');
+      // Before the publish step, so a real run is not slowed by it and a dry
+      // run reaches it at all.
+      expect(at).toBeLessThan(workflow.search(/^ *- name: Publish$/m));
+    });
+  });
+
 });
