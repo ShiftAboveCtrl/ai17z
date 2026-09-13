@@ -2,62 +2,70 @@
 
 ## The short way
 
-1. Download **`Install-AI17Z-<version>.exe`** from the
-   [releases page](https://github.com/ShiftAboveCtrl/ai17z/releases).
-2. Run it.
-3. Follow the status screen.
-4. AI17Z opens when it is ready.
-
-**Only install AI17Z from the official repository above.** Nowhere else
-distributes it.
-
-Check what you downloaded against `SHA256SUMS.txt`, published beside it:
+Open **Windows Terminal** and paste this:
 
 ```powershell
-Get-FileHash .\Install-AI17Z-1.0.0-beta.16.exe -Algorithm SHA256
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
 ```
 
-If it does not match, stop. Do not run it.
+That is the whole installation. It checks what this PC has, installs anything
+missing, installs AI17Z, starts it, checks it actually works, and opens it.
 
-## What that installer actually is
+**Install AI17Z only with the command above.** It is published here and on the
+[project page](https://github.com/ShiftAboveCtrl/ai17z), and nowhere else
+distributes AI17Z.
 
-One PowerShell script —
-[`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/Setup-AI17Z.ps1), in
-this repository, in full — and a wrapper that extracts and runs it. It is a
-script rather than compiled logic because it can turn on Windows features and
-install system software, and that is exactly the kind of program somebody should
-be able to read before running.
+## Why a command rather than a download
+
+AI17Z is not signed. Free certificates for open-source projects are granted on
+the strength of an existing user base; AI17Z applied and was turned down for not
+having one yet.
+
+So an AI17Z `.exe` would be an unsigned executable Windows has never seen, and
+Windows would warn you about it, and Windows would be right. The answer to that
+is not to talk you past the warning — it is to not ask for one.
+
+**Nothing above is an executable, nothing is double-clicked, and no Windows
+security feature is touched, turned off or argued with.** Not SmartScreen, not
+Smart App Control, not Defender, not your execution policy. Windows' default
+execution policy permits individual commands and refuses script files; the
+command above is individual commands, and so is the way it runs what it fetches.
+
+## What actually runs
+
+[`install.ps1`](../install.ps1) is the file at that URL: around 200 lines of code
+under a long comment explaining itself, in this repository, and short enough to
+read before you paste anything. Open the URL in a browser first if you like —
+that is what it is there for.
+
+All it does is:
+
+1. ask GitHub for the newest release;
+2. download that release's setup program;
+3. **check its SHA-256 against the hash that release published** — and stop, with
+   nothing written and nothing run, if they disagree;
+4. write the checked file to `%LOCALAPPDATA%\AI17Z-setup\Setup-AI17Z.checked.ps1`,
+   where you can read it;
+5. run the bytes it checked, in a separate process that hashes the file again
+   first.
+
+The setup program itself is
+[`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/Setup-AI17Z.ps1) — the
+whole installer, as a script, published with every release as
+`Install-AI17Z-<version>.ps1`. It is a script rather than compiled logic because
+it can turn on Windows features and install system software, and that is exactly
+the kind of program somebody should be able to read before running.
 
 To see what it would do to this PC without doing any of it:
 
 ```powershell
-.\Install-AI17Z-1.0.0-beta.16.exe /WHATIF
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -WhatIfOnly
 ```
 
 **[How to audit it](SETUP_AUDIT.md)** covers every privileged action, every
-download, everything it writes, what it never does, and how to check the hash and
-the signature. Read that first if you want to.
-
-## About the warning you will see
-
-While AI17Z's SignPath Foundation application is pending, the download is
-**unsigned**, and Windows will say so. You will see "Windows protected your PC"
-and have to choose **More info → Run anyway**.
-
-That warning is doing its job. An unsigned installer is one Windows has no
-publisher information for, and you should treat every unsigned download that way
-— including this one. Verify the SHA-256 above against the release page before
-you run it.
-
-We will not ask you to turn off SmartScreen, Smart App Control, Defender or any
-other protection. Once signing is in place the warning goes away on its own as
-the signature accumulates reputation. See
-[Windows trust and SmartScreen](WINDOWS_TRUST.md), which is honest about how long
-that takes.
-
-**Code signing policy:** [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md). Free
-code signing provided by [SignPath.io](https://about.signpath.io), certificate by
-[SignPath Foundation](https://signpath.org).
+download, everything it writes, what it never does, how to check the hashes, and
+— honestly — what that first URL does and does not protect you against. Read
+that first if you want to.
 
 ## What it installs, and what it leaves alone
 
@@ -88,8 +96,11 @@ them and skip all four. `-SkipDependencies` makes it check and never install.
 
 The status screen is deliberately quiet: one row per thing a person would
 recognise, and everything each step runs goes to a log rather than scrolling
-past. If you want the detail on screen as well, run the script with
-`-ShowDetails`.
+past. If you want the detail on screen as well:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -ShowDetails
+```
 
 Either way the whole of it is written to
 `%LOCALAPPDATA%\AI17Z-setup\setup-<date>.log`, with anything key-shaped blanked
@@ -126,47 +137,65 @@ and connect an X account when you are ready.
 
 ## A second installation
 
+A machine can hold as many AI17Z installations as you like. They share nothing —
+not the database, not the browser profile, not the containers — and **updating
+one leaves the others exactly as they are.**
+
 ```powershell
-.\Install-AI17Z-1.0.0-beta.16.exe /INSTANCE=AI17Z-test
+$s = irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1
+& ([scriptblock]::Create($s)) -List                 # what is installed here
+& ([scriptblock]::Create($s)) -NewInstance          # install another
+& ([scriptblock]::Create($s)) -Instance AI17Z-test  # act on that one
 ```
 
-Everything is derived from that one name: the program folder, the data folder,
-the Start Menu group, the Add/Remove Programs entry, the Docker project and the
-ports. A second installation shares nothing with the first — not its database,
-not its browser profile, not its containers — and updating either one leaves the
-other alone.
+Everything is derived from the one name: the program folder, the data folder, the
+Start Menu group, the Add/Remove Programs entry, the Docker project and the
+ports.
+
+Run the plain command on a machine that already has AI17Z and it **asks** which
+you meant rather than guessing. With several installed and nobody there to ask,
+it stops and tells you how to name one. It never picks for you, because picking
+wrong means replacing an installation somebody did not ask it to touch.
 
 ## Updating
 
 AI17Z tells you when there is a newer version. **Settings → Version** shows what
 changed and how this copy takes an update.
 
-For a copy installed with AI17Z Setup, that is **Update AI17Z** in the Start
-Menu: it stops this copy, downloads the new release, checks it against its
-published SHA-256, replaces the program, applies any database migrations, starts
-it again, and checks it works. If the hash does not match, nothing is replaced.
+**An update updates one installation: the one it was started from.** *Update
+AI17Z* in the Start Menu belongs to that installation, and the update screen in
+the application updates the copy you are looking at. Neither goes looking for
+another installation on the machine, and both refuse a request naming one that is
+not their own.
 
-For a copy installed with the older full installer, `AI17Z-Setup-<version>.exe`,
-it is a new one of those run over the top. Both routes keep working, and neither
-touches `%LOCALAPPDATA%\AI17Z` — your agents, memories, knowledge, saved browser
-sessions and encryption key all survive.
+An update stops that copy, downloads the new release, checks it against its
+published SHA-256, replaces the program directory, applies any database
+migrations, starts it again, and checks it works. If the hash does not match,
+nothing is replaced.
+
+A copy installed with the older full installer updates the same way, and so does
+one installed with the command. Neither touches `%LOCALAPPDATA%\AI17Z` — your
+agents, memories, knowledge, saved browser sessions and encryption key all
+survive.
 
 **Nothing updates itself.** There is no updater process, nothing restarts on its
 own, and an update you ignore stays ignored. You can skip a version so it is
 never mentioned again, or turn the check off entirely — off means no request is
 made at all. See [Privacy](PRIVACY.md).
 
-## The full installer
+## The older full installer
 
-`AI17Z-Setup-<version>.exe` is still published. It carries the application inside
-it rather than downloading it, which is useful on a machine with no network at
-install time, and it is what installations made before AI17Z Setup existed update
-with. It offers to install the prerequisites through winget but does not check
-that Docker's engine is actually running before it finishes, which is the main
-thing AI17Z Setup does differently.
+`AI17Z-Setup-<version>.exe` is still published, and is **unsigned and not the
+recommended route**. It carries the application inside it rather than downloading
+it, which is useful on a machine with no network at install time, and it is what
+installations made before the terminal route update with.
 
-Both produce the same program directory and the same data directory, and either
-can update an installation the other made.
+If you run it, Windows will warn you that it does not know the publisher, and
+that is correct — it does not. We will not tell you to click past that. Use the
+command at the top of this page instead.
+
+Both routes produce the same program directory and the same data directory, and
+either can update an installation the other made.
 
 ## If you forget your password
 

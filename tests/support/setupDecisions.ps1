@@ -35,7 +35,14 @@ $Allowed = @(
   'Test-Ai17zArchiveEntryPath',
   'Test-Ai17zVersionAtLeast',
   'Protect-Ai17zSecret',
-  'Get-Ai17zGlyphs'
+  'Get-Ai17zGlyphs',
+  # Which installation a run is about, which is the decision a machine holding
+  # several AI17Z installations turns on.
+  'Select-Ai17zTarget',
+  'Test-Ai17zInstallInfoTrustworthy',
+  'New-Ai17zInstanceName',
+  # Whether a release tag may become a filename.
+  'Test-Ai17zReleaseTag'
 )
 
 # Not $input: that is PowerShell's own pipeline enumerator, and assigning to it

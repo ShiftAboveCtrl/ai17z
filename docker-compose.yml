@@ -79,6 +79,12 @@ services:
       # whichever put the program directory there and read off INSTALL_INFO.json
       # by the launcher, because a container has no such file to read.
       AI17Z_INSTALL_CHANNEL: ${AI17Z_INSTALL_CHANNEL:-}
+      # Which installation this is, for an owner running more than one. The
+      # update screen names the copy it is offering to update, because "AI17Z is
+      # out of date" says nothing to somebody with three of them. The data
+      # directory is deliberately not here: it holds the master key.
+      AI17Z_INSTANCE_NAME: ${AI17Z_INSTANCE_NAME:-}
+      AI17Z_PROGRAM_DIR: ${AI17Z_PROGRAM_DIR:-}
       # The contact the SEC is told to reach this installation on. Both
       # services, because either can reach an upstream: the API runs a
       # capability the interface invokes and the worker runs the ones a model

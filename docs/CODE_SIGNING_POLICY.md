@@ -1,93 +1,116 @@
 # Code signing policy
 
-How AI17Z's Windows releases are built, signed and verified, and who is allowed
-to approve a signature.
+What AI17Z signs, what it does not, and what stands in place of a signature.
 
-Free code signing provided by [SignPath.io](https://about.signpath.io),
-certificate by [SignPath Foundation](https://signpath.org).
+**AI17Z is not code signed.** This page says so first, because a code signing
+policy that buries that under three paragraphs of process is a document written
+to look reassuring rather than to be read.
 
 ---
 
-## What gets signed
+## The short version
 
-One artifact: the Windows installer.
+| | |
+| --- | --- |
+| Is anything signed? | No |
+| Is that going to change? | Not soon, and not by us paying to look trustworthy |
+| What is the recommended way in, then? | A terminal command that downloads nothing you double-click |
+| What checks what you get? | A SHA-256, checked before anything is written and again before anything is run |
 
+---
+
+## Why not
+
+Certificates that would actually help cost money AI17Z does not spend, and the
+free route for open-source projects is conditional on something AI17Z does not
+have.
+
+**The free route.** [SignPath Foundation](https://signpath.org) provides
+certificates to open-source projects, and AI17Z applied. The application was
+**declined**, for the stated reason that the project does not yet have enough
+users. That is a reasonable rule — a certificate is a scarce thing to hand to a
+project nobody is running yet — and it is not one there is a way around. It is
+worth re-applying when that changes, and this page will change with it.
+
+**The paid route.** An ordinary certificate costs a few hundred a year and buys
+less than people expect. Since 2024 an EV certificate no longer carries
+SmartScreen reputation on day one either: reputation is built by the file being
+downloaded and run, which a new release of a small project does not get.
+[WINDOWS_TRUST.md](WINDOWS_TRUST.md) covers that in detail.
+
+So the choice was between shipping an unsigned executable and finding a way in
+that does not need one.
+
+## What we do instead
+
+**The recommended route downloads no executable.** Installation is a command
+pasted into Windows Terminal:
+
+```powershell
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
 ```
-AI17Z-Setup-<version>.exe
-```
 
-It carries product and version metadata (`AI17Z`, the release version, the
-publisher and a description), which SignPath requires and which a person can
-read in the file's properties before running it.
+Nothing is double-clicked, so SmartScreen's reputation check — which is about
+downloaded executables — never applies. **Nothing is disabled, excluded or
+turned off to achieve that**, and nothing needs to be: Windows' default
+execution policy permits individual commands, and everything above and
+everything it runs are individual commands rather than script files being
+launched. Your execution policy is not changed, and you are never asked to
+change it.
 
-Nothing else is signed. AI17Z is otherwise installed from source, and the
-installer is the only binary we ask anybody to run.
+**What replaces a signature is a hash and a public build.** `install.ps1` reads
+the release's own `SHA256SUMS.txt`, hashes the setup program it downloaded before
+writing it anywhere, and refuses to go on if the two disagree. The process that
+then runs it hashes the file again. There is no flag to skip either check.
 
-## Where it is built
+Every release is built by a public GitHub workflow from a public tag, from a
+lockfile, on a hosted runner — never uploaded from a maintainer's machine — and
+publishes the SHA-256 of every file in it. [SETUP_AUDIT.md](SETUP_AUDIT.md) is
+the full account, including the parts a hash does not cover.
 
-On a GitHub-hosted runner, from a tagged commit in the public repository, by
-`.github/workflows/release.yml`. Nothing is built on a maintainer's machine and
-uploaded, so what is signed is what the public source produces.
+## The one executable that still exists
 
-The build:
+`AI17Z-Setup-<version>.exe`, the older full installer, is still built and still
+published. It is **unsigned**, it is labelled as such on the release page, and it
+is not the recommended route. It exists because installations made with it
+update by running a newer one, and breaking those to tidy the architecture would
+be the wrong trade.
 
-1. checks out the tag
-2. installs dependencies from the committed lockfile
-3. runs typecheck, the full test suite and the release-cleanliness check
-4. stages the application with `npm run package:windows`
-5. compiles the installer with Inno Setup
-6. uploads it as a GitHub Actions artifact
+If you run it, Windows will warn you, and Windows is right to. We will not tell
+you to click past that warning. Use the command instead.
 
-SignPath then verifies the artifact's origin — repository, branch, commit and
-workflow — before any signature is issued. That origin check is the reason the
-build has to happen on the hosted runner rather than anywhere convenient.
+## Who could approve a signature
 
-## Who approves a signature
-
-AI17Z is currently maintained by one person, and this section says so rather
-than inventing a team.
+Nobody, currently, because there is nothing to approve. If AI17Z is ever signed,
+this is the arrangement it will be signed under, and this section changes before
+any of it happens rather than after:
 
 | Role | Who |
 | --- | --- |
 | **Authors** — may write code and open pull requests | [@ShiftAboveCtrl](https://github.com/ShiftAboveCtrl) |
 | **Reviewers** — review changes before they reach `main` | [@ShiftAboveCtrl](https://github.com/ShiftAboveCtrl) |
-| **Approvers** — may approve a signing request | [@ShiftAboveCtrl](https://github.com/ShiftAboveCtrl) |
+| **Approvers** — would approve a signing request | [@ShiftAboveCtrl](https://github.com/ShiftAboveCtrl) |
 
-Every signing request is **approved manually** in SignPath. There is no policy
-that signs automatically on a push, so a compromised workflow cannot produce a
-signed artifact without a person approving it.
+Any signing request would be approved **manually**, never by a policy that signs
+on a push, so a compromised workflow could not produce a signed artifact without
+a person approving it. Multi-factor authentication is required for every person
+holding any of those roles, on both GitHub and any signing service, which is the
+only thing standing between a stolen password and a signed release.
 
-If more maintainers join, this table changes before they are given a role.
+AI17Z is maintained by one person, and this table says so rather than inventing
+a team. If more maintainers join, it changes before they are given a role.
 
-## Multi-factor authentication
-
-Multi-factor authentication is required for every person holding any of the
-roles above, on **both** GitHub and SignPath. This is a SignPath Foundation
-condition and it is also the only thing standing between a stolen password and a
-signed release.
-
-## What we do not sign
+## What would not be signed, if anything were
 
 - Anything built from a fork, or from a branch that is not the release tag
 - Anything a maintainer built locally
-- Any artifact whose origin SignPath cannot verify
+- Any artifact whose origin a signing service cannot verify
 - Anything containing a component that is not open source
-
-## If signing fails
-
-The release fails. The workflow will not publish an unsigned installer where a
-signed one was expected, and it verifies the returned artifact — signature
-status, product name and version — before anything is attached to a release.
-
-There is a separate, clearly labelled lane for **unsigned** builds, used while
-this application is pending. Those releases say so on the release page and in
-the artifact's build information, and they are never published as if they were
-signed.
 
 ## Reporting a problem
 
 Security issues: see [SECURITY.md](../SECURITY.md).
 
-If you believe an AI17Z installer has been tampered with, do not run it. Open a
-security report, and include the SHA-256 of the file you have. Every release
-publishes `SHA256SUMS.txt` beside the installer.
+If you believe an AI17Z installation has been tampered with, do not run it. Open
+a security report and include the SHA-256 of the file you have. Every release
+publishes `SHA256SUMS.txt` beside every artifact in it.

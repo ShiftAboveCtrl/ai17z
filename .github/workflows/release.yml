@@ -1,19 +1,29 @@
-# Builds, signs and publishes the AI17Z Windows installer.
+# Builds and publishes an AI17Z release.
 #
-# Two lanes, and which one runs is explicit rather than inferred:
+# What a release is, since this stopped being "an installer":
 #
-#   SIGNING_REQUIRED = true   the artifact must come back signed, and the
-#                             release fails if it does not
-#   SIGNING_REQUIRED = false  a clearly labelled unsigned build, used while the
-#                             SignPath Foundation application is pending
+#   install.ps1                     the command on the README, published so it
+#                                   can be pinned and compared
+#   Install-AI17Z-<version>.ps1     the setup program -- the whole installer,
+#                                   as a script somebody can read
+#   AI17Z-App-<version>.zip         the application it installs
+#   AI17Z-Setup-<version>.exe       the older full installer, still published
+#                                   because installations made with it update
+#                                   by running a newer one
+#   AI17Z-Setup-Audit-<version>.json   what the setup program declares it may do
+#   SHA256SUMS.txt                  hashes for all of the above
 #
-# The important property is that these never blur into each other. A workflow
-# that expected a signature, did not get one, and published anyway would be
-# worse than one that never signed at all: it would attach our name to an
-# artifact nobody checked.
+# **There is no signing lane, and no unsigned executable in the recommended
+# route.** Code signing for open-source projects is granted on the strength of
+# an existing user base; AI17Z applied and was turned down for not having one
+# yet. Rather than ship an unsigned `.exe` and talk people past the warning
+# Windows is right to show, the ordinary way in is a command in a terminal --
+# no executable, nothing double-clicked, and no Windows security feature
+# touched. See docs/WINDOWS_TRUST.md, which says so plainly rather than
+# implying a signature is coming.
 #
-# Everything SignPath-specific arrives after approval and lives in repository
-# secrets and variables. Nothing here contains a credential.
+# The legacy `.exe` is still built for the installations that need it, and it
+# is still unsigned. It is labelled as such on the release page.
 
 name: Release
 
@@ -107,9 +117,9 @@ jobs:
         run: npm test
 
   # ---------------------------------------------------------------------------
-  # The installer. Built on a GitHub-hosted runner from the tagged commit, which
-  # is what SignPath verifies the origin of. Nothing is built on a maintainer's
-  # machine and uploaded.
+  # The release. Built on a GitHub-hosted runner from the tagged commit, in
+  # public, where the log of what happened is part of the release. Nothing is
+  # built on a maintainer's machine and uploaded.
   # ---------------------------------------------------------------------------
   build:
     name: build the Windows installer
@@ -174,10 +184,9 @@ jobs:
           "release-name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "release name: $name"
 
-          # The hash of the package, which is compiled into the setup program a
-          # few steps below. That is what makes a signature on that executable a
-          # pin on this payload rather than on a filename: the bytes it will
-          # install are the bytes built here, beside it, in this job.
+          # The hash of the package, which goes into the audit document and
+          # into SHA256SUMS.txt. It is what the setup program checks the
+          # download against before it unpacks a byte of it.
           $hash = $out | Select-String -Pattern '^AI17Z_PACKAGE_SHA256=([0-9a-f]{64})$' | Select-Object -Last 1
           if (-not $hash) { throw 'The packager did not print AI17Z_PACKAGE_SHA256.' }
           $digest = $hash.Matches[0].Groups[1].Value
@@ -241,30 +250,22 @@ jobs:
           & "$env:ISCC" "/DAppVersion=${{ steps.version.outputs.version }}" packaging\windows\ai17z.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with $LASTEXITCODE" }
 
-      - name: Compile AI17Z Setup
-        shell: pwsh
-        run: |
-          # The recommended download, and a different thing from the installer
-          # above: it carries no application, only the script that fetches one.
-          # The tag and the package hash are compiled in, so this executable
-          # installs exactly one release and exactly one payload.
-          & "$env:ISCC" `
-            "/DAppVersion=${{ steps.version.outputs.version }}" `
-            "/DReleaseTag=v${{ steps.version.outputs.version }}" `
-            "/DPackageSha256=${{ steps.stage.outputs.package-sha256 }}" `
-            packaging\windows\bootstrap.iss
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with $LASTEXITCODE" }
-
       - name: Publish the setup script and its audit manifest beside it
         shell: pwsh
         run: |
           $version = '${{ steps.version.outputs.version }}'
           $script = 'packaging\windows\Setup-AI17Z.ps1'
 
-          # The same file the executable extracts, published so anybody can hash
-          # both and prove they are the same script -- which is the whole reason
-          # the installer is a script rather than compiled logic.
+          # The installer, published as the script it is. `install.ps1` fetches
+          # exactly this file and refuses to run it unless its SHA-256 matches
+          # what SHA256SUMS.txt says below.
           Copy-Item $script "build\windows\Install-AI17Z-$version.ps1" -Force
+
+          # And the command from the README, as a file. It is served from the
+          # branch, which is the one link in the chain whose bytes cannot be
+          # checked before they run; publishing it per release means anybody who
+          # wants to can compare the two, or pin to this one.
+          Copy-Item 'install.ps1' 'build\windows\install.ps1' -Force
 
           # What it says it is allowed to do, printed by the script itself so
           # the manifest cannot drift from the code it describes.
@@ -281,154 +282,49 @@ jobs:
 
           Get-ChildItem build\windows -File | Select-Object Name, Length | Format-Table -AutoSize
 
-      - name: Check the metadata SignPath requires
+      - name: Check the legacy installer's metadata
         shell: pwsh
         run: |
-          # Both executables, because both are published and both will be
-          # signed. Checking one and shipping two is how the unchecked one ends
-          # up being the one people download.
-          foreach ($name in @(
-              "build\windows\AI17Z-Setup-${{ steps.version.outputs.version }}.exe",
-              "build\windows\Install-AI17Z-${{ steps.version.outputs.version }}.exe")) {
-            if (-not (Test-Path $name)) { throw "Not produced: $name" }
-            $info = (Get-Item $name).VersionInfo
-            # Windows pads version-resource strings, so ProductName comes back
-            # as "AI17Z" followed by 55 spaces and an exact comparison fails on
-            # a file that is perfectly correct. Trim before comparing, and print
-            # the length so the next surprise here is one line of output away.
-            $product = $info.ProductName.Trim()
-            $productVersion = $info.ProductVersion.Trim()
-            "$(Split-Path -Leaf $name)"
-            "  ProductName    : '$product' (raw length $($info.ProductName.Length))"
-            "  ProductVersion : '$productVersion'"
-            "  FileVersion    : '$($info.FileVersion.Trim())'"
-            if ($product -ne 'AI17Z') { throw "Wrong product name: '$product'" }
-            if ($productVersion -ne '${{ steps.version.outputs.version }}') {
-              throw "Wrong product version: '$productVersion' (expected '${{ steps.version.outputs.version }}')"
-            }
+          # One executable now. The recommended route publishes no `.exe` at
+          # all; this one is still built because installations made with it
+          # update by running a newer one.
+          $name = "build\windows\AI17Z-Setup-${{ steps.version.outputs.version }}.exe"
+          if (-not (Test-Path $name)) { throw "Not produced: $name" }
+          $info = (Get-Item $name).VersionInfo
+          # Windows pads version-resource strings, so ProductName comes back as
+          # "AI17Z" followed by 55 spaces and an exact comparison fails on a
+          # file that is perfectly correct. Trim before comparing, and print the
+          # length so the next surprise here is one line of output away.
+          $product = $info.ProductName.Trim()
+          $productVersion = $info.ProductVersion.Trim()
+          "  ProductName    : '$product' (raw length $($info.ProductName.Length))"
+          "  ProductVersion : '$productVersion'"
+          if ($product -ne 'AI17Z') { throw "Wrong product name: '$product'" }
+          if ($productVersion -ne '${{ steps.version.outputs.version }}') {
+            throw "Wrong product version: '$productVersion' (expected '${{ steps.version.outputs.version }}')"
           }
 
       # Everything that gets published, in one artifact.
-      #
-      # SignPath signs what this artifact contains, so its project configuration
-      # has to name both executables. Anything here that is not signable -- the
-      # package, the script, the manifest -- passes through untouched, and the
-      # signing job checks the signatures on the two that matter rather than
-      # trusting that the service did what was asked.
-      - name: Upload the unsigned artifacts
+      - name: Upload the release artifacts
         id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: unsigned-installer
+          name: release-artifacts
           path: |
             build/windows/AI17Z-Setup-${{ steps.version.outputs.version }}.exe
-            build/windows/Install-AI17Z-${{ steps.version.outputs.version }}.exe
             build/windows/Install-AI17Z-${{ steps.version.outputs.version }}.ps1
+            build/windows/install.ps1
             build/windows/AI17Z-App-${{ steps.version.outputs.version }}.zip
             build/windows/setup-declaration.json
           if-no-files-found: error
           retention-days: 30
 
   # ---------------------------------------------------------------------------
-  # Signing. Skipped entirely while the application is pending; the moment
-  # SIGNING_REQUIRED is set to true and the SignPath values exist, this runs and
-  # the release will not publish without it.
-  # ---------------------------------------------------------------------------
-  sign:
-    name: sign with SignPath
-    needs: build
-    if: vars.SIGNING_REQUIRED == 'true'
-    runs-on: windows-latest
-    outputs:
-      signed: ${{ steps.result.outputs.signed }}
-    steps:
-      - name: Refuse to proceed without the SignPath settings
-        shell: pwsh
-        run: |
-          # Named individually, because "signing failed" is not something anybody
-          # can act on and "SIGNPATH_PROJECT_SLUG is not set" is.
-          $missing = @()
-          if (-not '${{ secrets.SIGNPATH_API_TOKEN }}')       { $missing += 'secret SIGNPATH_API_TOKEN' }
-          if (-not '${{ vars.SIGNPATH_ORGANIZATION_ID }}')    { $missing += 'variable SIGNPATH_ORGANIZATION_ID' }
-          if (-not '${{ vars.SIGNPATH_PROJECT_SLUG }}')       { $missing += 'variable SIGNPATH_PROJECT_SLUG' }
-          if (-not '${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}'){ $missing += 'variable SIGNPATH_SIGNING_POLICY_SLUG' }
-          if ($missing.Count -gt 0) {
-            throw "SIGNING_REQUIRED is true but these are not configured: $($missing -join ', ')"
-          }
-
-      - name: Submit the signing request
-        id: signpath
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          github-artifact-id: ${{ needs.build.outputs.artifact-id }}
-          # Waits for a person to approve in SignPath. Nothing is signed by a
-          # push alone.
-          wait-for-completion: true
-          output-artifact-directory: signed
-
-      - name: Verify the signature on what came back
-        id: result
-        shell: pwsh
-        run: |
-          # SignPath reporting success is not the same as the files we are about
-          # to publish being correctly signed. Check the files themselves, and
-          # both of them: an unsigned AI17Z Setup published beside a signed
-          # installer would be the one people are told to download.
-          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Filter 'signtool.exe' -Recurse -ErrorAction SilentlyContinue |
-                      Where-Object { $_.FullName -like '*x64*' } | Select-Object -First 1
-
-          foreach ($pattern in @('AI17Z-Setup-*.exe', 'Install-AI17Z-*.exe')) {
-            $exe = Get-ChildItem signed -Filter $pattern -Recurse | Select-Object -First 1
-            if (-not $exe) { throw "SignPath returned nothing matching $pattern." }
-
-            $sig = Get-AuthenticodeSignature $exe.FullName
-            "$($exe.Name)"
-            "  Status      : $($sig.Status)"
-            "  Signer      : $($sig.SignerCertificate.Subject)"
-            if ($sig.Status -ne 'Valid') { throw "Signature is not valid on $($exe.Name): $($sig.Status)" }
-
-            $info = $exe.VersionInfo
-            # Trimmed, for the same reason as in the build job: the version
-            # resource is space-padded and an exact comparison fails on a
-            # correct file.
-            $name = $info.ProductName.Trim()
-            $productVersion = $info.ProductVersion.Trim()
-            "  ProductName : '$name'"
-            "  Version     : '$productVersion'"
-            if ($name -ne 'AI17Z') { throw "Signed the wrong product: '$name'" }
-            if ($productVersion -ne '${{ needs.build.outputs.version }}') {
-              throw "Signed the wrong version: '$productVersion' (expected '${{ needs.build.outputs.version }}')"
-            }
-
-            # signtool as a second opinion, when the image has it.
-            if ($signtool) {
-              & $signtool.FullName verify /pa /v $exe.FullName
-              if ($LASTEXITCODE -ne 0) { throw "signtool verify failed on $($exe.Name) with $LASTEXITCODE" }
-            }
-          }
-
-          "signed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: Upload the signed artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: signed-installer
-          path: signed/**/*
-          if-no-files-found: error
-
-  # ---------------------------------------------------------------------------
-  # Publish. Refuses to run if signing was required and did not succeed.
+  # Publish.
   # ---------------------------------------------------------------------------
   publish:
     name: publish the release
-    needs: [build, sign]
-    # `always()` so this still runs when `sign` was skipped, and the guard below
-    # is what decides whether that was legitimate.
-    if: always() && needs.build.result == 'success'
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -439,30 +335,18 @@ jobs:
           # kind of quiet that ships a changelog saying nothing.
           fetch-depth: 0
 
-      - name: Refuse to publish unsigned when signing was required
-        run: |
-          set -euo pipefail
-          REQUIRED="${{ vars.SIGNING_REQUIRED }}"
-          SIGN_RESULT="${{ needs.sign.result }}"
-          if [ "$REQUIRED" = "true" ] && [ "$SIGN_RESULT" != "success" ]; then
-            echo "SIGNING_REQUIRED is true and signing did not succeed (result: $SIGN_RESULT)."
-            echo "Refusing to publish an unsigned installer as if it were signed."
-            exit 1
-          fi
-          echo "signing required: ${REQUIRED:-false}, signing result: ${SIGN_RESULT:-skipped}"
-
-      - name: Download the installer
+      - name: Download what was built
         uses: actions/download-artifact@v4
         with:
-          name: ${{ vars.SIGNING_REQUIRED == 'true' && 'signed-installer' || 'unsigned-installer' }}
+          name: release-artifacts
           path: dist
 
       - name: Checksums
         run: |
           set -euo pipefail
           cd dist
-          # The signing job returns a directory tree; flatten whatever came back
-          # so the release has files rather than folders.
+          # Flatten whatever came back, so the release has files rather than
+          # folders.
           find . -mindepth 2 -type f -exec cp -n {} . \; 2>/dev/null || true
 
           # Every published file, not only the installer.
@@ -472,23 +356,22 @@ jobs:
           # SHA256SUMS.txt that does not name the package is a release the
           # script will refuse to install from -- deliberately, because it does
           # not install a payload whose hash it cannot establish.
-          sha256sum AI17Z-Setup-*.exe Install-AI17Z-*.exe Install-AI17Z-*.ps1 AI17Z-App-*.zip | tee SHA256SUMS.txt
+          sha256sum AI17Z-Setup-*.exe install.ps1 Install-AI17Z-*.ps1 AI17Z-App-*.zip | tee SHA256SUMS.txt
 
       - name: The audit document for this release
         run: |
           set -euo pipefail
           VERSION="${{ needs.build.outputs.version }}"
-          SIGNED="${{ vars.SIGNING_REQUIRED == 'true' && 'true' || 'false' }}"
 
           # What the setup program says it may do, plus what this particular
           # release actually is: the tag, the commit, and the hash of every file
           # published beside it.
           #
-          # Built here rather than in the build job because signing changes the
-          # bytes of the executables, and an audit document listing the hashes
-          # of the unsigned ones would be wrong about exactly the files somebody
-          # is checking.
-          ARTIFACTS=$(cd dist && sha256sum AI17Z-Setup-*.exe Install-AI17Z-*.exe Install-AI17Z-*.ps1 AI17Z-App-*.zip \
+          # Built here rather than in the build job so that it hashes the files
+          # that are actually about to be published, from the artifact they are
+          # published out of -- an audit document is only worth anything if its
+          # hashes are the ones somebody will get.
+          ARTIFACTS=$(cd dist && sha256sum AI17Z-Setup-*.exe install.ps1 Install-AI17Z-*.ps1 AI17Z-App-*.zip \
             | jq -R -s 'split("\n") | map(select(length > 0) | split("  ") | {name: .[1], sha256: .[0]})')
 
           jq -n \
@@ -498,16 +381,16 @@ jobs:
             --arg tag "v$VERSION" \
             --arg commit "${{ github.sha }}" \
             --arg run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --argjson signed "$SIGNED" \
+            --argjson signed false \
             '{
               schema: 1,
               release: {version: $version, tag: $tag, commit: $commit, builtBy: $run, signed: $signed},
               artifacts: $artifacts,
               setup: $declaration[0],
               verify: [
-                "Get-FileHash .\\Install-AI17Z-\($version).exe -Algorithm SHA256",
-                "Get-AuthenticodeSignature .\\Install-AI17Z-\($version).exe | Format-List Status, SignerCertificate",
-                "powershell -ExecutionPolicy Bypass -File .\\Install-AI17Z-\($version).ps1 -WhatIfOnly"
+                "Get-FileHash $env:LOCALAPPDATA\\AI17Z-setup\\Setup-AI17Z.checked.ps1 -Algorithm SHA256",
+                "Get-FileHash .\\Install-AI17Z-\($version).ps1 -Algorithm SHA256",
+                "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1))) -WhatIfOnly"
               ],
               documentation: "https://github.com/${{ github.repository }}/blob/main/docs/SETUP_AUDIT.md"
             }' > "dist/AI17Z-Setup-Audit-$VERSION.json"
@@ -520,20 +403,22 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ needs.build.outputs.version }}"
-          SIGNED="${{ vars.SIGNING_REQUIRED == 'true' && 'yes' || 'no' }}"
           {
-            echo "## AI17Z $VERSION — Windows"
+            echo "## AI17Z $VERSION"
             echo
-            echo "**Download [\`Install-AI17Z-$VERSION.exe\`](https://github.com/ShiftAboveCtrl/ai17z/releases/download/v$VERSION/Install-AI17Z-$VERSION.exe) and run it.**"
+            echo "**Open Windows Terminal and paste this:**"
             echo
-            echo "It checks this PC, installs anything missing through Microsoft's own"
-            echo "package manager, installs AI17Z, starts it, and checks it works."
+            echo '```powershell'
+            echo "irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex"
+            echo '```'
             echo
-            echo "> **Install AI17Z only from this repository.** Nowhere else distributes it."
+            echo "That is the whole installation. It checks this PC, installs anything"
+            echo "missing through Microsoft's own package manager, installs AI17Z, starts it,"
+            echo "and checks it works before it says so."
             echo
-            # What changed, taken from the commits between the last tag and this
-            # one. This is the section the in-app update screen shows, so it is
-            # the only part of these notes that answers "should I take this?".
+            echo "> **Install AI17Z only with the command published in this repository.**"
+            echo "> Nowhere else distributes it."
+            echo
             TAG="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
             if [ -n "$TAG" ] && git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
               PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
@@ -544,17 +429,19 @@ jobs:
                 echo
               fi
             fi
-            if [ "$SIGNED" = "no" ]; then
-              echo "> **This installer is unsigned** while AI17Z's open-source"
-              echo "> [SignPath Foundation](https://signpath.org) code-signing application is pending."
-              echo "> Windows will warn you. Verify the SHA-256 below against this page before running it."
-              echo ">"
-              echo "> We will not ask you to disable SmartScreen, Smart App Control or your antivirus."
-              echo "> See [Windows trust and SmartScreen](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_TRUST.md)."
-            else
-              echo "Free code signing provided by [SignPath.io](https://about.signpath.io),"
-              echo "certificate by [SignPath Foundation](https://signpath.org)."
-            fi
+            echo "### Why a command and not a download"
+            echo
+            echo "AI17Z is not a signed application. Code signing for open-source projects is"
+            echo "granted on the strength of an existing user base, and AI17Z does not have one"
+            echo "yet -- so an AI17Z .exe would be an unsigned executable Windows has never"
+            echo "seen, and Windows would say so, loudly, and be right to."
+            echo
+            echo "The answer is not to talk anybody past that warning. It is to not ask for it:"
+            echo "nothing in the command above is an executable, nothing is double-clicked, and"
+            echo "**no Windows security setting is touched, turned off, or argued with** -- not"
+            echo "SmartScreen, not Defender, not your execution policy."
+            echo
+            echo "See [Windows trust and SmartScreen](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_TRUST.md)."
             echo
             echo "### What AI17Z is"
             echo
@@ -567,26 +454,27 @@ jobs:
             echo "**WSL 2**, **Docker Desktop**, **Node.js 22 or newer** and **Google Chrome**."
             echo
             echo "AI17Z Setup checks for all four and installs the ones that are missing:"
-            echo "WSL through Microsoft's own \`wsl --install\`, and the rest through winget,"
+            echo "WSL through Microsoft's own wsl --install, and the rest through winget,"
             echo "Microsoft's package manager. **It never downloads an executable from a URL"
-            echo "of its own.** Anything already present and new enough is left alone, and"
-            echo "\`-SkipDependencies\` installs none of them at all."
+            echo "of its own.** Anything already present and new enough is left alone."
             echo
             echo "It waits for Docker's *engine* to answer rather than finishing the moment"
             echo "Docker is installed, which is the \"restart your PC and run the installer"
             echo "again\" step it exists to remove."
             echo
-            echo "### What the download actually is"
+            echo "### What actually runs"
             echo
-            echo "One PowerShell script, in this repository, in full:"
-            echo "[\`packaging/windows/Setup-AI17Z.ps1\`](https://github.com/ShiftAboveCtrl/ai17z/blob/main/packaging/windows/Setup-AI17Z.ps1)."
-            echo "The \`.exe\` is a wrapper that extracts and runs exactly that, and the script"
-            echo "is published beside it so you can hash both and prove it."
+            echo "install.ps1 is short, public, and the file at the URL you just pasted. All it"
+            echo "does is resolve this release, download the setup program below, **check its"
+            echo "SHA-256 against the hash published here**, write it somewhere you can read it,"
+            echo "and run the bytes it checked. A mismatch stops everything."
             echo
-            echo "\`Install-AI17Z-$VERSION.exe /WHATIF\` looks at this PC and changes nothing."
+            echo "The setup program itself is"
+            echo "[packaging/windows/Setup-AI17Z.ps1](https://github.com/ShiftAboveCtrl/ai17z/blob/main/packaging/windows/Setup-AI17Z.ps1)"
+            echo "-- the whole installer, as a script, published here as Install-AI17Z-$VERSION.ps1."
             echo
             echo "**[How to audit it](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/SETUP_AUDIT.md)**"
-            echo "— every privileged action, every download, everything it writes."
+            echo "-- every privileged action, every download, everything it writes."
             echo
             echo "### Installing"
             echo
@@ -596,41 +484,57 @@ jobs:
             echo "    program    %LOCALAPPDATA%\\Programs\\AI17Z"
             echo "    your data  %LOCALAPPDATA%\\AI17Z"
             echo
-            echo "Your data is kept apart from the program on purpose: updating replaces"
-            echo "the program and never touches your data, and the uninstaller asks before"
-            echo "removing it. \`/INSTANCE=<name>\` installs a second, separate copy."
+            echo "Your data is kept apart from the program on purpose: updating replaces the"
+            echo "program and never touches your data."
+            echo
+            echo "### More than one AI17Z"
+            echo
+            echo "A machine can hold several independent installations -- different agents,"
+            echo "different databases, different signed-in accounts -- and they share nothing."
+            echo "Updating one leaves the others exactly as they are."
+            echo
+            echo '```powershell'
+            echo "\$s = irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1"
+            echo "& ([scriptblock]::Create(\$s)) -List                 # what is installed"
+            echo "& ([scriptblock]::Create(\$s)) -NewInstance          # install another"
+            echo "& ([scriptblock]::Create(\$s)) -Instance AI17Z-test  # update that one"
+            echo '```'
             echo
             echo "### Updates"
             echo
-            echo "AI17Z checks GitHub for new versions and shows you the release notes on the"
-            echo "Version panel in Settings. **It never updates itself.** You can skip a version,"
-            echo "ignore it entirely, or turn the check off, in which case no request is made at"
-            echo "all. Taking one is *Update AI17Z* in the Start Menu."
+            echo "AI17Z checks GitHub for new versions and shows the release notes on the"
+            echo "Version panel in Settings, which names the installation it belongs to. **It"
+            echo "never updates itself.** You can skip a version, ignore it, or turn the check"
+            echo "off, in which case no request is made at all."
             echo
-            echo "### The other files here"
+            echo "### The files here"
             echo
             echo "| | |"
             echo "| --- | --- |"
-            echo "| \`Install-AI17Z-$VERSION.exe\` | **the download**. Checks this PC, installs what is missing, installs AI17Z |"
-            echo "| \`Install-AI17Z-$VERSION.ps1\` | the same program, as the script it is |"
-            echo "| \`AI17Z-Setup-$VERSION.exe\` | the older full installer. Carries the application; what pre-Setup installations update with |"
-            echo "| \`AI17Z-App-$VERSION.zip\` | the application itself, which AI17Z Setup downloads and hash-checks |"
-            echo "| \`AI17Z-Setup-Audit-$VERSION.json\` | what the setup program declares it may do, printed by the program |"
-            echo "| \`SHA256SUMS.txt\` | hashes for all of the above |"
+            echo "| install.ps1 | the command above, as a file, if you would rather pin or read it |"
+            echo "| Install-AI17Z-$VERSION.ps1 | the setup program: the whole installer, as a script |"
+            echo "| AI17Z-App-$VERSION.zip | the application, which the setup program hash-checks |"
+            echo "| AI17Z-Setup-$VERSION.exe | **the older full installer.** Unsigned, and not the recommended route -- it is what installations made before this one update with |"
+            echo "| AI17Z-Setup-Audit-$VERSION.json | what the setup program declares it may do |"
+            echo "| SHA256SUMS.txt | hashes for all of the above |"
             echo
             echo "- [Installing on Windows](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_INSTALL.md)"
             echo "- [Auditing AI17Z Setup](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/SETUP_AUDIT.md)"
             echo "- [Uninstalling](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/WINDOWS_UNINSTALL.md)"
-            echo "- [Code signing policy](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/CODE_SIGNING_POLICY.md)"
             echo "- [Privacy](https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/PRIVACY.md)"
             echo
-            echo "### Verify your download"
+            echo "### Verify what you ran"
+            echo
+            echo "The checked setup program is written into %LOCALAPPDATA%\\AI17Z-setup before"
+            echo "it runs. It is kept there whenever anything goes wrong, and removed after a"
+            echo "clean run because it is a copy of a file published here -- pass -KeepDownload"
+            echo "to keep it either way, and hash it against the line for"
+            echo "Install-AI17Z-$VERSION.ps1 below:"
             echo
             echo '```powershell'
-            echo "Get-FileHash .\\Install-AI17Z-$VERSION.exe -Algorithm SHA256"
+            echo "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -KeepDownload"
+            echo "Get-FileHash \$env:LOCALAPPDATA\\AI17Z-setup\\Setup-AI17Z.checked.ps1 -Algorithm SHA256"
             echo '```'
-            echo
-            echo "If it does not match the line below, **stop** and do not run it."
             echo
             echo "\`\`\`"
             cat dist/SHA256SUMS.txt
@@ -660,18 +564,19 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.build.outputs.version) }}
           name: ${{ needs.build.outputs.release-name || format('AI17Z {0}', needs.build.outputs.version) }}
           body_path: release-notes.md
-          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || vars.SIGNING_REQUIRED != 'true' }}
-          # The full installer first, deliberately.
+          # Every AI17Z release so far is a prerelease, and the tag is what
+          # says so -- not a signing variable that no longer exists.
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || contains(github.ref_name, '-') }}
+          # The full installer first, and the only `.exe` here.
           #
           # An installation from before AI17Z Setup existed reads this release
-          # through an update check that took "the first asset ending in .exe",
-          # which was unambiguous while there was one of those. There are now
-          # two, and the one those installations must be handed is the installer
-          # that matches the layout they have. Newer ones pick by name and do not
-          # depend on this order; the ones already out there do.
+          # through an update check that took "the first asset ending in .exe".
+          # That has to stay the installer matching the layout those
+          # installations have, which is why nothing else may become an
+          # executable in this list. Newer ones pick by name.
           files: |
             dist/AI17Z-Setup-*.exe
-            dist/Install-AI17Z-*.exe
+            dist/install.ps1
             dist/Install-AI17Z-*.ps1
             dist/AI17Z-App-*.zip
             dist/AI17Z-Setup-Audit-*.json

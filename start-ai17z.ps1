@@ -455,16 +455,34 @@ if (Test-Path $stamp) {
 # Written by whichever of the two put this program directory here. Absent means
 # a checkout, or an installation from before this existed, and the application
 # falls back to what it did then.
+#
+# And which installation this is, by name.
+#
+# A machine can hold several AI17Z installations, and each serves its own
+# interface. The update screen has to be able to say *which* copy it is offering
+# to update -- "AI17Z is out of date" is not much use to somebody running three
+# of them -- and it cannot work that out for itself: the API is in a container
+# with no idea what the directory outside is called.
+#
+# The data directory is deliberately not passed on. It holds the master key, and
+# the browser never needs to know where it is.
 $installInfo = Join-Path $PSScriptRoot 'INSTALL_INFO.json'
 if (Test-Path $installInfo) {
   try {
-    $channel = (Get-Content -Raw $installInfo | ConvertFrom-Json).channel
-    if ($channel) { $env:AI17Z_INSTALL_CHANNEL = $channel }
+    $marker = Get-Content -Raw $installInfo | ConvertFrom-Json
+    if ($marker.channel) { $env:AI17Z_INSTALL_CHANNEL = $marker.channel }
+    if ($marker.instance) { $env:AI17Z_INSTANCE_NAME = $marker.instance }
   } catch {
     # An unreadable marker is not a reason to refuse to start. The update screen
     # then says what it said before this file existed.
   }
 }
+# The folder this copy runs from, whatever the marker says or does not say. The
+# update screen shows it so somebody with more than one installation can tell
+# them apart, and it is the one value here that cannot be wrong: it is where
+# this script is.
+if (-not $env:AI17Z_INSTANCE_NAME) { $env:AI17Z_INSTANCE_NAME = Split-Path -Leaf $PSScriptRoot }
+$env:AI17Z_PROGRAM_DIR = $PSScriptRoot
 # Run a native command for its output, and tolerate it not being there.
 #
 # Everything below runs on every start, so none of it may stop one. Under

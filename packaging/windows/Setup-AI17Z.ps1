@@ -101,6 +101,17 @@ param(
   [string] $DataDir = '',
   [string] $LocalPackage = '',
   [switch] $Update,
+  # Install another, independent AI17Z beside the ones already here, rather than
+  # updating one of them. Kept apart from -Update on purpose: they are opposite
+  # operations and the difference is somebody's agents.
+  [switch] $NewInstance,
+  # Print what is installed on this machine and change nothing.
+  [switch] $ListInstallations,
+  # Where this script is on disk, for the two things that have to re-invoke it:
+  # asking Windows for administrator rights, and continuing after a restart.
+  # `install.ps1` runs the checked bytes from memory, so $PSCommandPath is empty
+  # and this is how the file it checked is found again.
+  [string] $SelfPath = '',
   [switch] $SkipDependencies,
   [switch] $NoStart,
   [switch] $NoBrowser,
@@ -898,6 +909,172 @@ function Test-Ai17zLayoutConsistent {
 }
 
 <#
+  Whether an installation's own metadata describes the installation it was
+  found in.
+
+  `INSTALL_INFO.json` is written by whichever program installed a copy, and it
+  is the honest answer to "how do I update this". It is still only a file in a
+  folder: it can be stale after somebody moved the folder, and it can be copied
+  into a different one. Believed about *how* a copy was installed; never
+  believed about *where* it is.
+
+  So the paths it claims are checked against the directory it was actually read
+  from, and a disagreement stops the update rather than steering it. That is the
+  Beta 1.0.0 (14) defect stated as a rule: the thing being modified is decided
+  by where we are, never by what a file says about somewhere else.
+#>
+function Test-Ai17zInstallInfoTrustworthy {
+  param(
+    [psobject] $Info,
+    [string] $FoundInProgramDir
+  )
+  if (-not $Info) {
+    # An installation from before this file existed. Nothing is claimed, so
+    # nothing can disagree; the caller falls back to what it did then.
+    return [pscustomobject]@{ Ok = $true; Reason = 'no metadata' }
+  }
+
+  # The directory it claims against the directory it is in, and nothing else.
+  #
+  # Not the instance name against the folder name: an installation put
+  # somewhere of the owner's choosing has a folder called whatever they called
+  # it, and refusing to update those would be inventing a rule nobody agreed to.
+  # What actually detects "this file is describing somewhere else" is the path.
+  $claimed = '' + $Info.programDir
+  if ($claimed) {
+    $left = ($claimed -replace '[\\/]+$', '') -replace '/', '\'
+    $right = ($FoundInProgramDir -replace '[\\/]+$', '') -replace '/', '\'
+    if ($left -ine $right) {
+      return [pscustomobject]@{
+        Ok = $false
+        Reason = ('its INSTALL_INFO.json describes ' + $claimed + ', but it was read from ' + $FoundInProgramDir)
+      }
+    }
+  }
+
+  return [pscustomobject]@{ Ok = $true; Reason = '' }
+}
+
+<#
+  A name for an installation that does not exist yet.
+
+  Only reached when somebody has asked for another AI17Z and not said what to
+  call it. Counting up is enough: the point is a name that is free and obvious,
+  not a clever one.
+#>
+function New-Ai17zInstanceName {
+  param([string[]] $Taken, [string] $Base = 'AI17Z')
+  $used = @{}
+  foreach ($name in $Taken) { if ($name) { $used[$name.ToLowerInvariant()] = $true } }
+  if (-not $used.ContainsKey($Base.ToLowerInvariant())) { return $Base }
+  for ($i = 2; $i -lt 100; $i++) {
+    $candidate = $Base + '-' + $i
+    if (-not $used.ContainsKey($candidate.ToLowerInvariant())) { return $candidate }
+  }
+  throw 'There are already a hundred AI17Z installations on this machine. Name the next one yourself with -Instance.'
+}
+
+<#
+  Which installation this run is about, and whether it is being made or updated.
+
+  The one decision that must never be taken loosely. A machine can hold several
+  independent AI17Z installations -- different agents, different databases,
+  different signed-in accounts -- and the two operations somebody could mean are
+  the opposite of each other:
+
+      update this one        replace a program directory, keep everything else
+      install another        a new program directory, a new everything
+
+  Collapsing those is how an owner loses an agent. So: when it is knowable, it
+  is decided here and said out loud before anything is written; when it is not
+  knowable and nobody is there to ask, this refuses instead of guessing.
+
+  `ExplicitPaths` is the exception, and only that: a caller who named the
+  program directory has already said where, and discovery has nothing to add.
+#>
+function Select-Ai17zTarget {
+  param(
+    [psobject[]] $Installations = @(),
+    [string] $RequestedName = '',
+    [bool] $Update = $false,
+    [bool] $NewInstance = $false,
+    [bool] $Interactive = $false,
+    [bool] $ExplicitPaths = $false
+  )
+  $known = @($Installations | Where-Object { $_ })
+  $names = @($known | ForEach-Object { '' + $_.Instance })
+
+  $decide = {
+    param([string] $Action, [string] $Instance, [string] $Reason)
+    [pscustomobject]@{ Action = $Action; Instance = $Instance; Reason = $Reason }
+  }
+
+  if ($ExplicitPaths) {
+    $name = $RequestedName
+    if (-not $name) { $name = 'AI17Z' }
+    if ($Update) { return (& $decide 'UPDATE' $name 'the caller named the program directory') }
+    return (& $decide 'INSTALL_NEW' $name 'the caller named the program directory')
+  }
+
+  if ($RequestedName) {
+    $match = @($known | Where-Object { ('' + $_.Instance) -ieq $RequestedName })[0]
+    if ($match) {
+      if ($NewInstance) {
+        return (& $decide 'REFUSE' $RequestedName ('there is already an AI17Z called ' + $match.Instance))
+      }
+      return (& $decide 'UPDATE' ('' + $match.Instance) 'named, and already installed')
+    }
+    if ($Update) {
+      return (& $decide 'REFUSE' $RequestedName ('there is no AI17Z called ' + $RequestedName + ' on this machine'))
+    }
+    return (& $decide 'INSTALL_NEW' $RequestedName 'named, and not installed yet')
+  }
+
+  if ($known.Count -eq 0) {
+    if ($Update) { return (& $decide 'REFUSE' '' 'there is no AI17Z on this machine to update') }
+    return (& $decide 'INSTALL_NEW' 'AI17Z' 'nothing installed yet')
+  }
+
+  if ($NewInstance) {
+    return (& $decide 'INSTALL_NEW' (New-Ai17zInstanceName $names) 'asked for another installation')
+  }
+
+  if ($known.Count -eq 1) {
+    if ($Interactive -and -not $Update) {
+      return (& $decide 'ASK' ('' + $known[0].Instance) 'one installation, and somebody is here to ask')
+    }
+    return (& $decide 'UPDATE' ('' + $known[0].Instance) 'the only installation on this machine')
+  }
+
+  if ($Interactive) { return (& $decide 'CHOOSE' '' ($known.Count.ToString() + ' installations')) }
+  return (& $decide 'REFUSE' '' ('there are ' + $known.Count + ' AI17Z installations here and nothing said which one'))
+}
+
+<#
+  Whether a release tag is one this program will build a name from.
+
+  A tag arrives in one of two ways and neither is trustworthy in the way that
+  matters here: typed by whoever ran this, or read out of a document GitHub
+  served. What gets derived from it is a filename -- `AI17Z-App-<version>.zip`
+  -- and then a path under the setup folder that file is written to. **A value
+  that came off the network has no business becoming a local path.**
+
+  GitHub will not publish a tag with a slash in it today. That is a fact about
+  GitHub rather than a property of this program, and the only version of this
+  that stays true whatever GitHub does next is the one that checks.
+
+  Semver, optionally with the leading v this project tags with, and nothing that
+  is a path: no separator, no colon, no drive letter, nothing but the characters
+  semver actually allows.
+#>
+function Test-Ai17zReleaseTag {
+  param([string] $Tag)
+  if (-not $Tag) { return $false }
+  if ($Tag.Length -gt 64) { return $false }
+  return [bool]([regex]::IsMatch($Tag, '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'))
+}
+
+<#
   Whether a zip entry may be written.
 
   A zip stores whatever path its maker put in it, including `..\..\Windows\` and
@@ -1107,6 +1284,101 @@ function Measure-Ai17zChrome {
   return [pscustomobject]@{ Path = ''; ProductName = ''; Version = '' }
 }
 
+<#
+  Every AI17Z on this machine, and nothing else.
+
+  Two sources, because neither alone is complete: the list each installer
+  records under HKCU, and the folders under %LOCALAPPDATA%\Programs. A copy
+  installed before that list existed is only in the second; a copy installed
+  somewhere else is only in the first.
+
+  **Read-only, always.** Discovery runs before anybody has chosen anything, so
+  it may look at other people's installations -- and looking is the entire
+  permission it has. Nothing here opens a file for writing, starts a process,
+  or asks Docker anything.
+#>
+function Get-Ai17zInstallations {
+  $found = @{}
+
+  $consider = {
+    param([string] $ProgramDir)
+    if (-not $ProgramDir) { return }
+    $key = $ProgramDir.TrimEnd('\').ToLowerInvariant()
+    if ($found.ContainsKey($key)) { return }
+    # An AI17Z is a directory with the application in it. A registry entry for
+    # something somebody has deleted is not an installation.
+    if (-not (Test-Path (Join-Path $ProgramDir 'package.json'))) { return }
+
+    $instance = Split-Path -Leaf ($ProgramDir.TrimEnd('\'))
+    $dataDir = ''
+    $channel = ''
+    $version = ''
+    $info = $null
+
+    $infoPath = Join-Path $ProgramDir 'INSTALL_INFO.json'
+    if (Test-Path $infoPath) {
+      try {
+        $info = Get-Content -Raw -LiteralPath $infoPath | ConvertFrom-Json
+        if ($info.instance) { $instance = '' + $info.instance }
+        if ($info.dataDir) { $dataDir = '' + $info.dataDir }
+        if ($info.channel) { $channel = '' + $info.channel }
+        if ($info.version) { $version = '' + $info.version }
+      } catch {
+        # Unreadable metadata is not a reason to hide an installation from its
+        # owner. It is a reason not to believe anything it says.
+        $info = $null
+      }
+    }
+    if (-not $dataDir) {
+      $pointer = Join-Path $ProgramDir 'data-location.txt'
+      if (Test-Path $pointer) {
+        try { $dataDir = (Get-Content -LiteralPath $pointer -First 1).Trim() } catch { }
+      }
+    }
+    if (-not $version) {
+      $stamp = Join-Path $ProgramDir 'BUILD_INFO.json'
+      if (Test-Path $stamp) {
+        try { $version = '' + (Get-Content -Raw -LiteralPath $stamp | ConvertFrom-Json).version } catch { }
+      }
+    }
+    if (-not $channel) {
+      # No marker: an installation from before one was written. The Windows
+      # installer is what made those, and saying so is what keeps its update
+      # route working.
+      $channel = 'INSTALLER'
+    }
+
+    $trust = Test-Ai17zInstallInfoTrustworthy $info $ProgramDir
+    $found[$key] = [pscustomobject]@{
+      Instance = $instance
+      ProgramDir = $ProgramDir.TrimEnd('\')
+      DataDir = $dataDir
+      Channel = $channel
+      Version = $version
+      Trustworthy = $trust.Ok
+      Doubt = $trust.Reason
+    }
+  }
+
+  try {
+    $list = Get-Item -Path 'HKCU:\Software\AI17Z\Installs' -ErrorAction SilentlyContinue
+    if ($list) {
+      foreach ($name in $list.GetValueNames()) { & $consider $name }
+    }
+  } catch { }
+
+  $programs = Join-Path $env:LOCALAPPDATA 'Programs'
+  if (Test-Path $programs) {
+    try {
+      foreach ($directory in (Get-ChildItem -LiteralPath $programs -Directory -ErrorAction SilentlyContinue)) {
+        & $consider $directory.FullName
+      }
+    } catch { }
+  }
+
+  return @($found.Values | Sort-Object Instance)
+}
+
 function Test-Ai17zPortTaken {
   param([int] $Port)
   try { return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) } catch { return $false }
@@ -1279,8 +1551,42 @@ if ($Manifest) {
 # Everything from here is the install itself
 # ---------------------------------------------------------------------------
 
+# Everything the install command could not pass as a parameter.
+#
+# `install.ps1` runs these bytes in a child process rather than as a launched
+# file -- Windows' default policy does not run script files, and the answer to
+# that is not to change somebody's policy -- and a child started with -Command
+# takes no named arguments. So the few values that steer this arrive in the
+# environment instead, and anything passed explicitly wins over them.
+#
+# Whether a name was *asked for* rather than defaulted: -InstanceName has a
+# default, so its value alone cannot tell "install AI17Z" from "the owner said
+# AI17Z", and those decide different things below.
+$InstanceNameWasGiven = $PSBoundParameters.ContainsKey('InstanceName')
+if (-not $SelfPath -and $env:AI17Z_SETUP_FILE) { $SelfPath = $env:AI17Z_SETUP_FILE }
+if (-not $Release -and $env:AI17Z_SETUP_RELEASE) { $Release = $env:AI17Z_SETUP_RELEASE }
+if (-not $InstanceNameWasGiven -and $env:AI17Z_SETUP_INSTANCE) { $InstanceName = $env:AI17Z_SETUP_INSTANCE; $InstanceNameWasGiven = $true }
+if (-not $Update -and $env:AI17Z_SETUP_UPDATE) { $Update = [switch]$true }
+if (-not $NewInstance -and $env:AI17Z_SETUP_NEW_INSTANCE) { $NewInstance = [switch]$true }
+if (-not $ListInstallations -and $env:AI17Z_SETUP_LIST) { $ListInstallations = [switch]$true }
+if (-not $WhatIfOnly -and $env:AI17Z_SETUP_WHATIF) { $WhatIfOnly = [switch]$true }
+if (-not $ShowDetails -and $env:AI17Z_SETUP_DETAILS) { $ShowDetails = [switch]$true }
+
+# A tag somebody asked for, checked once here so the refusal is a sentence
+# rather than a PowerShell error. `Get-Ai17zRelease` checks again before it
+# concatenates one into a URL, because a guard that only runs at the front door
+# protects only the callers who came through it.
+if ($Release -and -not (Test-Ai17zReleaseTag $Release)) {
+  Write-Host ''
+  Write-Host ('  "' + $Release + '" is not a release version.') -ForegroundColor Red
+  Write-Host '  Releases are named like v1.0.0 or v1.0.0-beta.1. Nothing was changed.' -ForegroundColor Gray
+  Write-Host ''
+  exit 1
+}
+
 $script:Ai17zScriptPath = $PSCommandPath
 if (-not $script:Ai17zScriptPath) { $script:Ai17zScriptPath = $MyInvocation.MyCommand.Path }
+if (-not $script:Ai17zScriptPath) { $script:Ai17zScriptPath = $SelfPath }
 
 $script:Ai17zSetupHome = Join-Path $env:LOCALAPPDATA 'AI17Z-setup'
 $script:Ai17zStatePath = Join-Path $script:Ai17zSetupHome 'resume.json'
@@ -1528,6 +1834,12 @@ function Save-Ai17zDownload {
 
 function Get-Ai17zRelease {
   param([string] $Tag)
+  # A tag goes into a URL path, so it is checked before it is concatenated into
+  # one. `Assert-Ai17zAllowedUrl` checks the host; it cannot tell that the path
+  # underneath it is the one that was meant.
+  if ($Tag -and -not (Test-Ai17zReleaseTag $Tag)) {
+    throw ('"' + $Tag + '" is not a release version. Releases are named like v1.0.0 or v1.0.0-beta.1.')
+  }
   $base = 'https://api.github.com/repos/' + $script:Ai17zSetup.Repository + '/releases'
   $url = if ($Tag) { $base + '/tags/' + $Tag } else { $base + '?per_page=10' }
   $answer = Get-Ai17zText $url 'application/vnd.github+json'
@@ -1679,8 +1991,12 @@ function Write-Ai17zInstallInfo {
     [string] $Tag,
     [hashtable] $Dependencies
   )
+  # Schema 2 adds fields and removes none, so a reader that knows only schema 1
+  # -- an older launcher, the diagnostics of a copy that has not been updated
+  # yet -- goes on finding everything it looks for. Nothing may ever be taken
+  # away from this file without a reader that copes with its absence.
   $info = [ordered]@{
-    schema = 1
+    schema = 2
     channel = 'BOOTSTRAP'
     instance = $Layout.Instance
     programDir = $Layout.ProgramDir
@@ -1689,6 +2005,9 @@ function Write-Ai17zInstallInfo {
     version = $Version
     installedAt = (Get-Date).ToUniversalTime().ToString('o')
     setupScript = 'packaging\windows\Setup-AI17Z.ps1'
+    # What updates this installation, written down so the update screen does not
+    # have to work it out from the shape of the directory.
+    updateCommand = 'update-ai17z.ps1'
     # Whether AI17Z installed a dependency or found it. For the diagnostics, and
     # so nothing later assumes AI17Z owns Docker because it helped install it.
     dependencies = $Dependencies
@@ -1910,7 +2229,118 @@ try {
   $script:Ai17zInteractive = $false
 }
 
+# ---------------------------------------------------------------------------
+# Which AI17Z this is about
+#
+# A machine can hold several, and they are not variations of one installation:
+# each has its own agents, its own database, its own signed-in browser and its
+# own Docker project. So the first thing this does is find out what is here and
+# settle, out loud, which one is being touched -- before a byte moves.
+# ---------------------------------------------------------------------------
+
+$explicitPaths = [bool]$ProgramDir -or [bool]$DataDir
+$installed = @()
+if (-not $explicitPaths) {
+  try { $installed = @(Get-Ai17zInstallations) } catch { Write-Ai17zLog ('could not look for installations: ' + $_.Exception.Message) 'warn' }
+}
+
+if ($ListInstallations) {
+  Write-Host ''
+  if ($installed.Count -eq 0) {
+    Write-Host '  No AI17Z is installed on this PC.' -ForegroundColor Gray
+  } else {
+    Write-Host '  AI17Z installations on this PC' -ForegroundColor White
+    Write-Host ''
+    foreach ($one in $installed) {
+      $line = '  {0,-22}{1,-18}{2}' -f $one.Instance, $one.Version, $one.Channel.ToLowerInvariant()
+      Write-Host $line -ForegroundColor Gray
+      if (-not $one.Trustworthy) { Write-Host ('      ! ' + $one.Doubt) -ForegroundColor Yellow }
+    }
+  }
+  Write-Host ''
+  Write-Host '  Update one of them:   ... -Instance <name>' -ForegroundColor DarkGray
+  Write-Host '  Install another:      ... -NewInstance' -ForegroundColor DarkGray
+  Write-Host ''
+  exit 0
+}
+
+$requestedName = ''
+if ($InstanceNameWasGiven) { $requestedName = $InstanceName }
+$interactive = $false
+try { $interactive = ($Host.Name -eq 'ConsoleHost') -and -not [Console]::IsInputRedirected -and -not $env:CI } catch { }
+
+$decision = Select-Ai17zTarget -Installations $installed -RequestedName $requestedName `
+  -Update ([bool]$Update) -NewInstance ([bool]$NewInstance) -Interactive $interactive -ExplicitPaths $explicitPaths
+
+if ($decision.Action -eq 'ASK') {
+  $existing = @($installed | Where-Object { ('' + $_.Instance) -ieq $decision.Instance })[0]
+  Write-Host ''
+  Write-Host ('  AI17Z is already installed on this PC as "' + $existing.Instance + '".') -ForegroundColor White
+  Write-Host ''
+  Write-Host ('    1  Update ' + $existing.Instance + ' -- keeps its agents, memories and settings') -ForegroundColor Gray
+  Write-Host '    2  Install another, separate AI17Z beside it' -ForegroundColor Gray
+  Write-Host '    3  Stop and change nothing' -ForegroundColor Gray
+  Write-Host ''
+  Write-Host '  Which? [1] ' -NoNewline -ForegroundColor White
+  $answer = (Read-Host).Trim()
+  if ($answer -eq '2') {
+    $decision = Select-Ai17zTarget -Installations $installed -NewInstance $true -Interactive $false
+  } elseif ($answer -eq '3') {
+    Write-Ai17zSay 'Nothing was changed.' 'Gray'
+    exit 0
+  } else {
+    $decision = [pscustomobject]@{ Action = 'UPDATE'; Instance = $existing.Instance; Reason = 'chosen' }
+  }
+}
+
+if ($decision.Action -eq 'CHOOSE') {
+  Write-Host ''
+  Write-Host '  There is more than one AI17Z on this PC. Which one?' -ForegroundColor White
+  Write-Host ''
+  for ($i = 0; $i -lt $installed.Count; $i++) {
+    Write-Host ('    {0}  {1,-22}{2}' -f ($i + 1), $installed[$i].Instance, $installed[$i].Version) -ForegroundColor Gray
+  }
+  Write-Host ('    {0}  Install another, separate AI17Z' -f ($installed.Count + 1)) -ForegroundColor Gray
+  Write-Host ''
+  Write-Host '  Which? ' -NoNewline -ForegroundColor White
+  $answer = (Read-Host).Trim()
+  $index = 0
+  if ([int]::TryParse($answer, [ref]$index) -and $index -ge 1 -and $index -le $installed.Count) {
+    $decision = [pscustomobject]@{ Action = 'UPDATE'; Instance = $installed[$index - 1].Instance; Reason = 'chosen' }
+  } elseif ($index -eq ($installed.Count + 1)) {
+    $decision = Select-Ai17zTarget -Installations $installed -NewInstance $true -Interactive $false
+  } else {
+    Write-Ai17zSay 'That was not one of the choices, so nothing was changed.' 'Yellow'
+    exit 0
+  }
+}
+
+if ($decision.Action -eq 'REFUSE') {
+  $names = ($installed | ForEach-Object { '    ' + $_.Instance }) -join "`n"
+  Stop-Ai17z ('AI17Z Setup could not tell which installation you meant.') `
+    ($decision.Reason + ".`nNothing was changed.") `
+    (("Name one of these:`n" + $names + "`n`n  ... -Instance <name>        update that one" + "`n  ... -NewInstance            install another, separate AI17Z").Trim())
+}
+
+if (-not $explicitPaths) {
+  $InstanceName = $decision.Instance
+  if ($decision.Action -eq 'UPDATE') { $Update = [switch]$true } else { $Update = [switch]$false }
+}
+
 $layout = Get-Ai17zLayout $InstanceName $ProgramDir $DataDir $env:LOCALAPPDATA
+
+# The installation being updated must be the one its own metadata describes.
+#
+# Believed about how it was installed, never about where it is: a file that
+# claims another directory is a file that has been moved or copied, and acting
+# on it is exactly how one installation writes into another.
+$target = @($installed | Where-Object { ('' + $_.Instance) -ieq $layout.Instance })[0]
+if ($target -and -not $target.Trustworthy) {
+  Stop-Ai17z ('AI17Z will not update "' + $target.Instance + '" while its own record of itself disagrees.') `
+    ($target.Doubt + ".`nNothing was changed.") `
+    ("This happens when an installation folder has been moved or copied. Install a fresh one:`n  ... -NewInstance" + "`nor put the folder back where it was.")
+}
+
 if (-not (Test-Ai17zLayoutConsistent $InstanceName $layout.ProgramDir ([bool]$ProgramDir))) {
   Stop-Ai17z ('The name and the folder do not agree.') `
     ('Asked for the instance "' + $InstanceName + '" and would install into ' + $layout.ProgramDir + '.') `
@@ -1943,6 +2373,23 @@ if ($Resume) {
 
 Write-Host ''
 Write-Host '  AI17Z Setup' -ForegroundColor White
+
+# Which installation, said before anything is written rather than afterwards.
+#
+# On a machine with one AI17Z this is one quiet line. On a machine with several
+# it is the whole point: the owner sees the name of the one about to change,
+# and the names of the ones that are not, before it happens.
+if ($Update) {
+  Write-Host ('  Updating ' + $layout.Instance) -ForegroundColor White
+} elseif ($installed.Count -gt 0) {
+  Write-Host ('  Installing a new AI17Z called ' + $layout.Instance) -ForegroundColor White
+}
+if ($installed.Count -gt 0) {
+  $others = @($installed | Where-Object { ('' + $_.Instance) -ine $layout.Instance } | ForEach-Object { $_.Instance })
+  if ($others.Count -gt 0) {
+    Write-Host ('  Leaving alone: ' + ($others -join ', ')) -ForegroundColor DarkGray
+  }
+}
 if ($WhatIfOnly) { Write-Host '  Looking only. Nothing on this PC will be changed.' -ForegroundColor Yellow }
 Write-Host ''
 
@@ -2209,11 +2656,33 @@ if ($LocalPackage) {
       ('GitHub answered ' + $found.Status + '.' + "`nNothing on this PC was changed.") `
       'Check your internet connection and run AI17Z Setup again.'
   }
-  $release = $found.Release
-  $tag = '' + $release.tag_name
+  # Not `$release`.
+  #
+  # PowerShell variable names are case-insensitive, so `$release` *is* the
+  # `-Release` parameter -- which is declared `[string]`, so assigning a release
+  # object to it silently converts the object to a string. Every field read
+  # afterwards is then empty, and this fails as a wrong answer rather than as an
+  # error: the tag becomes '', the asset name becomes `AI17Z-App-.zip`, and the
+  # message blames the release for not containing a file nobody ever published.
+  #
+  # Every phase of the install verifier uses `-LocalPackage`, which takes the
+  # branch above this one, so nothing exercised this until the command was run
+  # against the real API.
+  $chosen = $found.Release
+  $tag = '' + $chosen.tag_name
+  # The tag GitHub just handed over, before a filename is built from it. This
+  # is the one place a value off the network turns into a local path, and it is
+  # refused rather than sanitised: a tag this does not recognise is a release
+  # this program does not understand, not one to guess a name for.
+  if (-not (Test-Ai17zReleaseTag $tag)) {
+    Set-Ai17zStep 'app' 'failed' 'the release is not named like a release'
+    Stop-Ai17z ('That release is called "' + $tag + '", which is not a version number.') `
+      'Nothing on this PC was changed. AI17Z will not build a filename out of that.' `
+      ("Install a release by name instead:`n  ... -Release v1.0.0`nand report this at https://github.com/" + $script:Ai17zSetup.Repository + '/issues')
+  }
   $version = $tag -replace '^v', ''
   $assetName = [string]::Format($script:Ai17zAssets.Package, $version)
-  $asset = Find-Ai17zAsset $release $assetName
+  $asset = Find-Ai17zAsset $chosen $assetName
   if (-not $asset) {
     Set-Ai17zStep 'app' 'failed' ('release ' + $tag + ' has no package')
     Stop-Ai17z ('Release ' + $tag + ' does not contain ' + $assetName + '.') `
@@ -2221,7 +2690,7 @@ if ($LocalPackage) {
       ("Download AI17Z from`n  https://github.com/" + $script:Ai17zSetup.Repository + '/releases')
   }
 
-  $expected = Resolve-Ai17zExpectedHash $release $assetName $ExpectedSha256
+  $expected = Resolve-Ai17zExpectedHash $chosen $assetName $ExpectedSha256
   if (-not $expected.Hash) {
     Set-Ai17zStep 'app' 'failed' 'no published hash'
     Stop-Ai17z 'There is no published SHA-256 for this release.' `

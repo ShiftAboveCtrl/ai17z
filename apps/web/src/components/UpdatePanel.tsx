@@ -28,6 +28,11 @@ export interface UpdateState {
   checkedAt: string | null;
   error: string | null;
   method: 'INSTALLER' | 'BOOTSTRAP' | 'CHECKOUT';
+  installation: {
+    name: string | null;
+    programDir: string | null;
+    channel: 'INSTALLER' | 'BOOTSTRAP' | 'CHECKOUT';
+  };
 }
 
 /**
@@ -42,7 +47,7 @@ const HOW_TO_UPDATE: Record<UpdateState['method'], { action: string; detail: str
   BOOTSTRAP: {
     action: 'Update AI17Z',
     detail:
-      'Open "Update AI17Z" in the Start Menu. It stops this copy, fetches the new version, checks it against its published hash, applies any database migrations and starts it again. Your agents, memories, provider keys and browser session are in your data folder and are not touched.',
+      'Open "Update AI17Z" in the Start Menu group for this installation. It stops this copy, fetches the new version, checks it against its published hash, applies any database migrations and starts it again. Your agents, memories, provider keys and browser session are in your data folder and are not touched.',
   },
   INSTALLER: {
     action: 'Download the installer',
@@ -110,6 +115,13 @@ export function UpdatePanel() {
         */}
         <span className="text-sm text-bone">{state.currentName}</span>
         <span className="font-mono text-xs text-bone-faint">v{state.current}</span>
+        {/*
+          The installation's own name, for a machine running more than one. It
+          costs three words here and saves somebody updating the wrong copy.
+        */}
+        {state.installation?.name && (
+          <span className="eyebrow text-bone-faint">{state.installation.name}</span>
+        )}
         <span className="text-sm text-bone-dim">
           {!state.enabled
             ? 'Update checking is off. Nothing is sent anywhere.'
@@ -180,6 +192,28 @@ export function UpdatePanel() {
               Skip this version
             </button>
           </div>
+
+          {/*
+            Which installation this is.
+
+            A machine can hold several, each serving its own copy of this
+            screen, and each with its own agents and its own database. An update
+            screen that cannot say which copy it belongs to is one that will
+            eventually be used on the wrong one -- so it says, every time, and
+            it says it next to the button rather than somewhere else.
+          */}
+          {state.installation?.name && (
+            <p className="break-words text-xs text-bone-faint">
+              This updates <span className="text-bone">{state.installation.name}</span>
+              {state.installation.programDir ? (
+                <>
+                  {' '}
+                  in <span className="font-mono">{state.installation.programDir}</span>
+                </>
+              ) : null}
+              . Any other AI17Z on this machine is left exactly as it is.
+            </p>
+          )}
 
           {/*
             The phases an update goes through, named the same way the setup

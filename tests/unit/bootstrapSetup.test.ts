@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -23,8 +23,8 @@ const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 
 const setup = read('packaging/windows/Setup-AI17Z.ps1');
 const uninstall = read('packaging/windows/Uninstall-AI17Z.ps1');
-const wrapper = read('packaging/windows/bootstrap.iss');
 const installer = read('packaging/windows/ai17z.iss');
+const stageZero = read('install.ps1');
 const packager = read('tools/package-windows.mts');
 const workflow = read('.github/workflows/release.yml');
 const audit = read('docs/SETUP_AUDIT.md');
@@ -170,6 +170,26 @@ describe('where it may go on the network', () => {
       expect(url.endsWith('.exe'), `${url} is an executable the script could fetch`).toBe(false);
       expect(url.endsWith('.msi')).toBe(false);
     }
+  });
+
+  it('will not let a release tag become a filename without checking it', () => {
+    // The tag is the one value here that arrives in a document GitHub served
+    // and turns into a local path: `AI17Z-App-<version>.zip`, written under the
+    // setup folder. GitHub will not publish a tag with a separator in it today,
+    // which is a fact about GitHub rather than a property of this program.
+    expect(setup).toContain('function Test-Ai17zReleaseTag');
+
+    // Twice, and deliberately. Once at the front door so a bad `-Release`
+    // produces a sentence, and again inside `Get-Ai17zRelease` before a tag is
+    // concatenated into a URL -- because a guard at the front door protects
+    // only the callers who came through it.
+    const inLookup = setup.slice(setup.indexOf('function Get-Ai17zRelease'), setup.indexOf('function Get-Ai17zRelease') + 700);
+    expect(inLookup).toContain('Test-Ai17zReleaseTag');
+
+    // And before the name is built from it, not after.
+    expect(setup.indexOf('if (-not (Test-Ai17zReleaseTag $tag))')).toBeLessThan(
+      setup.indexOf('$assetName = [string]::Format'),
+    );
   });
 
   it('never treats a finished download as a checked one', () => {
@@ -368,10 +388,24 @@ describe('what it must never touch', () => {
       if (/^\s*(#|\s*Windows PowerShell)/.test(line)) continue;
       expect(/Set-Content[^\n]*utf8/.test(line), `writes a BOM: ${line.trim()}`).toBe(false);
     }
+    // Reading one of these is ordinary now -- discovery reads every
+    // installation's to find out how it was installed -- so the first mention
+    // is no longer the write. It is the writes that have to go through the one
+    // function, and every mention that has to not be a write by some other
+    // means.
     for (const file of ['INSTALL_INFO.json', 'data-location.txt']) {
-      const at = setup.indexOf(`'${file}'`);
-      expect(at, `${file} is not written any more`).toBeGreaterThan(-1);
-      expect(setup.slice(at - 120, at), `${file} is written some other way`).toContain('Set-Ai17zText');
+      const mentions = setup.split(/\r?\n/).filter((line) => line.includes(`'${file}'`));
+      expect(mentions.length, `${file} is not mentioned any more`).toBeGreaterThan(0);
+      expect(
+        mentions.some((line) => line.includes('Set-Ai17zText')),
+        `${file} is not written through Set-Ai17zText any more`,
+      ).toBe(true);
+      for (const line of mentions) {
+        expect(
+          /Set-Content|Out-File|WriteAllText|Add-Content/.test(line),
+          `${file} is written some other way: ${line.trim()}`,
+        ).toBe(false);
+      }
     }
   });
 
@@ -380,46 +414,51 @@ describe('what it must never touch', () => {
   });
 });
 
-describe('the wrapper that makes it one download', () => {
-  it('carries the script and nothing else', () => {
-    expect(wrapper).toContain('Source: "Setup-AI17Z.ps1"');
-    expect(wrapper).toContain('CreateAppDir=no');
-    expect(wrapper).toContain('Uninstallable=no');
-    // Not an application installer wearing a hat: it must not lay down a
-    // program directory of its own.
-    expect(wrapper).not.toContain('{#StageDir}');
+describe('there is no executable in the recommended route', () => {
+  it('ships no wrapper to build one from', () => {
+    // There was one, briefly: an Inno script that wrapped the setup program in
+    // an `.exe` so it could be downloaded and double-clicked, and a signing lane
+    // in the workflow to make Windows trust it.
+    //
+    // Signing for open-source projects is granted on the strength of an existing
+    // user base, and AI17Z was refused for not having one. An unsigned `.exe`
+    // Windows has never seen raises a warning that nobody should be talked past,
+    // so the recommended route stopped being a download and became a command.
+    expect(existsSync(resolve(root, 'packaging/windows/bootstrap.iss'))).toBe(false);
+    expect(packager).not.toContain('bootstrap.iss');
+    expect(workflow).not.toContain('bootstrap.iss');
   });
 
-  it('pins the release and the payload it installs', () => {
-    expect(wrapper).toContain('-Release ""{#ReleaseTag}""');
-    expect(wrapper).toContain('-ExpectedSha256 ""{#PackageSha256}""');
+  it('depends on no signing service anywhere', () => {
+    for (const [name, text] of [
+      ['the workflow', workflow],
+      ['the setup program', setup],
+      ['the full installer', installer],
+      ['the stage-zero command', stageZero],
+      ['the audit document', audit],
+    ] as const) {
+      expect(/signpath/i.test(text), `${name} still refers to SignPath`).toBe(false);
+    }
+    // The gate that used to stop a release going out unsigned. Removing the
+    // signing lane and leaving the gate behind would fail every release.
+    expect(workflow).not.toContain('SIGNING_REQUIRED');
   });
 
-  it('forwards two flags and refuses to forward anything else', () => {
-    // Everything here lands on a PowerShell command line. A general pass-through
-    // would make a signed executable a way to run arbitrary code, which is worth
-    // less than not signing it at all.
-    expect(wrapper).toContain('function CleanInstanceName');
-    expect(wrapper).toMatch(/if Length\(Result\) > 48 then/);
-    expect(wrapper).not.toMatch(/\{param:[A-Za-z]+\|\}[^\n]*Parameters/);
-    const args = wrapper.slice(wrapper.indexOf('function ScriptArguments'));
-    expect(args).toContain('-InstanceName');
-    expect(args).toContain('-WhatIfOnly');
-    // Nothing else is appended to that command line.
-    expect([...args.matchAll(/Result := Result \+ ' -[A-Za-z]+/g)].length).toBe(2);
+  it('still publishes the older full installer, because installations use it', () => {
+    // Unsigned, labelled as such, and not offered first. It is what an
+    // installation made before the terminal route updates with, and breaking
+    // those to tidy the new architecture would be the wrong trade.
+    expect(existsSync(resolve(root, 'packaging/windows/ai17z.iss'))).toBe(true);
+    expect(workflow).toContain('AI17Z-Setup-${{ steps.version.outputs.version }}.exe');
   });
 
-  it('derives a four-number version the same way the installer does', () => {
+  it('derives a four-number version, because Windows still needs one', () => {
     // Windows refuses a version resource with a prerelease suffix in it and
     // Inno refuses the whole script over it -- a one-second failure at the end
     // of an eight-minute build, and only on the tags that matter.
-    const rule = /#define NumericVersion Pos\("-", AppVersion\) > 0 \? Copy\(AppVersion, 1, Pos\("-", AppVersion\) - 1\) : AppVersion/;
-    expect(wrapper).toMatch(rule);
-    expect(installer).toMatch(rule);
-  });
-
-  it('needs no administrator rights of its own', () => {
-    expect(wrapper).toContain('PrivilegesRequired=lowest');
+    expect(installer).toMatch(
+      /#define NumericVersion Pos\("-", AppVersion\) > 0 \? Copy\(AppVersion, 1, Pos\("-", AppVersion\) - 1\) : AppVersion/,
+    );
   });
 });
 
@@ -453,8 +492,12 @@ describe('the packaging and the release agree with the script', () => {
   it('hashes everything it publishes, including the package', () => {
     const checksums = workflow.slice(workflow.indexOf('- name: Checksums'), workflow.indexOf('- name: Release notes'));
     expect(checksums).toContain('AI17Z-App-*.zip');
-    expect(checksums).toContain('Install-AI17Z-*.exe');
     expect(checksums).toContain('Install-AI17Z-*.ps1');
+    expect(checksums).toContain('AI17Z-Setup-*.exe');
+    // The file the install command downloads and hashes before it runs
+    // anything. A release that published it without a line in SHA256SUMS.txt
+    // would leave the command with nothing to check the download against.
+    expect(checksums).toContain('install.ps1');
   });
 
   it('publishes the setup script beside the executable, so the two can be compared', () => {
@@ -477,19 +520,22 @@ describe('the packaging and the release agree with the script', () => {
     expect(workflow).toContain('dist/AI17Z-Setup-Audit-*.json');
   });
 
-  it('lists the full installer first, for update checks that take the first .exe', () => {
+  it('publishes exactly one .exe, and it is the full installer', () => {
+    // An installation from before AI17Z Setup existed updates through a check
+    // that takes "the first asset ending in .exe". While the recommended route
+    // was also an executable there were two, and the order decided which of
+    // them those installations were handed. Now there is one, and what has to
+    // hold is that nothing new becomes an executable in this list.
     const files = workflow.slice(workflow.lastIndexOf('files: |'));
-    const installerAt = files.indexOf('AI17Z-Setup-*.exe');
-    const setupAt = files.indexOf('Install-AI17Z-*.exe');
-    expect(installerAt).toBeGreaterThan(-1);
-    expect(setupAt).toBeGreaterThan(-1);
-    expect(installerAt, 'an installation from before AI17Z Setup would be handed the wrong .exe').toBeLessThan(setupAt);
+    const executables = [...files.matchAll(/^\s+dist\/(\S+\.exe)$/gm)].map((match) => match[1]);
+    expect(executables).toEqual(['AI17Z-Setup-*.exe']);
   });
 
-  it('checks both executables before publishing either', () => {
-    const check = workflow.slice(workflow.indexOf('Check the metadata SignPath requires'));
+  it('checks the executable it does publish before publishing it', () => {
+    const check = workflow.slice(workflow.indexOf("- name: Check the legacy installer's metadata"));
+    expect(check.length, 'nothing checks the installer metadata any more').toBeGreaterThan(0);
     expect(check).toContain('AI17Z-Setup-${{ steps.version.outputs.version }}.exe');
-    expect(check).toContain('Install-AI17Z-${{ steps.version.outputs.version }}.exe');
+    expect(check).toContain("if ($product -ne 'AI17Z')");
   });
 });
 
@@ -587,10 +633,14 @@ describe('the audit document describes the program it ships with', () => {
     }
   });
 
-  it('tells people where the only official download is', () => {
-    expect(audit).toContain('https://github.com/ShiftAboveCtrl/ai17z/releases');
+  it('tells people where the only official source is', () => {
+    // An unsigned installation has nothing to prove who wrote it, so where it
+    // came from is the whole of the answer and both documents have to say it.
+    expect(audit).toContain('https://github.com/ShiftAboveCtrl/ai17z');
     expect(audit).toMatch(/only from the official repository/i);
-    expect(read('README.md')).toMatch(/Only install AI17Z from the official repository/i);
+    const readme = read('README.md');
+    expect(readme).toMatch(/Install AI17Z only with the command published here/i);
+    expect(readme).toContain('raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1');
   });
 
   it('says what the hash does and does not protect against', () => {

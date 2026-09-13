@@ -72,12 +72,11 @@ export interface ReleaseInfo {
   /** The full Windows installer, when the release has one. */
   installerUrl: string | null;
   /**
-   * AI17Z Setup, which is the recommended download and a different artifact
-   * from the installer above.
+   * The setup program for this release, as the script it is.
    *
-   * Both are published, because an installation made by the older installer
-   * updates by running a new one of those, and telling it to run the bootstrap
-   * instead would be telling it to take a different layout than the one it has.
+   * Not a download anybody is asked to run: the ordinary way in is a command,
+   * and the command fetches this. It is here so an update screen can link
+   * somebody straight at what is about to run on their machine.
    */
   setupUrl: string | null;
   publishedAt: string;
@@ -117,9 +116,49 @@ export interface UpdateState {
    * repository in it.
    */
   method: UpdateMethod;
+  /**
+   * Which installation this screen belongs to.
+   *
+   * A machine can hold several AI17Z installations, each with its own agents,
+   * database and browser session, and each serving its own copy of this
+   * interface. "There is an update" is not an answer for somebody running three
+   * of them, and an update screen that cannot name itself is one that will
+   * eventually be used to update the wrong one.
+   *
+   * Both values come from the launcher of *this* installation -- the name off
+   * its own marker, the directory it is running from -- and never from release
+   * metadata, which is remote data and has no business naming a local path.
+   */
+  installation: Installation;
+}
+
+export interface Installation {
+  /** `AI17Z`, `AI17Z-test`. Null in a checkout, which has no instance. */
+  name: string | null;
+  /** The folder this copy runs from. Null when it is not an installation. */
+  programDir: string | null;
+  /** How it got here, which is what decides how it takes an update. */
+  channel: UpdateMethod;
 }
 
 export type UpdateMethod = 'INSTALLER' | 'BOOTSTRAP' | 'CHECKOUT';
+
+/**
+ * What this installation can say about itself.
+ *
+ * Read from the environment the launcher set rather than from the filesystem:
+ * the API runs in a container that cannot see the program directory at all, so
+ * anything it knows about where it came from was handed to it on the way in.
+ */
+export function installationFrom(env: NodeJS.ProcessEnv, method: UpdateMethod): Installation {
+  const name = (env.AI17Z_INSTANCE_NAME ?? '').trim();
+  const programDir = (env.AI17Z_PROGRAM_DIR ?? '').trim();
+  return {
+    name: name || null,
+    programDir: programDir || null,
+    channel: method,
+  };
+}
 
 interface CachedCheck {
   checkedAt: string;
@@ -193,11 +232,18 @@ function toRelease(raw: GitHubRelease): ReleaseInfo | null {
   // old rule survives as a fallback so a release published before either name
   // existed still resolves to something.
   const assets = raw.assets ?? [];
-  const byPrefix = (prefix: string) =>
-    assets.find((asset) => asset.name?.toLowerCase().startsWith(prefix) && asset.name.toLowerCase().endsWith('.exe'));
+  const assetNamed = (prefix: string, extension: string) =>
+    assets.find(
+      (asset) =>
+        asset.name?.toLowerCase().startsWith(prefix) && asset.name.toLowerCase().endsWith(extension),
+    );
   const anyExe = assets.find((asset) => asset.name?.toLowerCase().endsWith('.exe'));
-  const installer = byPrefix('ai17z-setup-') ?? anyExe;
-  const setup = byPrefix('install-ai17z-') ?? null;
+  // The older full installer, still published because the installations that
+  // were made with it update by running a newer one.
+  const installer = assetNamed('ai17z-setup-', '.exe') ?? anyExe;
+  // The setup program itself, as a script. A release from before the terminal
+  // route has none, and null is the honest answer there.
+  const setup = assetNamed('install-ai17z-', '.ps1') ?? null;
 
   // GitHub defaults a release's name to its tag, and a heading that reads
   // `v1.0.0-beta.2` above the notes tells somebody nothing they did not get
@@ -319,6 +365,7 @@ export async function updateState(options: { refresh?: boolean } = {}): Promise<
   const enabled = await updatesEnabled();
   const skipped = await ops.getSetting<string>(SKIPPED_KEY);
   const method = updateMethod();
+  const installation = installationFrom(process.env, method);
 
   const currentName = releaseName(current).title;
 
@@ -333,6 +380,7 @@ export async function updateState(options: { refresh?: boolean } = {}): Promise<
       checkedAt: null,
       error: null,
       method,
+      installation,
     };
   }
 
@@ -367,5 +415,6 @@ export async function updateState(options: { refresh?: boolean } = {}): Promise<
     checkedAt: check.checkedAt,
     error: check.error,
     method,
+    installation,
   };
 }

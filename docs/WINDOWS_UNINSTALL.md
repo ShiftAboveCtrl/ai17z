@@ -33,6 +33,19 @@ have installed them for you; that is not the same as owning them, and something
 else on this machine may be using any of them. Removing them is a separate,
 deliberate decision — see the last section.
 
+## More than one AI17Z
+
+Each installation has its own entry in Add/Remove Programs, its own Start Menu
+group and its own *Uninstall AI17Z*, all named after it. **Removing one removes
+only that one** — its program directory, its shortcuts, its registry entries and,
+if you say so, its data directory. Every other AI17Z on the machine is left
+exactly as it is, including its database, which is a separate Docker volume.
+
+Every path on this page is the one belonging to the installation you are
+removing. For an installation called `AI17Z-test` that is
+`%LOCALAPPDATA%\Programs\AI17Z-test` and `%LOCALAPPDATA%\AI17Z-test`, and its
+uninstaller is the one in its own folder — not the one in another installation's.
+
 ## Removing your data
 
 `%LOCALAPPDATA%\AI17Z` holds:

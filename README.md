@@ -58,50 +58,89 @@ costs less.
 
 ## Install on Windows
 
-1. Download **`Install-AI17Z-<version>.exe`** from
-   [the releases page](https://github.com/ShiftAboveCtrl/ai17z/releases).
-2. Run it.
-3. Watch the status screen. It checks what this PC has, installs what is
-   missing, installs AI17Z, starts it, and checks it works.
-4. AI17Z opens when it is ready.
-
-**Only install AI17Z from the official repository above.** Nowhere else
-distributes it.
-
-That download can install Windows features and system software, which is a lot
-to ask of a file off the internet. So the whole of it is one PowerShell script
-in this repository — [`packaging/windows/Setup-AI17Z.ps1`](packaging/windows/Setup-AI17Z.ps1)
-— and the `.exe` is a wrapper that extracts and runs exactly that. Both are
-published, both are hashed in `SHA256SUMS.txt`, and it will show you what it
-would do without doing any of it:
+Open **Windows Terminal** and paste this:
 
 ```powershell
-.\Install-AI17Z-<version>.exe /WHATIF
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+```
+
+That is the whole installation. It checks what this PC has, installs anything
+missing, installs AI17Z, starts it, checks it actually works, and opens it.
+
+**Install AI17Z only with the command published here.** Nowhere else distributes
+it.
+
+### Why a command and not a download
+
+AI17Z is not a signed application. Code signing for open-source projects is
+granted on the strength of an existing user base, and AI17Z does not have one
+yet — we applied, and were turned down for exactly that reason. So an AI17Z
+`.exe` would be an unsigned executable Windows has never seen, and Windows would
+say so, loudly, and be right to.
+
+The answer is not to talk you past that warning. It is to not ask for it:
+**nothing above is an executable, nothing is double-clicked, and no Windows
+security setting is touched, turned off, or argued with** — not SmartScreen, not
+Defender, not your execution policy. Windows' default policy permits individual
+commands and not script files; the command above is individual commands, and so
+is the way the installer it fetches is run.
+
+### What actually runs
+
+[`install.ps1`](install.ps1) is short, public, and the file at the URL you just
+pasted — read it first if you like, that is what it is there for. All it does is
+work out the newest release, download the setup program from it, **check its
+SHA-256 against the hash that release published**, write it somewhere you can
+read it, and run the bytes it checked. A mismatch stops everything.
+
+The setup program is [`packaging/windows/Setup-AI17Z.ps1`](packaging/windows/Setup-AI17Z.ps1)
+— the whole installer, as a script, published with every release.
+
+To see what it would do to this PC without doing any of it:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -WhatIfOnly
 ```
 
 **[How to audit it](docs/SETUP_AUDIT.md)** — every privileged action, every
-download, everything it writes, and how to check the hash and the signature
-yourself. Read that before you run it. It is the point of the thing being a
-script.
+download, everything it writes, and how to check it yourself. Read that before
+you run it. It is the point of the thing being a script.
+
+### More than one AI17Z
+
+A machine can hold several independent installations — different agents,
+different databases, different signed-in accounts. They share nothing, and
+**updating one leaves the others exactly as they are.**
+
+```powershell
+$s = irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1
+& ([scriptblock]::Create($s)) -List                 # what is installed
+& ([scriptblock]::Create($s)) -NewInstance          # install another
+& ([scriptblock]::Create($s)) -Instance AI17Z-test  # update that one
+```
+
+Run the plain command on a machine that already has AI17Z and it asks which you
+meant rather than guessing.
 
 Also: [Installing on Windows](docs/WINDOWS_INSTALL.md) ·
 [Uninstalling](docs/WINDOWS_UNINSTALL.md)
 
-### Code signing policy
+### Code signing
 
-AI17Z's Windows downloads are currently **unsigned**, while our
-[SignPath Foundation](https://signpath.org) application is pending. Windows will
-warn you, and you should treat every unsigned download that way. Check the
-SHA-256 against the release page before running it.
+AI17Z is **not signed**, and is not about to be: free certificates for
+open-source projects are granted on the strength of an existing user base, we
+applied, and we were turned down for not having one yet. Saying "signing is
+coming" would be a nicer sentence and not a true one.
 
-We will never ask you to disable SmartScreen, Smart App Control or your
-antivirus. See [Windows trust and SmartScreen](docs/WINDOWS_TRUST.md) for what
-those warnings mean and what is actually true about them.
+That is why the ordinary way in is a command rather than a download. **We will
+never ask you to disable SmartScreen, Smart App Control or your antivirus, or to
+click past a warning.** See [Windows trust and SmartScreen](docs/WINDOWS_TRUST.md)
+for what those warnings actually mean, and
+[docs/CODE_SIGNING_POLICY.md](docs/CODE_SIGNING_POLICY.md) for where this stands.
 
-Free code signing provided by [SignPath.io](https://about.signpath.io),
-certificate by [SignPath Foundation](https://signpath.org).
-
-Full policy: [docs/CODE_SIGNING_POLICY.md](docs/CODE_SIGNING_POLICY.md).
+The one file on the releases page that is still an executable — the older full
+installer, kept for installations made with it — is unsigned and labelled as
+such. You do not need it.
 
 ### Privacy
 
@@ -303,12 +342,18 @@ it cannot update is left running rather than left down.
 program directory is replaced; the data directory — agents, memories, provider
 keys, browser session, master key — is not.
 
+**And an update updates one installation: the one it was started from.** The
+Start Menu entry belongs to that installation and the Version panel names the
+copy it is offering to update. Neither goes looking for another AI17Z on the
+machine, and asking one to update a different one is refused rather than
+redirected.
+
 ---
 
 ## Quick start with Docker
 
-> You do not need this section if you used the installer above. It is here for
-> people who would rather drive Docker themselves.
+> You do not need this section if you used the install command above. It is here
+> for people who would rather drive Docker themselves.
 
 ```bash
 npm run setup          # writes .env with a master key, if there is not one
@@ -471,6 +516,9 @@ different package.
 
 ## Running a second installation
 
+This is about a second *clone*. For a second installed copy, the install command
+does it in one flag — see [More than one AI17Z](#more-than-one-ai17z) above.
+
 Every installation names itself after the folder it was installed into, and that
 name decides which Docker volumes it uses. A clone into `ai17z-test` is
 `ai17z-test`: its own database, its own browser profiles, its own containers.
@@ -522,7 +570,7 @@ Installing and running it:
 - [Installing on Windows](docs/WINDOWS_INSTALL.md)
 - [Auditing AI17Z Setup](docs/SETUP_AUDIT.md) — everything the installer can change, and how to check it yourself
 - [Uninstalling, and removing your data](docs/WINDOWS_UNINSTALL.md)
-- [Why Windows warns about the download](docs/WINDOWS_TRUST.md)
+- [Windows trust, SmartScreen, and why AI17Z installs from a command](docs/WINDOWS_TRUST.md)
 - [Privacy: what leaves your machine](docs/PRIVACY.md)
 - [Code signing policy](docs/CODE_SIGNING_POLICY.md)
 - [Local setup](docs/operations/LOCAL_SETUP.md) · [Docker](docs/operations/DOCKER.md) · [Driving a real browser](docs/operations/BROWSER_SESSIONS.md)

@@ -125,8 +125,10 @@ PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={code:InstanceName} {#ReleaseVersionOnly}
 UninstallDisplayIcon={app}\packaging\windows\ai17z.ico
-; SignPath requires signed binaries to carry product and version attributes,
-; and they are what a person sees in the file properties either way.
+; What a person sees in the file properties. This executable is not signed --
+; open-source signing is granted on the strength of a user base AI17Z does not
+; yet have -- so these attributes are the only thing it says about itself before
+; it runs, which is a reason to keep them right rather than a reason to drop them.
 VersionInfoVersion={#NumericVersion}
 VersionInfoProductName={#AppName}
 VersionInfoProductVersion={#NumericVersion}

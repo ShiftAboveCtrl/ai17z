@@ -7,12 +7,33 @@ this project's own documentation gave until now.
 
 | | |
 | --- | --- |
-| Unsigned installer | Windows warns. You choose "Run anyway". Verify the SHA-256 first |
+| Unsigned installer | Windows warns, and is right to |
 | Signed installer, new | Windows still warns at first. Reputation accrues with downloads |
 | Signed installer, established | No warning |
 | Microsoft Store app | No warning, ever |
+| **Nothing downloaded to run** | **nothing for SmartScreen to have an opinion about** |
 
-AI17Z is currently the first row and is applying for the second.
+AI17Z is the last row. It applied for the free open-source certificate that
+would have moved it to the second, and was **declined** for not yet having the
+user base those are granted on. Rather than ship an unsigned executable and
+explain the warning away, the recommended route stopped producing a file to
+double-click at all:
+
+```powershell
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+```
+
+**That is not a way around SmartScreen, and this document is not going to
+pretend it is.** SmartScreen's application-reputation check is about executables
+that were downloaded and run; a command that downloads a script, verifies its
+SHA-256 and executes the checked bytes in memory is not that operation, so the
+check does not apply rather than being defeated. Nothing here disables, excludes
+or reconfigures SmartScreen, Smart App Control, Defender, UAC or your execution
+policy — see [What AI17Z will never ask of you](#what-ai17z-will-never-ask-of-you)
+below, and [What this does not buy you](#what-this-does-not-buy-you) for the
+other side of it. [SETUP_AUDIT.md](SETUP_AUDIT.md#execution-policy-precisely)
+says exactly what does and does not happen to your execution policy, including
+the part that is easy to leave out.
 
 ## EV certificates no longer skip SmartScreen
 
@@ -90,30 +111,34 @@ knowing about the download. Verify the SHA-256 against the release page instead,
 and read [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for how our builds are
 produced and who can approve a signature.
 
-## Two downloads, and what that does not change
+## What this does not buy you
 
-A release carries two executables: `Install-AI17Z-<version>.exe`, which is the
-recommended one, and `AI17Z-Setup-<version>.exe`, the older full installer.
+Worth setting out, because "no warning" is easy to misread as "safe".
 
-Both start from zero reputation on every release while they are unsigned, and
-the smaller one gets no advantage for being smaller — SmartScreen weighs the
-publisher's certificate and how many people have downloaded *this exact file*
-without trouble, and neither of those has anything to do with size. Once signing
-is in place, reputation accrues to the certificate, so both files inherit it
-together and a new release starts from something rather than nothing.
+**A signature answers a question the hash does not.** A signature says who
+published a file, and binds later releases to the same identity so reputation can
+accumulate across them. A SHA-256 published by a release says only that the bytes
+you got are the bytes that release published. If that release itself were
+tampered with, the checksum would have been replaced alongside the payload, and
+nothing in the chain would notice. AI17Z does not have the first of those and
+says so rather than implying the second covers it.
 
-What AI17Z Setup does change is what you can check **before** you run it. The
-whole program is
-[`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/Setup-AI17Z.ps1) in
-this repository, published as a file beside the `.exe`, and
-`Install-AI17Z-<version>.exe /WHATIF` reports what it would do to the machine
-and changes nothing. That is not a substitute for a signature. It is the thing a
-compiled installer cannot offer at all. See [Auditing AI17Z Setup](SETUP_AUDIT.md).
+**What stands in its place** is that every release is built by a public GitHub
+workflow from a public tag, never uploaded from anybody's machine; that every
+published file is a file you can read; and that
+[`install.ps1`](../install.ps1) checks the setup program's hash before writing it
+and the process that runs it checks again. [SETUP_AUDIT.md](SETUP_AUDIT.md) is
+the full account, including the one step that is not pinned: the first URL points
+at `main`, which moves.
 
-**We will not claim the warning has gone away when it has not.** A release is
-labelled unsigned on its own page while that is true, and the honest statement
-about a newly signed release is that Windows may still warn until reputation
-accrues.
+**One executable is still published.** `AI17Z-Setup-<version>.exe`, the older
+full installer, is unsigned, labelled as such, and kept because installations
+made with it update by running a newer one. If you run it Windows will warn you
+that it does not know the publisher, and that is correct — it does not. **We will
+not tell you to click past that warning.** Use the command instead.
+
+**We will not claim a warning has gone away when it has not.** A release is
+labelled unsigned on its own page while that is true.
 
 ## Why not the Microsoft Store
 

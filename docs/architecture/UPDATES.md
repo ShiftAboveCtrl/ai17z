@@ -95,7 +95,7 @@ running `git pull` in a directory with no repository in it.
 
 | Channel | How it got here | How it updates |
 | --- | --- | --- |
-| `BOOTSTRAP` | AI17Z Setup | **Update AI17Z** in the Start Menu, which is `update-ai17z.ps1`, which hands back to the setup script that installed it |
+| `BOOTSTRAP` | the install command, or AI17Z Setup run directly | **Update AI17Z** in the Start Menu, which is `update-ai17z.ps1`, which hands back to the setup script that installed it |
 | `INSTALLER` | `AI17Z-Setup-<version>.exe` | a newer one of those, run over the existing copy |
 | `CHECKOUT` | a clone | `.\update-ai17z.ps1`, which pulls |
 
@@ -123,29 +123,90 @@ data directory and the instance, so nothing discovered on the machine can move
 where the update lands. One implementation of "fetch a release, check its hash,
 lay it down" serves both installing and updating.
 
-The setup script then: stops the native worker only -- the containers hold the
-database and an update has no reason to interrupt it -- downloads the release's
-package, **checks it against the SHA-256 compiled into the signed setup program
-or published in that release's `SHA256SUMS.txt`**, unpacks it beside the
-installation, and moves it into place only once it is whole. If the hash does not
-match, the file is deleted and nothing is replaced. There is no flag to skip
-that.
+The setup script then: stops the native worker only — the containers hold the
+database and an update has no reason to interrupt it — downloads the release's
+package, **checks it against the SHA-256 published in that release's
+`SHA256SUMS.txt`**, unpacks it beside the installation, and moves it into place
+only once it is whole. If the hash does not match, the file is deleted and
+nothing is replaced. There is no flag to skip that.
 
 The data directory is not touched: `.env`, the master key, the database volume,
 the browser profile and everything under `storage` survive by construction,
 because the only directories removed are the ones the package owns.
 
-### Two executables on a release, and which is which
+### One executable on a release, and one command
 
 `AI17Z-Setup-<version>.exe` is the full installer and carries the application.
-`Install-AI17Z-<version>.exe` is AI17Z Setup, which carries a script.
+It is the only `.exe` a release publishes, and it is unsigned — the free
+open-source certificate AI17Z applied for was declined for want of a user base,
+and shipping an unsigned executable as the recommended route means asking people
+to click past a warning that is doing its job.
 
-`toRelease` picks them **by name**. It used to take "the first asset ending in
-`.exe`", which was unambiguous while there was one -- and would now be a coin
-toss, handing half of all installations the wrong one. Releases still list the
-full installer first, because an installation published before this existed is
-still running that old rule and must keep resolving to the installer that
-matches the layout it has.
+So the recommended route is a command, and what it fetches are scripts:
+`install.ps1` and `Install-AI17Z-<version>.ps1`.
+
+`toRelease` picks assets **by name**, and `setupUrl` is the setup script rather
+than an executable. The old rule was "the first asset ending in `.exe`", which
+was unambiguous while there was one, ambiguous for the short period there were
+two, and unambiguous again now — but installations published under that rule
+are still running it, so the full installer stays first in the release's file
+list and nothing else in that list may become an executable.
+
+## One machine, several installations
+
+A machine can hold any number of AI17Z installations, and they are not variations
+of one thing: each has its own agents, its own database, its own signed-in
+browser and its own Docker project. The two operations somebody could mean are
+opposites — "update this one" replaces a program directory and keeps everything
+else, "install another" makes a new everything — and collapsing them loses an
+agent.
+
+**An update updates the installation it was started from, and nothing else.**
+
+- `update-ai17z.ps1` updates `$PSScriptRoot`. It is shipped *inside* each
+  installation, so which one it is is not a question anything has to answer.
+- The update screen in the application updates the copy serving that screen. It
+  is handed `AI17Z_INSTANCE_NAME` and `AI17Z_PROGRAM_DIR` by the launcher, shows
+  both, and has no route that enumerates installations.
+- `Setup-AI17Z.ps1` run with explicit paths goes exactly there. Run without
+  them, `Select-Ai17zTarget` decides: nothing installed → install the default;
+  one installed and somebody is there → **ask**; one installed and nobody is
+  → update it; several → **refuse**, and say how to name one. It never picks
+  between several on its own.
+
+### The rule that stops an update landing somewhere else
+
+`INSTALL_INFO.json` records **how** a copy was installed. It is never
+authoritative about **where** one is.
+
+That distinction is the Beta 1.0.0 (14) defect written down. That installer took
+an instance name, derived the Add/Remove entry and the Start Menu group from it,
+and wrote the files into a different installation's directory — leaving an
+installation named one thing, living inside another, with an uninstaller
+registered to delete a program directory belonging to something else.
+
+So `Test-Ai17zInstallInfoTrustworthy` compares the `programDir` a record claims
+against the directory the record was read from, and a disagreement stops the run
+rather than being resolved in either direction. A record that names somewhere
+else has been copied or moved, and neither is a reason to start replacing program
+files. The folder's *name* is deliberately not part of that check: somebody who
+chose their own directory has a folder called whatever they called it, and
+refusing to update those would be inventing a rule nobody agreed to.
+
+Nothing from the network is allowed near any of this. A release's metadata never
+supplies a path, a filename or a directory; the checked setup script is written
+under a fixed name, and the instance name is validated against
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$` before it reaches anything that builds a
+path.
+
+### Proved rather than argued
+
+`npm run verify:install -- --instances` installs three independent
+installations, updates the middle one, and asserts two things about the other
+two: that every file under each is byte-for-byte what it was, hashed one by one,
+and that asking the updater inside one installation to update another is
+refused. `tests/unit/bootstrapDecisions.test.ts` drives the selection and trust
+functions out of the shipped script itself.
 
 ## What the check sends
 

@@ -264,17 +264,21 @@ describe('what a release is called on the screen', () => {
 /**
  * Which download an installation is pointed at.
  *
- * A release now carries two executables -- the full installer, and AI17Z Setup
- * -- and which one a copy should be offered depends on how it was installed.
- * This used to take "the first asset ending in .exe", which was unambiguous
- * while there was one of those and is a coin toss now: GitHub lists assets in
- * upload order, and half the installations would be handed the wrong one.
+ * A release carries one executable -- the older full installer -- and one setup
+ * script, which is what the recommended route runs. Which of them a copy should
+ * be offered depends on how it was installed, so both are resolved **by name**.
+ *
+ * The rule this replaced took "the first asset ending in .exe". That was
+ * unambiguous while a release had one, and briefly was not: for the period the
+ * recommended route was also an executable, GitHub's upload ordering decided
+ * which half of all installations got the wrong one.
  */
 describe('picking the right download out of a release', () => {
   const both = (tag: string) =>
     release(tag, {
       assets: [
-        { name: `Install-AI17Z-${tag.replace(/^v/, '')}.exe`, browser_download_url: 'https://example.invalid/setup.exe' },
+        { name: 'install.ps1', browser_download_url: 'https://example.invalid/stage-zero.ps1' },
+        { name: `Install-AI17Z-${tag.replace(/^v/, '')}.ps1`, browser_download_url: 'https://example.invalid/setup.ps1' },
         { name: `AI17Z-Setup-${tag.replace(/^v/, '')}.exe`, browser_download_url: 'https://example.invalid/installer.exe' },
         { name: `AI17Z-App-${tag.replace(/^v/, '')}.zip`, browser_download_url: 'https://example.invalid/app.zip' },
         { name: 'SHA256SUMS.txt', browser_download_url: 'https://example.invalid/sums.txt' },
@@ -284,10 +288,17 @@ describe('picking the right download out of a release', () => {
   it('names them rather than taking whichever is listed first', async () => {
     serve([both('v9.9.9')]);
     const latest = await fetchLatestRelease('9.0.0');
-    // Deliberately listed with AI17Z Setup first, which is what would break a
-    // positional rule.
     expect(latest?.installerUrl).toBe('https://example.invalid/installer.exe');
-    expect(latest?.setupUrl).toBe('https://example.invalid/setup.exe');
+    expect(latest?.setupUrl).toBe('https://example.invalid/setup.ps1');
+  });
+
+  it('does not mistake the command for the setup program it fetches', async () => {
+    // `install.ps1` is a few hundred lines whose whole job is to check a hash
+    // and hand over. Offering it as the update would be offering the wrong
+    // file, and it is listed first in the fixture for exactly that reason.
+    serve([both('v9.9.9')]);
+    const latest = await fetchLatestRelease('9.0.0');
+    expect(latest?.setupUrl).not.toContain('stage-zero');
   });
 
   it('still answers for a release published before either name existed', async () => {
@@ -298,6 +309,7 @@ describe('picking the right download out of a release', () => {
     ]);
     const latest = await fetchLatestRelease('9.0.0');
     expect(latest?.installerUrl).toBe('https://example.invalid/old.exe');
+    // Nothing to offer the terminal route, and saying so beats inventing a URL.
     expect(latest?.setupUrl).toBeNull();
   });
 
