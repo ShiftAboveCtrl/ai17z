@@ -25,6 +25,14 @@ on:
       - 'packages/shared/src/releaseManifest.ts'
       - 'packages/shared/src/installLayout.ts'
       - 'install-ai17z-*.sh'
+      # Shipped inside the package, so a change to one changes what a package
+      # is. `docker-compose.yml` in particular decides what an installed copy
+      # publishes and where, which is exactly the kind of thing that should not
+      # reach a release without every platform having run it.
+      - 'docker-compose.yml'
+      - 'docker/**'
+      - '.env.example'
+      - '*-ai17z.sh'
       - '.github/workflows/platform-packaging.yml'
       - '.github/workflows/release.yml'
       - '.github/actions/**'
@@ -39,6 +47,14 @@ on:
       - 'packages/shared/src/releaseManifest.ts'
       - 'packages/shared/src/installLayout.ts'
       - 'install-ai17z-*.sh'
+      # Shipped inside the package, so a change to one changes what a package
+      # is. `docker-compose.yml` in particular decides what an installed copy
+      # publishes and where, which is exactly the kind of thing that should not
+      # reach a release without every platform having run it.
+      - 'docker-compose.yml'
+      - 'docker/**'
+      - '.env.example'
+      - '*-ai17z.sh'
       - '.github/workflows/platform-packaging.yml'
       - '.github/workflows/release.yml'
       - '.github/actions/**'
