@@ -125,7 +125,15 @@ if printf '%s' "$out" | grep -qE '403|could not be read|could not be reached'; t
   echo "  what the installer itself tells somebody to do."
   sleep 90
   out="$(install_once)"
-  ok "it was refused once and retried"
+  if printf '%s' "$out" | grep -qE '403|could not be read|could not be reached'; then
+    # Twice. The ceiling is an hour long, so ninety seconds was never going to
+    # clear it -- and this has to be unmistakable rather than look like a
+    # finding about the release. Everything else in this run installed the same
+    # release from the same URLs.
+    bad "this runner could not reach the GitHub API after a retry. That is the sixty-an-hour ceiling on an address it shares, not something about the release."
+  else
+    ok "it was refused once and the retry worked"
+  fi
 fi
 printf '%s\n' "$out" | sed 's/^/    /' | tail -40
 
