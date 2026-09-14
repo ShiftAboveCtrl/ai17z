@@ -40,6 +40,28 @@ says() { if printf '%s' "$2" | grep -qi -- "$3"; then ok "$1"; else
 # An ordinary person, with sudo, which is what the documented route assumes.
 id -u installer >/dev/null 2>&1 || sudo useradd -m -s /bin/bash installer
 echo 'installer ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/installer >/dev/null
+
+# And able to reach Docker, which the owner of a real machine is and which this
+# machine's own user already is.
+#
+# Without it the installer correctly stops at "Docker works for root but not for
+# you", adds the user to the group, and says to log in again -- which is the
+# right behaviour and leaves everything after that point untested. Adding the
+# user to the group here is setting up the machine, not changing the installer.
+# The group that actually owns the socket, not the one called "docker". They
+# are usually the same and are not always: a socket bind-mounted from another
+# machine carries that machine's group id.
+DOCKER_GROUP=""
+if [ -S /var/run/docker.sock ]; then
+  DOCKER_GROUP="$(getent group "$(stat -c %g /var/run/docker.sock)" 2>/dev/null | cut -d: -f1)"
+fi
+[ -n "$DOCKER_GROUP" ] || DOCKER_GROUP="$(getent group docker >/dev/null 2>&1 && echo docker || echo '')"
+if [ -n "$DOCKER_GROUP" ]; then
+  sudo usermod -aG "$DOCKER_GROUP" installer
+  echo "  installer is in the '$DOCKER_GROUP' group, which owns the docker socket"
+else
+  echo "  this machine has no docker group; the installer will say so itself"
+fi
 # Under its real name. The installer reads the version out of the filename --
 # deliberately, so that a file somebody renamed cannot claim to be a version it
 # is not -- and a harness that copies it to `package.deb` is testing the name

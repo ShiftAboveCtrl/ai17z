@@ -14,8 +14,11 @@
 # What is under test is the installer's own decisions: refusals, architecture
 # selection, the hash, extraction, where it puts things, and rerunning it.
 #
-# Nothing about AI17Z's own logic is mocked. Docker Desktop's GUI install is the
-# one thing this cannot reach, and it is declined rather than faked.
+# Nothing about AI17Z's own logic is mocked. One thing outside it is: a hosted
+# Mac has no Docker Desktop and cannot be given one without a person, so the
+# `docker` command is answered at the vendor boundary. See the note where that
+# happens. Docker Desktop's own download, disk image, licence and first run are
+# not reachable here and are not claimed.
 set -uo pipefail
 
 TARBALL="${1:?a tarball}"
@@ -37,6 +40,36 @@ says() { if printf '%s' "$2" | grep -qi -- "$3"; then ok "$1"; else
 ROOM="${TMPDIR:-/tmp}/installer room"
 rm -rf "$ROOM"; mkdir -p "$ROOM"
 TARGET="$ROOM/AI17Z test"
+
+# Docker, and only Docker.
+#
+# A hosted Mac has no Docker Desktop and cannot be given one: its installer is a
+# disk image with a graphical setup and Docker's own licence to accept, and
+# AI17Z must never accept that for somebody. Without it the installer stops at
+# the Docker gate -- correctly -- and everything after that gate goes untested.
+#
+# So the vendor check is answered, at the narrowest point it can be: two
+# commands on PATH that say what a working Docker says. Nothing of AI17Z's own
+# logic is replaced; the installer runs exactly as it would, and what it does
+# after finding Docker is the thing being tested.
+#
+# The real Docker Desktop path -- the download, the disk image, the licence, the
+# first run -- is not reachable here and is not claimed.
+STUB="$ROOM/vendor-bin"
+mkdir -p "$STUB"
+cat > "$STUB/docker" <<'STUBBED'
+#!/bin/sh
+case "$1" in
+  info)    echo "Server Version: 27.4.0"; exit 0 ;;
+  version) echo "27.4.0"; exit 0 ;;
+  compose) echo "Docker Compose version v2.30.0"; exit 0 ;;
+  *)       exit 0 ;;
+esac
+STUBBED
+chmod +x "$STUB/docker"
+PATH="$STUB:$PATH"
+export PATH
+echo "  docker is stubbed at the vendor boundary: $(command -v docker)"
 
 echo "### the refusals, before anything is unpacked"
 

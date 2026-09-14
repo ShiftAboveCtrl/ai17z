@@ -78,7 +78,23 @@ ask() {
   case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
-WORK=""; trap '[ -n "$WORK" ] && rm -rf "$WORK"' EXIT INT TERM
+# Anything mounted inside the work directory is detached before the directory
+# is removed.
+#
+# The Docker Desktop path mounts a disk image in here. `rm -rf` on a mounted
+# read-only volume does not remove it -- it walks the whole of Docker.app
+# printing "Read-only file system" for every file inside, and leaves the volume
+# mounted afterwards. On a hosted Mac that was several hundred lines of error
+# about somebody else's application.
+WORK=""
+ai17z_cleanup() {
+  [ -n "$WORK" ] || return 0
+  if [ -d "$WORK/dockermount" ]; then
+    hdiutil detach -quiet -force "$WORK/dockermount" 2>/dev/null || true
+  fi
+  rm -rf "$WORK" 2>/dev/null || true
+}
+trap ai17z_cleanup EXIT INT TERM
 
 assert_allowed_url() {
   local host
@@ -239,9 +255,26 @@ else
       note "Docker Desktop's installer is open. Follow it, including Docker's own"
       note "terms, then come back here."
       open "$MOUNT/Docker.app" 2>/dev/null || true
-      printf '  %sPress return once Docker Desktop is installed and running. %s' "$YELLOW" "$OFF"
-      read -r _ || true
-      hdiutil detach -quiet "$MOUNT" 2>/dev/null || true
+      # Only where somebody is there to press it.
+      #
+      # With no terminal, `read` returns at once and the script carries on as
+      # though Docker's setup had been completed -- which it has not, and which
+      # it then blames on Docker. This repository has the same lesson written
+      # down for a `pause` at the end of a Windows script: nothing may wait for
+      # a keypress that cannot come, and nothing may pretend one arrived.
+      if [ -t 0 ]; then
+        printf '  %sPress return once Docker Desktop is installed and running. %s' "$YELLOW" "$OFF"
+        read -r _ || true
+      else
+        hdiutil detach -quiet -force "$MOUNT" 2>/dev/null || true
+        stop "Docker Desktop needs somebody to finish installing it." \
+          "Its installer has been opened, and this is not running where anyone can answer it.
+Nothing on this Mac was changed by AI17Z." \
+          "Finish Docker's own setup, then run this installer again."
+      fi
+      # -force, because the installer that was just opened may still hold it,
+      # and a volume left mounted is one somebody has to find and eject.
+      hdiutil detach -quiet -force "$MOUNT" 2>/dev/null || true
       docker_ready || stop "Docker still is not answering." \
         "AI17Z was not installed. Nothing on this Mac was changed by AI17Z." \
         "Finish Docker's setup, then run this installer again."
