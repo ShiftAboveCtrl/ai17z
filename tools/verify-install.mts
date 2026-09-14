@@ -42,7 +42,7 @@
  * the value before it starts, removes everything it created by name, and puts
  * the value back.
  *
- * Run: npm run verify:install [-- --twice] [--upgrade] [--bootstrap] [--instances] [--no-git] [--keep]
+ * Run: npm run verify:install [-- --twice] [--upgrade] [--bootstrap] [--instances] [--schemas] [--no-git] [--keep]
  */
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -62,6 +62,7 @@ const alsoUpgrade = process.argv.includes('--upgrade');
 const alsoBootstrap = process.argv.includes('--bootstrap');
 /** Also make three independent installations and prove that updating one leaves the others alone. */
 const alsoInstances = process.argv.includes('--instances');
+const alsoSchemas = process.argv.includes('--schemas');
 /** Take Git off PATH first, so "a normal install needs no Git" is a result rather than a claim. */
 const noGit = process.argv.includes('--no-git');
 
@@ -921,6 +922,155 @@ async function bootstrap(stage: string): Promise<void> {
  * offered the wrong folder, and this is the harness that exists so nothing else
  * has to find that out.
  */
+
+/**
+ * Every install-record schema still supported takes a new release.
+ *
+ * `--upgrade` proves the deep version of this once, with a database and a real
+ * start, for the schema the harness happens to write. What it cannot say is
+ * whether the *other* schemas still update, and those are the installations
+ * most likely to be out there: schema 1 is the Inno installer's, schema 2 is
+ * the terminal route's first shape, schema 3 is current.
+ *
+ * `upgradeInstallRecord` has unit tests for reading each of them forward. This
+ * is the behavioural half: a program directory replaced on disk, and the
+ * owner's directory afterwards holding exactly what it held before -- the
+ * master key most of all, because without it every sealed provider credential
+ * is unreadable whether or not the rows survived.
+ *
+ * No database here. That question is answered once, properly, by `--upgrade`;
+ * asking it three more times would add twenty minutes and no information.
+ */
+async function schemas(stage: string): Promise<void> {
+  const label = 'schemas';
+  const room = join(ROOM, label);
+  await rm(room, { recursive: true, force: true });
+
+  // What each era actually wrote. Schema 1 and 2 are Windows-only -- they
+  // predate there being another platform -- and 3 is what every platform
+  // writes now.
+  const eras = [
+    {
+      schema: 1,
+      what: 'the Inno installer',
+      record: (program: string, data: string) => ({
+        schema: 1,
+        channel: 'INSTALLER',
+        instance: basename(program),
+        programDir: program,
+        dataDir: data,
+      }),
+    },
+    {
+      schema: 2,
+      what: 'the terminal route, first shape',
+      record: (program: string, data: string) => ({
+        schema: 2,
+        channel: 'BOOTSTRAP',
+        instance: basename(program),
+        programDir: program,
+        dataDir: data,
+        version: '1.0.0-beta.16',
+        release: 'v1.0.0-beta.16',
+      }),
+    },
+    {
+      schema: 3,
+      what: 'the current layout',
+      record: (program: string, data: string) => ({
+        schema: 3,
+        platform: 'windows',
+        arch: 'x64',
+        installMethod: 'BOOTSTRAP',
+        instance: basename(program),
+        appVersion: '1.0.0-beta.16',
+        appRoot: program,
+        dataRoot: data,
+        runtimeRoot: null,
+        browserProfileRoot: join(data, 'browser-profiles'),
+      }),
+    },
+  ];
+
+  for (const era of eras) {
+    const program = join(room, `schema${era.schema}`, 'program');
+    const data = join(room, `schema${era.schema}`, 'data');
+    await mkdir(program, { recursive: true });
+    await mkdir(data, { recursive: true });
+
+    const ports: Ports = { web: PORT_BASE.web + 900, api: PORT_BASE.api + 900, db: PORT_BASE.db + 900 };
+    await install(stage, program, data, ports);
+
+    // The record this era would have left, replacing whatever `install` wrote.
+    await writeFile(
+      join(program, 'INSTALL_INFO.json'),
+      `${JSON.stringify(era.record(program, data), null, 2)}\n`,
+      'utf8',
+    );
+
+    // Everything of the owner's that an update must not touch.
+    const key = `master-key-for-schema-${era.schema}-which-must-survive`;
+    const envPath = join(data, '.env');
+    await writeFile(envPath, `${await readFile(envPath, 'utf8')}\nAI17Z_MASTER_KEY=${key}\n`, 'utf8');
+    await mkdir(join(data, 'storage'), { recursive: true });
+    await writeFile(join(data, 'storage', 'owner.txt'), 'a thing the owner made\n', 'utf8');
+    await mkdir(join(data, 'browser-profiles', 'account-1'), { recursive: true });
+    await writeFile(join(data, 'browser-profiles', 'account-1', 'Cookies'), 'a signed-in session\n', 'utf8');
+
+    // And something in the program directory that a real upgrade replaces.
+    const stampPath = join(program, 'BUILD_INFO.json');
+    const before = JSON.parse(await readFile(stampPath, 'utf8')) as Record<string, unknown>;
+    await writeFile(stampPath, `${JSON.stringify({ ...before, version: '1.0.0-old' }, null, 2)}\n`, 'utf8');
+
+    // The upgrade: the program directory is replaced, the data directory is not.
+    await rm(program, { recursive: true, force: true });
+    await mkdir(program, { recursive: true });
+    await install(stage, program, data, ports);
+
+    // ---- what must have changed -------------------------------------------
+    const after = JSON.parse(await readFile(stampPath, 'utf8')) as { version: string };
+    if (after.version === '1.0.0-old') {
+      fail(`${label}: schema ${era.schema} still holds the old application`, after.version);
+    }
+
+    // ---- what must not have ------------------------------------------------
+    const env = await readFile(envPath, 'utf8');
+    if (!env.includes(key)) fail(`${label}: schema ${era.schema} lost its master key`, env.slice(0, 400));
+    if (!existsSync(join(data, 'storage', 'owner.txt'))) {
+      fail(`${label}: schema ${era.schema} lost the owner's file`, '');
+    }
+    if (!existsSync(join(data, 'browser-profiles', 'account-1', 'Cookies'))) {
+      fail(`${label}: schema ${era.schema} lost the signed-in browser profile`, '');
+    }
+
+    // ---- and the record reads forward --------------------------------------
+    const { upgradeInstallRecord, INSTALL_LAYOUT_SCHEMA } = await import('@xbam/shared');
+    const raw = JSON.parse(await readFile(join(program, 'INSTALL_INFO.json'), 'utf8')) as unknown;
+    const read = upgradeInstallRecord(raw, {
+      foundInAppRoot: program,
+      platform: 'windows',
+      arch: 'x64',
+      dataRootHint: data,
+      versionHint: '1.0.0-beta.16',
+    });
+    if (!read) fail(`${label}: schema ${era.schema} produced a record nothing can read`, JSON.stringify(raw));
+    if (read!.schema !== INSTALL_LAYOUT_SCHEMA) {
+      fail(`${label}: schema ${era.schema} did not read forward`, `got ${read!.schema}`);
+    }
+    if (read!.dataRoot !== data) {
+      fail(`${label}: schema ${era.schema} lost track of the data directory`, read!.dataRoot);
+    }
+    if (read!.instance !== basename(program)) {
+      fail(`${label}: schema ${era.schema} changed the instance name`, read!.instance);
+    }
+
+    say(`${label}: schema ${era.schema} (${era.what}) took a new release, and kept everything of the owner's`);
+  }
+
+  if (!keep) await rm(room, { recursive: true, force: true }).catch(() => undefined);
+  say(`${label}: every supported install record can be updated`);
+}
+
 function machineStateOf(instances: { instance: string; program: string }[]) {
   return {
     /** Taken before anything is installed. */
@@ -1419,6 +1569,7 @@ async function main(): Promise<void> {
 
   // Three of them, and an update to one.
   if (alsoInstances) await instances(stage);
+  if (alsoSchemas) await schemas(stage);
 
   // The path where a mistake is worst, and the last one that was untested.
   if (alsoUpgrade) await upgrade(stage);
