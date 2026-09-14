@@ -54,14 +54,25 @@ database, API, interface and jobs worker. The installer:
 
 - uses it if it is already running
 - starts it and waits for the engine to actually answer if it is installed
-- offers to download it from Docker's own host if it is missing, then opens
-  **Docker's own installer** so Docker collects its own licence acceptance
+- offers to download it from Docker's own host if it is missing
 
-AI17Z never accepts a vendor's agreement on your behalf. If Docker asks you to
-accept terms or finish first-run setup, AI17Z says so and waits for you.
+If it downloads it, what happens next is worth knowing, because a `.dmg` is a
+disk image rather than an installer — the file you get is a window holding
+`Docker.app` and a shortcut to your Applications folder.
 
-Installing Docker Desktop needs your administrator password. **Docker's
-installer asks for it, not AI17Z.**
+1. AI17Z offers to run **Docker's own command-line installer**, which lives
+   inside that image and which Docker documents. It puts Docker Desktop in
+   `/Applications` and needs your administrator password — `sudo` asks for it,
+   not AI17Z, and AI17Z never sees it.
+2. If you would rather do it yourself, or that does not finish, AI17Z opens the
+   disk image in Finder and waits. **Drag `Docker.app` onto the Applications
+   folder in that window.** It watches for the application to appear rather than
+   asking you to press a key when you are done.
+3. Then it starts Docker and waits for the engine to genuinely answer.
+
+**AI17Z never accepts a vendor's agreement on your behalf.** Docker asks you to
+accept its terms the first time it runs, and that is Docker's to ask. The flag
+that would answer it for you appears nowhere in AI17Z and never will.
 
 **Chrome is optional.** AI17Z drives real Google Chrome — never Chromium — for X
 and other browser-backed channels, using a dedicated profile that is not the one

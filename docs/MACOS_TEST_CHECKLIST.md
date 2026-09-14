@@ -94,9 +94,13 @@ cannot be removed by architecture, it gets documented, not bypassed.
 - [ ] detected when already installed and running
 - [ ] `open -a Docker` starts it and the bounded wait works
 - [ ] the DMG downloads for the right architecture
-- [ ] `hdiutil attach` and Docker's own installer open correctly
+- [ ] `hdiutil attach` mounts the image and Docker's own command-line
+      installer puts Docker Desktop in `/Applications`
+- [ ] declining that, the image opens in Finder and dragging `Docker.app` onto
+      Applications is noticed — the wait ends by itself, with no keypress
 - [ ] Docker collects its **own** licence acceptance — AI17Z never does
 - [ ] the installer resumes correctly after Docker's first-run setup
+- [ ] the disk image is ejected afterwards and nothing is left mounted
 - [ ] `docker info` and `docker compose version` both answer before AI17Z
       continues
 
@@ -184,10 +188,21 @@ are on.
 
 **4. Docker Desktop, if it is not already there.**
 
-*Expected:* AI17Z offers Docker's own installer and hands you to Docker's own
-first run and licence. **AI17Z must never accept a licence for you.** If a
-licence is accepted without you reading and clicking it, that is a defect worth
-reporting immediately.
+*Expected:* AI17Z downloads Docker's disk image and offers to run **Docker's
+own command-line installer**, which asks for your administrator password
+through `sudo`. Say no and it opens the image in Finder instead, tells you to
+drag `Docker.app` onto Applications, and notices by itself when you have —
+there is no "press return when you are done".
+
+Either way, Docker Desktop ends up in `/Applications`, AI17Z starts it, and
+**Docker** asks you to accept its terms.
+
+*This is the step that was wrong in Beta 1.0.0 (17) and (18).* Those versions
+opened `Docker.app` out of the mounted image instead of installing it, then
+ejected the image, so Docker never reached Applications and the engine never
+came up. **AI17Z must never accept a licence for you.** If a licence is accepted
+without you reading and clicking it, that is a defect worth reporting
+immediately.
 
 **5. Start it, and watch the first run.**
 
