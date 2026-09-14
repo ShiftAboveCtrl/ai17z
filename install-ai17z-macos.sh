@@ -301,6 +301,17 @@ if [ -n "$TARGET_OVERRIDE" ]; then
 else
   TARGET="$HOME/Library/Application Support/AI17Z/${INSTANCE}"
 fi
+# Said to the person running it, not only in a comment and a document.
+#
+# AI17Z has no Apple Developer ID, so its Mac packages are not signed and not
+# notarized. Nothing here disables Gatekeeper, strips a quarantine attribute, or
+# argues with either -- and somebody installing software that is unsigned should
+# hear it from the installer rather than find out later. docs/MACOS_TRUST.md is
+# the long version.
+note "This package is not signed with an Apple Developer ID and is not notarized."
+note "AI17Z does not disable Gatekeeper or strip quarantine attributes to work"
+note "around that. What it means is written out in docs/MACOS_TRUST.md."
+
 step "Installing to ${TARGET}"
 
 if [ -d "$TARGET/app" ]; then
