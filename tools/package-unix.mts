@@ -112,7 +112,15 @@ const WINDOWS_ONLY = /\.ps1$|^packaging\/windows\/(?!ai17z-256\.png)|\.cmd$|\.ic
 
 async function main(): Promise<void> {
   const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { version: string };
-  const version = manifest.version;
+  // The tag wins, exactly as it does for the Windows packager.
+  //
+  // The release workflow hands the tag's version to `build-tarball.sh` and
+  // `build-deb.sh`, so the package is *named* after the tag -- while this wrote
+  // `package.json`'s into BUILD_INFO.json. Tag and checkout agree today because
+  // the convention is to bump package.json with the tag, and the day somebody
+  // forgets, the package would be named for one version and report another.
+  // That is not a failure anybody would look for.
+  const version = process.env.AI17Z_VERSION?.replace(/^v/, '') || manifest.version;
   const name = releaseName(version);
   console.log(`${name.title} (${version}): staging the ${platform} application`);
 
