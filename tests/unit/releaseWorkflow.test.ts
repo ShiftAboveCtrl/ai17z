@@ -344,7 +344,15 @@ describe('the release notes say what changed', () => {
   it('finds the previous tag rather than being told one', () => {
     // `git describe --tags --abbrev=0 <tag>^` is the previous tag reachable
     // from this one, which stays right when a release is skipped or deleted.
-    expect(workflow).toContain('git describe --tags --abbrev=0 "$TAG^"');
+    //
+    // `--match 'v[0-9]*'` because releases stopped being the only tags: a
+    // `rehearsal-v*` tag sits on the commit that was rehearsed, an ancestor of
+    // the one being released, so the *nearest* tag to this one's parent was the
+    // rehearsal. Asked on this repository, `git describe` answered
+    // `rehearsal-v1.0.0-beta.17` without the filter and `v1.0.0-beta.16` with
+    // it -- and the changelog would have opened "What changed since
+    // rehearsal-v1.0.0-beta.17" and listed two commits.
+    expect(workflow).toContain(`git describe --tags --abbrev=0 --match 'v[0-9]*' "$TAG^"`);
   });
 
   it('checks out the history the changelog needs', () => {
