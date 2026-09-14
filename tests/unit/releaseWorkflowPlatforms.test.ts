@@ -238,4 +238,19 @@ describe('the release builds every platform from one tag', () => {
     });
   });
 
+
+  it('stages at the version it is building, not the one in the checkout', () => {
+    // The build scripts are handed the version as a flag, so a package is
+    // *named* after the tag. The stager wrote `package.json`'s version into
+    // BUILD_INFO.json, and the two agree only because the convention is to bump
+    // package.json with the tag. The day somebody tags first, a package would
+    // be named one version and report another -- and the only thing that would
+    // notice is a check nobody runs on the published bytes.
+    expect(read('tools/package-unix.mts')).toContain('process.env.AI17Z_VERSION');
+    expect(read('tools/package-windows.mts')).toContain('process.env.AI17Z_VERSION');
+    for (const action of [macosAction, ubuntuAction]) {
+      expect(action).toMatch(/AI17Z_VERSION: \$\{\{ inputs\.version \}\}/);
+    }
+  });
+
 });

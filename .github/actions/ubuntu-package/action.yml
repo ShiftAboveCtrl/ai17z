@@ -45,6 +45,13 @@ runs:
 
     - name: Stage the application
       shell: bash
+      # AI17Z_VERSION so the staged BUILD_INFO.json and the package's name come
+      # from one place. The build script is handed the version as a flag; the
+      # stager would otherwise read package.json, and a release tagged before
+      # package.json was bumped would name a package one version and have it
+      # report another.
+      env:
+        AI17Z_VERSION: ${{ inputs.version }}
       run: bash .github/scripts/say-on-fail.sh 'staging' -- npm run package:unix -- --platform ubuntu --stage "${{ runner.temp }}/stage"
 
     - name: Build the package
