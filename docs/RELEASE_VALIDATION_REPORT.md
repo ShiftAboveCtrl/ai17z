@@ -283,7 +283,7 @@ work behind it -- are that evidence; this section is about the release itself.
 | `npm --workspace @xbam/web run build` | built |
 | `npm run release:check` | 950 tracked files, nothing found, run after `git add` |
 | `shellcheck` | clean at error and warning, all 35 tracked shell files |
-| GitHub Actions | 11 of 11 green on the candidate commit, platform packaging included |
+| GitHub Actions | 11 of 11 green on the tagged commit, platform packaging included |
 | `rehearsal-v1.0.0-beta.17` | the whole release workflow, publishing nothing: 5 jobs, 26m 25s, green |
 | `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | exit 0 |
 
@@ -466,6 +466,25 @@ rehearsal proved is the publish job the release ran, step for step; the changed
 installers are exercised by the packaging validation workflow, on real Macs and
 real Ubuntu machines, on the tagged commit. Saying which commit was rehearsed is
 better than implying it was this one.
+
+### And a seventh, which CI found and this document nearly did not record
+
+The previous-tag filter went in with a test beside it. A second test, in another
+file, had pinned the same line of the workflow -- four unit test files read
+`release.yml`, and only three of them were re-run before pushing. CI failed, and
+said:
+
+    Process completed with exit code 1.
+
+That is the whole annotation. The platform jobs carry `say-on-fail.sh`, which
+turns a failing command's output into an `::error::` that anybody can read; the
+CI job does not, and Actions logs answer 403 without admin rights on the
+repository. So finding out what broke meant running the whole unit directory
+locally, which takes two minutes and would have caught it before the push.
+
+Recorded here because "CI went red once and then green" is exactly the kind of
+thing a validation document quietly leaves out, and a document that only lists
+what went right is not evidence of anything.
 
 ### The asset contract
 
