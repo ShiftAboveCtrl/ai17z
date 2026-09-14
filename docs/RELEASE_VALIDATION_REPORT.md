@@ -264,6 +264,96 @@ for backticks. It is the same trap.
 
 ---
 
+## AI17Z Beta 1.0.0 (19)
+
+Two faults, both reported from a real Mac, and neither reachable by anything
+that runs here. They are the first defects in this sequence that no machine in
+this project could have found, and the reason is the same for both.
+
+### What a real Mac found
+
+**Docker never reached /Applications.** The installer mounted Docker's disk
+image and then ran `open "$MOUNT/Docker.app"` -- which launches Docker from a
+read-only volume -- while telling somebody to follow an installer that does not
+exist, because a `.dmg` is a disk image and not an installer. It then ejected
+the volume. Nothing was ever installed, and the failure read as Docker's.
+
+It now offers Docker's own command-line installer, which lives inside the image
+and which Docker documents; failing that it opens the image in Finder and says
+to drag the application across; and it waits by looking for
+`/Applications/Docker.app` rather than by asking for a keypress. The image is
+ejected only once the copy that matters exists. `--accept-license`, which that
+installer supports, appears nowhere and must never be added.
+
+**And then first-run setup died on a missing node-gyp:**
+
+    npm error Cannot find module 'node-gyp/bin/node-gyp.js'
+
+Two mistakes meeting. A packaged copy was running `npm install` -- the script a
+developer runs in a clone -- on an installation that ships 4,753 files of
+`node_modules`. And the build prunes node-gyp out of the bundled runtime to save
+space, which does not merely remove the ability to compile a native addon: npm
+resolves `node-gyp/bin/node-gyp.js` before running *any* lifecycle script, so
+the bundled npm could not run one at all.
+
+A package now recognises itself by the `BUILD_INFO.json` beside the script --
+which exists in no checkout -- and skips installing what it was shipped with.
+node-gyp is back in both runtimes. The Python it brings is still removed, which
+is the half that only matters for compiling something, and nothing here
+compiles.
+
+### Why nothing here caught either
+
+The same reason twice, and it is worth stating rather than explaining away.
+
+A hosted Mac has no Docker Desktop and cannot be given one -- a disk image, a
+graphical setup, and Docker's own licence, which AI17Z must never accept for
+anybody. So the macOS proof answers the `docker` command at the vendor boundary,
+so that everything *after* the Docker gate is reachable. That stub makes the
+handover itself unreachable, and "not covered" was a sentence in a checklist
+rather than anything that would fail.
+
+And every check in that proof ran `tsx`, which is what the browser worker needs.
+None ran `npm`, which is what first-run setup needs.
+
+### What is different now
+
+- Both deep proofs ask the bundled npm to run a real script, in a throwaway
+  package, on the hosted runner. Proved against a stock Node both ways: with
+  node-gyp present it answers `2`, and with node-gyp pruned -- exactly what was
+  shipped -- it fails.
+- `tests/unit/macosDockerHandoff.test.ts` holds the shape of the handover and
+  the packaging rules. It cannot prove the Docker path works on a Mac. All nine
+  of its properties were seen failing with the old behaviour put back.
+- `docs/MACOS_TEST_CHECKLIST.md` now describes the corrected flow step by step,
+  and says which release got it wrong.
+
+The honest summary: this release fixes two things a person found by installing
+it, and adds the checks that would have caught the half of each fault a machine
+can see. The other half still needs a Mac.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean |
+| `npm run lint` | clean |
+| `npx vitest run tests/unit` | 166 files, 2434 tests, 0 failures |
+| `npm test` | GATE_TESTS |
+| `npm run release:check` | 953 tracked files, nothing found |
+| `shellcheck` | clean at error and warning, all 35 tracked shell files |
+| GitHub Actions | GATE_CI |
+| `rehearsal-v1.0.0-beta.19` | GATE_REHEARSAL |
+| `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | GATE_WINDOWS |
+
+### Not verified
+
+Everything from Beta 1.0.0 (18), and one of them now matters more than the rest:
+**the Docker Desktop handover on a Mac, end to end.** No machine in this project
+can run it. It is the first item in `docs/MACOS_TEST_CHECKLIST.md`.
+
+---
+
 ## AI17Z Beta 1.0.0 (18)
 
 One defect, found by qualifying the release before it, and three messages that

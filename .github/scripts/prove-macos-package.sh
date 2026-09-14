@@ -81,6 +81,37 @@ else
 fi
 
 echo
+echo
+echo "### the bundled npm can run a script"
+# The thing that was missing, and that nothing here ever asked for.
+#
+# The build prunes node-gyp out of the runtime to save space, and npm resolves
+# `node-gyp/bin/node-gyp.js` before running *any* lifecycle script --
+# `make-spawn-args.js` does it unconditionally. So a package with no node-gyp
+# has an npm that cannot run `npm run` at all, whether or not anything native is
+# involved. A Mac found that on first launch:
+#
+#     Cannot find module 'node-gyp/bin/node-gyp.js'
+#
+# Every check here ran tsx, which is what the worker needs, and none of them ran
+# npm, which is what first-run setup needs. So: a throwaway package, one trivial
+# script, and the bundled npm asked to run it.
+PROBE_DIR="$(mktemp -d)"
+cat > "$PROBE_DIR/package.json" <<'PROBEJSON'
+{ "name": "probe", "version": "1.0.0", "private": true,
+  "scripts": { "probe": "node -e \"process.stdout.write(String(1+1))\"" } }
+PROBEJSON
+# `cd` into it rather than `npm --prefix`: --prefix moves where npm *installs*,
+# not where it looks for the package.json a script lives in, and the first
+# version of this check passed nothing and failed everything.
+if OUT="$( cd "$PROBE_DIR" && "$HERE/runtime/node/bin/npm" run --silent probe 2>&1 )" && [ "$OUT" = "2" ]; then
+  ok "npm runs a script"
+else
+  bad "the bundled npm cannot run a script -- node-gyp pruned out of the runtime is what did this before: $(printf '%s' "$OUT" | grep -v '^[[:space:]]*$' | tail -3 | tr '\n' '/')"
+fi
+rm -rf "$PROBE_DIR"
+
+echo
 echo "### TypeScript transforms, which every npm script an installed copy runs needs"
 if out="$("$NODE" "$TSX" -e 'const n: number = 1; console.log(`tsx ok ${n}`)' 2>&1)"; then
   ok "tsx: $out"
