@@ -100,7 +100,10 @@ if dpkg -s ai17z >/dev/null 2>&1; then
   said="$(dpkg -s ai17z | awk '/^Architecture:/ {print $2}')"
   if [ "$said" = "$ARCH" ]; then ok "dpkg says $said"; else bad "dpkg says '$said', not $ARCH"; fi
 else
-  bad "the published installer did not install the package"
+  # The installer's own words, carried into the summary that is printed last: an
+  # annotation holds the last forty lines and the checks fill them, so a failed
+  # install would otherwise arrive as consequences with no cause.
+  bad "the package was not installed. The installer said: $(printf '%s' "$out" | grep -v '^[[:space:]]*$' | tail -6 | tr '\n' '/')"
 fi
 
 echo

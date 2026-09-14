@@ -118,7 +118,14 @@ says "it said the package is not signed or notarized" "$out" "notariz"
 # actually matters passed. `file` on the bundled node and on esbuild is the
 # stronger question anyway -- a package can be named anything.
 
-if [ -x "$TARGET/ai17z" ]; then ok "the launcher is there"; else bad "no launcher at $TARGET/ai17z"; fi
+if [ -x "$TARGET/ai17z" ]; then
+  ok "the launcher is there"
+else
+  # The installer's own words, carried into the summary that is printed last.
+  # An annotation holds the last forty lines, and the checks below fill them --
+  # so a failed install arrived once as thirteen consequences and no cause.
+  bad "nothing was installed. The installer said: $(printf '%s' "$out" | grep -v '^[[:space:]]*$' | tail -6 | tr '\n' '/')"
+fi
 if [ -d "$TARGET/app" ] && [ -d "$TARGET/runtime" ]; then ok "app and runtime are there"; else bad "app or runtime missing"; fi
 
 echo
