@@ -197,6 +197,10 @@ good "AI17Z ${VERSION}"
 # ---------------------------------------------------------------------------
 step "Downloading and checking"
 if [ -z "$LOCAL_PACKAGE" ]; then
+  # Named, because this is the one moment the choice between Apple Silicon and
+  # Intel is visible, and somebody reading the output should be able to see
+  # which one was made rather than infer it afterwards.
+  note "$TAR_NAME"
   fetch "$WORK/$TAR_NAME" "$TAR_URL"
   fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
 fi

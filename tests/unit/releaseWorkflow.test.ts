@@ -43,9 +43,14 @@ describe('the release does not pretend to sign anything', () => {
     // reappearing under another name fails here rather than passing quietly.
     // The platform jobs are named for what they build, and a fourth would have
     // to be added here deliberately.
+    //
+    // `qualify` is last and builds nothing: it calls the qualification workflow
+    // on what was just published. It is called from here because the event that
+    // should have started it never happens -- a release created with
+    // GITHUB_TOKEN raises nothing a workflow can listen for.
     const section = workflow.slice(workflow.indexOf('\njobs:'));
     const jobs = [...section.matchAll(/^ {2}([a-z][a-z0-9-]*):\r?$/gm)].map((match) => match[1]);
-    expect(jobs).toEqual(['validate', 'build', 'macos', 'ubuntu', 'publish']);
+    expect(jobs).toEqual(['validate', 'build', 'macos', 'ubuntu', 'publish', 'qualify']);
   });
 
   it('says unsigned where somebody reading the release page will see it', () => {

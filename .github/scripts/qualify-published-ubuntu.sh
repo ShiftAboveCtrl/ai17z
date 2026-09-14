@@ -2,7 +2,15 @@
 #
 # A published AI17Z release, installed on real Ubuntu the way a stranger would.
 #
-#   qualify-published-ubuntu.sh <tag>
+#   qualify-published-ubuntu.sh <tag> [<checkout-of-that-tag>]
+#
+# The second argument is what the published installer is compared against,
+# and it defaults to this script's own checkout. The workflow passes them
+# separately on purpose: the tooling should be the current one, so a fault in
+# *this* file can be fixed and re-run against a release that already exists,
+# while the thing being compared still comes from the tag. With one checkout
+# for both, a bad assertion here was frozen at the tag and could only ever be
+# fixed for the next release.
 #
 # Everything before this proves the package a run has just built. This proves
 # the one that was published: the script comes off the release rather than out
@@ -21,6 +29,9 @@ REPO="${GITHUB_REPOSITORY:-ShiftAboveCtrl/ai17z}"
 DL="https://github.com/$REPO/releases/download/$TAG"
 
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Where the tag's copy of the installer is. The same checkout unless the
+# caller says otherwise, which is what makes running this by hand work.
+TAGGED="${2:-$HERE}"
 ARCH="$(dpkg --print-architecture)"
 
 pass=0; fail=0
@@ -54,11 +65,11 @@ fi
 # And that it is this tag's file rather than some other version of it. The
 # release copies the repository's own script in; a difference means the release
 # was assembled from something that is not this commit.
-if diff -q "$ROOM/install-ai17z-ubuntu.sh" "$HERE/install-ai17z-ubuntu.sh" >/dev/null 2>&1; then
+if diff -q "$ROOM/install-ai17z-ubuntu.sh" "$TAGGED/install-ai17z-ubuntu.sh" >/dev/null 2>&1; then
   ok "and is byte for byte the script this checkout holds"
 else
   bad "the published installer differs from the one in the checkout"
-  diff "$HERE/install-ai17z-ubuntu.sh" "$ROOM/install-ai17z-ubuntu.sh" | head -20 | sed 's/^/        /'
+  diff "$TAGGED/install-ai17z-ubuntu.sh" "$ROOM/install-ai17z-ubuntu.sh" | head -20 | sed 's/^/        /'
 fi
 
 echo

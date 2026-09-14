@@ -72,7 +72,7 @@ function block(text: string, key: string): string[] {
 describe('the release builds every platform from one tag', () => {
   it('has a job for each, and publish waits for all of them', () => {
     const jobs = [...workflow.slice(workflow.indexOf('\njobs:')).matchAll(/^ {2}([a-z][a-z0-9-]*):\r?$/gm)].map((m) => m[1]);
-    expect(jobs).toEqual(['validate', 'build', 'macos', 'ubuntu', 'publish']);
+    expect(jobs).toEqual(['validate', 'build', 'macos', 'ubuntu', 'publish', 'qualify']);
     expect(workflow).toContain('needs: [build, macos, ubuntu]');
   });
 
@@ -275,14 +275,24 @@ describe('the release builds every platform from one tag', () => {
       expect(qualification).not.toContain('action-gh-release');
     });
 
-    it('checks out the tag, never the branch the event arrived on', () => {
-      // A `release` event's ref is the default branch, which has usually moved
-      // on -- and these jobs compare what the release published against what
-      // the commit holds. Every job that checks out has to name the tag.
-      const checkouts = qualification.split('actions/checkout@v4').slice(1);
-      expect(checkouts.length).toBeGreaterThan(0);
-      for (const after of checkouts) {
-        expect(after.slice(0, 200)).toContain('ref: ${{ needs.which.outputs.tag }}');
+    it('checks out the tag for what it compares, and itself for what compares', () => {
+      // Two checkouts in every job, and the difference is the point.
+      //
+      // One checkout at the tag looked right and was not: the scripts doing the
+      // checking were frozen at the release, so a bad assertion in the macOS
+      // qualifier failed both Macs for Beta 1.0.0 (17) with no way to correct
+      // it except by making another release. The tooling is now the workflow's
+      // own ref; the tag supplies only the installers being compared, which is
+      // a question about the release and has to be asked of its own commit.
+      for (const [job, text] of Object.entries(jobs(qualification))) {
+        if (!text.includes('actions/checkout@v4')) continue;
+        const checkouts = text.split('actions/checkout@v4').slice(1);
+        expect(checkouts.length, `${job} does not check out twice`).toBe(2);
+        // The first names nothing: it is this workflow's own commit.
+        expect(checkouts[0]!.slice(0, 120)).not.toContain('ref:');
+        // The second is the tag, kept apart so nothing confuses the two.
+        expect(checkouts[1]!.slice(0, 200)).toContain('ref: ${{ needs.which.outputs.tag }}');
+        expect(checkouts[1]!.slice(0, 200)).toContain('path: tagged');
       }
     });
 
@@ -323,6 +333,31 @@ describe('the release builds every platform from one tag', () => {
     // it. Adding a second kind of tag is what made a filter necessary.
     const notes = workflow.slice(workflow.indexOf('- name: Release notes'));
     expect(notes).toContain("git describe --tags --abbrev=0 --match 'v[0-9]*'");
+  });
+
+  it('asks what was published, because nothing else is going to', () => {
+    // The obvious wiring does not work, and looked as though it did. A release
+    // created with GITHUB_TOKEN raises no event that can start a workflow, so
+    // `release: published` never fired for a release this repository made:
+    // Beta 1.0.0 (17) went out and the qualification workflow sat there. Caught
+    // by looking for the run afterwards rather than assuming it, which is the
+    // same way the attestation that globbed an empty directory was caught.
+    //
+    // So the release calls it, as its own last job.
+    const qualify = jobs(workflow).qualify!;
+    expect(qualify).toContain('uses: ./.github/workflows/release-qualification.yml');
+    expect(qualify).toContain('needs: [build, publish]');
+    // It reads, and cannot write. What checks a release must not change one.
+    expect(qualify).toContain('contents: read');
+    // And it is told which tag rather than deriving one.
+    expect(qualify).toContain('tag: ${{ github.ref_type == ');
+    // A rehearsal published nothing, so there is nothing to qualify.
+    expect(qualify).toContain("startsWith(github.ref_name, 'rehearsal-')");
+
+    // Which means the qualification workflow has to be callable.
+    expect(qualification).toContain('workflow_call:');
+    const which = jobs(qualification).which!;
+    expect(which).toContain('${{ inputs.tag }}');
   });
 
   it('can rehearse the whole release without publishing one', () => {
