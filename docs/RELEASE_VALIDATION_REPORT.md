@@ -293,14 +293,14 @@ account is under "And the defect that made this a two-release day", in the Beta
 | `npm run typecheck` | clean |
 | `npm run lint` | clean |
 | `npm run test tests/unit` | 165 files, 2422 tests, 0 failures |
-| `npm test` | GATE_TESTS |
+| `npm test` | 259 files, 3311 tests, 0 failures |
 | `npm audit` | 0 vulnerabilities |
 | `npm --workspace @xbam/web run build` | built |
 | `npm run release:check` | 951 tracked files, nothing found, run after `git add` |
 | `shellcheck` | clean at error and warning, all 35 tracked shell files |
-| GitHub Actions | GATE_CI |
+| GitHub Actions | 11 of 11 green on the tagged commit, platform packaging included |
 | `rehearsal-v1.0.0-beta.18` | GATE_REHEARSAL |
-| `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | GATE_WINDOWS |
+| `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | exit 0, and both golden installations byte for byte what they were |
 
 ### What is different about releasing this one
 
