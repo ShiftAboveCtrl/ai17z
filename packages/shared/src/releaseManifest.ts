@@ -115,6 +115,25 @@ export function nodeArchiveName(nodeVersion: string, platform: Platform, arch: A
 export const CHECKSUMS_ASSET = 'SHA256SUMS.txt';
 export const MANIFEST_ASSET = 'release-manifest.json';
 
+/**
+ * Every package a platform must publish, by name.
+ *
+ * Not "whatever was found in the directory". `release-manifest.mts` used to
+ * describe the artifacts it happened to see, so a release missing one of the
+ * four packages would have published a manifest quietly saying that platform
+ * was unsupported -- correct about the directory, and wrong about the release.
+ * The job that reads this asks for a platform and is told what that platform
+ * owes, so an absent file is a missing name rather than a smaller list.
+ */
+export function expectedAssets(version: string, platform: Platform): string[] {
+  const v = bareVersion(version);
+  if (platform === 'windows') {
+    return [windowsInstallerAsset(v), windowsSetupAsset(v), windowsPackageAsset(v), 'install.ps1'];
+  }
+  const packageFor = platform === 'macos' ? macosPackageAsset : ubuntuPackageAsset;
+  return [...ARCHITECTURES.map((arch) => packageFor(v, arch)), installerScriptAsset(platform)];
+}
+
 // ---------------------------------------------------------------------------
 // The document
 // ---------------------------------------------------------------------------

@@ -2,11 +2,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  ARCHITECTURES,
   INSTALL_LAYOUT_SCHEMA,
   RELEASE_MANIFEST_SCHEMA,
   bareVersion,
   compareVersionNumbers,
   debArchitecture,
+  expectedAssets,
   installerScriptAsset,
   macosPackageAsset,
   nodeArchiveName,
@@ -65,6 +67,43 @@ describe('asset names come from one place', () => {
     // Node says darwin, and x64 rather than amd64.
     expect(nodeArchiveName('v22.23.2', 'macos', 'arm64')).toBe('node-v22.23.2-darwin-arm64.tar.gz');
     expect(nodeArchiveName('22.23.2', 'ubuntu', 'x64')).toBe('node-v22.23.2-linux-x64.tar.gz');
+  });
+
+  it('says what a platform owes rather than what a directory happens to hold', () => {
+    // `release-manifest.mts` described the files it found, so a release that had
+    // lost one of the four packages would have published a manifest saying that
+    // platform was unsupported: true about the directory, and a lie about the
+    // release. This is the list it checks against first.
+    expect(expectedAssets(VERSION, 'macos')).toEqual([
+      'AI17Z-macos-x64-9.9.9-beta.1.tar.gz',
+      'AI17Z-macos-arm64-9.9.9-beta.1.tar.gz',
+      'install-ai17z-macos.sh',
+    ]);
+    expect(expectedAssets(VERSION, 'ubuntu')).toEqual([
+      'ai17z_9.9.9-beta.1_amd64.deb',
+      'ai17z_9.9.9-beta.1_arm64.deb',
+      'install-ai17z-ubuntu.sh',
+    ]);
+    expect(expectedAssets(VERSION, 'windows')).toEqual([
+      'AI17Z-Setup-9.9.9-beta.1.exe',
+      'Install-AI17Z-9.9.9-beta.1.ps1',
+      'AI17Z-App-9.9.9-beta.1.zip',
+      'install.ps1',
+    ]);
+  });
+
+  it('owes a package for every architecture it claims to build', () => {
+    // Read off ARCHITECTURES rather than counted by hand, so adding one is not
+    // a change that leaves this list quietly describing the old world.
+    for (const platform of ['macos', 'ubuntu'] as const) {
+      const names = expectedAssets(VERSION, platform);
+      expect(names).toHaveLength(ARCHITECTURES.length + 1);
+      expect(names).toContain(installerScriptAsset(platform));
+      for (const arch of ARCHITECTURES) {
+        const asset = platform === 'macos' ? macosPackageAsset(VERSION, arch) : ubuntuPackageAsset(VERSION, arch);
+        expect(names, `${platform} owes nothing for ${arch}`).toContain(asset);
+      }
+    }
   });
 
   it('agrees with the pattern install.ps1 carries', () => {
