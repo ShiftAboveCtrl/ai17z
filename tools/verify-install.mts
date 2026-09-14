@@ -634,7 +634,27 @@ async function teardown(label: string): Promise<void> {
     '-Command',
     `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${label}\\program*' -and $_.Name -like 'node*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
   ]).catch(() => undefined);
-  await rm(join(ROOM, label), { recursive: true, force: true }).catch(() => undefined);
+  // Retried, and said out loud if it still will not go.
+  //
+  // Windows holds a handle for a moment after the process that owned it exits,
+  // so a single attempt loses the race often enough to matter -- and it was
+  // swallowed by a bare `.catch`, which is how a run that reports "nothing else
+  // was touched" leaves a directory behind. A leftover room is also what the
+  // next run inherits, since the path is fixed.
+  const room = join(ROOM, label);
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      await rm(room, { recursive: true, force: true });
+      break;
+    } catch {
+      if (attempt === 5) {
+        say(`${label}: could not remove ${room}; remove it before the next run`);
+        break;
+      }
+      await new Promise((done) => setTimeout(done, 500 * attempt));
+    }
+  }
+  if (existsSync(room)) say(`${label}: ${room} is still there`);
 }
 
 /**
