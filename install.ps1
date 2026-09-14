@@ -314,6 +314,15 @@ try {
   }
 } catch {
   $why = '' + $_.Exception.Message
+  # A named release that is not there. Asked for `-Release v0.0.0-nope`, this
+  # used to say it could not work out which release to install and then send
+  # somebody to check their internet connection. It worked out which release
+  # perfectly well; that release does not exist.
+  if ($Release -and $why -match '\(404\)') {
+    Stop-Install ('There is no release called "' + $Release + '".') `
+      'Nothing on this PC was changed.' `
+      ('Pick one from https://github.com/' + $Repository + '/releases, or leave -Release off to take the newest.')
+  }
   # What to go and look at, decided by what actually happened.
   #
   # This used to say "check your internet connection" whatever the answer was.
@@ -432,7 +441,12 @@ $setupPath = Join-Path $setupHome 'Setup-AI17Z.checked.ps1'
 [System.IO.File]::WriteAllBytes($setupPath, $bytes)
 
 Write-Line ('Checked: SHA-256 matches ' + $tag + "'s published hash.") 'Green'
-Write-Line ('Reading it afterwards: ' + $setupPath) 'DarkGray'
+# Where it is *while it runs*, and what happens to it afterwards. This said
+# "Reading it afterwards: <path>", which is true only when something goes wrong:
+# a clean run removes the file, so anybody who took that line at its word went
+# looking for a file that was not there and drew the wrong conclusion.
+Write-Line ('Written to ' + $setupPath + ' and run from there.') 'DarkGray'
+Write-Line 'Removed when the install finishes cleanly. Pass -KeepDownload to keep it.' 'DarkGray'
 
 # ---------------------------------------------------------------------------
 # Run the bytes that were checked

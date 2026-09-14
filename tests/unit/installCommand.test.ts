@@ -353,6 +353,39 @@ describe('a refusal sends somebody to the right place', () => {
     expect(catchBlock).toContain('Check your internet connection');
   });
 
+  it('knows a release that is not there from a network that is not working', () => {
+    // `-Release v0.0.0-nope` used to answer "AI17Z could not work out which
+    // release to install" and send somebody to check their connection. It
+    // worked out which release perfectly well; that release does not exist, and
+    // GitHub said so with a 404. Observed by running the published command on a
+    // real machine, which is the only way a message like this is ever read.
+    const catchBlock = install.slice(
+      install.indexOf("} catch {\n  $why = '' + $_.Exception.Message"),
+      install.indexOf("Stop-Install 'AI17Z could not work out which release to install.'"),
+    );
+    expect(catchBlock).toMatch(/404/);
+    expect(catchBlock).toContain('There is no release called');
+    // And only when a release was named: a 404 with none named is a different
+    // thing and must not claim the person asked for something that is missing.
+    expect(catchBlock).toContain('if ($Release -and');
+  });
+
+  it('does not point at a file the clean path deletes', () => {
+    // It said "Reading it afterwards: <path>". A clean run removes that file --
+    // deliberately, because it is a copy of something published -- so the one
+    // person who took the line at its word found nothing there and had no way
+    // to know that was correct. `-KeepDownload` is the answer and the line
+    // never mentioned it.
+    // As something printed, not as a word: the line that replaced it quotes the
+    // old wording to explain itself, exactly as the `continue-on-error` check in
+    // the workflow tests had to be taught.
+    const printed = install.split(/\r?\n/).filter((line) => /^\s*Write-Line/.test(line));
+    expect(printed.join('\n')).not.toContain('Reading it afterwards');
+    expect(install).toContain('Removed when the install finishes cleanly. Pass -KeepDownload to keep it.');
+    // And the failure path still says where what ran is, because there it stays.
+    expect(install).toContain('What ran is still at ');
+  });
+
   it('says nothing about a cause the shell installers cannot know', () => {
     // `curl -f` collapses every 4xx into one exit code, and the status cannot
     // come back out of the subshell `RELEASE_JSON="$(fetch_stdout ...)"` runs
