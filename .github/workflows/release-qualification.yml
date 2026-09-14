@@ -6,17 +6,34 @@
 # network, and the hashes they are checked against are the ones the release
 # published.
 #
-# It runs on `release: published`, so it happens by itself the moment a release
-# exists. Nothing here needs anybody to remember to trigger it, which is the
-# same reason `platform-packaging.yml` runs on a push. A `qualify-v*` tag runs
-# it again against a release that already exists -- for a re-check after a fix,
-# or against an older release to see what it would do.
+# Three ways in, and the first one is the only one that happens by itself:
+#
+#   workflow_call        the release workflow calls this as its last job. This
+#                        is the one that matters, and it is here because the
+#                        obvious answer does not work: a release created with
+#                        GITHUB_TOKEN raises no event that can start a workflow,
+#                        so `release: published` never fired for a release this
+#                        repository made. Beta 1.0.0 (17) was published and this
+#                        workflow sat there, which is the same shape as an
+#                        attestation step that globbed an empty directory: a
+#                        check that cannot run looks exactly like one that has
+#                        nothing to say.
+#   release: published   for a release somebody makes by hand, where the event
+#                        is raised by a person and does start a workflow.
+#   qualify-v* tag       to run it again -- after a fix, or against an older
+#                        release to see what it would do.
 #
 # It changes nothing. No release is created, edited or deleted by this workflow,
 # and it holds no write permission of any kind.
 name: Release qualification
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag to qualify
+        required: true
+        type: string
   release:
     types: [published]
   push:
@@ -41,7 +58,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = release ]; then
+          # The caller's input first: on a `workflow_call` the ref is the tag
+          # being released, which `${GITHUB_REF_NAME#qualify-}` would pass
+          # through unchanged and get right by accident. Being told is better
+          # than guessing correctly.
+          if [ -n "${{ inputs.tag }}" ]; then
+            tag='${{ inputs.tag }}'
+          elif [ "${{ github.event_name }}" = release ]; then
             tag='${{ github.event.release.tag_name }}'
           else
             tag="${GITHUB_REF_NAME#qualify-}"
@@ -60,13 +83,22 @@ jobs:
     needs: which
     runs-on: ubuntu-24.04
     steps:
-      # The tag, not the default branch. This workflow is started by an event
-      # whose ref is `main`, which has usually moved on by the time anybody
-      # re-runs it -- and the checks below compare what the release published
-      # against what this commit holds.
+      # Two checkouts, and the difference matters.
+      #
+      # This one is the workflow's own ref: the scripts that do the checking. A
+      # fault in one of them has to be fixable against a release that already
+      # exists, and with a single checkout at the tag it was not -- a bad
+      # assertion in the macOS qualifier failed both Macs for Beta 1.0.0 (17)
+      # with no way to correct it except by making another release.
+      - uses: actions/checkout@v4
+
+      # And this one is the tag: what the published installers are compared
+      # against, byte for byte. That question is about the release, so it has to
+      # be asked of the release's own commit.
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.which.outputs.tag }}
+          path: tagged
 
       - name: Hashes, the manifest, and the provenance
         shell: bash
@@ -93,14 +125,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ needs.which.outputs.tag }}
+          path: tagged
 
       - name: Install the published release, as a stranger would
         shell: bash
         run: |
           bash .github/scripts/say-on-fail.sh 'the published macOS release' -- \
-            bash .github/scripts/qualify-published-macos.sh "${{ needs.which.outputs.tag }}"
+            bash .github/scripts/qualify-published-macos.sh "${{ needs.which.outputs.tag }}" "$PWD/tagged"
 
   ubuntu:
     name: published Ubuntu ${{ matrix.arch }}
@@ -114,14 +148,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ needs.which.outputs.tag }}
+          path: tagged
 
       - name: Install the published release, as a stranger would
         shell: bash
         run: |
           bash .github/scripts/say-on-fail.sh 'the published Ubuntu release' -- \
-            bash .github/scripts/qualify-published-ubuntu.sh "${{ needs.which.outputs.tag }}"
+            bash .github/scripts/qualify-published-ubuntu.sh "${{ needs.which.outputs.tag }}" "$PWD/tagged"
 
   windows:
     # Stage zero of the Windows route, against the published bytes.
@@ -139,8 +175,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ needs.which.outputs.tag }}
+          path: tagged
 
       - name: The published install.ps1, checked and then run in WhatIf
         shell: pwsh
@@ -163,7 +201,7 @@ jobs:
           "  install.ps1 matches the hash the release published"
 
           # And that it is this tag's file rather than another version of it.
-          $mine = (Get-FileHash 'install.ps1' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $mine = (Get-FileHash 'tagged\install.ps1' -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($got -ne $mine) { throw 'the published install.ps1 is not the one this commit holds' }
           "  and is byte for byte the script this checkout holds"
 

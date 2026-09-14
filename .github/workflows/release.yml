@@ -917,3 +917,27 @@ jobs:
             dist/AI17Z-Setup-Audit-*.json
             dist/SHA256SUMS.txt
             docs/RELEASE_VALIDATION_REPORT.md
+
+  # ---------------------------------------------------------------------------
+  # And then find out what was published.
+  #
+  # Called from here rather than left to `release: published`, because that
+  # event is never raised for a release created with GITHUB_TOKEN -- which is
+  # every release this workflow makes. Beta 1.0.0 (17) went out and the
+  # qualification workflow sat there: the same shape as the attestation step
+  # that globbed a directory its job did not have, and caught the same way, by
+  # looking for the run afterwards instead of assuming it.
+  #
+  # `contents: read` and nothing else. What checks a release must not be able to
+  # change one.
+  # ---------------------------------------------------------------------------
+  qualify:
+    name: qualify what was published
+    needs: [build, publish]
+    # A rehearsal published nothing, so there is nothing to qualify.
+    if: ${{ !((github.event_name == 'workflow_dispatch' && inputs.dry_run) || startsWith(github.ref_name, 'rehearsal-')) }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-qualification.yml
+    with:
+      tag: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.build.outputs.version) }}
