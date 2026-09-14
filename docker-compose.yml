@@ -13,6 +13,14 @@
 #
 # Chrome debugging ports are already chosen per launch, so they need nothing
 # here. The project name and these two published ports were the collisions.
+#
+# Every published port carries a bind address, and the default is loopback.
+#
+# Without one Docker binds to 0.0.0.0, which put the interface, the API and the
+# database on every interface of the machine -- on a server, the open internet.
+# The documentation has said "binds to loopback and stays there" the whole time;
+# this is the part that makes that true. `AI17Z_BIND_HOST` is how somebody who
+# genuinely wants otherwise says so, deliberately, once, in their own .env.
 name: ${AI17Z_INSTANCE:-xbam}
 
 services:
@@ -24,7 +32,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-xbam}
       POSTGRES_DB: ${POSTGRES_DB:-xbam}
     ports:
-      - "${POSTGRES_PORT:-55432}:5432"
+      - "${AI17Z_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-55432}:5432"
     volumes:
       - xbam_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -97,7 +105,7 @@ services:
       XBAM_STORAGE_DIR: /data/storage
       XBAM_RUN_MIGRATIONS: "1"
     ports:
-      - "${AI17Z_API_PORT:-8787}:8787"
+      - "${AI17Z_BIND_HOST:-127.0.0.1}:${AI17Z_API_PORT:-8787}:8787"
     volumes:
       - xbam_storage:/data/storage
     depends_on:
@@ -185,7 +193,7 @@ services:
         ai17z.built-from: ${AI17Z_BUILD_STAMP:-unknown}
     restart: unless-stopped
     ports:
-      - "${AI17Z_WEB_PORT:-8080}:80"
+      - "${AI17Z_BIND_HOST:-127.0.0.1}:${AI17Z_WEB_PORT:-8080}:80"
     depends_on:
       - api
 

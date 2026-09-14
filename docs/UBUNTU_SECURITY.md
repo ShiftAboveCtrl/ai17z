@@ -65,7 +65,11 @@ database are published on `127.0.0.1` only.
 
 - No firewall rules are added or changed. `ufw` is never touched.
 - Nothing is bound to a public address by default.
-- If you configure a non-loopback bind, `ai17z doctor` warns about it.
+- If you configure a non-loopback bind, `ai17z doctor` reports it as NEEDS
+  ACTION every time it runs, and says what it means.
+- `AI17Z_BIND_HOST` in your `.env` is the one place that decision is made. It
+  defaults to `127.0.0.1`, and `docker compose config` will show `host_ip` on
+  every published port.
 
 To reach a server installation from elsewhere, tunnel rather than expose:
 
