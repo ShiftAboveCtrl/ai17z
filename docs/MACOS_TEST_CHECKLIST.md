@@ -1,14 +1,37 @@
 # macOS: what has been tested, and what needs a Mac
 
-AI17Z's macOS support is implemented and its packaging is verified. What has
-**not** happened is anyone running it on a Mac, because no Mac hardware or
-runner has been available. This page is the honest split, so that the first
-person with a Mac knows exactly what to look at rather than starting from
-nothing.
+AI17Z's macOS packages are now built and run on real Macs, on every push:
+`macos-15` for Apple Silicon and `macos-15-intel` for Intel. The package, the
+runtime, the architecture of both binaries, every workspace import, the
+lifecycle, the compatibility gate and the installer are all exercised there --
+see "Hosted platform validation" in `RELEASE_VALIDATION_REPORT.md`.
+
+What a hosted runner cannot represent is a person at a Mac: the dialogs, the
+downloads, and Docker Desktop's own setup. That is what is left here, and it is
+a much shorter list than it was.
 
 Nothing below is a promise about behaviour that has not been observed.
 
-## Proved, on Linux, against real artifacts
+## Proved on a real Mac, on every push
+
+`.github/scripts/prove-macos-package.sh` and `prove-macos-installer.sh`, run by
+the `macos-15` and `macos-15-intel` jobs. Both green.
+
+- the bundled Node starts and reports `darwin` and the right architecture
+- `file` confirms Node **and** esbuild are genuinely that architecture
+- esbuild runs; tsx transforms TypeScript
+- all ten workspace packages import
+- the launcher runs from a path with a space in it
+- an unknown command is refused; root is refused
+- `data`, `logs` and `browser-profiles` are created 0700, beside the program
+- `doctor` produces a report from a packaged layout
+- the compatibility gate answers both ways, and no Chrome is a note not a refusal
+- the installer refuses a bad hash, a missing file, the other architecture and
+  an unknown option -- and installs, reruns keeping the master key, and leaves
+  the owner's data alone on uninstall
+- the finished tarball is unpacked and scanned
+
+## Also proved on Linux, against real artifacts
 
 These run in `packaging/macos/test-tarball.sh`, which builds the real package
 with the real script — including fetching Node's darwin binaries from nodejs.org
@@ -36,10 +59,10 @@ Every item here is unobserved. Do not describe any of it as working.
 
 ### The package actually running
 
-- [ ] `runtime/node/bin/node --version` runs and reports the bundled version
-- [ ] `node -p 'process.arch'` matches the package's architecture
-- [ ] `tsx` transforms TypeScript using the bundled runtime
-- [ ] native modules load — particularly `esbuild` and anything the worker needs
+- [x] `runtime/node/bin/node --version` runs and reports the bundled version  *(hosted, both architectures)*
+- [x] `node -p 'process.arch'` matches the package's architecture  *(hosted, both architectures)*
+- [x] `tsx` transforms TypeScript using the bundled runtime  *(hosted, both architectures)*
+- [x] native modules load — particularly `esbuild` and anything the worker needs  *(hosted, both architectures)*
 - [ ] on Apple Silicon, the arm64 package runs **without** Rosetta
 
 ### Gatekeeper, quarantine and Terminal

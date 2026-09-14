@@ -1,8 +1,11 @@
 # Ubuntu: what has been tested, and what needs a real machine
 
-More of Ubuntu has been exercised than macOS, because the tests run in a real
-Ubuntu 24.04 container. A container is not a desktop, though, and it is not
-every release. This page separates what has been observed from what has not.
+The package is built on real Ubuntu machines of both architectures and
+installed and exercised on every release this project claims to support --
+22.04, 24.04 and 26.04 -- on every push. See "Hosted platform validation" in
+`RELEASE_VALIDATION_REPORT.md`.
+
+What none of those has is a screen. That is what is left here.
 
 Nothing below is a promise about behaviour that has not been observed.
 
@@ -57,8 +60,8 @@ Everything about the browser is untested on Ubuntu, because the container has no
 screen and installing one to pretend otherwise is exactly what the mission
 forbids.
 
-- [ ] `ai17z doctor` on a headless server reports browser support NOT AVAILABLE
-      and everything else healthy
+- [x] `ai17z doctor` on a headless server reports browser support NOT AVAILABLE
+      and everything else healthy  *(hosted, and in every release container)*
 - [ ] on a desktop, a `DISPLAY`/`WAYLAND_DISPLAY` session is detected correctly
 - [ ] Chrome installs from Google's own APT repository, amd64 and arm64
 - [ ] Chrome is **never** run as root and **never** with `--no-sandbox`
@@ -78,15 +81,15 @@ forbids.
 
 ### Releases other than 24.04
 
-- [ ] Ubuntu 22.04 — the oldest declared supported
-- [ ] Ubuntu 26.04 — the newest
-- [ ] the `.deb`'s declared dependencies are satisfiable on each
+- [x] Ubuntu 22.04 — the oldest declared supported  *(hosted, every push)*
+- [x] Ubuntu 26.04 — the newest  *(hosted, every push)*
+- [x] the `.deb`'s declared dependencies are satisfiable on each  *(hosted, every push)*
 
 ### arm64
 
-- [ ] the arm64 `.deb` installs and runs on real arm64 hardware
-- [ ] the bundled Node reports `arm64`
-- [ ] `ubuntu-24.04-arm` is still an available runner when the release is built
+- [x] the arm64 `.deb` installs and runs on real arm64 hardware  *(hosted, every push)*
+- [x] the bundled Node reports `arm64`  *(hosted, every push)*
+- [x] `ubuntu-24.04-arm` is still an available runner when the release is built  *(hosted, every push)*
 
 ### The full lifecycle on real hardware
 
