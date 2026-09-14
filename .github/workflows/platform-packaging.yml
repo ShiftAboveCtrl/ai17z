@@ -108,9 +108,10 @@ jobs:
       - name: The installer, against the package this job just built
         run: |
           set -euo pipefail
-          bash .github/scripts/prove-macos-installer.sh \
-            "${{ runner.temp }}/out/AI17Z-macos-${{ matrix.arch }}-${{ needs.version.outputs.version }}.tar.gz" \
-            "${{ needs.version.outputs.version }}"
+          bash .github/scripts/say-on-fail.sh 'the macOS installer' -- \
+            bash .github/scripts/prove-macos-installer.sh \
+              "${{ runner.temp }}/out/AI17Z-macos-${{ matrix.arch }}-${{ needs.version.outputs.version }}.tar.gz" \
+              "${{ needs.version.outputs.version }}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -152,10 +153,11 @@ jobs:
       - name: The installer, against the package this job just built
         run: |
           set -euo pipefail
-          bash .github/scripts/prove-ubuntu-installer.sh \
-            "${{ runner.temp }}/out/ai17z_${{ needs.version.outputs.version }}_${{ matrix.arch }}.deb" \
-            "${{ needs.version.outputs.version }}" \
-            "${{ matrix.arch }}"
+          bash .github/scripts/say-on-fail.sh 'the Ubuntu installer' -- \
+            bash .github/scripts/prove-ubuntu-installer.sh \
+              "${{ runner.temp }}/out/ai17z_${{ needs.version.outputs.version }}_${{ matrix.arch }}.deb" \
+              "${{ needs.version.outputs.version }}" \
+              "${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -188,6 +190,7 @@ jobs:
       - name: Install and exercise it on Ubuntu ${{ matrix.release }}
         run: |
           set -euo pipefail
+          bash .github/scripts/say-on-fail.sh 'Ubuntu ${{ matrix.release }}' -- \
           docker run --rm \
             -v "$PWD:/repo:ro" \
             -v "$PWD/dist:/dist:ro" \
