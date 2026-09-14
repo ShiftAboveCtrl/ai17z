@@ -126,9 +126,14 @@ fi
 _install_method="${_install_method:-checkout}"
 row "Install" "PASS" "$_install_method"
 
+# A package ships BUILD_INFO.json and a checkout has none, which is the same
+# signal the setup script uses. Kept here because the advice below differs: a
+# package's owner has `ai17z`, and has no `./install-ai17z.sh` to run.
 if [ -f "$AI17Z_APP_DIR/BUILD_INFO.json" ]; then
+  PACKAGED=1
   row "Version" "PASS" "$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$AI17Z_APP_DIR/BUILD_INFO.json" | head -1)"
 else
+  PACKAGED=0
   row "Version" "NOT CONFIGURED" "no BUILD_INFO.json; this looks like a checkout"
 fi
 
@@ -180,14 +185,22 @@ if [ -f "$AI17Z_ENV_FILE" ]; then
   row "Configuration" "PASS" ".env present."
 else
   row "Configuration" "NOT CONFIGURED" "No .env file yet."
-  todo+=("Configuration: run ./install-ai17z.sh, which creates one with a fresh master key.")
+  if [ "${PACKAGED:-0}" = "1" ]; then
+    todo+=("Configuration: run 'ai17z start'. It writes one with a fresh master key before starting.")
+  else
+    todo+=("Configuration: run ./install-ai17z.sh, which creates one with a fresh master key.")
+  fi
 fi
 
 master_key="$(env_value AI17Z_MASTER_KEY)"
 [ -n "$master_key" ] || master_key="$(env_value XBAM_MASTER_KEY)"
 if [ -z "$master_key" ]; then
   row "Master key" "NOT CONFIGURED" "Not set."
-  todo+=("Master key: run ./install-ai17z.sh. Provider keys cannot be stored without one.")
+  if [ "${PACKAGED:-0}" = "1" ]; then
+    todo+=("Master key: run 'ai17z start'. Provider keys cannot be stored without one.")
+  else
+    todo+=("Master key: run ./install-ai17z.sh. Provider keys cannot be stored without one.")
+  fi
 else
   # Length only. The value is never printed and never logged.
   key_bytes="$(printf '%s' "$master_key" | base64 -d 2>/dev/null | wc -c || echo 0)"
@@ -278,14 +291,30 @@ fi
 
 
 # -- Storage -----------------------------------------------------------------
-profile_root="$(env_value XBAM_BROWSER_PROFILE_DIR)"
+# The directory the application resolves, which is the one that matters.
+#
+# This read `XBAM_BROWSER_PROFILE_DIR` out of the environment file -- where the
+# key is written under its AI17Z name -- and otherwise probed a relative
+# `./storage/browser-profiles`, which in a packaged installation is neither
+# worker's profile root. So it reported on a directory nothing uses.
+#
+# And it created it. A tool whose header says "Reads only. Changes nothing" must
+# not `mkdir -p` anything: the probe is of the parent that already exists.
+profile_root="${AI17Z_BROWSER_PROFILES:-$(env_value AI17Z_BROWSER_PROFILE_DIR)}"
+profile_root="${profile_root:-$(env_value XBAM_BROWSER_PROFILE_DIR)}"
 profile_root="${profile_root:-./storage/browser-profiles}"
-if mkdir -p "$profile_root" 2>/dev/null && touch "$profile_root/.doctor-write-probe" 2>/dev/null; then
-  rm -f "$profile_root/.doctor-write-probe"
-  row "Storage" "PASS" "Writable: $profile_root"
+probe_dir="$profile_root"
+[ -d "$probe_dir" ] || probe_dir="$(dirname "$profile_root")"
+if [ -d "$probe_dir" ] && touch "$probe_dir/.doctor-write-probe" 2>/dev/null; then
+  rm -f "$probe_dir/.doctor-write-probe"
+  if [ -d "$profile_root" ]; then
+    row "Storage" "PASS" "Writable: $profile_root"
+  else
+    row "Storage" "PASS" "Writable: $probe_dir (profiles appear on first connection)"
+  fi
 else
-  row "Storage" "FAIL" "Cannot write to $profile_root"
-  failures+=("Storage: check permissions, or set XBAM_BROWSER_PROFILE_DIR to a writable location.")
+  row "Storage" "FAIL" "Cannot write to $probe_dir"
+  failures+=("Storage: check permissions on $probe_dir.")
 fi
 
 # -- Database and what is configured -----------------------------------------
@@ -318,12 +347,63 @@ if [ -n "$health" ]; then
     row "AI providers" "PASS" "$providers configured."
   fi
 
-  accounts="$(printf '%s' "$health" | grep -o '"kind":"account"' | wc -l | tr -d ' ')"
-  if [ "$accounts" = "0" ]; then
+  # Counted by state, not by existence.
+  #
+  # This counted `"kind":"account"` and called every one of them connected. On a
+  # Mac whose only account was `offline` -- every sign-in failing -- the report
+  # read "1 connected" and finished with "Nothing is broken". A diagnostic that
+  # says that while the thing it diagnoses does not work is worse than none.
+  #
+  # Parsed rather than grepped, with the runtime the installation carries.
+  accounts="$(printf '%s' "$health" | "$(ai17z_node)" -e '
+    let raw = "";
+    process.stdin.on("data", (c) => (raw += c));
+    process.stdin.on("end", () => {
+      try {
+        const parts = (JSON.parse(raw).components || []).filter((c) => c.kind === "account");
+        const bad = parts.filter((c) => c.status !== "healthy");
+        process.stdout.write([parts.length, bad.length, (bad[0] && bad[0].detail) || ""].join("\t"));
+      } catch { process.stdout.write(""); }
+    });
+  ' 2>/dev/null || printf '')"
+  total="${accounts%%$'\t'*}"
+  rest="${accounts#*$'\t'}"
+  unhealthy="${rest%%$'\t'*}"
+  first_detail="${rest#*$'\t'}"
+  if [ -z "$total" ]; then
+    row "Accounts" "UNKNOWN" "The health report could not be read."
+  elif [ "$total" = "0" ]; then
     row "Accounts" "NOT CONFIGURED" "None yet. Nothing to read or reply to."
     todo+=("Accounts: create an agent, then connect an account to it.")
+  elif [ "$unhealthy" != "0" ]; then
+    row "Accounts" "FAIL" "$unhealthy of $total not working. ${first_detail}"
+    failures+=("Accounts: ${first_detail:-one or more accounts are not connected.} Open the account and reconnect it.")
   else
-    row "Accounts" "PASS" "$accounts connected."
+    row "Accounts" "PASS" "$total connected."
+  fi
+
+  # The browser component, which this used to ignore entirely -- so "no worker
+  # has reported a live browser recently" was invisible on the one screen
+  # somebody looks at when a browser will not open.
+  browser_state="$(printf '%s' "$health" | "$(ai17z_node)" -e '
+    let raw = "";
+    process.stdin.on("data", (c) => (raw += c));
+    process.stdin.on("end", () => {
+      try {
+        const part = (JSON.parse(raw).components || []).find((c) => c.kind === "browser");
+        process.stdout.write(part ? part.status + "\t" + (part.detail || "") : "");
+      } catch { process.stdout.write(""); }
+    });
+  ' 2>/dev/null || printf '')"
+  if [ -n "$browser_state" ]; then
+    case "${browser_state%%$'\t'*}" in
+      healthy) row "Browser, as the API sees it" "PASS" "${browser_state#*$'\t'}" ;;
+      offline) row "Browser, as the API sees it" "NOT AVAILABLE" "${browser_state#*$'\t'}" ;;
+      *)
+        row "Browser, as the API sees it" "NEEDS ACTION" "${browser_state#*$'\t'}"
+        todo+=("Browser: no worker is reporting a live browser. On a desktop, 'ai17z restart' starts one; over ssh there is no graphical session and there never will be.")
+        ;;
+    esac
   fi
 else
   row "Database" "NOT RUNNING" "API is down, so this could not be checked."

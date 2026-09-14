@@ -264,6 +264,210 @@ for backticks. It is the same trap.
 
 ---
 
+## AI17Z Beta 1.0.0 (20)
+
+Nine faults, all from one person installing Beta 1.0.0 (19) on a Mac and trying
+to use it. One of them meant the product's central feature -- connecting an
+account -- could not be used at all on that platform, and it had a guard, a
+comment explaining why the guard mattered, and a test file named after it.
+
+### The one that mattered
+
+**Connecting an account did nothing.** No window appeared and nothing on
+screen said why. The failure was recorded -- the account went to `offline` with
+the reason on it -- but the one place somebody looks, `ai17z doctor`, was
+counting accounts rather than reading their health and reported "1 connected"
+and "Nothing is broken". So the seventh fault below was hiding the first.
+
+The API resolved `defaultProfileDir()` and wrote the answer into the session
+row. The API runs in a container whose working directory is `/app`, so the
+answer was `/app/storage/browser-profiles/<id>`. The native worker on the Mac
+read that row, asked Chrome to create `/app` on a machine whose root is
+read-only, and every attempt died in half a second with
+
+    ENOENT: no such file or directory, mkdir '/app'
+
+`resolveProfileDir` exists to stop exactly this, and its own docstring says the
+stored path is not trusted across machines. It was not what stopped it, for two
+separate reasons:
+
+- It **consulted the stored path** through `profilePathIsLocal`, which
+  distinguishes a Windows path from a POSIX one and nothing else. On Windows
+  that catches `/app/...`; on macOS and Linux, `/app/...` is a perfectly good
+  POSIX path and passed.
+- And **nothing on this route called it anyway**. `buildChannelContext` read
+  `session.profileDir` straight out of the row.
+
+So the fix is three things, none of which relies on a path being recognisable:
+
+| | Before | Now |
+| --- | --- | --- |
+| API, on creating or reconfiguring an account | wrote `defaultProfileDir()`, resolved in a container | writes `null`; it cannot know |
+| `buildChannelContext` | `session.profileDir ?? defaultProfileDir(...)` | `resolveProfileDir(account.id, session.profileDir)` |
+| `resolveProfileDir` | returned the stored path when it looked local | derives from the account id, always |
+
+Deriving unconditionally also repairs every row already written, with no
+migration: nothing reads them for this any more. `profilePathIsLocal` is kept
+and documented as diagnostic only.
+
+`tests/unit/profileDirIsLocal.test.ts` pins it, deliberately as a *unit* test:
+`tests/integration/realChrome.test.ts` skips on every machine without Chrome,
+which is every machine that builds these packages, so the rule needed somewhere
+that always runs.
+
+### The other eight
+
+| | What it did | What it does |
+| --- | --- | --- |
+| `ai17z` on PATH | resolved its own location from the symlink's directory, so every command failed | follows the link chain, relative links included |
+| Update screen | showed a Mac `.\update-ai17z.ps1`: `updateMethodFrom` knew two of the five install methods and fell through to a file check no container can pass | the method list has one home in `@xbam/shared` and is read off it |
+| Updating | replaced the files and kept running the previous version's containers | images carry the build they came from and stale ones are rebuilt first |
+| "Is it newer?" | `sort -V` on macOS, `dpkg --compare-versions` on Ubuntu | one comparator, in the application, reached through the bridge |
+| Restart during sign-in | marked the account "the window was closed before it finished" | stopping waits for the check; a browser closed by shutdown changes nothing |
+| `ai17z doctor` | counted account rows, said "1 connected" and "Nothing is broken" for an account that never worked | counts by health, quotes the failure, and has a row for the browser |
+| Browser log | truncated on every start, so the reason for a failure was gone by the second attempt | appended, rotated at 5 MB, marked per start |
+| Setup | said Chrome was missing on every Mac that had it; told a packaged copy to run `./start-ai17z.sh` | knows both platforms' Chrome paths; names the command that copy has |
+
+On that second row: **the launchers were not at fault**, which the first
+account of this got wrong. `export AI17Z_INSTALL_CHANNEL=MACOS_PKG` has been in the macOS launcher
+since that platform shipped, and `UBUNTU_DEB` likewise. Run against
+Beta 1.0.0 (19)'s own function:
+
+    channel MACOS_PKG -> not BOOTSTRAP, not INSTALLER
+                      -> AI17Z_INSTALLED unset
+                      -> hasBuildInfo false, because BUILD_INFO.json is not
+                         among the files docker/node.Dockerfile copies
+                      -> CHECKOUT
+
+Both Unix lifecycles now export the channel themselves as well, so the
+guarantee holds when one is run directly rather than through the launcher --
+which the updater does after it swaps the application. That is worth having and
+is not what fixed this.
+
+### One the report did not mention
+
+The report flagged `sort -V` on macOS. Ubuntu's `dpkg --compare-versions` was
+not mentioned, and has the same fault by a different route:
+
+    dpkg --compare-versions 1.0.0 gt 1.0.0-beta.19   ->  false
+    printf '1.0.0\n1.0.0-beta.19\n' | sort -V | tail -1  ->  1.0.0-beta.19
+
+Both rank the release *below* its own prerelease. So **the finished 1.0.0 would
+have been refused as "not newer" on two platforms out of three**, and an
+installation that stayed on a beta would have had no way forward but a
+reinstall. Found by running the pair through `dpkg` rather than trusting the
+report's scope.
+
+Beta 1.0.0 (20) is still reachable from (19): both old comparators accept it,
+which was checked in a container. This is the last release at which that stops
+being true.
+
+### Two things done differently after review
+
+**The comparator was fixed twice.** The first version put a byte-identical
+`release_is_newer` in each of the two updaters -- which is the shape of the
+fault being fixed, two platforms each holding their own copy of one rule. It is
+now `ai17z_version_is_newer` in `packaging/unix/ai17z-paths.sh`, which both
+already source, printing a verdict and deciding nothing so each keeps its own
+refusal wording.
+
+**The two lifecycles were left parallel, on purpose.** 162 of their 243 lines of
+code are already identical; extracting only the three new staleness functions
+would have been inconsistent with the rest of the file. Instead a test compares
+the two `images_are_stale` bodies and fails if they diverge.
+
+### Every fix was checked by putting the fault back
+
+Twenty-six mutations, applied one at a time, each reverting a fix and asserting
+the new test goes red. A test written after a fix passes by construction; that
+says nothing about whether it would have caught anything.
+
+Four did not fail on the first attempt, and the tests were rewritten rather than
+the result accepted:
+
+| The mutation | Why it slipped past |
+| --- | --- |
+| renamed `images_are_stale` | the assertion was `toContain`, and the renamed function still contains the name |
+| removed the system-wide Chrome path | `$HOME/Applications/...` contains `/Applications/...`, so a substring check was satisfied by the per-user path |
+| removed the UNREACHABLE shutdown guard | the loop's own guard declined the check before it could reach the branch |
+| removed `stopping` from `tick()` | same masking, by the same guard |
+
+The last two were testing one guard while believing they tested another. They
+now begin the shutdown *inside* the page read, and assert on the database query
+rather than on the writes.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean, from a cleared `tsbuildinfo` |
+| `npm run lint` | clean |
+| `npx vitest run tests/unit` | 169 files, 2473 tests, 0 failures |
+| `npm test` | 263 files, 3362 tests, 0 failures |
+| `npm run release:check` | 957 tracked files, nothing found |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+| `shellcheck` | clean at error and warning, all 35 tracked shell files and the launcher |
+| web build | clean |
+| `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | exit 0: installed twice, upgraded over the top, the bootstrap route, three side-by-side instances, and all three INSTALL_INFO schemas |
+| Golden installations | `AI17Z-test` byte for byte what it was. **`AI17Z-main` is not** -- see below; nothing in this work touched it |
+| GitHub Actions | pending |
+| `rehearsal-v1.0.0-beta.20` | pending |
+
+### A golden installation moved, and it was not this work
+
+`AI17Z-main` on the development machine is kept untouched so that "nothing was
+damaged" is a comparison rather than an assurance. It did not survive this
+session, and the honest thing is to record that rather than tick the box.
+
+Measured, not inferred:
+
+| | |
+| --- | --- |
+| Before, 15:11 | 5,124 files, tree `246626fb...` -- identical to the snapshot kept from Beta 1.0.0 (19) |
+| After | 5,147 files, tree `8c01b311...` |
+| Written | 26 files: four at 16:43-16:46 (`INSTALL_INFO.json`, `data-location.txt`, `unins000.exe`, `unins000.dat`) and 22 carrying archive timestamps |
+| `AI17Z-test` | 0 files written; byte for byte what it was |
+| Registry and Start Menu | unchanged for both |
+
+The new `INSTALL_INFO.json` says schema 1, `INSTALLER`, `1.0.0-beta.19`,
+installed at 16:43:58, while `BUILD_INFO.json` still says `1.0.0-beta.15`. Its
+containers were started at about 16:47.
+
+`tools/verify-install.mts` was read end to end against this: every install it
+performs passes an explicit `-ProgramDir`/`-DataDir` under `C:\ai17z-verify-room`
+or names `AI17Z-alpha`/`AI17Z-beta`/`AI17Z-gamma`/`ai17z-verify-boot`, and it
+names `AI17Z-main` nowhere. A second interactive session was running on the same
+machine throughout. So this was almost certainly somebody else installing
+Beta 1.0.0 (19) over that copy, and it is not evidence about this release --
+but "almost certainly" is not the same as knowing, and the box is not ticked.
+
+Nothing was done to put `AI17Z-main` back. It is a hands-off installation, and
+restoring it would be another uninstructed write to it.
+
+The gate that matters for this release still holds: the harness's own rooms
+proved the install, the upgrade, the three-instance isolation and all three
+schema eras, and `AI17Z-test` -- the preserved production-like copy -- is
+unchanged.
+
+### Not verified
+
+Everything from Beta 1.0.0 (19), and the same first item: **the Docker Desktop
+handover on a Mac, end to end**, which no machine in this project can run.
+
+Two more that a person has to confirm, both being the fixes themselves:
+
+- **A browser window actually opening on a Mac**, which is the fault this
+  release exists for. What can be proved here is that the path handed to Chrome
+  is derived locally and never read from the row; that Chrome then opens is what
+  the owner is testing.
+- **The updater running on a real installation.** Beta 1.0.0 (19)'s `ai17z`
+  command is broken, so it has to be started by its full path:
+  `"$HOME/Library/Application Support/AI17Z/AI17Z/ai17z" update`. The command
+  works normally again afterwards -- the updater replaces the launcher itself,
+  and the symlink already points at it.
+
+---
+
 ## AI17Z Beta 1.0.0 (19)
 
 Two faults, both reported from a real Mac, and neither reachable by anything

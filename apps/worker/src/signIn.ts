@@ -28,26 +28,53 @@ export class SignInWatcher {
    */
   private readonly intervalMs = envInt('AI17Z_SIGNIN_POLL_MS', 4_000);
 
+  /**
+   * Set the moment shutdown begins, and read before anything is written.
+   *
+   * Stopping used to clear the interval and return, leaving a check already in
+   * flight against a browser the shutdown was about to close. Observed on a
+   * Mac: an account sat in AWAITING_LOGIN with the Chrome window still open, an
+   * `ai17z restart` arrived, and nine milliseconds after SIGTERM the account
+   * was marked NEEDS_AUTH -- "The sign-in window was closed before it
+   * finished." Nobody had closed anything. `closeAllSessions()` detached CDP
+   * under the running check, the adapter correctly read that as UNREACHABLE,
+   * and the watcher wrote it down.
+   */
+  private stopping = false;
+  /** A check already running, so stopping can wait for it rather than race it. */
+  private inFlight: Promise<void> | null = null;
+
   start(): void {
     if (this.timer) return;
+    this.stopping = false;
     this.timer = startLoop('sign-in', this.intervalMs, () => this.tick());
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    // Awaited, so the browsers are not pulled out from under a check that is
+    // halfway through reading a page.
+    await this.inFlight?.catch(() => undefined);
   }
 
   async tick(): Promise<void> {
-    if (this.running) return;
+    if (this.running || this.stopping) return;
     this.running = true;
-    try {
+    const work = (async () => {
       for (const account of await accountsRepo.accountsAwaitingSignIn()) {
+        if (this.stopping) return;
         await this.check(account.id).catch((error) =>
           log.warn('sign-in check failed', { accountId: account.id, message: errorMessage(error) }),
         );
       }
+    })();
+    this.inFlight = work;
+    try {
+      await work;
     } finally {
+      this.inFlight = null;
       this.running = false;
     }
   }
@@ -123,6 +150,17 @@ export class SignInWatcher {
         return;
 
       case 'UNREACHABLE':
+        // Not while this worker is going down. A browser closed by our own
+        // shutdown is indistinguishable from one somebody closed, and telling
+        // an owner mid-sign-in that their window was closed -- when it is still
+        // open on their screen, and it was a restart that did it -- is a worse
+        // answer than saying nothing and finding out on the way back up.
+        if (this.stopping) {
+          log.info('sign-in check interrupted by shutdown; leaving the status alone', {
+            handle: account.handle,
+          });
+          return;
+        }
         // Almost always somebody closing the window rather than a fault. Saying
         // ERROR implies something broke and needs fixing; nothing did, and the
         // way forward is simply to open sign-in again.

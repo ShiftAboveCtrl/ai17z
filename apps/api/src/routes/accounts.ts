@@ -4,7 +4,7 @@ import { BrowserEngine, CadenceConfig, CreateAccountInput } from '@xbam/shared/c
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
 import { accounts as accountsRepo, cadences as cadencesRepo, ops, type UserRow } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@xbam/channels';
-import { closeSession, defaultProfileDir } from '@xbam/browser';
+import { closeSession } from '@xbam/browser';
 import { ensureDefaultRadarSources } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
@@ -74,7 +74,12 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
           mode: input.browser?.mode ?? 'MANAGED',
           channel: 'chrome',
           engine: 'GOOGLE_CHROME',
-          profileDir: defaultProfileDir(account.id),
+          // Null, because the API cannot know. It runs in a container whose
+          // working directory is `/app`, so resolving the default here wrote a
+          // path that exists on no machine anybody uses -- and a Mac then tried
+          // to create `/app`. Where a profile lives is answered by the process
+          // that opens the browser, on the machine it opens it on.
+          profileDir: null,
           cdpUrl: input.browser?.cdpUrl || null,
         });
       }
@@ -164,7 +169,12 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
           mode: engine === 'CUSTOM_CDP' ? 'CDP' : 'MANAGED',
           channel:
             engine === 'GOOGLE_CHROME' ? 'chrome' : engine === 'MICROSOFT_EDGE' ? 'msedge' : 'chromium',
-          profileDir: defaultProfileDir(account.id),
+          // Null, because the API cannot know. It runs in a container whose
+          // working directory is `/app`, so resolving the default here wrote a
+          // path that exists on no machine anybody uses -- and a Mac then tried
+          // to create `/app`. Where a profile lives is answered by the process
+          // that opens the browser, on the machine it opens it on.
+          profileDir: null,
           cdpUrl: body.browser.cdpUrl || null,
         });
         // Configuration changed, so any live context is no longer valid.

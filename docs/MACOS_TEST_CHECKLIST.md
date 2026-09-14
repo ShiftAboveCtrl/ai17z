@@ -113,13 +113,37 @@ cannot be removed by architecture, it gets documented, not bypassed.
 - [ ] the worker survives a Chrome restart and a Docker restart
 - [ ] stopping kills the process tree, not just the recorded pid
 
+### Connecting an account
+
+The whole point of the product, and the thing Beta 1.0.0 (19) could not do at
+all on a Mac. Nothing here can be checked by a machine in this project: the
+runners have no Chrome and no screen.
+
+- [ ] pressing Connect **opens a Chrome window**, on the first attempt
+- [ ] the profile it opens is under the data directory, not `/app` and not
+      anywhere in the program directory
+- [ ] a failure — any failure — is visible on the account, not only in a log
+- [ ] `ai17z doctor` says the account is not working while it is not working
+- [ ] **the sign-in itself is left to a person.** Nothing is typed, nothing is
+      clicked through, and a security challenge stops the watcher and leaves the
+      window alone. Never answer one while testing.
+
 ### The full lifecycle
 
+- [ ] `ai17z` on PATH works — the installer's symlink is followed, so `ai17z
+      doctor` from any directory behaves as the full path does
 - [ ] `ai17z start` brings up containers and reaches health
 - [ ] paths containing spaces work throughout — `Application Support` has one
 - [ ] `ai17z doctor` reports truthfully on a real Mac
 - [ ] `ai17z update` stages, swaps, and keeps the previous app until the new one
       reports the right version
+- [ ] after an update, **the containers are rebuilt** — the version on the
+      health screen is the new one and the images are not the old build
+- [ ] the Version panel names a command this Mac actually has, never a
+      PowerShell script
+- [ ] the browser log still holds the previous start's output after a restart
+- [ ] a restart during a sign-in does **not** mark the account as though
+      somebody closed the window
 - [ ] a failed update restores the previous application
 - [ ] `ai17z uninstall` keeps data; `--remove-data` lists before removing
 - [ ] a second `--instance` shares nothing with the first

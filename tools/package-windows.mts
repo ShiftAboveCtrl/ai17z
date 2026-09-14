@@ -188,6 +188,10 @@ function probeManifest(version: string, platform: Platform): string {
  * a machine the release supports and once on one it does not. The refusal is
  * the half that matters, because a bridge that cannot start at all prints
  * nothing, and nothing is not `NO`.
+ *
+ * Then twice more for `--newer`, the version comparison the same bridge
+ * answers. That one fails closed rather than open, so a bridge that cannot
+ * answer it refuses every update instead of allowing a bad one.
  */
 export async function proveCompatibilityGate(stageDir: string, platform: Platform, version: string): Promise<void> {
   console.log('  proving the update compatibility gate answers');
@@ -213,6 +217,16 @@ export async function proveCompatibilityGate(stageDir: string, platform: Platfor
     return stdout.trim();
   };
 
+  /** The same bridge, asked its other question: which of two versions is newer. */
+  const askNewer = async (versions: string[]): Promise<string> => {
+    const { stdout } = await run(
+      'node',
+      [join('node_modules', 'tsx', 'dist', 'cli.mjs'), join('packaging', 'preflight.mts'), '--newer', ...versions],
+      { cwd: stageDir, maxBuffer: 8 * 1024 * 1024 },
+    );
+    return stdout.trim();
+  };
+
   try {
     const yes = await ask(cases[platform].supported);
     if (!yes.startsWith('OK')) throw new Error(`a machine this release supports was not accepted; it said:\n${yes}`);
@@ -224,6 +238,29 @@ export async function proveCompatibilityGate(stageDir: string, platform: Platfor
           'A SKIP here means the bridge could not run at all, which is how an update gate stops ' +
           'working without anybody being told.',
       );
+    }
+
+    // And the version comparison, which the same bridge answers and which the
+    // two Unix updaters now refuse without.
+    //
+    // This one fails *closed*, unlike the gate above: an updater that cannot
+    // rank two versions stops rather than guessing, because the comparators it
+    // replaced were wrong about the most important upgrade there is. So a
+    // bridge that cannot answer here does not wave a bad update through -- it
+    // blocks every good one, with a refusal nobody can act on.
+    //
+    // The pair is the one `sort -V` and `dpkg --compare-versions` both get
+    // backwards, so this proves the behaviour and not merely the plumbing.
+    const newer = await askNewer(['1.0.0', '1.0.0-beta.19']);
+    if (newer !== 'NEWER') {
+      throw new Error(
+        `1.0.0 was not ranked above 1.0.0-beta.19; it said: ${newer || '(nothing at all)'}\n` +
+          'Every update on this platform is refused when this cannot answer.',
+      );
+    }
+    const older = await askNewer(['1.0.0-beta.19', '1.0.0']);
+    if (older !== 'NOT-NEWER') {
+      throw new Error(`a downgrade was not refused; it said: ${older || '(nothing at all)'}`);
     }
   } catch (error) {
     throw new Error(

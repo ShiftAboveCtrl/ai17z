@@ -163,10 +163,66 @@ stop_worker() {
 # ---------------------------------------------------------------------------
 # commands
 # ---------------------------------------------------------------------------
+# What the images were built from, and what they should have been built from.
+#
+# `docker compose up -d` builds only when an image is *missing*. It has no idea
+# the source changed, so an installation updated over the top went on serving
+# the containers built for the version before it. Windows has had this since
+# Beta 1.0.0 (8); neither Unix platform did, and their images were labelled
+# `ai17z.built-from=unknown` on every machine. Found on a Mac, fixed here too
+# because this file has the same shape and therefore had the same hole.
+build_stamp() {
+  [ -f "$APP_ROOT/BUILD_INFO.json" ] || { printf 'unknown'; return; }
+  sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$APP_ROOT/BUILD_INFO.json" | head -1 | tr -d '\n'
+  sed -n 's/.*"builtAt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/-\1/p' "$APP_ROOT/BUILD_INFO.json" | head -1 | tr -d '\n'
+}
+
+image_stamp() { # image
+  docker inspect --format '{{index .Config.Labels "ai17z.built-from"}}' "$1" 2>/dev/null || printf ''
+}
+
+images_are_stale() {
+  local project want built
+  want="$(build_stamp)"
+  [ -n "$want" ] || return 1
+  project="$(ai17z_compose config 2>/dev/null | sed -n 's/^name: //p' | head -1)"
+  [ -n "$project" ] || return 0
+  for service in api worker web; do
+    built="$(image_stamp "${project}-${service}")"
+    [ "$built" = "$want" ] || {
+      note "The ${service} image holds '${built:-nothing}' and this is '${want}'."
+      return 0
+    }
+  done
+  return 1
+}
+
 cmd_start() {
   printf '\n  %sAI17Z%s\n\n' "$GREEN" "$OFF"
   require_docker
   ensure_configured
+
+  AI17Z_BUILD_STAMP="$(build_stamp)"
+  AI17Z_VERSION="$(version_of)"
+  export AI17Z_BUILD_STAMP AI17Z_VERSION
+  # Which kind of installation this is, handed to the containers because the API
+  # runs in one and cannot see the program directory at all.
+  #
+  # The launcher exports this too and always has. Repeated here so that a
+  # lifecycle run directly still carries it. The update screen's wrong answer
+  # was `updateMethodFrom` not recognising the value, not the value missing.
+  AI17Z_INSTALL_CHANNEL=UBUNTU_DEB
+  export AI17Z_INSTALL_CHANNEL
+
+  if images_are_stale; then
+    step "Rebuilding the containers for this version"
+    ai17z_compose build >"$LOG_DIR/compose-build.log" 2>&1 || {
+      tail -30 "$LOG_DIR/compose-build.log" >&2
+      oops "The containers would not build." "Full log: $LOG_DIR/compose-build.log"
+    }
+    good "Containers rebuilt"
+  fi
+
   step "Starting AI17Z"
   ai17z_compose up -d >"$LOG_DIR/compose.log" 2>&1 || {
     tail -20 "$LOG_DIR/compose.log" >&2

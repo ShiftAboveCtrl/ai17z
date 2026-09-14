@@ -28,7 +28,8 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ops } from '@xbam/database';
-import { buildVersion, createLogger, errorMessage, nowIso, releaseName } from '@xbam/shared';
+import { INSTALL_METHODS, buildVersion, compareVersions, createLogger, errorMessage, nowIso, releaseName } from '@xbam/shared';
+import type { InstallMethod } from '@xbam/shared';
 
 const log = createLogger('updates');
 
@@ -141,7 +142,16 @@ export interface Installation {
   channel: UpdateMethod;
 }
 
-export type UpdateMethod = 'INSTALLER' | 'BOOTSTRAP' | 'CHECKOUT';
+/**
+ * How a copy got here, which decides how it takes an update.
+ *
+ * The same list as `INSTALL_METHODS` in `@xbam/shared`, because it is the same
+ * question. It used to be its own three-way union written out here, and the two
+ * platforms added since were missing from it -- so a Mac fell through to
+ * CHECKOUT and the Version panel told an owner to run `.\update-ai17z.ps1`,
+ * which is a PowerShell script, on a Mac. Reported from one.
+ */
+export type UpdateMethod = InstallMethod;
 
 /**
  * What this installation can say about itself.
@@ -169,43 +179,14 @@ interface CachedCheck {
 /**
  * Semver precedence, in the part of it AI17Z actually uses.
  *
- * Returns negative when `a` is older. The one rule people get wrong is that a
- * prerelease is *older* than the release it leads to: `0.1.0-rc.4` comes before
- * `0.1.0`. Getting that backwards offers everybody on a stable build a
- * downgrade to last month's candidate.
+ * Lives in `@xbam/shared` so that the shell updaters can reach it through
+ * `packaging/preflight.mts`. They had a comparator each, and both were wrong in
+ * the same place: `sort -V` on macOS and `dpkg --compare-versions` on Ubuntu
+ * both rank `1.0.0` *below* `1.0.0-beta.19`, so the release this whole beta
+ * series leads to would have been refused as "not newer" on two platforms out
+ * of three. Checked, not assumed -- both were run against that pair.
  */
-export function compareVersions(a: string, b: string): number {
-  const parse = (value: string) => {
-    const [core = '', pre = ''] = value.replace(/^v/, '').split('-', 2);
-    const numbers = core.split('.').map((part) => Number.parseInt(part, 10) || 0);
-    return { numbers, pre };
-  };
-  const left = parse(a);
-  const right = parse(b);
-
-  for (let i = 0; i < 3; i += 1) {
-    const difference = (left.numbers[i] ?? 0) - (right.numbers[i] ?? 0);
-    if (difference !== 0) return difference;
-  }
-
-  if (left.pre === right.pre) return 0;
-  // No prerelease beats any prerelease.
-  if (!left.pre) return 1;
-  if (!right.pre) return -1;
-
-  const leftParts = left.pre.split('.');
-  const rightParts = right.pre.split('.');
-  for (let i = 0; i < Math.max(leftParts.length, rightParts.length); i += 1) {
-    const l = leftParts[i];
-    const r = rightParts[i];
-    if (l === undefined) return -1;
-    if (r === undefined) return 1;
-    const both = /^\d+$/.test(l) && /^\d+$/.test(r);
-    const difference = both ? Number(l) - Number(r) : l.localeCompare(r);
-    if (difference !== 0) return difference;
-  }
-  return 0;
-}
+export { compareVersions } from '@xbam/shared';
 
 interface GitHubRelease {
   tag_name?: string;
@@ -341,8 +322,17 @@ export async function skipVersion(version: string): Promise<void> {
  */
 export function updateMethodFrom(env: NodeJS.ProcessEnv, hasBuildInfo: boolean): UpdateMethod {
   const channel = (env.AI17Z_INSTALL_CHANNEL ?? '').trim().toUpperCase();
-  if (channel === 'BOOTSTRAP') return 'BOOTSTRAP';
-  if (channel === 'INSTALLER') return 'INSTALLER';
+  // Read off the shared list rather than matched one at a time, so a platform
+  // added there cannot go missing here -- which is exactly what happened to
+  // MACOS_PKG and UBUNTU_DEB.
+  //
+  // CHECKOUT is excluded because it is the one value nothing declares: it is
+  // what an installation is when no installer put it anywhere, concluded below
+  // from the absence of BUILD_INFO.json. Honouring it as a marker would let a
+  // stray environment variable tell an installed copy it was a clone.
+  if ((INSTALL_METHODS as readonly string[]).includes(channel) && channel !== 'CHECKOUT') {
+    return channel as UpdateMethod;
+  }
   // An unknown channel is not a third answer. Something wrote a value nothing
   // here understands, and guessing from it would be worse than falling back to
   // the signal that has always worked.

@@ -82,10 +82,16 @@ services:
       # update screen offers an installer or `update-ai17z.ps1`. Only the API
       # answers that route, so only the API needs it.
       AI17Z_INSTALLED: ${AI17Z_INSTALLED:-}
-      # Which of the two kinds of installation it is, when it is one: INSTALLER
-      # for the Windows package, BOOTSTRAP for one AI17Z Setup made. Written by
-      # whichever put the program directory there and read off INSTALL_INFO.json
-      # by the launcher, because a container has no such file to read.
+      # Which kind of installation this is, when it is one. The whole list lives
+      # in INSTALL_METHODS in @xbam/shared: INSTALLER for the Windows package,
+      # BOOTSTRAP for one AI17Z Setup made, MACOS_PKG, UBUNTU_DEB, and CHECKOUT
+      # for a clone -- which nothing declares and the API concludes.
+      #
+      # Handed in because a container has no way to find out: on Windows the
+      # launcher reads INSTALL_INFO.json, and the Unix launchers know it
+      # outright. An unrecognised value here is not a third answer; see
+      # updateMethodFrom, which used to name two of these and therefore told a
+      # Mac owner to run a PowerShell script.
       AI17Z_INSTALL_CHANNEL: ${AI17Z_INSTALL_CHANNEL:-}
       # Which installation this is, for an owner running more than one. The
       # update screen names the copy it is offering to update, because "AI17Z is

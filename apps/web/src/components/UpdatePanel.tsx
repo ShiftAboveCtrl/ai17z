@@ -27,11 +27,15 @@ export interface UpdateState {
   enabled: boolean;
   checkedAt: string | null;
   error: string | null;
-  method: 'INSTALLER' | 'BOOTSTRAP' | 'CHECKOUT';
+  // The same five as INSTALL_METHODS in @xbam/shared. Written out because the
+  // web bundle does not import node-side modules, and kept in step by the test
+  // that compares the two -- three copies of this list is how a Mac was told to
+  // run a PowerShell script.
+  method: 'INSTALLER' | 'BOOTSTRAP' | 'MACOS_PKG' | 'UBUNTU_DEB' | 'CHECKOUT';
   installation: {
     name: string | null;
     programDir: string | null;
-    channel: 'INSTALLER' | 'BOOTSTRAP' | 'CHECKOUT';
+    channel: 'INSTALLER' | 'BOOTSTRAP' | 'MACOS_PKG' | 'UBUNTU_DEB' | 'CHECKOUT';
   };
 }
 
@@ -39,9 +43,11 @@ export interface UpdateState {
  * What taking this update actually involves, for the way this copy was
  * installed.
  *
- * Three layouts, three different true answers, and the screen says the one that
+ * Five layouts, five different true answers, and the screen says the one that
  * applies rather than the one that applies most often. Offering "download the
- * installer" to a checkout is how somebody ends up with two AI17Zs.
+ * installer" to a checkout is how somebody ends up with two AI17Zs -- and
+ * offering `.\update-ai17z.ps1` to a Mac, which is what the missing entries
+ * below caused, is how somebody ends up with no way forward at all.
  */
 const HOW_TO_UPDATE: Record<UpdateState['method'], { action: string; detail: string }> = {
   BOOTSTRAP: {
@@ -53,6 +59,16 @@ const HOW_TO_UPDATE: Record<UpdateState['method'], { action: string; detail: str
     action: 'Download the installer',
     detail:
       'Run the installer over this copy. Your agents, memories, provider keys and settings are in your data folder and are not touched.',
+  },
+  MACOS_PKG: {
+    action: 'Update AI17Z',
+    detail:
+      'Run ai17z update in a terminal. It checks that this Mac can run the new version before it stops anything, fetches the package, checks it against its published hash, applies any database migrations and starts it again. Your agents, memories, provider keys and signed-in browser session are in your data folder and are not touched.',
+  },
+  UBUNTU_DEB: {
+    action: 'Update AI17Z',
+    detail:
+      'Run ai17z update in a terminal. It checks that this machine can run the new version before it stops anything, fetches the .deb, checks it against its published hash, installs it with apt, applies any database migrations and starts it again. Your agents, memories, provider keys and signed-in browser session are in your data folder and are not touched.',
   },
   CHECKOUT: {
     action: 'Read the release',

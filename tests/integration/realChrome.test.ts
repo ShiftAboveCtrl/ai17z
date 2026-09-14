@@ -359,16 +359,25 @@ describe('a profile path from another machine is not trusted', () => {
     expect(profilePathIsLocal(local)).toBe(true);
   });
 
-  it('falls back to the account-derived path when the stored one is foreign', () => {
-    const foreign = process.platform === 'win32' ? '/app/storage/browser-profiles/abc' : 'C:\\app\\abc';
-    const resolved = resolveProfileDir('abc-123', foreign);
-    expect(resolved).not.toBe(foreign);
-    expect(resolved).toContain('abc-123');
+  it('derives the path from the account, whatever the row says', () => {
+    // Every one of these, not only the ones that look wrong for this platform.
+    // The version of this test that only checked a *foreign*-shaped path is why
+    // a Mac spent an afternoon on `mkdir '/app'`: `/app/storage/...` is a POSIX
+    // path, macOS is POSIX, so it read as local and was used. The rule has no
+    // exceptions -- `tests/unit/profileDirIsLocal.test.ts` states it in full.
+    for (const stored of [
+      '/app/storage/browser-profiles/abc',
+      'C:\\app\\abc',
+      '/home/someone-else/profiles/abc',
+      null,
+    ]) {
+      expect(resolveProfileDir('abc-123', stored)).toContain('abc-123');
+      if (stored) expect(resolveProfileDir('abc-123', stored)).not.toBe(stored);
+    }
   });
 
-  it('treats a missing path as foreign rather than using it', () => {
+  it('keeps profilePathIsLocal as a description of a shape, not a decision', () => {
     expect(profilePathIsLocal(null)).toBe(false);
-    expect(resolveProfileDir('abc-123', null)).toContain('abc-123');
   });
 });
 

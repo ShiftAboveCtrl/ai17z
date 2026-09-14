@@ -138,6 +138,17 @@ export class BrowserTaskRunner {
     const ctx = await buildChannelContext(account, null);
     // Never trust a path written by a worker on another filesystem.
     const profileDir = resolveProfileDir(account.id, ctx.session?.profileDir);
+    // Said out loud, because the version of this that silently used the stored
+    // path took an afternoon on somebody's Mac to find. A row written by the
+    // containerised API says `/app/...`, which is nowhere on the machine that
+    // opens the browser.
+    if (ctx.session?.profileDir && ctx.session.profileDir !== profileDir) {
+      log.info('the stored profile path is not this machine\'s; using this one', {
+        account: account.id,
+        stored: ctx.session.profileDir,
+        using: profileDir,
+      });
+    }
     const mode = ctx.session?.mode ?? 'MANAGED';
     const channel = ctx.session?.channel ?? null;
     const engine = ctx.session?.engine ?? 'GOOGLE_CHROME';
