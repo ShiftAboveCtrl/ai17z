@@ -20,8 +20,10 @@ on:
     branches: ['**']
     paths:
       - 'packaging/**'
-      - 'tools/package-*.mts'
-      - 'tools/release-manifest.mts'
+      # The whole of `tools/`, because the whole of it ships: the Dockerfiles
+      # copy it and npm needs its workspace manifest to resolve at all. A
+      # change in here changes the bytes of every package.
+      - 'tools/**'
       - 'packages/shared/src/releaseManifest.ts'
       - 'packages/shared/src/installLayout.ts'
       - 'install-ai17z-*.sh'
@@ -42,8 +44,10 @@ on:
   pull_request:
     paths:
       - 'packaging/**'
-      - 'tools/package-*.mts'
-      - 'tools/release-manifest.mts'
+      # The whole of `tools/`, because the whole of it ships: the Dockerfiles
+      # copy it and npm needs its workspace manifest to resolve at all. A
+      # change in here changes the bytes of every package.
+      - 'tools/**'
       - 'packages/shared/src/releaseManifest.ts'
       - 'packages/shared/src/installLayout.ts'
       - 'install-ai17z-*.sh'
