@@ -313,9 +313,21 @@ try {
     $chosen = @($all | Where-Object { -not $_.draft } | Select-Object -First 1)[0]
   }
 } catch {
+  $why = '' + $_.Exception.Message
+  # What to go and look at, decided by what actually happened.
+  #
+  # This used to say "check your internet connection" whatever the answer was.
+  # GitHub allows sixty API requests an hour to an address that is not signed
+  # in, and a shared office, a university or a cloud box reaches that without
+  # anybody doing anything unusual -- so the one person whose connection is
+  # provably fine was the one being told to go and check it.
+  $advice = 'Check your internet connection and run the command again.'
+  if ($why -match '\(40[39]\)' -or $why -match '\(429\)') {
+    $advice = 'GitHub refused the request. That is usually its rate limit: it allows sixty an hour from an address that is not signed in, which a shared network reaches on its own. Wait a few minutes and run the command again.'
+  }
   Stop-Install 'AI17Z could not work out which release to install.' `
-    ("Nothing on this PC was changed.`n" + $_.Exception.Message) `
-    'Check your internet connection and run the command again.'
+    ("Nothing on this PC was changed.`n" + $why) `
+    $advice
 }
 if (-not $chosen) {
   Stop-Install 'That release does not exist.' '' ('Look at https://github.com/' + $Repository + '/releases and pass -Release <tag>.')

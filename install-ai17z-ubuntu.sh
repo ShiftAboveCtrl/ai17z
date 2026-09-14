@@ -214,9 +214,14 @@ elif [ -n "$RELEASE" ]; then
 else
   # Not /releases/latest: that hides prereleases, and every AI17Z release so far
   # is one.
+  # The advice names no cause, because this cannot know one: `curl -f` collapses
+  # every 4xx into one exit code, and the status cannot come back out of the
+  # subshell this runs in. It used to say the connection was at fault, which is
+  # the single explanation that is definitely wrong when GitHub is rate limiting.
   RELEASE_JSON="$(fetch_stdout "${API}?per_page=10")" || stop \
     "AI17Z could not be reached." "Nothing on this computer was changed." \
-    "Check your internet connection and run this again."
+    "GitHub did not answer. That can be this connection, or GitHub refusing requests from this address -- it allows sixty an hour to anybody who is not signed in, which a shared network reaches on its own.
+Wait a few minutes and run this again."
 fi
 
 if [ -z "$LOCAL_PACKAGE" ]; then
