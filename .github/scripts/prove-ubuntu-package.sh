@@ -96,7 +96,11 @@ PROBEJSON
 # `cd` into it rather than `npm --prefix`: --prefix moves where npm *installs*,
 # not where it looks for the package.json a script lives in, and the first
 # version of this check passed nothing and failed everything.
-if OUT="$( cd "$PROBE_DIR" && "/usr/lib/ai17z/runtime/node/bin/npm" run --silent probe 2>&1 )" && [ "$OUT" = "2" ]; then
+# With only the bundled runtime on PATH, which is what the launcher gives an
+# installed copy. `npm` is a script starting `#!/usr/bin/env node`, so without
+# this the runner's own Node interprets the bundled npm -- which still exercises
+# the node-gyp resolution that broke, but is not the configuration anybody runs.
+if OUT="$( cd "$PROBE_DIR" && PATH="/usr/lib/ai17z/runtime/node/bin:$PATH" "/usr/lib/ai17z/runtime/node/bin/npm" run --silent probe 2>&1 )" && [ "$OUT" = "2" ]; then
   ok "npm runs a script"
 else
   bad "the bundled npm cannot run a script -- node-gyp pruned out of the runtime is what did this before: $(printf '%s' "$OUT" | grep -v '^[[:space:]]*$' | tail -3 | tr '\n' '/')"
