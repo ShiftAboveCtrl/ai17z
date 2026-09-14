@@ -243,6 +243,56 @@ describe('the release builds every platform from one tag', () => {
     expect(workflow).toContain('tools/release-manifest.mts');
   });
 
+  it('can rehearse the whole release without publishing one', () => {
+    // `dry_run` does this too and needs `workflow_dispatch`, which needs a
+    // browser or an authenticated CLI. A tag is something a push can do, and
+    // the reason to want one is that the publish job's newest steps had never
+    // executed at all -- it ran `npx tsx` with no `npm ci` anywhere in the job.
+    expect(workflow).toContain("- 'rehearsal-v*'");
+
+    // Exactly one step in this workflow creates a release.
+    expect(workflow.match(/softprops\/action-gh-release/g)).toHaveLength(1);
+    const publish = jobs(workflow).publish!;
+    const step = publish.slice(publish.indexOf('- name: Publish'));
+    expect(step).toContain('softprops/action-gh-release');
+    // And it is off for both kinds of rehearsal.
+    expect(step).toContain(
+      "if: ${{ !((github.event_name == 'workflow_dispatch' && inputs.dry_run) || startsWith(github.ref_name, 'rehearsal-')) }}",
+    );
+
+    // A rehearsal builds the version its tag names, on every platform, or it
+    // is a rehearsal of something else.
+    expect(workflow).toContain('v="${GITHUB_REF_NAME#rehearsal-}"');
+    expect(workflow).toContain("-replace '^(rehearsal-)?v', ''");
+    // Both platform jobs, not one of them.
+    expect(workflow.match(/GITHUB_REF_NAME#rehearsal-/g)).toHaveLength(2);
+  });
+
+  it('installs dependencies in every job that runs one of this repository\'s tools', () => {
+    // `tools/release-manifest.mts` imports `@xbam/shared`, which resolves only
+    // through the workspace symlinks `npm ci` writes. The publish job ran it
+    // with neither a Node setup nor an install, so the step ended in
+    // ERR_MODULE_NOT_FOUND -- and because that step is newer than the last
+    // release, it had never once run. A release would have been the first
+    // thing to find out.
+    for (const [name, file] of [
+      ['release', workflow],
+      ['platform packaging', validation],
+    ] as const) {
+      for (const [job, text] of Object.entries(jobs(file))) {
+        if (!/npx |npm run /.test(text)) continue;
+        expect(text, `${name}: the ${job} job runs a tool without setting up Node`).toContain('actions/setup-node');
+        expect(text, `${name}: the ${job} job runs a tool without installing dependencies`).toContain('npm ci');
+        // And in that order: an install before the thing that needs it.
+        expect(text.indexOf('npm ci'), `${name}: the ${job} job installs after it runs`).toBeLessThan(
+          Math.min(
+            ...[text.indexOf('npx '), text.indexOf('npm run ')].filter((at) => at >= 0),
+          ),
+        );
+      }
+    }
+  });
+
   it('builds the manifest against a complete asset set, never a directory listing', () => {
     // The generator described whatever it found, so a release short one of the
     // four packages would have published a manifest saying that platform was
@@ -347,6 +397,11 @@ describe('the release builds every platform from one tag', () => {
    * The property worth pinning is not that the input exists. It is that the
    * publishing step cannot run when it is set, and that it still runs on an
    * ordinary tag push, where `inputs` does not exist at all.
+   *
+   * There is a second way in, for the same reason a second way was needed at
+   * all: `workflow_dispatch` wants a browser or an authenticated CLI, and a
+   * push can only push. A `rehearsal-v*` tag runs everything and publishes
+   * nothing, so the same condition has to hold for it.
    */
   describe('a dry run', () => {
     it('is offered, and defaults to off', () => {
@@ -358,15 +413,22 @@ describe('the release builds every platform from one tag', () => {
     it('cannot publish, and a tag push still can', () => {
       const at = workflow.search(/^ *- name: Publish$/m);
       expect(at).toBeGreaterThan(-1);
-      const step = workflow.slice(at, at + 600);
+      const step = workflow.slice(at, at + 900);
       const guard = step.match(/if: \$\{\{([^}]+)\}\}/);
       expect(guard).not.toBeNull();
-      const condition = guard![1]!;
-      // Both halves. `!inputs.dry_run` on its own is true for a tag push, which
-      // is right, and reads as "not set" for a dispatch that did set it only
-      // because GitHub coerces -- so the event is named rather than relied on.
-      expect(condition).toContain("github.event_name != 'workflow_dispatch'");
-      expect(condition).toContain('!inputs.dry_run');
+      const condition = guard![1]!.trim();
+      // A negation of everything that is a rehearsal, so an ordinary tag push
+      // -- which has no `inputs` at all -- falls straight through it.
+      expect(condition.startsWith('!(')).toBe(true);
+      // Both halves of the dispatch case. `!inputs.dry_run` on its own is true
+      // for a tag push, which is right, and reads as "not set" for a dispatch
+      // that did set it only because GitHub coerces -- so the event is named
+      // rather than relied on.
+      expect(condition).toContain("github.event_name == 'workflow_dispatch'");
+      expect(condition).toContain('inputs.dry_run');
+      // And the other kind of rehearsal, which is a tag and would otherwise
+      // reach exactly the path a release does.
+      expect(condition).toContain("startsWith(github.ref_name, 'rehearsal-')");
     });
 
     it('leaves something to look at, since nothing is published', () => {
