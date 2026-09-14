@@ -410,8 +410,59 @@ rather than on the writes.
 | web build | clean |
 | `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | exit 0: installed twice, upgraded over the top, the bootstrap route, three side-by-side instances, and all three INSTALL_INFO schemas |
 | Golden installations | `AI17Z-test` byte for byte what it was. **`AI17Z-main` is not** -- see below; nothing in this work touched it |
-| GitHub Actions | pending |
-| `rehearsal-v1.0.0-beta.20` | pending |
+| GitHub Actions | 11 of 11 green on the tagged commit, platform packaging included |
+| `rehearsal-v1.0.0-beta.20` | seven jobs green, nothing published, qualification correctly skipped |
+
+### What it did once published
+
+The release ran its own qualification, which installed the published release on
+real machines:
+
+| | |
+| --- | --- |
+| Release workflow | seven build and publish jobs green |
+| Qualification | six jobs green -- which release, the published bytes, published macOS arm64, published macOS x64, published Ubuntu amd64, published Ubuntu arm64, and Windows looking only |
+| Assets | 14 |
+
+Then checked again from here, from the published bytes alone -- downloaded,
+hashed, and read back:
+
+| | |
+| --- | --- |
+| Every installable artifact | 10 of 10 hashed from the downloaded bytes and equal to the release's own `SHA256SUMS.txt` |
+| `release-manifest.json` | agrees with every file that arrived, on both hash and size |
+| Build provenance | 13 of 14 assets attested |
+
+Three points where that check disagreed with the release, each compared against
+Beta 1.0.0 (19) before being called anything:
+
+- `SHA256SUMS.txt` lists ten files, not fourteen. The three it omits --
+  `release-manifest.json`, `AI17Z-Setup-Audit-*.json` and this document -- are
+  metadata rather than things anybody installs, and the manifest carries their
+  hashes anyway. Beta 1.0.0 (19) lists exactly the same ten.
+- This document is the one asset with no attestation. It is copied from the
+  repository at publish time rather than built, and it has never been attested
+  in any release, Beta 1.0.0 (19) included.
+- `.github/scripts/verify-published-release.sh`, which is what CI runs, cannot
+  run on this Windows machine: under Git Bash it builds a URL curl rejects as
+  malformed, while a direct fetch of the same asset answers 200. That is this
+  shell, not the release. The checks above were done directly instead of
+  changing the script CI depends on.
+
+### The updater, from Beta 1.0.0 (19)
+
+The route an existing Mac takes, checked before publishing rather than assumed:
+
+- Beta 1.0.0 (19)'s `sort -V` ranks `1.0.0-beta.20` above `1.0.0-beta.19`, and
+  `dpkg --compare-versions` agrees -- run in `ubuntu:24.04`, both of them. So
+  the old comparators accept this release even though they would have refused
+  `1.0.0`. This is the last release at which that is true.
+- Beta 1.0.0 (19)'s updater replaces the launcher itself
+  (`install -m 0755 "$WORK/AI17Z/ai17z" "$HERE/ai17z"`), and the installer's
+  symlink already points at that path, so `ai17z` on PATH works again
+  afterwards without anybody repairing anything.
+- It must be started by its full path on Beta 1.0.0 (19), because the `ai17z`
+  command is the thing that is broken there.
 
 ### A golden installation moved, and it was not this work
 
