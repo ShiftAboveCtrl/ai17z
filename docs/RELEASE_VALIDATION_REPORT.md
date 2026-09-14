@@ -8,6 +8,119 @@ The release workflow attaches this file to the release.
 
 ---
 
+## Hosted platform validation
+
+Every platform package is now built on a runner that really is that
+architecture, on every push, and then run. `.github/workflows/platform-packaging.yml`
+does it and publishes nothing; it calls the same actions under `.github/actions/`
+that the release workflow calls, so what it proves is what a release ships.
+
+Before this, the macOS and Ubuntu jobs had never executed. The first four runs
+found five faults that would otherwise have appeared for the first time in a
+release.
+
+### The runners
+
+| Job | Runner | Result |
+| --- | --- | --- |
+| macOS arm64 | `macos-15` (Apple Silicon) | green |
+| macOS Intel | `macos-15-intel` | green |
+| Ubuntu amd64 | `ubuntu-24.04` | green |
+| Ubuntu arm64 | `ubuntu-24.04-arm` | green |
+| Ubuntu 22.04 takes the package | container on `ubuntu-24.04` | green |
+| Ubuntu 24.04 takes the package | container on `ubuntu-24.04` | green |
+| Ubuntu 26.04 takes the package | container on `ubuntu-24.04` | green |
+| the release contract | `ubuntu-24.04` | green |
+
+The labels are named exactly rather than through `macos-latest`, which moves
+between major versions *and* between architectures. The workflow asked for
+`macos-13` until this pass, and that image was retired in December 2025 -- so a
+release built from it would have waited for a runner that no longer answers.
+
+### What the hosted jobs actually run
+
+On each platform, against the package that job just built:
+
+- the bundled Node starts, and reports the architecture and platform it should
+- `file` confirms the Node binary and `@esbuild/<platform>/bin/esbuild` are
+  genuinely that architecture, rather than the runtime's own opinion of itself
+- esbuild runs
+- tsx transforms TypeScript
+- every workspace package imports -- ten of them, which is how a package with
+  every file present but nothing loadable is caught
+- `BUILD_INFO.json` and `VERSION` agree with the build
+- the launcher runs from a path with a space in it
+- an unknown command is refused
+- root is refused
+- the owner's directories are created 0700, beside the program and never inside
+  it
+- `doctor` produces a report from a packaged layout
+- the compatibility gate answers OK and NO, and treats a missing Chrome as a
+  note rather than a refusal
+- the fail-closed decision: a pre-gate installation carries on, a current one
+  with a broken gate refuses
+- the real installer installs, reruns without losing the master key, refuses a
+  downgrade, and leaves the owner's data alone on uninstall
+- the finished artifact is unpacked and scanned for anything of an owner's or a
+  builder's
+
+### The faults it found
+
+1. **`npm run package:unix` had never worked.** It imports the deny-list from
+   the Windows packager, and that file ended in a bare top-level `await main()`
+   -- so importing it ran the Windows packager. It is the first step of both
+   platform jobs.
+2. **Neither Unix build made a compiled binary executable.** The rule gave the
+   executable bit to anything with a `#!` line, written with `grep -I`, which
+   skips binary files by design. `@esbuild/<platform>/bin/esbuild` shipped at
+   0644 -- and that is what every `tsx` process an installed copy runs shells
+   out to. The package installed and the first migration died with EACCES.
+3. **The real `.deb` failed lintian.** `test-deb.sh` builds from a stand-in
+   stage with no dependency tree, so it never saw the sixteen errors a real one
+   produces.
+4. **The macOS installer's cleanup attacked a mounted volume.** The Docker path
+   mounts a disk image inside the work directory; `rm -rf` on a mounted
+   read-only volume walks the whole of Docker.app printing errors and leaves it
+   mounted.
+5. **It waited for a keypress that could not come.** With no terminal, `read`
+   returned at once and the script carried on as though Docker's setup had been
+   finished.
+
+And one thing the hosted run found that no packaging test could: the installer
+never told anybody the package is unsigned. The README says it, the trust
+document leads with it, and there was a test asserting the installer "says
+plainly that it is not signed or notarized" -- which passed, because it was
+reading a comment in the source.
+
+### What the artifacts were
+
+A green run produced, and retained without publishing:
+
+    macos-arm64         77,074,839 bytes
+    macos-x64           80,251,364 bytes
+    ubuntu-amd64        55,333,483 bytes
+    ubuntu-arm64        52,934,681 bytes
+    release-contract         1,467 bytes   (SHA256SUMS.txt + release-manifest.json)
+
+The contract job checks that every artifact the manifest names exists, and that
+each package carries the architecture its name claims -- after an upload and a
+download, over the finished files.
+
+### Still BLOCKED, and narrowly
+
+- **Docker Desktop's own install on macOS.** A hosted Mac has no Docker and
+  cannot be given one without a person: a disk image, a graphical setup, and
+  Docker's own licence, which AI17Z must never accept for somebody. The
+  `docker` command is answered at the vendor boundary so the rest of the
+  installer can be tested; the download, the image, the licence and the first
+  run are not reachable and are not claimed.
+- **Gatekeeper and quarantine as a person meets them** -- a downloaded file's
+  quarantine attribute, the dialog, Terminal's paste protection. Nothing in a
+  headless runner represents those.
+- **A real X sign-in**, on either platform.
+- **Chrome on Ubuntu**, which needs a graphical session.
+- **A physical reboot.**
+
 ## Cross-platform: macOS and Ubuntu
 
 Not a release of its own yet. This records what was proved while building the
@@ -55,8 +168,11 @@ out is to take it away.
   supported on Docker Engine's own list; that is source-inspected, not run.
 - **arm64.** Both arm64 packages build, and the build refuses a runner whose
   architecture disagrees. Neither has been installed on arm64 hardware.
-- **A real multi-platform release.** The workflow builds five jobs and has not
-  yet run: no tag has been pushed since it was written.
+- **A real multi-platform release.** The release workflow itself has still not
+  run -- no tag has been pushed since it was written. What has run, on every
+  push, is the packaging validation workflow, which builds the same artifacts
+  through the same actions and publishes nothing. See "Hosted platform
+  validation" above.
 
 Each of those is broken down item by item, so that whoever gets the hardware
 knows exactly what to look at: [what still needs a

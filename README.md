@@ -196,10 +196,11 @@ attributes to get around that. [What that actually means](docs/MACOS_TRUST.md)
 is written out in full, including which prompts are Docker's or Google's rather
 than AI17Z's.
 
-**The macOS packages are built and verified automatically, but nobody has yet
-run one on a Mac** -- no Mac hardware has been available. What has been proved
-and what has not is listed, item by item, in
-[what still needs a Mac](docs/MACOS_TEST_CHECKLIST.md). Treat macOS as new.
+**Every macOS package is built and run on a real Mac before it can be
+released** -- Apple Silicon and Intel, on every push, including the installer.
+What a hosted machine cannot represent is a person at one: Gatekeeper's dialogs,
+a downloaded file's quarantine, and Docker Desktop's own setup. Those are listed
+in [what still needs a Mac](docs/MACOS_TEST_CHECKLIST.md).
 
 Also: [Installing on macOS](docs/MACOS_INSTALL.md) ·
 [What still needs a Mac](docs/MACOS_TEST_CHECKLIST.md)
@@ -227,9 +228,11 @@ doctor` reports that as *not available* rather than as a failure, and nothing
 installs a desktop to pretend otherwise. AI17Z binds to loopback and the docs
 recommend an SSH tunnel rather than exposing it.
 
-The package, the installer and the lifecycle are tested against a real Ubuntu
-24.04. Chrome, Docker Engine and the other releases are not yet --
-[what still needs a real machine](docs/UBUNTU_TEST_CHECKLIST.md) says which.
+The package, the installer and the lifecycle are built and run on real Ubuntu
+machines -- amd64 and arm64 -- and the package is installed and exercised on
+22.04, 24.04 and 26.04, on every push. Chrome needs a graphical session and is
+not among them; [what still needs a real machine](docs/UBUNTU_TEST_CHECKLIST.md)
+says what else.
 
 Also: [Installing on Ubuntu](docs/UBUNTU_INSTALL.md) ·
 [What it touches](docs/UBUNTU_SECURITY.md) ·
