@@ -43,7 +43,7 @@ What can still ask you, legitimately, and why:
 
 | Prompt | Who is asking | Why |
 | --- | --- | --- |
-| Administrator password when installing Docker Desktop | **Docker's installer** | It installs a system component. AI17Z does not ask for it and never sees it. |
+| Administrator password when installing Docker Desktop | **`sudo`, for Docker's own installer** | It puts an application in /Applications and registers a privileged helper. AI17Z does not ask for it and never sees it, and you can decline and drag Docker across yourself instead. |
 | Docker's Subscription Service Agreement | **Docker** | Their terms, collected by them. AI17Z never accepts a vendor agreement for you. |
 | Docker asking to finish first-run setup | **Docker** | AI17Z waits for the engine to answer rather than assuming it is ready. |
 | Google Chrome's first-run screens | **Google** | Their terms, their software. |

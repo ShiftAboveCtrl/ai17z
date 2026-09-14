@@ -23,7 +23,11 @@ set -euo pipefail
 
 REPOSITORY="ShiftAboveCtrl/ai17z"
 API="https://api.github.com/repos/${REPOSITORY}/releases"
-ALLOWED_HOSTS="api.github.com github.com objects.githubusercontent.com release-assets.githubusercontent.com"
+ALLOWED_HOSTS="api.github.com github.com objects.githubusercontent.com release-assets.githubusercontent.com desktop.docker.com"
+# desktop.docker.com is Docker's own, and the only host here that is not
+# AI17Z's release. It is in the list rather than reached around it: the
+# Docker download used a bare curl, so the declared list was not the whole
+# list, which is the kind of gap that makes a declaration worth nothing.
 # Chrome's own floor, which is a Google decision rather than an AI17Z one.
 # Docker Desktop separately supports the current and two previous macOS
 # releases; on an older one it may refuse to install and will say so itself.
@@ -104,6 +108,9 @@ assert_allowed_url() {
     *) stop "AI17Z will not download from ${host}." "It only downloads from its own GitHub release." "" ;; esac
 }
 fetch() { assert_allowed_url "$2"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$1" "$2"; }
+# The same, with a progress bar. Docker Desktop is several hundred megabytes
+# and a silent terminal for four minutes reads as a hang.
+fetch_watched() { assert_allowed_url "$2"; curl -fL --proto '=https' --tlsv1.2 --retry 3 --progress-bar -o "$1" "$2"; }
 fetch_stdout() { assert_allowed_url "$1"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 "$1"; }
 
 printf '\n  %sAI17Z%s\n\n' "$GREEN" "$OFF"
@@ -251,48 +258,106 @@ that first. AI17Z will never accept a vendor's agreement on your behalf." \
     "Open Docker, complete whatever it asks, then run this installer again."
 else
   note "Docker Desktop is not installed. AI17Z needs it for the database."
-  note "It comes from Docker, not from AI17Z, and installing it needs your"
-  note "administrator password -- Docker's installer asks, not this script."
-  if ask "Download Docker Desktop for $([ "$ARCH" = arm64 ] && echo "Apple Silicon" || echo "Intel") and open it?"; then
+  note "It comes from Docker, not from AI17Z. Docker's own installer puts it in"
+  note "your Applications folder, and Docker asks you to accept its terms the"
+  note "first time it runs. AI17Z never answers that for anybody."
+  if ask "Download Docker Desktop for $([ "$ARCH" = arm64 ] && echo "Apple Silicon" || echo "Intel") from Docker?"; then
     DOCKER_DMG="$WORK/Docker.dmg"
     DOCKER_URL="https://desktop.docker.com/mac/main/$([ "$ARCH" = arm64 ] && echo arm64 || echo amd64)/Docker.dmg"
-    note "Downloading from desktop.docker.com"
-    if curl -fsSL --proto '=https' --tlsv1.2 -o "$DOCKER_DMG" "$DOCKER_URL"; then
-      MOUNT="$WORK/dockermount"
-      mkdir -p "$MOUNT"
-      hdiutil attach -quiet -nobrowse -mountpoint "$MOUNT" "$DOCKER_DMG"
-      note "Docker Desktop's installer is open. Follow it, including Docker's own"
-      note "terms, then come back here."
-      open "$MOUNT/Docker.app" 2>/dev/null || true
-      # Only where somebody is there to press it.
-      #
-      # With no terminal, `read` returns at once and the script carries on as
-      # though Docker's setup had been completed -- which it has not, and which
-      # it then blames on Docker. This repository has the same lesson written
-      # down for a `pause` at the end of a Windows script: nothing may wait for
-      # a keypress that cannot come, and nothing may pretend one arrived.
+    note "Downloading from desktop.docker.com. This is a large file."
+    fetch_watched "$DOCKER_DMG" "$DOCKER_URL" || stop \
+      "Docker Desktop could not be downloaded." \
+      "Nothing on this Mac was changed by AI17Z." \
+      "Install it yourself from https://www.docker.com/products/docker-desktop/
+then run this installer again."
+
+    MOUNT="$WORK/dockermount"
+    mkdir -p "$MOUNT"
+    hdiutil attach -quiet -nobrowse -mountpoint "$MOUNT" "$DOCKER_DMG" || stop \
+      "Docker's disk image could not be opened." \
+      "Nothing on this Mac was changed by AI17Z." \
+      "Install Docker Desktop yourself from https://www.docker.com/products/docker-desktop/
+then run this installer again."
+
+    # A .dmg is a disk image, not an installer.
+    #
+    # This used to `open` Docker.app from inside the mounted image and tell
+    # somebody to follow an installer that does not exist. That launches Docker
+    # from a read-only volume which is then ejected out from under it, so
+    # nothing ever reaches /Applications and the engine never comes up --
+    # reported from a real Mac, where it looked like Docker had simply failed.
+    #
+    # What installs it is Docker's own command-line installer, inside the image,
+    # documented by Docker:
+    #
+    #   sudo /Volumes/Docker/Docker.app/Contents/MacOS/install
+    #
+    # It needs administrator rights because it puts an application in
+    # /Applications and registers a privileged helper, and sudo asks for the
+    # password rather than this script. It does **not** accept Docker's licence:
+    # Docker asks that on first launch, and `--accept-license`, which that
+    # binary does support, appears nowhere here and must never be added.
+    DOCKER_INSTALL="$MOUNT/Docker.app/Contents/MacOS/install"
+    if [ -x "$DOCKER_INSTALL" ] && [ -t 0 ] \
+       && ask "Let Docker's own installer put it in Applications? It needs your administrator password."; then
+      note "Running Docker's installer. sudo will ask for your password."
+      sudo "$DOCKER_INSTALL" || warn "Docker's installer did not finish. You can still do it by hand."
+    fi
+
+    if [ ! -d "/Applications/Docker.app" ]; then
+      # By hand, which is what a disk image is for. The window that opens holds
+      # Docker.app and a shortcut to Applications beside it; dragging one onto
+      # the other is the whole of it.
+      note ""
+      note "Opening Docker's disk image in Finder."
+      note "Drag Docker.app onto the Applications folder in that window."
+      open "$MOUNT" 2>/dev/null || true
       if [ -t 0 ]; then
-        printf '  %sPress return once Docker Desktop is installed and running. %s' "$YELLOW" "$OFF"
-        read -r _ || true
+        # Waited for by looking, not by asking for a keypress. A keypress proves
+        # somebody pressed a key; this proves the application is there.
+        note "Waiting for Docker.app to appear in Applications (up to six minutes)..."
+        waited=0
+        while [ ! -d "/Applications/Docker.app" ] && [ "$waited" -lt 180 ]; do
+          sleep 2
+          waited=$((waited + 1))
+          [ $((waited % 15)) -eq 0 ] && note "  still waiting..."
+        done
       else
         hdiutil detach -quiet -force "$MOUNT" 2>/dev/null || true
-        stop "Docker Desktop needs somebody to finish installing it." \
-          "Its installer has been opened, and this is not running where anyone can answer it.
+        stop "Docker Desktop needs somebody to put it in Applications." \
+          "Its disk image was downloaded, and this is not running where anyone can drag it.
 Nothing on this Mac was changed by AI17Z." \
-          "Finish Docker's own setup, then run this installer again."
+          "Install Docker Desktop yourself, then run this installer again."
       fi
-      # -force, because the installer that was just opened may still hold it,
-      # and a volume left mounted is one somebody has to find and eject.
-      hdiutil detach -quiet -force "$MOUNT" 2>/dev/null || true
-      docker_ready || stop "Docker still is not answering." \
-        "AI17Z was not installed. Nothing on this Mac was changed by AI17Z." \
-        "Finish Docker's setup, then run this installer again."
-      good "Docker is answering"
-    else
-      stop "Docker Desktop could not be downloaded." "" \
-        "Install it yourself from https://www.docker.com/products/docker-desktop/
-then run this installer again."
     fi
+
+    if [ ! -d "/Applications/Docker.app" ]; then
+      hdiutil detach -quiet -force "$MOUNT" 2>/dev/null || true
+      stop "Docker Desktop is not in your Applications folder." \
+        "Nothing on this Mac was changed by AI17Z." \
+        "Drag Docker.app from Docker's disk image into Applications, or install it from
+https://www.docker.com/products/docker-desktop/ -- then run this installer again."
+    fi
+    good "Docker Desktop is in Applications"
+
+    # Only now. Ejecting while the copy was still being made is how the last
+    # version of this left nothing behind.
+    hdiutil detach -quiet -force "$MOUNT" 2>/dev/null || true
+
+    note "Starting Docker Desktop. Accept Docker's terms if it asks you to."
+    open -a Docker 2>/dev/null || true
+    note "Waiting for Docker's virtual machine (up to three minutes)..."
+    waited=0
+    while ! docker_ready && [ "$waited" -lt 90 ]; do
+      sleep 2
+      waited=$((waited + 1))
+    done
+    docker_ready || stop "Docker Desktop is installed but its engine is not answering." \
+      "If Docker is asking you to accept its terms or finish first-run setup, do
+that first -- AI17Z cannot and will not answer it for you.
+AI17Z was not installed. Nothing on this Mac was changed by AI17Z." \
+      "Finish Docker's setup, then run this installer again."
+    good "Docker is answering"
   else
     stop "AI17Z needs Docker Desktop." "Nothing was installed." \
       "Install it from https://www.docker.com/products/docker-desktop/
