@@ -354,6 +354,42 @@ One addition: the qualification is started by the release itself. Beta 1.0.0
 a workflow created, because a release created with `GITHUB_TOKEN` raises no
 event another workflow can listen for.
 
+### After it was published
+
+Fourteen assets, the fourteen expected. `sha256sum -c` against the release's own
+`SHA256SUMS.txt`: ten lines, ten `OK`. The manifest agrees with every one of its
+eleven artifacts on hash and on byte count, records the tagged commit and the
+run that built it, and says `supported=true` for all three platforms. Every
+asset answers 200 from the attestations API. All five packages scanned clean,
+and `file` confirms the architectures from the bytes: six checks, six passed.
+
+**And the qualification ran itself.** Fourteen jobs in the release run, every
+one green -- validate, four platform builds, publish, and then the whole
+qualification: the published bytes, both Macs, both Ubuntus and Windows, each
+installing or resolving this release from its own URLs. That is the loop the
+last release could not close, because nothing started it.
+
+**The defect this release exists for, from the two published packages.** The
+same three questions asked of each installed `.deb`:
+
+    Beta 1.0.0 (17)                     Beta 1.0.0 (18)
+      "predates the check": PRESENT       absent
+      UPDATER_GATE_SCHEMA:  no            yes
+      refuses when it cannot tell: no     yes
+
+and the shared decision, driven from Beta 1.0.0 (18)'s own application:
+
+    --decide 3 crashed    -> NO
+    --decide 3 no-bridge  -> NO
+    --decide 3 unreadable -> NO
+
+where the release before it handed the gate nothing and got GO for all three.
+
+The release page's generated changelog opens "What changed since
+v1.0.0-beta.17", with a rehearsal tag having existed and been deleted in
+between -- which is the filter added for Beta 1.0.0 (17) doing its job a second
+time. Every link on the page answers.
+
 ### Not verified
 
 Unchanged from Beta 1.0.0 (17), and for the same reasons: Docker Desktop's own
