@@ -339,12 +339,12 @@ can see. The other half still needs a Mac.
 | `npm run typecheck` | clean |
 | `npm run lint` | clean |
 | `npx vitest run tests/unit` | 166 files, 2434 tests, 0 failures |
-| `npm test` | GATE_TESTS |
+| `npm test` | 260 files, 3323 tests, 0 failures |
 | `npm run release:check` | 953 tracked files, nothing found |
 | `shellcheck` | clean at error and warning, all 35 tracked shell files |
-| GitHub Actions | GATE_CI |
+| GitHub Actions | 11 of 11 green on the tagged commit, platform packaging included |
 | `rehearsal-v1.0.0-beta.19` | GATE_REHEARSAL |
-| `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | GATE_WINDOWS |
+| `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | exit 0, and both golden installations byte for byte what they were |
 
 ### Not verified
 
