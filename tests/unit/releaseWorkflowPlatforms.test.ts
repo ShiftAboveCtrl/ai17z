@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  PLATFORMS,
   installerScriptAsset,
   macosPackageAsset,
   ubuntuPackageAsset,
@@ -203,6 +204,28 @@ describe('the release builds every platform from one tag', () => {
     // from, so its hashes are the ones somebody will get.
     expect(workflow.indexOf('- name: Checksums')).toBeLessThan(workflow.indexOf('- name: The release manifest'));
     expect(workflow).toContain('tools/release-manifest.mts');
+  });
+
+  it('builds the manifest against a complete asset set, never a directory listing', () => {
+    // The generator described whatever it found, so a release short one of the
+    // four packages would have published a manifest saying that platform was
+    // unsupported -- correct about the directory, and wrong about the release.
+    const publish = jobs(workflow).publish!;
+    const call = publish.slice(
+      publish.indexOf('tools/release-manifest.mts'),
+      publish.indexOf('cat dist/release-manifest.json'),
+    );
+    expect(call.length).toBeGreaterThan(0);
+    // A release publishes all three platforms, so it must narrow nothing.
+    const narrowed = /--expect ([a-z,]+)/.exec(call)?.[1];
+    expect(narrowed ? narrowed.split(',').sort() : [...PLATFORMS].sort()).toEqual([...PLATFORMS].sort());
+
+    // Validation never builds a Windows artifact, and says which two it owes
+    // rather than being told a release is broken on every push.
+    expect(validation).toContain('--expect macos,ubuntu');
+    // Which needs the two readable installers in the directory, exactly as the
+    // release copies them in, or the set it claims to expect is not there.
+    expect(validation).toContain('cp install-ai17z-macos.sh install-ai17z-ubuntu.sh dist/');
   });
 
   it('attests provenance without calling it something it is not', () => {

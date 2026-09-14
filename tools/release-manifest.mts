@@ -8,7 +8,12 @@
  * hoped for. Everything it names comes from `@xbam/shared`, which is the only
  * place an asset name is composed.
  *
- *   release-manifest.mts --dist <dir> --version <x.y.z> --commit <sha> [--run <url>]
+ *   release-manifest.mts --dist <dir> --version <x.y.z> --commit <sha>
+ *                        [--run <url>] [--expect windows,macos,ubuntu]
+ *
+ * `--expect` is the list of platforms this directory is supposed to hold a
+ * complete set for, and defaults to all three. Anything a named platform owes
+ * and has not got stops this rather than quietly leaving it out.
  */
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -18,7 +23,9 @@ import {
   CHECKSUMS_ASSET,
   INSTALL_LAYOUT_SCHEMA,
   MANIFEST_ASSET,
+  PLATFORMS,
   RELEASE_MANIFEST_SCHEMA,
+  expectedAssets,
   installerScriptAsset,
   macosPackageAsset,
   releaseManifestSchema,
@@ -51,11 +58,54 @@ const version = flag('version').replace(/^v/, '');
 const commit = flag('commit');
 const runUrl = optional('run');
 
+/**
+ * Which platforms this directory is supposed to be complete for.
+ *
+ * The release publishes all three at once; the packaging validation workflow
+ * builds macOS and Ubuntu and never sees a Windows artifact, so it says so
+ * rather than being told a release is broken every time it runs.
+ */
+const expected = (optional('expect') ?? PLATFORMS.join(','))
+  .split(',')
+  .map((name) => name.trim())
+  .filter((name) => name.length > 0);
+for (const platform of expected) {
+  if (!PLATFORMS.includes(platform as (typeof PLATFORMS)[number])) {
+    console.error(`  --expect: ${platform} is not a platform`);
+    process.exit(2);
+  }
+}
+
 const root = resolve(new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const nodeRuntime = JSON.parse(readFileSync(join(root, 'packaging/node-runtime.json'), 'utf8')) as { version: string };
 const migrations = readdirSync(join(root, 'migrations')).filter((name) => name.endsWith('.sql')).sort();
 
 const present = new Set(readdirSync(dist));
+
+// What each named platform owes, checked against the directory before a line of
+// the manifest is composed.
+//
+// Without this the generator described whatever it found: a release that had
+// lost one of the four packages would have published a manifest saying that
+// platform was unsupported, which is true of the directory and a lie about the
+// release. `if-no-files-found: error` on the uploads makes that hard to reach,
+// which is exactly what was said about the attestation step that had never run.
+const owed = [
+  // Shared, and the whole trust chain: every installer checks a package against
+  // this file before it unpacks a byte, so a release without it is one that
+  // deliberately cannot be installed.
+  { platform: 'every platform', name: CHECKSUMS_ASSET },
+  ...expected.flatMap((platform) =>
+    expectedAssets(version, platform as (typeof PLATFORMS)[number]).map((name) => ({ platform, name })),
+  ),
+];
+const absent = owed.filter((entry) => !present.has(entry.name));
+if (absent.length > 0) {
+  console.error(`  ${dist} is missing ${absent.length} file(s) it was told to expect:`);
+  for (const entry of absent) console.error(`    ${entry.platform}: ${entry.name}`);
+  console.error('  A manifest built from this would describe a release nobody could install.');
+  process.exit(1);
+}
 function artifact(name: string, kind: ReleaseArtifact['kind'], platform: ReleaseArtifact['platform'], arch: Architecture | null): ReleaseArtifact | null {
   if (!present.has(name)) return null;
   const bytes = readFileSync(join(dist, name));

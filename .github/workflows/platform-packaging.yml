@@ -260,19 +260,34 @@ jobs:
       - name: What was built
         run: ls -l dist
 
+      - name: The readable installers, as the release publishes them
+        run: |
+          set -euo pipefail
+          # Repository files, copied in exactly as the release workflow copies
+          # them, so this directory is the full macOS and Ubuntu asset set and
+          # the completeness check below has something to be complete about.
+          cp install-ai17z-macos.sh install-ai17z-ubuntu.sh dist/
+
       - name: The checksums, over the real files
         run: |
           set -euo pipefail
           cd dist
-          sha256sum AI17Z-macos-*.tar.gz ai17z_*.deb | tee SHA256SUMS.txt
+          sha256sum AI17Z-macos-*.tar.gz ai17z_*.deb \
+            install-ai17z-macos.sh install-ai17z-ubuntu.sh | tee SHA256SUMS.txt
 
       - name: The release manifest, from the one place a name is composed
         run: |
           set -euo pipefail
+          # `--expect macos,ubuntu`: this workflow never builds a Windows
+          # artifact, and everything the two platforms it does build owe has to
+          # be here. Without the flag the generator described whatever it found,
+          # so a package that failed to upload came back as "that platform is
+          # not supported" rather than as a red job.
           npx tsx tools/release-manifest.mts \
             --dist dist \
             --version "${{ needs.version.outputs.version }}" \
             --commit "${{ github.sha }}" \
+            --expect macos,ubuntu \
             --run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           cat dist/release-manifest.json
 
