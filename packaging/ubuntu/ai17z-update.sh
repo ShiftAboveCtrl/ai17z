@@ -114,31 +114,56 @@ good "AI17Z ${VERSION} is available"
 #
 # The schema this installation recorded about itself is what separates them, and
 # the decision lives in @xbam/shared so that three updaters cannot drift about
-# it. Where even the bridge cannot run, the fallback is the cautious half: an
-# installation that records the gate's schema and cannot run the gate is exactly
-# the case that must not proceed.
+# it.
+#
+# Where even the bridge cannot run, Ubuntu has no ambiguity to resolve and so
+# does not get the benefit of the doubt. Windows has installations made before
+# the gate existed, and refusing those would strand exactly the copies this is
+# meant to move forward. Ubuntu has none: the first release that could be
+# installed here at all was Beta 1.0.0 (17), and the gate shipped in it. An
+# installation with nothing to say about itself is therefore a fault here, not
+# an old friend, and a fault stops the update.
+#
+# This was the other way round in Beta 1.0.0 (17), and it meant the cautious
+# half could never run: no Ubuntu installer writes INSTALL_INFO.json, so every
+# installation read as one that predates a check it actually shipped with.
+# Proved against the published package rather than reasoned about -- installed,
+# and the file is not there.
 # ---------------------------------------------------------------------------
 installed_schema() {
+  said=""
   info="$APP_ROOT/INSTALL_INFO.json"
-  [ -f "$info" ] || { printf ''; return; }
-  sed -n 's/.*"schema"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$info" | head -1
+  [ -f "$info" ] && said="$(sed -n 's/.*"schema"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$info" | head -1)"
+  [ -n "$said" ] && { printf '%s' "$said"; return; }
+
+  # Nothing recorded. On Ubuntu that does not mean an old installation -- there
+  # are none, the first release installable here shipped the gate -- it means no
+  # installer here has ever written the file. So the answer is the schema this
+  # copy actually speaks, read out of the application it carries rather than
+  # repeated here, exactly as the Windows setup program reads the same constant.
+  sed -n 's/.*UPDATER_GATE_SCHEMA[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' \
+    "$APP_ROOT/packages/shared/src/releaseManifest.ts" 2>/dev/null | head -1
 }
 
 gate_said_nothing() { # why
   schema="$(installed_schema)"
+  if [ -z "$schema" ]; then
+    # Neither a record nor the constant the application carries. This copy is
+    # not intact, and an update is the wrong thing to attempt on one.
+    oops "AI17Z could not tell which update protocol this installation speaks." \
+      "Neither INSTALL_INFO.json nor the application's own source could be read." \
+      "Nothing was changed. AI17Z ${CURRENT} is still installed and still running."
+  fi
   decision=""
   if [ -f "$APP_ROOT/node_modules/tsx/dist/cli.mjs" ] && [ -f "$APP_ROOT/packaging/preflight.mts" ]; then
     decision="$(cd "$APP_ROOT" && "$(ai17z_node)" "$APP_ROOT/node_modules/tsx/dist/cli.mjs" \
       "$APP_ROOT/packaging/preflight.mts" --decide "$schema" "$1" 2>/dev/null || printf '')"
   fi
   if [ -z "$decision" ]; then
-    # The bridge itself could not run. An installation that predates it says so
-    # by having no schema at all; anything else is a fault, and a fault here
-    # stops the update rather than finding out afterwards.
-    if [ -z "$schema" ] || [ "$schema" -lt 3 ] 2>/dev/null; then
-      note "This installation predates the compatibility check; continuing."
-      return 0
-    fi
+    # The bridge itself could not run, and on this platform there is no older
+    # installation for that to be explained by. Nothing to say about itself is a
+    # fault, and a fault here stops the update rather than finding out
+    # afterwards.
     oops "AI17Z could not check whether ${VERSION} can run on this machine." \
       "The check is part of how this installation updates, and it did not run." \
       "Nothing was changed. AI17Z ${CURRENT} is still installed and still running."

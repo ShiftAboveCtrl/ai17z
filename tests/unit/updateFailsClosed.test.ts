@@ -140,6 +140,46 @@ describe('the updaters ask for that decision rather than making it', () => {
     expect(script).toContain('--decide');
   });
 
+  /**
+   * The half of the protocol that could never run on two of the three platforms.
+   *
+   * The fail-open branch is Windows reasoning: there are Windows installations
+   * made before the gate existed, and refusing those would strand exactly the
+   * copies the gate exists to move forward. It was copied to macOS and Ubuntu,
+   * where it means nothing -- the first release installable on either was Beta
+   * 1.0.0 (17), and the gate shipped in it.
+   *
+   * And neither Unix installer writes `INSTALL_INFO.json`, so every installation
+   * read as one that predates a check it actually carried. Proved against the
+   * published package rather than reasoned about: installed the real `.deb` in a
+   * container, and the file is not there. Handing the shared decision what that
+   * installation would have said produced GO for every unavailable outcome;
+   * handing it what this says produces NO:
+   *
+   *     --decide 3  crashed  -> NO      --decide 1  crashed  -> GO
+   *     --decide 3  no-bridge-> NO      --decide 1  no-bridge-> GO
+   */
+  it('gives no Unix installation the benefit of a doubt it cannot have', () => {
+    for (const platform of ['ubuntu', 'macos'] as const) {
+      const updater = updaters[platform];
+      // The branch that let it carry on is gone.
+      expect(updater, `${platform} still excuses itself`).not.toContain(
+        'This installation predates the compatibility check',
+      );
+      // And an absent record resolves to the schema the application carries,
+      // read out of the shipped source rather than repeated in shell -- the
+      // same way the Windows setup program reads the same constant.
+      expect(updater).toContain('UPDATER_GATE_SCHEMA');
+      expect(updater).toContain('packages/shared/src/releaseManifest.ts');
+      // Neither a record nor the constant means the copy is not intact, and an
+      // update is the wrong thing to attempt on one.
+      expect(updater).toContain('could not tell which update protocol');
+    }
+
+    // Windows keeps it, and must: those installations really do exist.
+    expect(updaters.windows).toContain('Get-Ai17zGateSchema');
+  });
+
   it('no updater decides it for itself', () => {
     // Three copies of a rule is how one of them drifts, and the one that drifts
     // is the one nobody runs.
