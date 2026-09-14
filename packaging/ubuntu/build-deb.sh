@@ -147,8 +147,18 @@ rm -rf "$PKG/usr/lib/ai17z/runtime/node/share/doc" \
 # them is dead weight, and lintian is right to object to all of it.
 RUNTIME_NODE="$PKG/usr/lib/ai17z/runtime/node"
 find "$RUNTIME_NODE" \( -name '*.ps1' -o -name '*.cmd' -o -name '*.bat' \) -delete
-rm -rf "$RUNTIME_NODE/lib/node_modules/corepack" "$RUNTIME_NODE/bin/corepack" \
-       "$RUNTIME_NODE/lib/node_modules/npm/node_modules/node-gyp"
+# corepack goes; node-gyp stays.
+#
+# npm resolves `node-gyp/bin/node-gyp.js` before it runs any lifecycle script --
+# `make-spawn-args.js` does it unconditionally -- so pruning it does not just
+# remove the ability to compile a native addon, it stops `npm run` working at
+# all. Reported from a Mac, whose build pruned the same thing:
+#
+#     Cannot find module 'node-gyp/bin/node-gyp.js'
+#
+# The Python it brings is still removed, which is the half that only matters for
+# compiling something, and nothing here compiles.
+rm -rf "$RUNTIME_NODE/lib/node_modules/corepack" "$RUNTIME_NODE/bin/corepack"
 find "$RUNTIME_NODE" \( -name '*.py' -o -name '*.pyc' \) -delete
 
 # Three things lintian objects to that are upstream Node being upstream Node.

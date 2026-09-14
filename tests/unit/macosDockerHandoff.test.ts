@@ -126,3 +126,71 @@ describe('the Docker Desktop handover on macOS', () => {
     }
   });
 });
+
+/**
+ * What a packaged copy does on its very first launch.
+ *
+ * Reported from the same Mac, one step further in: the installation succeeded
+ * and then setting up failed with
+ *
+ *     npm error Cannot find module 'node-gyp/bin/node-gyp.js'
+ *
+ * Two mistakes meeting. The first launch ran `npm install` on a copy that
+ * already ships 4,753 files of `node_modules` -- a package brings its
+ * dependencies, and reaching the network to reconcile them against
+ * package.json on somebody's machine is a different program from this one. And
+ * the build prunes node-gyp out of the bundled runtime to save space, which
+ * does not merely remove the ability to compile a native addon: npm resolves
+ * `node-gyp/bin/node-gyp.js` before running *any* lifecycle script, so the
+ * bundled npm could not run one at all.
+ *
+ * Every hosted check ran tsx, which is what the worker needs. None ran npm,
+ * which is what first-run setup needs.
+ */
+describe('a packaged copy on first launch', () => {
+  const setup = readFileSync(resolve(root, 'install-ai17z.sh'), 'utf8');
+  const builds = {
+    macos: readFileSync(resolve(root, 'packaging/macos/build-tarball.sh'), 'utf8'),
+    ubuntu: readFileSync(resolve(root, 'packaging/ubuntu/build-deb.sh'), 'utf8'),
+  };
+  const ran = (text: string) =>
+    text
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n');
+
+  it('does not install dependencies it was shipped with', () => {
+    // `BUILD_INFO.json` sits beside this script in a package and in no
+    // checkout, which is the only honest way to tell them apart.
+    expect(ran(setup)).toContain('BUILD_INFO.json');
+    expect(ran(setup)).toMatch(/PACKAGED=1/);
+    expect(ran(setup)).toMatch(/elif \[ "\$PACKAGED" = "1" \]/);
+    // And a clone still installs them, because there it is the whole point.
+    expect(ran(setup)).toContain('npm install ||');
+  });
+
+  it('leaves node-gyp in the runtime on both platforms', () => {
+    for (const [platform, text] of Object.entries(builds)) {
+      // Against every line that runs, not against one `rm -rf` line: the prune
+      // this replaced sat on a backslash continuation, so a pattern anchored to
+      // a single line walked straight past it -- which the first version of this
+      // check did, and passed.
+      expect(ran(text), `${platform} still prunes node-gyp`).not.toContain('node-gyp');
+      // corepack is still removed: nothing here uses it, and it is not load
+      // bearing for npm the way node-gyp turned out to be.
+      expect(ran(text), `${platform} stopped pruning corepack`).toMatch(/corepack/);
+    }
+  });
+
+  it('asks the bundled npm to run a script, on both platforms', () => {
+    // The check that would have caught it. `cd` into the throwaway package
+    // rather than `npm --prefix`, which moves where npm installs and not where
+    // it looks for the script -- the first version of this passed nothing.
+    for (const proof of ['prove-macos-package.sh', 'prove-ubuntu-package.sh']) {
+      const text = readFileSync(resolve(root, '.github/scripts', proof), 'utf8');
+      expect(text, `${proof} never runs npm`).toContain('run --silent probe');
+      expect(text).toMatch(/cd "\$PROBE_DIR" &&/);
+      expect(text).not.toMatch(/npm" --prefix/);
+    }
+  });
+});

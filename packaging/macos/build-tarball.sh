@@ -107,8 +107,19 @@ rm -rf "$PKG/runtime/node/share/doc" "$PKG/runtime/node/share/man" "$PKG/runtime
 # Windows shims and the Python that node-gyp brings, neither of which a Mac
 # installation ever runs.
 find "$PKG/runtime/node" \( -name '*.ps1' -o -name '*.cmd' -o -name '*.bat' -o -name '*.py' \) -delete
-rm -rf "$PKG/runtime/node/lib/node_modules/corepack" "$PKG/runtime/node/bin/corepack" \
-       "$PKG/runtime/node/lib/node_modules/npm/node_modules/node-gyp"
+# corepack goes; node-gyp stays.
+#
+# node-gyp was pruned here too, and npm resolves `node-gyp/bin/node-gyp.js`
+# before it runs *any* lifecycle script -- `make-spawn-args.js` does it
+# unconditionally, to put the path in the environment. So removing it does not
+# just remove the ability to compile a native addon: it stops `npm run` working
+# at all, which is what a Mac reported as
+#
+#     Cannot find module 'node-gyp/bin/node-gyp.js'
+#
+# Its Python helpers are still deleted by the line above, which is the part that
+# would only matter for compiling something -- and nothing here compiles.
+rm -rf "$PKG/runtime/node/lib/node_modules/corepack" "$PKG/runtime/node/bin/corepack"
 
 # The architecture is proved, not trusted. A Node built for the other
 # architecture runs under Rosetta and reports the wrong thing everywhere after.

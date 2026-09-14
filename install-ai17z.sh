@@ -147,8 +147,29 @@ else
 fi
 
 # -- Dependencies ------------------------------------------------------------
+#
+# A package brought its own, and must not be told to fetch them again.
+#
+# `BUILD_INFO.json` sits beside this script in a package and exists in no
+# checkout, so it is the one honest way to tell the two apart. Reported from a
+# real Mac: the first launch of an installed copy ran `npm install`, which died
+# with
+#
+#     Cannot find module 'node-gyp/bin/node-gyp.js'
+#
+# because the build prunes node-gyp from the bundled runtime -- and npm resolves
+# it before running any script at all, whether or not anything native is being
+# built. The installation was complete and correct; the step that failed was one
+# that should never have run. A packaged copy ships its node_modules, and
+# reaching the network to reconcile them against package.json on somebody's
+# machine is a different program from the one this is.
+PACKAGED=0
+[ -f "$(dirname "${BASH_SOURCE[0]:-$0}")/BUILD_INFO.json" ] && PACKAGED=1
+
 if [ "${1:-}" = "--skip-install" ]; then
   warn "Skipping npm install, as asked."
+elif [ "$PACKAGED" = "1" ]; then
+  done_ "Dependencies came with this installation."
 else
   step "Installing dependencies (this takes a few minutes the first time)..."
   npm install || stop_with_reason \
