@@ -299,8 +299,47 @@ account is under "And the defect that made this a two-release day", in the Beta
 | `npm run release:check` | 951 tracked files, nothing found, run after `git add` |
 | `shellcheck` | clean at error and warning, all 35 tracked shell files |
 | GitHub Actions | 11 of 11 green on the tagged commit, platform packaging included |
-| `rehearsal-v1.0.0-beta.18` | GATE_REHEARSAL |
+| `rehearsal-v1.0.0-beta.18` | seven jobs green, nothing published, and the qualification correctly skipped |
 | `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | exit 0, and both golden installations byte for byte what they were |
+
+### What the rehearsal said
+
+`rehearsal-v1.0.0-beta.18`, on the commit below the one this release is tagged
+at -- the difference between them is the line above this section and this
+paragraph. Seven jobs, every one green, nothing published, and the qualification
+job skipped, which is the whole of what a rehearsal is for.
+
+It is also the first run in which the qualification appeared in the release's
+own graph at all, which is the thing that could only be found by running it:
+a reusable workflow that GitHub will not accept fails the whole file at parse
+time, and nothing local can tell you that.
+
+    Nothing was published. A release from this commit would have attached:
+      23352K AI17Z-App-1.0.0-beta.18.zip
+      16592K AI17Z-Setup-1.0.0-beta.18.exe
+          8K AI17Z-Setup-Audit-1.0.0-beta.18.json
+      75816K AI17Z-macos-arm64-1.0.0-beta.18.tar.gz
+      78956K AI17Z-macos-x64-1.0.0-beta.18.tar.gz
+        140K Install-AI17Z-1.0.0-beta.18.ps1
+          4K SHA256SUMS.txt
+      54040K ai17z_1.0.0-beta.18_amd64.deb
+      51680K ai17z_1.0.0-beta.18_arm64.deb
+         20K install-ai17z-macos.sh
+         24K install-ai17z-ubuntu.sh
+         28K install.ps1
+          8K release-manifest.json
+
+    release-manifest.json, in summary:
+      version 1.0.0-beta.18  tag v1.0.0-beta.18  schema 1
+      windows: supported=true arch=x64
+      macos:   supported=true arch=x64,arm64
+      ubuntu:  supported=true arch=x64,arm64
+      artifacts: 11
+
+Three of those hashes differ from Beta 1.0.0 (17)'s and the rest do not, which
+is a check in itself: `install.ps1` and `install-ai17z-macos.sh` changed because
+this release changes them, and `Install-AI17Z-<version>.ps1` did not because the
+Windows setup program is untouched.
 
 ### What is different about releasing this one
 
