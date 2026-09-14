@@ -259,25 +259,6 @@ jobs:
           & "$env:ISCC" "/DAppVersion=${{ steps.version.outputs.version }}" packaging\windows\ai17z.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with $LASTEXITCODE" }
 
-      - name: Attest what was built
-        # GitHub's own artifact attestation: a signed statement that these exact
-        # bytes came out of this workflow, at this commit, in this repository.
-        #
-        # It is **not** Apple notarization and **not** Debian archive signing,
-        # and the documentation says so in those words. It answers "did this
-        # come from where it claims", not "has a platform vendor vouched for
-        # it". Verification needs the GitHub CLI and is never required to
-        # install AI17Z.
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-path: |
-            dist/AI17Z-Setup-*.exe
-            dist/Install-AI17Z-*.ps1
-            dist/AI17Z-App-*.zip
-            dist/AI17Z-macos-*.tar.gz
-            dist/ai17z_*.deb
-        continue-on-error: true
-
       - name: Publish the setup script and its audit manifest beside it
         shell: pwsh
         run: |
@@ -564,6 +545,49 @@ jobs:
           # The declaration was an input, not an asset.
           rm -f dist/setup-declaration.json
           cat "dist/AI17Z-Setup-Audit-$VERSION.json"
+
+      - name: Attest what was built
+        # GitHub's own artifact attestation: a signed statement that these exact
+        # bytes came out of this workflow, at this commit, in this repository.
+        #
+        # It is **not** Apple notarization and **not** Debian archive signing,
+        # and the documentation says so in those words. It answers "did this
+        # come from where it claims", not "has a platform vendor vouched for
+        # it". Verification needs the GitHub CLI and is never required to
+        # install AI17Z.
+        #
+        # Here, rather than in a build job, because this is the only place every
+        # artifact exists at once -- and because of how the first version of it
+        # failed. It sat in the Windows job and named `dist/` paths, a directory
+        # that job has never had: it writes to `build/windows`. Every glob
+        # matched nothing, the action failed, and `continue-on-error: true`
+        # rendered that green. Beta 1.0.0 (16) shipped saying it carried build
+        # provenance while every one of its assets answers 404 from the
+        # attestations API. So this step is required: a release that cannot be
+        # attested is a release that does not get published, rather than one
+        # that quietly stops meaning what its notes say.
+        #
+        # Deliberately not skipped on a dry run. An attestation is a statement
+        # about bytes this workflow really did build, which is as true of a
+        # rehearsal as of a release -- and a step exercised for the first time
+        # by the release it is meant to protect is the shape that produced the
+        # bug above.
+        uses: actions/attest-build-provenance@v4
+        with:
+          # Everything published, the checksum file included -- one signed
+          # statement over the list and over each file it vouches for.
+          subject-path: |
+            dist/AI17Z-Setup-*.exe
+            dist/install.ps1
+            dist/Install-AI17Z-*.ps1
+            dist/AI17Z-App-*.zip
+            dist/AI17Z-macos-*.tar.gz
+            dist/ai17z_*.deb
+            dist/install-ai17z-macos.sh
+            dist/install-ai17z-ubuntu.sh
+            dist/release-manifest.json
+            dist/AI17Z-Setup-Audit-*.json
+            dist/SHA256SUMS.txt
 
       - name: Release notes
         run: |

@@ -30,6 +30,41 @@ const macosProof = read('.github/scripts/prove-macos-package.sh');
 const ubuntuProof = read('.github/scripts/prove-ubuntu-package.sh');
 const VERSION = '9.9.9';
 
+/**
+ * Every job's own text, keyed by its name.
+ *
+ * A workflow read as one string answers "does this appear somewhere", which is
+ * the question that let an attestation step name paths belonging to a different
+ * job and pass for a release and a half.
+ */
+function jobs(text: string): Record<string, string> {
+  const body = text.slice(text.indexOf('\njobs:'));
+  const headers = [...body.matchAll(/^ {2}([a-z][a-z0-9-]*):\r?$/gm)];
+  const found: Record<string, string> = {};
+  headers.forEach((match, at) => {
+    const from = match.index ?? 0;
+    const to = at + 1 < headers.length ? (headers[at + 1]!.index ?? body.length) : body.length;
+    found[match[1]!] = body.slice(from, to);
+  });
+  return found;
+}
+
+/** The entries of a `key: |` block: every line indented past the key. */
+function block(text: string, key: string): string[] {
+  const at = text.indexOf(`${key}: |`);
+  if (at < 0) return [];
+  const lines = text.slice(at).split(/\r?\n/).slice(1);
+  const indent = (line: string) => line.length - line.trimStart().length;
+  const depth = indent(lines[0] ?? '');
+  const out: string[] = [];
+  for (const line of lines) {
+    if (line.trim() === '') continue;
+    if (indent(line) < depth) break;
+    out.push(line.trim());
+  }
+  return out;
+}
+
 describe('the release builds every platform from one tag', () => {
   it('has a job for each, and publish waits for all of them', () => {
     const jobs = [...workflow.slice(workflow.indexOf('\njobs:')).matchAll(/^ {2}([a-z][a-z0-9-]*):\r?$/gm)].map((m) => m[1]);
@@ -178,6 +213,54 @@ describe('the release builds every platform from one tag', () => {
     // be the one dishonest line in a release.
     const step = workflow.slice(workflow.indexOf('- name: Attest what was built'));
     expect(step.slice(0, 900)).toMatch(/not\*\* Apple notarization/);
+  });
+
+  /**
+   * The three things that were wrong with the first version of that step, as
+   * three properties rather than as a comment.
+   *
+   * It ran in the Windows build job and named `dist/` paths. That job writes to
+   * `build/windows` and has never had a `dist`, so every glob matched nothing;
+   * the action failed; and `continue-on-error: true` painted the step green.
+   * Beta 1.0.0 (16) was published saying it carried build provenance, and every
+   * one of its assets answers 404 from the attestations API.
+   */
+  it('attests in the job that actually holds the artifacts', () => {
+    const byJob = jobs(workflow);
+    const attesting = Object.entries(byJob)
+      .filter(([, text]) => text.includes('actions/attest-build-provenance'))
+      .map(([name]) => name);
+    expect(attesting).toEqual(['publish']);
+
+    const publish = byJob.publish!;
+    const subjects = block(publish, 'subject-path');
+    expect(subjects.length).toBeGreaterThan(0);
+    // And the directory has to be one this job makes: `download-artifact` puts
+    // every platform's output in `dist`, and nothing else here creates one.
+    expect(publish).toContain('path: dist');
+    for (const subject of subjects) {
+      expect(subject.startsWith('dist/'), `${subject} is not in a directory this job has`).toBe(true);
+    }
+  });
+
+  it('signs for every file it publishes out of dist', () => {
+    const publish = jobs(workflow).publish!;
+    // RELEASE_VALIDATION_REPORT.md is checked in rather than built, so it is
+    // published from the checkout and is deliberately not a build subject.
+    const published = block(publish, 'files').filter((entry) => entry.startsWith('dist/'));
+    expect(published.length).toBeGreaterThan(0);
+    expect(new Set(block(publish, 'subject-path'))).toEqual(new Set(published));
+  });
+
+  it('will not let the attestation fail quietly', () => {
+    const job = jobs(workflow).publish!;
+    const step = job.slice(job.indexOf('- name: Attest what was built'), job.indexOf('- name: Release notes'));
+    // As a key, not as a word: the step's own comment explains the failure
+    // this replaced, and says `continue-on-error: true` in doing so.
+    expect(step.split(/\r?\n/).filter((line) => /^\s*continue-on-error:/.test(line))).toEqual([]);
+    // Before the release exists rather than after it, so a release that cannot
+    // be attested is one that does not get published.
+    expect(job.indexOf('- name: Attest what was built')).toBeLessThan(job.indexOf('- name: Publish'));
   });
 
   it('pins one Node for every platform', () => {
