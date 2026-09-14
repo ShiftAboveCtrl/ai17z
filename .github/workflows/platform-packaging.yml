@@ -35,6 +35,14 @@ on:
       - 'docker/**'
       - '.env.example'
       - '*-ai17z.sh'
+      # These ship too, and are not decoration: the three Dockerfiles `COPY`
+      # them, so `docker compose build` fails with "/docs: not found" when one
+      # is missing. A change here changes what four runners build, and the last
+      # commit before a release should be one they have all built.
+      - 'docs/**'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
       - '.github/workflows/platform-packaging.yml'
       - '.github/workflows/release.yml'
       - '.github/actions/**'
@@ -59,6 +67,14 @@ on:
       - 'docker/**'
       - '.env.example'
       - '*-ai17z.sh'
+      # These ship too, and are not decoration: the three Dockerfiles `COPY`
+      # them, so `docker compose build` fails with "/docs: not found" when one
+      # is missing. A change here changes what four runners build, and the last
+      # commit before a release should be one they have all built.
+      - 'docs/**'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
       - '.github/workflows/platform-packaging.yml'
       - '.github/workflows/release.yml'
       - '.github/actions/**'
