@@ -1,0 +1,175 @@
+# What a published AI17Z release does on somebody else's machine.
+#
+# Everything else in this repository proves a package a run has just built. This
+# proves the one that was published, and it takes nothing from a build: the
+# installers come off the release, the packages come off the release over the
+# network, and the hashes they are checked against are the ones the release
+# published.
+#
+# It runs on `release: published`, so it happens by itself the moment a release
+# exists. Nothing here needs anybody to remember to trigger it, which is the
+# same reason `platform-packaging.yml` runs on a push. A `qualify-v*` tag runs
+# it again against a release that already exists -- for a re-check after a fix,
+# or against an older release to see what it would do.
+#
+# It changes nothing. No release is created, edited or deleted by this workflow,
+# and it holds no write permission of any kind.
+name: Release qualification
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'qualify-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qualify-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  which:
+    name: which release
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = release ]; then
+            tag='${{ github.event.release.tag_name }}'
+          else
+            tag="${GITHUB_REF_NAME#qualify-}"
+          fi
+          [ -n "$tag" ] || { echo "::error::nothing said which release to qualify"; exit 1; }
+          # A rehearsal publishes nothing, so there is nothing for this to
+          # qualify and a `rehearsal-v*` tag must never reach it.
+          case "$tag" in
+            rehearsal-*) echo "::error::$tag is a rehearsal, which publishes nothing"; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "qualifying $tag"
+
+  published:
+    name: the published bytes
+    needs: which
+    runs-on: ubuntu-24.04
+    steps:
+      # The tag, not the default branch. This workflow is started by an event
+      # whose ref is `main`, which has usually moved on by the time anybody
+      # re-runs it -- and the checks below compare what the release published
+      # against what this commit holds.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.which.outputs.tag }}
+
+      - name: Hashes, the manifest, and the provenance
+        shell: bash
+        # The token is for the rate limit and nothing else: every call this
+        # makes is of public data and works signed out. Sixty requests an
+        # hour is the unauthenticated ceiling, a runner shares its address,
+        # and being throttled would look exactly like a release with no
+        # attestations -- the one answer this must not get wrong by accident.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          bash .github/scripts/say-on-fail.sh 'the published release' -- \
+            bash .github/scripts/verify-published-release.sh "${{ needs.which.outputs.tag }}"
+
+  macos:
+    name: published macOS ${{ matrix.arch }}
+    needs: which
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, arch: arm64 }
+          - { runner: macos-15-intel, arch: x64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.which.outputs.tag }}
+
+      - name: Install the published release, as a stranger would
+        shell: bash
+        run: |
+          bash .github/scripts/say-on-fail.sh 'the published macOS release' -- \
+            bash .github/scripts/qualify-published-macos.sh "${{ needs.which.outputs.tag }}"
+
+  ubuntu:
+    name: published Ubuntu ${{ matrix.arch }}
+    needs: which
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.which.outputs.tag }}
+
+      - name: Install the published release, as a stranger would
+        shell: bash
+        run: |
+          bash .github/scripts/say-on-fail.sh 'the published Ubuntu release' -- \
+            bash .github/scripts/qualify-published-ubuntu.sh "${{ needs.which.outputs.tag }}"
+
+  windows:
+    # Stage zero of the Windows route, against the published bytes.
+    #
+    # Not the whole installation: that turns on a Windows feature, installs
+    # Docker Desktop and wants a restart, and a runner is the wrong place to
+    # find out whether any of that works -- `npm run verify:install` is, and it
+    # runs on a real machine before anything is tagged. What is reachable here
+    # is the part that decides what to trust: resolve the release, find the
+    # setup script, download it, hash it against the release's own
+    # SHA256SUMS.txt, and refuse on a mismatch. `-WhatIfOnly` then reports the
+    # plan and changes nothing.
+    name: published Windows, looking only
+    needs: which
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.which.outputs.tag }}
+
+      - name: The published install.ps1, checked and then run in WhatIf
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ needs.which.outputs.tag }}'
+          $dl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag"
+          $room = Join-Path $env:RUNNER_TEMP 'published'
+          New-Item -ItemType Directory -Force -Path $room | Out-Null
+
+          Invoke-WebRequest -Uri "$dl/SHA256SUMS.txt" -OutFile "$room\SHA256SUMS.txt" -UseBasicParsing
+          Invoke-WebRequest -Uri "$dl/install.ps1" -OutFile "$room\install.ps1" -UseBasicParsing
+
+          # The hash the release published, against the file that arrived.
+          $line = Get-Content "$room\SHA256SUMS.txt" | Where-Object { $_ -match '\s+install\.ps1$' }
+          if (-not $line) { throw 'SHA256SUMS.txt has no line for install.ps1' }
+          $want = ($line -split '\s+')[0]
+          $got = (Get-FileHash "$room\install.ps1" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($got -ne $want) { throw "install.ps1 hashes $got and the release says $want" }
+          "  install.ps1 matches the hash the release published"
+
+          # And that it is this tag's file rather than another version of it.
+          $mine = (Get-FileHash 'install.ps1' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($got -ne $mine) { throw 'the published install.ps1 is not the one this commit holds' }
+          "  and is byte for byte the script this checkout holds"
+
+          # Looking only. Nothing on this runner is changed.
+          $source = Get-Content "$room\install.ps1" -Raw
+          & ([scriptblock]::Create($source)) -Release $tag -WhatIfOnly
+          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
+            throw "install.ps1 -WhatIfOnly exited $LASTEXITCODE"
+          }

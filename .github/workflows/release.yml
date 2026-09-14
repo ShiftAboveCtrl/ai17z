@@ -842,16 +842,33 @@ jobs:
         if: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || startsWith(github.ref_name, 'rehearsal-') }}
         run: |
           set -euo pipefail
-          echo "This was a dry run. Nothing has been published."
-          echo
-          echo "Assets that would have been attached:"
-          ls -l dist | sed 's/^/  /'
-          echo
-          echo "SHA256SUMS.txt:"
-          cat dist/SHA256SUMS.txt | sed 's/^/  /'
-          echo
-          echo "release-manifest.json:"
-          cat dist/release-manifest.json
+          # Through an annotation, not only into the log.
+          #
+          # Actions logs need admin rights on the repository to read -- the API
+          # answers 403 and so does the web interface -- and a rehearsal whose
+          # whole value is what it printed is no use if almost nobody can read
+          # it. Annotations are public. The log still gets the same text.
+          {
+            echo "Nothing was published. A release from this commit would have attached:"
+            echo
+            ( cd dist && ls -1 -s --block-size=K \
+                AI17Z-Setup-*.exe install.ps1 Install-AI17Z-*.ps1 AI17Z-App-*.zip \
+                AI17Z-macos-*.tar.gz ai17z_*.deb \
+                install-ai17z-macos.sh install-ai17z-ubuntu.sh \
+                SHA256SUMS.txt release-manifest.json AI17Z-Setup-Audit-*.json )
+            echo
+            echo "SHA256SUMS.txt:"
+            cat dist/SHA256SUMS.txt
+            echo
+            echo "release-manifest.json, in summary:"
+            jq -r '
+              "  version \(.version)  tag \(.tag)  schema \(.schemaVersion)",
+              "  commit \(.commit)",
+              (.platforms | to_entries[] |
+                "  \(.key): supported=\(.value.supported) arch=\(.value.architectures | join(","))"),
+              "  artifacts: \(.artifacts | length)"
+            ' dist/release-manifest.json
+          } | bash .github/scripts/say-out.sh "Rehearsal of ${{ needs.build.outputs.version }}"
 
       - name: Keep them, so a dry run can be inspected
         if: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || startsWith(github.ref_name, 'rehearsal-') }}

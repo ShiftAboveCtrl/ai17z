@@ -132,3 +132,132 @@ cannot be removed by architecture, it gets documented, not bypassed.
 Put observations in `docs/RELEASE_VALIDATION_REPORT.md` under the release they
 were made for, with the macOS version and hardware. An unchecked box here is
 more useful than a checked one nobody can trace.
+
+---
+
+## Against the published Beta 1.0.0 (17), on a Mac you own
+
+Everything above is machine proof. This is the part that needs a person, in the
+order a person would meet it. Each step says what should happen, so a
+disagreement is a finding rather than a feeling.
+
+Nothing here asks you to lower a macOS protection. If any step seems to, stop.
+
+**1. Fetch the installer and read it.**
+
+```bash
+cd ~/Downloads
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh
+less install-ai17z-macos.sh
+```
+
+*Expected:* a shell script you can read end to end. It should mention
+`SHA256SUMS.txt`, and it should say the package is not signed or notarized
+before it unpacks anything.
+
+**2. Check what a browser download actually carries.**
+
+The installer uses `curl`, which sets no quarantine attribute. A file you
+download in Safari or Chrome does. Do both, and look:
+
+```bash
+xattr -p com.apple.quarantine ~/Downloads/install-ai17z-macos.sh 2>&1
+```
+
+*Expected:* `No such xattr` for the `curl` copy, and a value for a browser copy.
+**Do not remove it.** Note what macOS then does when you run each.
+
+**3. Install.**
+
+```bash
+bash install-ai17z-macos.sh
+```
+
+*Expected:* it works out Apple Silicon or Intel, names the package it is
+fetching, prints the SHA-256 it checked and says it matched, tells you the
+packages are unsigned, and never asks for `sudo`. Everything lands in
+`~/Library/Application Support/AI17Z/<instance>/`, and a launcher is symlinked
+into `~/.local/bin` -- never `/usr/local/bin`, which would need `sudo`.
+
+*Write down:* which architecture it chose, and whether that is the machine you
+are on.
+
+**4. Docker Desktop, if it is not already there.**
+
+*Expected:* AI17Z offers Docker's own installer and hands you to Docker's own
+first run and licence. **AI17Z must never accept a licence for you.** If a
+licence is accepted without you reading and clicking it, that is a defect worth
+reporting immediately.
+
+**5. Start it, and watch the first run.**
+
+*Expected:* the images build on this machine (there is no registry), then the
+interface opens. The first build is slow -- minutes -- and should say what it is
+doing rather than sitting silent.
+
+**6. The diagnostics.**
+
+The installer symlinks a launcher into `~/.local/bin`, and says so -- including
+what to add to your shell profile when that is not on your `PATH`. Either form
+works:
+
+```bash
+ai17z doctor
+"$HOME/Library/Application Support/AI17Z/AI17Z/ai17z" doctor
+```
+
+*Expected:* it finds the installation, reports the ports, and says whether
+browser support is available. On a Mac with Chrome it should be available.
+
+*Also check:* it never asked for `sudo`, and nothing was written outside your
+home. The second form is the installation's own launcher, under
+`~/Library/Application Support/AI17Z/<instance>/`, where `<instance>` is `AI17Z`
+unless you asked for another name.
+
+**7. Sign in to X through a real Chrome window.** This is the one thing no
+runner can do.
+
+*Expected:* AI17Z opens a Chrome window with a profile of its own and **touches
+nothing on the page**. You type. If X asks for a code, a CAPTCHA, or confirms an
+unusual login, AI17Z should stop and leave the window alone -- it must never
+answer a security challenge. Your everyday Chrome profile must be untouched.
+
+**8. Update.**
+
+```bash
+ai17z update
+```
+
+*Expected:* the compatibility check runs **before anything stops**, so a Mac
+that cannot run the arriving version keeps the one it has, running. Your `.env`,
+master key, database and signed-in profile all survive. The Version panel in
+Settings shows the same thing and names the installation it belongs to; AI17Z
+never updates itself without being asked.
+
+**9. Reboot the Mac, and start AI17Z again.**
+
+*Expected:* Docker comes back, the containers come back, and the signed-in X
+session is still signed in.
+
+### Verifying the download yourself
+
+```bash
+shasum -a 256 AI17Z-macos-arm64-1.0.0-beta.17.tar.gz
+curl -fsSL https://github.com/ShiftAboveCtrl/ai17z/releases/download/v1.0.0-beta.17/SHA256SUMS.txt
+```
+
+And the provenance, which needs the GitHub CLI and is never required to install:
+
+```bash
+gh attestation verify AI17Z-macos-arm64-1.0.0-beta.17.tar.gz --repo ShiftAboveCtrl/ai17z
+```
+
+*Expected:* the hashes agree, and the attestation verifies against this
+repository's release workflow. That is build provenance -- **not** Apple
+notarization, and not a claim that Apple has examined AI17Z.
+
+### If something disagrees
+
+Say what actually happened, including nothing happening, at
+<https://github.com/ShiftAboveCtrl/ai17z/issues>. A step that behaved
+differently from the sentence above is worth reporting even if it worked.
