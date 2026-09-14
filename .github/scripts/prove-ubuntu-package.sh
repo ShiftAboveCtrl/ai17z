@@ -26,8 +26,16 @@ TSX="$APP/node_modules/tsx/dist/cli.mjs"
 WANT_ARCH="$([ "$ARCH" = amd64 ] && echo x64 || echo arm64)"
 
 pass=0; fail=0
+# What failed, repeated at the end.
+#
+# An annotation carries the last forty lines, and a failure forty lines up is a
+# failure nobody reading the annotation can see. Keeping the labels and printing
+# them last costs nothing and is the difference between a diagnosis and another
+# round trip.
+failures=""
 ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
+bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); failures="$failures
+    $1"; }
 
 echo "### the bundled runtime"
 if out="$("$NODE" --version 2>&1)"; then ok "node: $out"; else bad "node will not run: $out"; fi
@@ -229,5 +237,6 @@ else
 fi
 
 echo
+[ "$fail" -eq 0 ] || printf '\n  what failed:%b\n' "$failures"
 echo "  package: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -30,8 +30,16 @@ SHA="$(shasum -a 256 "$TARBALL" | awk '{print $1}')"
 ARCH="$(uname -m)"; [ "$ARCH" = x86_64 ] && ARCH=x64
 
 pass=0; fail=0
+# What failed, repeated at the end.
+#
+# An annotation carries the last forty lines, and a failure forty lines up is a
+# failure nobody reading the annotation can see. Keeping the labels and printing
+# them last costs nothing and is the difference between a diagnosis and another
+# round trip.
+failures=""
 ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
+bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); failures="$failures
+    $1"; }
 says() { if printf '%s' "$2" | grep -qi -- "$3"; then ok "$1"; else
   bad "$1"; printf '%s\n' "$2" | tail -12 | sed 's/^/        /'; fi; }
 
@@ -169,5 +177,6 @@ fi
 
 rm -rf "$ROOM"
 echo
+[ "$fail" -eq 0 ] || printf '\n  what failed:%b\n' "$failures"
 echo "  installer: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

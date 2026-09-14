@@ -32,8 +32,16 @@ INSTALLER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/install-ai17z-ubu
 SHA="$(sha256sum "$DEB" | awk '{print $1}')"
 
 pass=0; fail=0
+# What failed, repeated at the end.
+#
+# An annotation carries the last forty lines, and a failure forty lines up is a
+# failure nobody reading the annotation can see. Keeping the labels and printing
+# them last costs nothing and is the difference between a diagnosis and another
+# round trip.
+failures=""
 ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
+bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); failures="$failures
+    $1"; }
 says() { if printf '%s' "$2" | grep -qi -- "$3"; then ok "$1"; else
   bad "$1"; printf '%s\n' "$2" | tail -12 | sed 's/^/        /'; fi; }
 
@@ -80,7 +88,15 @@ sudo cp "$DEB" "/tmp/tampered/$NAME"
 printf 'not the same bytes\n' | sudo tee -a "/tmp/tampered/$NAME" >/dev/null
 sudo chmod -R a+rX /tmp/tampered
 
-as_installer() { sudo -u installer -H bash -c "$1" 2>&1; }
+INSTALLER_HOME="$(getent passwd installer | cut -d: -f6)"
+# HOME named rather than left to `sudo -H`, which on a hosted runner did not
+# take: the launcher ran as `installer` with HOME still pointing at the
+# runner's own, and tried to create its XDG directories somewhere it could not
+# write.
+as_installer() {
+  sudo -u installer -H env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME -u XDG_CACHE_HOME \
+    "HOME=$INSTALLER_HOME" bash -c "$1" 2>&1
+}
 
 echo "### the refusals, before anything is installed"
 
@@ -164,7 +180,7 @@ echo "### the owner's data outlives the program"
 as_installer 'mkdir -p ~/.local/share/ai17z && printf "a thing the owner made\n" > ~/.local/share/ai17z/owner.txt' >/dev/null
 sudo apt-get purge -y -qq ai17z >/dev/null 2>&1
 if [ -d /usr/lib/ai17z ]; then bad "purge left the program behind"; else ok "the program is gone"; fi
-if sudo -u installer test -f /home/installer/.local/share/ai17z/owner.txt; then
+if sudo -u installer test -f "$INSTALLER_HOME"/.local/share/ai17z/owner.txt; then
   ok "the owner's file is still there"
 else
   bad "purge took the owner's data with it"
@@ -172,5 +188,6 @@ fi
 
 sudo rm -f /etc/sudoers.d/installer
 echo
+[ "$fail" -eq 0 ] || printf '\n  what failed:%b\n' "$failures"
 echo "  installer: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
