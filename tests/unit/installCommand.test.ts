@@ -326,6 +326,54 @@ describe('the setup program it hands over to', () => {
   });
 });
 
+describe('a refusal sends somebody to the right place', () => {
+  /**
+   * Observed, on a real machine, against a genuinely throttled address:
+   *
+   *   AI17Z could not work out which release to install.
+   *   Nothing on this PC was changed.
+   *   The remote server returned an error: (403) Forbidden.
+   *
+   *   Check your internet connection and run the command again.
+   *
+   * The connection was fine. GitHub allows sixty API requests an hour to an
+   * address that is not signed in, and a shared office, a university or a cloud
+   * box reaches that without anybody doing anything unusual -- so the one
+   * person whose connection is provably working was the one being sent to check
+   * it. An installer that answers wrong is worse than one that answers nothing.
+   */
+  it('does not blame the connection for a refusal', () => {
+    const catchBlock = install.slice(
+      install.indexOf("Stop-Install 'AI17Z could not work out which release to install.'") - 900,
+      install.indexOf("Stop-Install 'AI17Z could not work out which release to install.'") + 400,
+    );
+    expect(catchBlock).toMatch(/40\[39\]|403/);
+    expect(catchBlock).toMatch(/rate limit/i);
+    // The connection is still the answer for everything that is not a refusal.
+    expect(catchBlock).toContain('Check your internet connection');
+  });
+
+  it('says nothing about a cause the shell installers cannot know', () => {
+    // `curl -f` collapses every 4xx into one exit code, and the status cannot
+    // come back out of the subshell `RELEASE_JSON="$(fetch_stdout ...)"` runs
+    // in. So these say what is true of every case rather than picking one.
+    for (const [name, script] of [
+      ['macOS', read('install-ai17z-macos.sh')],
+      ['Ubuntu', read('install-ai17z-ubuntu.sh')],
+    ] as const) {
+      const at = script.indexOf('AI17Z could not be reached.');
+      expect(at, `${name}: the unreachable refusal is gone`).toBeGreaterThan(-1);
+      const refusal = script.slice(at, at + 500);
+      expect(refusal, `${name} still blames the connection outright`).not.toMatch(
+        /^\s*"Check your internet connection/m,
+      );
+      expect(refusal, `${name} does not mention the rate limit`).toMatch(/sixty an hour/);
+      // And it still says nothing was changed, which is the half that matters.
+      expect(refusal).toMatch(/was changed/);
+    }
+  });
+});
+
 describe('the release publishes what the command needs', () => {
   it('publishes the setup program as a script', () => {
     expect(workflow).toContain('Install-AI17Z-$version.ps1');
