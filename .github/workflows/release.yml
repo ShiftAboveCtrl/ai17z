@@ -686,7 +686,13 @@ jobs:
             echo
             TAG="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
             if [ -n "$TAG" ] && git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-              PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+              # `--match 'v[0-9]*'`, because releases are not the only tags any
+              # more. A `rehearsal-v*` tag sits on the commit that was rehearsed,
+              # which is an ancestor of the one being released -- so the nearest
+              # tag to this one's parent is the rehearsal, and the changelog
+              # would have read "what changed since rehearsal-v1.0.0-beta.17"
+              # and listed two commits. Only a release is a previous release.
+              PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$TAG^" 2>/dev/null || true)
               if [ -n "$PREV" ]; then
                 echo "### What changed since $PREV"
                 echo

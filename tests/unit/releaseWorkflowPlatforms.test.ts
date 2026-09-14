@@ -311,6 +311,20 @@ describe('the release builds every platform from one tag', () => {
     });
   });
 
+  it('does not mistake a rehearsal tag for the previous release', () => {
+    // `git describe` answers with the *nearest* tag, and a rehearsal tag sits on
+    // the commit that was rehearsed -- an ancestor of the one being released.
+    // So without a filter the changelog reads "what changed since
+    // rehearsal-v1.0.0-beta.17" and lists the two commits since it.
+    //
+    // Demonstrated on this repository rather than reasoned about: asked for the
+    // nearest tag to the commit below v1.0.0-beta.17, `git describe` answered
+    // `rehearsal-v1.0.0-beta.17` without the filter and `v1.0.0-beta.16` with
+    // it. Adding a second kind of tag is what made a filter necessary.
+    const notes = workflow.slice(workflow.indexOf('- name: Release notes'));
+    expect(notes).toContain("git describe --tags --abbrev=0 --match 'v[0-9]*'");
+  });
+
   it('can rehearse the whole release without publishing one', () => {
     // `dry_run` does this too and needs `workflow_dispatch`, which needs a
     // browser or an authenticated CLI. A tag is something a push can do, and
