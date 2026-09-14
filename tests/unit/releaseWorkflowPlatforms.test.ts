@@ -171,6 +171,43 @@ describe('the release builds every platform from one tag', () => {
     }
   });
 
+  it('scans the Windows package too, where the release can reach it', () => {
+    // The release notes say every published package is unpacked and scanned.
+    // The Windows one was scanned by nothing: its build job runs on Windows,
+    // where the scanner's tools are not all there, so the check lives in the
+    // publish job -- on Linux, over the bytes about to be attached.
+    const scanner = read('.github/scripts/scan-artifact.sh');
+    expect(scanner).toContain('windows)');
+    expect(scanner).toContain('unzip -q');
+
+    const publish = jobs(workflow).publish!;
+    const from = publish.indexOf("- name: Nothing of an owner's is in anything published");
+    const to = publish.indexOf('- name: The release manifest');
+    expect(from).toBeGreaterThan(0);
+    expect(to).toBeGreaterThan(from);
+    const scanning = publish.slice(from, to);
+    for (const call of [
+      'scan-artifact.sh "$zip" windows',
+      'scan-artifact.sh "$tarball" macos',
+      'scan-artifact.sh "$deb" ubuntu',
+    ]) {
+      expect(scanning, `the publish job never runs: ${call}`).toContain(call);
+    }
+    // One Windows zip, two Macs, two Debian packages. Counted, because a glob
+    // that matched nothing is a loop that runs nothing and a step that passes.
+    expect(scanning).toContain('[ "$scanned" -eq 5 ]');
+  });
+
+  it('scans after the artifacts have been flattened, not before', () => {
+    // `download-artifact` puts each job's output in its own folder, and the
+    // checksums step is what flattens them. A scan above it would glob nothing
+    // -- which is exactly how the attestation step attested nothing.
+    const publish = jobs(workflow).publish!;
+    expect(publish.indexOf('- name: Checksums')).toBeLessThan(
+      publish.indexOf("- name: Nothing of an owner's is in anything published"),
+    );
+  });
+
   it('publishes every platform asset, named the one way they are named', () => {
     const files = workflow.slice(workflow.lastIndexOf('files: |'));
     const end = files.indexOf('\n\n');
