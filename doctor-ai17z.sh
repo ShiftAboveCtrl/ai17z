@@ -217,6 +217,22 @@ else
   todo+=("Web: run ./start-ai17z.sh.")
 fi
 
+# -- Where those services can be reached from --------------------------------
+#
+# AI17Z holds the keys to every provider configured, a database of everything
+# the agents know, and a browser profile signed in to somebody's accounts. The
+# default is loopback so that none of it is on a network interface, and the
+# documentation says so. Anything else is a deliberate decision, and one worth
+# being reminded of every time this runs.
+bind_host="$(env_value AI17Z_BIND_HOST)"; bind_host="${bind_host:-127.0.0.1}"
+case "$bind_host" in
+  127.0.0.1|localhost|::1)
+    row "Reachable from" "PASS" "This machine only (${bind_host})." ;;
+  *)
+    row "Reachable from" "NEEDS ACTION"       "Published on ${bind_host}, not just this machine."
+    todo+=("Network: AI17Z's interface, API and database are published on ${bind_host}. Anyone who can reach that address can reach them. Set AI17Z_BIND_HOST=127.0.0.1 and use an SSH tunnel instead, unless you meant this.") ;;
+esac
+
 # -- Browser support ---------------------------------------------------------
 #
 # Three states, and only one of them is a fault.
