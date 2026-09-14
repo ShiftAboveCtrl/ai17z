@@ -31,6 +31,19 @@ on:
   push:
     tags:
       - 'v*'
+      # A rehearsal of the whole thing, publishing nothing.
+      #
+      # `dry_run` below does the same and needs `workflow_dispatch`, which needs
+      # somebody at a browser or an authenticated CLI. A tag is something a push
+      # can do -- and the reason to want one is that the publish job's newest
+      # steps had never executed at all: it ran `npx tsx` with no `npm ci`
+      # anywhere in the job, and would have ended a release in
+      # ERR_MODULE_NOT_FOUND. A release is the wrong place to discover that.
+      #
+      # `rehearsal-v1.2.3` builds all four packages, assembles the checksums,
+      # the manifest, the audit document and the attestation, and stops. Delete
+      # the tag afterwards: it is a test fixture, not release history.
+      - 'rehearsal-v*'
   workflow_dispatch:
     inputs:
       version:
@@ -160,7 +173,8 @@ jobs:
           if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
             $v = '${{ inputs.version }}'
           } else {
-            $v = '${{ github.ref_name }}' -replace '^v', ''
+            # `rehearsal-` first, so a rehearsal builds the version it names.
+            $v = '${{ github.ref_name }}' -replace '^(rehearsal-)?v', ''
           }
           if (-not $v) { throw 'No version could be determined.' }
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -367,7 +381,10 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then v="${{ inputs.version }}"
-          else v="${GITHUB_REF_NAME#v}"; fi
+          else
+            # `rehearsal-` first, so a rehearsal builds the version it names.
+            v="${GITHUB_REF_NAME#rehearsal-}"; v="${v#v}"
+          fi
           [ -n "$v" ] || { echo "no version"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
@@ -418,7 +435,10 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then v="${{ inputs.version }}"
-          else v="${GITHUB_REF_NAME#v}"; fi
+          else
+            # `rehearsal-` first, so a rehearsal builds the version it names.
+            v="${GITHUB_REF_NAME#rehearsal-}"; v="${v#v}"
+          fi
           [ -n "$v" ] || { echo "no version"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
@@ -454,6 +474,21 @@ jobs:
           # previous..this` is then empty rather than wrong, which is the
           # kind of quiet that ships a changelog saying nothing.
           fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        # `tools/release-manifest.mts` imports `@xbam/shared`, which resolves
+        # through the workspace symlinks `npm ci` writes. Without this step the
+        # manifest step ends in ERR_MODULE_NOT_FOUND -- and since that step is
+        # newer than the last release, it had never once run. A release would
+        # have been the first thing to find out.
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
       - name: Download what was built
         uses: actions/download-artifact@v4
@@ -804,7 +839,7 @@ jobs:
       # looked at. Nothing is tagged, nothing is released, and nothing on the
       # releases page changes.
       - name: What a real run would have published
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || startsWith(github.ref_name, 'rehearsal-') }}
         run: |
           set -euo pipefail
           echo "This was a dry run. Nothing has been published."
@@ -819,17 +854,18 @@ jobs:
           cat dist/release-manifest.json
 
       - name: Keep them, so a dry run can be inspected
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || startsWith(github.ref_name, 'rehearsal-') }}
         uses: actions/upload-artifact@v4
         with:
-          name: dry-run-${{ needs.build.outputs.version }}
+          name: dry-run-${{ needs.build.outputs.version }}-${{ github.run_id }}
           path: dist
           retention-days: 7
 
       - name: Publish
-        # Skipped only for an explicit dry run. A tag push has no `inputs` at
-        # all, so this has to read false there rather than blank.
-        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
+        # Skipped for either kind of rehearsal: the `dry_run` input, and a
+        # `rehearsal-v*` tag. A tag push has no `inputs` at all, so the first
+        # half has to read false there rather than blank.
+        if: ${{ !((github.event_name == 'workflow_dispatch' && inputs.dry_run) || startsWith(github.ref_name, 'rehearsal-')) }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.build.outputs.version) }}
