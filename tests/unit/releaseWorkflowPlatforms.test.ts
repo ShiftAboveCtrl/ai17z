@@ -23,6 +23,9 @@ const root = resolve(__dirname, '../..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 const workflow = read('.github/workflows/release.yml');
 const validation = read('.github/workflows/platform-packaging.yml');
+// What a published release does on somebody else's machine, which nothing
+// before it can answer: everything else proves a package a run just built.
+const qualification = read('.github/workflows/release-qualification.yml');
 const macosAction = read('.github/actions/macos-package/action.yml');
 const ubuntuAction = read('.github/actions/ubuntu-package/action.yml');
 // The proofs themselves live in scripts the actions call, so that a failure can
@@ -83,7 +86,7 @@ describe('the release builds every platform from one tag', () => {
     // had been retired in December 2025 and `macos-14` deprecated. The release
     // workflow had never run since they were written, so it was asking for a
     // runner that no longer answers and nothing said so.
-    for (const file of [workflow, validation]) {
+    for (const file of [workflow, validation, qualification]) {
       expect(file).toMatch(/runner: macos-15, arch: arm64/);
       expect(file).toMatch(/runner: macos-15-intel, arch: x64/);
       expect(file).toMatch(/runner: ubuntu-24\.04, arch: amd64/);
@@ -96,7 +99,7 @@ describe('the release builds every platform from one tag', () => {
     // for a runner that will never come, or fails with a message about labels
     // rather than about this project.
     const retired = ['macos-11', 'macos-12', 'macos-13', 'ubuntu-18.04', 'ubuntu-20.04'];
-    for (const file of [workflow, validation]) {
+    for (const file of [workflow, validation, qualification]) {
       for (const label of retired) {
         // `runs-on:` and matrix entries only -- the strings also appear in
         // prose about what was retired, which is worth keeping.
@@ -243,6 +246,71 @@ describe('the release builds every platform from one tag', () => {
     expect(workflow).toContain('tools/release-manifest.mts');
   });
 
+  /**
+   * The release, qualified after it exists.
+   *
+   * Every other check in this repository proves a package a run has just built.
+   * That is the right thing to gate on and it cannot answer one question: does
+   * the thing that was *published* install on somebody else's machine. Beta
+   * 1.0.0 (16) is why the question is worth asking -- it went out claiming
+   * build provenance it did not have, and nothing looked.
+   */
+  describe('qualifying a release after it is published', () => {
+    it('starts by itself, the moment a release exists', () => {
+      // Not `workflow_dispatch`. Nothing here may depend on somebody
+      // remembering, for the same reason platform packaging runs on a push.
+      expect(qualification).toContain('release:');
+      expect(qualification).toContain('types: [published]');
+      // And a way to run it again against a release that already exists.
+      expect(qualification).toContain("- 'qualify-v*'");
+    });
+
+    it('can change nothing about a release', () => {
+      // It reads published bytes and installs them on a runner. A workflow that
+      // could edit the release it is checking is one whose report is worth
+      // less.
+      const permissions = qualification.slice(qualification.indexOf('permissions:'));
+      expect(permissions.slice(0, 60)).toContain('contents: read');
+      expect(qualification).not.toContain('contents: write');
+      expect(qualification).not.toContain('action-gh-release');
+    });
+
+    it('checks out the tag, never the branch the event arrived on', () => {
+      // A `release` event's ref is the default branch, which has usually moved
+      // on -- and these jobs compare what the release published against what
+      // the commit holds. Every job that checks out has to name the tag.
+      const checkouts = qualification.split('actions/checkout@v4').slice(1);
+      expect(checkouts.length).toBeGreaterThan(0);
+      for (const after of checkouts) {
+        expect(after.slice(0, 200)).toContain('ref: ${{ needs.which.outputs.tag }}');
+      }
+    });
+
+    it('refuses a rehearsal, which published nothing to qualify', () => {
+      expect(qualification).toContain('rehearsal-*)');
+    });
+
+    it('reaches both Macs, both Ubuntus, and Windows', () => {
+      const names = Object.keys(jobs(qualification));
+      expect(names).toEqual(['which', 'published', 'macos', 'ubuntu', 'windows']);
+    });
+
+    it('takes the installers off the release rather than out of the checkout', () => {
+      // The whole point. An installer read from the checkout proves the
+      // checkout; this proves what a stranger is handed.
+      for (const script of [
+        read('.github/scripts/qualify-published-macos.sh'),
+        read('.github/scripts/qualify-published-ubuntu.sh'),
+      ]) {
+        expect(script).toContain('releases/download');
+        expect(script).toContain('SHA256SUMS.txt');
+        // And then says so if the two disagree, which would mean the release
+        // was assembled from something that is not this commit.
+        expect(script).toContain('byte for byte the script this checkout holds');
+      }
+    });
+  });
+
   it('can rehearse the whole release without publishing one', () => {
     // `dry_run` does this too and needs `workflow_dispatch`, which needs a
     // browser or an authenticated CLI. A tag is something a push can do, and
@@ -266,6 +334,13 @@ describe('the release builds every platform from one tag', () => {
     expect(workflow).toContain("-replace '^(rehearsal-)?v', ''");
     // Both platform jobs, not one of them.
     expect(workflow.match(/GITHUB_REF_NAME#rehearsal-/g)).toHaveLength(2);
+
+    // And what it found has to be readable. Actions logs need admin rights on
+    // the repository -- the API answers 403 and so does the web interface --
+    // so a rehearsal whose whole value is what it printed reaches almost
+    // nobody unless it also becomes an annotation.
+    const report = workflow.slice(workflow.indexOf('- name: What a real run would have published'));
+    expect(report.slice(0, 2000)).toContain('say-out.sh');
   });
 
   it('installs dependencies in every job that runs one of this repository\'s tools', () => {

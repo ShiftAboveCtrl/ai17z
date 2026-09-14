@@ -264,6 +264,218 @@ for backticks. It is the same trap.
 
 ---
 
+## AI17Z Beta 1.0.0 (17)
+
+The first release that is not only Windows. macOS on Apple Silicon and Intel,
+Ubuntu on amd64 and arm64, each built on a runner that really is that
+architecture and each run there before this release existed. The two sections at
+the top of this document -- hosted platform validation, and the cross-platform
+work behind it -- are that evidence; this section is about the release itself.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean, from a deleted `tsconfig.tsbuildinfo` |
+| `npm run lint` | clean |
+| `npm test` | 259 files, 3304 tests, 0 failures |
+| `npm audit` | 0 vulnerabilities |
+| `npm --workspace @xbam/web run build` | built |
+| `npm run release:check` | 950 tracked files, nothing found, run after `git add` |
+| `shellcheck` | clean at error and warning, all 35 tracked shell files |
+| GitHub Actions | 11 of 11 green on the candidate commit, platform packaging included |
+| `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | exit 0 |
+
+### The Windows regression, in full
+
+The gate this repository does not tag without. Every phase passed:
+
+    no-git:     git does not resolve in the environment every shortcut is given
+    first:      installed, started, 71 migrations, API and interface answering,
+                diagnostics agreeing, stopped, and nothing written beside the
+                program
+    second:     the same again into a new room, because a first-run bug is
+                invisible on the second run and a second-run bug on the first
+    sbs:        two installations side by side, each with its own everything
+    bootstrap:  a package with the wrong hash refused and nothing written; then
+                installed, started, and updated through the installed updater
+    instances:  AI17Z-beta updated; AI17Z-alpha and AI17Z-gamma byte for byte
+                what they were, 4791 files each; and a request from inside
+                AI17Z-beta to update AI17Z-alpha refused, touching neither
+    schemas:    install records 1, 2 and 3 each took a new release and kept
+                everything of the owner's
+    upgrade:    installed over the top -- same Docker project, same database,
+                master key intact, and it rebuilt
+
+And the part a log cannot be trusted for. The harness promises to take back
+whatever it told Windows, so that was checked rather than believed: both golden
+installations' program directories were hashed file by file before and after,
+along with `HKCU\Software\AI17Z`, the three uninstall entries and the three
+Start Menu groups. Identical, every line:
+
+    AI17Z-main : 5124 files, tree 246626fb1527c1a9...
+    AI17Z-test : 4781 files, tree 871447691d023958...
+    HKCU\Software\AI17Z DataDir : unchanged, and still naming AI17Z-test's
+                                  own data directory
+
+The verification room was gone, and no Docker volume of its own was left
+behind.
+
+### Four defects found while preparing this release
+
+None of them would have failed a build. Each is a thing a release says about
+itself that was not true.
+
+**1. A package named for the tag, reporting the version in the checkout.**
+The release workflow hands the tag's version to the platform build scripts, so a
+package is *named* after the tag -- while `package-unix.mts` wrote
+`package.json`'s version into the `BUILD_INFO.json` inside it. They agree today
+because the convention is to bump `package.json` with the tag. The day somebody
+forgets, `AI17Z-macos-arm64-1.0.0-beta.18.tar.gz` reports 1.0.0-beta.17 to the
+update check, which then offers an update that is already installed, for ever.
+The tag now wins in both places, exactly as it does for Windows.
+
+**2. The attestation that had never run.** The step sat in the Windows build
+job and named `dist/` paths. That job writes to `build/windows` and has never
+had a `dist`, so every glob matched nothing, the action failed, and
+`continue-on-error: true` rendered that green. Beta 1.0.0 (16) was published
+saying it carried GitHub build provenance. It does not, and anybody can check:
+
+    $ curl -s -o /dev/null -w '%{http_code}\n' \
+      https://api.github.com/repos/ShiftAboveCtrl/ai17z/attestations/sha256:38ceec5e...
+    404
+
+It now runs in the publish job, which is the only place every artifact exists at
+once, over every file published out of `dist`. Required rather than
+best-effort: a release that cannot be attested is one that does not get
+published.
+
+**3. The Windows package nobody was scanning.** `scan-artifact.sh` unpacks a
+finished package and refuses it if anything of a builder's or an owner's is
+inside. It knew macOS and Ubuntu. The Windows zip -- the one most people install
+-- went through no version of it, because the job that builds it runs on
+Windows, where the scanner's tools are not all there. The scan now happens in
+the publish job, on Linux, over the bytes about to be attached, and covers all
+five packages. It counts them, because a glob that matches nothing is a loop
+that runs nothing and a step that passes.
+
+**4. A manifest that described a directory rather than a release.**
+`release-manifest.mts` listed the artifacts it found. A release that had lost
+one of the four platform packages would therefore have published a manifest
+saying that platform was unsupported -- correct about the directory, and a lie
+about the release -- and the contract job that checks "every name the manifest
+gives is a file that exists" would have agreed, because the name was no longer
+there to check. `expectedAssets(version, platform)` now says what each platform
+owes, and anything owed and absent stops the generator before a line is
+composed.
+
+Three of the four are the same shape: a check that could not fail. That is worth
+saying plainly, because it is the shape that survives review.
+
+### And a fifth, which would have failed the release itself
+
+The publish job runs `npx tsx tools/release-manifest.mts`. That file imports
+`@xbam/shared`, which resolves only through the workspace symlinks `npm ci`
+writes -- and the job had neither `actions/setup-node` nor an install anywhere
+in it. Proved in a container holding the tools and the packages and no
+`node_modules`, rather than argued:
+
+    Cannot find package '@xbam/shared'
+    code: 'ERR_MODULE_NOT_FOUND'
+
+That step is newer than the last release, so like the attestation it had never
+once executed. Tagging would have been the first thing to find out.
+
+Which is why this release is rehearsed before it is made. `dry_run` already
+builds every platform and publishes nothing, but it is a `workflow_dispatch`
+input and wants a browser or an authenticated CLI; a push can only push. A
+`rehearsal-v*` tag now runs the same four platform builds and the same publish
+job -- checksums, privacy scan, manifest, audit document, attestation -- and
+stops before the release. Exactly one step in that workflow creates a release,
+and it is off for both kinds of rehearsal. The tag is a test fixture and is
+deleted afterwards; it is not release history.
+
+### The asset contract
+
+Fourteen files, and not one of their names is typed anywhere but
+`releaseManifest.ts` in `@xbam/shared`:
+
+    AI17Z-Setup-1.0.0-beta.17.exe          the older full installer, unsigned
+    Install-AI17Z-1.0.0-beta.17.ps1        the setup program, as a script
+    AI17Z-App-1.0.0-beta.17.zip            the application it installs
+    install.ps1                            the command on the README
+    AI17Z-macos-arm64-1.0.0-beta.17.tar.gz
+    AI17Z-macos-x64-1.0.0-beta.17.tar.gz
+    ai17z_1.0.0-beta.17_amd64.deb
+    ai17z_1.0.0-beta.17_arm64.deb
+    install-ai17z-macos.sh                 read it, then run it
+    install-ai17z-ubuntu.sh
+    SHA256SUMS.txt                         what every installer checks against
+    release-manifest.json                  what an updater reads
+    AI17Z-Setup-Audit-1.0.0-beta.17.json   what the setup program may do
+    RELEASE_VALIDATION_REPORT.md           this file
+
+The release name renders as **AI17Z Beta 1.0.0 (17)**, from `releaseName()`, and
+the installer derives the same string a second time in ISPP for Add/Remove
+Programs. The two are checked against each other, because the failure is silent
+and the uninstall list disagreeing with the version screen looks like two builds
+installed at once.
+
+### What happens after publication
+
+Everything above was true before the tag existed, which is the most a document
+attached to a release can ever be. What the published thing actually does is a
+separate question, and until this release nothing asked it.
+
+`.github/workflows/release-qualification.yml` now does, by itself, on
+`release: published`. It takes nothing from the build:
+
+- **the published bytes**, on Linux: every asset downloaded, every hash checked
+  against the release's own `SHA256SUMS.txt`, `release-manifest.json` read back
+  and compared against the files that actually arrived, and the attestations API
+  asked whether each one carries provenance -- which is the check that would
+  have caught Beta 1.0.0 (16) claiming provenance it did not have
+- **real Macs**, `macos-15` and `macos-15-intel`: the *published*
+  `install-ai17z-macos.sh`, hash-checked against the release and compared byte
+  for byte with the one this commit holds, then run against the release over the
+  network. What it installs is then asked what version and architecture it is,
+  from its own bytes
+- **real Ubuntu**, amd64 and arm64: the same, through apt, followed by the full
+  package proof against what the release put on the machine
+- **Windows**, looking only: `install.ps1` off the release, hash-checked, and
+  run with `-WhatIfOnly`. The rest of the Windows route turns on a Windows
+  feature and installs Docker Desktop, which a runner is the wrong place to
+  learn about -- `npm run verify:install` is, and it runs on a real machine
+  before anything is tagged
+
+It holds `contents: read` and nothing else, so it cannot change the release it
+is checking. A `qualify-v*` tag runs it again against a release that already
+exists.
+
+What that run found is added to this file in the repository afterwards, and
+reaches a release asset with the version after this one.
+
+### Not verified
+
+Machine-run proof cannot represent a person at a computer. These are gaps, not
+oversights:
+
+- **Docker Desktop's own installation on macOS.** A hosted Mac has no Docker and
+  cannot be given one without a person: a disk image, a graphical setup, and
+  Docker's own licence, which AI17Z must never accept for somebody.
+- **Gatekeeper and quarantine as a person meets them** -- a downloaded file's
+  quarantine attribute, the dialog, Terminal's paste protection.
+- **A real X sign-in**, on any platform, and the browser worker against an
+  actual screen.
+- **Ubuntu Desktop's session integration** and the desktop launcher.
+- **A physical reboot**, on any platform.
+
+`docs/MACOS_TEST_CHECKLIST.md` and `docs/UBUNTU_TEST_CHECKLIST.md` each end in
+the list of those, as steps against this release, with what should happen at
+each one.
+
+---
+
 ## AI17Z Beta 1.0.0 (16)
 
 The first release the terminal install command can actually install. Beta

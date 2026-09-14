@@ -108,3 +108,134 @@ forbids.
 Put observations in `docs/RELEASE_VALIDATION_REPORT.md` under the release they
 were made for, with the Ubuntu version and architecture. An unchecked box here
 is more useful than a checked one nobody can trace.
+
+---
+
+## Against the published Beta 1.0.0 (17), on a machine you own
+
+Everything above is machine proof, on real amd64 and arm64 runners and in
+22.04, 24.04 and 26.04 containers. This is the part that needs a person: a real
+session, a real screen or the deliberate absence of one, and a reboot.
+
+Nothing here asks you to weaken APT verification or to add a repository that is
+not Docker's own. If any step seems to, stop.
+
+**1. Fetch the installer and read it.**
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-ubuntu.sh
+less install-ai17z-ubuntu.sh
+```
+
+*Expected:* a shell script you can read end to end, mentioning `SHA256SUMS.txt`
+and Docker's own APT repository. It must not contain `get.docker.com` or
+`apt-key`.
+
+**2. Try it as root, and be refused.**
+
+```bash
+sudo bash install-ai17z-ubuntu.sh
+```
+
+*Expected:* it refuses, and says why: your agents, keys and browser session
+belong to you, and a root install leaves files in your home you cannot delete.
+Nothing should have been installed.
+
+**3. Install as yourself.**
+
+```bash
+bash install-ai17z-ubuntu.sh
+```
+
+*Expected:* it picks the `.deb` for your architecture, prints the SHA-256 it
+checked and says it matched, asks for `sudo` only where installing a system
+package needs it, and says -- before offering it -- that adding yourself to the
+`docker` group is equivalent to root on this machine.
+
+*Write down:* the architecture it chose, and whether that is the machine you are
+on (`dpkg --print-architecture`).
+
+**4. The diagnostics, on whatever kind of machine this is.**
+
+```bash
+ai17z doctor
+```
+
+*Expected on a desktop:* browser support available.
+*Expected on a server:* browser support **not available**, reported as a state
+rather than as a failure, with everything else running. Nothing should have
+installed a desktop, an X server or a virtual framebuffer.
+
+**5. Where it listens.**
+
+```bash
+ss -ltnp | grep -E '8080|8787|55432'
+```
+
+*Expected:* `127.0.0.1` and nothing else. If you have deliberately changed that,
+`ai17z doctor` should tell you every time it runs.
+
+To reach a server from elsewhere, forward a port rather than opening one:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 you@your-server
+```
+
+**6. Sign in to X through a real Chrome window.** Desktop only; this is the one
+thing no runner can do.
+
+*Expected:* AI17Z opens a Chrome window with a profile of its own and **touches
+nothing on the page**. If X asks for a code, a CAPTCHA, or confirms an unusual
+login, AI17Z stops and leaves the window alone. Your everyday profile is
+untouched.
+
+**7. Update.**
+
+```bash
+ai17z update
+```
+
+*Expected:* the compatibility check runs **before anything stops**, so a machine
+that cannot run the new version keeps the one it has. Your `.env`, master key,
+database and signed-in profile all survive.
+
+**8. Reboot, and start it again.**
+
+*Expected:* Docker comes back, the containers come back, and the signed-in X
+session is still signed in.
+
+**9. Remove it, and keep your data.**
+
+```bash
+ai17z uninstall     # explains what removing it leaves behind
+sudo apt remove ai17z
+```
+
+*Expected:* the program goes and everything you made stays --
+`~/.config/ai17z`, which holds `.env` and the key your provider credentials are
+sealed with, and `~/.local/share/ai17z`, which holds storage and your signed-in
+browser session. Nothing on any path through the package's own `postrm` touches
+either. If you want them gone, remove them yourself.
+
+### Verifying the download yourself
+
+```bash
+sha256sum ai17z_1.0.0-beta.17_amd64.deb
+curl -fsSL https://github.com/ShiftAboveCtrl/ai17z/releases/download/v1.0.0-beta.17/SHA256SUMS.txt
+```
+
+And the provenance, which needs the GitHub CLI and is never required to install:
+
+```bash
+gh attestation verify ai17z_1.0.0-beta.17_amd64.deb --repo ShiftAboveCtrl/ai17z
+```
+
+*Expected:* the hashes agree, and the attestation verifies against this
+repository's release workflow. That is build provenance -- **not** Canonical
+signing, and not a claim that anybody has examined AI17Z.
+
+### If something disagrees
+
+Say what actually happened, including nothing happening, at
+<https://github.com/ShiftAboveCtrl/ai17z/issues>. A step that behaved
+differently from the sentence above is worth reporting even if it worked.
