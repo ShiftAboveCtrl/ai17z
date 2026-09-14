@@ -2,7 +2,7 @@
 #
 # What is actually inside a finished AI17Z package.
 #
-#   scan-artifact.sh <file.tar.gz|file.deb> <macos|ubuntu>
+#   scan-artifact.sh <file.tar.gz|file.deb|file.zip> <macos|ubuntu|windows>
 #
 # Unpacks the real artifact -- the bytes that would be published -- and refuses
 # it if anything of the builder's or of an owner's is in there.
@@ -15,11 +15,16 @@
 # one that ships somebody's master key.
 #
 # Runs on macOS and Linux, so it uses only what both have: BSD and GNU `find`,
-# `grep`, `tar`, `dpkg-deb` where present.
+# `grep`, `tar`, `dpkg-deb` and `unzip` where present.
+#
+# The Windows package is scanned in the publish job rather than in the job that
+# builds it. That one runs on Windows, where `dpkg-deb` is absent and `find`
+# is Windows' own; the publish job holds the finished zip on Linux, which is
+# also the last moment before it is attached to a release.
 set -uo pipefail
 
 ARTIFACT="${1:?an artifact to scan}"
-KIND="${2:?macos or ubuntu}"
+KIND="${2:?macos, ubuntu or windows}"
 
 problems=0
 bad() { printf '  REFUSED  %s\n' "$1"; problems=$((problems+1)); }
@@ -36,6 +41,16 @@ case "$KIND" in
       dpkg-deb -x "$ARTIFACT" "$ROOM"
     else
       echo "  no dpkg-deb to unpack with" >&2; exit 1
+    fi ;;
+  windows)
+    # The zip has no top-level folder: its entries are the staged application
+    # itself, because the installer ships that directory and the setup program
+    # downloads this zip of it, and two ways in that laid down different bytes
+    # would be two products.
+    if command -v unzip >/dev/null 2>&1; then
+      unzip -q "$ARTIFACT" -d "$ROOM"
+    else
+      echo "  no unzip to unpack with" >&2; exit 1
     fi ;;
   *) echo "  unknown kind: $KIND" >&2; exit 1 ;;
 esac
@@ -93,7 +108,10 @@ SEARCH_ROOT="$ROOM"
 for candidate in "$ROOM/AI17Z/app" "$ROOM/usr/lib/ai17z/app"; do
   [ -d "$candidate" ] && SEARCH_ROOT="$candidate"
 done
-echo "  searching ${SEARCH_ROOT#"$ROOM"}"
+# The Windows package has no wrapper directory, so the trimmed path is empty
+# and the line would read "searching " and nothing else.
+inside="${SEARCH_ROOT#"$ROOM"}"
+echo "  searching ${inside:-the whole package}"
 
 # A builder's home directory. The runner's own path is what would leak from a
 # stray absolute path baked into a config or a source map.
@@ -149,17 +167,25 @@ echo "### binaries that belong to another platform"
 case "$KIND" in
   macos) APP="$ROOM/AI17Z/app"; foreign='linux|win32' ;;
   ubuntu) APP="$ROOM/usr/lib/ai17z/app"; foreign='darwin|win32' ;;
+  windows) APP="$ROOM"; foreign='linux|darwin' ;;
 esac
 
 # Ours. `playwright-core` ships Windows helper scripts on every platform and npm
 # writes a `.ps1` shim beside every `.cmd` it creates; neither is this project
 # putting a Windows file in a Unix package.
-hits="$(find "$APP" \( -name '*.exe' -o -name '*.dll' -o -name '*.ps1' -o -name '*.cmd' \) -not -path '*/node_modules/*' 2>/dev/null | head -5)"
-if [ -n "$hits" ]; then
-  bad "Windows files of ours are in a $KIND package"
-  printf '%s\n' "$hits" | sed "s#$ROOM#    #"
-else
-  ok "no Windows files of ours"
+#
+# Skipped for the Windows package, where those are the lifecycle scripts rather
+# than a mistake. The mirror of it -- a Unix shell script in a Windows package
+# -- is not worth a check: a stray `.sh` there is inert, while a stray `.ps1`
+# on a Mac invites somebody to run it.
+if [ "$KIND" != windows ]; then
+  hits="$(find "$APP" \( -name '*.exe' -o -name '*.dll' -o -name '*.ps1' -o -name '*.cmd' \) -not -path '*/node_modules/*' 2>/dev/null | head -5)"
+  if [ -n "$hits" ]; then
+    bad "Windows files of ours are in a $KIND package"
+    printf '%s\n' "$hits" | sed "s#$ROOM#    #"
+  else
+    ok "no Windows files of ours"
+  fi
 fi
 
 # esbuild is a different matter, and this one is fatal.

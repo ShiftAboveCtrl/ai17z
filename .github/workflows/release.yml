@@ -489,6 +489,40 @@ jobs:
             install-ai17z-macos.sh install-ai17z-ubuntu.sh \
             AI17Z-macos-*.tar.gz ai17z_*.deb | tee SHA256SUMS.txt
 
+      - name: Nothing of an owner's is in anything published
+        run: |
+          set -euo pipefail
+          # After the checksums step, because that is where the downloaded
+          # artifacts are flattened out of their per-job folders. A glob run
+          # before it matches nothing -- which is how the attestation step in
+          # this workflow attested nothing for two releases.
+          #
+          # Over the bytes that are about to be attached, after an upload and a
+          # download, rather than only on each builder. The macOS and Ubuntu
+          # jobs already scan their own output as they make it; the Windows
+          # package was scanned by nothing at all, because that job runs on
+          # Windows where this script's tools are not all there. The release
+          # notes say every published package is unpacked and scanned, so it
+          # has to be true of all five.
+          scanned=0
+          for zip in dist/AI17Z-App-*.zip; do
+            bash .github/scripts/scan-artifact.sh "$zip" windows
+            scanned=$((scanned + 1))
+          done
+          for tarball in dist/AI17Z-macos-*.tar.gz; do
+            bash .github/scripts/scan-artifact.sh "$tarball" macos
+            scanned=$((scanned + 1))
+          done
+          for deb in dist/ai17z_*.deb; do
+            bash .github/scripts/scan-artifact.sh "$deb" ubuntu
+            scanned=$((scanned + 1))
+          done
+          echo "scanned $scanned package(s)"
+          # One Windows zip, two Macs, two Debian packages. A glob that matched
+          # nothing would otherwise be a loop that ran nothing and a step that
+          # passed.
+          [ "$scanned" -eq 5 ] || { echo "::error::expected 5 packages, scanned $scanned"; exit 1; }
+
       - name: The release manifest
         run: |
           set -euo pipefail
