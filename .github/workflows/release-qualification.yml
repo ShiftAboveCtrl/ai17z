@@ -206,8 +206,31 @@ jobs:
           "  and is byte for byte the script this checkout holds"
 
           # Looking only. Nothing on this runner is changed.
+          #
+          # And retried once, for the same reason the macOS and Ubuntu jobs
+          # retry: this runs the published command, which asks api.github.com
+          # without a token because that is what a stranger's does, and sixty
+          # requests an hour is shared with whoever else is on this machine.
+          # A refusal is the ceiling; a second refusal ninety seconds later is
+          # a finding.
           $source = Get-Content "$room\install.ps1" -Raw
-          & ([scriptblock]::Create($source)) -Release $tag -WhatIfOnly
-          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
-            throw "install.ps1 -WhatIfOnly exited $LASTEXITCODE"
+          function Invoke-Once {
+            $out = & ([scriptblock]::Create($source)) -Release $tag -NewInstance -WhatIfOnly 2>&1 | Out-String
+            return @{ Text = $out; Code = $LASTEXITCODE }
+          }
+          $result = Invoke-Once
+          if ($result.Code -ne 0 -and $result.Text -match '\(40[39]\)|\(429\)') {
+            "  GitHub refused that. Waiting ninety seconds and trying once more."
+            Start-Sleep -Seconds 90
+            $result = Invoke-Once
+          }
+          $result.Text
+
+          if ($result.Code -ne 0 -and $null -ne $result.Code) {
+            # Into an annotation, because Actions logs need admin rights on this
+            # repository to read and "exited 1" on its own has already cost one
+            # round trip today. Newlines go through as %0A.
+            $detail = ($result.Text -split "`r?`n" | Select-Object -Last 25) -join '%0A'
+            "::error::install.ps1 -WhatIfOnly exited $($result.Code): $detail"
+            throw "install.ps1 -WhatIfOnly exited $($result.Code)"
           }

@@ -84,7 +84,27 @@ echo "### installing $TAG from the network, as published"
 # able to reach Docker -- which is what the documented route assumes. Adding a
 # user to that group is setting up a machine, not changing the installer, and
 # this machine's user is already in it.
-out="$(bash "$ROOM/install-ai17z-ubuntu.sh" --release "$TAG" --yes --no-start 2>&1)"
+# GitHub allows sixty API requests an hour to an address that is not signed in,
+# and a hosted runner shares its address with whoever else is on that machine.
+# The published installer is unauthenticated by design -- that is what a
+# stranger runs, and giving it a token here would be testing something nobody
+# else can run. So this does what the installer's own advice says to do: waits,
+# and tries once more. One refusal is the ceiling being shared. A second one,
+# ninety seconds later, is a finding.
+#
+# Seen for real: `curl: (56) The requested URL returned error: 403` from the
+# macOS arm64 runner, while the Intel one beside it installed fine.
+install_once() {
+  bash "$ROOM/install-ai17z-ubuntu.sh" --release "$TAG" --yes --no-start 2>&1
+}
+out="$(install_once)"
+if printf '%s' "$out" | grep -qE '403|could not be read|could not be reached'; then
+  echo "  GitHub refused that. Waiting ninety seconds and trying once more, which is"
+  echo "  what the installer itself tells somebody to do."
+  sleep 90
+  out="$(install_once)"
+  ok "it was refused once and retried"
+fi
 printf '%s\n' "$out" | sed 's/^/    /' | tail -40
 
 says "it resolved this release" "$out" "$VERSION"
