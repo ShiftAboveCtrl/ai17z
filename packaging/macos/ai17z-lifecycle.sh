@@ -121,6 +121,19 @@ start_worker() {
   fi
   step "Starting browser support"
   mkdir -p "$AI17Z_STORAGE_DIR" "$LOG_DIR"
+  # Appended to, not truncated.
+  #
+  # `>` here meant the next start erased why the last one failed -- and the
+  # thing somebody does after a browser-support failure is start it again. So
+  # the evidence was gone by the time anybody went looking for it, every time.
+  # Kept to a size instead: a log nobody can read because it is enormous is the
+  # other way to lose it.
+  for stream in "$WORKER_LOG" "$WORKER_LOG.err"; do
+    if [ -f "$stream" ] && [ "$(wc -c <"$stream" 2>/dev/null || echo 0)" -gt 5000000 ]; then
+      mv -f "$stream" "$stream.1" 2>/dev/null || true
+    fi
+    printf '\n--- started %s ---\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$stream"
+  done
   local node; node="$(ai17z_node)"
   (
     cd "$APP_ROOT"
@@ -128,7 +141,7 @@ start_worker() {
     AI17Z_CHROME_PATH="$chrome" AI17Z_BROWSER_PROFILE_DIR="$AI17Z_BROWSER_PROFILES" \
       nohup "$node" "$APP_ROOT/node_modules/tsx/dist/cli.mjs" \
         "$APP_ROOT/scripts/supervise-worker.mts" \
-        >"$WORKER_LOG" 2>"$WORKER_LOG.err" &
+        >>"$WORKER_LOG" 2>>"$WORKER_LOG.err" &
     echo $! > "$WORKER_PID"
   )
   sleep 2
@@ -151,10 +164,79 @@ stop_worker() {
   good "Browser support stopped"
 }
 
+# What the images were built from, and what they should have been built from.
+#
+# `docker compose up -d` builds only when an image is *missing*. It has no idea
+# the source changed, so an installation updated over the top went on serving
+# the containers built for the version before it -- somebody installs a fix,
+# starts AI17Z, and meets the same fault with nothing anywhere saying why.
+# Windows has had this since Beta 1.0.0 (8); macOS never did, and its images
+# were labelled `ai17z.built-from=unknown` on every machine.
+#
+# Asked of the images rather than remembered in a file beside them: a file can
+# claim an image somebody has since deleted, and an image cannot be wrong about
+# what it holds.
+build_stamp() {
+  # A package has no repository. Its version plus the moment it was built is a
+  # value that changes exactly when the installed source does.
+  [ -f "$APP_ROOT/BUILD_INFO.json" ] || { printf 'unknown'; return; }
+  sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$APP_ROOT/BUILD_INFO.json" | head -1 | tr -d '\n'
+  sed -n 's/.*"builtAt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/-\1/p' "$APP_ROOT/BUILD_INFO.json" | head -1 | tr -d '\n'
+}
+
+image_stamp() { # image
+  # The quoted-template trap is PowerShell's, not this shell's, so the simple
+  # form is safe here.
+  docker inspect --format '{{index .Config.Labels "ai17z.built-from"}}' "$1" 2>/dev/null || printf ''
+}
+
+images_are_stale() {
+  local project want built
+  want="$(build_stamp)"
+  [ -n "$want" ] || return 1
+  project="$(ai17z_compose config 2>/dev/null | sed -n 's/^name: //p' | head -1)"
+  [ -n "$project" ] || return 0
+  for service in api worker web; do
+    built="$(image_stamp "${project}-${service}")"
+    [ "$built" = "$want" ] || {
+      note "The ${service} image holds '${built:-nothing}' and this is '${want}'."
+      return 0
+    }
+  done
+  return 1
+}
+
 cmd_start() {
   printf '\n  %sAI17Z%s\n\n' "$GREEN" "$OFF"
   require_docker
   ensure_configured
+
+  # Handed to compose, which labels each image with it and shows the version on
+  # the health screen. Without the version there, an installed copy reported
+  # "source unknown" and there was no way to tell which build was serving.
+  AI17Z_BUILD_STAMP="$(build_stamp)"
+  AI17Z_VERSION="$(version_of)"
+  export AI17Z_BUILD_STAMP AI17Z_VERSION
+  # Which kind of installation this is, handed to the containers because the API
+  # runs in one and cannot see the program directory at all.
+  #
+  # The launcher exports this too and always has. Repeated here so that a
+  # lifecycle run directly still carries it -- the updater starts AI17Z that
+  # way, immediately after swapping the application. The Mac that was told to
+  # run a PowerShell script was not missing this value; `updateMethodFrom` did
+  # not recognise it.
+  AI17Z_INSTALL_CHANNEL=MACOS_PKG
+  export AI17Z_INSTALL_CHANNEL
+
+  if images_are_stale; then
+    step "Rebuilding the containers for this version"
+    ai17z_compose build >"$LOG_DIR/compose-build.log" 2>&1 || {
+      tail -30 "$LOG_DIR/compose-build.log" >&2
+      oops "The containers would not build." "Full log: $LOG_DIR/compose-build.log"
+    }
+    good "Containers rebuilt"
+  fi
+
   step "Starting AI17Z"
   ai17z_compose up -d >"$LOG_DIR/compose.log" 2>&1 || {
     tail -20 "$LOG_DIR/compose.log" >&2

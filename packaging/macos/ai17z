@@ -22,7 +22,25 @@
 set -euo pipefail
 
 # Where this copy is: the launcher sits at the top of the installation.
-HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#
+# Resolved through the symlink chain first. The installer puts a link at
+# ~/.local/bin/ai17z, and `dirname` of that is ~/.local/bin -- so every command
+# run as `ai17z` rather than by full path died with "the bundled Node runtime is
+# missing from ~/.local/bin/runtime/node". Reported from a real Mac: the command
+# on PATH, which is the one the installer tells you about, did not work at all.
+#
+# A loop rather than `readlink -f`, which BSD readlink does not have.
+ai17z_self() {
+  local target="${BASH_SOURCE[0]}" dir
+  while [ -L "$target" ]; do
+    dir="$(cd -P "$(dirname "$target")" && pwd)"
+    target="$(readlink "$target")"
+    # A relative link points inside the directory the link itself was in.
+    case "$target" in /*) ;; *) target="$dir/$target" ;; esac
+  done
+  printf '%s' "$target"
+}
+HERE="$(cd -P "$(dirname "$(ai17z_self)")" && pwd)"
 APP_ROOT="$HERE/app"
 RUNTIME_ROOT="$HERE/runtime"
 NODE="$RUNTIME_ROOT/node/bin/node"

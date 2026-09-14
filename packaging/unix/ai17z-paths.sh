@@ -109,6 +109,30 @@ ai17z_compose() {
   docker compose "${args[@]}" "$@"
 }
 
+# Is one version newer than another?
+#
+# Asked of the application, never of the shell. Both updaters had their own
+# comparison and both were wrong in the same place: `sort -V` on macOS and
+# `dpkg --compare-versions` on Ubuntu each rank `1.0.0` *below* `1.0.0-beta.19`,
+# because neither implements semver's rule that a release outranks its own
+# prereleases. So the finished 1.0.0 would have been refused as "not newer" on
+# both platforms. Run against that pair to check, rather than reasoned about.
+#
+# `compareVersions` in @xbam/shared is the one implementation, reached through
+# the same bridge the compatibility gate already uses. This prints `NEWER`,
+# `NOT-NEWER`, or nothing at all -- the last meaning the bridge could not
+# answer, which is a third outcome and not a synonym for no. The caller decides
+# what to do about it, and both callers refuse: guessing with a comparator known
+# to be wrong about the most important upgrade there is would be worse than
+# stopping.
+ai17z_version_is_newer() { # candidate installed
+  local root="$AI17Z_APP_DIR"
+  [ -f "$root/node_modules/tsx/dist/cli.mjs" ] || return 0
+  [ -f "$root/packaging/preflight.mts" ] || return 0
+  (cd "$root" && "$(ai17z_node)" "$root/node_modules/tsx/dist/cli.mjs" \
+    "$root/packaging/preflight.mts" --newer "$1" "$2" 2>/dev/null) || printf ''
+}
+
 # One value out of the environment file.
 #
 # `tail`, not `head`: a duplicated key resolves last-wins, which is what compose

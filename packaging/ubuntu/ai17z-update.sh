@@ -86,12 +86,21 @@ if [ "$VERSION" = "$CURRENT" ]; then
   good "AI17Z ${CURRENT} is the newest release"
   printf '\n'; exit 0
 fi
-if ! dpkg --compare-versions "$VERSION" gt "$CURRENT"; then
-  oops "The newest release (${VERSION}) is not newer than what is installed (${CURRENT})." \
-    "Nothing was changed. AI17Z does not install an older version over a newer one:
+# The comparison is `ai17z_version_is_newer`, shared with the macOS updater,
+# because two copies of this rule is how both platforms came to have the same
+# fault: each asked its own shell, and `dpkg --compare-versions` and `sort -V`
+# both rank `1.0.0` below `1.0.0-beta.19`.
+case "$(ai17z_version_is_newer "$VERSION" "$CURRENT")" in
+  NEWER) ;;
+  NOT-NEWER)
+    oops "The newest release (${VERSION}) is not newer than what is installed (${CURRENT})." \
+      "Nothing was changed. AI17Z does not install an older version over a newer one:
 the database has already been migrated forward and an older application
-cannot read it." ""
-fi
+cannot read it." "" ;;
+  *) oops "AI17Z could not work out whether ${VERSION} is newer than ${CURRENT}." \
+       "This check is part of how an installation updates, and it did not run.
+Nothing was changed." "" ;;
+esac
 good "AI17Z ${VERSION} is available"
 
 # ---------------------------------------------------------------------------

@@ -80,11 +80,18 @@ VERSION="${TAG#v}"
 if [ "$VERSION" = "$CURRENT" ]; then good "AI17Z ${CURRENT} is the newest release"; printf '\n'; exit 0; fi
 
 # A downgrade is refused. An older application against a database that has
-# already migrated forward has no good ending.
-newest="$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)"
-[ "$newest" = "$VERSION" ] || oops \
-  "The newest release (${VERSION}) is not newer than what is installed (${CURRENT})." \
-  "Nothing was changed." ""
+# already migrated forward has no good ending. The comparison is
+# `ai17z_version_is_newer`, shared with the Ubuntu updater, because two copies
+# of this rule is how both platforms came to have the same fault.
+case "$(ai17z_version_is_newer "$VERSION" "$CURRENT")" in
+  NEWER) ;;
+  NOT-NEWER) oops \
+    "The newest release (${VERSION}) is not newer than what is installed (${CURRENT})." \
+    "Nothing was changed." "" ;;
+  *) oops "AI17Z could not work out whether ${VERSION} is newer than ${CURRENT}." \
+       "This check is part of how an installation updates, and it did not run.
+Nothing was changed." "" ;;
+esac
 good "AI17Z ${VERSION} is available"
 
 # ---------------------------------------------------------------------------

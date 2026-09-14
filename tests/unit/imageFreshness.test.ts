@@ -8,6 +8,9 @@ const read = (file: string) => readFileSync(resolve(root, file), 'utf8');
 /**
  * An upgrade has to run the code it installed.
  *
+ * Windows first, then macOS and Ubuntu, which this file did not cover for
+ * twelve releases -- see the second suite below.
+ *
  * `docker compose up -d` builds an image only when one is *missing*. It has no
  * idea the source changed. The Docker project name is derived from the data
  * directory, which an upgrade deliberately does not touch, so the project name
@@ -182,5 +185,87 @@ describe('the launcher asks the heartbeat, not Windows', () => {
   it('ships the probe, since the launcher cannot run without it', () => {
     expect(packager).toContain("'scripts/browser-worker-present.mts'");
     expect(packager).toContain("'worker:present'");
+  });
+});
+
+/**
+ * The same property, on the two platforms that did not have it.
+ *
+ * Windows has compared the label against the installed build since
+ * Beta 1.0.0 (8). macOS and Ubuntu never did, and nothing here noticed, because
+ * this file only ever read `start-ai17z.ps1`. So every Unix image carried
+ * `ai17z.built-from=unknown` and an update went on serving the containers built
+ * for the version before it -- found by somebody updating a Mac, twelve
+ * releases later.
+ *
+ * The two lifecycles are parallel implementations on purpose: 162 of their 243
+ * lines of code are already identical, because the shapes differ per platform
+ * while the decisions do not. That only stays safe while the parallel halves
+ * cannot quietly diverge, so the rule itself is compared rather than trusted.
+ */
+describe('an upgrade runs the code it installed, on Unix too', () => {
+  const lifecycles = {
+    macos: read('packaging/macos/ai17z-lifecycle.sh'),
+    ubuntu: read('packaging/ubuntu/ai17z-lifecycle.sh'),
+  };
+  /** Lines that run, so a comment describing the fault is not mistaken for it. */
+  const ran = (text: string) =>
+    text
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n');
+
+  it.each(Object.entries(lifecycles))('%s has a stamp to compare against', (_platform, text) => {
+    expect(ran(text)).toMatch(/^build_stamp\(\) \{$/m);
+    expect(ran(text)).toMatch(/^image_stamp\(\) \{ # image$/m);
+    expect(ran(text)).toContain('AI17Z_BUILD_STAMP="$(build_stamp)"');
+    expect(ran(text)).toContain('export AI17Z_BUILD_STAMP AI17Z_VERSION');
+  });
+
+  it.each(Object.entries(lifecycles))('%s rebuilds without being asked', (_platform, text) => {
+    const code = ran(text);
+    // The call, not the name: a function that exists and is never called reads
+    // identically to one that works.
+    expect(code).toMatch(/^\s*if images_are_stale; then$/m);
+    expect(code).toMatch(/^images_are_stale\(\) \{$/m);
+    // And before the stack comes up, or the check is decoration.
+    const build = code.indexOf('ai17z_compose build');
+    const up = code.indexOf('ai17z_compose up -d');
+    expect(build).toBeGreaterThan(-1);
+    expect(build).toBeLessThan(up);
+  });
+
+  it.each(Object.entries(lifecycles))('%s says why it is building', (_platform, text) => {
+    // A rebuild takes minutes. Unexplained, it reads as a hang -- and this one
+    // fires on the first start after every update.
+    expect(ran(text)).toContain('step "Rebuilding the containers for this version"');
+    expect(ran(text)).toContain("note \"The ${service} image holds");
+  });
+
+  it.each(Object.entries(lifecycles))('%s never lets a missing answer mean "no need"', (_platform, text) => {
+    // An image with no label, an image that is not there, docker not
+    // answering: `image_stamp` prints nothing for all three, and nothing can
+    // equal a stamp, so every one of them ends in a rebuild.
+    const code = ran(text);
+    expect(code).toContain('[ "$built" = "$want" ] || {');
+    expect(code).toContain("|| printf ''");
+    // And a project name that cannot be read is also a rebuild, not a skip.
+    expect(code).toContain('[ -n "$project" ] || return 0');
+  });
+
+  it.each(Object.entries(lifecycles))('%s reads the label the simple way, which is safe here', (_platform, text) => {
+    // The quoted-template trap is Windows PowerShell's native argument
+    // passing, not this shell's, so `{{index ...}}` is correct in a POSIX
+    // shell and was proved against a real image.
+    expect(ran(text)).toContain('{{index .Config.Labels "ai17z.built-from"}}');
+  });
+
+  it('decides staleness identically on both platforms', () => {
+    const body = (text: string) => {
+      const start = text.indexOf('images_are_stale() {');
+      expect(start).toBeGreaterThan(-1);
+      return text.slice(start, text.indexOf('\n}', start)).replace(/\r/g, '');
+    };
+    expect(body(lifecycles.ubuntu), 'the two launchers no longer agree').toBe(body(lifecycles.macos));
   });
 });

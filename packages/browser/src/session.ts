@@ -670,12 +670,17 @@ export async function closeAllSessions(): Promise<void> {
 }
 
 /**
- * Whether a stored profile path makes sense on this machine.
+ * Whether a stored profile path is shaped like one this machine could use.
  *
  * The path is written by whichever worker last touched the account, and the
  * containerised worker and the native one do not share a filesystem. A Linux
  * path handed to Chrome on Windows produces C:\app\... — a second, empty
  * profile, and a session that silently is not there.
+ *
+ * Diagnostic only, and it must stay that way. It used to decide which path a
+ * browser was opened with, and it cannot carry that: it separates a Windows
+ * path from a POSIX one and nothing else, so on macOS and Linux every
+ * container path passed it.
  */
 export function profilePathIsLocal(profileDir: string | null | undefined): boolean {
   if (!profileDir) return false;
@@ -690,9 +695,28 @@ export function profilePathIsLocal(profileDir: string | null | undefined): boole
  * Derived from the account id rather than read from the row, because the id is
  * the identity and the path is a local detail. The stored path is kept for
  * diagnostics only.
+ *
+ * It now does that. It used to return the stored path whenever
+ * `profilePathIsLocal` accepted it, and that function only tells a Windows path
+ * from a POSIX one -- so on macOS and Linux it accepted anything starting with
+ * a slash, including `/app/storage/browser-profiles/<id>`, which is where the
+ * containerised API resolved the default because its working directory is
+ * `/app`. The native browser worker on a Mac then asked Chrome to create `/app`
+ * on a machine whose root is read-only, and every sign-in failed in half a
+ * second with
+ *
+ *     ENOENT: no such file or directory, mkdir '/app'
+ *
+ * Deriving unconditionally also repairs every row already written, with no
+ * migration: nothing reads them for this any more.
+ *
+ * `stored` stays in the signature and is ignored on purpose. A caller that
+ * passes it is saying "here is what the row claims", and the one place that
+ * wants to report the row as stale still has it to compare against.
  */
 export function resolveProfileDir(accountId: string, stored: string | null | undefined): string {
-  return profilePathIsLocal(stored) ? (stored as string) : defaultProfileDir(accountId);
+  void stored;
+  return defaultProfileDir(accountId);
 }
 
 /**

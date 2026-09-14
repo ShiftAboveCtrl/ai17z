@@ -69,8 +69,15 @@ done_ "Node $(node --version) is fine."
 
 # Not fatal: everything except connecting an X account works without a browser,
 # and somebody may be setting up before installing one.
+# Both platforms, because this script runs on both. It only knew the Linux
+# paths, so a Mac with Chrome installed was told on every single setup that
+# Chrome was not found -- a warning that is wrong is worse than no warning,
+# because the next true one is read as noise.
 chrome=""
-for candidate in /usr/bin/google-chrome /usr/bin/google-chrome-stable /opt/google/chrome/chrome; do
+for candidate in \
+  /usr/bin/google-chrome /usr/bin/google-chrome-stable /opt/google/chrome/chrome \
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
   [ -x "$candidate" ] && chrome="$candidate" && break
 done
 if [ -n "$chrome" ]; then
@@ -187,7 +194,17 @@ if [ "${START_AFTER:-0}" = "1" ] || [ "${1:-}" = "--start" ]; then
   exec ./start-ai17z.sh
 fi
 
+# What to run next depends on which of the two things this is.
+#
+# A package's owner never types `./start-ai17z.sh`; they type `ai17z start`, and
+# being told otherwise by the setup their own installer just ran is how somebody
+# ends up running a developer script against an installed copy.
 echo "  Next:"
-echo "    ${GREY}./start-ai17z.sh     start everything${OFF}"
-echo "    ${GREY}./doctor-ai17z.sh    check it over${OFF}"
+if [ "$PACKAGED" = "1" ]; then
+  echo "    ${GREY}ai17z start          start everything${OFF}"
+  echo "    ${GREY}ai17z doctor         check it over${OFF}"
+else
+  echo "    ${GREY}./start-ai17z.sh     start everything${OFF}"
+  echo "    ${GREY}./doctor-ai17z.sh    check it over${OFF}"
+fi
 echo

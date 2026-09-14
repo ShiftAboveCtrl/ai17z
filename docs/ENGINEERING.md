@@ -239,10 +239,26 @@ since version 136.** Every CDP path needs its own `--user-data-dir`.
 reason: a debug port reachable from the network is a signed-in browser anyone
 can drive.
 
-**A stored profile path is not trusted across machines.** The containerised
-worker writes `/app/...`, which on Windows becomes `C:\app\...` — a second,
-empty profile with none of the session in it. `resolveProfileDir` derives the
-path locally from the account id.
+**A stored profile path never decides where a browser opens.**
+`resolveProfileDir` derives it from the account id and ignores the stored value
+entirely. Not "unless the stored one looks usable" — always.
+
+The row is written by whichever process last touched the account, and the API
+that writes it runs in a container whose working directory is `/app`. On Windows
+that lands as `C:\app\...`, a second empty profile with none of the session in
+it. On macOS and Linux it lands as `/app`, at the root of a read-only volume,
+and Chrome cannot create it: `ENOENT: no such file or directory, mkdir '/app'`,
+on every attempt, which is what a Mac reported in Beta 1.0.0 (19).
+
+The earlier version of this guard asked whether the stored path *looked* local,
+which is only answerable between a Windows path and a POSIX one. A container
+path is a POSIX path, so on two of the three platforms the question had no
+useful answer and the guard passed everything. `profilePathIsLocal` still
+exists and is diagnostic only: it may report that a row disagrees with this
+machine, and it may not choose anything.
+
+The API therefore stores `null`. It cannot know where a browser profile lives,
+and a guess recorded as a fact is worse than an absence.
 
 **Launching is locked per account.** Two callers arriving together used to start
 two browsers. Across processes the account lease is the guard; in-process it is

@@ -201,3 +201,44 @@ export function releaseName(version = buildVersion().version): ReleaseName {
   const short = `${channel} ${number}${suffix}`;
   return { title: `AI17Z ${short}`, short, channel, number, iteration };
 }
+
+/**
+ * Semver precedence, in the part of it AI17Z actually uses.
+ *
+ * Returns negative when `a` is older. The one rule people get wrong is that a
+ * prerelease is *older* than the release it leads to: `0.1.0-rc.4` comes before
+ * `0.1.0`. Getting that backwards offers everybody on a stable build a
+ * downgrade to last month's candidate.
+ */
+export function compareVersions(a: string, b: string): number {
+  const parse = (value: string) => {
+    const [core = '', pre = ''] = value.replace(/^v/, '').split('-', 2);
+    const numbers = core.split('.').map((part) => Number.parseInt(part, 10) || 0);
+    return { numbers, pre };
+  };
+  const left = parse(a);
+  const right = parse(b);
+
+  for (let i = 0; i < 3; i += 1) {
+    const difference = (left.numbers[i] ?? 0) - (right.numbers[i] ?? 0);
+    if (difference !== 0) return difference;
+  }
+
+  if (left.pre === right.pre) return 0;
+  // No prerelease beats any prerelease.
+  if (!left.pre) return 1;
+  if (!right.pre) return -1;
+
+  const leftParts = left.pre.split('.');
+  const rightParts = right.pre.split('.');
+  for (let i = 0; i < Math.max(leftParts.length, rightParts.length); i += 1) {
+    const l = leftParts[i];
+    const r = rightParts[i];
+    if (l === undefined) return -1;
+    if (r === undefined) return 1;
+    const both = /^\d+$/.test(l) && /^\d+$/.test(r);
+    const difference = both ? Number(l) - Number(r) : l.localeCompare(r);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}

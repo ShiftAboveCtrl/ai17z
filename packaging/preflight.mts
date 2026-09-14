@@ -14,6 +14,13 @@
  * `unix/`, Windows had no gate at all and nothing said so.
  *
  *   preflight.mts <manifest.json> <platform> <arch> <osVersion> [dockerVersion] [chromeMajor]
+ *   preflight.mts --newer <candidate> <installed>
+ *
+ * `--newer` prints NEWER or NOT-NEWER. It exists because the two shell
+ * updaters each had their own comparison and both got the same case wrong:
+ * `sort -V` and `dpkg --compare-versions` rank `1.0.0` below
+ * `1.0.0-beta.19`, so the release this beta series leads to would have been
+ * refused as not newer on macOS and on Ubuntu.
  *
  * Prints `OK` or `NO` on the first line, then one reason per line.
  *
@@ -23,10 +30,30 @@
  * shells ask for that decision rather than each inventing it.
  */
 import { readFileSync } from 'node:fs';
-import { decideUpdate, parseReleaseManifest, preflight } from '@xbam/shared';
+import { compareVersions, decideUpdate, parseReleaseManifest, preflight } from '@xbam/shared';
 import type { Architecture, GateUnavailable, Platform } from '@xbam/shared';
 
 const argv = process.argv.slice(2);
+
+// --newer <candidate> <installed>
+//
+// Is the offered release newer than the installed one? Asked here rather than
+// in each shell, because the two shells each had their own comparison and both
+// got the same case wrong in the same direction: `sort -V` on macOS and
+// `dpkg --compare-versions` on Ubuntu rank `1.0.0` below `1.0.0-beta.19`, so
+// the release this beta series leads to would have been refused as not newer
+// on both. `compareVersions` in @xbam/shared is the one implementation.
+const newerAt = argv.indexOf('--newer');
+if (newerAt >= 0) {
+  const candidate = argv[newerAt + 1];
+  const installed = argv[newerAt + 2];
+  if (!candidate || !installed) {
+    console.error('--newer needs two versions');
+    process.exit(2);
+  }
+  console.log(compareVersions(candidate, installed) > 0 ? 'NEWER' : 'NOT-NEWER');
+  process.exit(0);
+}
 
 // --decide <installedSchema> <why>
 //

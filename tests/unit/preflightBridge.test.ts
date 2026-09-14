@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -35,9 +36,13 @@ const windows = read('packaging/windows/Setup-AI17Z.ps1');
 
 describe('the compatibility gate speaks one language', () => {
   it('prints exactly the three verdicts, and nothing else', () => {
-    // Every literal the bridge can put on its first line.
-    const printed = [...bridge.matchAll(/console\.log\(\s*'([A-Z]+)'/g)].map((m) => m[1]);
-    const firstLine = [...bridge.matchAll(/console\.log\(verdict\.ok \? '([A-Z]+)' : '([A-Z]+)'\)/g)].flatMap((m) => [m[1], m[2]]);
+    // Every literal the compatibility gate can put on its first line. The
+    // bridge answers other questions too -- `--newer` below -- and each exits
+    // before this one is reached, so they are excluded here by taking the file
+    // from the gate's own argument parsing onwards rather than by name.
+    const gate = bridge.slice(bridge.indexOf('const [manifestPath'));
+    const printed = [...gate.matchAll(/console\.log\(\s*'([A-Z]+)'/g)].map((m) => m[1]);
+    const firstLine = [...gate.matchAll(/console\.log\(verdict\.ok \? '([A-Z]+)' : '([A-Z]+)'\)/g)].flatMap((m) => [m[1], m[2]]);
     expect(new Set([...printed, ...firstLine])).toEqual(new Set(['SKIP', 'OK', 'NO']));
   });
 
@@ -121,6 +126,36 @@ describe('the compatibility gate speaks one language', () => {
     expect(refusal).toContain('still installed and still running');
   });
 
+  it('answers --newer by running it, on the case both shells got wrong', () => {
+    // Run rather than read. The whole reason this mode exists is that two
+    // shells each had a comparison that looked right and was not, and a test
+    // that only greps the file would have agreed with both of them.
+    //
+    // `1.0.0` against `1.0.0-beta.19` is the pair that matters: it is the
+    // upgrade every installation in this beta series eventually takes, and
+    // `sort -V` and `dpkg --compare-versions` both rank it backwards -- checked
+    // against those two commands, not assumed.
+    const ask = (candidate: string, installed: string) => {
+      const run = spawnSync(
+        process.execPath,
+        [resolve(root, 'node_modules/tsx/dist/cli.mjs'), resolve(root, 'packaging/preflight.mts'), '--newer', candidate, installed],
+        { cwd: root, encoding: 'utf8' },
+      );
+      expect(run.status, `--newer ${candidate} ${installed} exited ${run.status}: ${run.stderr}`).toBe(0);
+      return run.stdout.trim();
+    };
+
+    expect(ask('1.0.0', '1.0.0-beta.19')).toBe('NEWER');
+    expect(ask('1.0.0-beta.20', '1.0.0-beta.19')).toBe('NEWER');
+    expect(ask('1.0.0-beta.19', '1.0.0')).toBe('NOT-NEWER');
+    // A reinstall of the same version is not an update.
+    expect(ask('1.0.0-beta.19', '1.0.0-beta.19')).toBe('NOT-NEWER');
+    // And a downgrade, which is the answer the whole check exists to give: an
+    // older application against a database that has migrated forward has no
+    // good ending.
+    expect(ask('0.9.0', '1.0.0')).toBe('NOT-NEWER');
+  }, 60_000);
+
   it('every packager proves the bridge answers, rather than checking it is present', () => {
     // A guard that lists files cannot catch a missing binary: tsx and esbuild
     // were both present and correct in a package where nothing could run.
@@ -133,5 +168,26 @@ describe('the compatibility gate speaks one language', () => {
     // Both halves. An OK-only check passes on a bridge that cannot start.
     expect(packager).toMatch(/startsWith\('OK'\)/);
     expect(packager).toMatch(/startsWith\('NO'\)/);
+    // And the version comparison, which the same bridge answers. It matters
+    // more here than the gate does: the gate fails open, so a dead bridge lets
+    // updates through; this fails closed, so a dead bridge refuses all of them.
+    expect(packager).toContain("askNewer(['1.0.0', '1.0.0-beta.19'])");
+    expect(packager).toMatch(/newer !== 'NEWER'/);
+    expect(packager).toMatch(/older !== 'NOT-NEWER'/);
+  });
+
+  it('the one comparator lives where both Unix updaters already look', () => {
+    // The first version of this fix put a byte-identical function in each
+    // updater. Two copies of one rule is what produced the fault being fixed --
+    // each platform asked its own shell and both were wrong the same way -- so
+    // fixing it with two copies of the fix would have been the same mistake in
+    // a better disguise.
+    const shared = read('packaging/unix/ai17z-paths.sh');
+    expect(shared).toMatch(/^ai17z_version_is_newer\(\) \{/m);
+    for (const [platform, script] of Object.entries(updaters)) {
+      expect(script, `${platform} does not use it`).toContain('ai17z_version_is_newer "$VERSION" "$CURRENT"');
+      expect(script, `${platform} defines its own`).not.toMatch(/^ai17z_version_is_newer\(\)/m);
+      expect(script, `${platform} sources nothing`).toContain('ai17z-paths.sh');
+    }
   });
 });

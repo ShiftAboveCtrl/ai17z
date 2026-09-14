@@ -3,7 +3,7 @@ import type { Account } from '@xbam/shared/contracts';
 import { createLogger, envString } from '@xbam/shared';
 import { accounts as accountsRepo } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
-import { defaultProfileDir } from '@xbam/browser';
+import { resolveProfileDir } from '@xbam/browser';
 import type { ChannelContext } from '@xbam/channels';
 
 export function storageDir(): string {
@@ -27,7 +27,10 @@ export async function buildChannelContext(account: Account, jobId: string | null
           engine: session.engine ?? 'GOOGLE_CHROME',
           mode: session.mode,
           channel: session.channel ?? 'chromium',
-          profileDir: session.profileDir ?? defaultProfileDir(account.id),
+          // Through the resolver, never the stored value. Reading the row
+          // directly was the shortest path to opening a browser wherever some
+          // other machine happened to say.
+          profileDir: resolveProfileDir(account.id, session.profileDir),
           cdpUrl: session.cdpUrl,
         }
       : null,

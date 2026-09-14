@@ -269,7 +269,9 @@ async function main(): Promise<void> {
     await publishTabs().catch(() => undefined);
     poller.stop();
     browserTaskRunner.stop();
-    signIns.stop();
+    // Awaited: a check already reading a sign-in page has to finish before the
+    // browsers below are closed, or it reads the close as the owner giving up.
+    await signIns.stop();
     socialRadar.stop();
     personaSync.stop();
     posts.stop();
