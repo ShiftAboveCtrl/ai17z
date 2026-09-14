@@ -264,6 +264,67 @@ for backticks. It is the same trap.
 
 ---
 
+## AI17Z Beta 1.0.0 (18)
+
+One defect, found by qualifying the release before it, and three messages that
+sent people to look in the wrong place. Everything Beta 1.0.0 (17) established
+about the packages themselves still stands, and its section below is that
+evidence rather than a summary of it.
+
+### The defect
+
+Beta 1.0.0 (17)'s release page promised that a current installation whose
+compatibility check cannot run refuses to update. True on Windows. True of
+neither macOS nor Ubuntu, because neither Unix installer writes
+`INSTALL_INFO.json` and an installation with nothing recorded read as one older
+than the check — which is right on Windows, where such installations exist, and
+impossible on the other two, where the first installable release shipped the
+check inside it.
+
+Found by installing the published `.deb` in a container and looking, and proved
+against the published application's own bytes in both directions. The full
+account is under "And the defect that made this a two-release day", in the Beta
+1.0.0 (17) section below.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | clean |
+| `npm run lint` | clean |
+| `npm run test tests/unit` | 165 files, 2422 tests, 0 failures |
+| `npm test` | GATE_TESTS |
+| `npm audit` | 0 vulnerabilities |
+| `npm --workspace @xbam/web run build` | built |
+| `npm run release:check` | 951 tracked files, nothing found, run after `git add` |
+| `shellcheck` | clean at error and warning, all 35 tracked shell files |
+| GitHub Actions | GATE_CI |
+| `rehearsal-v1.0.0-beta.18` | GATE_REHEARSAL |
+| `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | GATE_WINDOWS |
+
+### What is different about releasing this one
+
+Nothing, and that is the point. The rehearsal, the four platform builds, the
+privacy scan over all five packages, the manifest that refuses an incomplete
+set, the attestation that is now required rather than best-effort, and the
+qualification that installs the published bytes on real machines — all of that
+was built for Beta 1.0.0 (17) and is used here without a change.
+
+One addition: the qualification is started by the release itself. Beta 1.0.0
+(17) found out the hard way that `release: published` never fires for a release
+a workflow created, because a release created with `GITHUB_TOKEN` raises no
+event another workflow can listen for.
+
+### Not verified
+
+Unchanged from Beta 1.0.0 (17), and for the same reasons: Docker Desktop's own
+installation on macOS, Gatekeeper and quarantine as a person meets them, a real
+X sign-in on any platform, Ubuntu Desktop's session integration, and a physical
+reboot. `docs/MACOS_TEST_CHECKLIST.md` and `docs/UBUNTU_TEST_CHECKLIST.md` end
+in those, as steps somebody can follow against a published release.
+
+---
+
 ## AI17Z Beta 1.0.0 (17)
 
 The first release that is not only Windows. macOS on Apple Silicon and Intel,
@@ -545,6 +606,110 @@ exists.
 
 What that run found is added to this file in the repository afterwards, and
 reaches a release asset with the version after this one.
+
+### After it was published
+
+The section above promised this would be filled in. It is, and it is the more
+interesting half.
+
+**The release page.** Fourteen assets, exactly the fourteen named before the tag
+existed, with the name `AI17Z Beta 1.0.0 (17)` rendering correctly,
+prerelease, not a draft. The generated changelog opened "What changed since
+v1.0.0-beta.16" rather than naming the rehearsal tag, which is what the
+`--match 'v[0-9]*'` filter was added for the day before.
+
+**Every hash, from the published bytes.** All fourteen downloaded and
+`sha256sum -c` against the release's own `SHA256SUMS.txt`: ten lines, ten `OK`.
+
+**The manifest, against the files that arrived.** All eleven artifacts it names
+agree on hash and on byte count. It records the tagged commit, the run that
+built it, `signed: false` for all three platforms, install layout schema 3,
+seventy-one migrations, and `supported=true` for Windows, macOS and Ubuntu with
+both architectures on each.
+
+**The privacy scan and the architectures, over the published bytes.** All five
+packages unpacked and scanned: nothing of a builder's or an owner's, and each
+`@esbuild` holding exactly one platform's binary. Then `file` on what is inside:
+
+    AI17Z-macos-arm64  Mach-O 64-bit arm64 executable
+    AI17Z-macos-x64    Mach-O 64-bit x86_64 executable
+    ai17z_..._amd64    ELF 64-bit LSB executable, x86-64
+    ai17z_..._arm64    ELF 64-bit LSB executable, ARM aarch64
+
+six checks, six passed. Nothing here was relabelled.
+
+**Provenance.** Every asset is attested. Beta 1.0.0 (16)'s were not, and the
+same check against that release still answers 404 for every one of them, which
+is how this one is known to be measuring something.
+
+**The published command, on a real Windows machine.** The file the README's URL
+serves hashes to the line the release published. `-List` named both golden
+installations and their versions. `-WhatIfOnly -NewInstance` said "Leaving
+alone: AI17Z-main, AI17Z-test", planned the install and changed nothing.
+Pointed at Beta 1.0.0 (15) it refused precisely -- that release carries no setup
+script -- and pointed at the newest that does. Both golden installations were
+hashed file by file before and after: identical.
+
+**A real upgrade, from the release before it.** Beta 1.0.0 (16) installed from
+its own published setup program, then Beta 1.0.0 (17) run over the top from
+its own, both hash-checked against the `SHA256SUMS.txt` each release published.
+Eleven checks, none failed: the version moved, the owner's file survived, the
+master key is the same one, the ports and `DATABASE_URL` were not rewritten, and
+everything the harness told Windows was taken back afterwards.
+
+**Hosted qualification, from the published URLs.** `macos-15-intel`,
+`ubuntu-24.04`, `ubuntu-24.04-arm` and `windows-latest` installed or resolved
+this release from its own URLs and passed. `macos-15` passed on the first run --
+eighteen checks including the launcher and `BUILD_INFO.json` both reporting
+1.0.0-beta.17 -- and on two later runs could not reach `api.github.com` at all:
+
+    curl: (56) The requested URL returned error: 403
+
+That is the sixty-requests-an-hour ceiling on an address a hosted runner shares,
+not anything about the release, and the qualification now says so in those words
+rather than leaving it looking like a finding.
+
+### What the qualification found about itself
+
+Three faults, and all three are the same shape as the ones before the tag: a
+check that could not run.
+
+1. **It never started.** `release: published` is the obvious trigger and is
+   useless here -- a release created with `GITHUB_TOKEN` raises no event that
+   can start a workflow. The release was published and the qualification sat
+   there. The release now calls it as its own last job.
+2. **It could not be corrected.** It checked out the tag for everything,
+   including the scripts doing the checking, so a bad assertion in the macOS
+   qualifier was frozen at the release. There are now two checkouts: the tooling
+   from the workflow's own ref, the tag for the installers being compared.
+3. **It did not say why.** A failed install arrived as thirteen consequences --
+   "no launcher", "no BUILD_INFO.json", "tsx cannot transform" -- and no cause,
+   because an annotation carries the last forty lines and the checks had filled
+   them. The installer's own words now go into the failure summary, which is
+   printed last. That is how the 403 above became readable at all.
+
+### And the defect that made this a two-release day
+
+The release page for Beta 1.0.0 (17) says a current installation whose
+compatibility check cannot run refuses to update. That was true on Windows and
+true of neither macOS nor Ubuntu, and it was found by installing the published
+`.deb` in a container and looking: no `INSTALL_INFO.json`, because neither Unix
+installer writes one. An installation with nothing recorded read as one older
+than the check -- correct on Windows, impossible on macOS and Ubuntu, where the
+first installable release shipped the check inside it.
+
+Driven against the published application's own bytes, both ways:
+
+    --decide 3  crashed    -> NO        --decide 1  crashed    -> GO
+    --decide 3  no-bridge  -> NO        --decide 1  no-bridge  -> GO
+    --decide 3  unreadable -> NO        --decide 1  unreadable -> GO
+
+Three is what a Unix installation says with the fix. Nothing is what it said
+before, and nothing took the GO column.
+
+Beta 1.0.0 (18) is that fix. History is not rewritten and the assets of
+Beta 1.0.0 (17) are not touched: a defect found after a release is a reason for
+the next one.
 
 ### Not verified
 
