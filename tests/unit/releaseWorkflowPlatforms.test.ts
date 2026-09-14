@@ -24,6 +24,10 @@ const workflow = read('.github/workflows/release.yml');
 const validation = read('.github/workflows/platform-packaging.yml');
 const macosAction = read('.github/actions/macos-package/action.yml');
 const ubuntuAction = read('.github/actions/ubuntu-package/action.yml');
+// The proofs themselves live in scripts the actions call, so that a failure can
+// be run locally and so that its output can reach an annotation.
+const macosProof = read('.github/scripts/prove-macos-package.sh');
+const ubuntuProof = read('.github/scripts/prove-ubuntu-package.sh');
 const VERSION = '9.9.9';
 
 describe('the release builds every platform from one tag', () => {
@@ -94,7 +98,7 @@ describe('the release builds every platform from one tag', () => {
   it('proves the bundled runtime starts, on the machine it was built for', () => {
     // A package whose Node cannot start is one that installs and then does
     // nothing, and that is only visible by running it.
-    for (const [name, action] of [['macos', macosAction], ['ubuntu', ubuntuAction]] as const) {
+    for (const [name, action] of [['macos', macosProof], ['ubuntu', ubuntuProof]] as const) {
       expect(action, `${name} does not reference its own runtime`).toContain('runtime/node/bin/node');
       expect(action, `${name} does not run it`).toContain('--version');
       expect(action, `${name} does not check process.arch`).toContain('process.arch');
@@ -109,9 +113,18 @@ describe('the release builds every platform from one tag', () => {
 
   it('lints the package and proves it removes cleanly', () => {
     expect(ubuntuAction).toContain('lintian --fail-on error');
-    expect(ubuntuAction).toContain('apt-get purge -y ai17z');
+    expect(ubuntuProof).toContain('apt-get purge -y -qq ai17z');
     // And that a purge is not allowed to take the owner's data with it.
-    expect(ubuntuAction).toContain('purge took the owner');
+    expect(ubuntuProof).toContain('purge took the owner');
+  });
+
+  it('runs its proof through something that reports what failed', () => {
+    // A failure inside a composite action reaches anybody who cannot read
+    // Actions logs as "Process completed with exit code 1" and nothing else.
+    for (const action of [macosAction, ubuntuAction]) {
+      expect(action).toContain('say-on-fail.sh');
+      expect(action).toMatch(/trap 'printf "::error::/);
+    }
   });
 
   it('scans the finished artifact rather than the staging directory', () => {

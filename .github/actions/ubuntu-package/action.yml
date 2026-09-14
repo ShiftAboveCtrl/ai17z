@@ -1,10 +1,8 @@
-# @release-check-fixtures -- the `owner` home this file mentions belongs to a
-# user the action creates on a disposable runner. It is nobody's.
-# Every step here traps its own failure and prints it as an `::error::`
-# annotation. Actions logs need admin rights on the repository to read --
-# through the API and in the web interface both -- so without this, "Process
-# completed with exit code 1" is all most people ever see of a broken job.
-# Annotations are public.
+# Every step here reports its own failure as an `::error::` annotation, and the
+# deep proof runs through `say-on-fail.sh` so its output arrives that way too.
+# Actions logs need admin rights on the repository to read -- through the API
+# and in the web interface both -- so without this, "Process completed with exit
+# code 1" is all most people ever see of a broken job. Annotations are public.
 name: Build and prove the Ubuntu package
 description: >
   Stages, packages, installs and then actually runs an AI17Z .deb on the machine
@@ -34,274 +32,91 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # A failure that says what failed.
-        #
-        # Actions logs need admin rights on the repository to read, through the
-        # API and in the web interface both, so "Process completed with exit
-        # code 1" is all most people ever see of a broken job. An `::error::`
-        # line becomes an annotation, and annotations are public.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
+        trap 'printf "::error::%s\n" "line $LINENO failed: $BASH_COMMAND"' ERR
         # An arm64 package assembled on an x86_64 machine carries the wrong
         # native modules under the right name. It installs, and fails on
         # somebody else's machine with "cannot load".
         actual="$(dpkg --print-architecture)"
         [ "$actual" = "${{ inputs.arch }}" ] \
-          || { echo "runner is $actual, job builds ${{ inputs.arch }}" >&2; exit 1; }
+          || { echo "::error::runner is $actual, job builds ${{ inputs.arch }}"; exit 1; }
         echo "runner is $actual, as expected"
         . /etc/os-release && echo "on Ubuntu ${VERSION_ID}"
+        echo "node $(node -v), npm $(npm -v)"
 
     - name: Stage the application
       shell: bash
-      run: |
-        set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "staging failed: $BASH_COMMAND"' ERR
-        echo "node $(node -v), npm $(npm -v), on $(uname -sm)"
-        npm run package:unix -- --platform ubuntu --stage "$RUNNER_TEMP/stage"
+      run: bash .github/scripts/say-on-fail.sh 'staging' -- npm run package:unix -- --platform ubuntu --stage "${{ runner.temp }}/stage"
 
     - name: Build the package
       shell: bash
       run: |
         set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
-        bash packaging/ubuntu/build-deb.sh \
-          --stage "$RUNNER_TEMP/stage" \
-          --version "${{ inputs.version }}" \
-          --arch "${{ inputs.arch }}" \
-          --node "$(node -p "require('./packaging/node-runtime.json').version")" \
-          --out "${{ inputs.out }}"
+        trap 'printf "::error::%s\n" "line $LINENO failed: $BASH_COMMAND"' ERR
+        bash .github/scripts/say-on-fail.sh 'build-deb.sh' -- \
+          bash packaging/ubuntu/build-deb.sh \
+            --stage "${{ runner.temp }}/stage" \
+            --version "${{ inputs.version }}" \
+            --arch "${{ inputs.arch }}" \
+            --node "$(node -p "require('./packaging/node-runtime.json').version")" \
+            --out "${{ inputs.out }}"
 
     - name: lintian
       shell: bash
       run: |
         set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
+        trap 'printf "::error::%s\n" "line $LINENO failed: $BASH_COMMAND"' ERR
         sudo apt-get update -qq
-        sudo apt-get install -y -qq lintian
+        sudo apt-get install -y -qq lintian file
         # Errors fail. Warnings are printed rather than suppressed wholesale:
         # the ones that are upstream Node being upstream Node have named
         # overrides inside the package, each with its reason.
-        lintian --fail-on error \
-          "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
+        bash .github/scripts/say-on-fail.sh 'lintian' -- \
+          lintian --fail-on error \
+            "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
 
     - name: What the package says it is
       shell: bash
       run: |
         set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
+        trap 'printf "::error::%s\n" "line $LINENO failed: $BASH_COMMAND"' ERR
         DEB="${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
         dpkg -I "$DEB"
         said="$(dpkg-deb -f "$DEB" Architecture)"
-        [ "$said" = "${{ inputs.arch }}" ] || { echo "the package says $said" >&2; exit 1; }
+        [ "$said" = "${{ inputs.arch }}" ] || { echo "::error::the package says $said"; exit 1; }
         said="$(dpkg-deb -f "$DEB" Version)"
-        [ "$said" = "${{ inputs.version }}" ] || { echo "the package says version $said" >&2; exit 1; }
+        [ "$said" = "${{ inputs.version }}" ] || { echo "::error::the package says version $said"; exit 1; }
         echo "metadata agrees: ${{ inputs.arch }} ${{ inputs.version }}"
 
-    - name: Install it, and run what was installed
+    - name: Install it
       shell: bash
       run: |
         set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
-        sudo apt-get install -y "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
+        trap 'printf "::error::%s\n" "line $LINENO failed: $BASH_COMMAND"' ERR
+        bash .github/scripts/say-on-fail.sh 'apt install' -- \
+          sudo apt-get install -y "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
 
-        NODE=/usr/lib/ai17z/runtime/node/bin/node
-        echo "--- the bundled runtime ---"
-        "$NODE" --version
-        want="$([ "${{ inputs.arch }}" = amd64 ] && echo x64 || echo arm64)"
-        [ "$("$NODE" -p 'process.arch')" = "$want" ] \
-          || { echo "node reports $("$NODE" -p 'process.arch'), wanted $want" >&2; exit 1; }
-        [ "$("$NODE" -p 'process.platform')" = linux ] || { echo "not a linux build" >&2; exit 1; }
-
-        echo "--- the binary really is this architecture ---"
-        says="$(file -b "$NODE")"
-        echo "$says"
-        case "${{ inputs.arch }}:$says" in
-          amd64:*x86-64*|arm64:*aarch64*) : ;;
-          *) echo "the bundled node is not ${{ inputs.arch }}" >&2; exit 1 ;;
-        esac
-
-        echo "--- tsx transforms ---"
-        "$NODE" /usr/lib/ai17z/app/node_modules/tsx/dist/cli.mjs -e 'const n: number = 1; console.log(`tsx ok ${n}`)'
-
-        echo "--- esbuild's native binary is this architecture too ---"
-        ESBUILD="$(find /usr/lib/ai17z/app/node_modules/@esbuild -type f -name esbuild -perm -u+x | head -1)"
-        [ -n "$ESBUILD" ] || { echo "no esbuild binary in the package" >&2; exit 1; }
-        says="$(file -b "$ESBUILD")"
-        echo "$says"
-        case "${{ inputs.arch }}:$says" in
-          amd64:*x86-64*|arm64:*aarch64*) : ;;
-          *) echo "esbuild is not ${{ inputs.arch }}" >&2; exit 1 ;;
-        esac
-        "$ESBUILD" --version
-
-    - name: The entry points an installed copy loads
-      if: ${{ inputs.deep == 'true' }}
+    - name: Run what was installed
       shell: bash
       run: |
         set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
-        NODE=/usr/lib/ai17z/runtime/node/bin/node
-        TSX=/usr/lib/ai17z/app/node_modules/tsx/dist/cli.mjs
-        cd /usr/lib/ai17z/app
-        # Importing is the test: a package can hold every file and still be one
-        # where nothing loads.
-        # Static imports, not `await import(...)`. Top-level await needs an ES
-        # module, and `tsx -e` decides which it is from the source it is handed:
-        # a file whose only imports are dynamic has nothing to make it a module,
-        # so the await is a syntax error. Import statements settle it.
-        "$NODE" "$TSX" -e '
-          import "@xbam/shared";
-          import "@xbam/database";
-          import "@xbam/jobs";
-          import "@xbam/runtime";
-          import "@xbam/channels";
-          import "@xbam/models";
-          import "@xbam/memory";
-          import "@xbam/prompts";
-          import "@xbam/tools";
-          import "@xbam/persona";
-          console.log("  every workspace package loads");
-        '
-
-    - name: The launcher, as an ordinary person, in a disposable home
-      if: ${{ inputs.deep == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
-        id -u owner >/dev/null 2>&1 || sudo useradd -m -s /bin/bash owner
-
-        echo "--- version and the bundled node, through the launcher ---"
-        say() { bash .github/scripts/say-on-fail.sh "$@"; }
-        say 'ai17z version' -- sudo -u owner -H bash -lc 'ai17z version'
-        say 'ai17z node' -- sudo -u owner -H bash -lc "ai17z node -p 'process.arch'"
-
-        echo "--- root is refused ---"
-        if sudo -H bash -lc 'ai17z version' >/dev/null 2>&1; then
-          echo "the launcher ran as root" >&2; exit 1
-        fi
-        echo "  refused, as it should be"
-
-        echo "--- XDG directories, created private ---"
-        # Docker is not running for this user on a runner, so doctor is expected
-        # to report that rather than to succeed. What is under test is that it
-        # produces a report at all, from a packaged layout.
-        sudo -u owner -H bash -lc 'ai17z doctor' > "$RUNNER_TEMP/doctor.txt" 2>&1 || true
-        sed 's/^/    /' "$RUNNER_TEMP/doctor.txt" | head -40
-        sed 's/^/  /' "$RUNNER_TEMP/doctor.txt"
-        for dir in .config/ai17z .local/share/ai17z .local/state/ai17z; do
-          mode="$(sudo -u owner stat -c '%a' "/home/owner/$dir")"
-          [ "$mode" = 700 ] || { echo "$dir is mode $mode, not 700" >&2; exit 1; }
-          echo "  $dir 700"
-        done
-
-        echo "--- XDG overrides are honoured ---"
-        sudo -u owner -H bash -lc 'XDG_CONFIG_HOME=/tmp/xc ai17z doctor >/dev/null 2>&1 || true; stat -c "%a %n" /tmp/xc/ai17z'
-
-        echo "--- no screen means browser support is unavailable, not failed ---"
-        # A container and a hosted runner are both servers. That is the ordinary
-        # Ubuntu Server case, and the whole point is that AI17Z says so in those
-        # words rather than reporting a failure somebody would try to fix.
-        if grep -qiE 'not available|unavailable' "$RUNNER_TEMP/doctor.txt"; then
-          echo "  reported as not available"
-        else
-          echo "doctor did not report browser support as unavailable on a headless machine" >&2
-          exit 1
-        fi
-
-    - name: The compatibility gate answers, on this machine, both ways
-      if: ${{ inputs.deep == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
-        NODE=/usr/lib/ai17z/runtime/node/bin/node
-        APP=/usr/lib/ai17z/app
-        . /etc/os-release
-
-        cat > "$RUNNER_TEMP/manifest.json" <<JSON
-        {"schemaVersion":1,"version":"9.9.9","tag":"v9.9.9",
-         "commit":"0000000000000000000000000000000000000000",
-         "builtAt":"2026-01-01T00:00:00.000Z",
-         "signed":{"windows":false,"macos":false,"ubuntu":false},
-         "minimumUpdaterSchema":1,"installLayoutSchema":3,
-         "platforms":{"ubuntu":{"supported":true,"architectures":["x64","arm64"],
-           "methods":["UBUNTU_DEB"],
-           "requirements":{"minimumDocker":"26.0.0","minimumChromeMajor":120,
-             "bundledNode":"v22.23.2","os":{"releases":["${VERSION_ID}"]}}}},
-         "artifacts":[],"migrations":{"latest":"probe","count":0}}
-        JSON
-
-        want="$([ "${{ inputs.arch }}" = amd64 ] && echo x64 || echo arm64)"
-        ask() { (cd "$APP" && "$NODE" "$APP/node_modules/tsx/dist/cli.mjs" \
-          "$APP/packaging/preflight.mts" "$RUNNER_TEMP/manifest.json" ubuntu "$@"); }
-
-        echo "--- this machine, which the release supports ---"
-        said="$(ask "$want" "$VERSION_ID" 27.0.0 130)"
-        printf '%s\n' "$said" | sed 's/^/  /'
-        [ "${said%%$'\n'*}" = OK ] || { echo "a supported machine was not accepted" >&2; exit 1; }
-
-        echo "--- an Ubuntu the release does not support ---"
-        said="$(ask "$want" 18.04 27.0.0 130)"
-        printf '%s\n' "$said" | sed 's/^/  /'
-        [ "${said%%$'\n'*}" = NO ] || { echo "an unsupported Ubuntu was not refused" >&2; exit 1; }
-
-        echo "--- Docker too old ---"
-        said="$(ask "$want" "$VERSION_ID" 25.0.0 130)"
-        printf '%s\n' "$said" | sed 's/^/  /'
-        [ "${said%%$'\n'*}" = NO ] || { echo "an old Docker was not refused" >&2; exit 1; }
-
-        echo "--- no Chrome is a note, never a refusal ---"
-        said="$(ask "$want" "$VERSION_ID" 27.0.0 '')"
-        printf '%s\n' "$said" | sed 's/^/  /'
-        [ "${said%%$'\n'*}" = OK ] || { echo "a machine with no Chrome was refused" >&2; exit 1; }
-
-    - name: Purge keeps the owner's data
-      if: ${{ inputs.deep == 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
-        sudo -u owner -H bash -lc 'printf "a thing the owner made\n" > ~/.local/share/ai17z/owner.txt'
-        sudo apt-get purge -y ai17z
-        [ ! -d /usr/lib/ai17z ] || { echo "purge left the program behind" >&2; exit 1; }
-        sudo -u owner test -f /home/owner/.local/share/ai17z/owner.txt \
-          || { echo "purge took the owner's data with it" >&2; exit 1; }
-        echo "  the program is gone and the owner's data is not"
-
-    - name: Remove it again for the shallow path
-      if: ${{ inputs.deep != 'true' }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
-        sudo apt-get purge -y ai17z
-        [ ! -d /usr/lib/ai17z ] || { echo "purge left files behind" >&2; exit 1; }
+        trap 'printf "::error::%s\n" "line $LINENO failed: $BASH_COMMAND"' ERR
+        bash .github/scripts/say-on-fail.sh 'the installed package' -- \
+          bash .github/scripts/prove-ubuntu-package.sh "${{ inputs.version }}" "${{ inputs.arch }}"
 
     - name: Nothing of an owner's is in the package
       shell: bash
       run: |
         set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
-        bash .github/scripts/scan-artifact.sh \
-          "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb" ubuntu
+        trap 'printf "::error::%s\n" "line $LINENO failed: $BASH_COMMAND"' ERR
+        bash .github/scripts/say-on-fail.sh 'the privacy scan' -- \
+          bash .github/scripts/scan-artifact.sh \
+            "${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb" ubuntu
 
     - name: What this package is
       shell: bash
       run: |
         set -euo pipefail
-        # Named rather than "exit code 1"; see the note at the top of this file.
-        trap 'printf "::error::%s\n" "${BASH_SOURCE##*/}:$LINENO failed: $BASH_COMMAND"' ERR
+        trap 'printf "::error::%s\n" "line $LINENO failed: $BASH_COMMAND"' ERR
         DEB="${{ inputs.out }}/ai17z_${{ inputs.version }}_${{ inputs.arch }}.deb"
         ls -l "$DEB"
         sha256sum "$DEB"
