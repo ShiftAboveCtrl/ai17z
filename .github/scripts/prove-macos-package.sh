@@ -20,8 +20,16 @@ VERSION="${2:?a version}"
 ARCH="${3:?arm64 or x64}"
 
 pass=0; fail=0
+# What failed, repeated at the end.
+#
+# An annotation carries the last forty lines, and a failure forty lines up is a
+# failure nobody reading the annotation can see. Keeping the labels and printing
+# them last costs nothing and is the difference between a diagnosis and another
+# round trip.
+failures=""
 ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
+bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); failures="$failures
+    $1"; }
 
 ROOM="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/with space/room"
 rm -rf "$ROOM"; mkdir -p "$ROOM"
@@ -190,5 +198,6 @@ said="$(decide 3 crashed)"
 if [ "${said%%$'\n'*}" = NO ]; then ok "a crashed gate refuses"; else bad "a crashed gate carried on"; fi
 
 echo
+[ "$fail" -eq 0 ] || printf '\n  what failed:%b\n' "$failures"
 echo "  package: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
