@@ -284,6 +284,7 @@ work behind it -- are that evidence; this section is about the release itself.
 | `npm run release:check` | 950 tracked files, nothing found, run after `git add` |
 | `shellcheck` | clean at error and warning, all 35 tracked shell files |
 | GitHub Actions | 11 of 11 green on the candidate commit, platform packaging included |
+| `rehearsal-v1.0.0-beta.17` | the whole release workflow, publishing nothing: 5 jobs, 26m 25s, green |
 | `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | exit 0 |
 
 ### The Windows regression, in full
@@ -394,6 +395,77 @@ job -- checksums, privacy scan, manifest, audit document, attestation -- and
 stops before the release. Exactly one step in that workflow creates a release,
 and it is off for both kinds of rehearsal. The tag is a test fixture and is
 deleted afterwards; it is not release history.
+
+### And a sixth, found by running the command rather than reading it
+
+Every gate in this repository was green when the command on the README was
+pasted into a terminal on a rate-limited address:
+
+    AI17Z could not work out which release to install.
+    Nothing on this PC was changed.
+    The remote server returned an error: (403) Forbidden.
+
+    Check your internet connection and run the command again.
+
+The connection was fine. GitHub allows sixty API requests an hour to an address
+that is not signed in, and a shared office, a university or a cloud box reaches
+that on its own -- so the one person whose connection provably works is the one
+being sent to check it. The refusal was right in every other respect: nothing
+was changed, and the status was printed. Only the advice was wrong, and advice
+is the part somebody acts on.
+
+`install.ps1` now reads the status it already had. The two shell installers
+cannot: `curl -f` collapses every 4xx into one exit code and the status cannot
+leave the subshell `RELEASE_JSON="$(fetch_stdout ...)"` runs in, so their
+sentence names both possibilities instead of picking one.
+
+### What the rehearsal said
+
+`rehearsal-v1.0.0-beta.17`, on the commit below the one this release is tagged
+at. Twenty-six minutes, five jobs, every one green, and nothing published.
+
+Every step of the publish job that had never executed ran: `npm ci`, the privacy
+scan over all five packages, the manifest with nothing narrowed, the audit
+document, and the attestation. The release itself was the only step skipped.
+
+And it said so where it can be read. Actions logs need admin rights on this
+repository -- the API answers 403 and so does the web interface -- so the report
+leaves as a `::notice::` annotation, which is public:
+
+    Nothing was published. A release from this commit would have attached:
+      23348K AI17Z-App-1.0.0-beta.17.zip
+      16588K AI17Z-Setup-1.0.0-beta.17.exe
+          8K AI17Z-Setup-Audit-1.0.0-beta.17.json
+      75812K AI17Z-macos-arm64-1.0.0-beta.17.tar.gz
+      78956K AI17Z-macos-x64-1.0.0-beta.17.tar.gz
+        140K Install-AI17Z-1.0.0-beta.17.ps1
+          4K SHA256SUMS.txt
+      54032K ai17z_1.0.0-beta.17_amd64.deb
+      51684K ai17z_1.0.0-beta.17_arm64.deb
+         20K install-ai17z-macos.sh
+         24K install-ai17z-ubuntu.sh
+         28K install.ps1
+          8K release-manifest.json
+
+    release-manifest.json, in summary:
+      version 1.0.0-beta.17  tag v1.0.0-beta.17  schema 1
+      windows: supported=true arch=x64
+      macos:   supported=true arch=x64,arm64
+      ubuntu:  supported=true arch=x64,arm64
+      artifacts: 11
+
+Thirteen files, plus this document, which is published from the checkout rather
+than built and so is not in that directory. `supported=true` on all three is the
+thing the manifest guard was added for: a missing package would have made one of
+them false rather than failing.
+
+**The release is tagged one commit later than the rehearsal.** What changed in
+between is the wording of a refusal in the three installers, and the test that
+pins it -- no workflow, no packaging, no asset name. The publish job the
+rehearsal proved is the publish job the release ran, step for step; the changed
+installers are exercised by the packaging validation workflow, on real Macs and
+real Ubuntu machines, on the tagged commit. Saying which commit was rehearsed is
+better than implying it was this one.
 
 ### The asset contract
 
