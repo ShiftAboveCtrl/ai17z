@@ -111,7 +111,24 @@ fi
 echo
 echo "### the launcher, as an ordinary person"
 id -u owner >/dev/null 2>&1 || sudo useradd -m -s /bin/bash owner
-as_owner() { sudo -u owner -H bash -lc "$1" 2>&1; }
+OWNER_HOME="$(getent passwd owner | cut -d: -f6)"
+
+# HOME named rather than left to `sudo -H`.
+#
+# On a hosted runner `-H` did not take: the launcher ran as `owner` with HOME
+# still pointing at the runner's own home, tried to create its XDG directories
+# there, and got "cannot create directory '/home/runner': Permission denied".
+# Six checks failed for that one reason, and one of them -- "an unknown command
+# is refused" -- passed for the wrong reason, which is worse.
+#
+# The XDG variables are cleared as well, because a runner sets some of them and
+# what is under test is where AI17Z puts things when nobody has said.
+as_owner() {
+  sudo -u owner -H env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME -u XDG_CACHE_HOME \
+    "HOME=$OWNER_HOME" bash -lc "$1" 2>&1
+}
+
+echo "  owner's home is $OWNER_HOME, and HOME inside is $(as_owner 'printf %s "$HOME"')"
 
 if out="$(as_owner 'ai17z version')"; then
   if [ "$out" = "$VERSION" ]; then ok "version: $out"; else bad "version says '$out'"; fi
@@ -135,7 +152,7 @@ fi
 
 echo
 echo "### root is refused"
-if sudo -H bash -lc 'ai17z version' >/dev/null 2>&1; then
+if sudo -H env HOME=/root bash -lc 'ai17z version' >/dev/null 2>&1; then
   bad "the launcher ran as root"
 else
   ok "refused"
@@ -146,8 +163,8 @@ echo "### XDG layout, created private, overrides honoured"
 as_owner 'ai17z doctor' > /tmp/doctor.txt 2>&1 || true
 sed 's/^/        /' /tmp/doctor.txt | head -30
 for dir in .config/ai17z .local/share/ai17z .local/state/ai17z; do
-  if [ -d "/home/owner/$dir" ]; then
-    mode="$(sudo -u owner stat -c '%a' "/home/owner/$dir")"
+  if [ -d "$OWNER_HOME/$dir" ]; then
+    mode="$(sudo -u owner stat -c '%a' "$OWNER_HOME/$dir")"
     if [ "$mode" = 700 ]; then ok "$dir is 700"; else bad "$dir is $mode"; fi
   else
     bad "$dir was not created"
@@ -205,7 +222,7 @@ echo "### purge keeps the owner's data"
 as_owner 'mkdir -p ~/.local/share/ai17z && printf "a thing the owner made\n" > ~/.local/share/ai17z/owner.txt' >/dev/null
 sudo apt-get purge -y -qq ai17z >/dev/null 2>&1
 if [ -d /usr/lib/ai17z ]; then bad "purge left the program behind"; else ok "the program is gone"; fi
-if sudo -u owner test -f /home/owner/.local/share/ai17z/owner.txt; then
+if sudo -u owner test -f "$OWNER_HOME"/.local/share/ai17z/owner.txt; then
   ok "the owner's file is still there"
 else
   bad "purge took the owner's data with it"
