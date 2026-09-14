@@ -343,7 +343,7 @@ can see. The other half still needs a Mac.
 | `npm run release:check` | 953 tracked files, nothing found |
 | `shellcheck` | clean at error and warning, all 35 tracked shell files |
 | GitHub Actions | 11 of 11 green on the tagged commit, platform packaging included |
-| `rehearsal-v1.0.0-beta.19` | GATE_REHEARSAL |
+| `rehearsal-v1.0.0-beta.19` | seven jobs green, nothing published, qualification correctly skipped |
 | `npm run verify:install -- --twice --upgrade --bootstrap --instances --schemas --no-git` | exit 0, and both golden installations byte for byte what they were |
 
 ### Not verified
