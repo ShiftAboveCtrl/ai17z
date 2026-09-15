@@ -9,7 +9,7 @@ import type {
   RetrievedMemory,
 } from '@xbam/shared/contracts';
 import type { PromptLayerTemplate } from '@xbam/database';
-import { truncateTail } from '@xbam/shared';
+import { envelopeFor, lengthInstruction, truncateTail } from '@xbam/shared';
 import {
   bulletList,
   renderCallback,
@@ -84,6 +84,23 @@ const LENGTH_HINTS: Record<PersonaVersion['responseLength'], string> = {
   MEDIUM: 'Two to four sentences.',
   LONG: 'A full paragraph is fine.',
   ADAPTIVE: 'Match the length and depth of the incoming message.',
+};
+
+/**
+ * The most sentences each setting permits.
+ *
+ * The owner's setting is a ceiling, and the message in hand decides how much of
+ * it to use. Before this the setting was the whole answer, so a persona on
+ * MEDIUM answered the word "nice" with two to four sentences, and every reply
+ * the live agent published came out between 110 and 175 characters.
+ */
+const LENGTH_CEILING: Record<PersonaVersion['responseLength'], number> = {
+  TERSE: 1,
+  SHORT: 2,
+  MEDIUM: 4,
+  LONG: 6,
+  // No ceiling of its own: the owner asked for it to follow the conversation.
+  ADAPTIVE: 6,
 };
 
 function renderMemories(memories: RetrievedMemory[], budget: number): string {
@@ -224,10 +241,26 @@ function renderParentAttachments(inventory: MediaInventory | undefined, alreadyD
   return `That post also carries ${parts.join(' and ')}. You have not seen the attachments, so do not describe them.`;
 }
 
-function renderOutputRules(persona: PersonaVersion, policy: PolicyConfig, extra?: string): string {
+function renderOutputRules(
+  persona: PersonaVersion,
+  policy: PolicyConfig,
+  extra?: string,
+  incoming?: string,
+): string {
   const rules: string[] = [`Stay under ${policy.output.maxCharacters} characters.`];
   if (policy.output.minCharacters > 1) rules.push(`Write at least ${policy.output.minCharacters} characters.`);
-  rules.push(LENGTH_HINTS[persona.responseLength]);
+  /*
+    What this message is asking for, within what the owner allowed.
+
+    `envelopeFor` narrows and never widens, so TERSE stays terse however much
+    somebody writes. What it stops is the opposite: a paragraph in answer to
+    "ha, fair". It carries its own reason, because a length rule with no reason
+    behind it is one the model weighs against everything else in the prompt.
+  */
+  const envelope = incoming === undefined ? null : envelopeFor(incoming);
+  rules.push(
+    envelope ? lengthInstruction(envelope, LENGTH_CEILING[persona.responseLength]) : LENGTH_HINTS[persona.responseLength],
+  );
   if (policy.output.forbidHashtags) rules.push('Do not use hashtags.');
   if (policy.output.forbidLinks) rules.push('Do not include links.');
   if (policy.output.forbidMentionsOfOthers) rules.push('Do not mention other accounts.');
@@ -329,7 +362,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
     incomingText: context.incomingText,
     toolsBlock: bulletList(input.toolDescriptions),
-    outputRules: renderOutputRules(persona, policy, input.experiment?.instruction),
+    outputRules: renderOutputRules(persona, policy, input.experiment?.instruction, context.incomingText),
     // The TASK layer reads this. A post has no incoming message to answer, and
     // telling a model to "reply" to its own brief produces something that reads
     // like half a conversation.

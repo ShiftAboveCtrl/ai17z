@@ -15,3 +15,4 @@ export * from './callSignal';
 export * from './releaseManifest';
 export * from './installLayout';
 export * from './resources';
+export * from './register';
