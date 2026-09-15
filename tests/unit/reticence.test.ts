@@ -28,6 +28,29 @@ describe('subjects an agent does not raise on its own', () => {
     );
   });
 
+  it('declines a price call, which is the substance of unprompted financial advice', () => {
+    expect(unpromptedSubject('My price target for this is a lot higher than people think.')?.subject).toBe(
+      'what somebody should do with their money',
+    );
+    expect(unpromptedSubject('Not financial advice, but I know what I would do here.')?.subject).toBe(
+      'what somebody should do with their money',
+    );
+  });
+
+  it('leaves ordinary crypto vocabulary alone, which is this agent’s actual subject', () => {
+    // An agent connected to DexScreener is meant to talk about tokens. These
+    // are all ordinary words in that register or in this codebase -- and
+    // "guaranteed" appears in its own documentation.
+    for (const sentence of [
+      'The deepest pair is the wrong one; the median is what survives a broken quote.',
+      'Uniqueness is guaranteed by the index, not by the application code.',
+      'That contract address is not the one the ticker resolves to.',
+      'It got 10x faster once the claim moved the due time in the same statement.',
+    ]) {
+      expect(unpromptedSubject(sentence)).toBeNull();
+    }
+  });
+
   it('declines medical advice', () => {
     expect(unpromptedSubject('Half that dosage would have been plenty.')?.subject).toBe('medical advice');
   });

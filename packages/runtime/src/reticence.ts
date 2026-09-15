@@ -45,6 +45,14 @@
  * getting up -- and this file is read by agents whose whole subject is
  * software.
  *
+ * The same reasoning keeps most crypto vocabulary out. An agent whose owner
+ * connected it to DexScreener is meant to talk about tokens, and `10x`,
+ * `guaranteed`, `pump` and `dyor` are all ordinary words in that register or in
+ * this codebase -- `guaranteed by the unique index` is a sentence from its own
+ * documentation. What is here instead is the substance of unprompted financial
+ * advice: telling somebody to buy or sell, a price target, and the two phrases
+ * that only ever introduce one.
+ *
  * ## The agent may not switch it off
  *
  * There is no policy field, no autonomy level and no code path that disables
@@ -109,7 +117,8 @@ const SUBJECTS: ReadonlyArray<readonly [string, readonly string[]]> = [
     'what somebody should do with their money',
     [
       'you should buy', 'you should sell', 'financial advice', 'investment advice',
-      'guaranteed returns', 'life savings', 'mortgage', 'retirement fund', 'pension fund',
+      'not financial advice', 'guaranteed returns', 'price target', 'to the moon',
+      'life savings', 'mortgage', 'retirement fund', 'pension fund',
     ],
   ],
   [
