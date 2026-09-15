@@ -67,6 +67,12 @@ function registerEverything(): void {
   upstream.registerEntityUpstreams();
   upstream.registerSecUpstreams();
   runtime.registerXCapabilities();
+  // The projects pack, whose capabilities are registered from the runtime for
+  // the same reason X's are: they need the agent row to know whose watches they
+  // may read. A pack with no registered members makes setToolpack refuse, which
+  // is right and would otherwise make this test fail for a reason that has
+  // nothing to do with packs being off.
+  runtime.registerGithubCapabilities();
   runtime.registerChainCapabilities();
   runtime.registerContractCapabilities();
   runtime.registerDefiCapabilities();
