@@ -55,13 +55,28 @@
   LowerCase(PreWord) == "preview" ? "Preview" : PreWord
 ; The first beta is just "Beta"; only a second one has to say which.
 #define IterationSuffix (PreCount != "" && PreCount != "1") ? " (" + PreCount + ")" : ""
+;
+; A beta says which beta, in the two digits people use: Beta 1.0 through
+; Beta 1.9, then Beta 2.0. Ten to a row, counting from the tag's own number, so
+; beta.20 is Beta 3.0 and beta.21 is Beta 3.1.
+;
+; The same arithmetic as betaLabelFor() in packages/shared/src/version.ts, and
+; it must move with it -- these two are read side by side, one in the Windows
+; uninstall list and one on AI17Z's version screen, and disagreeing looks like
+; two builds installed at once.
+;
+; AppVersion is untouched. The tag stays 1.0.0-beta.21, because that is what
+; VersionInfoVersion, the updater comparison and the download filename are all
+; built on. This is a rendering and nothing parses it back.
+#define PreCountNumber PreCount == "" ? 0 : Int(PreCount)
+#define BetaLabel Str((PreCountNumber / 10) + 1) + "." + Str(PreCountNumber % 10)
 #define ReleaseVersionOnly ChannelWord == "" ? \
   NumericVersion : \
-  ChannelWord + " " + NumericVersion + IterationSuffix
+  (LowerCase(PreWord) == "beta" ? "Beta " + BetaLabel : ChannelWord + " " + NumericVersion + IterationSuffix)
 #ifndef ReleaseName
   #define ReleaseName ChannelWord == "" ? \
     AppName + " " + NumericVersion : \
-    AppName + " " + ChannelWord + " " + NumericVersion + IterationSuffix
+    AppName + " " + ReleaseVersionOnly
 #endif
 ; Where the staged application was assembled. Matches AI17Z_STAGE_DIR in
 ; tools/package-windows.mts, which exists because npm cannot create the

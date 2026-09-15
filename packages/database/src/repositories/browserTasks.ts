@@ -32,6 +32,14 @@ export const BROWSER_TASK_KINDS = [
   'SHUTDOWN_BROWSER',
   /** Type the account's stored sign-in details into the form. Opt-in. */
   'CREDENTIAL_SIGN_IN',
+  /**
+   * Read a public account's own writing, to learn a voice from it.
+   *
+   * Browser work, so it belongs here rather than in the API: the API owns
+   * no browsers. The feature used to shell out to a Python library from
+   * the API process, which no packaged installation has.
+   */
+  'COLLECT_PERSONA',
 ] as const;
 export type BrowserTaskKind = (typeof BROWSER_TASK_KINDS)[number];
 

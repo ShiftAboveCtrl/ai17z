@@ -131,7 +131,18 @@ row "Install" "PASS" "$_install_method"
 # package's owner has `ai17z`, and has no `./install-ai17z.sh` to run.
 if [ -f "$AI17Z_APP_DIR/BUILD_INFO.json" ]; then
   PACKAGED=1
-  row "Version" "PASS" "$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$AI17Z_APP_DIR/BUILD_INFO.json" | head -1)"
+  # Both, because they answer different questions. "AI17Z Beta 3.0" is what
+  # somebody recognises; `1.0.0-beta.20` is what they quote in a bug report and
+  # what every comparison actually runs on. Read out of BUILD_INFO.json, which
+  # the packager writes from releaseName() -- the grammar is not reimplemented
+  # here, and a copy that predates the `name` field falls back to the number.
+  _build_version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$AI17Z_APP_DIR/BUILD_INFO.json" | head -1)"
+  _build_name="$(sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$AI17Z_APP_DIR/BUILD_INFO.json" | head -1)"
+  if [ -n "$_build_name" ]; then
+    row "Version" "PASS" "${_build_name}  (build ${_build_version})"
+  else
+    row "Version" "PASS" "$_build_version"
+  fi
 else
   PACKAGED=0
   row "Version" "NOT CONFIGURED" "no BUILD_INFO.json; this looks like a checkout"

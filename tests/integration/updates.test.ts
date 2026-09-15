@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ops } from '@xbam/database';
 import { fetchLatestRelease, setUpdatesEnabled, skipVersion, updateState, updatesEnabled } from '@xbam/runtime';
+import { betaLabelFor } from '@xbam/shared';
 import { installHarness } from '../support/harness';
 
 installHarness();
@@ -228,15 +229,34 @@ describe('what a release is called on the screen', () => {
     serve([]);
     const state = await updateState({ refresh: true });
     expect(state.currentName).toMatch(/^AI17Z /);
-    // The name is a rendering of the number; they cannot disagree.
-    expect(state.currentName).toContain(state.current.replace(/-.*$/, ''));
+    // The name is a rendering of the number and the two cannot disagree. For a
+    // beta the link is the iteration rather than the core: `1.0.0-beta.20` is
+    // "Beta 3.0", and the 20 is what the 3.0 is made of. Asserted by deriving
+    // it the same way rather than by repeating the arithmetic here, so this
+    // cannot drift from the formatter it is checking.
+    const iteration = Number(/-beta\.(\d+)/.exec(state.current)?.[1] ?? 0);
+    if (iteration > 0) {
+      expect(state.currentName).toBe(`AI17Z Beta ${betaLabelFor(iteration)}`);
+      // And the number is still on the screen, beside it, for a bug report.
+      expect(state.current).toMatch(/^\d+\.\d+\.\d+-beta\.\d+$/);
+    } else {
+      expect(state.currentName).toContain(state.current.replace(/-.*$/, ''));
+    }
   });
 
   it('renders a name for a release GitHub named after its own tag', async () => {
     serve([release('v9.9.9-beta.2', { name: 'v9.9.9-beta.2' })]);
     const state = await updateState({ refresh: true });
-    expect(state.latest?.name).toBe('AI17Z Beta 9.9.9 (2)');
+    // The beta label counts betas and says nothing about the core version, so
+    // `9.9.9-beta.2` reads the same as `1.0.0-beta.2` would. That is what a
+    // flat counter means and it is deliberate: there is one beta series, the
+    // tag is what disambiguates anywhere it matters, and the tag is on the
+    // screen beside this. Stated here so that a second beta series -- if there
+    // is ever one -- is a decision somebody makes rather than a collision they
+    // discover.
+    expect(state.latest?.name).toBe('AI17Z Beta 1.2');
     expect(state.latest?.channel).toBe('Beta');
+    expect(state.latest?.version).toBe('9.9.9-beta.2');
   });
 
   it('leaves a name somebody actually wrote alone', async () => {

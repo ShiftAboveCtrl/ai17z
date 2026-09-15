@@ -474,6 +474,74 @@ export class BrowserTaskRunner {
         return { found: events.length, jobsCreated: created };
       }
 
+      case 'COLLECT_PERSONA': {
+        // Reading a public account's writing, to learn a voice from it.
+        //
+        // Here rather than in the API because this is the process with a
+        // browser. The feature used to run in the API and shell out to
+        // twscrape, a Python library no packaged installation has -- so it
+        // reported "unavailable" on every machine and the button did nothing.
+        //
+        // Read-only, and nothing about it touches the account being collected:
+        // no follow, no like, no reply, no DM. It scrolls a public profile the
+        // way a person does and stops.
+        const handle = typeof task.params.handle === 'string' ? task.params.handle : '';
+        const sourceId = typeof task.params.sourceId === 'string' ? task.params.sourceId : '';
+        if (!sourceId) throw new Error('A persona collection needs the source it is collecting for.');
+
+        const target = typeof task.params.target === 'number' ? task.params.target : undefined;
+        const { collectPersonaCorpus } = await import('@xbam/channels');
+        const { syncPersonaSource } = await import('@xbam/persona');
+        const { personaSources } = await import('@xbam/database');
+
+        // Progress is written as it happens, because the alternative is a
+        // spinner that cannot say whether it is working or stuck. The numbers
+        // are what was actually collected -- never an estimate.
+        const corpus = await collectPersonaCorpus(ctx, {
+          handle,
+          ...(target === undefined ? {} : { target }),
+          onProgress: (collected, passes) => {
+            void personaSources
+              .setSourceStatus(sourceId, 'SYNCING', {
+                lastError: null,
+                progress: `Read ${collected} post${collected === 1 ? '' : 's'} by @${handle}.`,
+              })
+              .catch(() => undefined);
+            log.debug('persona collection progress', { handle, collected, passes });
+          },
+        });
+
+        if (corpus.outcome !== 'OK') {
+          // Said as itself. A protected account, a suspended one, a signed-out
+          // browser and a security challenge each need a different thing from
+          // the owner, and "could not learn from that account" tells them none
+          // of it. Nothing is derived from an empty corpus.
+          await personaSources.setSourceStatus(sourceId, 'UNAVAILABLE', { lastError: corpus.detail });
+          return { outcome: corpus.outcome, detail: corpus.detail, posts: 0 };
+        }
+
+        const report = await syncPersonaSource({
+          sourceId,
+          items: corpus.posts.map((post) => ({
+            remoteId: post.statusId,
+            text: post.text,
+            url: post.url,
+            itemKind: post.kind,
+            createdAt: post.createdAt,
+            raw: { statusId: post.statusId, kind: post.kind, handle: corpus.handle },
+          })),
+        });
+
+        return {
+          outcome: corpus.outcome,
+          detail: corpus.detail,
+          posts: corpus.posts.length,
+          scrollPasses: corpus.scrollPasses,
+          stored: report.stored,
+          traits: report.traits,
+        };
+      }
+
       default:
         return { detail: `Unknown task kind: ${task.kind}` };
     }

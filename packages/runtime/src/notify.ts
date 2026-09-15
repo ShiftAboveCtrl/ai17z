@@ -295,6 +295,22 @@ export async function sweepNotifications(): Promise<{ raised: number; resolved: 
   }
 
   for (const account of await accountsRepo.allAccounts()) {
+    // An account the owner switched off is not a problem to report.
+    //
+    // This is the whole of the "it keeps telling me the account is signed out"
+    // complaint. The sweep read status and nothing else, so an account somebody
+    // had finished with went on raising ACCOUNT_SIGNED_OUT every cycle -- and
+    // dismissing it could not help, because dismissing answers the notification
+    // rather than the state that produces it.
+    //
+    // Resolved rather than skipped, so anything already standing clears on the
+    // first sweep after the owner disconnects rather than sitting there until
+    // something else happens to fix it.
+    if (!account.enabled) {
+      await accountIsWell(account.id);
+      resolved += 1;
+      continue;
+    }
     if (account.status === 'CHALLENGE_REQUIRES_USER') {
       count(
         await accountNeedsUser({

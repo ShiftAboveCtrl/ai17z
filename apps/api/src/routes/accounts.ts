@@ -2,10 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { BrowserEngine, CadenceConfig, CreateAccountInput } from '@xbam/shared/contracts';
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
-import { accounts as accountsRepo, cadences as cadencesRepo, ops, type UserRow } from '@xbam/database';
+import {
+  accounts as accountsRepo,
+  browserTasks as browserTasksRepo,
+  cadences as cadencesRepo,
+  ops,
+  type UserRow,
+} from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@xbam/channels';
 import { closeSession } from '@xbam/browser';
-import { ensureDefaultRadarSources } from '@xbam/runtime';
+import { accountIsWell, ensureDefaultRadarSources } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAccount(accountId: string, user: UserRow) {
@@ -189,14 +195,74 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * Stop working this account, and keep everything about it.
+   *
+   * The half of "I do not want this account any more" that is reversible. The
+   * poller and the radar already refuse a disabled account, so this switches
+   * that flag, settles the status, closes any live session and cancels the
+   * browser work already queued for it -- a task sitting in the queue would
+   * otherwise open a window for an account the owner has just switched off.
+   *
+   * What it does not touch: the registration, its history, its cadence, its
+   * capability grants, its links to agents, or anything an agent remembers.
+   * Reconnecting is switching it back on.
+   */
+  app.post(
+    '/api/accounts/:id/disconnect',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const account = await ownedAccount(params(request).id!, user);
+      await closeSession(account.id).catch(() => undefined);
+      await browserTasksRepo.cancelAccountTasks(account.id, 'The account was disconnected.').catch(() => 0);
+      await accountsRepo.disconnectAccount(account.id);
+      // Cleared here rather than waiting for the next health sweep, so the
+      // warning goes when the owner acts rather than up to a minute later.
+      await accountIsWell(account.id).catch(() => undefined);
+      return accountsRepo.requireAccount(account.id);
+    }),
+  );
+
+  /** Switched back on. Nothing is assumed about the session; signing in starts it. */
+  app.post(
+    '/api/accounts/:id/reconnect',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const account = await ownedAccount(params(request).id!, user);
+      await accountsRepo.reconnectAccount(account.id);
+      return accountsRepo.requireAccount(account.id);
+    }),
+  );
+
+  /**
+   * Remove the registration itself.
+   *
+   * Every table that references an account either cascades or nulls the column,
+   * so the row going is enough to stop the polling, the radar, the sign-in
+   * watcher, the queued browser work and the notifications -- and
+   * `ON DELETE CASCADE` on `owner_notifications` is what stops the signed-out
+   * warning rather than anything remembering to clear it.
+   *
+   * The live session is closed and the queued work cancelled first anyway,
+   * because the worker holds those in memory and a cascade cannot reach a
+   * browser that is already open.
+   *
+   * What survives on purpose: what the agents wrote. `events`, `jobs`,
+   * `actions` and memory all null the account column rather than cascade, so
+   * removing an account the agent used does not delete the conversations it
+   * had. Removing an account is not a way to erase history.
+   */
   app.delete(
     '/api/accounts/:id',
     handler(async (request) => {
       const user = await requireUser(request);
       const account = await ownedAccount(params(request).id!, user);
       await closeSession(account.id).catch(() => undefined);
+      await browserTasksRepo.cancelAccountTasks(account.id, 'The account was removed.').catch(() => 0);
       await accountsRepo.deleteAccount(account.id);
-      return { deleted: true };
+      // Idempotent by construction: a second call finds no account and answers
+      // 404 from `ownedAccount`, rather than half-removing anything.
+      return { deleted: true, handle: account.handle };
     }),
   );
 }

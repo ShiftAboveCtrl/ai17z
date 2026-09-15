@@ -55,14 +55,21 @@ describe('what this installation is running', () => {
  */
 describe('what a release is called', () => {
   it('names the channel before the number, the way a person says it', () => {
-    expect(releaseName('1.0.0-beta.1').title).toBe('AI17Z Beta 1.0.0');
+    // A beta is now two digits of its own -- see betaLabel.test.ts for the
+    // mapping and for why the tag underneath it did not move.
+    expect(releaseName('1.0.0-beta.1').title).toBe('AI17Z Beta 1.1');
+    // Everything else keeps the grammar this file was always about.
+    expect(releaseName('1.0.0-rc.1').title).toBe('AI17Z Release Candidate 1.0.0');
   });
 
-  it('does not say "1" for the first of anything', () => {
-    // "AI17Z Beta 1.0.0 (1)" is a worse name than "AI17Z Beta 1.0.0", and
-    // every cycle starts with one, so the common case must read cleanly.
+  it('never puts a bracketed count in front of somebody', () => {
+    // "AI17Z Beta 1.0.0 (1)" was a worse name than "AI17Z Beta 1.0.0", and
+    // twenty betas later "(20)" had stopped reading as progress at all. No
+    // beta has brackets now; a candidate still drops them on the first.
     expect(releaseName('1.0.0-beta.1').title).not.toContain('(');
-    expect(releaseName('1.0.0-beta.2').title).toBe('AI17Z Beta 1.0.0 (2)');
+    expect(releaseName('1.0.0-beta.20').title).not.toContain('(');
+    expect(releaseName('1.0.0-beta.2').title).toBe('AI17Z Beta 1.2');
+    expect(releaseName('1.0.0-rc.1').title).not.toContain('(');
   });
 
   it('spells out rc, which is jargon', () => {
@@ -100,8 +107,9 @@ describe('what a release is called', () => {
   });
 
   it('has a short form for a badge with no room for the product name', () => {
-    expect(releaseName('1.0.0-beta.1').short).toBe('Beta 1.0.0');
+    expect(releaseName('1.0.0-beta.1').short).toBe('Beta 1.1');
     expect(releaseName('1.0.0-beta.1').title).toContain(releaseName('1.0.0-beta.1').short);
+    expect(releaseName('1.0.0-rc.8').short).toBe('Release Candidate 1.0.0 (8)');
   });
 
   it('names whatever this installation is running', () => {

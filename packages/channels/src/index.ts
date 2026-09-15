@@ -5,6 +5,16 @@ export { xAdapter } from './x/index';
 export { observeAuthPage } from './x/auth';
 export { signInWithStoredCredentials } from './x/credentialSignIn';
 export { CHALLENGE_SIGNALS, SEL } from './x/selectors';
+export {
+  PERSONA_MINIMUM_POSTS,
+  PERSONA_TARGET_POSTS,
+  authoredBy,
+  collectPersonaCorpus,
+  normaliseHandle,
+  type AuthoredPost,
+  type CorpusOutcome,
+  type PersonaCorpus,
+} from './x/personaCorpus';
 export { linksInText, upgradeImageUrl, readMediaInventory } from './x/media';
 export { webSearch, readPage, extractBraveAnswer, type WebResult } from './x/websearch';
  export * as xMonitors from './x/monitors';

@@ -156,14 +156,37 @@ async function collect(): Promise<HealthReport> {
   // and reporting that as "healthy, 0 live sessions" said nothing true about
   // any browser anywhere. What the worker publishes is the only evidence there
   // is, and a snapshot nobody has refreshed describes a browser that has closed.
+  // Which part is not ready, rather than one sentence for every reason.
+  //
+  // A browser that has not started yet and a browser that has gone look
+  // identical from here unless somebody asks whether the worker is running --
+  // and the worker is the thing that owns browsers. Reported from a real Mac as
+  // "the Chrome launcher broke in the update"; it had not, the containers were
+  // still rebuilding, and the screen had no way to say so.
+  const browserState = await (async (): Promise<{ status: 'healthy' | 'degraded' | 'offline'; detail: string }> => {
+    if (!browserEnabled()) return { status: 'offline', detail: 'Disabled by configuration' };
+    if (await browserRunning()) return { status: 'healthy', detail: 'Ready. A worker is reporting live tabs.' };
+
+    const workers = await workersRepo.present().catch(() => []);
+    if (workers.length === 0) {
+      // Degraded rather than offline: nothing is broken, something has not
+      // happened yet, and the first start after an update rebuilds every
+      // container before the worker exists at all.
+      return {
+        status: 'degraded',
+        detail: 'Starting. No worker has reported in yet — after an update this takes a few minutes while the containers rebuild.',
+      };
+    }
+    return {
+      status: 'degraded',
+      detail: 'Waiting for Chrome. A worker is running and has not opened a browser yet.',
+    };
+  })();
+
   components.push({
     name: 'Browser',
-    status: !browserEnabled() ? 'offline' : (await browserRunning()) ? 'healthy' : 'degraded',
-    detail: !browserEnabled()
-      ? 'Disabled by configuration'
-      : (await browserRunning())
-        ? 'A worker is reporting live tabs'
-        : 'No worker has reported a live browser recently',
+    status: browserState.status,
+    detail: browserState.detail,
     optional: true,
     kind: 'browser',
     checkedAt,

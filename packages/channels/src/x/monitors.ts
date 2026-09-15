@@ -34,6 +34,17 @@ export interface Seen {
   url: string | null;
   /** When X says it was posted. Null when the element could not be read. */
   createdAt: string | null;
+  /**
+   * Whether X rendered this article as an answer to somebody.
+   *
+   * Read in the same evaluation as the rest, because a second traversal of the
+   * same nodes is what this function exists to avoid. The monitors do not use
+   * it; the persona collector does, because a reply and an announcement teach
+   * different things about how somebody writes.
+   */
+  isReply?: boolean;
+  /** Whether it carries a quoted post, which makes the text a remark about it. */
+  isQuote?: boolean;
 }
 
 /**
@@ -87,11 +98,31 @@ export async function readAllArticles(page: Page, limit: number): Promise<Seen[]
             .join('\n')
             .trim();
           const createdAt = el.querySelector('time')?.getAttribute('datetime') ?? null;
-          return { href, nameBlock, text, createdAt };
+          // X renders "Replying to @someone" above an answer. Matched on the
+          // rendered text rather than a testid because that line has never had
+          // one. Only the opening of the article is looked at: the line sits
+          // above the text, and searching the whole body would match somebody
+          // who simply wrote the words "Replying to".
+          const isReply = /^\s*Replying to\b/m.test((el.innerText ?? '').slice(0, 400));
+          // A quoted post is an article inside an article. The outer one is
+          // this node, so anything nested belongs to the quote.
+          const isQuote = el.querySelector('[data-testid="tweetText"] ~ div [role="link"] time') !== null
+            || el.querySelectorAll('[data-testid="User-Name"]').length > 1;
+          return { href, nameBlock, text, createdAt, isReply, isQuote };
         }),
       limit,
     )
-    .catch(() => [] as { href: string | null; nameBlock: string; text: string; createdAt: string | null }[]);
+    .catch(
+      () =>
+        [] as {
+          href: string | null;
+          nameBlock: string;
+          text: string;
+          createdAt: string | null;
+          isReply: boolean;
+          isQuote: boolean;
+        }[],
+    );
 
   return raw.map((item) => {
     const url = item.href ? `https://x.com${item.href.startsWith('/') ? item.href : `/${item.href}`}` : null;
@@ -102,6 +133,8 @@ export async function readAllArticles(page: Page, limit: number): Promise<Seen[]
       text: item.text,
       url: normalizeTargetId(url),
       createdAt: item.createdAt,
+      isReply: item.isReply,
+      isQuote: item.isQuote,
     };
   });
 }

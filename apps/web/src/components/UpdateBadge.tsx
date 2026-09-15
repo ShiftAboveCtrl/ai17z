@@ -44,12 +44,17 @@ export function UpdateBadge() {
     >
       <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden />
       {/*
-        The number goes below `md`, the icon stays. Seven controls already
-        overflowed a 375px bar, which is why the detail switch moved to its own
-        row -- but an update nobody on a phone can see is not a notice, and the
-        icon alone is four characters' worth of space.
+        The label, not the tag. `Beta 3.1` is shorter than `v1.0.0-beta.21` and
+        says the thing somebody wants from a badge -- which one is out -- while
+        the tag says only that a number went up. The full version is on the
+        screen this links to, beside the name, for anybody writing a bug report.
+
+        It goes below `md`, the icon stays. Seven controls already overflowed a
+        375px bar, which is why the detail switch moved to its own row -- but an
+        update nobody on a phone can see is not a notice, and the icon alone is
+        four characters' worth of space.
       */}
-      <span className="hidden md:inline">v{state.latest.version}</span>
+      <span className="hidden md:inline">{state.latest.label}</span>
     </Link>
   );
 }
