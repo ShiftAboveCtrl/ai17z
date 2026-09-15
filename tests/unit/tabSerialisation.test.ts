@@ -192,8 +192,12 @@ describe('an operation that never gives the tab back', () => {
       await lockTab(tab);
 
       const waiting = lockTab(tab);
+      // The assertion attaches its handler before the timer fires. Advancing
+      // first leaves a rejected promise nobody is watching for a moment, which
+      // Node reports as an unhandled rejection and which then hides real ones.
+      const refused = expect(waiting).rejects.toThrow(/still busy/);
       await vi.advanceTimersByTimeAsync(121_000);
-      await expect(waiting).rejects.toThrow(/still busy/);
+      await refused;
 
       // The hold's bound fires next, and the tab comes back.
       await vi.advanceTimersByTimeAsync(60_000);
