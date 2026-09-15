@@ -241,6 +241,18 @@ export const BrowserTabStatus = z.object({
   openedAt: z.string().nullable().default(null),
   lastUsedAt: z.string().nullable().default(null),
   lastError: z.string().nullable().default(null),
+  /**
+   * Why this tab was last replaced, in a sentence somebody can read.
+   *
+   * Recovery an owner cannot see is indistinguishable from a fault: a renderer
+   * running out of memory and being replaced correctly showed up as nothing
+   * but a run of failed polls. Defaulted rather than required, so a snapshot
+   * published by an older worker still parses.
+   */
+  recycled: z
+    .object({ at: z.string(), because: z.string().max(300) })
+    .nullable()
+    .default(null),
 });
 export type BrowserTabStatus = z.infer<typeof BrowserTabStatus>;
 

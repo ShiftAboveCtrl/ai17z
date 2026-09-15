@@ -1,6 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import type { HealthComponent, HealthReport } from '@xbam/shared/contracts';
-import { describeVersion, nowIso, workerAbsenceSentence } from '@xbam/shared';
+import {
+  currentBudget,
+  currentPressure,
+  describeBudget,
+  describeVersion,
+  nowIso,
+  workerAbsenceSentence,
+} from '@xbam/shared';
 import {
   accounts as accountsRepo,
   jobs as jobsRepo,
@@ -187,6 +194,36 @@ async function collect(): Promise<HealthReport> {
     name: 'Browser',
     status: browserState.status,
     detail: browserState.detail,
+    optional: true,
+    kind: 'browser',
+    checkedAt,
+  });
+
+  /*
+    What this machine can afford, and whether it currently can.
+
+    A row rather than a number buried in diagnostics, because the failure it
+    describes is one an owner meets as "my monitors stopped". Chrome runs out
+    of memory, AI17Z recycles the tab, and without this the only visible
+    evidence is a run of failed polls -- which is what happened on 2026-09-15
+    and took a CDP probe to explain.
+
+    It reports what AI17Z decided, not raw operating system numbers: `freemem`
+    means different things on different platforms and a precise figure implies
+    a precision it does not have. A platform that will not answer is reported
+    as running normally rather than as a problem.
+  */
+  const budget = currentBudget();
+  const pressure = currentPressure();
+  components.push({
+    name: 'Memory',
+    status: pressure === 'CRITICAL' ? 'degraded' : 'healthy',
+    detail:
+      pressure === 'NORMAL'
+        ? `Normal. ${describeBudget(budget, pressure)}`
+        : pressure === 'PRESSURED'
+          ? `Memory is tight, so AI17Z is running less in the background. ${describeBudget(budget, pressure)}`
+          : `Memory is very tight, so AI17Z has paused background work to keep the browser alive. ${describeBudget(budget, pressure)}`,
     optional: true,
     kind: 'browser',
     checkedAt,
