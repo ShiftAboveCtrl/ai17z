@@ -3,7 +3,14 @@ import { z } from 'zod';
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
 import { ATTENTION_STATES, AUTONOMY_LEVELS, GOAL_STATUSES } from '@xbam/shared/contracts';
 import { wakeAgent } from '@xbam/runtime';
-import { agents as agentsRepo, deliberation as mind, ops, type UserRow } from '@xbam/database';
+import {
+  agents as agentsRepo,
+  deliberation as mind,
+  ops,
+  repoSources,
+  REPO_EVENT_KINDS,
+  type UserRow,
+} from '@xbam/database';
 import { handler, params, parseBody, requireUser } from '../http';
 
 /**
@@ -241,6 +248,84 @@ export async function mindRoutes(app: FastifyInstance): Promise<void> {
         data: { summary: item.summary },
       });
       return { retired: true };
+    }),
+  );
+
+  /**
+   * The projects this agent follows, and what they have done.
+   *
+   * Read only, and there is no route here that could be anything else: nothing
+   * in the watcher pushes, merges, comments or releases. An agent that could
+   * act on a repository is a different product with a different threat model.
+   */
+  app.get(
+    '/api/agents/:id/mind/repos',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const [sources, events] = await Promise.all([
+        repoSources.listRepos(user.id, agent.id),
+        repoSources.recentRepoEvents({ ownerUserId: user.id, agentId: agent.id, limit: 30 }),
+      ]);
+      return { sources, events };
+    }),
+  );
+
+  app.post(
+    '/api/agents/:id/mind/repos',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(
+        z.object({
+          // "owner/name", which is how a forge spells it and how somebody will
+          // type it. Validated here so a typo is refused rather than becoming a
+          // watch that 404s every quarter of an hour.
+          repo: z
+            .string()
+            .trim()
+            .regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/, 'Give it as owner/name.'),
+          kinds: z.array(z.enum(REPO_EVENT_KINDS)).min(1).optional(),
+          /**
+           * A read-only token, for a repository that is not public.
+           *
+           * Sealed under the master key the moment it arrives and never
+           * returned by any route. Absent for a public repository, which needs
+           * no credential at all.
+           */
+          token: z.string().trim().min(8).max(400).optional(),
+        }),
+        request,
+      );
+
+      const source = await repoSources.watchRepo({
+        ownerUserId: user.id,
+        agentId: agent.id,
+        repo: body.repo,
+        ...(body.kinds ? { kinds: body.kinds } : {}),
+        ...(body.token ? { token: body.token } : {}),
+      });
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'mind.repo.watched',
+        entityType: 'agent',
+        entityId: agent.id,
+        // The repository and whether a credential was involved. Never the
+        // credential, and never anything derived from it.
+        data: { repo: source.repo, kinds: source.kinds, withToken: source.hasToken },
+      });
+      return { source };
+    }),
+  );
+
+  app.delete(
+    '/api/agents/:id/mind/repos/:repoId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      await ownedAgent(params(request).id!, user);
+      const gone = await repoSources.forgetRepo(user.id, params(request).repoId!);
+      if (!gone) throw new NotFoundError('Repository watch');
+      return { forgotten: true };
     }),
   );
 

@@ -34,6 +34,7 @@ import {
   TRACE_EVENT_TYPES,
 } from '@xbam/shared/contracts';
 import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
+import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
 
 /**
  * Every column whose values are constrained to a fixed vocabulary by a database
@@ -56,6 +57,14 @@ import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
  * Some vocabularies have no shared contract enum because nothing outside the
  * database has ever needed to name them. Those carry their values inline with a
  * note, which at least gives them one runtime source and a test.
+ *
+ * **A one-value CHECK is deliberately not here.** Postgres renders `IN ('x')`
+ * as `= 'x'::text` rather than `= ANY (ARRAY[...])`, so the discovery below
+ * cannot see it -- and a constraint with one permitted value is not a
+ * vocabulary that can drift anyway. `repo_sources.provider` is the current
+ * example. The moment a second value is added it becomes discoverable, and the
+ * unregistered-column test then insists it be registered, which is exactly the
+ * right moment for that to happen.
  */
 export interface ConstrainedEnum {
   table: string;
@@ -115,6 +124,18 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'provider_credentials', column: 'provider', values: PROVIDER_KINDS },
   { table: 'radar_sources', column: 'status', values: RADAR_STATUSES },
   { table: 'relationships', column: 'disposition', values: DISPOSITIONS },
+  {
+    table: 'repo_events',
+    column: 'kind',
+    values: REPO_EVENT_KINDS,
+    note: 'What a watched repository did. Owned by the repository-watch repository.',
+  },
+  {
+    table: 'repo_sources',
+    column: 'status',
+    values: REPO_STATUSES,
+    note: 'Watch health. Mirrors the radar vocabulary without sharing it: a forge and a timeline fail differently.',
+  },
   { table: 'relationships', column: 'familiarity', values: FAMILIARITY_LEVELS },
   { table: 'stances', column: 'position', values: STANCE_POSITIONS },
   { table: 'stances', column: 'status', values: STANCE_STATUSES },
