@@ -32,7 +32,24 @@ export type Ailment =
   /** Open, and not answering. Frozen script, or a modal nothing dismissed. */
   | 'UNRESPONSIVE'
   /** Open and answering, but sitting on the same navigation far too long. */
-  | 'STUCK';
+  | 'STUCK'
+  /**
+   * Answering, but holding so much memory that the next allocation kills it.
+   *
+   * The one ailment that is worth catching *before* it becomes CRASHED. A
+   * renderer that has crashed has already taken its monitors with it; one at
+   * 90% of the heap ceiling can still be replaced in an orderly way, on a tab
+   * nobody is using, without losing anything.
+   */
+  | 'OUT_OF_MEMORY'
+  /**
+   * Nothing is wrong with the tab. One operation has been holding it for so
+   * long that everything else queued behind it has given up.
+   *
+   * This is the failure of 2026-09-15 and it had no name, which is why it ran
+   * for fifty-six minutes: the tab was `BUSY`, and busy sounds like progress.
+   */
+  | 'HELD';
 
 export type Remedy =
   | 'NONE'
@@ -60,6 +77,20 @@ export interface TabProbe {
   respondedMs: number | null;
   /** How long it has been on the same URL, when that is known. */
   onSameUrlMs?: number | null;
+  /**
+   * How much of the renderer's own heap ceiling is in use, where the browser
+   * will say. Null on an engine that does not expose it, which is reported as
+   * unknown rather than as healthy.
+   */
+  heapFraction?: number | null;
+  /**
+   * How long the current operation has held this tab, when one does.
+   *
+   * Not how long since it was last used: a tab nobody has touched for an hour
+   * is idle, and a tab one operation has held for an hour is broken, and the
+   * difference is the whole point.
+   */
+  heldMs?: number | null;
   /** How many times recovery has already been attempted for this role. */
   attempts?: number;
 }
@@ -86,6 +117,26 @@ export const STUCK_NAVIGATION_MS = 10 * 60_000;
 
 /** Rebuilding a role more than this many times means something else is wrong. */
 export const MAX_RECOVERY_ATTEMPTS = 3;
+
+/**
+ * The share of a renderer's heap ceiling past which it is living on borrowed
+ * time.
+ *
+ * Above the recycling threshold in the resource budget, deliberately: the
+ * budget decides when a tab is replaced during ordinary use, and this decides
+ * when the watchdog says out loud that something is wrong. A live mentions
+ * renderer measured 3,754 MB against a 4,192 MB ceiling -- 90% -- shortly
+ * before Chrome killed it.
+ */
+export const HEAP_ALARM_FRACTION = 0.85;
+
+/**
+ * How long one operation may hold a tab before the watchdog calls it wedged.
+ *
+ * Longer than the lease's own watchdog in `tabs.ts`, so the lease takes the tab
+ * back first and this only fires when even that did not help.
+ */
+export const HELD_TOO_LONG_MS = 5 * 60_000;
 
 /** What is wrong with one role, and what to do about it. */
 export function diagnoseTab(probe: TabProbe): RoleVerdict {
@@ -118,6 +169,28 @@ export function diagnoseTab(probe: TabProbe): RoleVerdict {
   }
   if (probe.respondedMs === null) {
     return verdict('UNRESPONSIVE', 'The tab did not answer, so nothing can be read from it.', 'RECREATE_TAB');
+  }
+  /*
+    Held before heap, because a wedged hold is what an owner actually sees.
+
+    Both can be true at once -- a renderer that ran out of memory is usually
+    also being held by whatever was reading it -- and of the two, "one
+    operation has been holding this for six minutes" is the sentence that
+    explains the failed polls.
+  */
+  if ((probe.heldMs ?? 0) > HELD_TOO_LONG_MS) {
+    return verdict(
+      'HELD',
+      `One operation has been holding this tab for ${Math.round((probe.heldMs ?? 0) / 60_000)} minutes, so everything else waiting for it has failed.`,
+      'RECREATE_TAB',
+    );
+  }
+  if ((probe.heapFraction ?? 0) >= HEAP_ALARM_FRACTION) {
+    return verdict(
+      'OUT_OF_MEMORY',
+      `The tab is using ${Math.round((probe.heapFraction ?? 0) * 100)}% of the memory this renderer is allowed, and will be killed if it keeps going.`,
+      'RECREATE_TAB',
+    );
   }
   if (probe.respondedMs > RESPONSE_BUDGET_MS) {
     return verdict('UNRESPONSIVE', `The tab took ${Math.round(probe.respondedMs / 1000)}s to answer.`, 'RECREATE_TAB');

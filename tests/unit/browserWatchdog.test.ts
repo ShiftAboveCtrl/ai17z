@@ -219,3 +219,81 @@ describe('tabs no role is using', () => {
     expect(orphanTabs({ pages }).every((i) => pages[i]!.url.startsWith('https://'))).toBe(true);
   });
 });
+
+/*
+  The failure of 2026-09-15, as tests.
+
+  A live installation's mentions renderer ran out of memory. The operation
+  holding that tab never finished and never released it, so `busy` stayed true
+  for fifty-six minutes and the three monitors that share the mentions tab --
+  mention search, reply search and replies to own posts -- failed every two
+  minutes for the whole afternoon. Notifications, which has its own tab, stayed
+  perfectly healthy the entire time and reported so.
+
+  Nothing diagnosed it, because the tab was `BUSY`, and busy sounds like work.
+*/
+describe('a tab one operation will not let go of', () => {
+  it('is a fault with a name, not a tab that is merely busy', () => {
+    const verdict = diagnoseTab(probe({ heldMs: 6 * 60_000 }));
+    expect(verdict.ailment).toBe('HELD');
+    expect(verdict.remedy).toBe('RECREATE_TAB');
+    // The sentence has to explain the failed polls, because that is what the
+    // owner is actually looking at.
+    expect(verdict.detail).toMatch(/holding this tab for 6 minutes/);
+    expect(verdict.detail).toMatch(/waiting for it has failed/);
+  });
+
+  it('leaves an ordinary operation alone', () => {
+    // A monitor legitimately holds the tab while it reads a timeline.
+    expect(diagnoseTab(probe({ heldMs: 20_000 })).ailment).toBe('HEALTHY');
+  });
+
+  it('says nothing about a tab nothing is holding', () => {
+    expect(diagnoseTab(probe({ heldMs: null })).ailment).toBe('HEALTHY');
+    expect(diagnoseTab(probe({})).ailment).toBe('HEALTHY');
+  });
+});
+
+describe('a renderer about to be killed for memory', () => {
+  it('is caught before it crashes, not after', () => {
+    // The whole point: a crashed renderer has already taken its monitors with
+    // it. One at 90% can still be replaced in an orderly way.
+    const verdict = diagnoseTab(probe({ heapFraction: 0.9 }));
+    expect(verdict.ailment).toBe('OUT_OF_MEMORY');
+    expect(verdict.remedy).toBe('RECREATE_TAB');
+    expect(verdict.detail).toMatch(/90% of the memory this renderer is allowed/);
+  });
+
+  it('leaves a renderer with room alone', () => {
+    expect(diagnoseTab(probe({ heapFraction: 0.4 })).ailment).toBe('HEALTHY');
+  });
+
+  it('does not invent a verdict on an engine that will not say', () => {
+    // Absent is not zero and it is not full either.
+    expect(diagnoseTab(probe({ heapFraction: null })).ailment).toBe('HEALTHY');
+  });
+
+  it('still reports a tab that already crashed', () => {
+    const verdict = diagnoseTab(probe({ onErrorPage: true }));
+    expect(verdict.ailment).toBe('CRASHED');
+    expect(verdict.remedy).toBe('RECREATE_TAB');
+  });
+});
+
+describe('one role failing is not four roles failing', () => {
+  it('recreates only the tab that is wrong', () => {
+    // The shape of the live failure: three monitors share MENTIONS and all
+    // three died; NOTIFICATIONS has its own tab and was fine. Recovery must
+    // not touch the healthy one.
+    const mentions = diagnoseTab(probe({ role: 'MENTIONS', heldMs: 9 * 60_000 }));
+    const notifications = diagnoseTab(probe({ role: 'NOTIFICATIONS' }));
+    expect(mentions.remedy).toBe('RECREATE_TAB');
+    expect(notifications.remedy).toBe('NONE');
+  });
+
+  it('stops rebuilding a role that rebuilding does not fix', () => {
+    const verdict = diagnoseTab(probe({ heldMs: 9 * 60_000, attempts: MAX_RECOVERY_ATTEMPTS }));
+    expect(verdict.remedy).toBe('GIVE_UP');
+    expect(verdict.detail).toMatch(/has not helped/);
+  });
+});

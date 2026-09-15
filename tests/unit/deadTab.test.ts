@@ -25,6 +25,9 @@ function tabs(entries: Partial<Record<(typeof TAB_ROLES)[number], Page>>): TabMa
       lastError: null,
       queue: Promise.resolve(),
       busy: false,
+      heldSince: null,
+      navigations: 0,
+      recycled: null,
     } satisfies TabState);
   }
   return map;
