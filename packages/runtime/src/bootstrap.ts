@@ -42,6 +42,7 @@ import { registerReferenceCapabilities } from './referenceCapabilities';
 import { registerMarketCapabilities } from './marketCapabilities';
 import { defaultPipelineDraft } from './defaultPipeline';
 import { registerXCapabilities } from './xCapabilities';
+import { registerGithubCapabilities } from './githubCapabilities';
 
 const log = createLogger('bootstrap');
 
@@ -67,6 +68,10 @@ export async function bootstrapRuntime(): Promise<void> {
   // channel package does not do. The selector boundary is unaffected --
   // what crosses it is still only the normalised shapes.
   registerXCapabilities();
+  // What a watched repository did, answered from what was recorded rather than
+  // by calling GitHub. An agent cannot add a watch and cannot reach a project
+  // its owner has not pointed it at.
+  registerGithubCapabilities();
 
   // Every upstream call in this process now goes through a coordinator that
   // other processes can see. The default one counts alone, which is right for a
