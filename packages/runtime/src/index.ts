@@ -71,6 +71,7 @@ export * from './opportunity';
 export * from './accountReading';
 export * from './salience';
 export * from './reticence';
+export * from './curiosity';
 export * from './deliberate';
 export * from './repoWatcher';
 export * from './githubCapabilities';
