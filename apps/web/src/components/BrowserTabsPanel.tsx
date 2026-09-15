@@ -68,6 +68,19 @@ export function BrowserTabsPanel({ accountId }: { accountId: string }) {
                 <p className="mt-0.5 pl-4 text-[11px] leading-relaxed text-bone-faint">
                   {state === 'FAILED' && tab.lastError ? tab.lastError : words.does}
                 </p>
+                {/*
+                  What recovery looked like, when there was some.
+
+                  A renderer that ran out of memory and was replaced is a thing
+                  that went right, and it has to read that way. Without this the
+                  only trace is a gap in the polls, which reads as a fault
+                  nobody fixed.
+                */}
+                {tab.recycled && state !== 'FAILED' && (
+                  <p className="mt-0.5 break-words pl-4 text-[11px] leading-relaxed text-bone-faint">
+                    Replaced {timeAgo(tab.recycled.at)}: {tab.recycled.because}.
+                  </p>
+                )}
               </div>
               <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">
                 {state === 'MISSING'

@@ -126,6 +126,15 @@ export interface TabHealth {
   openedAt: string | null;
   lastUsedAt: string | null;
   lastError: string | null;
+  /**
+   * Why this tab was replaced, when it was, in a sentence.
+   *
+   * Recovery an owner cannot see is indistinguishable from a fault. Without
+   * this, a renderer running out of memory and being replaced correctly shows
+   * up as a run of failed polls and nothing else, which is what made the live
+   * failure take a CDP probe to explain.
+   */
+  recycled: { at: string; because: string } | null;
 }
 
 export type TabMap = Map<TabRole, TabState>;
@@ -579,7 +588,15 @@ export function tabHealth(tabs: TabMap): TabHealth[] {
   return TAB_ROLES.map((role) => {
     const state = tabs.get(role);
     if (!state) {
-      return { role, state: 'MISSING' as const, url: null, openedAt: null, lastUsedAt: null, lastError: null };
+      return {
+        role,
+        state: 'MISSING' as const,
+        url: null,
+        openedAt: null,
+        lastUsedAt: null,
+        lastError: null,
+        recycled: null,
+      };
     }
     const closed = state.page.isClosed();
     let url: string | null = null;
@@ -618,6 +635,9 @@ export function tabHealth(tabs: TabMap): TabHealth[] {
       url,
       openedAt: new Date(state.openedAt).toISOString(),
       lastUsedAt: new Date(state.lastUsedAt).toISOString(),
+      recycled: state.recycled
+        ? { at: new Date(state.recycled.at).toISOString(), because: state.recycled.because }
+        : null,
       lastError: wedged
         ? `one operation has been holding this tab for ${Math.round(heldMs / 60_000)} minutes`
         : dead
