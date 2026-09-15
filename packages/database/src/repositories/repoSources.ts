@@ -233,10 +233,18 @@ export async function recordRepoEvent(input: {
   state?: string | null;
   occurredAt?: string | null;
   payload?: Record<string, unknown>;
+  /**
+   * Recorded by a source's first poll, so it is history rather than news.
+   *
+   * Still recorded and still shown to the owner. What this decides is only
+   * whether deliberation is told about it as something that just happened --
+   * see migration 0078.
+   */
+  backfill?: boolean;
 }): Promise<RepoEventRow | null> {
   const row = await queryOne(
-    `INSERT INTO repo_events (source_id, kind, remote_id, title, body, url, actor, state, occurred_at, payload)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+    `INSERT INTO repo_events (source_id, kind, remote_id, title, body, url, actor, state, occurred_at, payload, backfill)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)
      ON CONFLICT (source_id, kind, remote_id) DO NOTHING
      RETURNING ${EVENT_COLUMNS}`,
     [
@@ -250,6 +258,7 @@ export async function recordRepoEvent(input: {
       input.state ?? null,
       input.occurredAt ?? null,
       JSON.stringify(input.payload ?? {}),
+      input.backfill ?? false,
     ],
   );
   return mapRow<RepoEventRow>(row);
@@ -284,6 +293,17 @@ export async function recentRepoEvents(input: {
     */
     clauses.push(`e.seen_at >= $${params.length}`);
   }
+  /*
+    Never a source's own backfill.
+
+    The first poll records everything the forge will hand over -- twenty
+    releases, twenty commits -- all in the same second, so all of it lands in
+    the next wake's window at once and the working set fills with one item per
+    release tag. Connecting a repository today is not a reason to have opinions
+    about a release from last week. Same rule as RETROACTIVE_WORK_WINDOW_MS in
+    ingest.ts, and the rows are still there for the owner to read.
+  */
+  clauses.push('NOT e.backfill');
   params.push(Math.min(Math.max(input.limit ?? 50, 1), 300));
   return mapRows<RepoEventRow & { repo: string }>(
     await query(

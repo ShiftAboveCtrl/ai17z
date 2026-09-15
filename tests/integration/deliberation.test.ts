@@ -626,6 +626,33 @@ describe('the autonomy ladder', () => {
     expect(outcome.candidates).toBe(0);
   });
 
+  /*
+    A reflection that failed and one that correctly found nothing used to be
+    the same two zeros on the screen. That is the shape of defect this
+    codebase has paid for twice: a failure turned into silence that reads
+    exactly like a correct quiet result.
+  */
+  it('says why reflection did not run, rather than showing the same two zeros', async () => {
+    const agent = await agentThatThinks();
+    // No classifier configured, which is a reason and not a result.
+    await somebodySaid(agent.accountId, 'The hard part of autonomous agents is agent memory that survives a restart.');
+    await wakeAgent(agent.agentId);
+
+    const [latest] = await mind.recentReflections(agent.agentId, 1);
+    expect(latest?.produced).toBe(0);
+    expect(latest?.model).toBeNull();
+    expect(latest?.why).toContain('classifier');
+  });
+
+  it('says nothing when there was simply nothing to say', async () => {
+    // The other half: a correctly quiet wake must not carry a reason, or the
+    // screen cries wolf on every quiet agent.
+    const agent = await agentThatThinks();
+    await wakeAgent(agent.agentId);
+    const [latest] = await mind.recentReflections(agent.agentId, 1);
+    expect(latest?.why ?? null).toBeNull();
+  });
+
   it('does nothing at all when deliberation is switched off', async () => {
     const agent = await agentThatThinks();
     await mind.setWake(agent.agentId, { enabled: false });

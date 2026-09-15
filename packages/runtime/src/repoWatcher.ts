@@ -242,6 +242,21 @@ export interface RepoPollOutcome {
  */
 export async function pollRepo(source: RepoSourceRow): Promise<RepoPollOutcome> {
   const token = source.hasToken ? await repoSources.getDecryptedToken(source.id) : null;
+  /*
+    The first poll is a backfill, not news.
+
+    A forge hands over its recent history in one go -- twenty releases, twenty
+    commits, whatever is open -- and all of it is recorded in the same second,
+    so all of it falls inside the next wake's window together. The live agent's
+    first wake attended to twenty near-identical release tags and crowded out
+    everything that was actually happening.
+
+    Recorded either way, and the owner sees the whole history on the screen.
+    What this decides is whether deliberation is told about it as something
+    that just happened. `lastSuccessAt` rather than `lastPollAt`, because the
+    claim stamps `lastPollAt` before the request is even made.
+  */
+  const backfill = source.lastSuccessAt === null;
   const etags = { ...source.etags };
   const cursors = { ...source.cursors };
   let fresh = 0;
@@ -270,7 +285,7 @@ export async function pollRepo(source: RepoSourceRow): Promise<RepoPollOutcome> 
         const item = normalise(kind, raw);
         if (!item) continue;
         newest ??= item.remoteId;
-        const recorded = await repoSources.recordRepoEvent({ sourceId: source.id, kind, ...item });
+        const recorded = await repoSources.recordRepoEvent({ sourceId: source.id, kind, ...item, backfill });
         // Null means it was already known. The index is the guarantee here, not
         // the cursor: polls overlap as a matter of course.
         if (recorded) fresh += 1;
@@ -284,7 +299,13 @@ export async function pollRepo(source: RepoSourceRow): Promise<RepoPollOutcome> 
   const error = refusals.length === source.kinds.length && refusals.length > 0 ? refusals.join(' ') : null;
   await repoSources.noteRepoPoll(source.id, { etags, cursors, ...(error ? { error } : {}) });
 
-  if (fresh > 0) log.info('a watched repository did something', { repo: source.repo, fresh });
+  if (fresh > 0) {
+    log.info(backfill ? 'read a watched repository for the first time' : 'a watched repository did something', {
+      repo: source.repo,
+      fresh,
+      ...(backfill ? { backfill: true } : {}),
+    });
+  }
   return { repo: source.repo, fresh, unchanged, error };
 }
 

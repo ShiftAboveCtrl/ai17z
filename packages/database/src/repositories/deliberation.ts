@@ -363,6 +363,8 @@ export interface ReflectionRow {
   summary: string;
   model: string | null;
   durationMs: number;
+  /** Why it produced nothing, when there was a reason beyond nothing to say. */
+  why: string | null;
   createdAt: string;
 }
 
@@ -376,11 +378,22 @@ export async function recordReflection(input: {
   summary?: string;
   model?: string | null;
   durationMs?: number;
+  /**
+   * Why reflection produced nothing, when there was a reason beyond there
+   * being nothing to say.
+   *
+   * `reflect` has always worked this out and the wake has always thrown it
+   * away, leaving a `log.debug` below the default level -- so a reflection
+   * that failed and one that correctly found nothing were the same two zeros.
+   * Never raw model reasoning: a sentence about the machinery, not about the
+   * subject.
+   */
+  why?: string | null;
 }): Promise<ReflectionRow> {
   const row = await queryOne(
-    `INSERT INTO agent_reflections (agent_id, kind, considered, produced, reinforced, retired, summary, model, duration_ms)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-     RETURNING id, agent_id, kind, considered, produced, reinforced, retired, summary, model, duration_ms, created_at`,
+    `INSERT INTO agent_reflections (agent_id, kind, considered, produced, reinforced, retired, summary, model, duration_ms, why)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     RETURNING id, agent_id, kind, considered, produced, reinforced, retired, summary, model, duration_ms, why, created_at`,
     [
       input.agentId,
       input.kind,
@@ -391,6 +404,7 @@ export async function recordReflection(input: {
       (input.summary ?? '').slice(0, 2000),
       input.model ?? null,
       input.durationMs ?? 0,
+      input.why ? input.why.slice(0, 500) : null,
     ],
   );
   return mapRow<ReflectionRow>(row) as ReflectionRow;
@@ -399,7 +413,7 @@ export async function recordReflection(input: {
 export async function recentReflections(agentId: string, limit = 20): Promise<ReflectionRow[]> {
   return mapRows<ReflectionRow>(
     await query(
-      `SELECT id, agent_id, kind, considered, produced, reinforced, retired, summary, model, duration_ms, created_at
+      `SELECT id, agent_id, kind, considered, produced, reinforced, retired, summary, model, duration_ms, why, created_at
          FROM agent_reflections WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [agentId, Math.min(Math.max(limit, 1), 100)],
     ),
