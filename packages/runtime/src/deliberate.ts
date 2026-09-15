@@ -492,7 +492,16 @@ export async function reflect(input: {
   fresh: AttentionRow[];
   existing: AttentionRow[];
 }): Promise<{ produced: number; resolved: number; kept: number; model: string | null; why: string }> {
-  if (input.fresh.length === 0) return { produced: 0, resolved: 0, kept: 0, model: null, why: 'nothing new to think about' };
+  /*
+    Nothing to reflect on is not a reason, it is the ordinary case.
+
+    Returned as no reason at all, because the wake's own sentence already says
+    "looked at N things and found nothing new" -- and a screen that adds "did
+    not get that far" to every quiet wake is a screen that cries wolf until
+    nobody reads it. What `why` is for is the wake that had something to think
+    about and could not.
+  */
+  if (input.fresh.length === 0) return { produced: 0, resolved: 0, kept: 0, model: null, why: '' };
   if (!(await hasReflector(input.agentId))) {
     return { produced: 0, resolved: 0, kept: 0, model: null, why: 'no classifier model is configured' };
   }
@@ -732,6 +741,7 @@ export async function wakeAgent(
   let resolvedCount = 0;
   let kept = 0;
   let model: string | null = null;
+  let whyNotReflected: string | null = null;
   let retired = 0;
   let candidates = 0;
   const deep = autonomyAtLeast(wake.autonomy, 'THINK') && (await mind.deepIsDue(agentId));
@@ -743,6 +753,18 @@ export async function wakeAgent(
     resolvedCount = outcome.resolved;
     kept = outcome.kept;
     model = outcome.model;
+    /*
+      Kept rather than discarded.
+
+      `reflect` has always known why it produced nothing -- no classifier
+      configured, a timeout, an answer in the wrong shape, an exception -- and
+      this is where that was thrown away. The only trace was a `log.debug`,
+      which is below the default level, so a reflection that failed and one
+      that correctly found nothing showed an owner the same two zeros. That is
+      the same shape of defect as a bare catch, and this codebase has paid for
+      it twice.
+    */
+    whyNotReflected = outcome.produced === 0 && outcome.why ? outcome.why : null;
     // Decay runs on every thinking wake rather than only on the deep pass:
     // a working set that only fades once a day is a working set that is wrong
     // for most of the day.
@@ -817,7 +839,14 @@ export async function wakeAgent(
     summary: reason,
     model,
     durationMs: Date.now() - now.getTime(),
+    why: whyNotReflected,
   });
+
+  // Said out loud, not only stored. A reflection that threw is a thing
+  // somebody reading a log should find out about without turning on debug.
+  if (whyNotReflected && model === null) {
+    log.warn('reflection did not run', { agentId, why: whyNotReflected });
+  }
 
   if (somethingHappened) {
     log.info('an agent thought about something', { agentId, attended, produced, candidates, retired });

@@ -73,6 +73,7 @@ interface Reflection {
   retired: number;
   summary: string;
   model: string | null;
+  why: string | null;
   createdAt: string;
 }
 
@@ -495,6 +496,16 @@ export function MindView({ agentId }: { agentId: string }) {
                 {when(entry.createdAt)} · {entry.kind.toLowerCase()} · looked at {entry.considered}
                 {entry.model ? ` · ${entry.model}` : ' · no model needed'}
               </p>
+              {/*
+                Why it produced nothing, when there was a reason beyond there
+                being nothing to say. Without this a reflection that failed and
+                one that correctly found nothing are the same line on the
+                screen, which is how a broken feature hides behind a working
+                one.
+              */}
+              {entry.why && (
+                <p className="mt-1 break-words text-[11px] text-bone-faint">Did not get that far: {entry.why}</p>
+              )}
             </li>
           ))}
         </ul>

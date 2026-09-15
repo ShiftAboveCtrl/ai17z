@@ -199,3 +199,68 @@ describe('the boundary', () => {
     expect(input.safeParse({ repo: 'owner/name' }).success).toBe(true);
   });
 });
+
+/*
+  A repository's existing history is not news.
+
+  The first poll hands over everything the forge will give -- twenty releases,
+  twenty commits -- all recorded in the same second, so all of it falls inside
+  the next wake's window together. Measured on the live agent's first wake: 34
+  observations, 23 attended, and the top ten were release tags. Recorded either
+  way; what backfill decides is whether deliberation is told about it as
+  something that just happened.
+*/
+describe('what a first poll counts as', () => {
+  async function watching() {
+    const fixture = await createFixture();
+    const source = await repoSources.watchRepo({
+      ownerUserId: fixture.ownerId,
+      agentId: fixture.agentId,
+      repo: 'example/proj',
+      kinds: ['RELEASE'],
+    });
+    return { fixture, source };
+  }
+
+  it('does not offer a source’s backfill to deliberation', async () => {
+    const { fixture, source } = await watching();
+    for (const n of [17, 18, 19, 20]) {
+      await repoSources.recordRepoEvent({
+        sourceId: source.id,
+        kind: 'RELEASE',
+        remoteId: `v1.0.0-beta.${n}`,
+        title: `AI17Z Beta 1.0.0 (${n})`,
+        url: `https://github.com/example/proj/releases/tag/v1.0.0-beta.${n}`,
+        occurredAt: new Date().toISOString(),
+        backfill: true,
+      });
+    }
+
+    const offered = await repoSources.recentRepoEvents({ ownerUserId: fixture.ownerId, agentId: fixture.agentId });
+    expect(offered).toHaveLength(0);
+  });
+
+  it('offers what happened after the first poll', async () => {
+    const { fixture, source } = await watching();
+    await repoSources.recordRepoEvent({
+      sourceId: source.id,
+      kind: 'RELEASE',
+      remoteId: 'v1.0.0-beta.20',
+      title: 'AI17Z Beta 1.0.0 (20)',
+      url: 'https://github.com/example/proj/releases/tag/v1.0.0-beta.20',
+      occurredAt: new Date().toISOString(),
+      backfill: true,
+    });
+    await repoSources.recordRepoEvent({
+      sourceId: source.id,
+      kind: 'RELEASE',
+      remoteId: 'v1.0.0-beta.21',
+      title: 'AI17Z Beta 3.1',
+      url: 'https://github.com/example/proj/releases/tag/v1.0.0-beta.21',
+      occurredAt: new Date().toISOString(),
+    });
+
+    const offered = await repoSources.recentRepoEvents({ ownerUserId: fixture.ownerId, agentId: fixture.agentId });
+    expect(offered.map((each) => each.remoteId)).toEqual(['v1.0.0-beta.21']);
+  });
+});

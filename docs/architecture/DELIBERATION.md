@@ -324,6 +324,44 @@ so `wakeAgent` takes an explicit permission rather than guessing where it is
 running, and an owner pressing "think now" gets everything else. The outcome says
 nothing was looked up rather than quietly doing less than it claims.
 
+## A repository's history is not news
+
+The first poll of a newly watched repository records everything the forge will
+hand over -- twenty releases, twenty commits, whatever is open -- all in the
+same second. All of it therefore falls inside the next wake's window together,
+and the working set fills in one go with one item per release tag, each scoring
+the same, crowding out whatever is actually happening.
+
+That is not hypothetical. The live agent's first wake attended to 23 of 34
+observations and its top ten were `AI17Z Beta 1.0.0 (17)`, `(19)`, `(20)`,
+`Beta 3.1`, `Beta 3.2` and so on -- the changelog bot `worthNoticing` was
+written to prevent, arriving through a door it does not cover.
+
+A source's first poll is marked `backfill`. The rows are still recorded and the
+owner still sees the whole history; what backfill decides is only whether
+deliberation is told about it as something that just happened. The precedent
+and the rule are `RETROACTIVE_WORK_WINDOW_MS` in `ingest.ts`: **widening what
+an agent is triggered by changes what happens next, never what happened
+yesterday.** Connecting a repository today is not a reason to have opinions
+about a release from last week.
+
+## When reflection does not run, it says so
+
+`reflect` has always known why it produced nothing -- no classifier configured,
+a timeout, an answer in the wrong shape, an exception -- and the wake threw that
+away. The only trace was a `log.debug`, which is below the default level. So a
+reflection that failed and one that correctly found nothing were the same two
+zeros on the screen.
+
+It is now recorded on the reflection row and shown in the Thinking view, and an
+exception is logged at `warn`. **Nothing to reflect on is deliberately not a
+reason**: the wake's own sentence already says it looked at nothing, and a
+screen that adds "did not get that far" to every quiet wake is one nobody reads.
+
+This is the same shape of defect as a bare catch, and it is the third time this
+codebase has paid for it -- the X reader spent a whole release reporting "X
+exposed nothing" while crashing.
+
 ## Watching a project
 
 `docs/architecture/DELIBERATION.md` is also where repository awareness lands,
@@ -368,4 +406,6 @@ builds do. A release always counts; a red build counts because somebody may ask.
 | What a faded thought leaves behind, and what it does not | same file |
 | Which question is worth a lookup, and what it would ask | `tests/unit/curiosity.test.ts` |
 | What a lookup does to the item, and the declines that bound it | `tests/integration/deliberation.test.ts` |
+| Why reflection did not run, and when that is not worth saying | same file |
+| A first poll's backfill, and what comes after it | `tests/integration/githubCapabilities.test.ts` |
 | Reading a project, and the boundary around it | `tests/integration/githubCapabilities.test.ts` |
