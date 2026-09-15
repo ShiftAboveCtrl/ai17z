@@ -69,6 +69,8 @@ export * from './capabilityViews';
 export * from './bridge';
 export * from './opportunity';
 export * from './accountReading';
+export * from './salience';
+export * from './deliberate';
 export * from './narratives';
 export * from './contentIntelligence';
 export * from './experiments';

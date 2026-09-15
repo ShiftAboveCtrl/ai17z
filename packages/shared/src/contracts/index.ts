@@ -11,6 +11,7 @@ export * from './easy';
 export * from './multimodal';
 export * from './relationship';
 export * from './stance';
+export * from './deliberation';
 export * from './engagement';
 export * from './voice';
 export * from './domain';
