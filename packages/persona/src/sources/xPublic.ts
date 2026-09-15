@@ -1,263 +1,86 @@
-import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, renameSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { promisify } from 'node:util';
-import { createLogger, envString } from '@xbam/shared';
+import { envBool } from '@xbam/shared';
 import type { CorpusFetchOptions, PersonaSourceAdapter, RawCorpusItem, SourceAvailability } from './contract';
 
-const run = promisify(execFile);
-const log = createLogger('persona-x-public');
-
 /**
- * Public X corpus, via twscrape.
+ * Public X posts, read through the browser AI17Z already has.
  *
- * twscrape is a Python library, so this shells out to its CLI rather than
- * embedding it. That keeps the dependency at arm's length: if twscrape stops
- * working, only this file is replaced, because everything downstream consumes
- * RawCorpusItem.
+ * ## What this replaced, and why
  *
- * It is optional on purpose. The live reply pipeline is Playwright-driven and
- * does not depend on this at all; nothing here can break a running agent.
+ * This adapter used to shell out to **twscrape**: a Python library the owner
+ * had to `pip install`, put on PATH inside the worker, and seed with X accounts
+ * of its own, held in its own credential database. Every one of those is a
+ * thing a packaged installation does not have and cannot get -- there is no
+ * Python in the worker image and never will be -- so `availability()` answered
+ * "not installed" on every machine anybody actually ran, the sync stored
+ * nothing, and the feature above it did nothing.
  *
- * twscrape signs in with X accounts of its own, held in its own database. AI17Z
- * never sees, stores, or transmits those credentials — adding them is something
- * the owner does directly with the twscrape CLI.
+ * The lesson was not that twscrape was the wrong library. It was that a brittle
+ * scraper was wired directly into a product feature, so when it died the
+ * feature died with it and there was nowhere else for it to go.
+ *
+ * Reading X now goes through the canonical X intelligence layer, which reads
+ * inside the signed-in browser the owner already has -- no second login, no
+ * cookie export, no account pool, no Python, and the same code on all five
+ * packaged platforms.
+ *
+ * ## Why this file still exists at all
+ *
+ * The persona source registry answers two questions: what kinds of source are
+ * there, and can this one be used right now. Those are still real questions and
+ * the screens still ask them. What changed is the answer to the second: it is
+ * no longer "is a Python package installed" but "is there a browser here" --
+ * which is the honest requirement, and one the product can actually meet.
+ *
+ * Collection itself is not done here. An X source is read by the worker, which
+ * is the process that owns browsers, and the corpus is handed to
+ * `syncPersonaSource` already gathered -- the same route "Learn from this
+ * account" takes, because they are the same operation and having two was the
+ * bug.
  */
 
+const KIND = 'x_public';
+
 /**
- * How to invoke twscrape.
+ * Whether this worker can read X.
  *
- * Accepts a full command line, not just an executable, because the CLI is often
- * reached through something else: a virtualenv wrapper, `python -m`, `poetry
- * run`, or a launcher script. Quoted segments survive, so a Windows path with
- * spaces works.
+ * Deliberately a browser question. `AI17Z_DISABLE_BROWSER` is the one switch
+ * that turns browser work off -- a headless server sets it -- and an
+ * installation with browsing off cannot read X, which is a true answer rather
+ * than a missing-dependency one.
  */
-function commandLine(): { command: string; prefixArgs: string[] } {
-  const raw = envString('AI17Z_TWSCRAPE_COMMAND', 'twscrape').trim();
-  const tokens = raw.match(/"[^"]*"|\S+/g) ?? [raw];
-  const parts = tokens.map((t) => (t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1) : t));
-  return { command: parts[0] ?? 'twscrape', prefixArgs: parts.slice(1) };
-}
-
-const COMMAND = () => commandLine().command;
-
-/**
- * Where twscrape keeps its own account database.
- *
- * It writes `accounts.db` into whatever directory it is run from, and this ran
- * it from wherever the worker happened to start -- which for an installed copy
- * is the program directory, the one replaced on every upgrade and emptied by
- * the uninstaller. A file holding X credentials was being left somewhere that
- * gets deleted, and turning up in an uninstalled program folder.
- *
- * So it is given a directory of its own under the owner's storage, which is
- * where everything else that has to survive an upgrade already lives. An
- * existing database is moved there once rather than abandoned: those are
- * credentials somebody added by hand, and silently starting again with an empty
- * pool would look exactly like twscrape having broken.
- */
-function twscrapeHome(): string {
-  const storage = resolve(envString('AI17Z_STORAGE_DIR', './storage'));
-  const home = join(storage, 'twscrape');
-  mkdirSync(home, { recursive: true });
-
-  const legacy = join(process.cwd(), 'accounts.db');
-  const moved = join(home, 'accounts.db');
-  if (existsSync(legacy) && !existsSync(moved)) {
-    try {
-      renameSync(legacy, moved);
-      log.info('moved the twscrape account database out of the program directory', { to: moved });
-    } catch (error) {
-      // Not worth failing a corpus fetch for: twscrape will simply start a new
-      // pool, and the old file is still where it was.
-      log.warn('could not move the twscrape account database', { error: (error as Error).message });
-    }
-  }
-  return home;
-}
-
-interface Invocation {
-  stdout: string;
-  stderr: string;
-}
-
-async function invoke(args: string[], timeoutMs = 180_000): Promise<Invocation> {
-  const { command, prefixArgs } = commandLine();
-  try {
-    const { stdout, stderr } = await run(command, [...prefixArgs, ...args], {
-      // Its account database is written into the working directory, so this
-      // decides where those credentials live.
-      cwd: twscrapeHome(),
-      timeout: timeoutMs,
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return { stdout, stderr };
-  } catch (error) {
-    // twscrape exits non-zero for ordinary conditions such as an empty account
-    // pool, and writes the useful part to stderr. Its output is worth more than
-    // the exit code, so it is carried through rather than discarded.
-    const e = error as { stdout?: string; stderr?: string; message?: string; code?: string };
-    if (e.code === 'ENOENT') throw error;
-    return { stdout: e.stdout ?? '', stderr: e.stderr ?? e.message ?? '' };
-  }
-}
-
-/**
- * twscrape reports an empty account pool as "Not Found", which reads as "no such
- * user" and sends people off checking a handle that was correct all along.
- */
-function noAccountsInPool(output: string): boolean {
-  return /No active accounts|no accounts? (available|found)/i.test(output);
-}
-
-const NEEDS_ACCOUNTS =
-  'twscrape is installed but has no X account to read with. Add one yourself with: twscrape add_accounts ' +
-  '(then twscrape login_accounts). Those credentials go into twscrape\'s own database — AI17Z never sees them. ' +
-  'Use a spare account: X may rate-limit or lock an account used for bulk reading.';
-
-function parseItem(line: string): RawCorpusItem | null {
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(line) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  const id = parsed.id_str ?? parsed.id;
-  const text = parsed.rawContent ?? parsed.text ?? parsed.full_text;
-  if (id === undefined || typeof text !== 'string' || text.trim().length === 0) return null;
-
-  const inReplyTo = parsed.inReplyToTweetId ?? parsed.in_reply_to_status_id_str ?? null;
-  const quoted = parsed.quotedTweet ?? null;
-
-  return {
-    remoteId: String(id),
-    text,
-    url: typeof parsed.url === 'string' ? parsed.url : null,
-    itemKind: inReplyTo ? 'reply' : quoted ? 'quote' : 'post',
-    createdAt: typeof parsed.date === 'string' ? parsed.date : null,
-    // Kept verbatim: provenance is the point of a raw archive.
-    raw: parsed,
-  };
-}
-
-/**
- * twscrape prints one JSON document per result, but its logging goes to the same
- * stream in some versions, so lines are filtered rather than assumed.
- */
-function parseLines(stdout: string): RawCorpusItem[] {
-  const items: RawCorpusItem[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) continue;
-    if (trimmed.startsWith('[')) {
-      // Some subcommands emit a single array rather than one object per line.
-      try {
-        for (const entry of JSON.parse(trimmed) as unknown[]) {
-          const item = parseItem(JSON.stringify(entry));
-          if (item) items.push(item);
-        }
-        continue;
-      } catch {
-        continue;
-      }
-    }
-    const item = parseItem(trimmed);
-    if (item) items.push(item);
-  }
-  return items;
-}
-
-/**
- * Resolves a handle to the numeric id the timeline commands actually take.
- *
- * `user_tweets_and_replies` takes a user id, not a handle. Passing a handle
- * returns nothing at all rather than an error, which looks exactly like an
- * account with no posts.
- */
-async function resolveUserId(handle: string): Promise<string> {
-  const { stdout, stderr } = await invoke(['user_by_login', handle], 90_000);
-  const combined = `${stdout}\n${stderr}`;
-  if (noAccountsInPool(combined)) throw new Error(NEEDS_ACCOUNTS);
-
-  for (const line of stdout.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('{')) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      const id = parsed.id_str ?? parsed.id;
-      if (id !== undefined) return String(id);
-    } catch {
-      continue;
-    }
-  }
-  throw new Error(
-    `twscrape could not find @${handle}. Check the handle, and that the account is public and not suspended.`,
-  );
-}
-
 export const xPublicSource: PersonaSourceAdapter = {
-  kind: 'x_public',
-  displayName: 'Public X posts (twscrape)',
+  kind: KIND,
+  displayName: 'Public X posts',
 
   async availability(): Promise<SourceAvailability> {
-    let version: string;
-    try {
-      const { stdout, stderr } = await invoke(['version'], 20_000);
-      version = (stdout || stderr).trim().split(/\r?\n/).pop() ?? '';
-    } catch (error) {
-      const message = (error as Error).message ?? '';
+    if (envBool('AI17Z_DISABLE_BROWSER', false)) {
       return {
         available: false,
-        detail: `"${COMMAND()}" is not on PATH where the worker runs.`,
+        detail: 'Browser support is switched off on this machine, so X cannot be read.',
         requirement:
-          'Install it with: pip install twscrape. Then add an X account to it with twscrape add_accounts. ' +
-          'Set AI17Z_TWSCRAPE_COMMAND if the CLI is not on PATH. ' +
-          `(${message.split('\n')[0]})`,
+          'Reading X needs the AI17Z browser. On a desktop, start AI17Z normally; over ssh there is no graphical session and there never will be.',
       };
     }
-
-    // Installed is not the same as usable. An empty account pool fails every
-    // query with a message about the handle, which is the wrong thing to check.
-    const { stdout, stderr } = await invoke(['accounts'], 30_000);
-    const rows = `${stdout}`
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !/^\d{4}-\d{2}-\d{2}/.test(l) && !/username/i.test(l));
-
-    if (rows.length === 0 || noAccountsInPool(`${stdout}\n${stderr}`)) {
-      return { available: false, detail: 'twscrape is installed but has no X account to read with.', requirement: NEEDS_ACCOUNTS };
-    }
-
     return {
       available: true,
-      detail: `twscrape ${version || 'installed'}, ${rows.length} account${rows.length === 1 ? '' : 's'} in its pool`,
+      detail: "Read through AI17Z's own signed-in browser.",
       requirement: null,
     };
   },
 
-  async fetch(options: CorpusFetchOptions): Promise<RawCorpusItem[]> {
-    const handle = options.handle.replace(/^@+/, '');
-    const userId = await resolveUserId(handle);
-
-    // Replies carry a great deal of voice, so they are included by default.
-    const command = options.includeReplies === false ? 'user_tweets' : 'user_tweets_and_replies';
-    const { stdout, stderr } = await invoke([command, userId, '--limit', String(options.limit)]);
-    const combined = `${stdout}\n${stderr}`;
-    if (noAccountsInPool(combined)) throw new Error(NEEDS_ACCOUNTS);
-
-    const parsed = parseLines(stdout);
-    if (parsed.length === 0 && stderr.trim()) {
-      log.warn('twscrape returned nothing', { handle, stderr: stderr.split('\n').slice(-2).join(' ') });
-    }
-
-    const items: RawCorpusItem[] = [];
-    for (const item of parsed) {
-      // Incremental sync: stop once we reach something already ingested.
-      if (options.since && item.remoteId === options.since) break;
-      if (item.itemKind === 'quote' && options.includeQuotes === false) continue;
-      items.push(item);
-    }
-    log.info('fetched public corpus', { handle, userId, items: items.length });
-    return items;
+  /**
+   * Never called for this kind, and refusing loudly is the point.
+   *
+   * An X corpus is collected by the worker through the intelligence layer and
+   * passed to the sync already gathered. If something ever calls this, the
+   * routing has gone wrong somewhere upstream, and a clear error naming the
+   * right path is worth far more than an empty array that looks like an account
+   * with nothing to say.
+   */
+  async fetch(_options: CorpusFetchOptions): Promise<RawCorpusItem[]> {
+    throw new Error(
+      'An X persona corpus is collected by the worker through the browser, not fetched here. ' +
+        'Request a sync on the source and the worker will read it.',
+    );
   },
 };

@@ -106,6 +106,24 @@ export async function setSourceStatus(
   );
 }
 
+/**
+ * Remember what was learned about the account itself.
+ *
+ * Merged rather than replaced, so a caller recording the resolved identity does
+ * not blank the collection settings sitting beside it. The immutable X user id
+ * lives here: `config` is jsonb and already exists, which is a better place for
+ * it than a column added to carry one value.
+ */
+export async function updateSourceConfig(id: string, patch: Record<string, unknown>): Promise<void> {
+  await query(
+    `UPDATE persona_sources
+        SET config = coalesce(config, '{}'::jsonb) || $2::jsonb,
+            updated_at = now()
+      WHERE id = $1`,
+    [id, JSON.stringify(patch)],
+  );
+}
+
 export async function deleteSource(id: string): Promise<void> {
   await query('DELETE FROM persona_sources WHERE id = $1', [id]);
 }
@@ -310,8 +328,11 @@ export async function requestSync(sourceId: string, request: SyncRequest): Promi
 export async function claimSync(
   workerId: string,
   leaseMinutes = 20,
-): Promise<{ id: string; request: SyncRequest } | null> {
-  const row = await queryOne<{ id: string; pending_request: SyncRequest }>(
+): Promise<{ id: string; kind: PersonaSourceRow['kind']; handle: string | null; request: SyncRequest } | null> {
+  // The kind and the handle come back with the claim because what to do next
+  // depends on them: an X source is read through the browser by the shared
+  // collector, and anything else goes straight through the adapter path.
+  const row = await queryOne<{ id: string; kind: PersonaSourceRow['kind']; handle: string | null; pending_request: SyncRequest }>(
     `UPDATE persona_sources SET claimed_by = $1, claimed_at = now()
       WHERE id = (
         SELECT id FROM persona_sources
@@ -320,10 +341,10 @@ export async function claimSync(
          ORDER BY claimed_at NULLS FIRST
          LIMIT 1 FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, pending_request`,
+      RETURNING id, kind, handle, pending_request`,
     [workerId, leaseMinutes],
   );
-  return row ? { id: row.id, request: row.pending_request } : null;
+  return row ? { id: row.id, kind: row.kind, handle: row.handle, request: row.pending_request } : null;
 }
 
 export async function clearSyncRequest(sourceId: string): Promise<void> {

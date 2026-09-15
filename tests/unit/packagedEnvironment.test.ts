@@ -257,10 +257,11 @@ describe('one installation cannot adopt another one', () => {
  *   - `storage/native-worker.log` and `.pid`, so the log somebody was reading
  *     to find out why their worker died went with the upgrade -- and an open
  *     handle there was what stopped the directory being removed at all.
- *   - `accounts.db`, which is twscrape's own account database. It writes it
- *     into whatever directory it was run from, and it was run from wherever
- *     the worker happened to start. Those are X credentials somebody added by
- *     hand.
+ *   - `accounts.db`, which was twscrape's own account database: X credentials
+ *     somebody added by hand, written into whatever directory the worker
+ *     happened to start in. That one is gone rather than relocated -- there is
+ *     no second set of X credentials any more, because X is read through the
+ *     browser the owner already signed in to. See the last case in this block.
  *
  * Worse than either: `Stop-ForUninstall.ps1` has always looked for the pid
  * under the *data* directory while the scripts wrote it under the program
@@ -299,19 +300,59 @@ describe('the program directory holds nothing worth keeping', () => {
     expect(stop).not.toMatch(/Join-Path \$env:LOCALAPPDATA 'AI17Z\\storage/);
   });
 
-  it('twscrape writes its account database under the owner storage', () => {
-    const source = readFileSync(resolve(root, 'packages/persona/src/sources/xPublic.ts'), 'utf8');
-    expect(source).toContain('function twscrapeHome');
-    expect(source).toContain('cwd: twscrapeHome()');
-    expect(source).toContain("envString('AI17Z_STORAGE_DIR'");
+  it('asks for no X credential of its own, anywhere', () => {
+    // The strongest version of the rule this block is about: a credential file
+    // that is never created cannot be written to the wrong directory, cannot
+    // go with an upgrade, and cannot turn up in an uninstalled program folder.
+    //
+    // Reading X uses the session in the Chrome profile the owner signed in to,
+    // which has always lived under the data directory. Nothing exports a
+    // cookie, pastes a token, keeps a second login, or seeds an account pool --
+    // and this fails if anything starts.
+    const sources = [
+      'packages/persona/src/sources/xPublic.ts',
+      'packages/channels/src/x/intelligence/index.ts',
+      'packages/channels/src/x/intelligence/pageGraphql.ts',
+      'packages/channels/src/x/intelligence/pageDom.ts',
+      'apps/worker/src/personaFromX.ts',
+    ];
+    for (const file of sources) {
+      // Comments explaining the history are exempt: the reason this design
+      // exists is worth writing down, and forbidding the words would forbid
+      // explaining them.
+      const code = readFileSync(resolve(root, file), 'utf8')
+        .split(/\r?\n/)
+        .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+        .join('\n');
+      expect(code, `${file} creates a credential database`).not.toMatch(/accounts\.db/);
+      expect(code, `${file} shells out to a scraper CLI`).not.toMatch(/twscrape/i);
+      expect(code, `${file} asks for an auth token`).not.toMatch(/auth_token/i);
+    }
   });
 
-  it('moves an existing account database rather than abandoning it', () => {
-    // Those credentials were added by hand. Silently starting again with an
-    // empty pool looks exactly like twscrape having broken.
-    const source = readFileSync(resolve(root, 'packages/persona/src/sources/xPublic.ts'), 'utf8');
-    expect(source).toContain('renameSync');
-    expect(source).toContain('moved the twscrape account database');
+  it('never carries a cookie back out of the browser', () => {
+    // The structured reader works inside the page precisely so the session
+    // never reaches this process, where it could reach a log, a trace, a crash
+    // report or a model. It reads `ct0` in the page to set the header X's own
+    // requests set -- and must never return it.
+    const source = readFileSync(resolve(root, 'packages/channels/src/x/intelligence/pageGraphql.ts'), 'utf8');
+    const inPage = source.slice(source.indexOf('async function askGraphql'));
+    // The cookie is read and used in the same evaluate, and what comes back is
+    // the answer and nothing else. Asserted on the shape that crosses the
+    // boundary: the type says four fields, and a fifth carrying a credential
+    // would have to be declared here first.
+    expect(source).toContain('interface GraphqlAnswer {');
+    const opened = source.indexOf('interface GraphqlAnswer {');
+    const shape = source.slice(opened, source.indexOf('\n}', opened));
+    for (const field of ['ok:', 'status:', 'error:', 'json:']) {
+      expect(shape, `the answer no longer carries ${field}`).toContain(field);
+    }
+    for (const leak of ['csrf', 'bearer', 'cookie', 'token', 'ct0']) {
+      expect(shape.toLowerCase(), `the answer carries a ${leak}`).not.toContain(leak);
+    }
+    expect(inPage, 'a credential is returned from the page').not.toMatch(/return[^;]*\b(csrf|bearer|cookie)\b/);
+    // And nothing logs one.
+    expect(source, 'a credential reaches a log line').not.toMatch(/log\.[a-z]+\([^)]*\b(csrf|bearer|cookie|ct0)\b/i);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { personaSources } from '@xbam/database';
-import { personaDraftFromTraits, syncPersonaSource, getPersonaSourceAdapter } from '@xbam/persona';
+import { personaDraftFromTraits, syncPersonaSource } from '@xbam/persona';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -134,16 +134,21 @@ describe('persona sources', () => {
     const src = await personaSources.upsertSource({
       agentId: fixture.agentId, kind: 'x_public', handle: 'someone', label: 'X',
     });
-    const availability = await getPersonaSourceAdapter('x_public').availability();
-
+    // An X source is collected by the worker, through the browser, and handed
+    // to the sync already gathered. Calling the sync without a corpus is a
+    // routing mistake upstream -- and the thing that must not happen is it
+    // quietly succeeding with nothing, which would write an empty persona and
+    // call it a voice.
     const report = await syncPersonaSource({ sourceId: src.id, limit: 10 });
-    if (availability.available) {
-      // twscrape is installed here; the sync is a real network call.
-      expect(report.error).toBeNull();
-    } else {
-      expect(report.error).toBeTruthy();
-      expect((await personaSources.getSource(src.id))!.status).toBe('UNAVAILABLE');
-      expect((await personaSources.getSource(src.id))!.lastError).toMatch(/twscrape|PATH/i);
-    }
+
+    expect(report.error).toBeTruthy();
+    expect(report.stored).toBe(0);
+    const after = (await personaSources.getSource(src.id))!;
+    expect(after.status).toBe('ERROR');
+    // The error names where the corpus actually comes from, rather than saying
+    // something is not installed -- which is what it used to say, about a
+    // Python package no packaged installation ever had.
+    expect(after.lastError).toMatch(/worker|browser/i);
+    expect(after.lastError).not.toMatch(/twscrape|pip|PATH/i);
   });
 });
