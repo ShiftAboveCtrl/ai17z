@@ -192,6 +192,29 @@ async function collect(): Promise<HealthReport> {
     checkedAt,
   });
 
+  // How AI17Z reads X, and what that depends on.
+  //
+  // Reported from what is already known rather than by probing X: asking the
+  // structured reader whether it works means making a request to somebody
+  // else's service, and doing that on every health poll is the definition of
+  // hammering. So this says what the readers are and what they need -- the
+  // browser -- and the readers report their own state the first time something
+  // actually uses them.
+  //
+  // It is a row at all because "learn from this account did nothing" was
+  // impossible to diagnose from a screen that never mentioned how X is read.
+  components.push({
+    name: 'Reading X',
+    status: browserState.status === 'healthy' ? 'healthy' : browserState.status === 'offline' ? 'offline' : 'degraded',
+    detail:
+      browserState.status === 'healthy'
+        ? "X is read through the signed-in browser: X's own data first, the rendered page as a fallback."
+        : `X is read through the signed-in browser, which is not ready. ${browserState.detail}`,
+    optional: true,
+    kind: 'browser',
+    checkedAt,
+  });
+
   const required = components.filter((c) => !c.optional);
   const status = required.some((c) => c.status === 'offline')
     ? 'offline'

@@ -180,6 +180,34 @@ export async function update(
 }
 
 /** Merges newly observed topics without letting the list grow without bound. */
+/**
+ * Fill in the numeric id for somebody we only knew by handle.
+ *
+ * Handles change; the id does not. `recordInteraction` already fills this in
+ * opportunistically when an interaction happens to carry one, and this is the
+ * same fill from the other direction -- something read the profile and now
+ * knows who they are.
+ *
+ * Deliberately not an interaction, and deliberately only writes when the field
+ * is still empty: an id already recorded is the one the conversations were had
+ * with, and a later read must not quietly move a relationship onto a different
+ * person.
+ */
+export async function noteRemoteUserId(
+  id: string,
+  remoteUserId: string,
+  displayName?: string | null,
+): Promise<void> {
+  await query(
+    `UPDATE relationships
+        SET remote_user_id = coalesce(remote_user_id, $2),
+            display_name = coalesce(nullif($3, ''), display_name),
+            updated_at = now()
+      WHERE id = $1`,
+    [id, remoteUserId, displayName ?? ''],
+  );
+}
+
 export async function addTopics(id: string, topics: string[], max = 12): Promise<void> {
   if (topics.length === 0) return;
   const current = await get(id);

@@ -5,6 +5,39 @@ export { xAdapter } from './x/index';
 export { observeAuthPage } from './x/auth';
 export { signInWithStoredCredentials } from './x/credentialSignIn';
 export { CHALLENGE_SIGNALS, SEL } from './x/selectors';
+// The canonical way AI17Z reads X. One layer, several backends, and nothing
+// downstream knows which one answered -- see x/intelligence/contract.ts.
+export * as xIntelligenceReads from './x/intelligence/index';
+export {
+  xIntelligence,
+  DEFAULT_BUDGET,
+  FRESHNESS_SECONDS,
+  STOP_ASKING,
+  WORTH_ANOTHER_BACKEND,
+  emptyResult,
+  provenanceFor,
+  pageDomBackend,
+  pageGraphqlBackend,
+  // The parsing of X's own payloads. Pure, and where its shape bites.
+  tweetsFrom,
+  toUser,
+  toPost,
+  nextCursor,
+  classifyDetailed,
+  findUserResult,
+  forgetXReads,
+} from './x/intelligence/index';
+export type {
+  XId,
+  XUser,
+  XPostRecord,
+  XReadResult,
+  XReadOutcome,
+  XProvenance,
+  XIntelligenceBackend,
+  XIntelligenceHealth,
+  XCapability,
+} from './x/intelligence/index';
 export {
   PERSONA_MINIMUM_POSTS,
   PERSONA_TARGET_POSTS,
