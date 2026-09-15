@@ -516,6 +516,43 @@ export class BrowserTaskRunner {
         };
       }
 
+      case 'READ_X_ACCOUNT': {
+        // Looking somebody up, so the owner can be shown who they are.
+        //
+        // Here for the same reason COLLECT_PERSONA is: the API owns no browser.
+        // A People screen that read X on render would cost a request per card
+        // against the session the agent needs for its actual work, so the read
+        // happens once, here, and what it found is recorded for the screen.
+        //
+        // Read-only and structurally unable to be otherwise: this calls the X
+        // intelligence layer, which has no post, like, follow or message in it.
+        const handle = typeof task.params.handle === 'string' ? task.params.handle : '';
+        const ownerUserId = typeof task.params.ownerUserId === 'string' ? task.params.ownerUserId : '';
+        if (!handle) throw new Error('An account read needs a handle to read.');
+        if (!ownerUserId) throw new Error('An account read needs the owner it was asked for.');
+        const agentId = typeof task.params.agentId === 'string' ? task.params.agentId : null;
+        const posts = typeof task.params.posts === 'number' ? task.params.posts : undefined;
+
+        const { readXAccount } = await import('./accountIntelligence');
+        const read = await readXAccount({
+          ownerUserId,
+          handle,
+          readerAccountId: account.id,
+          agentId,
+          ...(posts === undefined ? {} : { posts }),
+          refresh: task.params.refresh === true,
+        });
+
+        return {
+          outcome: read.outcome,
+          detail: read.detail,
+          handle: read.row?.handle ?? handle,
+          userId: read.row?.userId || null,
+          posts: read.postsRead,
+          backend: read.backend,
+        };
+      }
+
       default:
         return { detail: `Unknown task kind: ${task.kind}` };
     }

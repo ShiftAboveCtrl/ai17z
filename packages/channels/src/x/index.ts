@@ -25,6 +25,7 @@ import { SEL, X_URLS, articleForStatus } from './selectors';
 import { observeAuthPage } from './auth';
 import { signInWithStoredCredentials } from './credentialSignIn';
 import { X_MONITORS } from './monitors';
+import { pollViaIntelligence } from './radarIntelligence';
 import { readMediaInventory } from './media';
 import { readPage, webSearch } from './websearch';
 import { type ArticleSnapshot, parentTextOf, resolveBranch } from './conversation';
@@ -157,6 +158,28 @@ export const xAdapter: ChannelAdapter = {
       return { candidates: [], cursor: null, error: `X has no ${request.kind} monitor.` };
     }
     try {
+      /*
+        Ask the one layer AI17Z reads X through first.
+
+        Four of the six monitors are searches or timeline walks, and X answers
+        those itself with immutable author ids, exact engagement counts and the
+        real conversation id -- none of which survive being scraped off a drawn
+        page. `pollViaIntelligence` returns nothing when the structured read
+        could not run at all, which is the signal to scroll the page the way
+        this has always worked. It returns a recorded refusal, rather than
+        nothing, when X asked for a sign-in or a security check or said to slow
+        down: loading the same page in a browser after that is how a rate limit
+        turns into hammering.
+      */
+      const canonical = await pollViaIntelligence(request.kind, {
+        channel: ctx,
+        selfHandles: selfHandles(ctx),
+        limit: request.limit,
+        cursor: request.cursor,
+        target: request.target,
+      });
+      if (canonical) return canonical;
+
       return await withSession(ctx, monitorRole(request.kind), async ({ page }) =>
         monitor({
           page,

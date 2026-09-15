@@ -253,7 +253,9 @@ export class SocialRadar {
     if (!link) return;
 
     const ctx = await buildChannelContext(account, null);
-    const profile = await readProfile(ctx, account.handle);
+    // The profile only. This wants two numbers, and asking for a timeline it
+    // would discard is a second request to X for nothing.
+    const profile = await readProfile(ctx, account.handle, { posts: 0 });
     if (profile.followerCount === undefined && profile.followingCount === undefined) {
       // X showed neither number. Absent is not zero, and a row of nulls is not
       // a reading -- it would occupy the minute the real one needs.

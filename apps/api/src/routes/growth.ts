@@ -114,7 +114,10 @@ export async function growthRoutes(app: FastifyInstance): Promise<void> {
       const agent = await ownedAgent(params(request).id!, user);
       const accountId = await linkedAccount(agent.id);
       if (!accountId) return { ...noAccount, items: [] };
-      return { ok: true, items: await bridgesFor(agent.id, accountId) };
+      // The owner is passed so the scores can use profiles this owner has
+      // already had read. Nothing is read here; an account nobody has looked
+      // at keeps its gaps and says so.
+      return { ok: true, items: await bridgesFor(agent.id, accountId, { ownerUserId: user.id }) };
     }),
   );
 

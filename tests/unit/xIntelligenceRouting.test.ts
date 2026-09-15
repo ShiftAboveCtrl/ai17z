@@ -41,6 +41,8 @@ const user = (handle: string, userId: string): XUser => ({
   createdAt: null,
   verified: null,
   protected: null,
+  weFollow: null,
+  followsUs: null,
   provenance: provenanceFor('fake'),
 });
 

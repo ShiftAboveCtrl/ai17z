@@ -224,3 +224,71 @@ describe('the two engagement writes are told apart', () => {
     }
   });
 });
+
+describe('everything an agent may reach for on X, registered together', () => {
+  /*
+    The registrations are two calls in bootstrap -- the built-ins and X's own --
+    and every test above this point makes only the second. That is the right
+    scope for them and it is also the blind spot: a duplicate between the two
+    families is invisible to a test that registers one of them.
+
+    It was not hypothetical. `x.read_account` lived among the built-ins and
+    `x.read_profile` in the runtime, both reading a public profile through the
+    same X intelligence layer, both offered to the model at once. A model picks
+    one of them at random and an owner sees two switches for one decision.
+  */
+  it('has exactly one way to read a profile', async () => {
+    const { registerBuiltinCapabilities } = await import('@xbam/tools');
+    const { listCapabilities } = await import('@xbam/tools');
+    resetCapabilitiesForTest();
+    registerBuiltinCapabilities();
+    registerXCapabilities();
+
+    const profileReaders = listCapabilities()
+      .map((c) => c.id)
+      .filter((id) => id.startsWith('x.') && /profile|account/.test(id));
+    expect(profileReaders).toEqual(['x.read_profile']);
+  });
+
+  it('has nothing in the X family that reads through anything but the one layer', async () => {
+    const { registerBuiltinCapabilities, listCapabilities } = await import('@xbam/tools');
+    resetCapabilitiesForTest();
+    registerBuiltinCapabilities();
+    registerXCapabilities();
+
+    // Pinned as the exact surface. Two writes, ten reads: adding to either is
+    // meant to fail here, because what a model may choose to do to somebody
+    // else's service should never grow without somebody writing it down.
+    expect(
+      listCapabilities()
+        .map((c) => c.id)
+        .filter((id) => id.startsWith('x.'))
+        .sort(),
+    ).toEqual([
+      'x.like',
+      'x.read_connections',
+      'x.read_conversation',
+      'x.read_inbox',
+      'x.read_notifications',
+      'x.read_post',
+      'x.read_post_analytics',
+      'x.read_profile',
+      'x.read_thread',
+      'x.read_timeline',
+      'x.repost',
+      'x.search',
+    ]);
+  });
+
+  it('lets a profile read ask for more of somebody’s writing, or none', () => {
+    resetCapabilitiesForTest();
+    registerXCapabilities();
+    const input = getCapability('x.read_profile')!.input;
+    // What `x.read_account` had that this did not, kept rather than lost.
+    expect(input.parse({ handle: 'someone' })).toMatchObject({ posts: 5 });
+    expect(input.safeParse({ handle: 'someone', posts: 0 }).success).toBe(true);
+    expect(input.safeParse({ handle: 'someone', posts: 40 }).success).toBe(true);
+    // An unbounded read is a prompt nobody sized.
+    expect(input.safeParse({ handle: 'someone', posts: 500 }).success).toBe(false);
+  });
+});

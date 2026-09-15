@@ -17,9 +17,28 @@ import { query } from '../pool';
 export interface DiscoveredPostRow extends Record<string, unknown> {
   remote_event_id: string;
   handle: string | null;
+  /**
+   * The author's immutable id on the platform, when whatever found the post
+   * could see one.
+   *
+   * Null for anything scraped off a rendered page, which carries no id. It
+   * stops being null as the radar's search monitors read through the canonical
+   * X layer, and it is what lets an observation be attached to a person rather
+   * than to whatever they were calling themselves that week.
+   */
+  author_id: string | null;
   text: string;
   occurred_at: string | null;
   conversation_id: string | null;
+  /**
+   * The engagement counts the reader saw, where it saw exact ones.
+   *
+   * `{}` means nobody has been able to count: a drawn article renders "1.2K"
+   * and a backend that cannot see an exact number reports none rather than a
+   * wrong one. Absent must never read as zero -- "nobody has replied yet" and
+   * "we could not tell" are different things to say about a post.
+   */
+  metrics: Record<string, number>;
 }
 
 /**
@@ -44,9 +63,11 @@ export async function discoveredPosts(
   return query<DiscoveredPostRow>(
     `SELECT remote_event_id,
             remote_author_handle AS handle,
+            remote_author_id AS author_id,
             text,
             occurred_at,
-            remote_conversation_id AS conversation_id
+            remote_conversation_id AS conversation_id,
+            COALESCE(payload -> 'metrics', '{}'::jsonb) AS metrics
        FROM events
       WHERE ${clauses.join(' AND ')}
       ORDER BY COALESCE(occurred_at, ingested_at) DESC

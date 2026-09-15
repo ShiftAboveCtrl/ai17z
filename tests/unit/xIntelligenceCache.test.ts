@@ -47,6 +47,8 @@ function counting(outcome: XReadOutcome = 'OK'): XIntelligenceBackend {
         createdAt: null,
         verified: null,
         protected: null,
+        weFollow: null,
+        followsUs: null,
         provenance: provenanceFor('counting'),
       };
       return { outcome: 'OK', detail: '', data: user, provenance: provenanceFor('counting') };

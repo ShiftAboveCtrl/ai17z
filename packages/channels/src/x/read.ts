@@ -1,4 +1,4 @@
-import type { XPost, XProfile, XSearchResult, XThread } from '@xbam/shared/contracts';
+import type { XMediaItem, XPost, XProfile, XSearchResult, XThread } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
 import type { ChannelContext } from '../contract';
 import { SEL, X_URLS } from './selectors';
@@ -7,6 +7,14 @@ import { MAX_ARTICLES_READ, goto, readArticle, refuseIfXBroke, selfHandles, sett
 import { extractStatusId } from './targets';
 import { parseCount, readCounts } from './counts';
 import { readAllArticles } from './monitors';
+import {
+  xIntelligence,
+  type XMediaRef,
+  type XPostRecord,
+  type XReadOutcome,
+  type XReadResult,
+  type XUser,
+} from './intelligence';
 
 // Re-exported so the public surface of the channel package is unchanged: these
 // moved into `counts.ts` when the radar needed them too, and a file that both
@@ -50,6 +58,132 @@ const PROFILE_POSTS = 5;
  */
 const FIELD_TIMEOUT_MS = 2_000;
 
+/**
+ * Asking the canonical layer first.
+ *
+ * Everything below this comment reads the rendered page, and that is the right
+ * floor rather than the right first choice. X answers these four questions
+ * itself -- a post, a conversation, a search, a profile -- with immutable ids,
+ * exact counts, the real reply link and the conversation id, none of which a
+ * drawn article carries. `XPost` has had `remoteUserId`, `inReplyToStatusId`
+ * and four count fields since it was written, and the DOM path could fill two
+ * of them approximately.
+ *
+ * So each public reader below asks `xIntelligence` first and keeps its existing
+ * implementation underneath. **Nothing about the boundary changes**: what
+ * leaves this package is still `XPost`, `XProfile`, `XThread` and
+ * `XSearchResult`, and no capability, id, schema or caller moved.
+ *
+ * ### When the page is still the answer, and when it must not be
+ *
+ * `SCHEMA_CHANGED`, `UNAVAILABLE` and `EMPTY` fall through to the page, which
+ * is what the page is for. Anything in `STOP_ASKING` does not: a protected
+ * account is protected however it is read, a challenge is a person's to answer,
+ * and loading the same page in a browser after a rate limit is how a read turns
+ * into hammering. Those become the failure they are, classified so the job
+ * machinery does the right thing with each -- a rate limit is worth retrying
+ * later, a missing post never is, and a sign-in is somebody's to do.
+ */
+
+/** A refusal the canonical layer made, as a failure the pipeline understands. */
+function refusal(outcome: XReadOutcome, detail: string, what: string): PipelineError | null {
+  switch (outcome) {
+    case 'NOT_FOUND':
+      return PipelineError.permanent('x_not_found', detail || `${what} could not be found.`);
+    case 'PROTECTED':
+      return PipelineError.permanent('x_protected', detail || `${what} is not public.`);
+    case 'NEEDS_SIGN_IN':
+      // A person has to sign in. Retrying cannot produce a session, and a
+      // browser that is signed out will go on being signed out.
+      return PipelineError.review('x_needs_sign_in', detail || 'X asked for a sign-in before it would show this.');
+    case 'CHALLENGE':
+      // AI17Z never answers a security challenge. Nothing here is an exception.
+      return PipelineError.review(
+        'x_challenge',
+        detail || 'X is asking for a security check, which only a person can answer.',
+      );
+    case 'RATE_LIMITED':
+      return PipelineError.retryable('x_rate_limited', detail || 'X asked AI17Z to slow down, so nothing was read.');
+    default:
+      return null;
+  }
+}
+
+/** X's media vocabulary, in the one the contract uses. */
+const MEDIA_KINDS: Record<XMediaRef['kind'], XMediaItem['kind']> = {
+  photo: 'IMAGE',
+  video: 'VIDEO',
+  gif: 'GIF',
+  unknown: 'UNKNOWN',
+};
+
+/**
+ * A normalised post as the shape that crosses this package's boundary.
+ *
+ * Every optional field is spread rather than defaulted, because absent means
+ * "not visible" throughout these contracts and a zero would be a measurement.
+ * That is the same rule the counts already had and the reason `XPost` has
+ * optional counts at all.
+ */
+export function asXPost(post: XPostRecord): XPost {
+  const metrics = post.metrics;
+  return {
+    statusId: post.postId,
+    url: post.url,
+    author: {
+      handle: post.authorHandle.replace(/^@+/, ''),
+      // The field has existed since `XPost` was written and nothing could ever
+      // fill it: a rendered article carries no numeric id.
+      ...(post.authorId ? { remoteUserId: post.authorId } : {}),
+    },
+    text: post.text,
+    ...(post.createdAt ? { postedAt: post.createdAt } : {}),
+    media: post.media.map((item) => ({
+      kind: MEDIA_KINDS[item.kind],
+      ...(item.url ? { url: item.url } : {}),
+      ...(item.altText ? { altText: item.altText } : {}),
+    })),
+    ...(post.replyToPostId ? { inReplyToStatusId: post.replyToPostId } : {}),
+    ...(post.quotedPostId ? { quotedStatusId: post.quotedPostId } : {}),
+    ...(typeof metrics?.replies === 'number' ? { replyCount: metrics.replies } : {}),
+    ...(typeof metrics?.reposts === 'number' ? { repostCount: metrics.reposts } : {}),
+    ...(typeof metrics?.likes === 'number' ? { likeCount: metrics.likes } : {}),
+    ...(typeof metrics?.views === 'number' ? { viewCount: metrics.views } : {}),
+  };
+}
+
+/** A resolved user as the profile shape, minus the posts. */
+export function asXProfile(user: XUser, recentPosts: XPost[]): XProfile {
+  return {
+    handle: user.handle.replace(/^@+/, ''),
+    ...(user.displayName ? { displayName: user.displayName } : {}),
+    ...(user.userId ? { remoteUserId: user.userId } : {}),
+    ...(user.bio ? { bio: user.bio } : {}),
+    ...(user.location ? { location: user.location } : {}),
+    ...(user.website ? { website: user.website } : {}),
+    ...(user.createdAt ? { joined: user.createdAt } : {}),
+    ...(typeof user.verified === 'boolean' ? { verified: user.verified } : {}),
+    ...(typeof user.followers === 'number' ? { followerCount: user.followers } : {}),
+    ...(typeof user.following === 'number' ? { followingCount: user.following } : {}),
+    ...(typeof user.weFollow === 'boolean' ? { followedByYou: user.weFollow } : {}),
+    ...(typeof user.followsUs === 'boolean' ? { followsYou: user.followsUs } : {}),
+    recentPosts,
+  };
+}
+
+/**
+ * Take the canonical answer, or say why there is not going to be one.
+ *
+ * Returns `null` for the outcomes where the rendered page is a reasonable next
+ * attempt, and throws for the ones where asking again is the wrong thing to do.
+ */
+export function canonical<T>(result: XReadResult<T>, what: string): T | null {
+  if (result.outcome === 'OK') return result.data;
+  const stop = refusal(result.outcome, result.detail, what);
+  if (stop) throw stop;
+  return null;
+}
+
 /** The status url for whatever the caller had: an id, a url, or a handle path. */
 function statusUrl(reference: string): string {
   const id = extractStatusId(reference) ?? (/^\d{5,25}$/.test(reference.trim()) ? reference.trim() : null);
@@ -65,6 +199,18 @@ function statusUrl(reference: string): string {
 /** One post, read from its own page. */
 export async function readPost(ctx: ChannelContext, reference: string): Promise<XPost> {
   const url = statusUrl(reference);
+  const statusId = extractStatusId(url)!;
+
+  // X's own data first: it carries the author's numeric id, the exact counts,
+  // and the id of the post being replied to. None of the three survive being
+  // read off a drawn article, and `XPost` has had fields for all of them since
+  // it was written.
+  const structured = canonical(
+    await xIntelligence.getPost(statusId, { channel: ctx, freshness: 'LIVE' }),
+    `The post ${statusId}`,
+  );
+  if (structured) return asXPost(structured);
+
   return withSession(ctx, 'RESEARCH', async (session) => {
     await goto(session.page, url);
     await settle();
@@ -97,10 +243,49 @@ export async function readPost(ctx: ChannelContext, reference: string): Promise<
 }
 
 /** One account, read from its profile page. */
-export async function readProfile(ctx: ChannelContext, handleInput: string): Promise<XProfile> {
+export async function readProfile(
+  ctx: ChannelContext,
+  handleInput: string,
+  options: { posts?: number } = {},
+): Promise<XProfile> {
   const handle = handleInput.trim().replace(/^@+/, '');
+  // A few by default, because the question a profile answers is "who is this"
+  // rather than "what have they been saying". A caller that wants the second
+  // asks for it.
+  const wantedPosts = Math.min(Math.max(options.posts ?? PROFILE_POSTS, 0), 40);
   if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) {
     throw PipelineError.permanent('bad_handle', `"${handleInput}" is not an X handle.`);
+  }
+
+  // X's own profile data, which carries the numeric id and -- because the query
+  // goes out as the signed-in session -- whether either account follows the
+  // other. `XProfile` has had `remoteUserId`, `followedByYou` and `followsYou`
+  // since it was written and the rendered page could fill none of them
+  // reliably.
+  const structured = canonical(
+    await xIntelligence.resolveUser(handle, { channel: ctx, freshness: 'MODERATE' }),
+    `@${handle}`,
+  );
+  if (structured && structured.userId) {
+    // Nothing asked for means nothing read. The radar reads its own profile
+    // every few hours purely for a follower count, and a timeline fetched and
+    // thrown away is a request to X that bought nobody anything.
+    if (wantedPosts === 0) return asXProfile(structured, []);
+
+    const recent = await xIntelligence.getUserPosts(
+      {
+        userId: structured.userId,
+        handle: structured.handle,
+        limit: wantedPosts,
+        includeReplies: false,
+        includeReposts: false,
+      },
+      { channel: ctx, freshness: 'RECENT' },
+    );
+    // A profile whose posts could not be read is still a profile. The absence
+    // travels as an empty list exactly as it did before, because the field is
+    // "what was visible" rather than "what they have written".
+    return asXProfile(structured, recent.outcome === 'OK' ? recent.data.map(asXPost) : []);
   }
 
   return withSession(ctx, 'RESEARCH', async (session) => {
@@ -239,6 +424,25 @@ export async function searchPosts(
   const mode = request.mode ?? 'LIVE';
   const limit = Math.min(Math.max(request.limit ?? 10, 1), 25);
 
+  // X's own search index, which is the same index the rendered search page
+  // draws from -- but answered with ids, counts and reply links rather than
+  // with articles that have had all three rendered out of them.
+  const structured = canonical(
+    await xIntelligence.searchPosts({ query, limit, latest: mode === 'LIVE' }, { channel: ctx, freshness: 'LIVE' }),
+    `Results for "${query}"`,
+  );
+  if (structured) {
+    return {
+      query,
+      mode,
+      posts: structured.map(asXPost),
+      // A single page of X's search, which is all it offers in one answer. It
+      // says `more` when it filled the request exactly, because a full page is
+      // the only evidence available that something was left behind.
+      more: structured.length >= limit,
+    };
+  }
+
   return withSession(ctx, 'RESEARCH', async (session) => {
     const url = `https://x.com/search?q=${encodeURIComponent(query)}${mode === 'LIVE' ? '&f=live' : ''}`;
     await goto(session.page, url);
@@ -296,6 +500,25 @@ export async function searchPosts(
 export async function readThread(ctx: ChannelContext, reference: string): Promise<XThread> {
   const url = statusUrl(reference);
   const focalStatusId = extractStatusId(url)!;
+
+  // The structured read follows the reply-to links rather than the order of
+  // the page, so a sibling branch cannot become part of the conversation. The
+  // walker below reaches the same conclusion from what X rendered; this reaches
+  // it from what X actually said.
+  const structured = canonical(
+    await xIntelligence.getThread(focalStatusId, { channel: ctx, freshness: 'LIVE' }),
+    `The conversation around ${focalStatusId}`,
+  );
+  if (structured && structured.length > 0) {
+    const root = structured[0]!;
+    return {
+      focalStatusId,
+      posts: structured.map(asXPost),
+      // True when the chain stopped at a post that is itself an answer: X did
+      // not return its parent, so this is not the start of the conversation.
+      truncated: root.replyToPostId !== null,
+    };
+  }
 
   return withSession(ctx, 'RESEARCH', async (session) => {
     await goto(session.page, url);

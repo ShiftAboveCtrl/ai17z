@@ -69,6 +69,13 @@ and the radar's own-threads monitor records one each time it visits one of the
 agent's own posts to look for replies — it is already standing on the page where
 the counts are. Nothing polls X to ask how a post is doing.
 
+Since `x.read_post` reads through the canonical layer (`X_READING.md`), the
+figures it records are X's own exact numbers rather than the abbreviations a
+page renders — `12,340` rather than whatever `12.3K` parsed to. The radar's
+search monitors carry exact counts on the events they discover for the same
+reason, which is what finally gave the opportunity engine a reply count to
+weigh.
+
 Observations are snapshots, never a running total. The unique index is per post,
 per source, per minute, so a poller that runs twice records one observation. An
 older reading is evidence; replacing it would throw away the only thing that
@@ -80,9 +87,11 @@ must never suppress the other.
 
 The account's own numbers work the same way and are collected the same way:
 reading the agent's own profile records a follower count, and nothing else does.
-Only its own -- a follower count for somebody else is read live for a bridge
-score and not kept, because a series about accounts the agent merely looked at
-would be a history of people who never asked for one.
+Only its own. Somebody else's follower count is kept, where an owner asked for
+that account to be read, as a single row on `x_account_observations` saying what
+was true when somebody looked. A *series* is the thing that is refused --
+recording how every account the agent glanced at has grown over time would be
+building a history of people who never asked for one.
 
 **Nothing here is scheduled, and that is deliberate.** `docs/architecture/CADENCE.md`
 allows one timing engine and no second timer. So the series is as dense as the
@@ -109,6 +118,26 @@ scores low however well liked it is. Reach is log-scaled and relative, because
 linear reach makes one enormous account outrank every other consideration
 combined — which is how automated outreach ends up talking exclusively at people
 who will never answer.
+
+### Where reach and reciprocity come from
+
+`scoreBridge` has been able to weigh both since it was written and for a long
+time was supplied with neither, so every score carried "How many people follow
+them was not visible" and "Whether either account follows the other was not
+visible" as permanent gaps. The reason was real: filling them meant reading a
+profile per card, and the browser is one signed-in session the agent needs for
+its own work.
+
+They are now filled from reads an owner already asked for -- the People screen's
+*Read their account*, recorded on `x_account_observations`. The follow
+relationship comes with it, because X answers a profile query as somebody and
+says whether the viewer follows them and whether they follow back.
+
+**The screens still read nothing.** An account nobody has looked at keeps its
+gaps and says so, which is why those sentences still exist and still have to be
+shown. And null stays null: "X did not say" is reported as a gap, never
+flattened into "they do not follow you", which would turn every unread profile
+into a measured pair of strangers.
 
 ## Opportunities are mostly declines
 

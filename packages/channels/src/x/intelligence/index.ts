@@ -5,6 +5,7 @@ import {
   WORTH_ANOTHER_BACKEND,
   emptyResult,
   type XBackendReadiness,
+  X_CAPABILITIES,
   type XCapability,
   type XId,
   type XIntelligenceBackend,
@@ -31,6 +32,9 @@ export {
   nextCursor,
   classifyDetailed,
   findUserResult,
+  // The ancestry walk. Pure, and the one place a sibling branch either does or
+  // does not get into a thread.
+  ancestorChain,
 } from './pageGraphql';
 export { pageDomBackend } from './pageDom';
 export { forget as forgetXReads } from './cache';
@@ -250,7 +254,7 @@ export const xIntelligence = {
     }
 
     const capabilities: Record<XCapability, XCapabilityHealth> = {} as Record<XCapability, XCapabilityHealth>;
-    for (const capability of ALL_CAPABILITIES) {
+    for (const capability of X_CAPABILITIES) {
       const serving = rows.filter((row) => row.state !== 'UNAVAILABLE' && row.can.includes(capability));
       capabilities[capability] = {
         state: serving.length === 0 ? 'UNAVAILABLE' : serving.some((r) => r.state === 'READY') ? 'READY' : 'DEGRADED',
@@ -261,15 +265,6 @@ export const xIntelligence = {
     return { backends: rows, capabilities };
   },
 };
-
-const ALL_CAPABILITIES: XCapability[] = [
-  'resolveUser',
-  'getUser',
-  'getUserPosts',
-  'getPost',
-  'getThread',
-  'searchPosts',
-];
 
 export interface XBackendHealthRow extends XBackendReadiness {
   backend: string;

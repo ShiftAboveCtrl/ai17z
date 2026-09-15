@@ -220,6 +220,26 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     note: 'Log level on a trace row. Matches the logger levels.',
   },
   {
+    table: 'x_account_observations',
+    column: 'outcome',
+    values: [
+      'OK',
+      'NOT_FOUND',
+      'PROTECTED',
+      'EMPTY',
+      'NEEDS_SIGN_IN',
+      'CHALLENGE',
+      'RATE_LIMITED',
+      'SCHEMA_CHANGED',
+      'UNAVAILABLE',
+    ],
+    note:
+      "How a read of somebody's X account ended. Mirrors X_READ_OUTCOMES in the channels package, " +
+      'which this package deliberately does not import -- the database layer sits underneath the ' +
+      'channels and an import the other way would invert that. ' +
+      'tests/unit/constrainedEnumRegistry.test.ts holds the two lists against each other.',
+  },
+  {
     table: 'users',
     column: 'role',
     values: ['OWNER', 'MEMBER'],

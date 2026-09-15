@@ -3,6 +3,11 @@
 Asking the model provider to run a search during the call, and refusing to
 overstate what came back.
 
+> **Not to be confused with `X_READING.md`,** which is the canonical layer
+> everything else reads X through -- the signed-in browser, free, on by
+> default. This document is about a paid provider capability that reaches X's
+> own search index, and it is off unless somebody turns it on.
+
 ## What this adds that AI17Z did not have
 
 AI17Z already looks things up. `packages/runtime/src/research.ts` decides from

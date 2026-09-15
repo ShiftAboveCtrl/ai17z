@@ -3,13 +3,16 @@ import type { ChannelContext } from '../../contract';
 import { goto, settle, withSession, type Page } from '../page';
 import {
   DEFAULT_BUDGET,
+  X_CAPABILITIES,
   emptyResult,
   provenanceFor,
   type XBackendReadiness,
+  type XId,
   type XIntelligenceBackend,
   type XPostRecord,
   type XPostsRequest,
   type XReadContext,
+  type XReadOutcome,
   type XReadResult,
   type XUser,
 } from './contract';
@@ -69,6 +72,13 @@ const OPERATIONS = {
   userTweets: 'UserTweets',
   userTweetsAndReplies: 'UserTweetsAndReplies',
   searchTimeline: 'SearchTimeline',
+  /**
+   * One post and the conversation around it.
+   *
+   * The same query X's own status page makes, which is why the reply chain
+   * comes back already resolved rather than needing to be walked.
+   */
+  tweetDetail: 'TweetDetail',
 } as const;
 
 /**
@@ -93,7 +103,7 @@ async function discoverOperationIds(page: Page): Promise<Map<string, string>> {
 
   const found = await page
     .evaluate(async () => {
-      const wanted = ['UserByScreenName', 'UserTweets', 'UserTweetsAndReplies', 'SearchTimeline'];
+      const wanted = ['UserByScreenName', 'UserTweets', 'UserTweetsAndReplies', 'SearchTimeline', 'TweetDetail'];
       const ids: Record<string, string> = {};
 
       const scan = (text: string) => {
@@ -325,6 +335,34 @@ function num(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * A boolean X actually stated, or nothing.
+ *
+ * Deliberately not `Boolean(value)`. A key X did not send would become `false`,
+ * and `false` here means "they do not follow you" -- a measured fact the bridge
+ * score treats differently from an unknown one. Absence has to survive.
+ */
+function bool(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+/**
+ * Where X currently keeps the viewer's relationship with somebody.
+ *
+ * It moved off `legacy` into its own object at some point and both shapes are
+ * still seen in the wild depending on which fields the query asked for. Read
+ * defensively rather than pinned to this week's arrangement -- the cost of
+ * being wrong is a permanently absent signal that looks exactly like an account
+ * nobody follows.
+ */
+function perspectives(result: Record<string, unknown>): Record<string, unknown> {
+  const direct = result.relationship_perspectives;
+  if (direct && typeof direct === 'object') return direct as Record<string, unknown>;
+  const legacy = (result.legacy ?? {}) as Record<string, unknown>;
+  const nested = legacy.relationship_perspectives;
+  return nested && typeof nested === 'object' ? (nested as Record<string, unknown>) : {};
+}
+
 /** X's JSON for one user, as the contract's shape. */
 export function toUser(result: Record<string, unknown>, backend: string): XUser | null {
   const restId = result.rest_id;
@@ -351,6 +389,14 @@ export function toUser(result: Record<string, unknown>, backend: string): XUser 
     createdAt: (legacy.created_at as string | undefined) ?? null,
     verified: typeof legacy.verified === 'boolean' ? legacy.verified : (result.is_blue_verified as boolean | undefined) ?? null,
     protected: typeof legacy.protected === 'boolean' ? legacy.protected : null,
+    // The viewer's own relationship with them, which X answers because the
+    // query was made as somebody. It has lived in two places across X's
+    // schema revisions -- on `legacy` and under `relationship_perspectives` --
+    // and both are read rather than one being assumed, because the failure is
+    // silent: a missing key is indistinguishable from "they do not follow you"
+    // unless the absence is preserved, which is what `bool` does.
+    weFollow: bool(legacy.following) ?? bool(perspectives(result).following),
+    followsUs: bool(legacy.followed_by) ?? bool(perspectives(result).followed_by),
     provenance: provenanceFor(backend, { url: `https://x.com/${handle}` }),
   };
 }
@@ -449,9 +495,10 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
         if (ids.has(OPERATIONS.userByScreenName)) can.push('resolveUser', 'getUser');
         if (ids.has(OPERATIONS.userTweets) || ids.has(OPERATIONS.userTweetsAndReplies)) can.push('getUserPosts');
         if (ids.has(OPERATIONS.searchTimeline)) can.push('searchPosts');
+        if (ids.has(OPERATIONS.tweetDetail)) can.push('getPost', 'getThread');
         return {
           state: can.length > 0 ? ('READY' as const) : ('DEGRADED' as const),
-          detail: `Reading X's own data through the signed-in browser (${can.length} of 4 operations available).`,
+          detail: `Reading X's own data through the signed-in browser (${can.length} of ${X_CAPABILITIES.length} reads available).`,
           can,
         };
       });
@@ -581,6 +628,82 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
     });
   },
 
+  /**
+   * One post, by its id.
+   *
+   * The same query X's own status page makes, which is also why this one query
+   * serves both `getPost` and `getThread`: the answer carries the focal post and
+   * the conversation X has already resolved around it.
+   */
+  async getPost(ctx: XReadContext, postId: XId): Promise<XReadResult<XPostRecord | null>> {
+    const channel = ctx.channel as ChannelContext | null;
+    if (!channel) return emptyResult(NAME, 'UNAVAILABLE', 'No browser session to read through.', null);
+
+    return withSession(channel, 'RESEARCH', async (session) => {
+      const detail = await readTweetDetail(session.page, postId);
+      if (detail.outcome !== 'OK') return emptyResult(NAME, detail.outcome, detail.detail, null);
+
+      const found = detail.posts.find((post) => post.postId === postId) ?? null;
+      if (!found) {
+        // X answered, and the post asked for was not in the answer. A deleted
+        // post and one hidden from this viewer both land here, and neither is a
+        // schema problem -- so this is NOT_FOUND, which stops the read rather
+        // than sending it to a second backend that would ask X again.
+        return emptyResult(NAME, 'NOT_FOUND', 'X did not return that post.', null);
+      }
+      return {
+        outcome: 'OK',
+        detail: '',
+        data: found,
+        provenance: provenanceFor(NAME, { url: found.url }),
+      };
+    });
+  },
+
+  /**
+   * A post and the posts above it, root first.
+   *
+   * **The chain is walked, not sliced.** X returns the conversation as a list of
+   * entries, and the obvious implementation takes everything before the focal
+   * post -- which is how a sibling branch ends up in a thread. The reply-to ids
+   * are in the data, so the ancestry is followed through them: start at the
+   * focal post, climb `replyToPostId` while the parent is present, reverse.
+   *
+   * That is the same conclusion `x/conversation.ts` reached for the rendered
+   * page, arrived at differently because the JSON carries the links the DOM does
+   * not. Both refuse the positional shortcut for the same reason: a thread that
+   * quietly contains somebody else's tangent is a prompt that quietly contains
+   * somebody else's tangent.
+   */
+  async getThread(ctx: XReadContext, postId: XId): Promise<XReadResult<XPostRecord[]>> {
+    const channel = ctx.channel as ChannelContext | null;
+    if (!channel) return emptyResult(NAME, 'UNAVAILABLE', 'No browser session to read through.', []);
+
+    return withSession(channel, 'RESEARCH', async (session) => {
+      const detail = await readTweetDetail(session.page, postId);
+      if (detail.outcome !== 'OK') return emptyResult(NAME, detail.outcome, detail.detail, []);
+
+      const chain = ancestorChain(detail.posts, postId);
+      if (chain.length === 0) return emptyResult(NAME, 'NOT_FOUND', 'X did not return that post.', []);
+
+      const root = chain[0]!;
+      const reachedRoot = root.replyToPostId === null;
+      return {
+        outcome: 'OK',
+        detail: `Read ${chain.length} post${chain.length === 1 ? '' : 's'} in the conversation.`,
+        data: chain,
+        provenance: provenanceFor(NAME, {
+          url: chain[chain.length - 1]!.url,
+          // Said rather than implied. A chain that stops because X did not
+          // return the parent is not the start of the conversation, and a
+          // prompt built from it would open partway through an exchange while
+          // looking complete.
+          gaps: reachedRoot ? [] : ['the conversation continues above the oldest post X returned'],
+        }),
+      };
+    });
+  },
+
   async searchPosts(
     ctx: XReadContext,
     request: { query: string; limit: number; latest?: boolean },
@@ -627,6 +750,93 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
     });
   },
 };
+
+/**
+ * The conversation X renders around one post, as normalised records.
+ *
+ * One query serves both `getPost` and `getThread` because X's status page makes
+ * exactly this request and gets both from it: the post asked for, the chain
+ * above it already resolved, and the replies below. Asking twice would be two
+ * requests for one answer.
+ */
+async function readTweetDetail(
+  page: Page,
+  postId: XId,
+): Promise<{ outcome: XReadOutcome; detail: string; posts: XPostRecord[] }> {
+  await ensureOnX(page);
+  const ids = await discoverOperationIds(page);
+  const queryId = ids.get(OPERATIONS.tweetDetail);
+  if (!queryId) {
+    return { outcome: 'SCHEMA_CHANGED', detail: 'X did not expose its post read to this page.', posts: [] };
+  }
+
+  const answer = await askGraphql(
+    page,
+    queryId,
+    OPERATIONS.tweetDetail,
+    {
+      focalTweetId: postId,
+      with_rux_injections: false,
+      includePromotedContent: false,
+      withCommunity: true,
+      withQuickPromoteEligibilityTweetFields: false,
+      withBirdwatchNotes: false,
+      withVoice: true,
+      withV2Timeline: true,
+    },
+    FEATURES,
+  );
+  if (!answer.ok) {
+    const { outcome, detail } = outcomeFromError(answer.status, answer.error);
+    return { outcome, detail, posts: [] };
+  }
+
+  const posts: XPostRecord[] = [];
+  for (const tweet of tweetsFrom(answer.json)) {
+    const post = toPost(tweet, NAME);
+    if (post) posts.push(post);
+  }
+  if (posts.length === 0) {
+    return { outcome: 'EMPTY', detail: 'X returned nothing for that post.', posts: [] };
+  }
+  return { outcome: 'OK', detail: '', posts };
+}
+
+/**
+ * The focal post and everything it is an answer to, root first.
+ *
+ * Pure, and exported so eleven lines of reasoning about somebody else's data
+ * model can be pinned against fixtures rather than against a live X. The rule
+ * it implements is small and the failure it prevents is not: **follow the
+ * reply-to links, never the order of the list.**
+ *
+ * A status page carries the ancestors, the focal post, its replies, and the
+ * replies to those. Taking "everything before the focal post" gets the right
+ * answer often enough to look correct and puts a stranger's tangent into a
+ * prompt the rest of the time. Climbing `replyToPostId` cannot: a post either
+ * is the parent or is not.
+ *
+ * Stops on a post it has already seen, because a cycle in this data would
+ * otherwise be an infinite loop in a worker. X should never produce one; a
+ * reader that trusts a remote service not to is a reader that hangs.
+ */
+export function ancestorChain(posts: XPostRecord[], focalId: XId): XPostRecord[] {
+  const byId = new Map(posts.map((post) => [post.postId, post]));
+  const focal = byId.get(focalId);
+  if (!focal) return [];
+
+  const chain: XPostRecord[] = [focal];
+  const seen = new Set<string>([focal.postId]);
+  let current = focal;
+  while (current.replyToPostId) {
+    const parent = byId.get(current.replyToPostId);
+    if (!parent || seen.has(parent.postId)) break;
+    seen.add(parent.postId);
+    chain.push(parent);
+    current = parent;
+  }
+  return chain.reverse();
+}
 
 /** The user object, wherever this week's wrappers put it. */
 export function findUserResult(json: unknown): Record<string, unknown> | null {

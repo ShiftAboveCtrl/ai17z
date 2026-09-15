@@ -14,6 +14,7 @@ export {
   FRESHNESS_SECONDS,
   STOP_ASKING,
   WORTH_ANOTHER_BACKEND,
+  X_READ_OUTCOMES,
   emptyResult,
   provenanceFor,
   pageDomBackend,
@@ -25,6 +26,7 @@ export {
   nextCursor,
   classifyDetailed,
   findUserResult,
+  ancestorChain,
   forgetXReads,
 } from './x/intelligence/index';
 export type {
@@ -50,7 +52,21 @@ export {
 } from './x/personaCorpus';
 export { linksInText, upgradeImageUrl, readMediaInventory } from './x/media';
 export { webSearch, readPage, extractBraveAnswer, type WebResult } from './x/websearch';
+// How a canonical read becomes the shapes that cross this package's boundary,
+// and the decision about when the rendered page may be tried instead. Exported
+// because both are pure and both are where evidence is either kept or lost.
+export { asXPost, asXProfile, canonical as canonicalOrPage } from './x/read';
  export * as xMonitors from './x/monitors';
+// How a canonical read becomes a radar candidate. Exported so the translation
+// can be tested without a browser: it is where the author id and the engagement
+// counts either survive the trip downstream or quietly do not.
+export {
+  pollViaIntelligence,
+  toCandidates,
+  // Whether a refusal ends the poll or the rendered page is tried instead.
+  fromReadResult as radarPollResultFrom,
+  type RadarReadContext,
+} from './x/radarIntelligence';
 export { fingerprint } from './x/index';
 // Exported for the composer-discipline tests: these are the steps that decide
 // whether a draft is complete before anything irreversible happens.

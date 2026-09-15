@@ -144,3 +144,48 @@ describe('reading narratives', () => {
     expect(gaps.join(' ')).toMatch(/had no timestamp/);
   });
 });
+
+describe('counting voices rather than names', () => {
+  /*
+    The radar reads X's own data now, so a discovered post carries its author's
+    immutable id. Counting by handle made one person two the moment they
+    renamed themselves -- and "several accounts are saying this" is the only
+    thing that separates a narrative from a loud account, so the inflation
+    lands precisely where it does harm.
+  */
+  const withIds = (n: number, text: string): NarrativePost[] =>
+    Array.from({ length: n }, (_, i) => ({
+      statusId: `id-${i}`,
+      handle: `acct${i}`,
+      authorId: `${900 + i}`,
+      text,
+      postedAt: hoursAgo(1),
+    }));
+
+  it('counts somebody who renamed themselves mid-window once', () => {
+    const posts = withIds(13, 'restaking yields are compressing');
+    // The fourteenth post is the first author again, under a new handle.
+    posts.push({
+      statusId: 'renamed',
+      handle: 'acct0_eth',
+      authorId: '900',
+      text: 'restaking yields are compressing',
+      postedAt: hoursAgo(1),
+    });
+
+    const found = readNarratives(posts, { now }).narratives.find((n) => n.term === 'restaking');
+    expect(found).toBeDefined();
+    // Thirteen people, fourteen posts, fourteen handles.
+    expect(found!.authors).toBe(13);
+    expect(found!.mentions).toBe(14);
+  });
+
+  it('still counts by handle for a post that carries no id', () => {
+    // Anything discovered before the radar read X's own data, or read off a
+    // rendered page, has no id. Its author must still be counted.
+    const found = readNarratives(chorus('restaking yields are compressing', 14, 1), { now }).narratives.find(
+      (n) => n.term === 'restaking',
+    );
+    expect(found!.authors).toBe(14);
+  });
+});
