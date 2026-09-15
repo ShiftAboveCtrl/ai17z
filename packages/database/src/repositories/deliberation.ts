@@ -581,7 +581,26 @@ export async function recentObservations(input: {
               COALESCE(e.payload -> 'metrics', '{}'::jsonb) AS metrics
          FROM events e
         WHERE ($2::uuid IS NULL OR e.account_id = $2)
-          AND COALESCE(e.occurred_at, e.ingested_at) >= $3
+          /*
+            When AI17Z first saw it, never when it happened.
+
+            The window answers "what has this agent not looked at yet", and an
+            agent finds out about a post when the radar brings it back, not when
+            somebody wrote it. Windowing on occurred_at looked equivalent and
+            is not: on a real installation the median gap between a post
+            happening and AI17Z ingesting it is nineteen hours, against a wake
+            interval measured in minutes. So the window almost never contained
+            the moment a post was written, deliberation observed nothing on
+            almost every wake, and the feature did nothing at all outside its
+            own tests -- where fixtures make events that happened just now.
+
+            An old post arriving today is still a real question, and it is
+            answered in the right place: salience.ts declines anything past
+            STALE_HOURS as history rather than something happening. When it
+            arrived and how old it is are two different facts and each belongs
+            to a different layer.
+          */
+          AND e.ingested_at >= $3
           AND e.type <> 'SCHEDULED_TRIGGER'
         ORDER BY COALESCE(e.occurred_at, e.ingested_at) DESC
         LIMIT $4

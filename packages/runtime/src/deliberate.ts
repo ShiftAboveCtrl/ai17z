@@ -3,6 +3,7 @@ import {
   agents as agentsRepo,
   content as contentRepo,
   deliberation as mind,
+  memories as memoriesRepo,
   relationships as relationshipsRepo,
   repoSources,
   type AttentionRow,
@@ -13,13 +14,17 @@ import {
   SALIENCE_FLOOR,
   autonomyAtLeast,
   type AttentionKind,
+  type AttentionState,
   type AutonomyLevel,
   type EvidenceRef,
+  type MemoryScope,
+  type MemoryType,
 } from '@xbam/shared/contracts';
 import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
 import { worthNoticing } from './repoWatcher';
+import { reticenceReason, unpromptedSubject } from './reticence';
 import { decayed, fingerprintOf, overlap, scoreObservation, type KnownPerson, type Observation, type SalienceContext } from './salience';
 
 const log = createLogger('deliberate');
@@ -96,6 +101,8 @@ export interface WakeOutcome {
   /** New working-set items produced by reflection. */
   produced: number;
   retired: number;
+  /** What faded but was worth keeping, written into the six memory scopes. */
+  kept: number;
   /** Candidates handed to the existing backlog. */
   candidates: number;
   deep: boolean;
@@ -114,6 +121,7 @@ function emptyOutcome(agentId: string, autonomy: AutonomyLevel, reason: string, 
     reinforced: 0,
     produced: 0,
     retired: 0,
+    kept: 0,
     candidates: 0,
     deep: false,
     reason,
@@ -275,9 +283,13 @@ export async function attend(
  * usefulness -- a working set of two hundred items is a list, and a list is
  * what this exists instead of.
  */
-export async function decayWorkingSet(agentId: string, now: Date = new Date()): Promise<number> {
+export async function decayWorkingSet(
+  agentId: string,
+  now: Date = new Date(),
+): Promise<{ retired: number; kept: number }> {
   const live = await mind.liveItems(agentId);
   let retired = 0;
+  let kept = 0;
 
   const scored = live.map((item) => ({
     item,
@@ -287,6 +299,7 @@ export async function decayWorkingSet(agentId: string, now: Date = new Date()): 
   for (const { item, current } of scored) {
     if (current === item.salience) continue;
     if (current < SALIENCE_FLOOR) {
+      if (await consolidate(item, 'RETIRED')) kept += 1;
       await mind.settle(item.id, 'RETIRED', 'Nothing has pointed at this in a while.');
       retired += 1;
     } else {
@@ -307,11 +320,87 @@ export async function decayWorkingSet(agentId: string, now: Date = new Date()): 
     .filter(({ item, current }) => current >= SALIENCE_FLOOR && item.state === 'ACTIVE')
     .sort((a, b) => b.current - a.current);
   for (const { item } of surviving.slice(DELIBERATION_LIMITS.workingSet)) {
+    if (await consolidate(item, 'RETIRED')) kept += 1;
     await mind.settle(item.id, 'RETIRED', 'Crowded out by things that mattered more.');
     retired += 1;
   }
 
-  return retired;
+  return { retired, kept };
+}
+
+/**
+ * What a faded thought leaves behind.
+ *
+ * The working set is small and forgetful on purpose -- that is what makes it a
+ * present tense rather than a log. But an agent that works something out, holds
+ * it for a fortnight and then loses it is a machine that learns and then
+ * forgets, so two kinds of item are kept after they stop being current:
+ *
+ *   - a **lesson**, which is what it concluded about how to act. That is about
+ *     itself, so it goes to `PERSONA`.
+ *   - a **question or hypothesis that got answered**, which is something it now
+ *     knows. That is about the world, so it goes to `KNOWLEDGE`.
+ *
+ * Everything else leaves the retired row and nothing more. An interest that
+ * faded is not a fact, and "it used to care about this" is already answerable
+ * from `agent_attention` without putting it somewhere retrieval will find it
+ * and quote back as though it were still true.
+ *
+ * It writes through `memories` -- the same six scopes everything else uses.
+ * **There is no separate store for what deliberation learned**, because a
+ * second memory is a second answer to "what does this agent know", and the
+ * first thing anybody asks of the second one is why it disagrees with the
+ * first.
+ *
+ * **Nothing stored here is a transcript.** The summary is the durable artifact
+ * reflection already produced; no model reasoning is kept, shown or carried.
+ * The evidence travels with it, because a memory whose grounds are gone is an
+ * assertion.
+ */
+async function consolidate(item: AttentionRow, becoming: AttentionState): Promise<boolean> {
+  // An unevidenced claim is not a memory, whatever it scored.
+  if (item.evidence.length === 0) return false;
+  // Still being worked out. The working set is where that belongs.
+  if (item.confidence < 0.5) return false;
+
+  const durable = durableMemoryFor(item, becoming);
+  if (!durable) return false;
+
+  const written = await memoriesRepo.writeMemory({
+    agentId: item.agentId,
+    scope: durable.scope,
+    memoryType: durable.memoryType,
+    content: item.summary,
+    importance: Math.min(1, Math.max(0.3, item.salience / 100)),
+    confidence: item.confidence,
+    /*
+      Where it came from, so a screen showing the memory can show why the agent
+      believes it and a person can follow it back to the post it came off.
+      Capped at the working set's own limit: a memory carrying forty references
+      is a memory nobody will check.
+    */
+    origin: {
+      from: 'deliberation',
+      attentionId: item.id,
+      kind: item.kind,
+      reinforcements: item.reinforcements,
+      firstObservedAt: item.firstObservedAt,
+      evidence: item.evidence.slice(0, DELIBERATION_LIMITS.evidencePerItem),
+    },
+  });
+  return written.created;
+}
+
+/** Which scope a settling item belongs in, and nothing when it belongs in none. */
+function durableMemoryFor(
+  item: AttentionRow,
+  becoming: AttentionState,
+): { scope: MemoryScope; memoryType: MemoryType } | null {
+  if (item.kind === 'LESSON') return { scope: 'PERSONA', memoryType: 'SUMMARY' };
+  if (becoming === 'RESOLVED' && (item.kind === 'QUESTION' || item.kind === 'HYPOTHESIS')) {
+    return { scope: 'KNOWLEDGE', memoryType: 'FACT' };
+  }
+  return null;
 }
 
 /** Whether this agent has a model cheap enough to reflect with. */
@@ -398,10 +487,10 @@ export async function reflect(input: {
   agentId: string;
   fresh: AttentionRow[];
   existing: AttentionRow[];
-}): Promise<{ produced: number; resolved: number; model: string | null; why: string }> {
-  if (input.fresh.length === 0) return { produced: 0, resolved: 0, model: null, why: 'nothing new to think about' };
+}): Promise<{ produced: number; resolved: number; kept: number; model: string | null; why: string }> {
+  if (input.fresh.length === 0) return { produced: 0, resolved: 0, kept: 0, model: null, why: 'nothing new to think about' };
   if (!(await hasReflector(input.agentId))) {
-    return { produced: 0, resolved: 0, model: null, why: 'no classifier model is configured' };
+    return { produced: 0, resolved: 0, kept: 0, model: null, why: 'no classifier model is configured' };
   }
 
   const observations = input.fresh.slice(0, 12);
@@ -429,7 +518,7 @@ export async function reflect(input: {
     ]);
 
     const parsed = parseReflection(result.text);
-    if (!parsed) return { produced: 0, resolved: 0, model: result.model ?? null, why: 'the model did not answer in the agreed shape' };
+    if (!parsed) return { produced: 0, resolved: 0, kept: 0, model: result.model ?? null, why: 'the model did not answer in the agreed shape' };
 
     let produced = 0;
     for (const item of parsed.items) {
@@ -466,18 +555,22 @@ export async function reflect(input: {
     }
 
     let resolved = 0;
+    let kept = 0;
     for (const entry of parsed.resolved) {
       const target = input.existing[entry.index];
       if (!target) continue;
+      // A question that got answered is the one thing on this set that is
+      // knowledge rather than weather, so it is kept before the row settles.
+      if (await consolidate(target, 'RESOLVED')) kept += 1;
       await mind.settle(target.id, 'RESOLVED', entry.because || 'Answered by something that happened since.');
       resolved += 1;
     }
 
-    return { produced, resolved, model: result.model ?? null, why: '' };
+    return { produced, resolved, kept, model: result.model ?? null, why: '' };
   } catch (error) {
     const why = errorMessage(error);
     log.debug('reflection fell back to what attention produced', { agentId: input.agentId, message: why });
-    return { produced: 0, resolved: 0, model: null, why };
+    return { produced: 0, resolved: 0, kept: 0, model: null, why };
   }
 }
 
@@ -512,6 +605,31 @@ export async function formIntentions(agentId: string, now: Date = new Date()): P
     const summary = item.summary.trim();
     if (summary.length < 30) continue;
     if (await contentRepo.similarExists(agentId, summary)) continue;
+
+    /*
+      The one gate on the agent choosing its own subject.
+
+      Answering about an election when somebody asks is the engagement
+      heuristic's decision and the policy's; *raising* one is this agent
+      deciding, by itself, to publish a political opinion on somebody's real
+      account. See `reticence.ts` for why the two are different promises.
+
+      The item is not settled and does not disappear -- it stays on the working
+      set, where the agent can still use it if somebody brings the subject up.
+      The refusal is recorded as a factor worth no points, so it appears in the
+      same list that explains every other score on the screen and costs the item
+      nothing.
+    */
+    const reticent = unpromptedSubject(`${summary} ${item.detail}`);
+    if (reticent) {
+      if (!item.factors.some((factor) => factor.name === 'not-raised-unprompted')) {
+        await mind.reprice(item.id, item.salience, [
+          ...item.factors,
+          { name: 'not-raised-unprompted', detail: reticenceReason(reticent), points: 0 },
+        ]);
+      }
+      continue;
+    }
 
     await contentRepo.addIdea({
       agentId,
@@ -594,6 +712,7 @@ export async function wakeAgent(agentId: string, options: { now?: Date } = {}): 
 
   let produced = 0;
   let resolvedCount = 0;
+  let kept = 0;
   let model: string | null = null;
   let retired = 0;
   let candidates = 0;
@@ -604,11 +723,14 @@ export async function wakeAgent(agentId: string, options: { now?: Date } = {}): 
     const outcome = await reflect({ agentId, fresh: items, existing });
     produced = outcome.produced;
     resolvedCount = outcome.resolved;
+    kept = outcome.kept;
     model = outcome.model;
     // Decay runs on every thinking wake rather than only on the deep pass:
     // a working set that only fades once a day is a working set that is wrong
     // for most of the day.
-    retired = await decayWorkingSet(agentId, now);
+    const faded = await decayWorkingSet(agentId, now);
+    retired = faded.retired;
+    kept += faded.kept;
   }
 
   if (autonomyAtLeast(wake.autonomy, 'SUGGEST')) {
@@ -623,6 +745,7 @@ export async function wakeAgent(agentId: string, options: { now?: Date } = {}): 
         resolvedCount > 0 ? `${resolvedCount} settled` : '',
         candidates > 0 ? `${candidates} worth saying` : '',
         retired > 0 ? `${retired} faded` : '',
+        kept > 0 ? `${kept} kept` : '',
       ]
         .filter(Boolean)
         .join(', ')
@@ -664,6 +787,7 @@ export async function wakeAgent(agentId: string, options: { now?: Date } = {}): 
     reinforced,
     produced,
     retired,
+    kept,
     candidates,
     deep,
     reason,
@@ -726,7 +850,15 @@ export async function mindForMessage(
   if (items.length === 0) return [];
 
   const chosen = isPost
-    ? items.slice(0, DELIBERATION_LIMITS.inPrompt)
+    ? items
+        /*
+          A post is the agent choosing its own subject, which is the one place
+          reticence applies. Filtered here as well as in `formIntentions`,
+          because a post can also be written from an idea a person put in the
+          backlog, and this is the last point before any text exists.
+        */
+        .filter((item) => !unpromptedSubject(`${item.summary} ${item.detail}`))
+        .slice(0, DELIBERATION_LIMITS.inPrompt)
     : items
         .map((item) => ({ item, relevance: overlap(text, `${item.summary} ${item.detail}`) }))
         // A quarter of the distinctive words in common. Lower and an agent

@@ -269,7 +269,20 @@ export async function recentRepoEvents(input: {
   }
   if (input.sinceIso) {
     params.push(input.sinceIso);
-    clauses.push(`coalesce(e.occurred_at, e.seen_at) >= $${params.length}`);
+    /*
+      When this installation first saw it, never when it happened upstream.
+
+      A repository poll runs every quarter of an hour and a commit is minutes
+      to days old by the time it comes back, so a window on `occurred_at` is
+      almost never open at the moment the thing happened -- and an event missed
+      that way is missed for good, because the window only ever moves forward.
+      Watching a repository produced nothing on a real installation for exactly
+      this reason: forty-three real events, every one of them invisible.
+
+      Ordering still uses `occurred_at`, because what is newest is a question
+      about the events and not about when we noticed them.
+    */
+    clauses.push(`e.seen_at >= $${params.length}`);
   }
   params.push(Math.min(Math.max(input.limit ?? 50, 1), 300));
   return mapRows<RepoEventRow & { repo: string }>(

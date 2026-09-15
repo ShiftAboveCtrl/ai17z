@@ -113,6 +113,37 @@ describe('what is declined outright', () => {
     expect(declined({ text: 'gm' })?.reason).toBe('nothing_said');
   });
 
+  /*
+    A repository somebody attached is the connection.
+
+    This is the case that failed on a real installation: a new agent's persona
+    carries no topics at all, so a release from the repository its owner had
+    just connected was declined "nothing here connects to what this agent
+    follows" -- said to the person who had connected it a minute earlier.
+  */
+  it('does not decline a watched repository as unrelated, even with no topics set', () => {
+    const verdict = scoreObservation(
+      observation({
+        source: 'REPO_EVENT',
+        text: 'ShiftAboveCtrl/ai17z: a release nothing in the persona happens to name',
+        url: 'https://github.com/ShiftAboveCtrl/ai17z/releases/tag/v1.0.0-beta.21',
+        handle: null,
+      }),
+      context({ topics: [] }),
+    );
+    expect(verdict.declined).toBeNull();
+    expect(verdict.factors.map((factor) => factor.name)).toContain('watched-project');
+  });
+
+  it('still declines an unrelated post when the agent has no topics', () => {
+    // The repository is the exception, not a hole: everything else still has
+    // to connect to something.
+    expect(
+      declined({ text: 'my flight to Lisbon is delayed again and the coffee here is terrible' }, { topics: [] })
+        ?.reason,
+    ).toBe('unrelated');
+  });
+
   it('declines the agent’s own post, so it cannot find itself interesting', () => {
     expect(declined({ handle: 'AI17ZOS' })?.reason).toBe('its_own');
   });

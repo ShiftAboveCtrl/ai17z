@@ -328,6 +328,15 @@ export const MemoryRecord = z.object({
   pinned: z.boolean(),
   sourceEventId: z.string().uuid().nullable(),
   sourceJobId: z.string().uuid().nullable(),
+  /**
+   * Where this came from, when it came from something with a shape.
+   *
+   * A file and heading for a knowledge source; the attention item, its kind and
+   * its evidence for something deliberation kept. The column has always been
+   * written and was not on this type, so a memory's provenance existed and
+   * nothing that reads memories could see it.
+   */
+  origin: z.record(z.unknown()).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastAccessedAt: z.string().nullable(),
