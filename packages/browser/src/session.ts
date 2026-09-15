@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { BrowserContext } from 'playwright';
-import { PipelineError, createLogger, envBool, errorMessage } from '@xbam/shared';
+import { PipelineError, createLogger, currentBudget, envBool, errorMessage } from '@xbam/shared';
 import type { BrowserIdentity, LeasedSession, SessionConfig } from './types';
 import {
   cdpIdentity,
@@ -442,9 +442,13 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
     }
   }
 
+  // Read per lease rather than cached, so a machine whose free memory changed
+  // does not keep acting on a number from when the worker started.
+  const budget = currentBudget();
+
   let tab;
   try {
-    tab = await acquireTab(entry.context, entry.tabs, role);
+    tab = await acquireTab(entry.context, entry.tabs, role, { heapFraction: budget.tabRecycleHeapFraction });
   } catch (error) {
     // The context died between the check above and here, which is exactly what
     // happens when somebody closes the window at the wrong moment. Reopen once
@@ -455,7 +459,7 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
     watchForClose(config.accountId, entry);
     contexts.set(config.accountId, entry);
     try {
-      tab = await acquireTab(entry.context, entry.tabs, role);
+      tab = await acquireTab(entry.context, entry.tabs, role, { heapFraction: budget.tabRecycleHeapFraction });
     } catch (secondError) {
       throw explainLaunchFailure(secondError, config);
     }
@@ -467,10 +471,40 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
   // navigations.
   const unlock = await lockTab(tab);
 
-  // Re-assert the role tag now that nothing else is driving the page. A tab
-  // that navigated off x.com and back lost it, and an untagged tab is one a
-  // restarted worker would abandon and replace.
-  await retagIfLost(tab.page, role);
+  /*
+    Everything between taking the lock and handing back the release runs here,
+    and anything that throws here has to give the tab back first.
+
+    This is the fifty-six minute outage of 2026-09-15, exactly. The lock was
+    taken, `retagIfLost` evaluated `window.name` against a renderer that had
+    just run out of memory, and that evaluation never settled. `unlock` was a
+    local nobody else could reach, so the mentions tab stayed `busy` until the
+    worker was restarted -- and the three monitors that share it failed every
+    two minutes for the whole afternoon while notifications, on its own tab,
+    reported perfect health.
+
+    A lock whose release can be lost is not a lock, it is a leak with a
+    schedule.
+  */
+  try {
+    // Re-assert the role tag now that nothing else is driving the page. A tab
+    // that navigated off x.com and back lost it, and an untagged tab is one a
+    // restarted worker would abandon and replace.
+    await retagIfLost(tab.page, role);
+    /*
+      Counted per lease rather than per `page.goto`.
+
+      A lease is what a navigation costs: every operation that takes this tab
+      moves it somewhere. Counting here means the backstop works for engines
+      that will not report heap at all, where lifetime is the only signal there
+      is.
+    */
+    tab.navigations += 1;
+  } catch (error) {
+    tab.lastError = `the ${role.toLowerCase()} tab could not be tagged: ${errorMessage(error)}`;
+    unlock();
+    throw error;
+  }
 
   const context = entry.context;
   const page = tab.page;

@@ -48,6 +48,46 @@ const TAG_PREFIX = 'ai17z-tab:';
  */
 const TAB_WAIT_MS = 120_000;
 
+/**
+ * How long one operation may hold a tab before it is taken away from it.
+ *
+ * The defect this exists for, measured on a live installation on 2026-09-15:
+ * the mentions renderer ran out of memory, the operation holding the tab never
+ * finished and never released, and `state.busy` stayed true for **fifty-six
+ * minutes**. Three monitors -- mention search, reply search and replies to own
+ * posts, all of which share that one tab -- failed every two minutes for the
+ * whole of it, while notifications, which has its own tab, stayed perfectly
+ * healthy. The tab health snapshot said `BUSY`, not `FAILED`, so nothing
+ * escalated.
+ *
+ * A wait has a bound and a hold did not. Longer than `TAB_WAIT_MS`, because a
+ * holder that is merely slow must not be robbed by the waiter it is keeping;
+ * short enough that a wedged renderer costs one cycle rather than an afternoon.
+ */
+const TAB_HOLD_MS = 180_000;
+
+/**
+ * How long a renderer gets to answer before it is presumed wedged.
+ *
+ * An out-of-memory renderer does not close its tab and does not always raise
+ * Playwright's `crash`. What it does is stop answering: `page.evaluate` hangs
+ * rather than throwing. Everything that probes a tab's health therefore has to
+ * carry its own deadline, or the health check wedges on the thing it is
+ * checking.
+ */
+const PROBE_MS = 5_000;
+
+/**
+ * How many navigations a tab gets before it is recycled regardless of heap.
+ *
+ * X's own bundles retain search results across navigations, and a forced
+ * collection on a 3,801 MB mentions renderer reclaimed 24 MB -- the memory is
+ * genuinely held, not waiting to be collected, and none of it is ours to free.
+ * Since the leak cannot be fixed from outside, the renderer's *lifetime* is
+ * what gets bounded instead.
+ */
+const MAX_NAVIGATIONS = 150;
+
 export interface TabState {
   role: TabRole;
   page: Page;
@@ -57,6 +97,25 @@ export interface TabState {
   /** Tail of the queue of operations on this tab. */
   queue: Promise<void>;
   busy: boolean;
+  /**
+   * When the current holder took it, so a hold can be bounded.
+   *
+   * Null when nothing holds it. Not derived from `lastUsedAt`, which moves on
+   * release and so says nothing about how long something has been holding on.
+   */
+  heldSince: number | null;
+  /** How many times this tab has been navigated, for lifetime recycling. */
+  navigations: number;
+  /** Why it was recycled, when it was, for the owner-facing panel. */
+  recycled: { at: number; because: string } | null;
+}
+
+/** What a renderer is holding, where the platform will say. */
+export interface TabMemory {
+  usedBytes: number;
+  limitBytes: number;
+  /** Used over the limit V8 will not let it cross. */
+  fraction: number;
 }
 
 /** What one tab is doing, for the account's browser panel. */
@@ -190,6 +249,12 @@ export async function adoptOpenTabs(context: BrowserContext, tabs: TabMap): Prom
       lastError: null,
       queue: Promise.resolve(),
       busy: false,
+      heldSince: null,
+      // An adopted tab has been navigated by somebody, and how often is not
+      // knowable. Counting from zero is the honest floor: heap is the primary
+      // signal and this is only the backstop.
+      navigations: 0,
+      recycled: null,
     });
   }
 
@@ -223,6 +288,93 @@ export async function adoptOpenTabs(context: BrowserContext, tabs: TabMap): Prom
  * that was already dead when we came back to it -- after a worker restart, or
  * when the crash arrived while nothing was listening.
  */
+/**
+ * Anything with a deadline, because a wedged renderer answers nothing.
+ *
+ * Playwright's own timeouts cover its navigations and selectors. They do not
+ * cover `page.evaluate` against a renderer that has stopped scheduling work,
+ * which simply never settles. Every probe below therefore races its own clock.
+ */
+async function within<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work.catch(() => fallback),
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * What this renderer is holding, or null where the browser will not say.
+ *
+ * `performance.memory` is Chromium's and is exactly what is needed: the used
+ * heap and the ceiling V8 will kill the renderer for crossing. Absent on other
+ * engines, and absent is reported rather than guessed -- a tab whose memory
+ * cannot be read is recycled on age and navigations instead.
+ */
+export async function tabMemory(page: Page): Promise<TabMemory | null> {
+  if (page.isClosed()) return null;
+  return within(
+    (async () => {
+      const raw = await page.evaluate(() => {
+        const m = (performance as unknown as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory;
+        return m ? { used: m.usedJSHeapSize, limit: m.jsHeapSizeLimit } : null;
+      });
+      if (!raw || !raw.limit) return null;
+      return { usedBytes: raw.used, limitBytes: raw.limit, fraction: raw.used / raw.limit };
+    })(),
+    PROBE_MS,
+    null,
+  );
+}
+
+/**
+ * Whether the renderer is still answering at all.
+ *
+ * The check `isDeadPage` cannot make. A renderer killed for memory keeps its
+ * URL -- the live failure showed `https://x.com/notifications/mentions` on a
+ * tab that had been dead for the best part of an hour -- so nothing about the
+ * URL, the title or `isClosed()` gives it away. What does give it away is that
+ * it will not evaluate `1` within five seconds.
+ */
+export async function isRendererWedged(page: Page): Promise<boolean> {
+  if (page.isClosed()) return false;
+  const answered = await within(
+    page.evaluate(() => 1).then(() => true),
+    PROBE_MS,
+    false,
+  );
+  return !answered;
+}
+
+/**
+ * Whether this tab should be replaced before it is used again.
+ *
+ * Recycling is the whole defence against a leak that is not ours to fix. The
+ * thresholds come from the one budget rather than from here, so a small
+ * machine recycles sooner without a second set of numbers to keep in step.
+ */
+export async function recycleReason(state: TabState, heapFraction: number): Promise<string | null> {
+  if (state.page.isClosed()) return 'the tab was closed';
+  if (isDeadPage(state.page)) return 'the tab was showing a browser error page';
+  if (await isRendererWedged(state.page)) return 'the renderer stopped answering, usually out of memory';
+
+  const memory = await tabMemory(state.page);
+  if (memory && memory.fraction >= heapFraction) {
+    return `it was holding ${Math.round(memory.usedBytes / 1048576)} MB, ${Math.round(memory.fraction * 100)}% of what this renderer is allowed`;
+  }
+  if (state.navigations >= MAX_NAVIGATIONS) {
+    return `it had been navigated ${state.navigations} times`;
+  }
+  return null;
+}
+
 export function isDeadPage(page: Page): boolean {
   if (page.isClosed()) return true;
   let url = '';
@@ -242,15 +394,34 @@ export function isDeadPage(page: Page): boolean {
  * touching the browser or the other two, which is what keeps a failed monitor
  * from ending a sign-in somebody is halfway through.
  */
-export async function acquireTab(context: BrowserContext, tabs: TabMap, role: TabRole): Promise<TabState> {
+export async function acquireTab(
+  context: BrowserContext,
+  tabs: TabMap,
+  role: TabRole,
+  options: { heapFraction?: number } = {},
+): Promise<TabState> {
   const existing = tabs.get(role);
-  if (existing && !existing.page.isClosed() && !isDeadPage(existing.page)) return existing;
+  /*
+    Why this asks rather than looks.
+
+    `isDeadPage` reads the URL, and the failure that cost fifty-six minutes had
+    a perfectly ordinary one: a renderer killed for memory keeps
+    `https://x.com/notifications/mentions` in the address bar and answers
+    nothing. So a tab is only reused after it has been asked whether it is
+    still there, and after its heap has been checked against what this machine
+    allows.
+
+    The probe carries its own deadline, because the thing being probed is
+    exactly the thing that does not answer.
+  */
+  let because: string | null = null;
+  if (existing) {
+    because = await recycleReason(existing, options.heapFraction ?? 0.6);
+    if (!because) return existing;
+  }
 
   if (existing) {
-    log.info(existing.page.isClosed() ? 'tab was closed, recreating it' : 'tab died, recreating it', {
-      role,
-      url: existing.page.isClosed() ? null : existing.page.url(),
-    });
+    log.info('recycling a role tab', { role, because });
     tabs.delete(role);
     // A crashed tab is still an open tab. Left behind it costs the memory that
     // killed it and gets adopted again by the next scan looking for our window
@@ -270,6 +441,12 @@ export async function acquireTab(context: BrowserContext, tabs: TabMap, role: Ta
     lastError: null,
     queue: Promise.resolve(),
     busy: false,
+    heldSince: null,
+    navigations: 0,
+    // Carried onto the new tab, so the owner-facing panel can say "the mentions
+    // tab ran out of memory and was replaced" rather than leaving them to infer
+    // it from a run of failed polls.
+    recycled: because ? { at: Date.now(), because } : null,
   };
   tabs.set(role, state);
 
@@ -343,8 +520,55 @@ export async function lockTab(state: TabState): Promise<() => void> {
     if (timer) clearTimeout(timer);
   }
   state.busy = true;
-  return () => {
+  state.heldSince = Date.now();
+
+  /*
+    A hold has a bound, because a wait always did and that asymmetry cost an
+    afternoon.
+
+    On 2026-09-15 an operation took the mentions tab at 21:19:01 and never gave
+    it back: its renderer had run out of memory, the evaluation it was waiting
+    on never settled, and nothing existed to take the tab away from it. Fifty-six
+    minutes later `busy` was still true, three monitors had failed twenty-odd
+    times each, and the health snapshot still said BUSY -- a word that sounds
+    like work is happening.
+
+    Taking it back does not rescue the stuck operation; nothing can. It stops
+    that one operation costing every later one. The tab is marked with why, so
+    the next acquire recycles it rather than handing out the same dead renderer.
+  */
+  let handedBack = false;
+  let watchdog: NodeJS.Timeout | undefined = setTimeout(() => {
+    if (handedBack) return;
+    /*
+      The same flag the holder's own release checks.
+
+      Without this the wedged operation's release still runs when it finally
+      returns -- possibly minutes later, with somebody else now holding the tab
+      -- and clears `busy` out from under them. Two operations then drive one
+      page at once, which is the exact failure the queue exists to prevent, and
+      the recovery would have caused it.
+    */
+    handedBack = true;
     state.busy = false;
+    state.heldSince = null;
+    state.lastError = `an operation held the ${state.role.toLowerCase()} tab for over ${Math.round(TAB_HOLD_MS / 1000)}s without finishing; the tab was taken back`;
+    log.warn('took a tab back from an operation that never finished', { role: state.role });
+    release();
+  }, TAB_HOLD_MS);
+  watchdog.unref?.();
+
+  return () => {
+    // Idempotent, and shared with the watchdog: a turn that is over must not be
+    // ended a second time by whoever was holding it.
+    if (handedBack) return;
+    handedBack = true;
+    if (watchdog) {
+      clearTimeout(watchdog);
+      watchdog = undefined;
+    }
+    state.busy = false;
+    state.heldSince = null;
     state.lastUsedAt = Date.now();
     release();
   };
@@ -370,11 +594,23 @@ export function tabHealth(tabs: TabMap): TabHealth[] {
     // four hours.
     const dead = !closed && isDeadPage(state.page);
 
+    /*
+      Busy is a state something is expected to leave.
+
+      The live failure reported `BUSY` for fifty-six minutes and nothing looked
+      twice, because busy reads as work in progress. Past the point where the
+      lease would have taken the tab back, busy is not busy: it is broken, and
+      the health snapshot has to say so or the panel keeps reassuring somebody
+      whose monitors have all stopped.
+    */
+    const heldMs = state.heldSince ? Date.now() - state.heldSince : 0;
+    const wedged = state.busy && heldMs > TAB_HOLD_MS;
+
     return {
       role,
       state: closed
         ? ('MISSING' as const)
-        : dead || state.lastError
+        : dead || state.lastError || wedged
           ? ('FAILED' as const)
           : state.busy
             ? ('BUSY' as const)
@@ -382,7 +618,11 @@ export function tabHealth(tabs: TabMap): TabHealth[] {
       url,
       openedAt: new Date(state.openedAt).toISOString(),
       lastUsedAt: new Date(state.lastUsedAt).toISOString(),
-      lastError: dead ? (state.lastError ?? 'the tab crashed, usually out of memory') : state.lastError,
+      lastError: wedged
+        ? `one operation has been holding this tab for ${Math.round(heldMs / 60_000)} minutes`
+        : dead
+          ? (state.lastError ?? 'the tab crashed, usually out of memory')
+          : state.lastError,
     };
   });
 }

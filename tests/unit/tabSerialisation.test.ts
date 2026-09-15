@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TAB_ROLES, lockTab, tabHealth, type TabRole, type TabState } from '@xbam/browser';
 
 /**
@@ -14,6 +14,9 @@ function fakeTab(role: TabRole): TabState {
     // Enough page for the health snapshot to read; `lockTab` never touches it.
     page: { isClosed: () => false, url: () => `https://x.com/${role.toLowerCase()}` } as never,
     busy: false,
+    heldSince: null,
+    navigations: 0,
+    recycled: null,
     lastUsedAt: 0,
     lastError: null,
     openedAt: Date.now(),
@@ -133,5 +136,122 @@ describe('what the health snapshot says', () => {
     const tabs = new Map<TabRole, TabState>();
     expect(() => tabHealth(tabs)).not.toThrow();
     expect(tabs.size).toBe(0);
+  });
+});
+
+/*
+  The failure of 2026-09-15, which these tests would have caught.
+
+  An operation took the mentions tab at 21:19:01 and never gave it back: its
+  renderer had run out of memory, the evaluation it was waiting on never
+  settled, and nothing existed to take the tab away from it. Fifty-six minutes
+  later `busy` was still true, and the three monitors that share that tab --
+  mention search, reply search and replies to own posts -- had each failed
+  twenty-odd times with "the mentions tab was still busy after 120s".
+
+  A wait had a bound. A hold did not.
+*/
+describe('an operation that never gives the tab back', () => {
+  it('has the tab taken away from it rather than keeping it for ever', async () => {
+    vi.useFakeTimers();
+    try {
+      const tab = fakeTab('MENTIONS');
+      // Takes the tab and never releases: the renderer it was talking to is
+      // gone, so nothing will ever come back to run the release.
+      await lockTab(tab);
+      expect(tab.busy).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(181_000);
+
+      expect(tab.busy).toBe(false);
+      // And it says why, so the next acquire recycles the tab rather than
+      // handing out the same dead renderer.
+      expect(tab.lastError).toMatch(/without finishing/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails the operation that was waiting, then works on the next attempt', async () => {
+    /*
+      Both bounds, in the order they actually fire.
+
+      A waiter gives up at 120s and reports `tab_busy`, which is right: it
+      cannot know whether the holder is wedged or merely slow, and a monitor
+      that waited indefinitely would be a monitor that never reported anything.
+      The hold's own bound is longer, so the holder is given every chance
+      first -- and when it does fire, the *next* poll gets a working tab.
+
+      That is the whole difference from the live failure. Before, every later
+      poll failed for fifty-six minutes. Now one poll fails and the one after
+      it succeeds.
+    */
+    vi.useFakeTimers();
+    try {
+      const tab = fakeTab('NOTIFICATIONS');
+      await lockTab(tab);
+
+      const waiting = lockTab(tab);
+      await vi.advanceTimersByTimeAsync(121_000);
+      await expect(waiting).rejects.toThrow(/still busy/);
+
+      // The hold's bound fires next, and the tab comes back.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(tab.busy).toBe(false);
+
+      const release = await lockTab(tab);
+      expect(tab.busy).toBe(true);
+      release();
+      expect(tab.busy).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not hand one tab to two operations when the holder returns late', async () => {
+    // The wedged holder eventually comes back and releases. That must not hand
+    // the tab on a second time, or two operations drive one page at once,
+    // which is the failure the queue exists to prevent.
+    vi.useFakeTimers();
+    try {
+      const tab = fakeTab('ACTION');
+      const late = await lockTab(tab);
+      await vi.advanceTimersByTimeAsync(181_000);
+      expect(tab.busy).toBe(false);
+
+      const second = await lockTab(tab);
+      expect(tab.busy).toBe(true);
+
+      // The original holder finally returns. Its release belongs to a turn that
+      // is over and must do nothing at all.
+      late();
+      expect(tab.busy).toBe(true);
+
+      second();
+      expect(tab.busy).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports a wedged tab as failed rather than as busy', async () => {
+    // BUSY is what the live panel said for fifty-six minutes, and busy sounds
+    // like progress. A hold past its bound is a fault, and health has to say so
+    // or nothing escalates.
+    const tab = fakeTab('MENTIONS');
+    await lockTab(tab);
+    tab.heldSince = Date.now() - 20 * 60_000;
+
+    const row = tabHealth(new Map([['MENTIONS', tab]] as [TabRole, TabState][])).find((r) => r.role === 'MENTIONS');
+    expect(row?.state).toBe('FAILED');
+    expect(row?.lastError).toMatch(/holding this tab for 20 minutes/);
+  });
+
+  it('still calls an ordinary in-flight operation busy', async () => {
+    const tab = fakeTab('MENTIONS');
+    const release = await lockTab(tab);
+    const row = tabHealth(new Map([['MENTIONS', tab]] as [TabRole, TabState][])).find((r) => r.role === 'MENTIONS');
+    expect(row?.state).toBe('BUSY');
+    release();
   });
 });
