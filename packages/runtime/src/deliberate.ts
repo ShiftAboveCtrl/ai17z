@@ -4,6 +4,7 @@ import {
   content as contentRepo,
   deliberation as mind,
   relationships as relationshipsRepo,
+  repoSources,
   type AttentionRow,
 } from '@xbam/database';
 import {
@@ -18,6 +19,7 @@ import {
 import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
+import { worthNoticing } from './repoWatcher';
 import { decayed, fingerprintOf, overlap, scoreObservation, type KnownPerson, type Observation, type SalienceContext } from './salience';
 
 const log = createLogger('deliberate');
@@ -175,6 +177,44 @@ function toObservation(row: Record<string, unknown>): Observation {
       ...(typeof metrics.views === 'number' ? { views: metrics.views } : {}),
     },
   };
+}
+
+/**
+ * What a watched repository did, as observations -- once the mechanical
+ * majority has been thrown away.
+ *
+ * `worthNoticing` is applied here rather than in the watcher because the
+ * watcher's job is to record what happened, faithfully and completely. What is
+ * worth an agent's attention is a different question with a different answer,
+ * and an owner looking at the repository's history should see the typo fix even
+ * though no agent should ever mention it.
+ */
+function repoObservations(
+  rows: { kind: string; title: string; body: string; state: string | null; url: string; repo: string; occurredAt: string | null; id: string }[],
+): Observation[] {
+  const kept: Observation[] = [];
+  for (const row of rows) {
+    const verdict = worthNoticing({
+      kind: row.kind as Parameters<typeof worthNoticing>[0]['kind'],
+      title: row.title,
+      body: row.body,
+      state: row.state,
+    });
+    if (!verdict.worth) continue;
+    kept.push({
+      source: 'REPO_EVENT',
+      id: row.id,
+      // The repository is named in the text because an agent reading this needs
+      // to know which project did it, and a bare commit subject does not say.
+      text: `${row.repo}: ${row.title}`,
+      at: row.occurredAt,
+      handle: null,
+      authorId: null,
+      url: row.url,
+      metrics: null,
+    });
+  }
+  return kept;
 }
 
 function evidenceFor(observation: Observation): EvidenceRef {
@@ -532,13 +572,23 @@ export async function wakeAgent(agentId: string, options: { now?: Date } = {}): 
   const since = wake.lastWakeAt ?? new Date(now.getTime() - FIRST_LOOK_HOURS * 3600_000).toISOString();
 
   const context = await contextFor(agentId, accountId);
-  const rows = await mind.recentObservations({
-    agentId,
-    accountId,
-    sinceIso: since,
-    limit: DELIBERATION_LIMITS.observationsPerWake,
-  });
-  const observations = rows.map(toObservation);
+  const [rows, repoRows] = await Promise.all([
+    mind.recentObservations({
+      agentId,
+      accountId,
+      sinceIso: since,
+      limit: DELIBERATION_LIMITS.observationsPerWake,
+    }),
+    // What the projects it watches actually did. Read separately from the rest
+    // because most of it has to be thrown away first: a repository's day is
+    // mostly mechanical, and an agent that treats every commit as news is the
+    // changelog bot everybody predicts.
+    agent.ownerId
+      ? repoSources.recentRepoEvents({ ownerUserId: agent.ownerId, agentId, sinceIso: since, limit: 40 })
+      : Promise.resolve([]),
+  ]);
+
+  const observations = [...rows.map(toObservation), ...repoObservations(repoRows)];
 
   const { attended, reinforced, items } = await attend(agentId, observations, context);
 

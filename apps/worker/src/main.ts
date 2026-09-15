@@ -28,7 +28,7 @@ import { PersonaSyncRunner } from './personaSync';
 import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
-import { pollDueFeeds, wakeDueAgents } from '@xbam/runtime';
+import { pollDueFeeds, pollDueRepos, wakeDueAgents } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -215,6 +215,26 @@ async function main(): Promise<void> {
   const deliberation = startLoop('deliberation', 60_000, thinkAhead);
 
   /**
+   * Follows what the projects an owner watches actually did.
+   *
+   * An agent whose subject is a piece of software and which does not know what
+   * shipped in it can only repeat what it was told once. This is where it finds
+   * out, and the evidence carries a URL anybody can check.
+   *
+   * Cheap by construction. Each watch carries its own interval and the claim
+   * moves it forward in the statement that selects it, so the tick is usually
+   * one indexed query returning nothing -- and when a poll does happen it is
+   * conditional, which GitHub answers with a 304 it does not charge against the
+   * rate limit.
+   */
+  const watchRepos = async () => {
+    const outcomes = await pollDueRepos(4);
+    const fresh = outcomes.reduce((total, outcome) => total + outcome.fresh, 0);
+    if (fresh > 0) log.info('watched repositories did something', { repos: outcomes.length, events: fresh });
+  };
+  const repoWatcher = startLoop('repo-watch', 60_000, watchRepos);
+
+  /**
    * Publishes what each account's three tabs are doing.
    *
    * The API owns no browsers, so this process is the only one that can answer
@@ -295,6 +315,7 @@ async function main(): Promise<void> {
     clearInterval(sweeper);
     clearInterval(feedWatcher);
     clearInterval(deliberation);
+    clearInterval(repoWatcher);
     if (tabReporter) clearInterval(tabReporter);
     // Withdraw immediately rather than waiting for the heartbeat to lapse: a
     // clean shutdown knows it is leaving.

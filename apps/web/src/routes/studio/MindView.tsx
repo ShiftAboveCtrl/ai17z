@@ -94,6 +94,27 @@ interface MindView {
   reflections: Reflection[];
 }
 
+interface RepoSource {
+  id: string;
+  repo: string;
+  kinds: string[];
+  enabled: boolean;
+  status: string;
+  hasToken: boolean;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+}
+
+interface RepoEvent {
+  id: string;
+  repo: string;
+  kind: string;
+  title: string;
+  url: string;
+  state: string | null;
+  occurredAt: string | null;
+}
+
 /** What each kind is, in the words somebody would use for it. */
 const KINDS: Record<string, string> = {
   INTEREST: 'Following',
@@ -140,6 +161,8 @@ function Bar({ value }: { value: number }) {
 
 export function MindView({ agentId }: { agentId: string }) {
   const view = useResource<MindView>(`/api/agents/${agentId}/mind`);
+  const repos = useResource<{ sources: RepoSource[]; events: RepoEvent[] }>(`/api/agents/${agentId}/mind/repos`);
+  const [repo, setRepo] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
@@ -185,6 +208,22 @@ export function MindView({ agentId }: { agentId: string }) {
       view.reload();
     } catch (error) {
       setFailed(error instanceof Error ? error.message : 'That could not be added.');
+    }
+  };
+
+  const watch = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = repo.trim();
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(name)) {
+      setFailed('Give a repository as owner/name.');
+      return;
+    }
+    setRepo('');
+    try {
+      await post(`/api/agents/${agentId}/mind/repos`, { repo: name });
+      repos.reload();
+    } catch (error) {
+      setFailed(error instanceof Error ? error.message : 'That could not be watched.');
     }
   };
 
@@ -367,6 +406,80 @@ export function MindView({ agentId }: { agentId: string }) {
             </Card>
           ))}
         </div>
+      </Panel>
+
+      <Panel
+        title="Projects it follows"
+        lede="Public repositories are read without any credential. What a project did becomes evidence with a link anybody can check — and most of what a repository does in a day is mechanical and never reaches the agent at all."
+      >
+        <form className="mb-4 flex flex-wrap items-center gap-2" onSubmit={watch}>
+          <input
+            className="field min-w-0 flex-1 text-[13px]"
+            placeholder="owner/name"
+            value={repo}
+            onChange={(event) => setRepo(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button type="submit" className="btn-ghost text-[12px]" disabled={repo.trim() === ''}>
+            Watch this repository
+          </button>
+        </form>
+
+        {(repos.data?.sources ?? []).length === 0 && (
+          <EmptyState title="Not following anything" detail="Point it at a repository and it will know what shipped." />
+        )}
+
+        <div className="space-y-3">
+          {(repos.data?.sources ?? []).map((source) => (
+            <Card
+              key={source.id}
+              title={source.repo}
+              score={source.status.toLowerCase()}
+              meta={[
+                source.kinds.join(', ').toLowerCase(),
+                source.hasToken ? 'private, with a read-only token' : 'public',
+                source.lastSuccessAt ? `last read ${when(source.lastSuccessAt)}` : 'not read yet',
+                source.lastError ?? '',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+              action={
+                <button
+                  type="button"
+                  className="btn-quiet px-0 text-[12px]"
+                  onClick={async () => {
+                    await del(`/api/agents/${agentId}/mind/repos/${source.id}`).catch(() => undefined);
+                    repos.reload();
+                  }}
+                >
+                  Stop watching
+                </button>
+              }
+            />
+          ))}
+        </div>
+
+        {(repos.data?.events ?? []).length > 0 && (
+          <div className="mt-4">
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-bone-faint">What they did</p>
+            <ul className="mt-2 space-y-1.5">
+              {(repos.data?.events ?? []).slice(0, 12).map((entry) => (
+                <li key={entry.id} className="flex flex-wrap gap-2 text-[12px] leading-relaxed">
+                  <span className="font-mono text-[10px] uppercase text-bone-faint">{entry.kind.toLowerCase()}</span>
+                  <a
+                    className="min-w-0 break-words text-bone-dim hover:text-bone"
+                    href={entry.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    {entry.title}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </Panel>
 
       <Panel
