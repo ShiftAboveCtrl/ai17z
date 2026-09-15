@@ -149,18 +149,34 @@ describe('what is declined outright', () => {
 });
 
 describe('not thinking the same thing twice', () => {
-  it('gives two sightings of one post the same fingerprint', () => {
+  it('gives two people saying the same thing one fingerprint', () => {
     const first = scoreObservation(observation(), context());
-    const second = scoreObservation(observation({ id: 'event-2' }), context());
-    // Same URL, same thing. The upsert is what turns these into one item that
-    // two things point at rather than an agent that looks obsessive.
+    const second = scoreObservation(
+      observation({ id: 'event-2', url: 'https://x.com/else/status/2', handle: 'else' }),
+      context(),
+    );
+    // A working set is about subjects, not posts. Three people saying the same
+    // thing is one thing three people said -- and it is the reinforcement that
+    // separates it from a passing remark.
     expect(first.fingerprint).toBe(second.fingerprint);
   });
 
-  it('separates genuinely different posts', () => {
+  it('separates things that are genuinely about something else', () => {
     const a = scoreObservation(observation(), context());
-    const b = scoreObservation(observation({ id: 'e2', url: 'https://x.com/other/status/2' }), context());
+    const b = scoreObservation(
+      observation({ id: 'e2', text: 'Browser automation keeps timing out whenever the mentions tab is scrolling.' }),
+      context(),
+    );
     expect(a.fingerprint).not.toBe(b.fingerprint);
+  });
+
+  it('anchors the agent’s own published action on the action itself', () => {
+    // Two different posts by the agent are two different things it did, even if
+    // it said something similar twice -- and "did I already say this" is a
+    // question about the post, not about the subject.
+    const one = scoreObservation(observation({ source: 'ACTION_RESULT', handle: 'ai17zos', url: 'u1' }), context());
+    const two = scoreObservation(observation({ source: 'ACTION_RESULT', handle: 'ai17zos', url: 'u2' }), context());
+    expect(one.fingerprint).not.toBe(two.fingerprint);
   });
 
   it('falls back to the subject when there is no permalink', () => {

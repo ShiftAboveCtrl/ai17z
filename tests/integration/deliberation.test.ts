@@ -6,7 +6,14 @@ import {
   deliberation as mind,
   providers as providersRepo,
 } from '@xbam/database';
-import { decayWorkingSet, formIntentions, setPauseAll, wakeAgent, wakeDueAgents } from '@xbam/runtime';
+import {
+  decayWorkingSet,
+  formIntentions,
+  mindForMessage,
+  setPauseAll,
+  wakeAgent,
+  wakeDueAgents,
+} from '@xbam/runtime';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { uniqueSuffix } from '../support/db';
@@ -111,17 +118,16 @@ describe('not thinking the same thing twice', () => {
   it('reinforces one item rather than creating a second', async () => {
     const agent = await agentThatThinks();
     const text = 'Agent memory that survives a restart is the hard part of autonomous agents.';
-    // The same post, discovered twice. Several radar monitors seeing one post
-    // is the ordinary case, not a contrived one.
-    await somebodySaid(agent.accountId, text, { id: 'same-post' });
-    await wakeAgent(agent.agentId);
-    await mind.setWake(agent.agentId, {});
-    await somebodySaid(agent.accountId, text, { id: 'same-post' });
+    // Two different people, saying the same thing. That is one subject two
+    // people raised, and it is the reinforcement that separates it from
+    // something one person mentioned once.
+    await somebodySaid(agent.accountId, text, { handle: 'first_person' });
+    await somebodySaid(agent.accountId, text, { handle: 'second_person' });
     await wakeAgent(agent.agentId);
 
     const items = await mind.onItsMind(agent.agentId);
     expect(items).toHaveLength(1);
-    expect(items[0]!.reinforcements).toBeGreaterThan(1);
+    expect(items[0]!.reinforcements).toBe(2);
   });
 });
 
@@ -380,6 +386,17 @@ describe('the wake schedule', () => {
     expect((await mind.getWake(agent.agentId))!.quietWakes).toBe(0);
   });
 
+  it('records that a wake happened even when nobody claimed it', async () => {
+    const agent = await agentThatThinks();
+    // "Think now" from the owner's screen calls wakeAgent directly and never
+    // goes through the claim. Without the stamp at completion the agent said it
+    // had never looked however often somebody asked -- and the next wake read
+    // the same window again, because the window starts at the last wake.
+    await wakeAgent(agent.agentId);
+    const after = await mind.getWake(agent.agentId);
+    expect(after!.lastWakeAt).toBeTruthy();
+  });
+
   it('records every wake, including the ones that found nothing', async () => {
     const agent = await agentThatThinks();
     await wakeAgent(agent.agentId);
@@ -447,5 +464,74 @@ describe('reflection', () => {
     // It inherited the evidence of what it was drawn from.
     expect(curiosity!.evidence.length).toBeGreaterThan(0);
     expect(curiosity!.origin).toBe('REFLECT');
+  });
+});
+
+describe('what reaches a reply', () => {
+  it('brings up something relevant that has been on its mind', async () => {
+    const agent = await agentThatThinks();
+    await mind.remember({
+      agentId: agent.agentId,
+      kind: 'CONCERN',
+      summary: 'Browser reads have been going flaky when several tabs are busy at once.',
+      salience: 70,
+      confidence: 0.7,
+      fingerprint: 'flaky-tabs',
+    });
+
+    const chosen = await mindForMessage(
+      agent.agentId,
+      'why do the browser reads go flaky when tabs are busy?',
+      false,
+    );
+    expect(chosen).toHaveLength(1);
+    expect(chosen[0]!.kind).toBe('CONCERN');
+  });
+
+  it('keeps internal state out of a conversation it has nothing to do with', async () => {
+    const agent = await agentThatThinks();
+    await mind.remember({
+      agentId: agent.agentId,
+      kind: 'CONCERN',
+      summary: 'Browser reads have been going flaky when several tabs are busy at once.',
+      salience: 90,
+      confidence: 0.9,
+      fingerprint: 'flaky-tabs',
+    });
+
+    // High salience, and still irrelevant. An agent that mentions its concerns
+    // because somebody said hello reads as one that cannot tell what it is
+    // talking about, which is worse than having no concerns at all.
+    const chosen = await mindForMessage(agent.agentId, 'congrats on the launch, looks great', false);
+    expect(chosen).toEqual([]);
+  });
+
+  it('gives a post the strongest items whatever they are about', async () => {
+    const agent = await agentThatThinks();
+    await mind.remember({
+      agentId: agent.agentId,
+      kind: 'LESSON',
+      summary: 'Reading X through its own JSON gives exact counts a rendered page cannot.',
+      salience: 80,
+      confidence: 0.9,
+      fingerprint: 'json-counts',
+    });
+
+    // No incoming message for anything to be relevant to, and "what has this
+    // agent been thinking about" is exactly what an original post answers.
+    const chosen = await mindForMessage(agent.agentId, '', true);
+    expect(chosen).toHaveLength(1);
+  });
+
+  it('renders a thing it suspects as a thing it suspects', async () => {
+    const { renderMind } = await import('@xbam/prompts');
+    const rendered = renderMind([
+      { kind: 'HYPOTHESIS', summary: 'the slow part is the browser', confidence: 0.4 },
+      { kind: 'LESSON', summary: 'the slow part was the browser', confidence: 0.9 },
+    ]);
+    // An agent that states a 0.4 hypothesis as a finding is worse than one that
+    // never had it.
+    expect(rendered).toContain('though you are not sure');
+    expect(rendered.split('\n')[1]).not.toContain('though you are not sure');
   });
 });
