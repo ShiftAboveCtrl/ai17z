@@ -51,7 +51,11 @@ $Allowed = @(
   # Which era an installation is from, which is what decides whether a gate
   # that said nothing is an era or a fault.
   'Get-Ai17zRecordedSchema',
-  'Get-Ai17zGateSchema'
+  'Get-Ai17zGateSchema',
+  # Which Add/Remove Programs entries are the same installation as this one,
+  # which is the decision a machine that was installed one way and updated
+  # another turns on.
+  'Select-Ai17zSupersededEntries'
 )
 
 # Not $input: that is PowerShell's own pipeline enumerator, and assigning to it

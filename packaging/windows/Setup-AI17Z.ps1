@@ -186,7 +186,7 @@ $script:Ai17zSetup = [ordered]@{
     '<program>\data-location.txt, <program>\INSTALL_INFO.json, <program>\BUILD_INFO.json',
     '%LOCALAPPDATA%\AI17Z-setup\  the log, and the resume note while a restart is pending',
     'Start Menu\Programs\<instance>\  shortcuts',
-    'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\...  the Add/Remove Programs entry',
+    'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\...  the Add/Remove Programs entry, replacing an older entry for this same directory',
     'HKCU\Software\AI17Z\Installs  so the next run finds this installation'
   )
   # Anything that outlives the run, so "what did it leave behind" has an answer.
@@ -1264,6 +1264,52 @@ function Read-Ai17zGateVerdict {
   if ($lines[0] -eq 'OK') { return [pscustomobject]@{ Verdict = 'OK'; Reasons = $rest } }
   # SKIP, or anything else it might grow. Neither a refusal nor a blessing.
   return [pscustomobject]@{ Verdict = 'UNKNOWN'; Reasons = $rest }
+}
+
+<#
+  Which other Add/Remove Programs entries are this same installation.
+
+  Two routes write one of these and they use different key suffixes: this script
+  writes `_setup`, `ai17z.iss` writes `_is1`. An installation made by the
+  installer and then updated by this script therefore ends up with two entries
+  for one directory, and the installer's is frozen at whatever version it last
+  wrote. Add/Remove Programs offered "AI17Z-main Beta 1.0.0 (11)" and "AI17Z-main
+  Beta 3.2" side by side, both pointing at the same folder -- and uninstalling
+  through the stale one would remove the current installation while claiming to
+  remove a version from months ago.
+
+  Matched on InstallLocation and never on the key's name, for the reason
+  `Test-Ai17zInstallInfoTrustworthy` gives: a custom program directory has a leaf
+  that is not the instance name, and the directory is what identifies an
+  installation. An entry pointing anywhere else is a different installation and
+  is left completely alone.
+
+  Pure, because a registry with a stale entry in it is a state no test machine
+  can be in and every part of it can be passed as an argument.
+#>
+function Select-Ai17zSupersededEntries {
+  param(
+    # @(@{ Name = '<key name>'; InstallLocation = '<path or empty>' }, ...)
+    [object[]] $Entries,
+    [string] $KeepKey,
+    [string] $ProgramDir
+  )
+  $here = ($ProgramDir + '').TrimEnd('\')
+  if (-not $here) { return @() }
+  $out = @()
+  foreach ($entry in @($Entries)) {
+    if (-not $entry) { continue }
+    $name = '' + $entry.Name
+    if (-not $name) { continue }
+    # Never the one we are about to write, and never somebody else's software.
+    if ($name -eq $KeepKey) { continue }
+    if ($name -notlike '*AI17Z*') { continue }
+    $where = ('' + $entry.InstallLocation).TrimEnd('\')
+    if (-not $where) { continue }
+    if ($where -ne $here) { continue }
+    $out += $name
+  }
+  return ,$out
 }
 
 if ($LoadOnly) { return }
@@ -2344,6 +2390,27 @@ function Write-Ai17zUninstallEntry {
     $type = if ($values[$name] -is [int]) { 'DWord' } else { 'String' }
     New-ItemProperty -Path $key -Name $name -Value $values[$name] -PropertyType $type -Force | Out-Null
   }
+  # An installation has one entry in Add/Remove Programs, whichever route put
+  # it there. Done after the new one is written, so a failure halfway leaves two
+  # entries rather than none.
+  try {
+    $root = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+    if (Test-Path $root) {
+      $seen = @()
+      foreach ($child in (Get-ChildItem $root -ErrorAction SilentlyContinue)) {
+        $where = ''
+        try { $where = '' + (Get-ItemProperty $child.PSPath -ErrorAction Stop).InstallLocation } catch { $where = '' }
+        $seen += @{ Name = $child.PSChildName; InstallLocation = $where }
+      }
+      foreach ($stale in (Select-Ai17zSupersededEntries -Entries $seen -KeepKey $Layout.UninstallKey -ProgramDir $Layout.ProgramDir)) {
+        Remove-Item -Path (Join-Path $root $stale) -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Ai17zLog ('retired a superseded Add/Remove Programs entry for this installation: ' + $stale) 'info'
+      }
+    }
+  } catch {
+    Write-Ai17zLog ('could not tidy the Add/Remove Programs entries: ' + $_.Exception.Message) 'warn'
+  }
+
   # And the list the installer and this script both read, so each can find
   # installations the other made.
   try {

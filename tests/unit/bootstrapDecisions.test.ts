@@ -773,4 +773,71 @@ describe('what AI17Z Setup decides about a machine', () => {
     });
   });
 
+  /*
+    One installation, one entry in Add/Remove Programs.
+
+    Two routes write one of these under different key suffixes -- Setup writes
+    `_setup`, `ai17z.iss` writes `_is1` -- so a copy installed by the installer
+    and then updated by Setup ended up with two entries for one directory, the
+    installer's frozen at whatever version it last wrote. A real machine showed
+    "AI17Z-main Beta 1.0.0 (11)" and "AI17Z-main Beta 3.2" side by side, both
+    pointing at the same folder: uninstalling through the stale one removes the
+    current installation while claiming to remove a version from months ago.
+  */
+  describe('tidying Add/Remove Programs', () => {
+    const entries = [
+      { Name: '{X}_AI17Z-main_is1', InstallLocation: 'C:\\Programs\\AI17Z-main\\' },
+      { Name: '{X}_AI17Z-main_setup', InstallLocation: 'C:\\Programs\\AI17Z-main\\' },
+      { Name: '{X}_AI17Z-test_is1', InstallLocation: 'C:\\Programs\\AI17Z-test\\' },
+      { Name: 'SomebodyElsesApp', InstallLocation: 'C:\\Programs\\AI17Z-main\\' },
+      { Name: '{X}_AI17Z-old_is1', InstallLocation: '' },
+    ];
+
+    it('retires the other route’s entry for this same directory', () => {
+      const got = call<string[]>(
+        'Select-Ai17zSupersededEntries',
+        entries,
+        '{X}_AI17Z-main_setup',
+        'C:\\Programs\\AI17Z-main',
+      );
+      expect(got).toEqual(['{X}_AI17Z-main_is1']);
+    });
+
+    it('never touches another installation, another program, or an entry that says nowhere', () => {
+      const got = call<string[]>(
+        'Select-Ai17zSupersededEntries',
+        entries,
+        '{X}_AI17Z-main_setup',
+        'C:\\Programs\\AI17Z-main',
+      );
+      expect(got).not.toContain('{X}_AI17Z-test_is1');
+      expect(got).not.toContain('SomebodyElsesApp');
+      expect(got).not.toContain('{X}_AI17Z-old_is1');
+      expect(got).not.toContain('{X}_AI17Z-main_setup');
+    });
+
+    it('matches on where it was installed, never on what the key is called', () => {
+      // A custom program directory has a leaf that is not the instance name --
+      // the same reason Test-Ai17zInstallInfoTrustworthy does not check the
+      // folder's name.
+      const got = call<string[]>(
+        'Select-Ai17zSupersededEntries',
+        [{ Name: '{X}_AI17Z-main_is1', InstallLocation: 'D:\\somewhere else\\' }],
+        '{X}_AI17Z-main_setup',
+        'D:\\somewhere else',
+      );
+      expect(got).toEqual(['{X}_AI17Z-main_is1']);
+    });
+
+    it('does nothing at all when it does not know where it is installed', () => {
+      // Asserted as "nothing came back" rather than as `[]`, because Windows
+      // PowerShell's ConvertTo-Json renders an empty collection as an object
+      // rather than an empty array. The behaviour under test is that no entry
+      // is chosen; the shape of nothing is the serialiser's business.
+      const got = call<unknown>('Select-Ai17zSupersededEntries', entries, '{X}_AI17Z-main_setup', '');
+      const chosen = Array.isArray(got) ? got : Object.keys(got ?? {});
+      expect(chosen).toHaveLength(0);
+    });
+  });
+
 });
