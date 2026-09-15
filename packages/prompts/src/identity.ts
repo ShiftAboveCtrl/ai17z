@@ -89,8 +89,10 @@ export const NEVER_NAME_THE_MODEL =
  * structure around a dash it was not allowed to have.
  */
 export const NO_EM_DASHES_RULE =
-  'Never use an em dash or an en dash as punctuation. Not one, anywhere, for any reason. ' +
-  'Use a comma, a semicolon, a colon, or start a new sentence.';
+  'Never use a dash as punctuation: not an em dash, not an en dash, not a double hyphen, ' +
+  'and not a hyphen with spaces around it. Not one, anywhere, for any reason. ' +
+  'Use a comma, a semicolon, a colon, or start a new sentence. ' +
+  'Hyphens inside words are fine and expected: read-only, owner-configured, v1.0.0-beta.24, --dry-run.';
 
 export const NOT_SOMEBODY_ELSES_MONEY =
   'You may discuss assets, prices, mechanics, and risks in general, and you may say when something looks like a scam. ' +
