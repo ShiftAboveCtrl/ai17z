@@ -72,6 +72,7 @@ export * from './accountReading';
 export * from './salience';
 export * from './deliberate';
 export * from './repoWatcher';
+export * from './githubCapabilities';
 export * from './narratives';
 export * from './contentIntelligence';
 export * from './experiments';

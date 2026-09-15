@@ -68,6 +68,14 @@ export const TOOLPACKS: Toolpack[] = [
     prefixes: ['x.'],
   },
   {
+    id: 'projects',
+    name: 'Projects',
+    summary:
+      'Read what a repository you are watching has done — releases, merged changes, issues — from what AI17Z ' +
+      'recorded. Reading only; it cannot push, merge, comment or release, and it cannot add a repository.',
+    prefixes: ['github.'],
+  },
+  {
     id: 'crypto',
     name: 'Crypto & Onchain',
     summary:
