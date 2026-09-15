@@ -137,7 +137,7 @@ page rather than fetching a binary instead.
 | `%LOCALAPPDATA%\AI17Z\storage`, `browser-profiles` | files your agents own, and your signed-in browser session |
 | `%LOCALAPPDATA%\AI17Z-setup\` | the setup log, `Setup-AI17Z.checked.ps1` — the copy whose hash was checked — and the resume note while a restart is pending |
 | Start Menu → `AI17Z` | five shortcuts: start, diagnostics, stop, update, uninstall |
-| `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\...` | the Add/Remove Programs entry |
+| `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\...` | the Add/Remove Programs entry, replacing an older entry for this same directory |
 | `HKCU\Software\AI17Z\Installs` | so the next run finds this installation rather than making a second one |
 
 Per user, under your own profile. Nothing is written to `Program Files`, nothing
