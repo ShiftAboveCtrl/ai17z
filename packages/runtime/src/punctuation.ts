@@ -34,6 +34,30 @@ const DASH_GLOBAL = /[—–―]/g;
 /** A dash used as a minus sign or a range: 1914-1918, 3-4pm. Left alone. */
 const NUMERIC_RANGE = /(\d)\s*[–—]\s*(\d)/g;
 
+/*
+  The same rhetorical pause, typed on a keyboard that has no em dash.
+
+  A model that has been told not to use an em dash reaches for `--` or a spaced
+  hyphen instead, and the result reads exactly as machine-written. Both are
+  therefore the same offence and get the same treatment.
+
+  **The hyphen itself is not the offence and must never be stripped generally.**
+  `read-only`, `owner-configured`, `v1.0.0-beta.24`, `--dry-run` and every URL
+  depend on it. What separates a rhetorical dash from a structural hyphen is
+  simple and reliable: a rhetorical one has whitespace on **both** sides. A
+  hyphen inside a word, a version or a URL never does.
+
+  The one thing that also has whitespace on both sides is the argument
+  separator in `npm run verify:install -- --twice`, so a `--` whose next
+  non-space character is another hyphen is left alone. That is a command
+  somebody pasted, not a sentence.
+*/
+const ASCII_PAIR = /(^|[ \t])--(?!\s*-)(?=[ \t])/;
+const ASCII_PAIR_GLOBAL = /(^|[ \t])--(?!\s*-)(?=[ \t])/g;
+/** A lone hyphen with a space either side, and a word on each end. */
+const SPACED_HYPHEN = /(\w)[ \t]-[ \t](?=\w)/;
+const SPACED_HYPHEN_GLOBAL = /(\w)[ \t]-[ \t](?=\w)/g;
+
 export interface PunctuationResult {
   text: string;
   replaced: number;
@@ -47,7 +71,9 @@ export interface PunctuationResult {
  * because the validator may repair a message more than once.
  */
 export function removeEmDashes(input: string): PunctuationResult {
-  if (!DASHES.test(input)) return { text: input, replaced: 0, reason: null };
+  if (!DASHES.test(input) && !ASCII_PAIR.test(input) && !SPACED_HYPHEN.test(input)) {
+    return { text: input, replaced: 0, reason: null };
+  }
 
   let replaced = 0;
   // Ranges first, so the general rules below never see them. The sentinel is
@@ -59,6 +85,16 @@ export function removeEmDashes(input: string): PunctuationResult {
     ranges.push(match);
     return `\u0000RANGE${ranges.length - 1}\u0000`;
   });
+
+  /*
+    The ASCII forms become real dashes first, then go through the same rules.
+
+    Normalising rather than duplicating the logic: a `--` doing a
+    parenthetical's job should become commas exactly as an em dash would, and
+    two implementations of that would disagree within a month.
+  */
+  text = text.replace(ASCII_PAIR_GLOBAL, (_match, before: string) => `${before}—`);
+  text = text.replace(SPACED_HYPHEN_GLOBAL, (_match, before: string) => `${before}—`);
 
   // A matched pair around a clause is a parenthetical: commas do that job.
   text = text.replace(
@@ -88,7 +124,10 @@ export function removeEmDashes(input: string): PunctuationResult {
   return {
     text,
     replaced,
-    reason: replaced > 0 ? `Replaced ${replaced} em dash${replaced === 1 ? '' : 'es'} with ordinary punctuation.` : null,
+    reason:
+      replaced > 0
+        ? `Replaced ${replaced} rhetorical dash${replaced === 1 ? '' : 'es'} with ordinary punctuation.`
+        : null,
   };
 }
 
@@ -100,6 +139,9 @@ export function removeEmDashes(input: string): PunctuationResult {
  * ones that do are caught anyway.
  */
 export const NO_EM_DASHES =
-  'Never use an em dash or an en dash as punctuation. Not one, anywhere, for any reason. ' +
+  'Never use a dash as punctuation: not an em dash, not an en dash, not a double hyphen, ' +
+  'and not a hyphen with spaces around it. Not one, anywhere, for any reason. ' +
   'Use a comma, a semicolon, a colon, or start a new sentence. ' +
+  'Hyphens inside words are fine and expected: read-only, owner-configured, v1.0.0-beta.24, --dry-run. ' +
+  'It is the dash-as-a-pause that is banned. ' +
   'This is the single most obvious sign that a machine wrote something, and it cannot be turned on.';

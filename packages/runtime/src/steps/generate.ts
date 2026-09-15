@@ -36,6 +36,7 @@ import {
   readTemperature,
 } from '../engagement';
 import { compileForJob } from '../voice';
+import { removeEmDashes } from '../punctuation';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -384,8 +385,34 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
     },
   });
 
-  if (compiled.text !== draft) {
-    await jobsRepo.updateJob(job.id, { validatedOutput: compiled.text });
+  /*
+    The last thing that writes text has to be the last thing that checks it.
+
+    The pipeline runs validate, then voice, then quality. The validator strips
+    rhetorical dashes and the voice rewrite is a model call that writes fresh
+    prose afterwards, so the guarantee the validator makes was being undone one
+    step later by design. Four of the sixty-eight replies ai17zos has published
+    went out with an em dash in them, all after the rule existed, and the
+    `validated_output` column holds the proof.
+
+    Applied here rather than moved: the validator still repairs its own output,
+    because a draft that never reaches the voice step must be clean too. This
+    closes the window between them.
+  */
+  const spoken = removeEmDashes(compiled.text);
+  if (spoken.replaced > 0) {
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'VOICE_COMPILED',
+      level: 'warn',
+      message: `The voice rewrite put ${spoken.replaced} dash${spoken.replaced === 1 ? '' : 'es'} back. ${spoken.reason ?? ''}`.trim(),
+      data: { rewroteDashes: spoken.replaced },
+    });
+  }
+
+  if (spoken.text !== draft) {
+    await jobsRepo.updateJob(job.id, { validatedOutput: spoken.text });
   }
 
   await jobsRepo.updateJob(job.id, {

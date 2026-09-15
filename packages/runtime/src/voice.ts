@@ -4,6 +4,7 @@ import { createLogger, errorMessage } from '@xbam/shared';
 import { agents as agentsRepo, voice as voiceRepo } from '@xbam/database';
 import { compileVoice, deriveFingerprint, scoreGeneric, scoreRepetition, scoreVoice } from '@xbam/persona';
 import { generate } from '@xbam/models';
+import { NO_EM_DASHES } from './punctuation';
 
 const log = createLogger('voice');
 
@@ -230,7 +231,18 @@ function buildBrief(
   generic: ReturnType<typeof scoreGeneric>,
   repetition: ReturnType<typeof scoreRepetition>,
 ): string {
-  const extra: string[] = [];
+  /*
+    Said to the rewriter as well as enforced after it.
+
+    The rewrite is the last model call before anything is published, and it was
+    the one call that had never been told the punctuation rule. So the
+    validator would strip a dash and the rewrite, working from a brief that
+    said nothing about it, would put one back in a new sentence of its own.
+    Repairing that afterwards works, and a message written correctly the first
+    time still reads better than a repaired one: the model chooses its clause
+    structure around the punctuation it thinks it has.
+  */
+  const extra: string[] = ['', 'PUNCTUATION', NO_EM_DASHES];
   if (generic.reasons.length > 0) {
     extra.push('', 'AVOID', ...generic.reasons.map((reason) => `- It currently ${reason}.`));
   }
