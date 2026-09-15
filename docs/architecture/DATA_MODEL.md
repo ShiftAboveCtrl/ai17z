@@ -35,10 +35,18 @@ job is in flight cannot change what that job is permitted to do.
 | `browser_sessions` | Session mode (managed profile or attached CDP), status, last check. Never stores cookies. |
 | `browser_tasks` | Browser intents recorded by the API and executed by the worker. At most one active per account. |
 | `provider_credentials` | API keys sealed with AES-256-GCM. `sealed_api_key` is never selected by the public column list. |
+| `x_account_observations` | What AI17Z last read about somebody on X, per owner. Two unique indexes -- one on the handle, one on the numeric id -- so a rename is an update rather than a second person. |
 | `model_configs` | Per agent, per role (primary, fallback_1, fallback_2, classifier). |
 
 Accounts are separate from agents on purpose: an account can move between
 agents, and one agent can drive several.
+
+`x_account_observations` is a record of reads, not a second relationship store.
+`relationships` holds what has passed between an agent and somebody, which is a
+different fact: reading a profile is not talking to anybody, and an observation
+here never becomes an interaction there. It exists because the API owns no
+browser -- a People screen that read X on render would cost a request per card
+against the session the agent needs for its own work. See `X_READING.md`.
 
 ## The runtime
 

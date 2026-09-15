@@ -23,6 +23,15 @@
 export interface NarrativePost {
   statusId: string;
   handle: string;
+  /**
+   * The author's immutable id, where whatever found the post could see one.
+   *
+   * Used in preference to the handle when counting how many accounts are
+   * saying something. Somebody who renames themselves mid-window is one voice,
+   * and counting them as two inflates the only signal that decides whether a
+   * term is a narrative at all.
+   */
+  authorId?: string | null;
   text: string;
   /** ISO. A post without one cannot be placed in a window and is skipped. */
   postedAt?: string;
@@ -122,13 +131,15 @@ function bucketOf(posts: NarrativePost[]): Bucket {
   const bucket: Bucket = { posts: 0, byTerm: new Map() };
   for (const post of posts) {
     bucket.posts += 1;
-    const handle = post.handle.replace(/^@+/, '').toLowerCase();
+    // Identity first, the handle as a fallback. A post discovered before the
+    // radar could see ids has none, and its author should still be counted.
+    const author = post.authorId || post.handle.replace(/^@+/, '').toLowerCase();
     // Counted once per post: a post that says "restaking" four times is one
     // account saying it, and rewarding repetition rewards spam.
     for (const term of termsIn(post.text)) {
       const entry = bucket.byTerm.get(term) ?? { mentions: 0, authors: new Set<string>() };
       entry.mentions += 1;
-      entry.authors.add(handle);
+      entry.authors.add(author);
       bucket.byTerm.set(term, entry);
     }
   }

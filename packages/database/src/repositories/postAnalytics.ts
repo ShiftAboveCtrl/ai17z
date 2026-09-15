@@ -226,6 +226,24 @@ export async function accountHistory(agentId: string, limit = 60): Promise<Accou
 }
 
 /**
+ * The most recent reading of the agent's own account.
+ *
+ * Reach is a ratio, not a number: an account with ten thousand followers is a
+ * different proposition to somebody with two hundred than to somebody with
+ * fifty thousand. `scoreBridge` says so outright -- without a scale it reports
+ * "reach has no scale to be measured against" as a gap and scores nothing at
+ * all. This is the scale, and it comes from readings the radar already takes
+ * while it is standing on the profile anyway.
+ */
+export async function latestAccountReading(agentId: string): Promise<AccountReadingRow | null> {
+  const rows = await query<AccountReadingRow>(
+    'SELECT * FROM account_analytics WHERE agent_id = $1 ORDER BY observed_at DESC LIMIT 1',
+    [agentId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * When this account was last looked at, or null if it never has been.
  *
  * Asked by the radar's own-threads source to decide whether to spend a cycle on

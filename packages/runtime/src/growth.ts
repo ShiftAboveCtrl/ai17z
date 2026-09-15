@@ -2,6 +2,7 @@ import {
   growth as growthRepo,
   postAnalytics as postAnalyticsRepo,
   relationships as relationshipsRepo,
+  xAccountObservations,
 } from '@xbam/database';
 import { rankBridges, scoreBridge, type BridgeScore } from './bridge';
 import { findOpportunities, type OpportunityCandidate, type OpportunityVerdict } from './opportunity';
@@ -66,6 +67,9 @@ export async function narrativesFor(
     rows.map((row) => ({
       statusId: row.remote_event_id,
       handle: row.handle ?? '',
+      // Present for anything the radar read through the canonical layer, so
+      // "how many accounts are saying this" counts people rather than names.
+      ...(row.author_id ? { authorId: row.author_id } : {}),
       text: row.text,
       ...(row.occurred_at ? { postedAt: row.occurred_at } : {}),
     })),
@@ -97,26 +101,61 @@ export async function launchesFor(
  * How much of an audience the agent does not already reach sits behind each
  * account it knows.
  *
- * Built from relationship memory and from who has been seen around whom. The
- * follower counts are usually absent, and that is reported as a gap rather than
- * guessed -- reading a profile to fill one in is a capability an owner invokes,
- * not something a screen does on its own to hundreds of accounts.
+ * Built from relationship memory, from who has been seen around whom, and from
+ * whatever the owner has already had read about them.
+ *
+ * That last part is the only thing that changed, and the constraint it works
+ * within did not: **this reads nothing**. Reading a profile to fill in a
+ * follower count is a capability an owner invokes, not something a screen does
+ * on its own to a hundred accounts, and the reason is the browser -- one
+ * signed-in session, needed by the agent for its actual work. So somebody who
+ * has been read contributes their real numbers, and somebody who has not keeps
+ * the gap sentences `scoreBridge` writes for them.
  */
 export async function bridgesFor(
   agentId: string,
   accountId: string,
-  options: { limit?: number; now?: Date; ourFollowerCount?: number } = {},
+  options: { limit?: number; now?: Date; ourFollowerCount?: number; ownerUserId?: string | null } = {},
 ): Promise<BridgeScore[]> {
   const now = options.now ?? new Date();
-  const [known, neighbours] = await Promise.all([
+  const [known, neighbours, ourReading] = await Promise.all([
     relationshipsRepo.listForAgent(agentId, { limit: options.limit ?? 100 }),
     growthRepo.neighbourCounts({ agentId, accountId, limit: 400 }),
+    // The scale reach is measured against. Taken from a reading the radar
+    // already made while standing on the profile, not from a request of this
+    // screen's own -- `docs/architecture/CADENCE.md` allows one timing engine
+    // and no second timer.
+    options.ourFollowerCount === undefined ? postAnalyticsRepo.latestAccountReading(agentId) : null,
   ]);
   const byHandle = new Map(neighbours.map((row) => [row.handle, row]));
+
+  /*
+    What is known about each of them, where somebody has looked.
+
+    This is the read that closes the gap `scoreBridge` has been declaring since
+    it was written: "How many people follow them was not visible", and
+    "Whether either account follows the other was not visible". Neither was
+    ever a limitation of the scoring -- the inputs were simply never supplied,
+    because filling them would have meant reading a profile per card and the
+    comment on this function said so outright.
+
+    Now they are filled from what an owner has already asked AI17Z to read.
+    Nothing is read here: an account nobody has looked at keeps its gaps, which
+    is why the gap sentences still have to exist and still have to be shown.
+  */
+  const observed = options.ownerUserId
+    ? await xAccountObservations.findManyByHandle(
+        options.ownerUserId,
+        known.map((person) => person.handle),
+      )
+    : new Map();
+
+  const ourFollowerCount = options.ourFollowerCount ?? ourReading?.followers ?? undefined;
 
   return rankBridges(
     known.map((person) => {
       const neighbourhood = byHandle.get(person.handle.toLowerCase());
+      const about = observed.get(person.handle.toLowerCase());
       return scoreBridge(
         {
           handle: person.handle,
@@ -124,7 +163,14 @@ export async function bridgesFor(
           outboundCount: person.outboundCount,
           lastInteractionAt: person.lastInteractionAt,
           disposition: person.disposition,
-          ...(options.ourFollowerCount === undefined ? {} : { ourFollowerCount: options.ourFollowerCount }),
+          ...(ourFollowerCount === undefined || ourFollowerCount === null ? {} : { ourFollowerCount }),
+          // Spread rather than defaulted, all three of them. A null here means
+          // "the reader could not see it", and scoreBridge reports that as a
+          // gap -- passing a zero or a false instead would turn "not known"
+          // into a measurement, which is the failure these gaps exist to name.
+          ...(typeof about?.followers === 'number' ? { followerCount: about.followers } : {}),
+          ...(typeof about?.weFollow === 'boolean' ? { weFollow: about.weFollow } : {}),
+          ...(typeof about?.followsUs === 'boolean' ? { followsUs: about.followsUs } : {}),
           ...(neighbourhood
             ? { neighbours: neighbourhood.neighbours, neighboursWeKnow: neighbourhood.neighbours_we_know }
             : {}),
@@ -162,11 +208,25 @@ export async function opportunitiesFor(input: {
   const byHandle: Record<string, BridgeScore> = {};
   for (const bridge of bridges) byHandle[bridge.handle.toLowerCase()] = bridge;
 
+  /*
+    The counts travel only when somebody actually counted.
+
+    `findOpportunities` has weighed a crowded thread against an empty one since
+    it was written -- "nobody has replied yet" is worth points, "150 replies
+    already" costs them -- and until the radar read X's own data there was never
+    a number to weigh, because a rendered article abbreviates its counts to
+    "1.2K". So these are spread in rather than defaulted: an absent count keeps
+    meaning nobody could see one, and never quietly means zero, which would turn
+    every unmeasured post into an apparently empty thread worth speaking into.
+  */
   const candidates: OpportunityCandidate[] = rows.map((row) => ({
     statusId: row.remote_event_id,
     handle: row.handle ?? '',
     text: row.text,
     ...(row.occurred_at ? { postedAt: row.occurred_at } : {}),
+    ...(typeof row.metrics?.replies === 'number' ? { replyCount: row.metrics.replies } : {}),
+    ...(typeof row.metrics?.likes === 'number' ? { likeCount: row.metrics.likes } : {}),
+    ...(typeof row.metrics?.views === 'number' ? { viewCount: row.metrics.views } : {}),
   }));
 
   return findOpportunities(candidates, {

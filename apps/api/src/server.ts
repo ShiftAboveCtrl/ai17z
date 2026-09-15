@@ -20,6 +20,7 @@ import { personaRoutes } from './routes/persona';
 import { artifactRoutes } from './routes/artifacts';
 import { settingsRoutes } from './routes/settings';
 import { growthRoutes } from './routes/growth';
+import { peopleRoutes } from './routes/people';
 import { experimentRoutes } from './routes/experiments';
 
 const log = createLogger('api');
@@ -83,6 +84,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(artifactRoutes);
   await app.register(settingsRoutes);
   await app.register(growthRoutes);
+  await app.register(peopleRoutes);
   await app.register(experimentRoutes);
 
   app.addHook('onResponse', async (request, reply) => {

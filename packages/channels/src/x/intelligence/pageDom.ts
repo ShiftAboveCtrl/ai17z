@@ -57,6 +57,7 @@ const OUTCOMES: Record<CorpusOutcome, XReadOutcome> = {
 const GAPS = [
   'engagement counts are rendered abbreviated and are not reported',
   'the author id is not present in a rendered article',
+  'whether either account follows the other is not read from a rendered page',
 ];
 
 export const pageDomBackend: XIntelligenceBackend = {
@@ -119,6 +120,12 @@ export const pageDomBackend: XIntelligenceBackend = {
         createdAt: null,
         verified: null,
         protected: corpus.outcome === 'PROTECTED' ? true : null,
+        // A rendered profile does carry a "Follows you" badge, but not
+        // reliably: it renders after the header and a read that arrives first
+        // sees nothing, which would report a follower as a stranger. Left
+        // unknown rather than read unreliably -- the gap below says so.
+        weFollow: null,
+        followsUs: null,
         provenance: provenanceFor(NAME, {
           url: `https://x.com/${corpus.handle}`,
           gaps: ['no numeric user id: a rendered profile does not carry one', ...GAPS],

@@ -58,7 +58,13 @@ export const TOOLPACKS: Toolpack[] = [
   {
     id: 'x',
     name: 'X',
-    summary: 'Read posts, profiles and conversations on X, and act on them.',
+    // "and act on them" used to be on the end of this sentence and was never
+    // true of anything in the pack: every `x.` capability reads, and acting on
+    // X belongs to the engagement pipeline behind its policy gates, approvals
+    // and audit trail. A switch whose description promises more than it grants
+    // is worse than no description -- somebody turns it off to stop the agent
+    // posting, and stops it reading instead.
+    summary: 'Look up accounts, posts, conversations and searches on X. Reading only; it cannot post, reply or follow.',
     prefixes: ['x.'],
   },
   {

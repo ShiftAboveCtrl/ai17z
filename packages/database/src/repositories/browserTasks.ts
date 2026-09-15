@@ -40,6 +40,15 @@ export const BROWSER_TASK_KINDS = [
    * the API process, which no packaged installation has.
    */
   'COLLECT_PERSONA',
+  /**
+   * Read a public account, so the owner can be shown who somebody is.
+   *
+   * Here for the same reason as COLLECT_PERSONA: it needs the signed-in
+   * browser, and only the worker has one. Read-only and structurally unable to
+   * be anything else -- it calls the X intelligence layer, which has no write
+   * in it.
+   */
+  'READ_X_ACCOUNT',
 ] as const;
 export type BrowserTaskKind = (typeof BROWSER_TASK_KINDS)[number];
 

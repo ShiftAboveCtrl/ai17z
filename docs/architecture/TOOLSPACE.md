@@ -266,6 +266,22 @@ A family with one source is not a defect. `governance` reads Snapshot because
 Snapshot is where the proposals are, and inventing a second source for symmetry
 would mean adding one that does not know the answer.
 
+### The `x.` family is not one of these
+
+It reaches X rather than an upstream HTTP source, so it does not go through
+`ask()` at all -- it goes through the canonical reading layer described in
+`X_READING.md`, which works inside the browser the owner is already signed in
+to. Ten reads and two writes, pinned exactly in
+`tests/unit/xCapabilities.test.ts` so neither set can grow by accident.
+
+There were briefly two ways to read a profile: `x.read_account` among the
+built-ins and `x.read_profile` in the runtime, both reading the same thing
+through the same layer, both offered to the model at once. That is a model that
+sometimes picks the worse one and an owner looking at two switches for one
+decision, so they are one capability now. What the built-in had that the other
+did not -- reading more than a handful of somebody's posts -- moved across as an
+argument.
+
 ## What the Toolspace refuses to do
 
 These are properties, not preferences, and each has a test behind it.

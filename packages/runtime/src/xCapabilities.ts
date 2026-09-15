@@ -114,13 +114,28 @@ const readProfileCapability = defineCapability({
   id: 'x.read_profile',
   name: 'Read an X profile',
   description:
-    'Reads one account on X by handle and returns its bio, follower counts where visible, and a few recent posts. ' +
-    'Use it when you need to know who somebody is before answering them.',
+    'Reads one account on X by handle and returns its bio, follower counts where visible, and its recent posts. ' +
+    'Use it when you need to know who somebody is, or what they have been writing about, before answering them.',
   category: 'READ',
   effect: 'READ',
   risk: 'LOW',
   input: z.object({
     handle: z.string().min(1).max(20),
+    /**
+     * How much of their recent writing to read.
+     *
+     * Present because this absorbed `x.read_account`, which existed alongside
+     * it reading the same profile through the same layer and differed only in
+     * bringing back more posts. Two switches for one thing is a switch somebody
+     * turns off expecting something else to stop.
+     */
+    posts: z
+      .number()
+      .int()
+      .min(0)
+      .max(40)
+      .default(5)
+      .describe('How many of their recent posts to read. 0 for the profile only.'),
   }),
   output: XProfile,
   modelCallable: true,
@@ -131,15 +146,16 @@ const readProfileCapability = defineCapability({
   async run(input, ctx) {
     const channel = await contextFor(ctx.accountId, ctx.jobId);
     if (!channel) throw new Error('This agent has no connected X account to read as.');
-    const profile = await readProfile(channel, input.handle);
+    const profile = await readProfile(channel, input.handle, { posts: input.posts });
 
     /**
      * Reading our own profile is also measuring this account.
      *
-     * Only our own: a follower count for somebody else belongs to the bridge
-     * score, which reads it live and does not keep it. Recording a series about
-     * accounts the agent merely looked at would be building a history of people
-     * who never asked for one.
+     * Only our own. A follower count for somebody else is kept, where an owner
+     * asked for it, on `x_account_observations` -- one row saying what was true
+     * when somebody looked. A *series* is a different thing: recording how
+     * every account the agent glanced at has grown over time would be building
+     * a history of people who never asked for one.
      *
      * Nothing schedules this. `docs/architecture/CADENCE.md` allows one timing
      * engine and no second timer, so the series is as dense as the looking --

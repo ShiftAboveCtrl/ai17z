@@ -57,24 +57,38 @@ export type XId = string;
  * message. A private account is not a missing one; a rate limit is not a
  * failure; a changed page is not a signed-out browser.
  */
-export type XReadOutcome =
-  | 'OK'
+export const X_READ_OUTCOMES = [
+  'OK',
   /** No such account, or it has been suspended. */
-  | 'NOT_FOUND'
+  'NOT_FOUND',
   /** It exists and its posts are not public. */
-  | 'PROTECTED'
+  'PROTECTED',
   /** It exists, is readable, and there was nothing to read. */
-  | 'EMPTY'
+  'EMPTY',
   /** X wants somebody to sign in. Nothing here answers that. */
-  | 'NEEDS_SIGN_IN'
+  'NEEDS_SIGN_IN',
   /** X is asking for a CAPTCHA, a code, a device check. Nothing here answers that either. */
-  | 'CHALLENGE'
+  'CHALLENGE',
   /** X said to slow down. Honoured, not worked around. */
-  | 'RATE_LIMITED'
+  'RATE_LIMITED',
   /** X answered in a shape this backend no longer understands. */
-  | 'SCHEMA_CHANGED'
+  'SCHEMA_CHANGED',
   /** The backend could not run at all. */
-  | 'UNAVAILABLE';
+  'UNAVAILABLE',
+] as const;
+
+/**
+ * A list rather than a bare union, because one of these is written to a column
+ * with a CHECK behind it -- `x_account_observations.outcome`, which records how
+ * a read ended so that "nobody has looked" and "they made their account
+ * private" stay different answers.
+ *
+ * Growing this union without widening that constraint compiles, passes every
+ * unit test, and then fails at the database on the one path nobody exercised.
+ * `tests/unit/constrainedEnumRegistry.test.ts` holds the registry against this
+ * list so the failure happens at the right moment instead.
+ */
+export type XReadOutcome = (typeof X_READ_OUTCOMES)[number];
 
 /** Outcomes where trying a different backend is reasonable. */
 export const WORTH_ANOTHER_BACKEND: readonly XReadOutcome[] = [
@@ -138,6 +152,21 @@ export interface XUser {
   /** X's own badge, when the backend could see it. Null is "did not see", not "no". */
   verified: boolean | null;
   protected: boolean | null;
+  /**
+   * How they stand with the account doing the reading.
+   *
+   * X answers a profile query as somebody, so the reply says whether the
+   * viewer follows them and whether they follow the viewer. It is the one
+   * reciprocity signal available without opening a follower list, which for a
+   * large account is effectively infinite and a request per screen.
+   *
+   * **Null is "X did not say", never "no".** The distinction is load-bearing:
+   * `scoreBridge` treats an unknown follow relationship as a gap it reports,
+   * and treats a known absence as a measured fact worth no points. Collapsing
+   * the two would turn every unread profile into a pair of strangers.
+   */
+  weFollow: boolean | null;
+  followsUs: boolean | null;
   provenance: XProvenance;
 }
 
@@ -279,13 +308,16 @@ export interface XBackendReadiness {
   can: XCapability[];
 }
 
-export type XCapability =
-  | 'resolveUser'
-  | 'getUser'
-  | 'getUserPosts'
-  | 'getPost'
-  | 'getThread'
-  | 'searchPosts';
+export const X_CAPABILITIES = [
+  'resolveUser',
+  'getUser',
+  'getUserPosts',
+  'getPost',
+  'getThread',
+  'searchPosts',
+] as const;
+
+export type XCapability = (typeof X_CAPABILITIES)[number];
 
 /**
  * What a backend is given to work with.

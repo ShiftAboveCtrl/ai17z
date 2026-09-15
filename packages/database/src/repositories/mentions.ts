@@ -69,6 +69,21 @@ export interface MentionFilter {
   accountId?: string | null;
   /** Restrict to one state. Omit for everything. */
   state?: MentionState | null;
+  /**
+   * Everything one person said, rather than everything everybody said.
+   *
+   * Added so the People screen can answer "what has passed between us" out of
+   * the same read model the inbox uses. A second query joining events, jobs and
+   * actions would be a second answer to a question this one already answers,
+   * and the two would drift.
+   *
+   * Matched on the handle rather than the numeric id because an event recorded
+   * before the radar could see ids has no id to match on -- and a person's
+   * history should not begin again the day AI17Z learned who they were. The id
+   * is the better key and is used where the record is being written; this is a
+   * read of what is already there.
+   */
+  authorHandle?: string | null;
   limit?: number;
 }
 
@@ -137,6 +152,7 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
       WHERE e.type IN ('MENTION', 'REPLY', 'DIRECT_MESSAGE', 'KEYWORD_MATCH')
         AND ($2::uuid IS NULL OR e.account_id = $2)
         AND ($1::uuid IS NULL OR j.agent_id = $1 OR j.id IS NULL)
+        AND ($4::text IS NULL OR lower(e.remote_author_handle) = lower($4))
         -- An event whose account has been deleted and which never produced a
         -- job is residue, not a mention: there is no account it arrived on and
         -- no agent that could ever answer it. events.account_id is ON DELETE
@@ -147,7 +163,12 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
         AND (e.account_id IS NOT NULL OR j.id IS NOT NULL)
       ORDER BY e.ingested_at DESC
       LIMIT $3`,
-    [filter.agentId ?? null, filter.accountId ?? null, Math.min(filter.limit ?? 50, 200)],
+    [
+      filter.agentId ?? null,
+      filter.accountId ?? null,
+      Math.min(filter.limit ?? 50, 200),
+      filter.authorHandle ? filter.authorHandle.replace(/^@+/, '') : null,
+    ],
   );
 
   const mapped = mapRows<Omit<MentionRow, 'state'>>(rows).map((row) => ({
