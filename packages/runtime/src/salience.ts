@@ -295,6 +295,27 @@ export function scoreObservation(observation: Observation, context: SalienceCont
     }
   }
 
+  /*
+    ── A project somebody attached to this agent ──────────────────────────────
+
+    Somebody adding a repository to an agent's watch list is a statement about
+    what that agent follows, and a stronger one than a word in a topics list:
+    they typed the name of a specific project and pressed a button.
+
+    Without this, a release from a watched repository was declined `unrelated`
+    -- "nothing here connects to what this agent follows" -- which was not true
+    and was said to the person who had just connected it. An agent whose
+    persona carries no topics, which is the state a new one is in, could not
+    attend to its own project at all.
+  */
+  if (observation.source === 'REPO_EVENT') {
+    factors.push({
+      name: 'watched-project',
+      detail: 'From a repository this agent was told to follow.',
+      points: 12,
+    });
+  }
+
   // ── Whether anything was addressed to it ──────────────────────────────────
   if (observation.source === 'MENTION' || observation.source === 'REPLY') {
     factors.push({
@@ -351,7 +372,15 @@ export function scoreObservation(observation: Observation, context: SalienceCont
   }
 
   // ── Whether there is anything to be interested in at all ──────────────────
-  if (matched.length === 0 && !goalHit && !person && observation.source !== 'MENTION' && observation.source !== 'REPLY') {
+  const connected =
+    matched.length > 0 ||
+    Boolean(goalHit) ||
+    Boolean(person) ||
+    observation.source === 'MENTION' ||
+    observation.source === 'REPLY' ||
+    // Attaching the repository was the connection.
+    observation.source === 'REPO_EVENT';
+  if (!connected) {
     // Not scored low: declined. Having nothing to do with something is not a
     // weak reason to think about it, it is a reason not to.
     return declineWith('unrelated', 'Nothing here connects to what this agent follows, knows or is doing.');

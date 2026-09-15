@@ -155,6 +155,137 @@ Off by default. An agent does not start thinking because it was created.
 model calls and changes the agent's own state, and an owner who pressed pause
 did not mean "keep developing opinions".
 
+## What a wake is allowed to see
+
+The window is on **when this installation first recorded something**, never on
+when it happened out there.
+
+Those look equivalent and are not. An agent finds out about a post when the
+radar brings it back, not when somebody wrote it -- and on a real installation
+the median gap between the two is nineteen hours, with a long tail past a year,
+against a wake interval measured in minutes. A window on `occurred_at` therefore
+almost never contained the moment a post was written, so deliberation observed
+nothing on nearly every wake and the whole feature did nothing outside its own
+tests, where a fixture makes an event that happened a moment ago.
+
+Worse than slow: an event missed that way is missed for ever, because the window
+only moves forward. Watching a repository produced exactly this -- forty-three
+real events recorded, every one of them permanently invisible to the agent that
+was watching for them.
+
+**When it arrived and how old it is are two different facts, and each belongs to
+a different layer.** The window answers "what has this agent not looked at yet".
+Whether something is history rather than news is `salience.ts`'s question, and
+it still declines anything past `STALE_HOURS` on its own terms. Both are tested,
+including the case where an old post arrives today and is let through the window
+and then declined for being old.
+
+## What it will not raise by itself
+
+Until deliberation, an agent only spoke when spoken to. A person had put the
+subject on the table, the engagement heuristic decided whether to answer, and
+the policy decided what could be said. An agent that forms its own interests and
+writes its own posts has no such person: it can arrive at a position on an
+election and publish it, on somebody's real account, while they are asleep.
+
+`reticence.ts` is a short list of subjects an agent does not **raise**. It gates
+origination and nothing else -- whether an item on the working set may become a
+post candidate, and what an original post may be about. It does not decide what
+an agent may find interesting, notice, remember, or say when somebody asks it
+directly. Those stay with `content.blockedTopics`, the persona's prohibited
+behaviours, the validator and the engagement heuristic, all of which are the
+owner's to set.
+
+The rule is not "this agent may not discuss war". It is "this agent does not
+bring up war unprompted". Only the second promise can be kept by a list of
+words.
+
+**The errors are not symmetric, and the list leans accordingly.** A word that
+should not be there costs one idea that never became a post, which nobody
+notices. A word that is missing costs an unprompted public opinion on somebody's
+real account, which a correction does not repair. That asymmetry is why a crude
+list is the right instrument here and the wrong one in `salience.ts`.
+
+**It is a floor, not a fence.** It is deliberately not exhaustive: it protects
+an unconfigured installation, which is the case that fails. An owner who wants
+more adds it to `content.blockedTopics`, which is stronger -- that one stops the
+subject being discussed at all.
+
+**Terms are chosen for the register an agent actually writes in**, which is why
+some obvious ones are absent. `died`, `diagnosis`, `side effects`, `candidate`
+and `woke` each belong to a subject on the list and belong just as much to a
+sentence about a worker process, a bug, a release, or getting up. An agent that
+cannot say "the worker died mid-job" is not safer; it is broken, and an owner
+switches it off, which protects nothing.
+
+**A refusal is shown rather than hidden.** A declined item is not settled and
+does not disappear -- it keeps its place on the working set and carries a factor
+saying why it was not offered, in the same list of factors that explains every
+other score on the screen.
+
+**The agent cannot switch it off.** No policy field, no autonomy level, no code
+path, and nothing deliberation writes can reach it. An autonomous loop that can
+widen its own remit has no remit.
+
+## What a faded thought leaves behind
+
+The working set is small and forgetful on purpose -- that is what makes it a
+present tense rather than a log. But an agent that works something out, holds it
+a fortnight and then loses it is a machine that learns and then forgets. Two
+kinds of item are worth keeping after they stop being current:
+
+| Kind | Scope | Because |
+| --- | --- | --- |
+| `LESSON` | `PERSONA` | What it concluded about how to act is about itself |
+| `QUESTION` / `HYPOTHESIS`, once resolved | `KNOWLEDGE` | What it found out is about the world |
+
+Everything else leaves the retired row and nothing more. An interest that faded
+is not a fact, and *it used to care about this* is already answerable from
+`agent_attention` without putting it where retrieval will find it and quote it
+back as though it were still true.
+
+Consolidation writes through `memories`, the same six scopes everything else
+uses. **There is no second store for what deliberation learned**, because a
+second memory is a second answer to "what does this agent know", and the first
+thing anybody asks of the second one is why it disagrees with the first.
+
+Two bars, both of which have to clear: it must carry evidence, because an
+unevidenced claim is not a memory whatever it scored; and confidence must be at
+least 0.5, because something still being worked out belongs on the working set.
+
+**Nothing stored is a transcript.** The summary is the durable artifact
+reflection already produced, the evidence travels with it in `origin`, and no
+model reasoning is kept, shown or carried.
+
+### The dynamic half of how an agent sees itself is the `PERSONA` scope
+
+It is tempting to give an agent a "self model" of its own -- a table of how it
+currently sees itself, updated gradually. AI17Z does not have one and must not
+grow one, because it already has both halves of that and they are better than a
+new table would be.
+
+The **stable** half is the persona: versioned, owner-edited, and the thing
+somebody deliberately decided. The **dynamic** half is `PERSONA`-scope memory,
+which retrieval already selects for and the prompt already renders as the
+agent's own history.
+
+What was missing was anything writing to it from what the agent worked out. A
+lesson lived on the working set, faded, and was gone. Consolidation closes that
+loop, and every property the dynamic layer needed comes from machinery that was
+already there:
+
+- **Gradual**, because a lesson has to survive the working set long enough to
+  fade out of it, which takes reinforcement over days.
+- **Damped**, because `policy.retrieval.persona` is a ceiling on how much of it
+  reaches any one prompt, and importance carries through from salience.
+- **Evidenced**, because consolidation refuses anything with nothing behind it,
+  and the references travel in `origin`.
+- **The owner's**, because these are rows on the memories screen like any other:
+  readable, editable, deletable.
+
+A seventh store would have to answer "what does this agent know about itself"
+alongside the sixth, and the first question anybody would ask is which one wins.
+
 ## Watching a project
 
 `docs/architecture/DELIBERATION.md` is also where repository awareness lands,
@@ -171,6 +302,14 @@ gets a 304 with no body, which GitHub does not charge against the rate limit —
 and the unique index on `(source, kind, remote_id)` is what makes overlapping
 polls safe. Polls overlap as a matter of course.
 
+**A repository somebody attached is a relevance signal in its own right.**
+Typing the name of a specific project and pressing a button is a stronger
+statement about what an agent follows than a word in a topics list. Without
+that, a release off a watched repository was declined `unrelated` -- "nothing
+here connects to what this agent follows" -- said to the person who had
+connected it a minute earlier, and an agent whose persona carries no topics,
+which is the state a new one is in, could not attend to its own project at all.
+
 **`worthNoticing` is the half that matters.** Most of what a repository does in
 a day is mechanical and interests nobody outside it, and the entire difference
 between a project-aware agent and a changelog bot is what it declines:
@@ -186,4 +325,7 @@ builds do. A release always counts; a red build counts because somebody may ask.
 | Observe, attend, reflect, goals, pause, backoff, restart-safety | `tests/integration/deliberation.test.ts` |
 | What reaches a reply, and what stays out of one | same file |
 | What a project did, and what is never worth mentioning | `tests/unit/repoWatcher.test.ts` |
+| Subjects it will not raise, and the engineering talk it must not refuse | `tests/unit/reticence.test.ts` |
+| An old post that arrived today, and a genuinely old one | `tests/integration/deliberation.test.ts` |
+| What a faded thought leaves behind, and what it does not | same file |
 | Reading a project, and the boundary around it | `tests/integration/githubCapabilities.test.ts` |

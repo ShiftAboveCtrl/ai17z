@@ -4,6 +4,7 @@ import {
   agents as agentsRepo,
   content as contentRepo,
   deliberation as mind,
+  memories as memoriesRepo,
   providers as providersRepo,
 } from '@xbam/database';
 import {
@@ -55,7 +56,11 @@ async function agentThatThinks(over: { autonomy?: 'OBSERVE' | 'THINK' | 'SUGGEST
 }
 
 /** Something somebody said, put where the radar would have put it. */
-async function somebodySaid(accountId: string, text: string, over: { handle?: string; id?: string } = {}) {
+async function somebodySaid(
+  accountId: string,
+  text: string,
+  over: { handle?: string; id?: string; occurredAt?: string } = {},
+) {
   await ingestNormalizedEvent({
     accountId,
     event: mockEvent(text, {
@@ -63,7 +68,8 @@ async function somebodySaid(accountId: string, text: string, over: { handle?: st
       remoteEventId: over.id ?? `ev-${uniqueSuffix()}`,
       remoteAuthorHandle: over.handle ?? 'somebody',
       remoteAuthorId: '900',
-      occurredAt: new Date().toISOString(),
+      // When it was written, which is not when this installation found out.
+      occurredAt: over.occurredAt ?? new Date().toISOString(),
     }),
     recordOnly: true,
   });
@@ -87,6 +93,46 @@ describe('observing what happened', () => {
     expect(items[0]!.summary).toContain('agent memory');
     // Evidence, not a copy: the item points back at the event it came from.
     expect(items[0]!.evidence.length).toBeGreaterThan(0);
+  });
+
+  /*
+    The defect that made this whole feature do nothing on a real installation.
+
+    An agent finds out about a post when the radar brings it back, not when
+    somebody wrote it. The window used to be on `occurred_at`, which looked
+    equivalent and is not: on a real install the median gap between a post
+    happening and AI17Z ingesting it is nineteen hours, against a wake interval
+    measured in minutes -- so the window almost never contained the moment the
+    post was written and almost nothing was ever observed. It passed every test
+    because a fixture makes an event that happened just now.
+  */
+  it('observes a post that arrived since the last wake, however old the post is', async () => {
+    const agent = await agentThatThinks();
+    await somebodySaid(
+      agent.accountId,
+      'The hard part of autonomous agents is agent memory that survives a restart.',
+      // Written thirty hours ago, which is outside the window a first wake
+      // looks back over. Ingested a moment ago, which is when this agent could
+      // first have known about it at all.
+      { occurredAt: new Date(Date.now() - 30 * 3_600_000).toISOString() },
+    );
+
+    const outcome = await wakeAgent(agent.agentId);
+    expect(outcome.observed).toBeGreaterThan(0);
+    expect(outcome.attended).toBe(1);
+  });
+
+  it('still treats a genuinely old post as history rather than news', async () => {
+    // When it arrived and how old it is are different facts answered in
+    // different layers: the window lets it through, salience declines it.
+    const agent = await agentThatThinks();
+    await somebodySaid(agent.accountId, 'The hard part of autonomous agents is agent memory that survives a restart.', {
+      occurredAt: new Date(Date.now() - 200 * 3_600_000).toISOString(),
+    });
+
+    const outcome = await wakeAgent(agent.agentId);
+    expect(outcome.observed).toBeGreaterThan(0);
+    expect(outcome.attended).toBe(0);
   });
 
   it('declines noise rather than scoring it low', async () => {
@@ -144,9 +190,9 @@ describe('fading', () => {
 
     // A month later, with nothing having reinforced it.
     const later = new Date(Date.now() + 40 * 24 * 3600_000);
-    const retired = await decayWorkingSet(agent.agentId, later);
+    const faded = await decayWorkingSet(agent.agentId, later);
 
-    expect(retired).toBeGreaterThan(0);
+    expect(faded.retired).toBeGreaterThan(0);
     const still = await mind.getAttention(item.id);
     expect(still?.state).toBe('RETIRED');
     // Retired, not deleted: "what did it used to care about" stays answerable.
@@ -310,6 +356,172 @@ describe('turning a thought into something it might say', () => {
     });
     const outcome = await wakeAgent(agent.agentId);
     expect(outcome.candidates).toBe(0);
+  });
+});
+
+/*
+  The one gate on an agent choosing its own subject.
+
+  Answering about an election when somebody asks is the engagement heuristic's
+  decision and the policy's. Raising one is this agent deciding by itself to
+  publish a political opinion on somebody's real account, which is what
+  origination made possible and nothing stopped.
+*/
+describe('what it will not raise by itself', () => {
+  const politically = {
+    kind: 'LESSON' as const,
+    summary: 'The election turned on turnout rather than on any of the arguments anybody made.',
+    salience: 85,
+    confidence: 0.9,
+    fingerprint: 'political',
+  };
+
+  it('does not offer a political opinion as something to post', async () => {
+    const agent = await agentThatThinks({ autonomy: 'SUGGEST' });
+    await mind.remember({ agentId: agent.agentId, ...politically });
+
+    expect(await formIntentions(agent.agentId)).toBe(0);
+    expect(await contentRepo.listIdeas(agent.agentId, 'unused')).toHaveLength(0);
+  });
+
+  it('leaves the item on its mind and says why it was not offered', async () => {
+    // Not settled and not hidden: it is still a live interest, and the refusal
+    // appears in the same list of factors that explains every other score.
+    const agent = await agentThatThinks({ autonomy: 'SUGGEST' });
+    await mind.remember({ agentId: agent.agentId, ...politically });
+    await formIntentions(agent.agentId);
+
+    const items = await mind.onItsMind(agent.agentId);
+    expect(items).toHaveLength(1);
+    const factor = items[0]!.factors.find((each) => each.name === 'not-raised-unprompted');
+    expect(factor?.detail).toContain('does not start the conversation');
+    // Worth no points, so a refusal costs the item nothing.
+    expect(factor?.points).toBe(0);
+    expect(items[0]!.salience).toBe(85);
+  });
+
+  it('keeps it out of an original post, which has no question to be relevant to', async () => {
+    const agent = await agentThatThinks({ autonomy: 'SUGGEST' });
+    await mind.remember({ agentId: agent.agentId, ...politically });
+    expect(await mindForMessage(agent.agentId, '', true)).toHaveLength(0);
+  });
+
+  it('still lets it answer when somebody brings the subject up', async () => {
+    // The promise is "does not raise it", never "may not discuss it". What an
+    // agent says in an answer is the policy's business and the owner's.
+    const agent = await agentThatThinks({ autonomy: 'SUGGEST' });
+    await mind.remember({ agentId: agent.agentId, ...politically });
+
+    const forReply = await mindForMessage(
+      agent.agentId,
+      'What did you make of the election turnout argument everyone was having?',
+      false,
+    );
+    expect(forReply).toHaveLength(1);
+  });
+
+  it('does not refuse ordinary engineering talk', async () => {
+    const agent = await agentThatThinks({ autonomy: 'SUGGEST' });
+    await mind.remember({
+      agentId: agent.agentId,
+      kind: 'LESSON',
+      summary: 'A worker that died mid-job resumes from the last settled state rather than starting again.',
+      salience: 80,
+      confidence: 0.9,
+      fingerprint: 'engineering',
+    });
+    expect(await formIntentions(agent.agentId)).toBe(1);
+  });
+});
+
+/*
+  What a faded thought leaves behind.
+
+  The working set is forgetful on purpose. Without this, an agent could work
+  something out, hold it a fortnight and lose it -- a machine that learns and
+  then forgets. It writes into the same six memory scopes everything else uses,
+  because a second store is a second answer to "what does this agent know".
+*/
+describe('keeping what was worth learning', () => {
+  const later = () => new Date(Date.now() + 400 * 24 * 3600_000);
+  const evidence = [{ kind: 'EVENT', ref: 'https://x.com/somebody/status/1', note: 'where it came from', at: null }];
+
+  it('keeps a lesson as persona memory when it fades', async () => {
+    const agent = await agentThatThinks();
+    await mind.remember({
+      agentId: agent.agentId,
+      kind: 'LESSON',
+      summary: 'Replying to the right post is harder than writing the reply.',
+      salience: 70,
+      confidence: 0.8,
+      evidence,
+      fingerprint: 'lesson-kept',
+    });
+
+    const faded = await decayWorkingSet(agent.agentId, later());
+    expect(faded.retired).toBeGreaterThan(0);
+    expect(faded.kept).toBe(1);
+
+    const kept = await memoriesRepo.searchMemories({ agentId: agent.agentId, scopes: ['PERSONA'], limit: 10 });
+    expect(kept.items.map((memory) => memory.content)).toContain(
+      'Replying to the right post is harder than writing the reply.',
+    );
+    // The evidence travels, because a memory whose grounds are gone is an
+    // assertion. And no reasoning travels with it: a summary is not a
+    // transcript.
+    const origin = kept.items.find((memory) => memory.content.startsWith('Replying'))?.origin as
+      | Record<string, unknown>
+      | null;
+    expect(origin?.from).toBe('deliberation');
+    expect((origin?.evidence as unknown[]).length).toBe(1);
+  });
+
+  it('keeps nothing from an interest that simply stopped mattering', async () => {
+    const agent = await agentThatThinks();
+    await mind.remember({
+      agentId: agent.agentId,
+      kind: 'INTEREST',
+      summary: 'Somebody was briefly excited about a thing and then nobody mentioned it again.',
+      salience: 70,
+      confidence: 0.9,
+      evidence,
+      fingerprint: 'interest-dropped',
+    });
+
+    const faded = await decayWorkingSet(agent.agentId, later());
+    expect(faded.retired).toBeGreaterThan(0);
+    // An interest that faded is not a fact. That it faded is already on the
+    // retired row.
+    expect(faded.kept).toBe(0);
+  });
+
+  it('keeps nothing it has no evidence for, whatever it scored', async () => {
+    const agent = await agentThatThinks();
+    await mind.remember({
+      agentId: agent.agentId,
+      kind: 'LESSON',
+      summary: 'Something it concluded from nothing anybody can check.',
+      salience: 95,
+      confidence: 1,
+      fingerprint: 'unevidenced',
+    });
+
+    expect((await decayWorkingSet(agent.agentId, later())).kept).toBe(0);
+  });
+
+  it('keeps nothing it is still unsure about', async () => {
+    const agent = await agentThatThinks();
+    await mind.remember({
+      agentId: agent.agentId,
+      kind: 'LESSON',
+      summary: 'Something it half thinks might be true and has not established.',
+      salience: 70,
+      confidence: 0.3,
+      evidence,
+      fingerprint: 'unsure-lesson',
+    });
+
+    expect((await decayWorkingSet(agent.agentId, later())).kept).toBe(0);
   });
 });
 
