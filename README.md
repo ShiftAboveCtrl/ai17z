@@ -677,6 +677,7 @@ How it works:
 - [Architecture overview](docs/architecture/OVERVIEW.md) · [Data model](docs/architecture/DATA_MODEL.md) · [Jobs and the runtime](docs/architecture/JOBS.md)
 - [Memory](docs/architecture/MEMORY.md) · [Channels](docs/architecture/CHANNELS.md) · [Models](docs/architecture/MODELS.md) · [Pipelines](docs/architecture/PIPELINES.md)
 - [The social layer: identity, relationships, voice](docs/architecture/SOCIAL.md)
+- [Persistent autonomous deliberation](docs/architecture/DELIBERATION.md) — what an agent thinks about between the things it is asked
 - [Cadence: when an account is read and may act](docs/architecture/CADENCE.md) · [Capabilities](docs/architecture/CAPABILITIES.md)
 - [Connecting an account and security challenges](docs/architecture/SIGN_IN.md) · [Persona sources](docs/architecture/PERSONA_SOURCES.md)
 - [The three-tab X runtime](docs/architecture/X_RUNTIME.md) · [Reading X](docs/architecture/X_READING.md) · [Searching X itself](docs/architecture/X_INTELLIGENCE.md) · [Owner notifications](docs/architecture/NOTIFICATIONS.md) · [Agent packages](docs/architecture/AGENT_PACKAGES.md)

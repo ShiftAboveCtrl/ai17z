@@ -62,6 +62,19 @@ against the session the agent needs for its own work. See `X_READING.md`.
 | `model_calls` | One row per provider attempt, written before and after the call. Stores prompt layers and raw output. |
 | `trace_events` | The narrative, keyed by job. |
 
+## Deliberation
+
+| Table | Notes |
+| --- | --- |
+| `agent_attention` | The working set: what is on an agent's mind, with the factors that put it there. Unique on `(agent, kind, fingerprint)`, which is what makes a repeat sighting reinforcement rather than duplication. |
+| `agent_goals` | What it is trying to do, and whether an owner or the agent decided. |
+| `agent_reflections` | Every time deliberation ran, including the runs that found nothing. |
+| `agent_wake` | When an agent next thinks, and how much it may do on its own. One row per agent, claimed by the statement that moves its due time. |
+| `repo_sources` / `repo_events` | Repositories being watched and what they did. Read only; the token, when there is one, is sealed under the master key and never selected into anything a route can return. |
+
+No raw model reasoning is stored in any of these. Every row is a conclusion, the
+evidence it rests on, and how sure the agent is. See `DELIBERATION.md`.
+
 ## Memory
 
 | Table | Notes |
