@@ -10,6 +10,7 @@ import {
 import {
   decayWorkingSet,
   formIntentions,
+  lookIntoSomething,
   mindForMessage,
   setPauseAll,
   wakeAgent,
@@ -522,6 +523,95 @@ describe('keeping what was worth learning', () => {
     });
 
     expect((await decayWorkingSet(agent.agentId, later())).kept).toBe(0);
+  });
+});
+
+/*
+  Going and finding out.
+
+  An agent that keeps a list of things it does not understand and never looks
+  any of them up is not curious, it is uncertain -- and uncertainty that never
+  resolves is the state an agent is in without any of this. The searching is the
+  existing research step; what is proved here is what is done with the answer,
+  and the declines that stop a curious agent hammering a search engine.
+*/
+describe('looking something up', () => {
+  const found = async () => [
+    {
+      kind: 'search' as const,
+      query: 'anything',
+      source: 'Web search',
+      title: 'Agent memory and restarts',
+      summary: 'Something that bears on the question.',
+      url: 'https://example.invalid/memory',
+      retrievedAt: new Date().toISOString(),
+    },
+  ];
+
+  async function wondering(agent: { agentId: string }, over: { salience?: number; kind?: 'QUESTION' | 'INTEREST' } = {}) {
+    return mind.remember({
+      agentId: agent.agentId,
+      kind: over.kind ?? 'QUESTION',
+      summary: 'Whether agent memory that survives a restart needs a database at all.',
+      salience: over.salience ?? 60,
+      confidence: 0.4,
+      fingerprint: 'wondering',
+    });
+  }
+
+  it('attaches what it found as evidence, and leaves the question open', async () => {
+    const agent = await agentThatThinks();
+    const before = await wondering(agent);
+
+    const outcome = await lookIntoSomething(agent.agentId, { search: found });
+    expect(outcome?.findings).toBe(1);
+
+    const [after] = await mind.onItsMind(agent.agentId);
+    // Evidence with a reference somebody can follow.
+    expect(after!.evidence.some((each) => each.ref === 'https://example.invalid/memory')).toBe(true);
+    // Still open. A search engine returning something is not an agent's
+    // question being answered -- that is reflection's decision, and a wrong
+    // result reads exactly like a right one.
+    expect(after!.state).toBe('ACTIVE');
+    expect(after!.summary).toBe(before.summary);
+    // Moved a little, not a lot: having found something relevant is not the
+    // same as having understood it.
+    expect(after!.confidence).toBeGreaterThan(before.confidence);
+    expect(after!.confidence).toBeLessThanOrEqual(0.75);
+  });
+
+  it('does not look the same thing up again straight away', async () => {
+    const agent = await agentThatThinks();
+    await wondering(agent);
+
+    expect(await lookIntoSomething(agent.agentId, { search: found })).not.toBeNull();
+    // The review clock is the only thing between a curious agent and a search
+    // engine it asks the same question of every quarter of an hour.
+    expect(await lookIntoSomething(agent.agentId, { search: found })).toBeNull();
+  });
+
+  it('records that it looked and found nothing, rather than asking again', async () => {
+    const agent = await agentThatThinks();
+    await wondering(agent);
+
+    const outcome = await lookIntoSomething(agent.agentId, { search: async () => [] });
+    expect(outcome?.findings).toBe(0);
+    expect(await lookIntoSomething(agent.agentId, { search: found })).toBeNull();
+  });
+
+  it('does not look up a subject, only a question', async () => {
+    const agent = await agentThatThinks();
+    await wondering(agent, { kind: 'INTEREST' });
+    expect(await lookIntoSomething(agent.agentId, { search: found })).toBeNull();
+  });
+
+  it('never looks anything up on a wake that was not allowed to', async () => {
+    // The API owns no browsers, so its "think now" does everything else and
+    // says it looked nothing up rather than quietly failing to.
+    const agent = await agentThatThinks();
+    await wondering(agent);
+    const outcome = await wakeAgent(agent.agentId);
+    expect(outcome.lookedInto).toBeNull();
   });
 });
 

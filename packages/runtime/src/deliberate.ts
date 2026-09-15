@@ -25,6 +25,7 @@ import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
 import { worthNoticing } from './repoWatcher';
 import { reticenceReason, unpromptedSubject } from './reticence';
+import { lookIntoSomething } from './curiosity';
 import { decayed, fingerprintOf, overlap, scoreObservation, type KnownPerson, type Observation, type SalienceContext } from './salience';
 
 const log = createLogger('deliberate');
@@ -103,6 +104,8 @@ export interface WakeOutcome {
   retired: number;
   /** What faded but was worth keeping, written into the six memory scopes. */
   kept: number;
+  /** A question it went and looked into, when it did. */
+  lookedInto: { question: string; findings: number } | null;
   /** Candidates handed to the existing backlog. */
   candidates: number;
   deep: boolean;
@@ -122,6 +125,7 @@ function emptyOutcome(agentId: string, autonomy: AutonomyLevel, reason: string, 
     produced: 0,
     retired: 0,
     kept: 0,
+    lookedInto: null,
     candidates: 0,
     deep: false,
     reason,
@@ -658,7 +662,21 @@ export async function formIntentions(agentId: string, now: Date = new Date()): P
  * the claim that selected this agent already moved its due time. A worker that
  * dies mid-wake loses the rest of this wake and nothing else.
  */
-export async function wakeAgent(agentId: string, options: { now?: Date } = {}): Promise<WakeOutcome> {
+export async function wakeAgent(
+  agentId: string,
+  options: {
+    now?: Date;
+    /**
+     * Whether this wake may go and look something up.
+     *
+     * Passed in rather than worked out, because the answer is "am I the worker",
+     * and a module that guesses that is a module that will be wrong in a test.
+     * The API owns no browsers, so its "think now" leaves this false and the
+     * outcome says nothing was looked up rather than quietly failing to.
+     */
+    mayResearch?: boolean;
+  } = {},
+): Promise<WakeOutcome> {
   const now = options.now ?? new Date();
   const wake = await mind.getWake(agentId);
   if (!wake || !wake.enabled) {
@@ -733,11 +751,32 @@ export async function wakeAgent(agentId: string, options: { now?: Date } = {}): 
     kept += faded.kept;
   }
 
+  /*
+    Going and finding out, once per wake at most.
+
+    After reflection rather than before it, because reflection is what turns
+    "somebody said a thing I do not understand" into a question worth asking --
+    looking first would mean looking up last wake's questions with this wake's
+    budget.
+
+    Thinking rather than acting, so THINK is the rung: an owner who asked for an
+    agent that develops its own interests and never resolves any of them has an
+    agent that only accumulates doubt. It still costs a browser lease, so it
+    happens only where a browser exists and only when the owner's own research
+    sources are on.
+  */
+  let lookedInto: WakeOutcome['lookedInto'] = null;
+  if (options.mayResearch && autonomyAtLeast(wake.autonomy, 'THINK')) {
+    const found = await lookIntoSomething(agentId, { now });
+    if (found) lookedInto = { question: found.question, findings: found.findings };
+  }
+
   if (autonomyAtLeast(wake.autonomy, 'SUGGEST')) {
     candidates = await formIntentions(agentId, now);
   }
 
-  const somethingHappened = attended > 0 || produced > 0 || candidates > 0 || resolvedCount > 0;
+  const somethingHappened =
+    attended > 0 || produced > 0 || candidates > 0 || resolvedCount > 0 || lookedInto !== null;
   const reason = somethingHappened
     ? [
         attended > 0 ? `${attended} worth noticing` : '',
@@ -746,6 +785,11 @@ export async function wakeAgent(agentId: string, options: { now?: Date } = {}): 
         candidates > 0 ? `${candidates} worth saying` : '',
         retired > 0 ? `${retired} faded` : '',
         kept > 0 ? `${kept} kept` : '',
+        lookedInto
+          ? lookedInto.findings > 0
+            ? `looked one up and found ${lookedInto.findings}`
+            : 'looked one up and found nothing'
+          : '',
       ]
         .filter(Boolean)
         .join(', ')
@@ -788,6 +832,7 @@ export async function wakeAgent(agentId: string, options: { now?: Date } = {}): 
     produced,
     retired,
     kept,
+    lookedInto,
     candidates,
     deep,
     reason,
@@ -807,7 +852,9 @@ export async function wakeDueAgents(limit = 3): Promise<WakeOutcome[]> {
   const outcomes: WakeOutcome[] = [];
   for (const row of due) {
     try {
-      outcomes.push(await wakeAgent(row.agentId));
+      // This loop runs in the worker, which is the only process that owns a
+      // browser -- so this is the one path a lookup can happen on.
+      outcomes.push(await wakeAgent(row.agentId, { mayResearch: true }));
     } catch (error) {
       // One agent's bad wake is not the loop's problem. The claim already moved
       // its due time, so a failing agent backs off on its own rather than being

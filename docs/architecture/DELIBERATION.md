@@ -286,6 +286,44 @@ already there:
 A seventh store would have to answer "what does this agent know about itself"
 alongside the sixth, and the first question anybody would ask is which one wins.
 
+## Going and finding out
+
+An agent that keeps a list of things it does not understand and never looks any
+of them up is not curious, it is uncertain -- and uncertainty that never
+resolves is the state an agent is already in without any of this. `curiosity.ts`
+is the one place deliberation does something rather than only think about it.
+
+**It is the existing research step, not a second one.** `research.ts` already
+knows how: the open web through the browser that is already running,
+DexScreener for a contract address or a ticker, a budget, the owner's own
+source-by-source switches, and a lookup that fails reported as a gap rather than
+swallowed. This module decides only *what* to look up and *what to do with the
+answer*.
+
+**Only a question, never a subject.** `CURIOSITY` and `QUESTION` are the kinds
+that can be asked. Sending an `INTEREST` to a search engine returns whatever is
+being said about that subject today, which is how a working set fills with the
+news.
+
+**What comes back is evidence and the question stays open.** Nothing here marks
+anything answered. An agent that decides its own question is settled because a
+search engine returned something is doing exactly the laundering `research.ts`
+exists to prevent, and a wrong result reads identically to a right one.
+Confidence moves a little -- having found something relevant is not the same as
+having understood it -- and reflection, a model looking at the item and its
+evidence together, is what may later resolve it.
+
+**Bounded by the clock the working set already has.** One lookup per wake, and
+an item just looked into has its `review_at` pushed a day forward whether or not
+anything came back. A question nothing could answer is not a question to ask
+again in fifteen minutes; that is the loop that turns curiosity into an agent
+hammering a search engine. No second timer.
+
+**It needs a browser, so it belongs to the worker.** The API owns no browsers,
+so `wakeAgent` takes an explicit permission rather than guessing where it is
+running, and an owner pressing "think now" gets everything else. The outcome says
+nothing was looked up rather than quietly doing less than it claims.
+
 ## Watching a project
 
 `docs/architecture/DELIBERATION.md` is also where repository awareness lands,
@@ -328,4 +366,6 @@ builds do. A release always counts; a red build counts because somebody may ask.
 | Subjects it will not raise, and the engineering talk it must not refuse | `tests/unit/reticence.test.ts` |
 | An old post that arrived today, and a genuinely old one | `tests/integration/deliberation.test.ts` |
 | What a faded thought leaves behind, and what it does not | same file |
+| Which question is worth a lookup, and what it would ask | `tests/unit/curiosity.test.ts` |
+| What a lookup does to the item, and the declines that bound it | `tests/integration/deliberation.test.ts` |
 | Reading a project, and the boundary around it | `tests/integration/githubCapabilities.test.ts` |
