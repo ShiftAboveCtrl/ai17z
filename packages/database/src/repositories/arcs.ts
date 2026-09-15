@@ -74,50 +74,7 @@ export async function saveThreadSummary(input: {
   );
 }
 
-// ── Narratives ──────────────────────────────────────────────────────────────
 
-export interface NarrativeRow {
-  id: string;
-  label: string;
-  detail: string;
-  useCount: number;
-  lastUsedAt: string | null;
-}
-
-export async function recordNarrative(agentId: string, label: string, detail = ''): Promise<void> {
-  await query(
-    `INSERT INTO narratives (agent_id, label, detail, use_count, last_used_at)
-     VALUES ($1,$2,$3,1, now())
-     ON CONFLICT (agent_id, label) DO UPDATE
-       SET use_count = narratives.use_count + 1, last_used_at = now(),
-           detail = CASE WHEN excluded.detail <> '' THEN excluded.detail ELSE narratives.detail END`,
-    [agentId, label.trim().toLowerCase(), detail],
-  );
-}
-
-export async function listNarratives(agentId: string, limit = 30): Promise<NarrativeRow[]> {
-  return mapRows<NarrativeRow>(
-    await query('SELECT * FROM narratives WHERE agent_id = $1 ORDER BY use_count DESC LIMIT $2', [agentId, limit]),
-  );
-}
-
-/**
- * Narratives used too recently to use again.
- *
- * An agent with three ideas it recycles endlessly is worse than one that knows
- * it already made that argument this week.
- */
-export async function overusedNarratives(agentId: string, withinHours = 48, minUses = 2): Promise<NarrativeRow[]> {
-  return mapRows<NarrativeRow>(
-    await query(
-      `SELECT * FROM narratives
-        WHERE agent_id = $1 AND use_count >= $3
-          AND last_used_at > now() - ($2::int * interval '1 hour')
-        ORDER BY last_used_at DESC LIMIT 10`,
-      [agentId, withinHours, minUses],
-    ),
-  );
-}
 
 // ── Entities ────────────────────────────────────────────────────────────────
 

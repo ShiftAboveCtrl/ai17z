@@ -88,7 +88,7 @@ export { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
 export type { XAccountObservationRow, RecordObservationInput } from './repositories/xAccountObservations';
 export type { StanceRow, EvidenceRow } from './repositories/stances';
 export type { FingerprintRow, RecentOutputRow } from './repositories/voice';
-export type { ThreadStateRow, NarrativeRow, EntityRow } from './repositories/arcs';
+export type { ThreadStateRow, EntityRow } from './repositories/arcs';
 export type { IdeaRow } from './repositories/content';
 export type { PostingRow } from './repositories/posting';
 export type { SocialMetrics } from './repositories/evaluation';

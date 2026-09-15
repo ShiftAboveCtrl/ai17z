@@ -32,7 +32,6 @@ import {
 
 import {
   observeEntities,
-  recordNarratives,
 } from '../arcs';
 import {
   harvestIdeas,
@@ -417,10 +416,16 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       }).catch(() => undefined);
     }
 
-    // What the agent keeps arguing, and what keeps coming up. Both are recorded
-    // from published text only: a draft is not an argument the agent has made.
+    /*
+      What came up, recorded from published text only: a draft is not something
+      the agent has said.
+
+      What it keeps *arguing* used to be recorded here too, into a `narratives`
+      table that nothing ever read and that filled with stopwords. Deliberation's
+      NARRATIVE items do that job properly now, so there is one answer to it
+      rather than two. See migration 0079.
+    */
     if (result.status !== 'DRY_RUN') {
-      await recordNarratives(bundle.agent.id, output).catch(() => undefined);
       await observeEntities(bundle.agent.id, output).catch(() => undefined);
     }
 

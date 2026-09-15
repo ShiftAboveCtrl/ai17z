@@ -161,19 +161,6 @@ async function summariseThread(
 }
 
 /**
- * Records the recurring things the agent is arguing.
- *
- * Detected from the subjects it keeps returning to, not from a fixed list: an
- * agent that has three ideas and recycles them endlessly is worse than one that
- * knows it already made that argument this week.
- */
-export async function recordNarratives(agentId: string, text: string): Promise<void> {
-  for (const subject of candidateSubjects(text)) {
-    await arcsRepo.recordNarrative(agentId, subject).catch(() => undefined);
-  }
-}
-
-/**
  * Notes the things a post mentioned, and that they came up together.
  *
  * The only claim is co-occurrence. Nothing here infers a relationship between
