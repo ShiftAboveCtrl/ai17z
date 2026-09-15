@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { arcs } from '@xbam/database';
-import { observeEntities, recordNarratives } from '@xbam/runtime';
+import { observeEntities } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -42,33 +42,6 @@ describe('thread state', () => {
     await arcs.touchThread({ agentId: fixture.agentId, remoteConversationId: 'a' });
     await arcs.touchThread({ agentId: fixture.agentId, remoteConversationId: 'b' });
     expect((await arcs.getThreadState(fixture.agentId, 'a'))!.turnCount).toBe(1);
-  });
-});
-
-describe('narratives', () => {
-  it('counts the arguments the agent keeps making', async () => {
-    const fixture = await createFixture();
-    await recordNarratives(fixture.agentId, 'Project Q got the distribution wrong.');
-    await recordNarratives(fixture.agentId, 'Project Q still has the same problem.');
-
-    const narratives = await arcs.listNarratives(fixture.agentId);
-    const projectQ = narratives.find((n) => n.label === 'project q');
-    expect(projectQ?.useCount).toBe(2);
-  });
-
-  it('reports one used too recently, so it is not made again immediately', async () => {
-    const fixture = await createFixture();
-    await recordNarratives(fixture.agentId, 'Project Q got the distribution wrong.');
-    await recordNarratives(fixture.agentId, 'Project Q again.');
-
-    const overused = await arcs.overusedNarratives(fixture.agentId, 48, 2);
-    expect(overused.map((n) => n.label)).toContain('project q');
-  });
-
-  it('leaves something used once alone', async () => {
-    const fixture = await createFixture();
-    await recordNarratives(fixture.agentId, 'Acme Labs shipped something.');
-    expect(await arcs.overusedNarratives(fixture.agentId, 48, 2)).toHaveLength(0);
   });
 });
 

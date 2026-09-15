@@ -1,0 +1,25 @@
+-- ---------------------------------------------------------------------------
+-- One answer to "what does this agent keep coming back to"
+-- ---------------------------------------------------------------------------
+--
+-- `narratives` was written on every published action and read by nothing. Its
+-- one caller in the entire repository was a test. What it collected was not
+-- usable either: the live agent's rows were `ai17z(9)`, `what(7)`, `chrome(4)`,
+-- `good(4)`, `that(2)`, `what i(2)` -- stopwords, because `candidateSubjects`
+-- is built to find the subject of a *stance* in one sentence and was being
+-- handed whole posts.
+--
+-- Its own comment says what it was for: "an agent that has three ideas and
+-- recycles them endlessly is worse than one that knows it already made that
+-- argument this week." That is now the NARRATIVE kind on `agent_attention`,
+-- which does it properly: fingerprinted on the subject so repeat sightings
+-- reinforce one item, carrying the evidence it came from, decaying on a
+-- half-life, and actually read back into prompts through `mindForMessage`.
+--
+-- Two answers to one question is the thing this codebase keeps saying it does
+-- not want, and the first thing anybody asks of the second one is why it
+-- disagrees with the first. So the older, unread, lower-quality one goes.
+--
+-- Nothing is lost that anything could read. `entity_edges`, which records that
+-- two things were named together, is untouched and is a different claim.
+DROP TABLE IF EXISTS narratives;
