@@ -220,6 +220,23 @@ describe('what X said went wrong', () => {
     expect(classifyDetailed(status, error).outcome).toBe(expected);
   });
 
+  it('reads an empty 404 as a changed shape, not a missing account', () => {
+    /*
+      When X means "no such account" it says so, in a JSON error somebody can
+      read. A 404 with nothing in it means the operation is not addressable the
+      way this build asks for it.
+
+      The distinction decides whether the fallback runs at all: NOT_FOUND is in
+      STOP_ASKING, so reading an empty 404 as a missing account stops the read
+      dead and one retired operation takes a working feature down with it. Live
+      X returns exactly this for two of its operations today.
+    */
+    expect(classifyDetailed(404, '').outcome).toBe('SCHEMA_CHANGED');
+    expect(classifyDetailed(404, null).outcome).toBe('SCHEMA_CHANGED');
+    // And a 404 that does say so is still a missing account.
+    expect(classifyDetailed(404, 'User not found').outcome).toBe('NOT_FOUND');
+  });
+
   it('treats an unrecognised answer as a changed shape, not a missing account', () => {
     // The fallback depends on this distinction: a changed shape is worth trying
     // another reader for, and a missing account is not.

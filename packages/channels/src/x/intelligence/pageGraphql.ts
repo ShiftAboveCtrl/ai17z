@@ -97,54 +97,141 @@ const idCache = new WeakMap<object, Map<string, string>>();
  * deliberately tolerant: an operation that cannot be found is reported missing
  * so the layer above can use a different backend, rather than guessed at.
  */
+/**
+ * The in-page half of discovery, as source rather than as a closure.
+ *
+ * **This must not be a TypeScript arrow function handed to `page.evaluate`, and
+ * that is not a style choice.** The worker runs under `tsx`, whose esbuild
+ * transform rewrites named inner functions to `__name(fn, "fn")` to preserve
+ * `Function.prototype.name`. Playwright serialises the *compiled* function into
+ * the page, where `__name` does not exist, and the evaluation dies with
+ * `ReferenceError: __name is not defined` before it reads a single script.
+ *
+ * The failure was invisible for a reason worth recording: the call site caught
+ * everything and returned an empty map, which reads exactly like "X did not
+ * expose its operations". So the backend reported DEGRADED, every read in AI17Z
+ * fell through to the rendered page, and the layer's own honesty machinery
+ * dutifully wrote `x-graphql could not answer` on every answer it produced.
+ * Nothing was broken except that the better half of the layer had never once
+ * run outside a unit test.
+ *
+ * Found by asking a live signed-in browser what it could actually see. A string
+ * is immune: it is sent verbatim, so what runs in the page is what is written
+ * here.
+ */
+const DISCOVERY_SOURCE = `(async () => {
+  const wanted = ['UserByScreenName', 'UserTweets', 'UserTweetsAndReplies', 'SearchTimeline', 'TweetDetail'];
+  const ids = {};
+
+  // Every text worth looking at, cheapest first: what is already in the
+  // document, then the bundles it loaded. Collected rather than scanned as we
+  // go, so there is no inner function for a transform to rename.
+  const texts = [];
+  const inline = document.querySelectorAll('script');
+  for (let i = 0; i < inline.length; i += 1) {
+    const body = inline[i].textContent;
+    if (body) texts.push(body);
+  }
+
+  const sources = [];
+  const tags = document.querySelectorAll('script[src]');
+  for (let i = 0; i < tags.length; i += 1) {
+    const src = tags[i].src;
+    if (!src) continue;
+    if (!/[/](responsive-web|shared)[/]/.test(src) && !/main[.]|api[.]/.test(src)) continue;
+    // Most likely first. X ships the operation map in one module inside its
+    // main or api bundle, and a tab accumulates on-demand chunks -- video,
+    // Grok, article readers -- as it is used. Without an order, a cap scans
+    // everything except the bundle that matters.
+    const file = src.slice(src.lastIndexOf('/') + 1);
+    const rank = file.indexOf('api.') === 0 ? 0 : file.indexOf('main.') === 0 ? 1 : file.indexOf('shared~') === 0 ? 2 : 3;
+    sources.push({ src: src, rank: rank });
+  }
+  sources.sort((a, b) => a.rank - b.rank);
+
+  for (let i = 0; i < sources.length && i < 30; i += 1) {
+    let done = true;
+    for (let w = 0; w < wanted.length; w += 1) { if (!ids[wanted[w]]) { done = false; break; } }
+    if (done) break;
+    try {
+      const response = await fetch(sources[i].src, { credentials: 'omit' });
+      if (!response.ok) continue;
+      texts.push(await response.text());
+    } catch (e) {
+      // A bundle that will not load is not worth failing over; the next one
+      // may carry the same map.
+    }
+  }
+
+  for (let t = 0; t < texts.length; t += 1) {
+    for (let w = 0; w < wanted.length; w += 1) {
+      const name = wanted[w];
+      if (ids[name]) continue;
+      // The pair appears in either order depending on how the bundle was
+      // minified, so both are tried rather than assuming one shape.
+      const forward = new RegExp('queryId:"([a-zA-Z0-9_-]{8,})"[^}]{0,120}?operationName:"' + name + '"').exec(texts[t]);
+      const backward = new RegExp('operationName:"' + name + '"[^}]{0,120}?queryId:"([a-zA-Z0-9_-]{8,})"').exec(texts[t]);
+      const id = (forward && forward[1]) || (backward && backward[1]);
+      if (!id) continue;
+      // Each operation declares the feature switches X sends with it. Sending
+      // a different set is refused -- with an empty-bodied 404 rather than
+      // anything that says so -- which is why these are read rather than
+      // guessed.
+      //
+      // Found by hand rather than by regular expression on purpose: this
+      // source is a string, the pattern would need three levels of escaping,
+      // and an escaping mistake here is a silent SyntaxError inside a page.
+      const switches = [];
+      const opAt = texts[t].indexOf('operationName:"' + name + '"');
+      if (opAt >= 0) {
+        const listAt = texts[t].indexOf('featureSwitches:[', opAt);
+        if (listAt >= 0 && listAt - opAt < 200) {
+          const from = listAt + 'featureSwitches:['.length;
+          const to = texts[t].indexOf(']', from);
+          if (to > from) {
+            const parts = texts[t].slice(from, to).split(',');
+            for (let p = 0; p < parts.length; p += 1) {
+              const cleaned = parts[p].split('"').join('').trim();
+              if (cleaned) switches.push(cleaned);
+            }
+          }
+        }
+      }
+      ids[name] = id;
+      ids['features:' + name] = switches.join(',');
+    }
+  }
+  return ids;
+})()`;
+
+/**
+ * Pull operation ids out of the scripts X has already loaded.
+ *
+ * The bundles carry `{queryId:"...",operationName:"UserTweets",...}` because
+ * the app needs the same mapping this does. Read in one page evaluation, and
+ * deliberately tolerant: an operation that cannot be found is reported missing
+ * so the layer above can use a different backend, rather than guessed at.
+ */
 async function discoverOperationIds(page: Page): Promise<Map<string, string>> {
   const cached = idCache.get(page as unknown as object);
   if (cached && cached.size > 0) return cached;
 
-  const found = await page
-    .evaluate(async () => {
-      const wanted = ['UserByScreenName', 'UserTweets', 'UserTweetsAndReplies', 'SearchTimeline', 'TweetDetail'];
-      const ids: Record<string, string> = {};
+  let found: Record<string, string> = {};
+  try {
+    found = (await page.evaluate(DISCOVERY_SOURCE)) as Record<string, string>;
+  } catch (error) {
+    /*
+      Said out loud, because the silent version of this cost the product its
+      primary X reader for as long as it existed.
 
-      const scan = (text: string) => {
-        for (const name of wanted) {
-          if (ids[name]) continue;
-          // The pair appears in either order depending on how the bundle was
-          // minified, so both are tried rather than assuming one shape.
-          const forward = new RegExp(`queryId:"([a-zA-Z0-9_-]{8,})"[^}]{0,120}?operationName:"${name}"`).exec(text);
-          const backward = new RegExp(`operationName:"${name}"[^}]{0,120}?queryId:"([a-zA-Z0-9_-]{8,})"`).exec(text);
-          const id = forward?.[1] ?? backward?.[1];
-          if (id) ids[name] = id;
-        }
-      };
-
-      // Inline scripts first: they are already here and cost nothing.
-      for (const el of Array.from(document.querySelectorAll('script'))) {
-        if (el.textContent) scan(el.textContent);
-      }
-      if (wanted.every((n) => ids[n])) return ids;
-
-      // Then the bundles the page loaded. Same-origin and already in the
-      // browser's cache, so this is not new traffic to X of any consequence.
-      const sources = Array.from(document.querySelectorAll('script[src]'))
-        .map((el) => (el as HTMLScriptElement).src)
-        .filter((src) => /\/(responsive-web|shared)\//.test(src) || /main\.|api\./.test(src))
-        .slice(0, 24);
-
-      for (const src of sources) {
-        if (wanted.every((n) => ids[n])) break;
-        try {
-          const response = await fetch(src, { credentials: 'omit' });
-          if (!response.ok) continue;
-          scan(await response.text());
-        } catch {
-          // A bundle that will not load is not worth failing over; the next one
-          // may carry the same map.
-        }
-      }
-      return ids;
-    })
-    .catch(() => ({}) as Record<string, string>);
+      A bare catch here turns "the evaluation crashed" into "X exposed
+      nothing", and those want completely different things done about them.
+      The layer still degrades to the rendered page either way -- that part was
+      always right -- but somebody reading a log now finds out which happened.
+    */
+    log.warn('could not read X operation ids from the page', { message: (error as Error).message });
+    found = {};
+  }
 
   const map = new Map(Object.entries(found));
   if (map.size > 0) idCache.set(page as unknown as object, map);
@@ -167,6 +254,30 @@ interface GraphqlAnswer {
  * in the page. **Neither is returned**: this function hands back the answer and
  * nothing else, so there is no path by which a credential reaches this process.
  */
+/**
+ * The feature switches one operation actually asks for.
+ *
+ * X registers each operation with its own `featureSwitches` list and sends
+ * exactly those. Sending a different set is refused -- and refused with an
+ * empty-bodied 404 rather than with anything that says what was wrong, which is
+ * how `SearchTimeline` and `UserTweetsAndReplies` looked like missing accounts
+ * while `UserTweets` worked from the same code.
+ *
+ * So the declared list wins where discovery could read one. The hand-written
+ * `FEATURES` map stays as the floor: it is what an operation gets when its
+ * metadata could not be parsed, and it is what kept the working operations
+ * working for as long as it did.
+ */
+function featuresFor(ids: Map<string, string>, operation: string): Record<string, boolean> {
+  const declared = ids.get(`features:${operation}`);
+  if (!declared) return FEATURES;
+  const named = declared.split(',').filter(Boolean);
+  if (named.length === 0) return FEATURES;
+  const features: Record<string, boolean> = {};
+  for (const name of named) features[name] = true;
+  return features;
+}
+
 async function askGraphql(
   page: Page,
   queryId: string,
@@ -270,6 +381,27 @@ export function classifyDetailed(status: number, error: string | null) {
     return {
       outcome: 'NEEDS_SIGN_IN' as const,
       detail: 'X wants you to sign in again in the AI17Z browser window.',
+    };
+  }
+  /*
+    An empty-bodied 404 is not X saying the account is missing.
+
+    When X means that it says so, in a JSON error somebody can read. A 404 with
+    nothing in it means the operation is not addressable the way it was asked
+    for -- a query id that has moved, an operation this build no longer serves,
+    a shape that changed. Those are the same thing as a changed schema, and they
+    want the same response: try the other reader.
+
+    The distinction is load-bearing because `NOT_FOUND` is in `STOP_ASKING`.
+    Reading an empty 404 as a missing account stops the fallback dead, so a
+    single retired operation would take a working feature down with it rather
+    than degrading to the rendered page. Live X returns exactly this for two
+    operations today, which is how it was found.
+  */
+  if (status === 404 && text.trim() === '') {
+    return {
+      outcome: 'SCHEMA_CHANGED' as const,
+      detail: 'X did not serve that read the way this build asks for it.',
     };
   }
   if (status === 404 || text.includes('user not found') || text.includes('does not exist')) {
@@ -483,6 +615,19 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
     }
     try {
       return await withSession(channel, 'RESEARCH', async (session) => {
+        /*
+          On X before asking what X exposes.
+
+          The RESEARCH tab is opened blank and stays blank until something
+          navigates it, and `about:blank` has no scripts -- so readiness on a
+          fresh tab reported "X did not expose its read operations", every
+          capability showed UNAVAILABLE on the health screen, and the one place
+          an owner could have seen that the structured reader was not running
+          said the opposite of the truth. The read paths already did this; the
+          question about whether they can is the one that was asking on an empty
+          page.
+        */
+        await ensureOnX(session.page);
         const ids = await discoverOperationIds(session.page);
         if (ids.size === 0) {
           return {
@@ -524,7 +669,7 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
         queryId,
         OPERATIONS.userByScreenName,
         { screen_name: handle, withSafetyModeUserFields: true },
-        FEATURES,
+        featuresFor(ids, OPERATIONS.userByScreenName),
       );
       if (!answer.ok) {
         const { outcome, detail } = outcomeFromError(answer.status, answer.error);
@@ -577,7 +722,7 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
             withV2Timeline: true,
             ...(cursor ? { cursor } : {}),
           },
-          FEATURES,
+          featuresFor(ids, operation),
         );
 
         if (!answer.ok) {
@@ -727,7 +872,7 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
           querySource: 'typed_query',
           product: request.latest === false ? 'Top' : 'Latest',
         },
-        FEATURES,
+        featuresFor(ids, OPERATIONS.searchTimeline),
       );
       if (!answer.ok) {
         const { outcome, detail } = outcomeFromError(answer.status, answer.error);
@@ -784,7 +929,7 @@ async function readTweetDetail(
       withVoice: true,
       withV2Timeline: true,
     },
-    FEATURES,
+    featuresFor(ids, OPERATIONS.tweetDetail),
   );
   if (!answer.ok) {
     const { outcome, detail } = outcomeFromError(answer.status, answer.error);
