@@ -22,6 +22,7 @@ import {
 } from '../engagement';
 
 import { loadThreadContext } from '../arcs';
+import { mindForMessage } from '../deliberate';
 
 import type { JobBundle } from '../loadJob';
 
@@ -112,6 +113,22 @@ export async function stepStance(bundle: JobBundle): Promise<void> {
   const handle = context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle;
   const open = handle ? await stancesRepo.openCommitmentsTo(bundle.agent.id, handle, 2) : [];
 
+  /*
+    What has been on the agent's mind, where it bears on this.
+
+    Relevance-driven, and that is the whole of the rule. An agent may be uneasy
+    about something all week without every reply mentioning it; internal state
+    that leaks into unrelated conversations is worse than internal state
+    nobody has, because it reads as an agent that cannot tell what it is
+    talking about.
+
+    A post is the exception and gets the strongest items whatever they are
+    about: there is no incoming message for them to be relevant to, and "what
+    has this agent been thinking about" is precisely the question an original
+    post answers.
+  */
+  const mind = await mindForMessage(bundle.agent.id, text, bundle.job.actionType === 'POST');
+
   await observability.emitTrace({
     jobId: job.id,
     agentId: bundle.agent.id,
@@ -120,14 +137,21 @@ export async function stepStance(bundle: JobBundle): Promise<void> {
       stanceContext.relevant.length > 0
         ? `Holds a position on ${stanceContext.relevant.map((s) => s.subject).join(', ')}.`
         : 'No existing position touches this.',
-    data: { relevant: stanceContext.relevant, revised: stanceContext.revised, openCommitments: open.length },
+    data: {
+      relevant: stanceContext.relevant,
+      revised: stanceContext.revised,
+      openCommitments: open.length,
+      // Named rather than counted: "it brought two things it had been thinking
+      // about" is only useful if a trace says which two.
+      onItsMind: mind.map((item) => `${item.kind}: ${item.summary}`),
+    },
   });
 
   if (context) {
     await jobsRepo.updateJob(job.id, {
       resolvedContext: {
         ...context,
-        meta: { ...context.meta, stance: stanceContext, openCommitments: open },
+        meta: { ...context.meta, stance: stanceContext, openCommitments: open, mind },
       },
     });
   }

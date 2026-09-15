@@ -8,6 +8,7 @@ import { CreateView } from './studio/CreateView';
 import { RadarView } from './studio/RadarView';
 import { RelationshipsView } from './studio/RelationshipsView';
 import { GrowthView } from './studio/GrowthView';
+import { MindView } from './studio/MindView';
 import { AnalyticsView } from './studio/AnalyticsView';
 import { LaunchView } from './studio/LaunchView';
 import { ExperimentsView } from './studio/ExperimentsView';
@@ -33,6 +34,7 @@ import { ExperimentsView } from './studio/ExperimentsView';
 
 const VIEWS = [
   { id: 'command', label: 'Command', blurb: 'What the agent has seen, and what came of it.' },
+  { id: 'mind', label: 'Thinking', blurb: 'What it has been paying attention to, and how much it does on its own.' },
   { id: 'growth', label: 'Growth', blurb: 'What might be worth answering, and what was passed over.' },
   { id: 'radar', label: 'Radar', blurb: 'What a lot of accounts have started saying.' },
   { id: 'relationships', label: 'People', blurb: 'Who leads somewhere this agent does not already reach.' },
@@ -80,7 +82,7 @@ export function StudioPage() {
       <nav aria-label="Studio" className="sticky top-[3.75rem] z-30 mt-6 border-y border-ink-line bg-ink/90 backdrop-blur-md sm:top-[3.5rem]">
         <div className="mx-auto max-w-page px-4 sm:px-8">
           {/*
-            Eight of these do not fit a phone side by side, so this one
+            Nine of these do not fit a phone side by side, so this one
             scrolls. The agent page's five are sized not to; the difference is
             that these are places to look rather than places to change
             something, and missing one costs nothing.
@@ -120,6 +122,7 @@ export function StudioPage() {
         <Crash area="view">
           <div className="mt-6">
             {view === 'command' && <CommandView agentId={agentId} onGo={(next) => setView(next as ViewId)} />}
+            {view === 'mind' && <MindView agentId={agentId} />}
             {view === 'growth' && <GrowthView agentId={agentId} />}
             {view === 'radar' && <RadarView agentId={agentId} />}
             {view === 'relationships' && <RelationshipsView agentId={agentId} />}

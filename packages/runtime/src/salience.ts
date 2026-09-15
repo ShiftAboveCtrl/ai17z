@@ -200,7 +200,26 @@ export function scoreObservation(observation: Observation, context: SalienceCont
   const handle = (observation.handle ?? '').replace(/^@+/, '').toLowerCase();
   const matched = subjectsIn(text, context.topics);
   const kind = kindFor(observation, matched);
-  const fingerprint = fingerprintOf(observation.source, text, observation.url ?? observation.id);
+  /*
+    A working set is about subjects, not posts.
+
+    Anchoring every observation on its permalink makes each post its own item,
+    and then three people saying the same thing is three entries that look like
+    an agent fixating rather than one thing several people said. Worse, nothing
+    is ever reinforced, so nothing can be distinguished from a passing remark --
+    and reinforcement is the whole signal that separates something this agent
+    keeps returning to from something it saw once.
+
+    So the anchor is used only where the object genuinely *is* the thing: the
+    agent's own published action, a promise it made, a release that happened.
+    Everything somebody said is fingerprinted on what it was about.
+  */
+  const anchored =
+    observation.source === 'ACTION_RESULT' ||
+    observation.source === 'COMMITMENT' ||
+    observation.source === 'STANCE' ||
+    observation.source === 'REPO_EVENT';
+  const fingerprint = fingerprintOf(observation.source, text, anchored ? (observation.url ?? observation.id) : null);
   const declineWith = (reason: string, detail: string): Salience => ({
     salience: 0,
     factors: [],

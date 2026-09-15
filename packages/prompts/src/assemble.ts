@@ -19,6 +19,7 @@ import {
   renderCommitments,
   renderRelationship,
   renderRevisions,
+  renderMind,
   renderStances,
   renderTemplate,
   renderThreadState,
@@ -276,6 +277,14 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const mediaContext = (context.meta as { mediaContext?: SocialMediaContext } | undefined)?.mediaContext;
   const relationship = (context.meta as { relationship?: RelationshipContext } | undefined)?.relationship;
   const stance = (context.meta as { stance?: StanceContext } | undefined)?.stance;
+  /*
+    What has been on the agent's mind, already filtered for relevance.
+
+    The runtime selects; this renders. An agent may hold a concern without
+    every reply mentioning it, and deciding which of them bear on the message
+    in hand is a judgement about the message -- which is where the message is.
+  */
+  const mind = (context.meta as { mind?: { kind: string; summary: string; confidence: number }[] } | undefined)?.mind;
   const threadState = (context.meta as { thread?: Parameters<typeof renderThreadState>[0] } | undefined)?.thread;
   const openCommitments = (context.meta as { openCommitments?: { promise: string }[] } | undefined)?.openCommitments;
   // Attached by the X adapter when the mention leans on what its parent carries.
@@ -302,6 +311,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     memoryBlock: renderMemories(input.memories, input.memoryCharBudget),
     relationshipBlock: renderRelationship(relationship),
     stanceBlock: renderStances(stance),
+    mindBlock: renderMind(mind ?? []),
     revisedBlock: renderRevisions(stance),
     commitmentBlock: renderCommitments(openCommitments),
     callbackBlock: renderCallback(relationship),

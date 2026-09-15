@@ -503,6 +503,16 @@ export async function noteWake(
     // Backing off a quiet agent is what stops it asking the same question of a
     // paid model every half hour for ever. Reset the moment anything happens.
     'quiet_wakes = CASE WHEN $3 THEN agent_wake.quiet_wakes + 1 ELSE 0 END',
+    /*
+      Recorded when the wake finishes rather than when it was claimed.
+
+      `claimDueWakes` also stamps it, which covers the scheduled path. An owner
+      pressing "think now" never goes through the claim, so without this their
+      agent said it had never looked however often they asked -- and the next
+      wake would read the same window again, because the window starts at the
+      last wake.
+    */
+    'last_wake_at = now()',
     'updated_at = now()',
   ];
   const params: unknown[] = [agentId, input.reason.slice(0, 1000), input.quiet];

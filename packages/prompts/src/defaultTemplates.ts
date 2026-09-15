@@ -118,7 +118,13 @@ Do not contradict these without saying that you have changed your mind.
 {{/stanceBlock}}{{#revisedBlock}}POSITIONS YOU HAVE ALREADY CHANGED
 {{revisedBlock}}
 
-{{/revisedBlock}}{{#commitmentBlock}}YOU SAID YOU WOULD
+{{/revisedBlock}}{{#mindBlock}}WHAT YOU HAVE BEEN THINKING ABOUT
+{{mindBlock}}
+
+Bring these up only where they actually bear on what is being said. Having a
+thought is not a reason to mention it.
+
+{{/mindBlock}}{{#commitmentBlock}}YOU SAID YOU WOULD
 {{commitmentBlock}}
 
 {{/commitmentBlock}}`,

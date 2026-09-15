@@ -646,3 +646,49 @@ export async function wakeDueAgents(limit = 3): Promise<WakeOutcome[]> {
   }
   return outcomes;
 }
+
+/**
+ * What the agent has been thinking about, where it bears on the message in hand.
+ *
+ * The rule this implements is the one that keeps a working set from becoming a
+ * liability: **internal state reaches a reply only when it is relevant.** An
+ * agent may be uneasy about something all week without every answer mentioning
+ * it, and one that mentions it anyway reads as an agent that cannot tell what
+ * it is talking about -- which is worse than an agent with no internal state,
+ * because it is actively distracting.
+ *
+ * A post is the deliberate exception. There is no incoming message for anything
+ * to be relevant *to*, and "what has this agent been thinking about" is exactly
+ * the question an original post answers -- so the strongest items travel
+ * whatever they are about, and the generation step decides which one it
+ * actually wants.
+ *
+ * Bounded either way. `DELIBERATION_LIMITS.inPrompt` is a ceiling on how much
+ * of its own head an agent brings to a conversation, and past it a prompt stops
+ * being context and becomes a journal dump.
+ */
+export async function mindForMessage(
+  agentId: string,
+  text: string,
+  isPost: boolean,
+): Promise<{ kind: AttentionKind; summary: string; confidence: number }[]> {
+  const items = await mind.onItsMind(agentId, { limit: 30 });
+  if (items.length === 0) return [];
+
+  const chosen = isPost
+    ? items.slice(0, DELIBERATION_LIMITS.inPrompt)
+    : items
+        .map((item) => ({ item, relevance: overlap(text, `${item.summary} ${item.detail}`) }))
+        // A quarter of the distinctive words in common. Lower and an agent
+        // brings up its concerns because somebody used the word "the".
+        .filter((scored) => scored.relevance >= 0.25)
+        .sort((a, b) => b.relevance - a.relevance || b.item.salience - a.item.salience)
+        .slice(0, DELIBERATION_LIMITS.inPrompt)
+        .map((scored) => scored.item);
+
+  return chosen.map((item) => ({
+    kind: item.kind,
+    summary: item.summary,
+    confidence: Number(item.confidence),
+  }));
+}

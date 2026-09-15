@@ -21,6 +21,7 @@ import { artifactRoutes } from './routes/artifacts';
 import { settingsRoutes } from './routes/settings';
 import { growthRoutes } from './routes/growth';
 import { peopleRoutes } from './routes/people';
+import { mindRoutes } from './routes/mind';
 import { experimentRoutes } from './routes/experiments';
 
 const log = createLogger('api');
@@ -85,6 +86,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(settingsRoutes);
   await app.register(growthRoutes);
   await app.register(peopleRoutes);
+  await app.register(mindRoutes);
   await app.register(experimentRoutes);
 
   app.addHook('onResponse', async (request, reply) => {

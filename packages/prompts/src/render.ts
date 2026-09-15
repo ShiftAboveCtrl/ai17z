@@ -151,6 +151,41 @@ export function renderLinks(links: SocialMediaContext['links']): string {
 }
 
 /**
+ * What the agent has been thinking about lately, where it bears on this.
+ *
+ * The working set is not a journal to be read out. `docs/architecture/DELIBERATION.md`
+ * is explicit that an agent may hold a concern without every reply mentioning
+ * it, so what arrives here has already been filtered for relevance by the
+ * runtime -- this only decides how it reads.
+ *
+ * Confidence travels with each line and is not decoration. An agent that states
+ * a hypothesis it holds at 0.4 as though it were a finding is worse than one
+ * that never had the hypothesis, and the wording here is what stops that: a
+ * thing it suspects is introduced as a thing it suspects.
+ */
+export function renderMind(
+  items: { kind: string; summary: string; confidence: number }[],
+): string {
+  if (items.length === 0) return '';
+  const lead: Record<string, string> = {
+    INTEREST: 'You have been following',
+    CURIOSITY: 'You have been wanting to find out',
+    CONCERN: 'You have been uneasy about',
+    HYPOTHESIS: 'You suspect',
+    QUESTION: 'You do not yet know',
+    LESSON: 'You worked out',
+    NARRATIVE: 'You have been following',
+    IDEA: 'You have been meaning to say',
+  };
+  return items
+    .map((item) => {
+      const hedge = item.confidence < 0.5 ? ', though you are not sure' : '';
+      return `- ${lead[item.kind] ?? 'You have been thinking about'}: ${item.summary}${hedge}`;
+    })
+    .join('\n');
+}
+
+/**
  * Describes the relationship in plain sentences.
  *
  * The point is continuity, not analysis. Everything here is something the two

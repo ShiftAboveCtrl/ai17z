@@ -9,6 +9,7 @@ export {
   renderLinks,
   renderRelationship,
   renderCallback,
+  renderMind,
   renderStances,
   renderRevisions,
   renderCommitments,
