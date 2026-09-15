@@ -28,7 +28,7 @@ import { PersonaSyncRunner } from './personaSync';
 import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
-import { pollDueFeeds } from '@xbam/runtime';
+import { pollDueFeeds, wakeDueAgents } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -182,6 +182,39 @@ async function main(): Promise<void> {
   const feedWatcher = startLoop('feed-watch', 60_000, watchFeeds);
 
   /**
+   * Lets agents think between the things they are asked.
+   *
+   * Everything else this worker runs starts with something arriving. This one
+   * starts with nothing happening, which is exactly when an agent either
+   * accumulates a present tense -- what it is interested in, unsure about,
+   * trying to find out -- or stays reactive and has nothing to say when the
+   * posting schedule next comes round.
+   *
+   * A minute is the tick and not the interval. Each agent carries its own in
+   * `agent_wake`, and the claim moves it forward in the statement that selects
+   * it, so this is usually a single indexed query that returns nothing. The
+   * same shape as the account poller and the feed watcher, for the same reason:
+   * a feature that brings its own timer is a second scheduler, and the second
+   * one is always the one nobody remembers to stop.
+   *
+   * Three at a time. Deliberation can cost a model call, and an installation
+   * with a dozen agents should spread that over minutes rather than spend it
+   * in one tick.
+   */
+  const thinkAhead = async () => {
+    const outcomes = await wakeDueAgents(3);
+    const busy = outcomes.filter((outcome) => !outcome.skipped && outcome.attended + outcome.produced > 0);
+    if (busy.length > 0) {
+      log.info('agents thought about something', {
+        agents: busy.length,
+        attended: busy.reduce((total, outcome) => total + outcome.attended, 0),
+        produced: busy.reduce((total, outcome) => total + outcome.produced, 0),
+      });
+    }
+  };
+  const deliberation = startLoop('deliberation', 60_000, thinkAhead);
+
+  /**
    * Publishes what each account's three tabs are doing.
    *
    * The API owns no browsers, so this process is the only one that can answer
@@ -261,6 +294,7 @@ async function main(): Promise<void> {
     clearInterval(heartbeat);
     clearInterval(sweeper);
     clearInterval(feedWatcher);
+    clearInterval(deliberation);
     if (tabReporter) clearInterval(tabReporter);
     // Withdraw immediately rather than waiting for the heartbeat to lapse: a
     // clean shutdown knows it is leaving.

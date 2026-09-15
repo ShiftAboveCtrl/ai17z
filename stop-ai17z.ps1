@@ -105,6 +105,85 @@ function Write-Warn($Message) { Write-Host "  $Message" -ForegroundColor Yellow 
 
 Write-Host ''
 
+# -- Close Chrome before anything is killed ----------------------------------
+#
+# The worker is stopped with taskkill /T /F, and Chrome is a child of the
+# worker. So the tree kill force-kills the browser -- and a force-killed Chrome
+# may never flush its cookies and local storage, which is the whole of the
+# signed-in X session that profile exists to hold. `docs/ENGINEERING.md` is
+# explicit that Chrome must be closed gracefully before it is killed; this
+# script was the one path that did not.
+#
+# The graceful close is a browser task, exactly as it is everywhere else: the
+# worker is the process that owns the browser, so it is the process that has to
+# close it. Recorded here and waited for, then the kill proceeds either way --
+# stopping must not become something that cannot finish because a browser is
+# wedged.
+#
+# Bounded and best-effort by design. An installation whose database is already
+# down, or which has no worker running, has no session to protect and skips
+# straight through.
+function Close-Ai17zBrowser {
+  param([string[]] $ComposeArgs, [int] $TimeoutSeconds = 45)
+
+  # Nothing to close if no worker is running: the browser is a child of one.
+  $running = $false
+  if (Test-Path $PidFile) {
+    $recorded = Get-Content $PidFile | Select-Object -First 1
+    $running = [bool](Get-Process -Id ([int]$recorded) -ErrorAction SilentlyContinue)
+  }
+  if (-not $running) { return }
+
+  Write-Step 'Closing Chrome so the signed-in session is flushed to disk...'
+
+  # Through the database rather than the API: stopping is exactly when the
+  # owner may have no session token to hand, and the queue is the same one the
+  # API would have written to.
+  $insert = @'
+INSERT INTO browser_tasks (account_id, kind, params)
+SELECT a.id, 'SHUTDOWN_BROWSER', '{}'::jsonb
+  FROM accounts a
+  JOIN browser_sessions b ON b.account_id = a.id
+ WHERE a.channel = 'x'
+RETURNING id;
+'@
+  # The SQL goes in over stdin and the credentials come from the container's
+  # own environment. Neither is a convenience: this script never reads the env
+  # file into its own process, so $env:POSTGRES_USER is empty here, and passing
+  # the statement as an argument would nest three levels of quoting through
+  # PowerShell, docker and sh.
+  $psql = 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA'
+  $ids = @()
+  try {
+    $ErrorActionPreference = 'Continue'
+    $out = $insert | & docker compose @ComposeArgs exec -T postgres sh -c $psql 2>&1
+    $ids = @($out | Where-Object { $_ -match '^[0-9a-f-]{36}$' })
+  } catch {
+    $ids = @()
+  }
+  if ($ids.Count -eq 0) {
+    Write-Warn 'No signed-in browser to close.'
+    return
+  }
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $query = "SELECT count(*) FROM browser_tasks WHERE id IN ('" + ($ids -join "','") + "') AND status = 'PENDING';"
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Seconds 2
+    $left = $query | & docker compose @ComposeArgs exec -T postgres sh -c $psql 2>&1 |
+      Where-Object { $_ -match '^\s*\d+\s*$' } | Select-Object -First 1
+    if ($null -ne $left -and ([int]($left.ToString().Trim())) -eq 0) {
+      Write-Done 'Chrome closed. The signed-in session is kept in the profile on disk.'
+      return
+    }
+  }
+  # Not fatal. Saying so matters: an owner whose session goes missing after a
+  # stop deserves to know this is where it happened.
+  Write-Warn 'Chrome did not confirm it closed in time; stopping anyway.'
+}
+
+Close-Ai17zBrowser -ComposeArgs $ComposeEnv
+
 # -- The native worker -------------------------------------------------------
 if (Test-Path $PidFile) {
   $workerPid = Get-Content $PidFile | Select-Object -First 1

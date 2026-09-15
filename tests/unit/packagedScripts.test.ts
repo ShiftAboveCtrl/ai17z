@@ -583,3 +583,57 @@ describe('an explicit instance name settles the directory too', () => {
     expect(iss).toContain('WizardForm.DirEdit.Text := Installs[Chosen].Program_;');
   });
 });
+
+/**
+ * Stopping must not take the signed-in browser with it.
+ *
+ * Chrome is spawned as a child of the native worker, and the worker is stopped
+ * with `taskkill /T /F`. A tree kill therefore force-kills Chrome -- and a
+ * force-killed Chrome may never flush its cookies and local storage, which is
+ * the entire signed-in X session that profile exists to hold. Getting that back
+ * costs somebody a sign-in and, on an account with two-factor, a phone.
+ *
+ * `docs/ENGINEERING.md` has said Chrome must be closed gracefully before it is
+ * killed since the browser work landed. Every other path obeyed it. This script
+ * -- the one an owner runs from the Start Menu, by far the most common way an
+ * installation is stopped -- went straight to the tree kill.
+ */
+describe('stopping closes Chrome before it kills anything', () => {
+  const stop = readFileSync(resolve(root, 'stop-ai17z.ps1'), 'utf8');
+
+  it('asks the worker to close the browser first', () => {
+    expect(stop).toContain('SHUTDOWN_BROWSER');
+  });
+
+  it('does it before the worker is killed, not after', () => {
+    const close = stop.indexOf('SHUTDOWN_BROWSER');
+    const kill = stop.indexOf("taskkill @('/PID'");
+    expect(close).toBeGreaterThan(-1);
+    expect(kill).toBeGreaterThan(-1);
+    // Afterwards would be a graceful close of a browser that is already gone.
+    expect(close).toBeLessThan(kill);
+  });
+
+  it('stops anyway when the browser does not answer', () => {
+    // A wedged browser must not become an installation that cannot be stopped.
+    expect(stop).toMatch(/did not confirm it closed in time; stopping anyway/);
+  });
+
+  it('bounds the wait rather than blocking for ever', () => {
+    expect(stop).toMatch(/TimeoutSeconds/);
+    expect(stop).toMatch(/\$deadline = \(Get-Date\)\.AddSeconds/);
+  });
+
+  it('reaches the database without needing an API session', () => {
+    // Stopping is exactly when an owner may have no token to hand, and the
+    // queue is the same one the API would have written to.
+    expect(stop).toContain('browser_tasks');
+    expect(stop).toContain('exec -T postgres');
+  });
+
+  it('lets the container supply its own credentials', () => {
+    // This script never reads the env file into its own process, so
+    // $env:POSTGRES_USER is empty here; the container's environment is not.
+    expect(stop).toContain('psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"');
+  });
+});

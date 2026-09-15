@@ -387,8 +387,22 @@ async function signInAndLook(label: string, ports: Ports): Promise<void> {
   }
 }
 
-async function migrationsOnDisk(): Promise<number> {
-  return (await readdir(join(root, 'migrations'))).filter((f) => f.endsWith('.sql')).length;
+/**
+ * How many migrations the thing under test actually ships.
+ *
+ * The installed copy's own directory, never the repository's. They are the same
+ * number right up until somebody edits the repository while a run is in
+ * progress -- and then this compares a database built from a frozen stage
+ * against a migrations directory that has moved, and fails an installation that
+ * is perfectly correct. That is not hypothetical: it is how this check first
+ * reported a fault, and the fault was in the check.
+ *
+ * Asking the installation is also the better question on its own terms. What
+ * this phase is testing is whether *what was installed* applied everything it
+ * brought with it; the repository's opinion is not evidence about that.
+ */
+async function migrationsShipped(programDir: string): Promise<number> {
+  return (await readdir(join(programDir, 'migrations'))).filter((f) => f.endsWith('.sql')).length;
 }
 
 /** Nothing in here may wait for ever; a hang is a failure that hides itself. */
@@ -483,7 +497,7 @@ async function attempt(label: string, stage: string): Promise<string> {
     await start(label, program, ports);
 
     // ---- 2. The database, asked rather than assumed ----------------------
-    const expected = await migrationsOnDisk();
+    const expected = await migrationsShipped(program);
     const counted = await compose(program, data, [
       'exec',
       '-T',
@@ -498,7 +512,7 @@ async function attempt(label: string, stage: string): Promise<string> {
     ]);
     const applied = Number(counted.trim().split(/\r?\n/).pop());
     if (applied !== expected) {
-      fail(`${label}: ${applied} migrations applied, ${expected} on disk`, counted.trim());
+      fail(`${label}: ${applied} migrations applied, ${expected} shipped`, counted.trim());
     }
     say(`${label}: ${applied} migrations applied`);
 
@@ -850,13 +864,13 @@ async function bootstrap(stage: string): Promise<void> {
     // ---- 3. Start it, and prove it works ---------------------------------
     await start(label, program, ports);
 
-    const expected = await migrationsOnDisk();
+    const expected = await migrationsShipped(program);
     const counted = await compose(program, data, [
       'exec', '-T', 'postgres', 'psql', '-U', 'xbam', '-d', 'xbam', '-tAc',
       'select count(*) from schema_migrations',
     ]);
     const applied = Number(counted.trim().split(/\r?\n/).pop());
-    if (applied !== expected) fail(`${label}: ${applied} migrations applied, ${expected} on disk`, counted.trim());
+    if (applied !== expected) fail(`${label}: ${applied} migrations applied, ${expected} shipped`, counted.trim());
 
     const health = await get(`http://localhost:${ports.api}/api/health`);
     if (health.status !== 200 || !health.body.includes('"status":"healthy"')) {
