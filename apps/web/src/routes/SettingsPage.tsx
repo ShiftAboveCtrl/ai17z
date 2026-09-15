@@ -56,6 +56,31 @@ export function SettingsPage() {
     Record<string, { ok: boolean; detail: string; latencyMs: number; models: number; verdict?: ProviderVerdict }>
   >({});
   const [openAccount, setOpenAccount] = useState<string | null>(null);
+  const [accountBusy, setAccountBusy] = useState<string | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<AccountRow | null>(null);
+
+  /** One shape for all three, so none of them can forget to reload or unlock. */
+  const accountAction = async (id: string, run: () => Promise<unknown>) => {
+    setAccountBusy(id);
+    setAccountError(null);
+    try {
+      await run();
+      accounts.reload();
+    } catch (e) {
+      setAccountError(e instanceof ApiError ? e.message : 'That did not work.');
+    } finally {
+      setAccountBusy(null);
+    }
+  };
+
+  const disconnectAccount = (id: string) => accountAction(id, () => post(`/api/accounts/${id}/disconnect`, {}));
+  const reconnectAccount = (id: string) => accountAction(id, () => post(`/api/accounts/${id}/reconnect`, {}));
+  const removeAccount = async (account: AccountRow) => {
+    await accountAction(account.id, () => del(`/api/accounts/${account.id}`));
+    setRemoving(null);
+    if (openAccount === account.id) setOpenAccount(null);
+  };
 
   const testElapsed = useElapsed(Boolean(testing));
 
@@ -247,23 +272,60 @@ export function SettingsPage() {
         ) : (
           <ul className="divide-y divide-ink-line border-y border-ink-line">
             {accounts.data?.items.map((account) => (
-              <li key={account.id}>
+              <li key={account.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-4">
                 <button
                   type="button"
-                  className="flex w-full flex-wrap items-center gap-x-5 gap-y-1 py-4 text-left"
+                  className="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-1 text-left"
                   onClick={() => setOpenAccount(account.id)}
                 >
                   <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-bone-faint">{account.channel}</span>
-                  <span className="text-base text-bone">@{account.handle}</span>
+                  <span className="break-words text-base text-bone">@{account.handle}</span>
                   {!account.implemented && <span className="chip">adapter not implemented</span>}
+                  {account.enabled === false && <span className="chip">disconnected</span>}
                   <span className="ml-auto font-mono text-[11px] text-bone-faint">
                     {account.status.toLowerCase()} · checked {timeAgo(account.lastHealthCheckAt)}
                   </span>
                 </button>
+                {/*
+                  Beside the row rather than inside the modal: somebody who has
+                  decided to stop using an account should not have to open the
+                  session panel for a browser they no longer want opened.
+                */}
+                <div className="flex shrink-0 items-center gap-2">
+                  {account.enabled === false ? (
+                    <button
+                      type="button"
+                      className="btn-quiet"
+                      disabled={accountBusy === account.id}
+                      onClick={() => void reconnectAccount(account.id)}
+                    >
+                      Reconnect
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-quiet"
+                      disabled={accountBusy === account.id}
+                      onClick={() => void disconnectAccount(account.id)}
+                    >
+                      Disconnect
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-quiet text-signal-fail"
+                    aria-label={`Remove @${account.handle}`}
+                    disabled={accountBusy === account.id}
+                    onClick={() => setRemoving(account)}
+                  >
+                    {accountBusy === account.id ? <Spinner /> : <Trash2 className="h-3.5 w-3.5" aria-hidden />}
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
         )}
+        {accountError && <p className="mt-4 text-sm text-signal-fail">{accountError}</p>}
       </section>
 
       <section id="notifications" className="border-t border-ink-line py-12">
@@ -333,6 +395,49 @@ export function SettingsPage() {
             Add provider
           </button>
         </div>
+      </Modal>
+
+      <Modal open={Boolean(removing)} onClose={() => setRemoving(null)} title="Remove this account?">
+        {removing && (
+          <div className="space-y-5">
+            <p className="text-sm text-bone-dim">
+              <strong className="text-bone">@{removing.handle}</strong> stops being registered with AI17Z. Its
+              polling, its monitors, its sign-in watcher and its queued browser work all stop, and it stops
+              telling you it is signed out.
+            </p>
+            {/*
+              The question everybody actually has. Answered before it is asked,
+              because the alternative is somebody not removing an account they
+              have finished with in case it takes an agent with it.
+            */}
+            <p className="text-sm text-bone-dim">
+              Your agents are not deleted, and neither is anything they have already said or remembered. If an
+              agent was using this account it simply has one fewer place to speak.
+            </p>
+            <p className="text-sm text-bone-dim">
+              The signed-in browser profile on this machine is left alone. Nothing here deletes a Chrome profile.
+            </p>
+            <p className="text-sm text-bone-faint">
+              To stop it working but keep it, use <strong className="text-bone-dim">Disconnect</strong> instead —
+              that one is reversible.
+            </p>
+            {accountError && <p className="text-sm text-signal-fail">{accountError}</p>}
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={accountBusy === removing.id}
+                onClick={() => void removeAccount(removing)}
+              >
+                {accountBusy === removing.id && <Spinner />}
+                Remove @{removing.handle}
+              </button>
+              <button type="button" className="btn-quiet" onClick={() => setRemoving(null)}>
+                Keep it
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <Modal open={Boolean(openAccount)} onClose={() => setOpenAccount(null)} title="Session" wide>

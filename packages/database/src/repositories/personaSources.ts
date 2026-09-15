@@ -10,6 +10,8 @@ export interface PersonaSourceRow {
   config: Record<string, unknown>;
   status: 'IDLE' | 'SYNCING' | 'READY' | 'ERROR' | 'UNAVAILABLE';
   lastError: string | null;
+  /** How far a collection has got, in words. Null when it has not said. */
+  progress: string | null;
   lastSyncedAt: string | null;
   syncCursor: string | null;
   createdAt: string;
@@ -69,7 +71,20 @@ export async function upsertSource(input: {
 export async function setSourceStatus(
   id: string,
   status: PersonaSourceRow['status'],
-  detail?: { lastError?: string | null; syncCursor?: string | null; touchSynced?: boolean },
+  detail?: {
+    lastError?: string | null;
+    syncCursor?: string | null;
+    touchSynced?: boolean;
+    /**
+     * How far a collection has got, in the words a person reads.
+     *
+     * Kept apart from `lastError` on purpose: progress is not a failure, and
+     * sharing the column would make a working collection look like a broken one
+     * on every screen that reads it. `coalesce` because most callers have
+     * nothing to say about progress and must not blank what the last one wrote.
+     */
+    progress?: string | null;
+  },
 ): Promise<void> {
   await query(
     `UPDATE persona_sources
@@ -77,9 +92,17 @@ export async function setSourceStatus(
             last_error = $3,
             sync_cursor = coalesce($4, sync_cursor),
             last_synced_at = CASE WHEN $5 THEN now() ELSE last_synced_at END,
+            progress = coalesce($6, progress),
             updated_at = now()
       WHERE id = $1`,
-    [id, status, detail?.lastError ?? null, detail?.syncCursor ?? null, detail?.touchSynced ?? false],
+    [
+      id,
+      status,
+      detail?.lastError ?? null,
+      detail?.syncCursor ?? null,
+      detail?.touchSynced ?? false,
+      detail?.progress ?? null,
+    ],
   );
 }
 

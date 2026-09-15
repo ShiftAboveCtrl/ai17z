@@ -125,6 +125,8 @@ export const SEL = {
   notificationCell: '[data-testid="cellInnerDiv"]',
   /** One account in a follower, following or suggestion list. */
   userCell: '[data-testid="UserCell"]',
+  /** The bio on a profile header. Absent when somebody has not written one. */
+  userDescription: '[data-testid="UserDescription"]',
   /** One conversation in the direct message list. */
   dmConversation: '[data-testid="conversation"]',
   /** One message inside a conversation. */

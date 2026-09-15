@@ -34,6 +34,15 @@ export async function syncPersonaSource(input: {
   limit?: number;
   /** For manual sources: the text the owner pasted. */
   text?: string;
+  /**
+   * Already collected, by whoever could.
+   *
+   * X is read through the browser the worker owns, so the worker collects and
+   * passes the result in rather than this reaching for an adapter the process
+   * it happens to be running in cannot use. The adapter path is still there for
+   * anything that genuinely can fetch from where the sync runs.
+   */
+  items?: RawCorpusItem[];
   incremental?: boolean;
 }): Promise<SyncReport> {
   const source = await personaSources.getSource(input.sourceId);
@@ -52,7 +61,13 @@ export async function syncPersonaSource(input: {
     const limit = input.limit ?? 2000;
 
     let raw: RawCorpusItem[];
-    if (source.kind === 'manual') {
+    if (input.items) {
+      // Handed over already collected. An empty array is a real answer and not
+      // a reason to go looking somewhere else: the collector said it found
+      // nothing, and quietly falling back to an adapter would turn a truthful
+      // "that account has no readable posts" into a different failure.
+      raw = input.items.slice(0, limit);
+    } else if (source.kind === 'manual') {
       raw = itemsFromText(input.text ?? '', { handle: source.handle ?? '', limit });
     } else {
       const availability = await adapter.availability();

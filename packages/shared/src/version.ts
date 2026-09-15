@@ -141,7 +141,7 @@ export function describeVersion(build: BuildVersion = buildVersion()): string {
  * What a release is called, as opposed to what it is numbered.
  *
  * `v0.1.0-rc.8` is correct, sortable, and says nothing to the person who
- * downloaded it. "AI17Z Beta 1.0.0" says which product, how finished it is, and
+ * downloaded it. "AI17Z Beta 3.1" says which product, how finished it is, and
  * which one it is -- in that order, because that is the order somebody looking
  * at a list of downloads cares about.
  *
@@ -151,21 +151,63 @@ export function describeVersion(build: BuildVersion = buildVersion()): string {
  * digits Windows will accept. This is a rendering of the version, not a second
  * version, and nothing downstream may parse it back.
  *
- * The iteration is dropped when it is the first, because "AI17Z Beta 1.0.0 (1)"
- * is a worse name than "AI17Z Beta 1.0.0" and every release cycle starts with
- * one.
+ * Two grammars, because the channels are asking different questions:
+ *
+ *   **A beta is counted**, ten to a row -- Beta 1.0 to Beta 1.9, then Beta 2.0.
+ *   The `1.0.0` was identical on all twenty of them and said nothing; which
+ *   beta it is, is the whole of what somebody wants. `betaLabelFor` below.
+ *
+ *   **Everything else names its number**, because an rc is a candidate *for* a
+ *   release and a finished release is one. Their iteration is dropped when it
+ *   is the first, since "AI17Z Release Candidate 1.0.0 (1)" is a worse name
+ *   than "AI17Z Release Candidate 1.0.0" and every cycle starts with one.
  */
 export interface ReleaseName {
-  /** The whole thing: `AI17Z Beta 1.0.0`. */
+  /** The whole thing: `AI17Z Beta 3.1`. */
   title: string;
-  /** Without the product: `Beta 1.0.0`. For a badge with no room. */
+  /** Without the product: `Beta 3.1`. For a badge with no room. */
   short: string;
   /** `Beta`, `Release Candidate`, `Alpha`, or null for a finished release. */
   channel: string | null;
-  /** `1.0.0`, always three numbers, never a `v`. */
+  /** `1.0.0`, always three numbers, never a `v`. The machine's number. */
   number: string;
   /** Which beta, which candidate. 1 when the tag does not say. */
   iteration: number;
+  /**
+   * The beta's own two digits, `3.1`, or null for anything that is not a beta.
+   *
+   * Exposed because a diagnostics screen shows this beside the machine version
+   * and should not have to take it apart from `short` to do it.
+   */
+  betaLabel: string | null;
+}
+
+/**
+ * Which beta this is, in the two digits people actually use.
+ *
+ * Twenty betas in, `Beta 1.0.0 (20)` had stopped telling anybody anything: the
+ * `1.0.0` is the same on every one of them, and `(20)` reads as a build number
+ * rather than as progress. The owner asked for the familiar shape instead --
+ * Beta 1.0 through Beta 1.9, then Beta 2.0 -- so the twentieth iteration is
+ * Beta 3.0 and the next is Beta 3.1.
+ *
+ * The tag does not change. `1.0.0-beta.21` stays exactly that: semver
+ * precedence, the prerelease filter, the Debian version, the four-digit
+ * `VersionInfoVersion` and every updater comparison all keep working on a
+ * number that only ever counts up. **This is a rendering, and nothing parses it
+ * back** -- the same rule the old grammar had, and the reason it is safe to
+ * change what it renders.
+ *
+ * Writing `1.0.0-beta.3.1` instead would have been the trap: semver compares
+ * prerelease identifiers field by field, so `beta.3.1` sorts *below* `beta.20`
+ * and every installation in the field would have refused the upgrade as older.
+ */
+export function betaLabelFor(iteration: number): string {
+  // Ten to a row, counting from the tag's own number: beta.1 is Beta 1.1,
+  // beta.10 is Beta 2.0, beta.20 is Beta 3.0. The tags are 1-based, which is
+  // what puts the first of each ten at `.0`.
+  const safe = Number.isFinite(iteration) && iteration > 0 ? Math.floor(iteration) : 0;
+  return `${Math.floor(safe / 10) + 1}.${safe % 10}`;
 }
 
 /**
@@ -190,16 +232,27 @@ export function releaseName(version = buildVersion().version): ReleaseName {
   const number = [numbers[0] ?? 0, numbers[1] ?? 0, numbers[2] ?? 0].join('.');
 
   if (!pre) {
-    return { title: `AI17Z ${number}`, short: number, channel: null, number, iteration: 1 };
+    return { title: `AI17Z ${number}`, short: number, channel: null, number, iteration: 1, betaLabel: null };
   }
 
   const [word = '', count = ''] = pre.split('.', 2);
   const channel = CHANNEL_WORDS[word.toLowerCase()] ?? word.charAt(0).toUpperCase() + word.slice(1);
   const iteration = Number.parseInt(count, 10) || 1;
 
+  // A beta says which beta, and nothing else. The `1.0.0` was identical on all
+  // twenty of them, so it carried no information and crowded out the part that
+  // did. Every other channel keeps the old grammar: an rc names the release it
+  // is a candidate for, which is the whole point of an rc, and a finished
+  // release is its number.
+  if (word.toLowerCase() === 'beta') {
+    const betaLabel = betaLabelFor(iteration);
+    const short = `Beta ${betaLabel}`;
+    return { title: `AI17Z ${short}`, short, channel, number, iteration, betaLabel };
+  }
+
   const suffix = iteration > 1 ? ` (${iteration})` : '';
   const short = `${channel} ${number}${suffix}`;
-  return { title: `AI17Z ${short}`, short, channel, number, iteration };
+  return { title: `AI17Z ${short}`, short, channel, number, iteration, betaLabel: null };
 }
 
 /**

@@ -9,6 +9,8 @@ interface ReleaseInfo {
   version: string;
   tag: string;
   name: string;
+  /** The name without the product: `Beta 3.1`. For a badge with no room. */
+  label: string;
   channel: string | null;
   notes: string;
   url: string;
@@ -31,6 +33,8 @@ export interface UpdateState {
   // web bundle does not import node-side modules, and kept in step by the test
   // that compares the two -- three copies of this list is how a Mac was told to
   // run a PowerShell script.
+  /** The short label: `Beta 3.1`. `current` is still the number. */
+  currentLabel: string;
   method: 'INSTALLER' | 'BOOTSTRAP' | 'MACOS_PKG' | 'UBUNTU_DEB' | 'CHECKOUT';
   installation: {
     name: string | null;
@@ -125,9 +129,11 @@ export function UpdatePanel() {
         <StatusDot state={state.updateAvailable ? 'wait' : 'live'} />
         {/*
           The name first and the number after it, in a smaller face. Both are
-          shown because they answer different questions: "AI17Z Beta 1.0.0" is
-          what somebody downloaded, and `1.0.0-beta.1` is what they quote in a bug
-          report.
+          shown because they answer different questions: "AI17Z Beta 3.0" is
+          what somebody downloaded, and `1.0.0-beta.20` is what they quote in a
+          bug report. Neither is derived from the other here -- the API sends
+          both, because the version grammar has one implementation and it is not
+          in the browser.
         */}
         <span className="text-sm text-bone">{state.currentName}</span>
         <span className="font-mono text-xs text-bone-faint">v{state.current}</span>

@@ -69,9 +69,54 @@ export async function accountsAwaitingSignIn(): Promise<Account[]> {
   return mapRows<Account>(
     await query(
       `SELECT ${ACCOUNT_COLUMNS} FROM accounts
-        WHERE status IN ('AWAITING_LOGIN', 'AUTHENTICATING')
+        WHERE enabled AND status IN ('AWAITING_LOGIN', 'AUTHENTICATING')
         ORDER BY auth_started_at NULLS LAST`,
     ),
+  );
+}
+
+/**
+ * The owner has switched this account off: stop working it, keep everything.
+ *
+ * `enabled` is the flag the poller and the radar already respect, so this is
+ * mostly a matter of setting it -- what it adds is the settled status to go
+ * with it. An account left in NEEDS_AUTH with `enabled` false still reads as a
+ * problem to anything that looks at status alone, and the one thing somebody
+ * disconnecting an account wants is for it to stop telling them it is signed
+ * out.
+ *
+ * `DISCONNECTED` already meant "the session was deliberately closed", which is
+ * exactly this, so no status and no migration had to be invented.
+ *
+ * Deliberately not a delete. The registration, its history, its cadence and its
+ * capability grants all survive, and reconnecting is switching it back on.
+ */
+export async function disconnectAccount(id: string): Promise<void> {
+  await query(
+    `UPDATE accounts
+        SET enabled = false,
+            status = 'DISCONNECTED',
+            last_health_status = 'Disconnected by the owner.',
+            last_error = NULL,
+            auth_started_at = NULL,
+            auth_deadline_at = NULL,
+            challenge_kind = NULL,
+            next_poll_at = NULL,
+            last_health_check_at = now()
+      WHERE id = $1`,
+    [id],
+  );
+}
+
+/** Switched back on, with nothing else assumed about it. */
+export async function reconnectAccount(id: string): Promise<void> {
+  await query(
+    `UPDATE accounts
+        SET enabled = true,
+            last_health_status = 'Reconnected by the owner. Sign in to start it.',
+            last_health_check_at = now()
+      WHERE id = $1`,
+    [id],
   );
 }
 

@@ -1,0 +1,15 @@
+-- Somewhere for a persona collection to say how far it has got.
+--
+-- Collecting a corpus takes a minute or two of scrolling, and the screen had a
+-- spinner and a fixed sentence. The requirement is that the count shown is the
+-- count collected -- never an estimate, never a number chosen to look busy --
+-- and a number that is read from the collector has to be written down
+-- somewhere first.
+--
+-- Deliberately not `last_error`: this is not an error, and putting progress
+-- there would make a working collection indistinguishable from a failing one on
+-- every screen that reads that column.
+--
+-- Nullable with no default, so every existing row is simply "has not said", and
+-- nothing that reads this table today has to change.
+ALTER TABLE persona_sources ADD COLUMN progress text;

@@ -57,8 +57,16 @@ export interface ReleaseInfo {
   version: string;
   /** What GitHub calls it, which is what a URL needs. */
   tag: string;
-  /** The readable name: `AI17Z Beta 1.0.0`. */
+  /** The readable name: `AI17Z Beta 3.1`. */
   name: string;
+  /**
+   * The same thing without the product: `Beta 3.1`.
+   *
+   * For a badge with no room for `AI17Z`. Derived here with `channel` and for
+   * the same reason: the version grammar has one implementation and the browser
+   * cannot reach it.
+   */
+  label: string;
   /**
    * `Beta`, `Release Candidate`, or null for a finished release.
    *
@@ -87,8 +95,10 @@ export interface ReleaseInfo {
 export interface UpdateState {
   /** What is running here. */
   current: string;
-  /** What that is called: `AI17Z Beta 1.0.0`. The number is still `current`. */
+  /** What that is called: `AI17Z Beta 3.1`. The number is still `current`. */
   currentName: string;
+  /** The short form of that: `Beta 3.1`. The number is still `current`. */
+  currentLabel: string;
   latest: ReleaseInfo | null;
   /** Newer than this installation, and not one the owner has skipped. */
   updateAvailable: boolean;
@@ -238,6 +248,7 @@ function toRelease(raw: GitHubRelease): ReleaseInfo | null {
     version,
     tag,
     name,
+    label: named.short,
     channel: named.channel,
     notes: raw.body?.trim() ?? '',
     url: raw.html_url ?? `https://github.com/${REPOSITORY}/releases/tag/${tag}`,
@@ -357,12 +368,15 @@ export async function updateState(options: { refresh?: boolean } = {}): Promise<
   const method = updateMethod();
   const installation = installationFrom(process.env, method);
 
-  const currentName = releaseName(current).title;
+  const running = releaseName(current);
+  const currentName = running.title;
+  const currentLabel = running.short;
 
   if (!enabled) {
     return {
       current,
       currentName,
+      currentLabel,
       latest: null,
       updateAvailable: false,
       skipped,
@@ -398,6 +412,7 @@ export async function updateState(options: { refresh?: boolean } = {}): Promise<
   return {
     current,
     currentName,
+    currentLabel,
     latest,
     updateAvailable: newer && latest.version !== skipped,
     skipped,

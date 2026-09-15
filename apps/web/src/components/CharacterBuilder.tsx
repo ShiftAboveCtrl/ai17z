@@ -239,6 +239,8 @@ function UseTemplate({ agentId, onDraft }: { agentId: string; onDraft: (draft: C
 
 interface LearnedPayload {
   ready: boolean;
+  /** The collection stopped and produced nothing. Not the same as still going. */
+  failed?: boolean;
   answers: CharacterAnswers | null;
   completeness: CharacterCompleteness | null;
   detail?: string;
@@ -260,7 +262,11 @@ function LearnFromAccount({ agentId, onDraft }: { agentId: string; onDraft: (dra
   const [error, setError] = useState<string | null>(null);
   const learned = useResource<LearnedPayload>(`/api/agents/${agentId}/character/learned`);
 
-  const working = started && !learned.data?.ready;
+  // Not merely "started and not ready": a collection that failed is never
+  // going to be ready, and treating that as still-working is how a screen spins
+  // for ever at an answer that already arrived.
+  const failed = Boolean(learned.data?.failed);
+  const working = started && !learned.data?.ready && !failed;
   usePolling(() => learned.reload(), 4_000, working);
   // The wait here is the reading, not the request that asked for it: the POST
   // returns immediately and the work goes on in the worker.
@@ -304,11 +310,28 @@ function LearnFromAccount({ agentId, onDraft }: { agentId: string; onDraft: (dra
 
       {working && (
         <Working
+          // Whatever the collector last wrote, which is a count of posts it
+          // actually read. Never an estimate and never a fixed sentence.
           label={learned.data?.detail ?? 'Reading the account'}
           seconds={elapsedWork}
           slowAfter={45}
-          slowHint="Six hundred posts is a lot to read. It keeps going while you look at something else."
+          slowHint="It scrolls the profile the way a person does, and keeps going while you look at something else."
         />
+      )}
+
+      {failed && (
+        /*
+          Said as itself. A protected account, a handle that does not exist, a
+          browser X wants signing in to and a security challenge each need a
+          different thing from the person reading this, and "that account could
+          not be read" tells them none of it.
+        */
+        <div className="rounded-lg border border-signal-fail/40 bg-signal-fail/[0.06] p-4">
+          <p className="text-sm text-bone">{learned.data?.detail ?? 'That account could not be read.'}</p>
+          <button type="button" className="btn-quiet mt-3" onClick={() => void start()} disabled={busy}>
+            Try again
+          </button>
+        </div>
       )}
 
       {learned.data?.ready && learned.data.answers && (

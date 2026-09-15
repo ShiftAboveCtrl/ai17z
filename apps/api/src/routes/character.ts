@@ -2,7 +2,15 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { CharacterAnswers, EasySetup, PersonaDraft } from '@xbam/shared/contracts';
 import { BadRequestError, ForbiddenError, NotFoundError, errorMessage } from '@xbam/shared';
-import { agents as agentsRepo, ops, personaSources, type UserRow } from '@xbam/database';
+import {
+  accounts as accountsRepo,
+  agents as agentsRepo,
+  browserTasks as browserTasksRepo,
+  ops,
+  personaSources,
+  type UserRow,
+} from '@xbam/database';
+import { PERSONA_TARGET_POSTS } from '@xbam/channels';
 import { generate } from '@xbam/models';
 import {
   answersToCharacter,
@@ -134,8 +142,19 @@ export async function characterRoutes(app: FastifyInstance): Promise<void> {
    * Starts the same corpus sync the advanced persona screens use, so the
    * provenance rules hold: raw posts never enter a prompt, only derived traits
    * do, and each trait cites the posts it came from. Returns immediately —
-   * fetching a few thousand posts is far too long for a request — and the UI
-   * follows the source status.
+   * reading a couple of hundred posts is far too long for a request — and the
+   * UI follows the source status.
+   *
+   * The reading happens in the worker, through the real Chrome that is already
+   * signed in and already drives X for the reply pipeline. It used to happen
+   * here, by shelling out to twscrape -- a Python library that has to be
+   * installed separately and given X accounts of its own. No packaged
+   * installation has it, so the feature reported "unavailable" on every machine
+   * anybody actually ran, which is why this never worked.
+   *
+   * Because the browser belongs to an account, this needs one. That is a real
+   * requirement rather than an implementation detail: AI17Z reads X as somebody,
+   * and there is no signed-out way to do it.
    */
   app.post(
     '/api/agents/:id/character/learn',
@@ -145,11 +164,26 @@ export async function characterRoutes(app: FastifyInstance): Promise<void> {
       const body = parseBody(
         z.object({
           handle: z.string().trim().min(1).max(120),
-          limit: z.number().int().min(50).max(5_000).default(600),
+          // A target for authored posts, not a page size. The default is the
+          // collector's own, which is where derived traits stop moving.
+          limit: z.number().int().min(10).max(1_000).default(PERSONA_TARGET_POSTS),
         }),
         request,
       );
       const handle = body.handle.replace(/^@+/, '');
+
+      // The account whose browser will do the reading. Any connected X account
+      // will do -- this reads a public profile, not anything belonging to that
+      // account -- so the first one is as good as a choice the owner would have
+      // to make for no reason.
+      const owned = await accountsRepo.listAccounts(user.id);
+      const reader = owned.find((a) => a.channel === 'x' && a.enabled) ?? null;
+      if (!reader) {
+        throw new BadRequestError(
+          'AI17Z reads X through a signed-in browser, so it needs one of your X accounts connected first. ' +
+            'Connect an account, sign in to it, and try again.',
+        );
+      }
 
       const source = await personaSources.upsertSource({
         agentId: agent.id,
@@ -158,10 +192,19 @@ export async function characterRoutes(app: FastifyInstance): Promise<void> {
         label: `Learned from @${handle}`,
         config: { includeReplies: true, includeQuotes: true },
       });
+      await personaSources.setSourceStatus(source.id, 'SYNCING', {
+        lastError: null,
+        progress: `Looking for @${handle}.`,
+      });
 
-      const { syncPersonaSource } = await import('@xbam/persona');
-      // Deliberately not awaited: the request returns and the UI polls.
-      void syncPersonaSource({ sourceId: source.id, limit: body.limit, incremental: false }).catch(() => undefined);
+      // Recorded, not performed. The worker claims this and runs it in the
+      // browser it owns; the UI follows the source's status and progress.
+      await browserTasksRepo.enqueueBrowserTask({
+        accountId: reader.id,
+        kind: 'COLLECT_PERSONA',
+        requestedBy: user.id,
+        params: { handle, sourceId: source.id, target: body.limit },
+      });
 
       await ops.audit({
         actorUserId: user.id,
@@ -194,14 +237,31 @@ export async function characterRoutes(app: FastifyInstance): Promise<void> {
       const learning = sources.find((s) => s.kind === 'x_public') ?? null;
 
       if (traits.length === 0) {
+        // Four different situations, which used to share one sentence.
+        //
+        //   nothing started        nobody has asked for anything
+        //   refused                protected, missing, signed out, challenged
+        //   working                a real count, written by the collector
+        //   finished with nothing  read the timeline, found no usable writing
+        //
+        // The last is the one that must never be dressed up: an empty corpus
+        // does not become a persona, and saying "still reading" for ever is how
+        // somebody waits on something that already stopped.
+        const detail = !learning
+          ? 'Nothing has been learned yet.'
+          : learning.status === 'UNAVAILABLE' || learning.status === 'ERROR'
+            ? (learning.lastError ?? `AI17Z could not read @${learning.handle ?? 'that account'}.`)
+            : (learning.progress ?? `Looking for @${learning.handle ?? 'that account'}.`);
+
         return {
           source: learning,
           ready: false,
+          // Distinguished from "still working", so the screen can stop waiting
+          // and say what went wrong instead of spinning.
+          failed: learning?.status === 'UNAVAILABLE' || learning?.status === 'ERROR',
           answers: null,
           completeness: null,
-          detail: learning
-            ? `Still reading @${learning.handle ?? 'that account'}. This takes a minute or two.`
-            : 'Nothing has been learned yet.',
+          detail,
         };
       }
 

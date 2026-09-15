@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Pencil, Sparkles } from 'lucide-react';
 import type { EasySetup, EasyView, PreflightResult } from '@xbam/shared/contracts';
+import { AvatarEditor } from '@app/components/AvatarEditor';
 import { AccountsSection } from './sections/AccountsSection';
 import { IntelligenceSection } from './sections/IntelligenceSection';
 import { VoiceSection } from './sections/VoiceSection';
@@ -170,6 +171,22 @@ export function EasyAgentView({ agent, onChanged }: { agent: AgentDetail; onChan
         account connects cannot apply in one view and not the other.
       */}
       <div className="space-y-10 border-t border-ink-line pt-8">
+        {/*
+          The face. Easy Mode could set one at creation, as a URL, and then had
+          nowhere to change it -- so the only way to replace a picture was to
+          find Advanced, then Character, then Identity. A likeness is the thing
+          most likely to be wrong on the first attempt, which makes "set once"
+          the wrong number of times.
+        */}
+        <div className="pb-2">
+          <p className="eyebrow mb-3">Its face</p>
+          <AvatarEditor
+            agentId={agent.agent.id}
+            name={agent.agent.name}
+            avatarUrl={agent.agent.avatarUrl}
+            onChanged={onChanged}
+          />
+        </div>
         <AccountsSection index={0} agentId={agent.agent.id} accounts={agent.accounts} onChanged={onChanged} compact />
         <IntelligenceSection index={0} agentId={agent.agent.id} models={agent.models} onChanged={onChanged} compact />
         <VoiceSection index={0} agentId={agent.agent.id} compact />
