@@ -168,7 +168,7 @@ async function contextFor(agentId: string, accountId: string | null): Promise<Sa
 
   return {
     topics: persona?.topics ?? [],
-    goals: goals.map((goal) => goal.summary),
+    goals: goals.map((goal) => ({ id: goal.id, summary: goal.summary })),
     onItsMind: mindItems.map((item) => item.summary),
     people,
     recentlySaid: said,
@@ -278,6 +278,30 @@ export async function attend(
     });
     if (row.reinforcements > 1) reinforced += 1;
     items.push(row);
+
+    /*
+      A goal accrues what the agent actually found bearing on it.
+
+      Scoring has always worked out which goal an observation relates to: it is
+      worth 25 points and it is the difference between a goal the agent holds
+      and a sentence stored beside it. Nothing wrote that answer down, so
+      `noteGoalEvidence` had no caller anywhere outside a test, and a goal's
+      evidence stayed exactly as the owner created it, for ever.
+
+      Deliberately evidence and not progress. How far along something is, is
+      the owner's judgement; what has been found bearing on it is a record, and
+      the record is what makes the judgement possible. An agent that decided
+      its own goals were progressing would be marking its own homework, which
+      is the same objection that keeps a model out of `salience.ts`.
+
+      First attention only, not every reinforcement. Evidence is bounded at
+      twenty and reinforcement is the common case by design, so recording one
+      each time would let a single subject seen repeatedly push everything else
+      off the list and leave a goal resting on twenty copies of one post.
+    */
+    if (verdict.bearsOnGoal && row.reinforcements === 1) {
+      await mind.noteGoalEvidence(verdict.bearsOnGoal, [evidenceFor(observation)]);
+    }
   }
 
   return { attended: items.length, reinforced, items };

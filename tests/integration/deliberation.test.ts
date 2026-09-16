@@ -289,6 +289,86 @@ describe('goals', () => {
     expect(after?.evidence.length).toBe(1);
   });
 
+  /*
+    The gap this closes.
+
+    Scoring has always found which goal an observation bears on: it is worth 25
+    points and it is the reason the thing was attended to at all. Nothing wrote
+    that answer down, so `noteGoalEvidence` had no caller anywhere outside this
+    file, and a goal's evidence stayed exactly as the owner created it however
+    long the agent ran.
+  */
+  it('gives a goal the evidence it found bearing on it', async () => {
+    const agent = await agentThatThinks();
+    const goal = await mind.addGoal({
+      agentId: agent.agentId,
+      summary: 'Work out how agent memory survives a restart.',
+      origin: 'OWNER',
+      pinned: true,
+    });
+    expect(goal.evidence).toHaveLength(0);
+
+    await somebodySaid(agent.accountId, 'The hard part of autonomous agents is agent memory that survives a restart.');
+    const outcome = await wakeAgent(agent.agentId);
+    expect(outcome.attended).toBe(1);
+
+    const [after] = await mind.listGoals(agent.agentId, { status: 'ACTIVE' });
+    expect(after?.evidence.length).toBeGreaterThan(0);
+    // Evidence, not a copy: it points back at what was actually observed.
+    expect(after?.evidence[0]?.note).toContain('agent memory');
+  });
+
+  /*
+    Evidence is bounded at twenty and reinforcement is the common case.
+
+    One subject seen repeatedly would otherwise push everything else off the
+    list and leave a goal resting on twenty copies of one post, which is the
+    same fixation failure the working set fingerprints subjects to avoid.
+  */
+  it('does not let one subject seen twice count as two findings', async () => {
+    const agent = await agentThatThinks();
+    await mind.addGoal({
+      agentId: agent.agentId,
+      summary: 'Work out how agent memory survives a restart.',
+      origin: 'OWNER',
+      pinned: true,
+    });
+
+    const said = 'The hard part of autonomous agents is agent memory that survives a restart.';
+    await somebodySaid(agent.accountId, said);
+    await wakeAgent(agent.agentId);
+    // The same subject again, as a different post, which is what reinforcement is.
+    await somebodySaid(agent.accountId, said, { handle: 'somebodyelse' });
+    await wakeAgent(agent.agentId);
+
+    const [after] = await mind.listGoals(agent.agentId, { status: 'ACTIVE' });
+    expect(after?.evidence).toHaveLength(1);
+  });
+
+  /*
+    How far along something is stays the owner's judgement.
+
+    An agent that moved its own progress bar would be marking its own homework,
+    which is the objection that keeps a model out of `salience.ts` as well.
+  */
+  it('does not decide for itself how far along a goal is', async () => {
+    const agent = await agentThatThinks();
+    await mind.addGoal({
+      agentId: agent.agentId,
+      summary: 'Work out how agent memory survives a restart.',
+      origin: 'OWNER',
+      pinned: true,
+    });
+
+    await somebodySaid(agent.accountId, 'The hard part of autonomous agents is agent memory that survives a restart.');
+    await wakeAgent(agent.agentId);
+
+    const [after] = await mind.listGoals(agent.agentId, { status: 'ACTIVE' });
+    expect(after?.evidence.length).toBeGreaterThan(0);
+    expect(after?.progress).toBe(0);
+    expect(after?.status).toBe('ACTIVE');
+  });
+
   it('records who decided a goal, because an owner’s outranks its own', async () => {
     const agent = await agentThatThinks();
     const mine = await mind.addGoal({ agentId: agent.agentId, summary: 'Owner set this.', origin: 'OWNER', pinned: true });

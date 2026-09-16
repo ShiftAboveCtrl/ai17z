@@ -247,8 +247,8 @@ export async function mindRoutes(app: FastifyInstance): Promise<void> {
         agentId: agent.id,
         summary: body.summary,
         reason: body.reason ?? '',
-        // Set by a person, so pinned: deliberation may move it along and may
-        // not decide it has stopped mattering.
+        // Set by a person, so pinned: deliberation may gather evidence on it
+        // and may not decide it has stopped mattering.
         origin: 'OWNER',
         pinned: true,
         ...(body.priority === undefined ? {} : { priority: body.priority }),
@@ -277,6 +277,16 @@ export async function mindRoutes(app: FastifyInstance): Promise<void> {
           status: z.enum(GOAL_STATUSES).optional(),
           pinned: z.boolean().optional(),
           resolution: z.string().trim().max(1_000).optional(),
+          /*
+            How far along the owner judges this to be.
+
+            `updateGoal` has always accepted it and this schema has always
+            dropped it, so `agent_goals.progress` could not be moved off zero
+            by any route in the product while the Mind screen rendered it as a
+            bar. It is the owner's number: nothing in deliberation sets it,
+            for the reason given where the evidence is recorded.
+          */
+          progress: z.number().int().min(0).max(100).optional(),
         }),
         request,
       );
