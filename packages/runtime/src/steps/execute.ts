@@ -509,12 +509,6 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
         })
         .catch(() => undefined);
     }
-    await actionsRepo.recordActionAttempt({
-      actionId: action.id,
-      attempt: job.attemptCount + 1,
-      outcome: result.status,
-    });
-
     if (result.status === 'DRY_RUN') {
       await jobsRepo.updateJob(job.id, { status: 'DRY_RUN_COMPLETED', touch: ['executedAt'], releaseLock: true });
       await observability.emitTrace({
@@ -555,13 +549,6 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       status: 'FAILED',
       errorClass: pipelineError.errorClass,
       lastError: pipelineError.message,
-    });
-    await actionsRepo.recordActionAttempt({
-      actionId: action.id,
-      attempt: job.attemptCount + 1,
-      outcome: 'FAILED',
-      errorClass: pipelineError.errorClass,
-      error: pipelineError.message,
     });
     await observability.emitTrace({
       jobId: job.id,

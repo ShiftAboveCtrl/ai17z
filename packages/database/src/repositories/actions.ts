@@ -147,24 +147,6 @@ export async function completeAction(
   return mapRow<ActionRecord>(row) as ActionRecord;
 }
 
-export async function recordActionAttempt(input: {
-  actionId: string;
-  attempt: number;
-  outcome: string;
-  errorClass?: string | null;
-  error?: string | null;
-  diagnosticId?: string | null;
-}): Promise<void> {
-  await query(
-    `INSERT INTO action_attempts (action_id, attempt, finished_at, outcome, error_class, error, diagnostic_id)
-     VALUES ($1,$2, now(), $3,$4,$5,$6)
-     ON CONFLICT (action_id, attempt) DO UPDATE
-       SET finished_at = now(), outcome = excluded.outcome, error_class = excluded.error_class,
-           error = excluded.error, diagnostic_id = excluded.diagnostic_id`,
-    [input.actionId, input.attempt, input.outcome, input.errorClass ?? null, input.error ?? null, input.diagnosticId ?? null],
-  );
-}
-
 /**
  * Closes off an action whose job has stopped for good.
  *
