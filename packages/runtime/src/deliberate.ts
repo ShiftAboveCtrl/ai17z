@@ -3,6 +3,7 @@ import {
   agents as agentsRepo,
   content as contentRepo,
   deliberation as mind,
+  engagements as engagementsRepo,
   memories as memoriesRepo,
   relationships as relationshipsRepo,
   repoSources,
@@ -25,6 +26,7 @@ import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
 import { worthNoticing } from './repoWatcher';
 import { reticenceReason, unpromptedSubject } from './reticence';
+import { worthEngaging } from './engagementWorth';
 import { lookIntoSomething } from './curiosity';
 import { decayed, fingerprintOf, overlap, scoreObservation, type KnownPerson, type Observation, type SalienceContext } from './salience';
 
@@ -108,6 +110,8 @@ export interface WakeOutcome {
   lookedInto: { question: string; findings: number } | null;
   /** Candidates handed to the existing backlog. */
   candidates: number;
+  /** Likes and reposts it proposed, which ACT may later take. */
+  engagements: number;
   deep: boolean;
   /** One sentence an owner can read. */
   reason: string;
@@ -127,6 +131,7 @@ function emptyOutcome(agentId: string, autonomy: AutonomyLevel, reason: string, 
     kept: 0,
     lookedInto: null,
     candidates: 0,
+    engagements: 0,
     deep: false,
     reason,
     ...(skipped ? { skipped } : {}),
@@ -664,6 +669,110 @@ export async function formIntentions(agentId: string, now: Date = new Date()): P
 }
 
 /**
+ * Posts this agent decided were worth acknowledging.
+ *
+ * The other half of `formIntentions`. That one turns a thought into something
+ * to *say*; this turns an observation into something to *acknowledge*, which is
+ * a different decision about a different object. An idea has no target and a
+ * like is nothing but a target.
+ *
+ * Only what was actually seen on X, and only where there is a real post id to
+ * act on: a like anchored to anything else is a like that cannot be verified
+ * and cannot be deduplicated. `worthEngaging` does the judging and declines
+ * most of it, which is the point.
+ *
+ * Proposing is all that happens here. Whether a proposal is ever taken is the
+ * autonomy ladder's business and `runDueEngagements`'s, and below ACT the
+ * answer is never.
+ */
+export async function formEngagements(agentId: string, observations: Observation[]): Promise<number> {
+  const links = await accountsRepo.listAgentAccounts(agentId);
+  const accountId = links[0]?.accountId;
+  if (!accountId) return 0;
+
+  const [persona, account, known, already] = await Promise.all([
+    agentsRepo.getActivePersona(agentId),
+    accountsRepo.getAccount(accountId),
+    relationshipsRepo.listForAgent(agentId, { limit: 150 }),
+    engagementsRepo.actedOn(agentId),
+  ]);
+
+  const people = new Map<string, { inboundCount: number; disposition: string }>();
+  for (const person of known) {
+    people.set(person.handle.toLowerCase(), {
+      inboundCount: person.inboundCount,
+      disposition: person.disposition,
+    });
+  }
+
+  const context = {
+    topics: persona?.topics ?? [],
+    selfHandles: account?.handle ? [account.handle] : [],
+    people,
+    alreadyEngaged: already,
+  };
+
+  let proposed = 0;
+  for (const observation of observations) {
+    // Only what somebody else posted on X. The agent's own actions, its
+    // stances, its commitments and a repository's commits are all observations
+    // and none of them is a post anybody can like.
+    if (observation.source !== 'DISCOVERY' && observation.source !== 'MENTION' && observation.source !== 'REPLY') {
+      continue;
+    }
+    const remoteId = remoteIdFrom(observation.url);
+    if (!remoteId) continue;
+
+    const ageHours = observation.at
+      ? (Date.now() - new Date(observation.at).getTime()) / 3600_000
+      : null;
+
+    const worth = worthEngaging(
+      {
+        remoteId,
+        url: observation.url ?? '',
+        authorHandle: observation.handle ?? '',
+        text: observation.text,
+        metrics: observation.metrics ?? null,
+        ageHours,
+      },
+      context,
+    );
+    if (!worth.kind) continue;
+
+    const row = await engagementsRepo.propose({
+      agentId,
+      accountId,
+      kind: worth.kind,
+      remoteId,
+      remoteUrl: observation.url ?? '',
+      authorHandle: observation.handle ?? '',
+      excerpt: observation.text.replace(/\s+/g, ' ').slice(0, 280),
+      score: worth.score,
+      factors: worth.factors,
+      confidence: worth.confidence,
+    });
+    if (row) proposed += 1;
+  }
+
+  return proposed;
+}
+
+/**
+ * The post id out of an X permalink.
+ *
+ * The action is anchored to the id and never to the URL, because one post can
+ * be written several ways -- with or without the handle's original casing, with
+ * or without a query string -- and an idempotency key built on the spelling
+ * would let the same like through twice.
+ */
+function remoteIdFrom(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const match = /\/status(?:es)?\/(\d{5,25})/.exec(url);
+  return match?.[1] ?? null;
+}
+
+/**
  * One wake.
  *
  * Idempotent and restart-safe by construction: everything it reads is a query
@@ -793,18 +902,26 @@ export async function wakeAgent(
     if (found) lookedInto = { question: found.question, findings: found.findings };
   }
 
+  let engagements = 0;
   if (autonomyAtLeast(wake.autonomy, 'SUGGEST')) {
     candidates = await formIntentions(agentId, now);
+    /*
+      Proposed at the same rung that offers something to say, because they are
+      the same kind of decision: the agent putting a candidate where somebody
+      can look at it. Whether either is ever taken is ACT's business.
+    */
+    engagements = await formEngagements(agentId, observations);
   }
 
   const somethingHappened =
-    attended > 0 || produced > 0 || candidates > 0 || resolvedCount > 0 || lookedInto !== null;
+    attended > 0 || produced > 0 || candidates > 0 || resolvedCount > 0 || lookedInto !== null || engagements > 0;
   const reason = somethingHappened
     ? [
         attended > 0 ? `${attended} worth noticing` : '',
         produced > 0 ? `${produced} new` : '',
         resolvedCount > 0 ? `${resolvedCount} settled` : '',
         candidates > 0 ? `${candidates} worth saying` : '',
+        engagements > 0 ? `${engagements} worth acknowledging` : '',
         retired > 0 ? `${retired} faded` : '',
         kept > 0 ? `${kept} kept` : '',
         lookedInto
@@ -863,6 +980,7 @@ export async function wakeAgent(
     kept,
     lookedInto,
     candidates,
+    engagements,
     deep,
     reason,
   };

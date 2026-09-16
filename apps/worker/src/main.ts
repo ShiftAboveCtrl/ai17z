@@ -28,7 +28,7 @@ import { PersonaSyncRunner } from './personaSync';
 import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
-import { pollDueFeeds, pollDueRepos, wakeDueAgents } from '@xbam/runtime';
+import { pollDueFeeds, pollDueRepos, runDueEngagements, wakeDueAgents } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -235,6 +235,33 @@ async function main(): Promise<void> {
   const repoWatcher = startLoop('repo-watch', 60_000, watchRepos);
 
   /**
+   * Takes the likes and reposts an agent proposed for itself.
+   *
+   * Same shape as every other loop here and for the same reason. The claim
+   * moves each proposal's attempt time forward in the statement that selects
+   * it, so two workers cannot take one and a restart cannot stampede the lot.
+   *
+   * Below ACT this does almost nothing: a proposal is left where it is for an
+   * owner to look at, which is what SUGGEST means. At ACT it hands each one to
+   * the same executor a reply goes through, so the idempotency key, the
+   * stale-retake check and the action ledger are the ones that already exist.
+   *
+   * Two at a time, because each one is a browser action on somebody's real
+   * account and there is never a reason to do them in a burst.
+   */
+  const engageAhead = async () => {
+    const outcomes = await runDueEngagements(2);
+    const done = outcomes.filter((outcome) => outcome.status === 'DONE');
+    if (done.length > 0) {
+      log.info('an agent acted on something it chose itself', {
+        likes: done.filter((outcome) => outcome.kind === 'LIKE').length,
+        reposts: done.filter((outcome) => outcome.kind === 'REPOST').length,
+      });
+    }
+  };
+  const engagement = startLoop('engagement', 90_000, engageAhead);
+
+  /**
    * Publishes what each account's three tabs are doing.
    *
    * The API owns no browsers, so this process is the only one that can answer
@@ -316,6 +343,7 @@ async function main(): Promise<void> {
     clearInterval(feedWatcher);
     clearInterval(deliberation);
     clearInterval(repoWatcher);
+    clearInterval(engagement);
     if (tabReporter) clearInterval(tabReporter);
     // Withdraw immediately rather than waiting for the heartbeat to lapse: a
     // clean shutdown knows it is leaving.

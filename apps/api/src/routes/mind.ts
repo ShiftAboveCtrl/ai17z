@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { ForbiddenError, NotFoundError } from '@xbam/shared';
+import { ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import { ATTENTION_STATES, AUTONOMY_LEVELS, GOAL_STATUSES } from '@xbam/shared/contracts';
 import { wakeAgent } from '@xbam/runtime';
 import {
   agents as agentsRepo,
   deliberation as mind,
+  engagements as engagementsRepo,
   ops,
   repoSources,
   REPO_EVENT_KINDS,
@@ -54,11 +55,14 @@ export async function mindRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
 
-      const [items, goals, reflections, wake] = await Promise.all([
+      const [items, goals, reflections, wake, suggested] = await Promise.all([
         mind.onItsMind(agent.id, { limit: 40 }),
         mind.listGoals(agent.id, { limit: 40 }),
         mind.recentReflections(agent.id, 15),
         mind.getWake(agent.id),
+        // What it wants to acknowledge, so SUGGEST is something an owner can
+        // actually read rather than a setting that changes nothing visible.
+        engagementsRepo.listEngagements(agent.id, { limit: 30 }),
       ]);
 
       return {
@@ -96,7 +100,76 @@ export async function mindRoutes(app: FastifyInstance): Promise<void> {
           resolvedAt: goal.resolvedAt,
         })),
         reflections,
+        /*
+          Likes and reposts it proposed for itself.
+
+          Shown with the reasons that produced them and never as a bare list:
+          an owner deciding whether to let an agent act in public needs to see
+          what it would do and why, and "score 62" tells nobody anything.
+        */
+        engagements: suggested.map((row) => ({
+          id: row.id,
+          kind: row.kind,
+          status: row.status,
+          url: row.remoteUrl,
+          authorHandle: row.authorHandle,
+          excerpt: row.excerpt,
+          score: row.score,
+          factors: row.factors,
+          confidence: Number(row.confidence),
+          reason: row.reason,
+          createdAt: row.createdAt,
+          decidedAt: row.decidedAt,
+        })),
       };
+    }),
+  );
+
+  /** An owner saying yes to one proposed like or repost. */
+  app.post(
+    '/api/agents/:id/mind/engagements/:engagementId/approve',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const engagementId = params(request).engagementId!;
+
+      const approved = await engagementsRepo.approve(engagementId, agent.id);
+      if (!approved) {
+        // Already decided, or never this agent's. Both are conflicts rather
+        // than failures, and an owner pressing approve twice should be told
+        // which happened.
+        throw new ConflictError('That suggestion has already been decided, or does not belong to this agent.');
+      }
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'mind.engagement.approved',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { engagementId },
+      });
+      return { approved: true };
+    }),
+  );
+
+  /** An owner saying no, which settles it with their reason. */
+  app.delete(
+    '/api/agents/:id/mind/engagements/:engagementId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const engagementId = params(request).engagementId!;
+
+      const row = await engagementsRepo.getEngagement(engagementId);
+      if (!row || row.agentId !== agent.id) throw new ConflictError('That suggestion does not belong to this agent.');
+      await engagementsRepo.settle(engagementId, 'DECLINED', 'You decided against this one.');
+      await ops.audit({
+        actorUserId: user.id,
+        action: 'mind.engagement.declined',
+        entityType: 'agent',
+        entityId: agent.id,
+        data: { engagementId },
+      });
+      return { declined: true };
     }),
   );
 
