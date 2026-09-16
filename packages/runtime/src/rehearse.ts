@@ -343,6 +343,30 @@ function isFinished(job: JobRecord): boolean {
   return TERMINAL.has(job.status);
 }
 
+/**
+ * Several trace rows read as several things, not as one sentence.
+ *
+ * A stage usually has more than one row behind it, and joining their messages
+ * with a space produced "Passed the filter. Passed 100% of the phrasing
+ * appeared in a recent reply" -- three separate findings run together into one
+ * that says none of them. Measured on a live rehearsal, which is where this
+ * kind of thing is visible and a fixture's single row is not.
+ *
+ * Repeats are dropped rather than shown twice: the validator runs at ingest and
+ * again before publication, and both say "Passed".
+ */
+function sentences(rows: TraceEvent[]): string {
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const row of rows) {
+    const message = (row.message ?? '').trim();
+    if (!message || seen.has(message)) continue;
+    seen.add(message);
+    parts.push(message);
+  }
+  return parts.join(' · ');
+}
+
 /** Trimmed for a card, with the fact that it was trimmed visible. */
 function shorten(text: string | null | undefined, limit = 400): string | null {
   if (!text) return null;
@@ -390,7 +414,7 @@ export async function explainRehearsal(jobId: string): Promise<RehearsalExplanat
           ? isFinished(job)
             ? 'Did not run.'
             : 'Has not run yet.'
-          : rows.map((row) => row.message).filter(Boolean).join(' '),
+          : sentences(rows),
       at: last?.at ?? null,
     };
   });
