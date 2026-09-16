@@ -17,8 +17,25 @@ import { query, queryOne } from '../pool';
  * feed watcher and the wake loop do, so two workers cannot take one proposal.
  */
 
-export type EngagementKind = 'LIKE' | 'REPOST';
-export type EngagementStatus = 'PROPOSED' | 'APPROVED' | 'DONE' | 'DECLINED' | 'FAILED';
+/*
+  The two vocabularies, as arrays rather than as unions.
+
+  Both have a CHECK constraint behind them, and `constrainedEnums.ts` needs the
+  values at runtime to hold the column and the code against each other. A union
+  type exists only at compile time, which is exactly how a widened enum reaches
+  a narrower constraint and fails at the database on whichever path writes one
+  first. That has cost this project a broken sign-in once already.
+
+  Nothing outside the database has needed to name either of these, so they have
+  no shared contract enum. `LIKE` and `REPOST` are two of the `ACTION_TYPES`,
+  but this column is not that column: it says what an agent proposed to do on
+  its own, and it may never grow to cover replying or posting.
+*/
+export const ENGAGEMENT_KINDS = ['LIKE', 'REPOST'] as const;
+export const ENGAGEMENT_STATUSES = ['PROPOSED', 'APPROVED', 'DONE', 'DECLINED', 'FAILED'] as const;
+
+export type EngagementKind = (typeof ENGAGEMENT_KINDS)[number];
+export type EngagementStatus = (typeof ENGAGEMENT_STATUSES)[number];
 
 export interface EngagementRow {
   id: string;

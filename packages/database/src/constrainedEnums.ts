@@ -34,6 +34,7 @@ import {
   TRACE_EVENT_TYPES,
 } from '@xbam/shared/contracts';
 import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
+import { ENGAGEMENT_KINDS, ENGAGEMENT_STATUSES } from './repositories/engagements';
 import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
 
 /**
@@ -144,6 +145,18 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   // ── Database-only vocabularies ────────────────────────────────────────────
   // Nothing outside the schema names these, so they live here rather than in a
   // shared contract nobody would import. Registered so they are still covered.
+  {
+    table: 'agent_engagements',
+    column: 'kind',
+    values: ENGAGEMENT_KINDS,
+    note: 'What an agent proposed to do on its own. Two of the ACTION_TYPES, deliberately not that enum: this column may never grow to cover replying or posting.',
+  },
+  {
+    table: 'agent_engagements',
+    column: 'status',
+    values: ENGAGEMENT_STATUSES,
+    note: 'Proposal lifecycle, owned by the engagements repository.',
+  },
   {
     table: 'artifacts',
     column: 'kind',
