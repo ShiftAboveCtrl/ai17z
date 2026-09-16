@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ops, prompts as promptsRepo, users as usersRepo } from '@xbam/database';
 import { envBool, envString } from '@xbam/shared';
 import { setUpdatesEnabled, skipVersion, updateState } from '@xbam/runtime';
-import { handler, parseBody, requireUser } from '../http';
+import { handler, parseBody, parseQuery, requireUser } from '../http';
 
 const APPEARANCE_KEY = 'appearance';
 
@@ -50,8 +50,41 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
+  /**
+   * What has been done to this installation, and by whom.
+   *
+   * This route is named for the audit log and returned the AI4CZ import
+   * history, which is a different thing entirely and is now at
+   * `/api/import-runs`. Nothing called either, so nothing breaks; what changes
+   * is that the fifty-three places that write an audit row are finally
+   * readable.
+   *
+   * It matters more since Telegram became a command surface: a paired chat can
+   * pause every agent and approve what they send, and "remote control of
+   * somebody's accounts is worth a row" is only true if somebody can read it.
+   */
   app.get(
     '/api/audit',
+    handler(async (request) => {
+      await requireUser(request);
+      const query = parseQuery(
+        z.object({ action: z.string().max(80).optional(), limit: z.coerce.number().int().min(1).max(500).optional() }),
+        request,
+      );
+      const [items, actions] = await Promise.all([
+        ops.listAuditEvents({
+          ...(query.action ? { action: query.action } : {}),
+          ...(query.limit ? { limit: query.limit } : {}),
+        }),
+        ops.auditActions(),
+      ]);
+      return { items, actions };
+    }),
+  );
+
+  /** The AI4CZ import history, which is what `/api/audit` used to return. */
+  app.get(
+    '/api/import-runs',
     handler(async (request) => {
       await requireUser(request);
       return { items: await ops.listImportRuns() };

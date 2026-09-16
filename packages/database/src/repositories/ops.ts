@@ -28,6 +28,65 @@ export async function audit(input: {
   );
 }
 
+export interface AuditEventRow {
+  id: string;
+  actorUserId: string | null;
+  actorEmail: string | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  data: Record<string, unknown>;
+  at: string;
+}
+
+/**
+ * What has been done to this installation, and by whom.
+ *
+ * Fifty-three call sites write an audit row and, until this function existed,
+ * nothing anywhere read one. The route named `/api/audit` returned the AI4CZ
+ * import history instead, so an owner had no way at all to see who paused
+ * their agents or approved a reply.
+ *
+ * That mattered more once Telegram became a command surface: a chat can pause
+ * every agent and approve what they send, and "remote control of somebody's
+ * accounts is worth a row" is only true if the row can be read.
+ *
+ * The actor's email is joined here rather than looked up per row, and there is
+ * deliberately no free-text search: this is a list to scan, and a query
+ * language over an audit log is a way to make an index nobody has.
+ */
+export async function listAuditEvents(filter: { action?: string; limit?: number } = {}): Promise<AuditEventRow[]> {
+  const params: unknown[] = [];
+  const where: string[] = [];
+  if (filter.action) {
+    params.push(`${filter.action}%`);
+    where.push(`a.action LIKE $${params.length}`);
+  }
+  params.push(Math.min(Math.max(filter.limit ?? 100, 1), 500));
+  return mapRows<AuditEventRow>(
+    await query(
+      `SELECT a.id::text AS id, a.actor_user_id, u.email AS actor_email, a.action,
+              a.entity_type, a.entity_id, a.data, a.at
+         FROM audit_events a
+         LEFT JOIN users u ON u.id = a.actor_user_id
+        ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+        ORDER BY a.at DESC
+        LIMIT $${params.length}`,
+      params,
+    ),
+  );
+}
+
+/** The distinct things that have been done, for a filter that cannot go stale. */
+export async function auditActions(): Promise<{ action: string; count: number }[]> {
+  return mapRows<{ action: string; count: number }>(
+    await query(
+      `SELECT action, count(*)::int AS count FROM audit_events
+        GROUP BY action ORDER BY count DESC, action LIMIT 60`,
+    ),
+  );
+}
+
 export interface ArtifactRow {
   id: string;
   kind: string;
