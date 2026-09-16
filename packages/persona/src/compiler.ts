@@ -140,19 +140,53 @@ function lightCompile(draft: string, input: CompileInput): { text: string; chang
 
   text = text.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 
-  // Length last, so trimming happens after everything that shortens the text.
-  const ceiling = Math.min(
-    input.maxCharacters ?? Number.MAX_SAFE_INTEGER,
-    input.fingerprint.sampleCount >= 10
-      ? Math.max(input.fingerprint.p90Chars * 1.3, input.fingerprint.medianChars * 2.5, 120)
-      : Number.MAX_SAFE_INTEGER,
-  );
-  if (text.length > ceiling) {
-    text = trimToSentence(text, Math.floor(ceiling));
-    changes.push('shortened to the length this agent usually writes');
+  /*
+    Length last, and **only against the policy's own ceiling**.
+
+    What used to be here was a second ceiling derived from the voice
+    fingerprint: `p90Chars * 1.3` or `medianChars * 2.5`, whichever was larger.
+    On the live agent that came to about 175 characters, because a fingerprint
+    with no stored samples is derived from the persona's **style examples** --
+    thirty-two illustrative snippets from "ha. okay that's fair" upwards. Those
+    show a register, not an extent, and taking a maximum from them is a category
+    error.
+
+    The effect was visible in production. Drafts of 196 to 230 characters were
+    landing as replies of 170 to 175, cut at a word boundary in the middle of a
+    sentence: "a different risk class than", "why no official X API key is".
+    The policy allowed 280 the whole time.
+
+    So a draft longer than this agent usually writes is now a reason to **ask
+    for a shorter one**, which is what `rewriteBrief` is for, and never a reason
+    to cut a sentence in half. A truncated thought is worse than a long one:
+    long reads as verbose, and truncated reads as broken.
+  */
+  const policyCeiling = input.maxCharacters ?? Number.MAX_SAFE_INTEGER;
+  if (text.length > policyCeiling) {
+    // The platform's own limit is the one hard stop, and even here the cut is
+    // sentence-aware. Reaching it at all means generation ignored its
+    // instructions, so it is a floor under a failure rather than ordinary
+    // shaping.
+    text = trimToSentence(text, Math.floor(policyCeiling));
+    changes.push(`shortened to the ${policyCeiling} character limit`);
   }
 
   return { text, changes };
+}
+
+/**
+ * Longer than this agent would usually write, without being over any limit.
+ *
+ * Not a ceiling. A reason to ask for a shorter draft, which the caller may or
+ * may not pay for. Null when there is nothing to say about the length, which
+ * includes every agent whose fingerprint rests on too few samples to mean
+ * anything.
+ */
+export function longerThanUsual(text: string, fingerprint: VoiceFingerprint): string | null {
+  if (fingerprint.sampleCount < 10) return null;
+  const usual = Math.max(fingerprint.p90Chars * 1.3, fingerprint.medianChars * 2.5, 120);
+  if (text.length <= usual) return null;
+  return `This is ${text.length} characters and this agent usually writes under ${Math.round(usual)}. Say the same thing in fewer words. Do not cut it off: finish the thought.`;
 }
 
 /**
