@@ -138,6 +138,59 @@ describe('opening a tab', () => {
     expect(sent.some((call) => call.method === 'context.newPage')).toBe(false);
   });
 
+  it('parks an idle tab rather than exceeding what the machine can hold', async () => {
+    /*
+      `budgetFor` has always said how many X tabs a machine may render at once,
+      and on a machine under 10 GB that number is two. Nothing read it: the role
+      map opened four regardless, so a small laptop ran four X renderers beside
+      Docker and Postgres, each allowed 45% of V8's own ceiling.
+
+      Enforced with the machinery that already exists rather than a new one: a
+      closed tab is recreated on demand, which is the property the whole role
+      map rests on.
+    */
+    const { context, sent } = fakeContext();
+    const tabs = new Map() as TabMap;
+    await acquireTab(context, tabs, 'ACTION', { maxLiveTabs: 2 });
+    await acquireTab(context, tabs, 'MENTIONS', { maxLiveTabs: 2 });
+    expect([...tabs.keys()].sort()).toEqual(['ACTION', 'MENTIONS']);
+
+    await acquireTab(context, tabs, 'NOTIFICATIONS', { maxLiveTabs: 2 });
+
+    expect(tabs.size).toBe(2);
+    // The one being acquired is never the one parked, and the least recently
+    // used goes first.
+    expect(tabs.has('NOTIFICATIONS')).toBe(true);
+    expect(tabs.has('ACTION')).toBe(false);
+    expect(sent.filter((call) => call.method === 'Target.createTarget')).toHaveLength(3);
+  });
+
+  it('never parks a tab something is holding', async () => {
+    // Taking a page out from under an operation is worse than being briefly
+    // over budget, so a busy tab is not a candidate and the cap gives way.
+    const { context } = fakeContext();
+    const tabs = new Map() as TabMap;
+    const action = await acquireTab(context, tabs, 'ACTION', { maxLiveTabs: 2 });
+    const mentions = await acquireTab(context, tabs, 'MENTIONS', { maxLiveTabs: 2 });
+    action.busy = true;
+    mentions.busy = true;
+
+    await acquireTab(context, tabs, 'RESEARCH', { maxLiveTabs: 2 });
+
+    expect(tabs.has('ACTION')).toBe(true);
+    expect(tabs.has('MENTIONS')).toBe(true);
+    expect(tabs.has('RESEARCH')).toBe(true);
+  });
+
+  it('leaves every tab alone when the machine has not said a number', async () => {
+    const { context } = fakeContext();
+    const tabs = new Map() as TabMap;
+    for (const role of ['ACTION', 'MENTIONS', 'NOTIFICATIONS', 'RESEARCH'] as const) {
+      await acquireTab(context, tabs, role);
+    }
+    expect(tabs.size).toBe(4);
+  });
+
   it('still opens a tab where the background flag is not available', async () => {
     // A Playwright-Chromium persistent context has no browser-level CDP
     // session. A tab that steals focus is worse than the alternative; a tab
