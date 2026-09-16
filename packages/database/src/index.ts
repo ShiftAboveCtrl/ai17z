@@ -40,6 +40,7 @@ export * as media from './repositories/media';
 export * as deliberation from './repositories/deliberation';
 export * as relationships from './repositories/relationships';
 export * as repoSources from './repositories/repoSources';
+export * as engagements from './repositories/engagements';
 export * as xAccountObservations from './repositories/xAccountObservations';
 export * as stances from './repositories/stances';
 export * as voice from './repositories/voice';
@@ -85,6 +86,7 @@ export type { AttentionRow, GoalRow, ReflectionRow, WakeRow, RememberInput } fro
 export type { RelationshipRow, CallbackRow } from './repositories/relationships';
 export type { RepoSourceRow, RepoEventRow, RepoEventKind, RepoStatus } from './repositories/repoSources';
 export { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
+export type { EngagementRow, EngagementKind, EngagementStatus } from './repositories/engagements';
 export type { XAccountObservationRow, RecordObservationInput } from './repositories/xAccountObservations';
 export type { StanceRow, EvidenceRow } from './repositories/stances';
 export type { FingerprintRow, RecentOutputRow } from './repositories/voice';
