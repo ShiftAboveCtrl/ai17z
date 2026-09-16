@@ -48,10 +48,18 @@ describe('what a missing worker says', () => {
   });
 
   it('is written once, not once per screen', () => {
-    // Each of these described the same situation in its own words.
+    /*
+      Each of these described the same situation in its own words.
+
+      The health check moved from `apps/api/src/routes/health.ts` into
+      `packages/runtime/src/health.ts` when Telegram became a second caller, so
+      a phone and a screen could not disagree about whether anything was wrong.
+      The route is two lines and no logic now, and this list follows the logic.
+      The test caught the move, which is what it is for.
+    */
     for (const file of [
       'packages/tools/src/diagnostics.ts',
-      'apps/api/src/routes/health.ts',
+      'packages/runtime/src/health.ts',
       'packages/runtime/src/notify.ts',
       'apps/api/src/routes/easy.ts',
     ]) {
