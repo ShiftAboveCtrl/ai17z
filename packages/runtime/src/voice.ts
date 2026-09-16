@@ -2,7 +2,14 @@ import type { PolicyConfig, QualityReport, VoiceFingerprint } from '@xbam/shared
 import { emptyFingerprint } from '@xbam/shared/contracts';
 import { createLogger, errorMessage } from '@xbam/shared';
 import { agents as agentsRepo, voice as voiceRepo } from '@xbam/database';
-import { compileVoice, deriveFingerprint, scoreGeneric, scoreRepetition, scoreVoice } from '@xbam/persona';
+import {
+  compileVoice,
+  deriveFingerprint,
+  longerThanUsual,
+  scoreGeneric,
+  scoreRepetition,
+  scoreVoice,
+} from '@xbam/persona';
 import { generate } from '@xbam/models';
 import { NO_EM_DASHES } from './punctuation';
 
@@ -243,6 +250,17 @@ function buildBrief(
     structure around the punctuation it thinks it has.
   */
   const extra: string[] = ['', 'PUNCTUATION', NO_EM_DASHES];
+  /*
+    Length pressure goes to the rewriter, never to a slicer.
+
+    The voice compiler used to enforce "the length this agent usually writes"
+    by cutting the text, which on the live agent meant drafts of 196 to 230
+    characters landing as replies of 170 to 175, chopped mid-sentence. A
+    truncated thought is worse than a long one: long reads as verbose, and
+    truncated reads as broken.
+  */
+  const tooLong = longerThanUsual(text, fingerprint);
+  if (tooLong) extra.push('', 'LENGTH', tooLong);
   if (generic.reasons.length > 0) {
     extra.push('', 'AVOID', ...generic.reasons.map((reason) => `- It currently ${reason}.`));
   }
