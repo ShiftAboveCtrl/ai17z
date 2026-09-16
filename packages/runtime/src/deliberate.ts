@@ -762,8 +762,8 @@ export async function formEngagements(agentId: string, observations: Observation
  * The post id out of an X permalink.
  *
  * The action is anchored to the id and never to the URL, because one post can
- * be written several ways -- with or without the handle's original casing, with
- * or without a query string -- and an idempotency key built on the spelling
+ * be written several ways, with or without the handle's original casing and
+ * with or without a query string, and an idempotency key built on the spelling
  * would let the same like through twice.
  */
 function remoteIdFrom(url: string | null | undefined): string | null {

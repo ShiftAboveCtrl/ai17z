@@ -20,7 +20,7 @@ import { handler, params, parseBody, requireUser } from '../http';
  *
  * The split between the first two is where the browser is. Something typed
  * needs nothing external, so the API can queue it directly. A real post has to
- * be read from X, and the API owns no browsers -- so it records the intent and
+ * be read from X, and the API owns no browsers, so it records the intent and
  * the worker does the reading, exactly as looking somebody up already does.
  *
  * ### Nothing here can publish

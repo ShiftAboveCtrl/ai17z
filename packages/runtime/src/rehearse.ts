@@ -27,9 +27,9 @@ const log = createLogger('rehearse');
  * runs persona, prompt, model, voice and validator with **no** memory, thread
  * or research, because comparing two personas fairly means holding everything
  * else still. That is the right answer to a different question, and it cannot
- * answer this one: most of what decides a real reply -- who this person is,
- * what was said above, what the agent already believes, what it had to look up
- * -- is exactly what the playground leaves out.
+ * answer this one. Most of what decides a real reply, meaning who this person
+ * is, what was said above, what the agent already believes and what it had to
+ * look up, is exactly what the playground leaves out.
  *
  * So a rehearsal manufactures an event and lets the ordinary ten steps run,
  * the same way a scheduled post is manufactured as a `SCHEDULED_TRIGGER` event
@@ -42,7 +42,7 @@ const log = createLogger('rehearse');
  * `dryRun: true` is not a parameter here, it is the whole path: it is set in
  * one place, it cannot be passed in, and the job is **checked** afterwards and
  * cancelled if it somehow is not one. That check exists because the mirror of
- * it has already been paid for -- a nested `{ options: { dryRun: true } }` was
+ * it has already been paid for: a nested `{ options: { dryRun: true } }` was
  * silently ignored in the scenario harness once and an autonomous agent
  * replied to a stranger.
  *
@@ -91,7 +91,7 @@ export interface RehearsalRun {
  *
  * A real post somebody else wrote is a MENTION as far as the pipeline is
  * concerned: something said, which the agent may or may not answer. Whether it
- * actually names the agent is not this function's business -- that is the
+ * actually names the agent is not this function's business. That is the
  * engagement heuristic's decision, and it is one of the stages the lab exists
  * to show.
  */
@@ -175,8 +175,8 @@ export async function rehearse(input: {
 
     Everything above sets `dryRun: true` in one place, and this reads the row
     back to see that it landed. A rehearsal that somehow became a real job is
-    stopped here rather than being allowed to run and discovered afterwards --
-    afterwards is a reply somebody did not ask for, on a real account.
+    stopped here rather than being allowed to run and discovered afterwards,
+    because afterwards is a reply somebody did not ask for, on a real account.
   */
   const job = await jobsRepo.requireJob(created.id);
   if (!job.dryRun) {
@@ -249,7 +249,8 @@ export interface RehearsalExplanation {
  * Which trace events belong to which stage, and what that stage is called.
  *
  * The trace is already a complete record and it is already conclusions rather
- * than reasoning -- no raw chain-of-thought is stored anywhere in this system,
+ * than reasoning, since no raw chain-of-thought is stored anywhere in this
+ * system,
  * so there is none here to leak. What it is not is *legible*: thirty rows of
  * `MEMORY_SELECTED`, `STANCE_SELECTED`, `RESEARCH_PLANNED` in the order they
  * happened is a log, and an owner reading a log is doing the product's job for

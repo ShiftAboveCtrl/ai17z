@@ -155,7 +155,7 @@ export async function compileForJob(input: CompileForJobInput): Promise<CompileF
         The rewrite is a draft too.
 
         It comes from a model with a house style exactly like the one that
-        wrote the first draft, so it arrives with the same tells -- and until
+        wrote the first draft, so it arrives with the same tells, and until
         this line it went to X without the deterministic pass ever seeing it.
         A brief that says "no sign-offs" is a request; the cheap pass is the
         enforcement, and skipping it on the last text before publication was

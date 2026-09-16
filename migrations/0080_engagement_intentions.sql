@@ -15,7 +15,7 @@
 -- executor the `x.like` and `x.repost` capabilities already use, so
 -- idempotency, the stale-retake check, exact-target verification and the
 -- action ledger are all the ones that already exist. There is no second
--- executor and no second scheduler -- `next_attempt_at` is claimed the same way
+-- executor and no second scheduler: `next_attempt_at` is claimed the same way
 -- the account poller, the feed watcher, the repository watcher and the wake
 -- loop claim theirs.
 --

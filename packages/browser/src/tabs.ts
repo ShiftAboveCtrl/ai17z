@@ -436,7 +436,7 @@ export function isDeadPage(page: Page): boolean {
  * CDP has the flag already. `Target.createTarget` with `background: true`
  * creates the tab without activating the window, which is exactly what a
  * browser doing background work should do, and is a cleaner answer than
- * minimising Chrome afterwards -- that still steals focus first and gives it
+ * minimising Chrome afterwards, which still steals focus first and gives it
  * back, which is visible and horrible.
  *
  * ## Why it is written this way
@@ -447,7 +447,7 @@ export function isDeadPage(page: Page): boolean {
  *
  * **The tab is created at a one-off URL and claimed by it.** The event says a
  * page appeared, never which caller asked for it, so three roles leasing at
- * once -- which is the ordinary startup -- each took whichever page arrived
+ * once, which is the ordinary startup, each took whichever page arrived
  * first: two callers walked away holding the same tab and the third was
  * orphaned. `tests/integration/realChrome.test.ts` saw two pages where three
  * were leased. Chrome keeps the fragment on `about:blank`, so the nonce is a

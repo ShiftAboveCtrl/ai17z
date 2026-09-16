@@ -27,7 +27,8 @@ installHarness();
  *
  * Against a real database because every command reads or changes a real row,
  * and against a fake Telegram installed over the global fetch because that is
- * how the worker's sweep calls it -- injecting one would test a path that never
+ * how the worker's sweep calls it, since injecting one would test a path that
+ * never
  * runs.
  *
  * The properties that matter are not that the commands work. They are that a
@@ -148,7 +149,7 @@ describe('who the bot listens to', () => {
     /*
       A bot can be messaged by anybody who knows its username.
 
-      Answering a stranger -- even to refuse -- confirms that this bot is live
+      Answering a stranger, even to refuse, confirms that this bot is live
       and attached to something worth attacking. So the message is dropped.
     */
     await connected();

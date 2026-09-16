@@ -15,7 +15,7 @@ installHarness();
  *
  * The count was never wrong. It counts jobs held for a person. The list was
  * incomplete: it was driven by inbound events of four conversational types, and
- * all four waiting jobs were work the agent had started *itself* -- an original
+ * all four waiting jobs were work the agent had started *itself*: an original
  * post and three follow-ups, which arrive on a SCHEDULED_TRIGGER event. Counted
  * by one and shown by neither.
  *

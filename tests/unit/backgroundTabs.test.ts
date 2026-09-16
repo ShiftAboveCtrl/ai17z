@@ -34,7 +34,7 @@ function fakeContext(over: { withBrowser?: boolean } = {}) {
 
     That is not decoration: the tab is claimed by a one-off URL, so a fake
     whose every page answers "about:blank" would make the claim look broken
-    when it is working, and -- worse -- would make a fake that hands the same
+    when it is working, and worse, would make a fake that hands the same
     page to every caller look correct.
   */
   const makePage = (url: string) =>

@@ -19,8 +19,8 @@ import { Gaps, Panel } from './shared';
  * A typed message runs on the mock channel and needs nothing connected, which
  * is what an owner wants while they are still editing a persona. A real post is
  * read from X through the signed-in browser the worker holds, because most of
- * what decides a real reply -- who wrote it, what is above it, when it happened
- * -- is exactly what a typed approximation leaves out.
+ * what decides a real reply, meaning who wrote it, what is above it and when
+ * it happened, is exactly what a typed approximation leaves out.
  *
  * Both end in the same rehearsal, which is the ordinary pipeline running as a
  * dry run. So what this screen shows is what would really have happened, not a
@@ -306,7 +306,7 @@ function Thinking() {
  * What fed the answer, and what happened to it.
  *
  * Three questions in the order somebody asks them: what did it say, what could
- * it see, and what did each stage decide. The stages come last deliberately --
+ * it see, and what did each stage decide. The stages come last deliberately.
  * an owner who is happy with the draft never has to read them, and one who is
  * not goes straight to the row that explains it.
  */
