@@ -159,3 +159,64 @@ describe('fields and what they say about themselves', () => {
     expect(ui).toMatch(/const selfLabelled = Boolean/);
   });
 });
+
+/*
+  And they have to look like controls.
+
+  The semantics above were right the whole time, which is why this went unseen:
+  a screen reader heard a correct radio group and a person saw three words run
+  together. An owner reported the reach controls rendering as
+
+      OnOff
+      allowedAsk
+      meOff
+
+  which is "On | Off" and "Allowed | Ask me | Off" with nothing between them.
+  `ChoiceOption` rendered a bare button with `className={className}` and no
+  default, `ChoiceGroup` did the same with a div, and **not one call site in the
+  product passed a className**. So every option everywhere was unstyled inline
+  text.
+*/
+describe('single-choice pickers look like controls', () => {
+  const ui = read('components/ui.tsx');
+
+  it('give an option an appearance when the caller gives none', () => {
+    // The fallback is what every call site actually gets.
+    expect(ui).toMatch(/className=\{\s*className\s*\?\?/);
+    expect(ui).toMatch(/rounded-lg border px-3/);
+  });
+
+  it('separate the options in a group', () => {
+    // The whole defect: three adjacent buttons with no gap read as one word.
+    expect(ui).toMatch(/className=\{className \?\? 'flex flex-wrap items-center gap-2'\}/);
+  });
+
+  it('show the chosen one by more than colour', () => {
+    // Colour alone is not enough for anybody looking at it, and `aria-checked`
+    // is already doing the work for anybody who is not.
+    expect(ui).toMatch(/border-bone-dim bg-white/);
+    expect(ui).toMatch(/aria-checked=\{selected\}/);
+  });
+
+  it('keep a visible focus ring, because arrow keys move between them', () => {
+    expect(ui).toMatch(/focus-visible:outline/);
+  });
+
+  it('still let a caller override the layout', () => {
+    // Eleven groups do: the setup screens want a grid rather than a row.
+    const easy = read('routes/EasySetup.tsx');
+    expect(easy).toMatch(/<ChoiceGroup[^>]*className="grid gap-2/);
+  });
+
+  it('do not leave any option in the product unstyled', () => {
+    /*
+      The guard that matters, because the defect was a missing default rather
+      than a wrong one: if somebody removes the fallback, every call site goes
+      back to bare text and nothing else here would notice.
+    */
+    const files = tsxFiles(web);
+    const callers = files.filter((file) => readFileSync(file, 'utf8').includes('<ChoiceOption'));
+    expect(callers.length).toBeGreaterThan(0);
+    expect(ui).toContain('className ??');
+  });
+});

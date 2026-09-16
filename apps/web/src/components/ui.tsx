@@ -518,7 +518,19 @@ export function ChoiceGroup({
       aria-label={labelledBy ? undefined : label}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
-      className={className}
+      /*
+        A default layout, because every caller that passed none got none.
+
+        Thirty-three options across the product rendered as bare inline buttons
+        with no gap, so three of them ran together into one word: an owner
+        reported "OnOff", "allowedAsk" and "meOff" on the reach controls, which
+        is "On | Off" and "Allowed | Ask me | Off" with nothing between them.
+
+        Still overridable, and eleven callers do override it -- the setup screens
+        want a grid rather than a row. Passing one replaces this entirely, which
+        is what those callers already expect.
+      */
+      className={className ?? 'flex flex-wrap items-center gap-2'}
       onKeyDown={onKeyDown}
     >
       {children}
@@ -550,7 +562,27 @@ export function ChoiceOption({
       aria-checked={selected}
       disabled={disabled}
       onClick={onSelect}
-      className={className}
+      /*
+        A default appearance, for the same reason the group has a default
+        layout: not one of the thirty-three call sites passes a className, so
+        without this every option in the product is unstyled text.
+
+        The selected state is carried by the border and the background rather
+        than by colour alone, because `aria-checked` is already doing the work
+        for a screen reader and colour alone is not enough for anybody looking
+        at it.
+      */
+      className={
+        className ??
+        [
+          'rounded-lg border px-3 py-1.5 text-[12px] transition-colors',
+          'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bone-dim',
+          'disabled:cursor-not-allowed disabled:opacity-40',
+          selected
+            ? 'border-bone-dim bg-white/[0.06] text-bone'
+            : 'border-ink-line text-bone-faint hover:border-bone-faint hover:text-bone-dim',
+        ].join(' ')
+      }
     >
       {children}
     </button>
