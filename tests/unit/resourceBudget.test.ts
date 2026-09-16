@@ -99,22 +99,22 @@ describe('the budget that follows from it', () => {
 
 describe('how much of the machine is spoken for', () => {
   it('reads plenty of free memory as normal', () => {
-    expect(pressureFor({ totalBytes: 16 * GB, availableBytes: 8 * GB })).toBe('NORMAL');
+    expect(pressureFor({ totalBytes: 16 * GB, availableBytes: 8 * GB, inContainer: false })).toBe('NORMAL');
   });
 
   it('reads a machine down to its last tenth as pressured', () => {
-    expect(pressureFor({ totalBytes: 16 * GB, availableBytes: 1.6 * GB })).toBe('PRESSURED');
+    expect(pressureFor({ totalBytes: 16 * GB, availableBytes: 1.6 * GB, inContainer: false })).toBe('PRESSURED');
   });
 
   it('reads a machine about to start killing things as critical', () => {
-    expect(pressureFor({ totalBytes: 16 * GB, availableBytes: 0.5 * GB })).toBe('CRITICAL');
+    expect(pressureFor({ totalBytes: 16 * GB, availableBytes: 0.5 * GB, inContainer: false })).toBe('CRITICAL');
   });
 
   it('says normal when the platform will not say', () => {
     // Throttling a machine nobody has measured is a product that mysteriously
     // does less on hardware that was fine.
-    expect(pressureFor({ totalBytes: 16 * GB, availableBytes: null })).toBe('NORMAL');
-    expect(pressureFor({ totalBytes: 0, availableBytes: 0 })).toBe('NORMAL');
+    expect(pressureFor({ totalBytes: 16 * GB, availableBytes: null, inContainer: false })).toBe('NORMAL');
+    expect(pressureFor({ totalBytes: 0, availableBytes: 0, inContainer: false })).toBe('NORMAL');
   });
 });
 
@@ -144,6 +144,17 @@ describe('what the owner is told', () => {
     const said = describeBudget(budgetFor(16 * GB), 'NORMAL');
     expect(said).toContain('16.0 GB machine (normal)');
     expect(said).toContain('running normally');
+  });
+
+  it('does not call a container share "the machine"', () => {
+    // Inside a container `totalmem` reports the container's slice: the API
+    // container on a 63 GB Windows machine reads 30.9 GB. Calling that "the
+    // machine" tells the owner something untrue. What is decided never used
+    // that number -- the browser worker runs on the host -- but the sentence
+    // did.
+    const said = describeBudget(budgetFor(30 * GB), 'NORMAL', true);
+    expect(said).toContain('available to AI17Z');
+    expect(said).not.toContain('machine');
   });
 
   it('explains a throttle rather than just reporting a state', () => {
