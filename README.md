@@ -674,6 +674,7 @@ Installing and running it:
 How it works:
 
 - [Engineering notes](docs/ENGINEERING.md) — the invariants, and what broke to produce each one
+- [How something gets from the world to X and back](docs/architecture/DATA_FLOW.md): where each responsibility lives, and where to add things
 - [Architecture overview](docs/architecture/OVERVIEW.md) · [Data model](docs/architecture/DATA_MODEL.md) · [Jobs and the runtime](docs/architecture/JOBS.md)
 - [Memory](docs/architecture/MEMORY.md) · [Channels](docs/architecture/CHANNELS.md) · [Models](docs/architecture/MODELS.md) · [Pipelines](docs/architecture/PIPELINES.md)
 - [The social layer: identity, relationships, voice](docs/architecture/SOCIAL.md)
