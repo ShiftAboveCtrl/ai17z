@@ -27,11 +27,13 @@ installHarness();
  * that nothing happened.
  */
 
-async function agentThatEngages(over: { autonomy?: 'OBSERVE' | 'THINK' | 'SUGGEST' | 'ACT' } = {}) {
+async function agentThatEngages(
+  over: { autonomy?: 'OBSERVE' | 'THINK' | 'SUGGEST' | 'ACT'; channel?: 'x' | 'mock' } = {},
+) {
   const fixture = await createFixture({ persona: { topics: ['autonomous agents', 'agent memory'] } });
   const account = await accountsRepo.createAccount({
     ownerId: fixture.ownerId,
-    channel: 'x',
+    channel: over.channel ?? 'x',
     handle: `self${uniqueSuffix()}`.slice(0, 15),
     displayName: 'The agent',
   });
@@ -202,7 +204,18 @@ describe('the job it leaves behind', () => {
       memory, a model call, validation, and a second execution. The executor is
       shared, as it must be; the intention was being carried out twice.
     */
-    const agent = await agentThatEngages({ autonomy: 'ACT' });
+    /*
+      On the mock channel, deliberately.
+
+      This is the only test that reaches `act()`, and `act()` calls the channel
+      adapter. Against `x` that means launching a browser and going to x.com,
+      which a test must never do: it was slow here and it failed outright on a
+      CI runner, where a browser really is installed. The mock adapter cannot
+      LIKE, so the attempt fails immediately, which is all this needs. What is
+      being pinned is the row `act()` leaves behind, not whether the remote
+      call worked.
+    */
+    const agent = await agentThatEngages({ autonomy: 'ACT', channel: 'mock' });
     // The grant the default link does not include, without which `mayAct`
     // refuses before a job is ever made. No test reached `act()` before this
     // one, which is how the defect it pins got out.
@@ -211,8 +224,8 @@ describe('the job it leaves behind', () => {
     await runDueEngagements(5);
 
     const [row] = await engagementsRepo.listEngagements(agent.agentId);
-    // Whether the action itself went through does not matter here: there is no
-    // browser in a test, so it will not. What matters is the row it leaves.
+    // Whether the remote call worked does not matter here. What matters is the
+    // row `act()` leaves behind.
     expect(row?.jobId).toBeTruthy();
 
     const job = await jobsRepo.requireJob(row!.jobId!);
