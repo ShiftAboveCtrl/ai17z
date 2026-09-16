@@ -132,7 +132,28 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
           ORDER BY executed_at DESC NULLS LAST
           LIMIT 1
        ) a ON true
-      WHERE e.type IN ('MENTION', 'REPLY', 'DIRECT_MESSAGE', 'KEYWORD_MATCH')
+      /*
+        Conversations, and work the agent started itself that is waiting on a
+        person.
+
+        The four conversational types are the inbox's ordinary subject: somebody
+        said something. But an agent also proposes things nobody sent it -- an
+        original post, a follow-up on a promise -- and those arrive on a
+        SCHEDULED_TRIGGER event. Held for review, they were counted by the badge
+        and shown by nothing.
+
+        Measured on a live installation: "4 messages are waiting for you to
+        decide" beside an empty inbox, for over a week. All four were
+        SCHEDULED_TRIGGER. The owner could neither see them nor dismiss them.
+
+        The count was never wrong. The list was incomplete, and the fix is to
+        complete it rather than to shrink the count: something waiting on a
+        decision must be reachable, or the decision cannot be made.
+      */
+      WHERE (
+        e.type IN ('MENTION', 'REPLY', 'DIRECT_MESSAGE', 'KEYWORD_MATCH')
+        OR (e.type = 'SCHEDULED_TRIGGER' AND j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED'))
+      )
         -- Owned through either side: an event belongs to this owner if its
         -- account does, or if the agent that worked it does. An account deleted
         -- since must not take its history out of the inbox.
