@@ -1,0 +1,25 @@
+-- `action_attempts` was written and never read, by anything, ever.
+--
+-- Two call sites in the execute step recorded an attempt's outcome, and no
+-- query anywhere selected from the table: not a route, not a screen, not a
+-- tool, not a test. Ninety-one days of rows that nobody could reach.
+--
+-- Every fact it held is already recorded somewhere that *is* read, written a
+-- line or two away from it:
+--
+--   the outcome        `actions.status`, shown on the job page
+--   the error class    `actions.error_class`, shown on the job page
+--   the message        `actions.last_error`, shown on the job page
+--   the attempt story  `job_attempts`, which is per step as well as per
+--                      attempt, carries the worker id, and is the one the job
+--                      page actually lists
+--   the diagnostic     `diagnostics`, already fetched by job id
+--
+-- So this was a second, narrower answer to a question `job_attempts` answers
+-- better. Two implementations of one responsibility is the thing this codebase
+-- keeps saying it does not want.
+--
+-- Safe to drop rather than merely stop writing: nothing has ever selected from
+-- it, so no owner has seen a row and none can be missed. A table that exists
+-- and is never written is more confusing to the next developer than no table.
+DROP TABLE IF EXISTS action_attempts;
