@@ -154,6 +154,19 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
         e.type IN ('MENTION', 'REPLY', 'DIRECT_MESSAGE', 'KEYWORD_MATCH')
         OR (e.type = 'SCHEDULED_TRIGGER' AND j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED'))
       )
+        /*
+          A rehearsal is not a message and there is nothing to decide about it.
+
+          The Response Lab manufactures a MENTION so its rehearsal runs the
+          ordinary pipeline, which is what makes the lab worth trusting. It also
+          means every rehearsal landed here looking like somebody had written to
+          the agent, and one held for review was counted as waiting on a person
+          when nothing had been sent and nothing could be.
+
+          Measured on the test installation the moment the first real-post
+          rehearsal ran: the badge went from one to two.
+        */
+        AND coalesce((e.payload ->> 'rehearsal')::boolean, false) = false
         -- Owned through either side: an event belongs to this owner if its
         -- account does, or if the agent that worked it does. An account deleted
         -- since must not take its history out of the inbox.
