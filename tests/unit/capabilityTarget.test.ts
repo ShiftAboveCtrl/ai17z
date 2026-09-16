@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalTarget, capabilityIdempotencyKey } from '@xbam/runtime';
+import { actionIdempotencyKeyFor, canonicalTarget, capabilityIdempotencyKey } from '@xbam/runtime';
 
 /**
  * One post is one target, however it was written.
@@ -69,5 +69,63 @@ describe('the target a key is built from', () => {
   it('is not fooled by a number that is not a status', () => {
     // A path that merely contains digits is not a post.
     expect(canonicalTarget('https://x.com/i/spaces/1234567890123')).toBe('https://x.com/i/spaces/1234567890123');
+  });
+});
+
+/**
+ * The half of the guarantee that canonicalising the target did not reach.
+ *
+ * `canonicalTarget` made one post one target. It did not make the two writers
+ * spell the whole key the same way: `engage.ts` acts through
+ * `performCapabilityAction`, whose key carries the capability and the target,
+ * while the pipeline claimed under the job's key bare. Those can never collide,
+ * so `actions.idempotency_key` could not see them as one action.
+ *
+ * The engagement record job is held out of the claim, so the pipeline should
+ * not run for one at all. Should is not a guarantee, and the recovery reasoning
+ * says in as many words that a process dying inside the hold is safe because
+ * the action key makes the second attempt a no-op. It only does if they agree.
+ */
+describe('the key two writers have to agree on', () => {
+  const TARGET = 'https://x.com/007Ledger/status/2100096754989314242';
+
+  it('builds a like the same way the capability executor does', () => {
+    expect(actionIdempotencyKeyFor({ actionType: 'LIKE', jobIdempotencyKey: JOB, targetRef: TARGET })).toBe(
+      capabilityIdempotencyKey({ jobIdempotencyKey: JOB, capabilityId: 'x.like', targetRef: TARGET }),
+    );
+  });
+
+  it('builds a repost the same way the capability executor does', () => {
+    expect(actionIdempotencyKeyFor({ actionType: 'REPOST', jobIdempotencyKey: JOB, targetRef: TARGET })).toBe(
+      capabilityIdempotencyKey({ jobIdempotencyKey: JOB, capabilityId: 'x.repost', targetRef: TARGET }),
+    );
+  });
+
+  it('agrees whichever way the same post was written', () => {
+    // The live failure exactly: one writer held the bare id, the other the address.
+    expect(actionIdempotencyKeyFor({ actionType: 'LIKE', jobIdempotencyKey: JOB, targetRef: TARGET })).toBe(
+      capabilityIdempotencyKey({
+        jobIdempotencyKey: JOB,
+        capabilityId: 'x.like',
+        targetRef: '2100096754989314242',
+      }),
+    );
+  });
+
+  /*
+    A reply and a post keep the job's key.
+
+    They have one writer, so there is nothing to agree with, and changing their
+    spelling would strand every job already queued under the old one across an
+    upgrade.
+  */
+  it('leaves a reply and a post on the job key', () => {
+    for (const actionType of ['REPLY', 'POST']) {
+      expect(actionIdempotencyKeyFor({ actionType, jobIdempotencyKey: JOB, targetRef: TARGET })).toBe(JOB);
+    }
+  });
+
+  it('falls back to the job key when there is no target to build from', () => {
+    expect(actionIdempotencyKeyFor({ actionType: 'LIKE', jobIdempotencyKey: JOB, targetRef: null })).toBe(JOB);
   });
 });
