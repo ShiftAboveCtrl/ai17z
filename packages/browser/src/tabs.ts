@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { BrowserContext, Page } from 'playwright';
 import { PipelineError, createLogger, errorMessage } from '@xbam/shared';
 import { reconcileTabs } from './reconcile';
@@ -442,8 +443,16 @@ export function isDeadPage(page: Page): boolean {
  *
  * Playwright does not expose the flag, so the target is created over a raw
  * browser-level CDP session and the resulting page is picked up from the
- * context's own `page` event. Waiting for the event rather than diffing
- * `pages()` is what makes it safe when two roles are created at once.
+ * context's own `page` event.
+ *
+ * **The tab is created at a one-off URL and claimed by it.** The event says a
+ * page appeared, never which caller asked for it, so three roles leasing at
+ * once -- which is the ordinary startup -- each took whichever page arrived
+ * first: two callers walked away holding the same tab and the third was
+ * orphaned. `tests/integration/realChrome.test.ts` saw two pages where three
+ * were leased. Chrome keeps the fragment on `about:blank`, so the nonce is a
+ * claim token rather than a guess, and a page nobody is waiting for is simply
+ * ignored instead of handed to the next caller in line.
  *
  * Falls back to `context.newPage()` whenever any of that is unavailable: a
  * Playwright-Chromium persistent context has no browser-level CDP session, and
@@ -455,18 +464,30 @@ async function openBackgroundPage(context: BrowserContext): Promise<Page> {
   const browser = context.browser();
   if (!browser) return context.newPage();
 
+  // Unique per call, so concurrent callers cannot claim each other's tab.
+  const startUrl = `about:blank#ai17z-open-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+
   try {
     const cdp = await browser.newBrowserCDPSession();
     try {
       const appeared = new Promise<Page>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('the new tab never appeared')), 15_000);
-        timer.unref?.();
-        context.once('page', (page) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const onPage = (page: Page) => {
+          // Somebody else's tab, or one the browser opened for its own
+          // reasons. Left where it is.
+          if (page.url() !== startUrl) return;
           clearTimeout(timer);
+          context.off('page', onPage);
           resolve(page);
-        });
+        };
+        timer = setTimeout(() => {
+          context.off('page', onPage);
+          reject(new Error('the new tab never appeared'));
+        }, 15_000);
+        timer.unref?.();
+        context.on('page', onPage);
       });
-      await cdp.send('Target.createTarget', { url: 'about:blank', background: true });
+      await cdp.send('Target.createTarget', { url: startUrl, background: true });
       return await appeared;
     } finally {
       // Released either way: a browser session left open is a listener held for
