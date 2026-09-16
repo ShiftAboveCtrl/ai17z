@@ -278,8 +278,20 @@ async function pendingReply(): Promise<string> {
 async function healthReply(): Promise<string> {
   const [report, open] = await Promise.all([collectHealth(), notificationsRepo.listOpen({ limit: 6 })]);
 
-  const mark = (status: string) => (status === 'offline' ? '🔴' : status === 'degraded' ? '🟠' : '🟢');
-  const unwell = report.components.filter((component) => component.status !== 'healthy');
+  const mark = (status: string) =>
+    status === 'offline' ? '🔴' : status === 'degraded' ? '🟠' : status === 'unknown' ? '⚪' : '🟢';
+
+  /*
+    Not answering means offline or degraded.
+
+    `unknown` is a component nobody has tested yet, which is most often an
+    optional channel nothing has used. Listing it as a problem makes a fresh
+    installation look broken, and it was doing exactly that: "Mock: not tested
+    yet" appeared under a heading that said it was not answering.
+  */
+  const unwell = report.components.filter(
+    (component) => component.status === 'offline' || component.status === 'degraded',
+  );
 
   const lines = [
     `${mark(report.status)} <b>${report.status === 'healthy' ? 'Everything is answering.' : `AI17Z is ${report.status}.`}</b>`,
