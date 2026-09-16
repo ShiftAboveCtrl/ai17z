@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Page } from 'playwright';
 import type { TAB_ROLES } from '@xbam/browser';
-import { isDeadPage, tabHealth, type TabMap, type TabState } from '@xbam/browser';
+import { acquireTab, isDeadPage, tabHealth, type TabMap, type TabState } from '@xbam/browser';
 
 /** The parts of a Page this logic touches, and nothing else. */
 function fakePage(url: string, closed = false): Page {
@@ -81,5 +81,59 @@ describe('a tab whose renderer was killed', () => {
     expect(health.find((h) => h.role === 'ACTION')?.state).toBe('READY');
     expect(health.find((h) => h.role === 'RESEARCH')?.state).toBe('FAILED');
     expect(health.find((h) => h.role === 'MENTIONS')?.state).toBe('MISSING');
+  });
+});
+
+/*
+  One role, one tab.
+
+  A live installation was found holding two pages tagged MENTIONS: one in use,
+  and one orphaned at 3,242 MB that nothing would look at again or close. They
+  come from a recreation that half succeeded, where the old page dropped out of
+  the map without being closed and the next pass tagged a new one beside it.
+*/
+describe('duplicate role tabs', () => {
+  it('keeps one and closes the rest', async () => {
+    const closed: string[] = [];
+    const tagged = (id: string) =>
+      ({
+        isClosed: () => false,
+        url: () => `https://x.com/${id}`,
+        evaluate: async () => 'ai17z-tab:MENTIONS',
+        close: async () => {
+          closed.push(id);
+        },
+        on: () => undefined,
+      }) as never;
+
+    const context = {
+      pages: () => [tagged('first'), tagged('leftover'), tagged('another')],
+      newPage: async () => tagged('new'),
+    } as never;
+
+    const tabs = new Map();
+    const state = await acquireTab(context, tabs, 'MENTIONS');
+
+    // The survivor is the first, and the other two are shut rather than left
+    // holding memory nothing will ever reclaim.
+    expect(state.page.url()).toBe('https://x.com/first');
+    expect(closed.sort()).toEqual(['another', 'leftover']);
+  });
+
+  it('leaves a single tagged tab alone', async () => {
+    const closed: string[] = [];
+    const only = {
+      isClosed: () => false,
+      url: () => 'https://x.com/only',
+      evaluate: async () => 'ai17z-tab:MENTIONS',
+      close: async () => {
+        closed.push('only');
+      },
+      on: () => undefined,
+    } as never;
+
+    const context = { pages: () => [only], newPage: async () => only } as never;
+    await acquireTab(context, new Map(), 'MENTIONS');
+    expect(closed).toEqual([]);
   });
 });

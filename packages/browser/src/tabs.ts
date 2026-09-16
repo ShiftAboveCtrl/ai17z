@@ -196,8 +196,33 @@ export async function retagIfLost(page: Page, role: TabRole): Promise<void> {
  */
 async function findExisting(context: BrowserContext, role: TabRole): Promise<Page | null> {
   const pages = context.pages().filter((p) => !p.isClosed());
+
+  /*
+    One role, one tab. Anything else claiming it is a leftover, and it is
+    closed rather than left open.
+
+    This used to return the first match and walk away from the rest. A live
+    installation was found holding **two** pages tagged MENTIONS: one in use,
+    and one orphaned at 3,242 MB that nothing would ever look at again or close.
+    They come from a recreation that half succeeded -- the old page dropped out
+    of the map without being closed, so the next pass tagged a new one beside
+    it.
+
+    Safe because the role is serialised: only one operation can be using this
+    role at a time, so a second page carrying the tag is by definition not the
+    one in use. The survivor is the first, and if it turns out to be unhealthy
+    the recycling check replaces it on the next acquire anyway.
+  */
+  const tagged: Page[] = [];
   for (const page of pages) {
-    if ((await readTag(page)) === role) return page;
+    if ((await readTag(page)) === role) tagged.push(page);
+  }
+  if (tagged.length > 0) {
+    for (const duplicate of tagged.slice(1)) {
+      log.warn('closing a duplicate role tab', { role, open: tagged.length });
+      await duplicate.close().catch(() => undefined);
+    }
+    return tagged[0] ?? null;
   }
 
   if (role === 'ACTION') {
