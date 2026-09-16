@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
+  capabilities as capabilitiesRepo,
   deliberation as mind,
   engagements as engagementsRepo,
+  jobs as jobsRepo,
 } from '@xbam/database';
+import { CLAIMABLE_JOB_STATUSES } from '@xbam/shared/contracts';
 import { formEngagements, runDueEngagements, setPauseAll, type Observation } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -183,6 +186,46 @@ describe('what a proposal records', () => {
     // A different sighting of the same post, after the fact.
     await formEngagements(agent.agentId, [{ ...post, id: 'later' }]);
     expect(await engagementsRepo.listEngagements(agent.agentId)).toHaveLength(1);
+  });
+});
+
+describe('the job it leaves behind', () => {
+  it('is a record, not work the queue will run again', async () => {
+    /*
+      Measured on the live installation the first time an agent acted on its
+      own choice: two of the four jobs had been run a second time by the
+      ordinary worker, and one post had two action rows.
+
+      A new job is RECEIVED, which is claimable, and `run_at` defaults to now.
+      So the job created to record the action was picked up while the action
+      was still being performed, and the whole pipeline ran on it: context,
+      memory, a model call, validation, and a second execution. The executor is
+      shared, as it must be; the intention was being carried out twice.
+    */
+    const agent = await agentThatEngages({ autonomy: 'ACT' });
+    // The grant the default link does not include, without which `mayAct`
+    // refuses before a job is ever made. No test reached `act()` before this
+    // one, which is how the defect it pins got out.
+    await capabilitiesRepo.grant(agent.agentId, agent.accountId, 'LIKE');
+    await formEngagements(agent.agentId, [seen()]);
+    await runDueEngagements(5);
+
+    const [row] = await engagementsRepo.listEngagements(agent.agentId);
+    // Whether the action itself went through does not matter here: there is no
+    // browser in a test, so it will not. What matters is the row it leaves.
+    expect(row?.jobId).toBeTruthy();
+
+    const job = await jobsRepo.requireJob(row!.jobId!);
+    // Settled, so the claim cannot take it whatever its run_at says.
+    expect(CLAIMABLE_JOB_STATUSES).not.toContain(job.status);
+
+    // And nothing claims it even asking for everything.
+    const claimed = await jobsRepo.claimJobs('a-second-worker', 10, 60_000, {
+      browserCapable: true,
+      jobsCapable: true,
+      agentId: agent.agentId,
+    });
+    expect(claimed.map((entry) => entry.id)).not.toContain(job.id);
   });
 });
 
