@@ -293,11 +293,30 @@ describe('identity survives a change of provider', () => {
     const a = compileVoice({ draft: chatty, fingerprint, policy });
     const b = compileVoice({ draft: formal, fingerprint, policy });
 
-    // Both improved, and neither still carries its provider's tells.
-    expect(a.scoreAfter).toBeGreaterThan(a.scoreBefore);
-    expect(b.scoreAfter).toBeGreaterThan(b.scoreBefore);
+    // Neither still carries its provider's tells, which is the substance.
     expect(a.text).not.toMatch(/great question|hope that helps|let me know/i);
     expect(b.text).not.toMatch(/leverage|in order to|important to note/i);
+    // And neither was made worse by the tidying.
+    expect(a.scoreAfter).toBeGreaterThanOrEqual(a.scoreBefore);
+    expect(b.scoreAfter).toBeGreaterThanOrEqual(b.scoreBefore);
+  });
+
+  it('asks for a shorter draft rather than cutting one', () => {
+    /*
+      This writer's median is twenty-three characters, so a two hundred
+      character paragraph is far outside their habit.
+
+      The compiler used to close that gap by chopping the text to a ceiling
+      derived from the fingerprint, which is what published replies ending "a
+      different risk class than" on the live agent. Removing the tells is all
+      the cheap pass can honestly do about length; making it *shorter* needs a
+      rewrite, and asking for one is the correct answer.
+    */
+    const b = compileVoice({ draft: formal, fingerprint, policy });
+    expect(b.applied).toBe('model_needed');
+    expect(b.rewriteBrief).toBeTruthy();
+    // And nothing was cut: it still ends where the sentence ends.
+    expect(b.text.trimEnd().endsWith('.')).toBe(true);
   });
 
   it('leaves both saying the same thing', () => {
