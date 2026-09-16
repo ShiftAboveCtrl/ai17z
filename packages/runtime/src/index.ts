@@ -60,6 +60,12 @@ export * from './xCapabilityContext';
 export * from './capabilityPermissions';
 export * from './capabilityActions';
 export * from './capabilityViews';
+/*
+  The key the pipeline claims an action under, so a test can hold it against
+  the one `performCapabilityAction` builds. Two writers spelling one key
+  differently is how a post came to be liked twice.
+*/
+export { actionIdempotencyKeyFor } from './steps/execute';
 /**
  * Growth intelligence: reading what happened rather than deciding what to say.
  *

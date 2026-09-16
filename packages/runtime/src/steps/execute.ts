@@ -33,6 +33,7 @@ import {
 import {
   observeEntities,
 } from '../arcs';
+import { capabilityIdempotencyKey } from '../capabilityActions';
 import {
   harvestIdeas,
   markIdeaUsed,
@@ -174,6 +175,35 @@ export async function persistTurnAndMemory(bundle: JobBundle, outgoing: string, 
  * that touches the outside world, and it does so behind three guards: the
  * automation mode, the rate policy, and an idempotency claim.
  */
+/**
+ * The capability a text-less action is performed through.
+ *
+ * Only the two that `engage.ts` can also write. Everything else this path
+ * executes has one writer, so there is nothing for its key to agree with.
+ */
+const CAPABILITY_FOR_ACTION: Record<string, string> = { LIKE: 'x.like', REPOST: 'x.repost' };
+
+/**
+ * The key this path claims an action under.
+ *
+ * Exported so the agreement with `performCapabilityAction` can be pinned by a
+ * test rather than by two people remembering. A key that two writers spell
+ * differently is not a key, and that has already cost one post two likes.
+ */
+export function actionIdempotencyKeyFor(input: {
+  actionType: string;
+  jobIdempotencyKey: string;
+  targetRef: string | null;
+}): string {
+  const capabilityId = CAPABILITY_FOR_ACTION[input.actionType];
+  if (!capabilityId || !input.targetRef) return input.jobIdempotencyKey;
+  return capabilityIdempotencyKey({
+    jobIdempotencyKey: input.jobIdempotencyKey,
+    capabilityId,
+    targetRef: input.targetRef,
+  });
+}
+
 export async function stepExecute(bundle: JobBundle): Promise<void> {
   const { job, policy } = bundle;
   const output = job.validatedOutput;
@@ -181,6 +211,37 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
 
   const context = job.resolvedContext;
   const targetRef = context?.targetRef ?? null;
+
+  /*
+    One key, whichever path got here first.
+
+    `engage.ts` writes its action through `performCapabilityAction`, whose key
+    is the job's plus the capability and the canonical target. This path used
+    the job's key bare, so for a like the two spellings could never collide and
+    the unique index on `actions.idempotency_key` had nothing to say about
+    them. That is not hypothetical: it is how one post came to be liked twice
+    on a live account four minutes apart, and `canonicalTarget` records those
+    rows.
+
+    The engagement record job is held out of the claim, so this path should not
+    run for one at all. Should is not a guarantee, and the recovery reasoning
+    says in as many words that a process dying inside the hold is safe because
+    the action's idempotency key makes the second attempt a no-op. It only does
+    if both writers spell it the same way. Now they do.
+
+    A reply and a post are untouched: they have one writer, so there is nothing
+    to agree with, and changing their keys would strand jobs queued under the
+    old spelling across an upgrade.
+
+    This is the claim only, which is the row the unique index covers. The copy
+    handed to the adapter stays the job's, because the X adapter ignores it
+    entirely and the mock is the only reader, deriving a fake remote id from it.
+  */
+  const actionIdempotencyKey = actionIdempotencyKeyFor({
+    actionType: job.actionType,
+    jobIdempotencyKey: job.idempotencyKey,
+    targetRef,
+  });
 
   if (!job.dryRun) {
     // The final say on whether this action is permitted. Ingest checked the same
@@ -251,7 +312,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     channel: job.channel,
     type: job.actionType,
     dryRun: job.dryRun,
-    idempotencyKey: job.idempotencyKey,
+    idempotencyKey: actionIdempotencyKey,
     payload: { text: output, targetRef },
     targetRef,
   });
