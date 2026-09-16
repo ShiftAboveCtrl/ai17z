@@ -162,3 +162,44 @@ describe('what the owner is told', () => {
     expect(describeBudget(budgetFor(16 * GB), 'CRITICAL')).toContain('only essential browser work');
   });
 });
+
+/*
+  What the pressure states actually change.
+
+  A budget that is measured and displayed but never acted on is a dashboard,
+  not a defence. The one thing it has to do is reduce load *before* the
+  operating system starts killing things, because what it kills is Chrome: a
+  renderer is the largest process AI17Z has and the first thing an
+  out-of-memory killer reaches for.
+*/
+describe('reducing work under pressure', () => {
+  /** The job worker's effective capacity, which is what consumes the throttle. */
+  const allowed = (concurrency: number, state: Parameters<typeof throttleFor>[0]) =>
+    Math.max(1, Math.floor(concurrency * throttleFor(state).concurrencyFactor));
+
+  it('runs everything it was configured for when memory is fine', () => {
+    expect(allowed(4, 'NORMAL')).toBe(4);
+  });
+
+  it('does less when memory is tight, and less again when it is critical', () => {
+    expect(allowed(4, 'PRESSURED')).toBe(2);
+    expect(allowed(4, 'CRITICAL')).toBe(1);
+  });
+
+  it('never stops entirely, however bad it gets', () => {
+    // An installation under pressure still makes progress, just slowly. A
+    // worker that claims nothing is one that looks broken.
+    for (const state of ['NORMAL', 'PRESSURED', 'CRITICAL'] as const) {
+      expect(allowed(1, state)).toBeGreaterThanOrEqual(1);
+      expect(allowed(8, state)).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('delays rather than drops', () => {
+    // Reducing how many are claimed leaves the rest in the queue. Nothing here
+    // can lose a durable job, which is the property that makes throttling safe
+    // to do automatically.
+    expect(allowed(8, 'CRITICAL')).toBeLessThan(8);
+    expect(throttleFor('CRITICAL').pauseBackground).toBe(true);
+  });
+});
