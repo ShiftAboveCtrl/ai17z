@@ -97,8 +97,8 @@ else: it cannot become something an agent says, and it cannot become part of a
 prompt.
 
 **It is a command surface, which it deliberately was not at first.** The
-reasoning for refusing — a bot token is a bearer credential and a chat is not an
-authenticated session — was right about the risk and wrong about the
+reasoning for refusing, that a bot token is a bearer credential and a chat is
+not an authenticated session, was right about the risk and wrong about the
 conclusion. An owner told at three in the morning that an account is waiting on
 a security challenge, on a machine at home, could read it and do nothing. A
 notification nobody can act on is half a feature.
@@ -125,8 +125,8 @@ The paired chat speaks for the **installation**, not for one owner, matching
 the notifications it already receives. The alternative is the half-feature
 again: a phone that says a draft is waiting and will not let you answer it.
 
-`/mute <hours>` silences the phone for up to a day and loses nothing — the
-notification is still raised, still deduped and still in the app — and the
+`/mute <hours>` silences the phone for up to a day and loses nothing, since the
+notification is still raised, still deduped and still in the app, and the
 settings screen says a mute is in force, so a transport that is connected,
 enabled and quiet is never a mystery.
 
