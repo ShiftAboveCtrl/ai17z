@@ -7,6 +7,7 @@ import {
 } from '@xbam/database';
 import { createLogger, errorMessage, openSecret } from '@xbam/shared';
 import { approveJob, rejectJob } from './approvals';
+import { collectHealth } from './health';
 import { pauseState, setPauseAll } from './killSwitch';
 import { loadConfig, saveConfig, telegramMuted, type TelegramConfig } from './telegram';
 import { escapeHtml, getUpdates, sendMessage } from './telegramApi';
@@ -261,33 +262,53 @@ async function pendingReply(): Promise<string> {
   return lines.join('\n');
 }
 
+/**
+ * The same health the web screen shows, rendered for a phone.
+ *
+ * This used to count workers and open notifications and nothing else, which
+ * meant a phone could be told everything was fine while the Health screen said
+ * a provider had stopped answering. Two health models is one more than a person
+ * can hold, and the one on the phone is the one somebody reads at three in the
+ * morning.
+ *
+ * `collectHealth` is the single source. What is added here is only rendering:
+ * a phone gets the components that are unwell rather than all of them, because
+ * a list of twelve green rows is the same as no message at all.
+ */
 async function healthReply(): Promise<string> {
-  const [present, browser, open] = await Promise.all([
-    workersRepo.present(),
-    workersRepo.browserWorkerPresent(),
-    notificationsRepo.listOpen({ limit: 6 }),
-  ]);
+  const [report, open] = await Promise.all([collectHealth(), notificationsRepo.listOpen({ limit: 6 })]);
+
+  const mark = (status: string) => (status === 'offline' ? '🔴' : status === 'degraded' ? '🟠' : '🟢');
+  const unwell = report.components.filter((component) => component.status !== 'healthy');
 
   const lines = [
-    '<b>Health</b>',
-    '',
-    `Workers running: ${present.length}.`,
-    `A worker that can drive a browser: ${browser ? 'yes' : 'no'}.`,
+    `${mark(report.status)} <b>${report.status === 'healthy' ? 'Everything is answering.' : `AI17Z is ${report.status}.`}</b>`,
   ];
-  if (open.length === 0) {
-    lines.push('', 'Nothing is reporting a problem.');
+
+  if (unwell.length > 0) {
+    lines.push('', '<b>Not answering</b>');
+    for (const component of unwell) {
+      // The component's own sentence, which is the one the screen shows too.
+      // A component with nothing to say still gets a line: its name and its
+      // state are the message, and an unwell row nobody mentions is worse.
+      const detail = component.detail ? `: ${escapeHtml(component.detail)}` : '';
+      lines.push(`${mark(component.status)} ${escapeHtml(component.name)}${detail}`);
+    }
   } else {
+    lines.push('', `${report.components.length} checks, all healthy.`);
+  }
+
+  if (open.length > 0) {
     lines.push('', '<b>Open problems</b>');
     // Coalesced rather than one message per occurrence: `notify` already
     // counts repeats against one row, and the count is what says whether
     // something is happening once or continuously.
     for (const item of open) {
-      const mark = item.severity === 'CRITICAL' ? '🔴' : item.severity === 'WARNING' ? '🟠' : '🔵';
-      lines.push(
-        `${mark} ${escapeHtml(item.title)}${item.occurrences > 1 ? ` <i>(${item.occurrences}x)</i>` : ''}`,
-      );
+      const severity = item.severity === 'CRITICAL' ? '🔴' : item.severity === 'WARNING' ? '🟠' : '🔵';
+      lines.push(`${severity} ${escapeHtml(item.title)}${item.occurrences > 1 ? ` <i>(${item.occurrences}x)</i>` : ''}`);
     }
   }
+
   return lines.join('\n');
 }
 

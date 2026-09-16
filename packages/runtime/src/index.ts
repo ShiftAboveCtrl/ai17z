@@ -34,6 +34,7 @@ export * from './knowledge';
 // them and packages/tools cannot import from here. Re-exported so nothing
 // that already says @xbam/runtime has to change.
 export { toolReadiness, preflightEnabling, withToolAllowed, collectDiagnostics, toolSupply, suppliedFacts } from '@xbam/tools';
+export * from './health';
 export * from './liveStatus';
 export * from './evidenceClass';
 export * from './followUp';
