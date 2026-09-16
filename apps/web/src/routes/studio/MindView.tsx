@@ -88,11 +88,28 @@ interface Wake {
   quietWakes: number;
 }
 
+/** A like or a repost the agent decided was worth doing. */
+interface Engagement {
+  id: string;
+  kind: 'LIKE' | 'REPOST';
+  status: string;
+  url: string | null;
+  authorHandle: string;
+  excerpt: string;
+  score: number;
+  factors: Factor[];
+  confidence: number;
+  reason: string;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
 interface MindView {
   wake: Wake | null;
   onItsMind: MindItem[];
   goals: Goal[];
   reflections: Reflection[];
+  engagements: Engagement[];
 }
 
 interface RepoSource {
@@ -175,6 +192,15 @@ export function MindView({ agentId }: { agentId: string }) {
   const goals = view.data?.goals ?? [];
   const active = goals.filter((entry) => entry.status === 'ACTIVE');
   const finished = goals.filter((entry) => entry.status !== 'ACTIVE');
+  const engagements = view.data?.engagements ?? [];
+  const proposals = engagements.filter((entry) => entry.status === 'PROPOSED');
+  /*
+    What became of the rest.
+
+    Shown rather than dropped, because "why did it not like that" is a fair
+    question and a list that only holds what is still pending cannot answer it.
+  */
+  const settled = engagements.filter((entry) => entry.status !== 'PROPOSED').slice(0, 8);
 
   const settings = async (patch: Record<string, unknown>) => {
     setFailed(null);
@@ -183,6 +209,18 @@ export function MindView({ agentId }: { agentId: string }) {
       view.reload();
     } catch (error) {
       setFailed(error instanceof Error ? error.message : 'That could not be saved.');
+    }
+  };
+
+  /** Yes or no to one proposed like or repost. */
+  const decide = async (engagementId: string, yes: boolean) => {
+    setFailed(null);
+    try {
+      if (yes) await post(`/api/agents/${agentId}/mind/engagements/${engagementId}/approve`, {});
+      else await del(`/api/agents/${agentId}/mind/engagements/${engagementId}`);
+      view.reload();
+    } catch (error) {
+      setFailed(error instanceof Error ? error.message : 'That could not be decided.');
     }
   };
 
@@ -357,6 +395,76 @@ export function MindView({ agentId }: { agentId: string }) {
             );
           })}
         </div>
+      </Panel>
+
+      <Panel
+        title="What it wants to acknowledge"
+        lede="Posts it decided were worth a like or a repost, with the reasons and how sure it is. Below Act it proposes and stops; nothing here goes out until you say so."
+      >
+        {proposals.length === 0 && settled.length === 0 && (
+          <EmptyState
+            title="Nothing proposed"
+            detail={
+              wake?.enabled
+                ? 'It has not seen a post it thought was worth acknowledging. Turning that down is most of what this does.'
+                : 'Deliberation is switched off, so it has not been looking.'
+            }
+          />
+        )}
+
+        <div className="space-y-3">
+          {proposals.map((item) => (
+            <Card
+              key={item.id}
+              title={
+                <>
+                  {item.kind === 'LIKE' ? 'Like' : 'Repost'} @{item.authorHandle || 'someone'}
+                  {item.url && (
+                    <a
+                      className="ml-2 text-[12px] text-bone-faint underline-offset-2 hover:underline"
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    >
+                      open
+                    </a>
+                  )}
+                </>
+              }
+              score={`${item.score}`}
+              meta={`${Math.round(item.confidence * 100)}% sure · ${when(item.createdAt)}`}
+              action={
+                <div className="flex gap-2">
+                  <button type="button" className="btn-quiet px-0 text-[12px]" onClick={() => void decide(item.id, true)}>
+                    Do it
+                  </button>
+                  <button type="button" className="btn-quiet px-0 text-[12px]" onClick={() => void decide(item.id, false)}>
+                    No
+                  </button>
+                </div>
+              }
+            >
+              <p className="mb-3 break-words text-[12px] leading-relaxed text-bone-dim">{item.excerpt}</p>
+              {/* The reasons, never the number alone. A score nobody can argue
+                  with is a score nobody can correct. */}
+              <Reasons items={item.factors} />
+            </Card>
+          ))}
+        </div>
+
+        {settled.length > 0 && (
+          <div className="mt-4">
+            <p className="eyebrow mb-2">Already decided</p>
+            <ul className="space-y-1.5">
+              {settled.map((item) => (
+                <li key={item.id} className="break-words text-[12px] leading-relaxed text-bone-faint">
+                  {item.kind === 'LIKE' ? 'Like' : 'Repost'} @{item.authorHandle || 'someone'} · {item.status.toLowerCase()}
+                  {item.reason ? `: ${item.reason}` : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </Panel>
 
       <Panel title="What it is trying to do" lede="Goals you set are pinned — it can work on them and cannot decide they stopped mattering.">
