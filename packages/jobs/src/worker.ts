@@ -1,5 +1,5 @@
 import type { JobRecord } from '@xbam/shared/contracts';
-import { createLogger, errorMessage, sleep } from '@xbam/shared';
+import { createLogger, currentPressure, errorMessage, sleep, throttleFor } from '@xbam/shared';
 import { jobs as jobsRepo } from '@xbam/database';
 import { capabilitiesFor, runRecoverySweep, type QueueOptions } from './queue';
 
@@ -61,7 +61,22 @@ export class JobWorker {
   private async loop(): Promise<void> {
     while (!this.stopping) {
       try {
-        const capacity = this.options.concurrency - this.inFlight.size;
+        /*
+          Less work when the machine is short of memory, and never none.
+
+          The point is to reduce load *before* the operating system starts
+          killing things, because what it kills is Chrome: a renderer is the
+          largest process AI17Z has and the first thing an out-of-memory killer
+          reaches for. Losing a renderer costs a monitor; losing a queued job
+          costs nothing, because it stays queued.
+
+          So this delays rather than drops. Claimed jobs are unaffected, nothing
+          leaves the queue, and the floor is one: an installation under pressure
+          still makes progress, just slowly. Measured per tick rather than
+          cached, so recovery is automatic and gradual as memory frees up.
+        */
+        const allowed = Math.max(1, Math.floor(this.options.concurrency * throttleFor(currentPressure()).concurrencyFactor));
+        const capacity = allowed - this.inFlight.size;
         if (capacity <= 0) {
           await sleep(this.options.pollIntervalMs);
           continue;
