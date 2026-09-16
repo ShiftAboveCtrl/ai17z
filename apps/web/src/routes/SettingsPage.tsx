@@ -12,6 +12,7 @@ import { Explain } from '@app/components/Explain';
 import { SessionPanel } from '@app/components/SessionPanel';
 import { TelegramPanel } from '@app/components/TelegramPanel';
 import { UpdatePanel } from '@app/components/UpdatePanel';
+import { AuditPanel } from '@app/components/AuditPanel';
 
 const HEALTH_TONE = { healthy: 'live', degraded: 'wait', offline: 'fail', unknown: 'idle' } as const;
 
@@ -326,6 +327,11 @@ export function SettingsPage() {
           </ul>
         )}
         {accountError && <p className="mt-4 text-sm text-signal-fail">{accountError}</p>}
+      </section>
+
+      <section id="audit" className="border-t border-ink-line py-12">
+        <p className="eyebrow mb-2">What has been done</p>
+        <AuditPanel />
       </section>
 
       <section id="notifications" className="border-t border-ink-line py-12">
