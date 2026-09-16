@@ -42,27 +42,20 @@ describe('what size of machine this is', () => {
 });
 
 describe('the budget that follows from it', () => {
-  it('never lets Chrome have more than half the machine', () => {
-    // The other half is the operating system, Docker, and whatever the owner
-    // was actually doing. A browser automation tool that takes the whole
-    // machine is one people uninstall.
-    for (const bytes of [4, 8, 16, 32, 64, 128].map((n) => n * GB)) {
-      const budget = budgetFor(bytes);
-      expect(budget.chromeHardBytes).toBeLessThan(bytes / 2);
-    }
-  });
+  /*
+    Every assertion here is about a number something enforces.
 
-  it('always leaves somewhere to recycle before anything has to wait', () => {
-    for (const bytes of [4, 8, 16, 32, 64, 128].map((n) => n * GB)) {
-      const budget = budgetFor(bytes);
-      expect(budget.chromeSoftBytes).toBeLessThan(budget.chromeHardBytes);
-    }
-  });
-
-  it('gives a small machine less parallelism and a tighter recycling threshold', () => {
+    There used to be four more, about `chromeSoftBytes`, `chromeHardBytes`,
+    `browserConcurrency` and `workerHeapMb`. All four were computed here and
+    read by nothing: no code path compared Chrome's memory against a budget, no
+    semaphore bounded browser operations, and `--max-old-space-size` appeared
+    in this repository exactly once, in the comment claiming it was passed.
+    Tests that pin the arithmetic of an unused number make a dead field look
+    maintained, which is how it survived.
+  */
+  it('gives a small machine fewer live tabs and a tighter recycling threshold', () => {
     const small = budgetFor(6 * GB);
     const ordinary = budgetFor(16 * GB);
-    expect(small.browserConcurrency).toBeLessThan(ordinary.browserConcurrency);
     expect(small.maxLiveTabs).toBeLessThan(ordinary.maxLiveTabs);
     // Sooner, because on a small machine the operating system kills the
     // renderer long before V8's own ceiling is in sight.
@@ -74,7 +67,16 @@ describe('the budget that follows from it', () => {
     // V8's own ceiling however much is free.
     const big = budgetFor(64 * GB);
     const enormous = budgetFor(512 * GB);
-    expect(enormous.chromeHardBytes).toBe(big.chromeHardBytes);
+    expect(enormous.maxLiveTabs).toBe(big.maxLiveTabs);
+    expect(enormous.tabRecycleHeapFraction).toBe(big.tabRecycleHeapFraction);
+  });
+
+  it('never lets a tab run to V8 own ceiling', () => {
+    // The crash happens on the allocation that crosses it, and the tab is gone
+    // before anything can act, so the fraction has to leave real headroom.
+    for (const bytes of [4, 8, 16, 32, 64, 128].map((n) => n * GB)) {
+      expect(budgetFor(bytes).tabRecycleHeapFraction).toBeLessThanOrEqual(0.7);
+    }
   });
 
   it('always keeps at least two tabs live, whatever the machine', () => {
@@ -85,12 +87,18 @@ describe('the budget that follows from it', () => {
     }
   });
 
+  it('never promises more live tabs than there are roles to fill them', () => {
+    // A cap above the number of roles is a cap that can never bind, which is
+    // the shape the removed fields all had.
+    for (const bytes of [1, 8, 64, 512].map((n) => n * GB)) {
+      expect(budgetFor(bytes).maxLiveTabs).toBeLessThanOrEqual(4);
+    }
+  });
+
   it('produces nothing absurd from an absurd machine', () => {
     for (const nonsense of [0, -5, Number.NaN]) {
       const budget = budgetFor(nonsense);
-      expect(budget.chromeSoftBytes).toBeGreaterThan(0);
-      expect(budget.browserConcurrency).toBeGreaterThanOrEqual(1);
-      expect(budget.workerHeapMb).toBeGreaterThan(0);
+      expect(budget.maxLiveTabs).toBeGreaterThanOrEqual(2);
       expect(budget.tabRecycleHeapFraction).toBeGreaterThan(0);
       expect(budget.tabRecycleHeapFraction).toBeLessThan(1);
     }

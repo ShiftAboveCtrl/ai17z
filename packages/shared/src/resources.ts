@@ -67,26 +67,15 @@ export interface ResourceBudget {
   memoryClass: MemoryClass;
   totalBytes: number;
   /**
-   * What AI17Z's Chrome should stay under, and what it must not exceed.
-   *
-   * Soft is where recycling starts; hard is where new browser work waits. Both
-   * are a share of the machine rather than a constant, because 1.5 GB is
-   * generous on an 8 GB laptop and nothing at all on a 64 GB desktop.
-   */
-  chromeSoftBytes: number;
-  chromeHardBytes: number;
-  /** What the worker's own heap is sized to, passed to Node as --max-old-space-size. */
-  workerHeapMb: number;
-  /**
    * How many X tabs may hold a live SPA at once.
    *
    * Never fewer than two: ACTION has to stay live while something reads, or a
    * reply waits behind a monitor. The role map is unchanged whatever this is --
-   * this bounds how many are *rendered*, not how many exist.
+   * this bounds how many are *rendered*, not how many exist, and `acquireTab`
+   * closes the least recently used idle tab to stay inside it. A closed tab is
+   * recreated on demand, which is the property the whole role map rests on.
    */
   maxLiveTabs: number;
-  /** How many browser operations may run at once. */
-  browserConcurrency: number;
   /**
    * The share of V8's own heap ceiling at which a tab is recycled.
    *
@@ -135,25 +124,10 @@ export function budgetFor(totalBytes: number): ResourceBudget {
   const memoryClass = memoryClassFor(totalBytes);
   const total = Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : 8 * GB;
 
-  // A share of the machine, then capped. The cap is what stops a 128 GB
-  // workstation deciding it may hold 64 GB of Chrome: past a point more
-  // headroom buys nothing, because a single renderer still dies at V8's own
-  // ceiling however much is free.
-  const softShare = memoryClass === 'LOW' ? 0.22 : memoryClass === 'HIGH' ? 0.28 : 0.25;
-  const chromeSoftBytes = Math.min(Math.round(total * softShare), 6 * GB);
-  const chromeHardBytes = Math.min(Math.round(total * (softShare + 0.12)), 9 * GB);
-
   return {
     memoryClass,
     totalBytes: total,
-    chromeSoftBytes,
-    chromeHardBytes,
-    // Deliberately modest. The worker holds normalised records and job rows,
-    // not pages; when it has needed more than this it has been a leak rather
-    // than a workload.
-    workerHeapMb: memoryClass === 'LOW' ? 512 : memoryClass === 'HIGH' ? 1536 : 1024,
     maxLiveTabs: memoryClass === 'LOW' ? 2 : memoryClass === 'HIGH' ? 4 : 3,
-    browserConcurrency: memoryClass === 'LOW' ? 1 : memoryClass === 'HIGH' ? 3 : 2,
     // Tighter on a small machine, because there the operating system will kill
     // the renderer before V8's own ceiling is anywhere in sight.
     tabRecycleHeapFraction: memoryClass === 'LOW' ? 0.45 : memoryClass === 'HIGH' ? 0.65 : 0.6,
@@ -246,7 +220,21 @@ export function describeBudget(budget: ResourceBudget, state: PressureState, inC
   const machine = inContainer
     ? `${gb(budget.totalBytes)} available to AI17Z (${budget.memoryClass.toLowerCase()})`
     : `${gb(budget.totalBytes)} machine (${budget.memoryClass.toLowerCase()})`;
-  const chrome = `browser budget ${gb(budget.chromeSoftBytes)}, ceiling ${gb(budget.chromeHardBytes)}`;
+  /*
+    What is actually enforced, and nothing else.
+
+    This used to read "browser budget 1.9 GB, ceiling 3.1 GB", which were two
+    numbers computed here and honoured nowhere: no code path ever compared
+    Chrome's memory against either. A health screen that states a limit the
+    product does not apply is worse than one that says less.
+
+    Both numbers below are enforced. `maxLiveTabs` is applied by `acquireTab`,
+    which parks the least recently used idle tab to stay inside it, and the
+    recycle fraction is applied by `recycleReason` against V8's own ceiling.
+  */
+  const chrome = `up to ${budget.maxLiveTabs} live X ${
+    budget.maxLiveTabs === 1 ? 'tab' : 'tabs'
+  }, each recycled past ${Math.round(budget.tabRecycleHeapFraction * 100)}% of its heap`;
   const doing =
     state === 'NORMAL'
       ? 'running normally'

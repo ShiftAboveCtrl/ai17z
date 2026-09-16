@@ -448,7 +448,7 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
 
   let tab;
   try {
-    tab = await acquireTab(entry.context, entry.tabs, role, { heapFraction: budget.tabRecycleHeapFraction });
+    tab = await acquireTab(entry.context, entry.tabs, role, { heapFraction: budget.tabRecycleHeapFraction, maxLiveTabs: budget.maxLiveTabs });
   } catch (error) {
     // The context died between the check above and here, which is exactly what
     // happens when somebody closes the window at the wrong moment. Reopen once
@@ -459,7 +459,7 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
     watchForClose(config.accountId, entry);
     contexts.set(config.accountId, entry);
     try {
-      tab = await acquireTab(entry.context, entry.tabs, role, { heapFraction: budget.tabRecycleHeapFraction });
+      tab = await acquireTab(entry.context, entry.tabs, role, { heapFraction: budget.tabRecycleHeapFraction, maxLiveTabs: budget.maxLiveTabs });
     } catch (secondError) {
       throw explainLaunchFailure(secondError, config);
     }

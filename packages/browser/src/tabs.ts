@@ -500,6 +500,57 @@ async function openBackgroundPage(context: BrowserContext): Promise<Page> {
 }
 
 /**
+ * Closes an idle tab when this machine cannot afford another live one.
+ *
+ * `budgetFor` has always said how many X tabs a machine may render at once, and
+ * on a small machine that number is two. Nothing read it. The role map opens
+ * four regardless, so a laptop with under 10 GB ran four X renderers beside
+ * Docker and Postgres, each allowed 45% of V8's own ceiling.
+ *
+ * Enforced with the machinery that already exists rather than with a new one: a
+ * closed tab is recreated on its own, which is the property the whole role map
+ * is built on, so making room is just closing the one nobody is using. The tab
+ * being acquired is never a candidate, and neither is a busy one, so this can
+ * never take a page out from under an operation.
+ *
+ * The least recently used goes first, which on this workload is almost always
+ * RESEARCH: it is used once per lookup and the monitors run every minute.
+ */
+async function parkForRoom(tabs: TabMap, wanted: TabRole, maxLiveTabs: number | undefined): Promise<void> {
+  if (!maxLiveTabs || maxLiveTabs < 1) return;
+
+  // The one being acquired is about to exist, so it counts towards the cap.
+  const others = [...tabs.values()].filter((state) => state.role !== wanted);
+  let live = others.length + 1;
+  if (live <= maxLiveTabs) return;
+
+  const idle = others.filter((state) => !state.busy).sort((a, b) => a.lastUsedAt - b.lastUsedAt);
+  for (const state of idle) {
+    if (live <= maxLiveTabs) break;
+    log.info('parking a tab to stay inside this machine budget', {
+      role: state.role,
+      forRole: wanted,
+      maxLiveTabs,
+    });
+    tabs.delete(state.role);
+    if (!state.page.isClosed()) await state.page.close().catch(() => undefined);
+    live -= 1;
+  }
+
+  /*
+    Everything else is busy.
+
+    The tab still opens. Refusing here would mean a monitor could not run
+    because two others happened to be mid-operation, and a browser that
+    sometimes will not open a tab is a worse failure than one briefly over its
+    budget. The cap is a steady-state target, not a lock.
+  */
+  if (live > maxLiveTabs) {
+    log.debug('over the live tab budget, and everything else is busy', { forRole: wanted, live, maxLiveTabs });
+  }
+}
+
+/**
  * The page for a role, created once and reused.
  *
  * Recovery is per role: a closed or crashed tab is replaced on its own without
@@ -510,7 +561,7 @@ export async function acquireTab(
   context: BrowserContext,
   tabs: TabMap,
   role: TabRole,
-  options: { heapFraction?: number } = {},
+  options: { heapFraction?: number; maxLiveTabs?: number } = {},
 ): Promise<TabState> {
   const existing = tabs.get(role);
   /*
@@ -540,6 +591,10 @@ export async function acquireTab(
     // name, which is still on it.
     if (!existing.page.isClosed()) await existing.page.close().catch(() => undefined);
   }
+
+  // Room for this one before it is opened, on a machine that has said how
+  // many it can hold.
+  await parkForRoom(tabs, role, options.maxLiveTabs);
 
   const adopted = await findExisting(context, role);
   const page = adopted ?? (await openBackgroundPage(context));
