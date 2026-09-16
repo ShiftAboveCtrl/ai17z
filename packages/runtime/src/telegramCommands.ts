@@ -64,6 +64,24 @@ const log = createLogger('telegram-commands');
 /** How many updates one sweep will take. Bounded so a flood cannot hold the loop. */
 const MAX_PER_SWEEP = 20;
 
+/**
+ * How old a message may be and still be treated as an instruction.
+ *
+ * The same rule ingest applies to a post: widening what something is triggered
+ * by changes what happens next, never what happened yesterday. Telegram holds
+ * unread updates for twenty-four hours, so the first sweep after an
+ * installation takes this release finds everything typed at the bot since it
+ * was paired, whether or not any of it was meant for this.
+ *
+ * A command typed hours ago is not an instruction now. It is acknowledged, so
+ * it is never seen again, and answered with a sentence saying why nothing
+ * happened, because silence would read as the bot being broken.
+ *
+ * Fifteen minutes is generous for somebody typing at a phone and short enough
+ * that nothing stale survives it.
+ */
+const STALE_COMMAND_MS = 15 * 60_000;
+
 /** How much of a job id has to be typed. Eight hex characters is a phone-sized name. */
 const SHORT_ID = 8;
 
@@ -102,14 +120,30 @@ export const COMMANDS: CommandSpec[] = [
 
 const BY_NAME = new Map(COMMANDS.map((command) => [command.name, command]));
 
-/** Short names people reach for, mapped to the real one. */
+/**
+ * Short names people reach for, mapped to the real one.
+ *
+ * **Nothing that changes something is reachable by a word Telegram itself
+ * uses.** `/start` is the button Telegram puts on every bot on first contact
+ * and the conventional first thing anybody types, so it means "hello, here is
+ * what I can do" and nothing else. It briefly meant `resume`, which would have
+ * let a `/start` sitting unread in the backlog lift a pause the owner set
+ * deliberately.
+ *
+ * `/stop` is deliberately absent for the mirror of that reason: in Telegram it
+ * conventionally means "stop messaging me", and an owner typing it expecting
+ * quiet would have stopped every agent instead. They get the list, which names
+ * `/pause` and `/mute` and lets them say which they meant.
+ *
+ * The approve and decline aliases stay because both need an id, so a bare one
+ * does nothing but ask for it.
+ */
 const ALIASES: Record<string, string> = {
   ok: 'approve',
   yes: 'approve',
   no: 'decline',
   reject: 'decline',
-  stop: 'pause',
-  start: 'resume',
+  start: 'help',
   h: 'help',
   s: 'status',
 };
@@ -438,11 +472,26 @@ export async function pollTelegramCommands(fetchImpl: typeof fetch = fetch): Pro
 
     const actor = message.from?.username ?? message.from?.first_name ?? `chat ${message.chat.id}`;
     let result: CommandResult;
-    try {
-      result = await runCommand(message.text, actor);
-    } catch (error) {
-      log.warn('a Telegram command failed', { message: errorMessage(error) });
-      result = { reply: 'Something went wrong running that. Nothing was changed.', command: null };
+
+    // Telegram dates are seconds. Zero or missing is treated as current rather
+    // than ancient: refusing what cannot be measured would silently ignore real
+    // commands the first time Telegram changed its payload.
+    const sentAt = message.date ? message.date * 1000 : Date.now();
+    if (Date.now() - sentAt > STALE_COMMAND_MS) {
+      log.info('ignoring a Telegram command that is too old to be an instruction', {
+        minutes: Math.round((Date.now() - sentAt) / 60_000),
+      });
+      result = {
+        reply: 'That was sent a while ago, so nothing was done with it. Send it again if you still want it.',
+        command: null,
+      };
+    } else {
+      try {
+        result = await runCommand(message.text, actor);
+      } catch (error) {
+        log.warn('a Telegram command failed', { message: errorMessage(error) });
+        result = { reply: 'Something went wrong running that. Nothing was changed.', command: null };
+      }
     }
 
     if (result.command && BY_NAME.get(result.command)?.acts) {
