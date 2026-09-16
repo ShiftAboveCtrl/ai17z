@@ -81,13 +81,15 @@ function json(payload: unknown): Response {
 }
 
 let nextUpdateId = 1000;
-function anUpdate(text: string, chatId = OWNER_CHAT) {
+function anUpdate(text: string, chatId = OWNER_CHAT, sentAt = new Date()) {
   nextUpdateId += 1;
   return {
     update_id: nextUpdateId,
     message: {
       message_id: nextUpdateId,
-      date: 1,
+      // Telegram sends seconds. Real by default, because a fixture dated in
+      // 1970 would be older than the staleness window and nothing would run.
+      date: Math.floor(sentAt.getTime() / 1000),
       text,
       chat: { id: chatId, type: 'private', first_name: 'Owner' },
       from: { id: chatId, first_name: 'Owner', username: 'owner' },
@@ -271,6 +273,49 @@ describe('what it will do', () => {
 });
 
 describe('what it will not do', () => {
+  it('does not act on a command that was typed hours ago', async () => {
+    /*
+      The same rule ingest applies to a post: widening what something is
+      triggered by changes what happens next, never what happened yesterday.
+
+      Telegram holds unread updates for a day, so the first sweep after an
+      installation takes this release finds everything typed at the bot since
+      it was paired. A `/pause` from last night is not an instruction now.
+    */
+    await connected();
+    const hoursAgo = new Date(Date.now() - 6 * 3_600_000);
+    telegram.updates = [anUpdate('/pause', OWNER_CHAT, hoursAgo)];
+    await pollTelegramCommands();
+
+    expect((await pauseState()).paused).toBe(false);
+    // Answered rather than ignored: silence reads as the bot being broken.
+    expect(telegram.texts().join(' ')).toMatch(/sent a while ago/i);
+  });
+
+  it('never lets Telegram’s own first button change anything', async () => {
+    // /start is the button Telegram puts on every bot, and the conventional
+    // first thing anybody types. It briefly meant resume, which would have let
+    // one sitting unread in the backlog lift a pause somebody set deliberately.
+    await connected();
+    await setPauseAll({ paused: true, by: 'a person' });
+    telegram.updates = [anUpdate('/start')];
+    await pollTelegramCommands();
+
+    expect((await pauseState()).paused).toBe(true);
+    expect(telegram.texts().join(' ')).toMatch(/what you can ask me/i);
+  });
+
+  it('does not read /stop as stopping every agent', async () => {
+    // In Telegram it conventionally means "stop messaging me". An owner typing
+    // it expecting quiet should not stop their agents instead.
+    await connected();
+    telegram.updates = [anUpdate('/stop')];
+    await pollTelegramCommands();
+
+    expect((await pauseState()).paused).toBe(false);
+    expect(telegram.texts().join(' ')).toMatch(/do not know/i);
+  });
+
   it('does not treat free text as an instruction', async () => {
     /*
       Nothing here interprets a sentence.
