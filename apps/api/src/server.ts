@@ -13,6 +13,7 @@ import { providerRoutes } from './routes/providers';
 import { accountRoutes } from './routes/accounts';
 import { sessionRoutes } from './routes/sessions';
 import { jobRoutes } from './routes/jobs';
+import { labRoutes } from './routes/lab';
 import { mockRoutes } from './routes/mock';
 import { memoryRoutes } from './routes/memories';
 import { knowledgeRoutes } from './routes/knowledge';
@@ -78,6 +79,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(accountRoutes);
   await app.register(sessionRoutes);
   await app.register(jobRoutes);
+  await app.register(labRoutes);
   await app.register(mockRoutes);
   await app.register(memoryRoutes);
   await app.register(knowledgeRoutes);

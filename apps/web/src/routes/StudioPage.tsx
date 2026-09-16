@@ -12,6 +12,7 @@ import { MindView } from './studio/MindView';
 import { AnalyticsView } from './studio/AnalyticsView';
 import { LaunchView } from './studio/LaunchView';
 import { ExperimentsView } from './studio/ExperimentsView';
+import { LabView } from './studio/LabView';
 
 /**
  * X Studio: what the agent has seen and what it did, rather than how it is set up.
@@ -41,6 +42,7 @@ const VIEWS = [
   { id: 'analytics', label: 'Analytics', blurb: 'What has worked, from the posts that were measured.' },
   { id: 'launch', label: 'Launches', blurb: 'Tickers and addresses, with nothing added to them.' },
   { id: 'create', label: 'Create', blurb: 'What it has to say, before it says it.' },
+  { id: 'lab', label: 'Lab', blurb: 'What it would say to something, and everything that fed the answer.' },
   { id: 'experiments', label: 'Experiments', blurb: 'One question at a time, answered slowly or not at all.' },
 ] as const;
 
@@ -82,7 +84,7 @@ export function StudioPage() {
       <nav aria-label="Studio" className="sticky top-[3.75rem] z-30 mt-6 border-y border-ink-line bg-ink/90 backdrop-blur-md sm:top-[3.5rem]">
         <div className="mx-auto max-w-page px-4 sm:px-8">
           {/*
-            Nine of these do not fit a phone side by side, so this one
+            Ten of these do not fit a phone side by side, so this one
             scrolls. The agent page's five are sized not to; the difference is
             that these are places to look rather than places to change
             something, and missing one costs nothing.
@@ -129,6 +131,7 @@ export function StudioPage() {
             {view === 'analytics' && <AnalyticsView agentId={agentId} />}
             {view === 'launch' && <LaunchView agentId={agentId} />}
             {view === 'create' && <CreateView agentId={agentId} />}
+            {view === 'lab' && <LabView agentId={agentId} />}
             {view === 'experiments' && <ExperimentsView agentId={agentId} />}
           </div>
         </Crash>
