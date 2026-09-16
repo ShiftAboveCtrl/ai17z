@@ -7,13 +7,15 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@xbam/shared": "*",
+    "@xbam/browser": "*",
+    "@xbam/channels": "*",
     "@xbam/database": "*",
     "@xbam/jobs": "*",
-    "@xbam/models": "*",
     "@xbam/memory": "*",
+    "@xbam/models": "*",
+    "@xbam/persona": "*",
     "@xbam/prompts": "*",
-    "@xbam/channels": "*",
+    "@xbam/shared": "*",
     "@xbam/tools": "*",
     "@xbam/upstream": "*"
   }
