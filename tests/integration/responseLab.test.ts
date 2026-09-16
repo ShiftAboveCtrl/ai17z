@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { actions as actionsRepo, events as eventsRepo, jobs as jobsRepo, query } from '@xbam/database';
+import {
+  actions as actionsRepo,
+  events as eventsRepo,
+  inbox as inboxRepo,
+  jobs as jobsRepo,
+  mentions as mentionsRepo,
+  query,
+} from '@xbam/database';
 import { explainRehearsal, ingestNormalizedEvent, rehearse } from '@xbam/runtime';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -218,6 +225,57 @@ describe('what fed the answer', () => {
 
     const explained = await explainRehearsal(run.jobId);
     expect(explained.gaps.join(' ')).toMatch(/could not be read/);
+  });
+});
+
+describe('a rehearsal is not a message', () => {
+  it('stays out of the owner’s inbox, and out of the badge', async () => {
+    /*
+      Measured on the test installation the moment the first real-post
+      rehearsal ran: the badge went from one to two.
+
+      The lab manufactures a MENTION so the rehearsal runs the ordinary
+      pipeline, which is the property that makes it worth trusting. It also
+      meant every trial landed in the inbox looking like somebody had written
+      to the agent, and one held for review was counted as waiting on a person
+      when nothing had been sent and nothing could be.
+    */
+    const fixture = await labAgent();
+    const before = await inboxRepo.ownerInbox(fixture.ownerId);
+
+    await rehearse({
+      agentId: fixture.agentId,
+      subject: { channel: 'mock', authorHandle: 'someone', text: 'Would you answer this one?' },
+    });
+    await drainAgentJobs(fixture.agentId);
+
+    const after = await inboxRepo.ownerInbox(fixture.ownerId);
+    expect(after).toHaveLength(before.length);
+  });
+
+  it('stays out of the mentions read model, so a trial is not a conversation', async () => {
+    const fixture = await labAgent();
+    await rehearse({
+      agentId: fixture.agentId,
+      subject: { channel: 'mock', authorHandle: 'tried_against', text: 'Something to try it on.' },
+    });
+    await drainAgentJobs(fixture.agentId);
+
+    const mentions = await mentionsRepo.listMentions({ agentId: fixture.agentId, accountId: null, state: null });
+    expect(mentions.some((row) => row.authorHandle === 'tried_against')).toBe(false);
+  });
+
+  it('still shows a real mention from the same agent', async () => {
+    // The mirror. Excluding rehearsals must not exclude anything else.
+    const fixture = await labAgent();
+    await ingestNormalizedEvent({
+      accountId: null,
+      onlyAgentId: fixture.agentId,
+      event: mockEvent('A person actually said this.'),
+    });
+
+    const items = await inboxRepo.ownerInbox(fixture.ownerId);
+    expect(items.length).toBeGreaterThan(0);
   });
 });
 

@@ -161,6 +161,15 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
         -- inbox fills with things nobody can act on. Anything that did produce
         -- a job is kept whatever became of the account.
         AND (e.account_id IS NOT NULL OR j.id IS NOT NULL)
+        /*
+          A rehearsal is not a mention.
+
+          The Response Lab manufactures one so its rehearsal runs the ordinary
+          pipeline, which is what makes the lab worth trusting. Left in, every
+          trial of an agent would appear here as somebody having written to it,
+          and its dry-run draft as an answer that went out.
+        */
+        AND coalesce((e.payload ->> 'rehearsal')::boolean, false) = false
       ORDER BY e.ingested_at DESC
       LIMIT $3`,
     [
