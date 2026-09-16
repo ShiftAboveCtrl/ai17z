@@ -9,6 +9,22 @@ const AGENT_COLUMNS = `
   id, owner_id, slug, name, description, avatar_url, avatar_mode, state, last_error,
   persona_version_id, policy_version_id, pipeline_version_id, created_at, updated_at`;
 
+/**
+ * How many agents are in each state, across the installation.
+ *
+ * Not owner-scoped, unlike `listAgents`, and deliberately so: the two callers
+ * are the health surfaces -- the owner notification transport and the
+ * diagnostics -- which describe the machine rather than one person's agents.
+ * It returns counts and nothing else, so it cannot become a way to enumerate
+ * somebody else's agents.
+ */
+export async function countAgentsByState(): Promise<Record<string, number>> {
+  const rows = await query<{ state: string; count: number }>(
+    'SELECT state, count(*)::int AS count FROM agents GROUP BY state',
+  );
+  return Object.fromEntries(rows.map((row) => [row.state, row.count]));
+}
+
 export async function listAgents(ownerId: string): Promise<Agent[]> {
   return mapRows<Agent>(
     await query(`SELECT ${AGENT_COLUMNS} FROM agents WHERE owner_id = $1 ORDER BY created_at DESC`, [ownerId]),

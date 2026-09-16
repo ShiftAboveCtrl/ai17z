@@ -93,15 +93,36 @@ export async function rejectJob(input: ApprovalDecisionInput): Promise<void> {
   if (job.status !== 'WAITING_FOR_APPROVAL' && job.status !== 'REVIEW_REQUIRED') {
     throw new ConflictError(`Job is ${job.status}, so there is nothing to reject.`);
   }
-  await actionsRepo
-    .decideApproval({
+  /*
+    Recorded, not swallowed.
+
+    This used to be `.catch(() => undefined)`, which quietly lost the decision
+    on exactly the jobs a person is most likely to decline: a REVIEW_REQUIRED
+    job has no approval row yet, so the update matched nothing and there was
+    never any record of who declined it or why. The approve path already
+    created the row for that case and said so in a comment; only this half was
+    missing, and "why was this never sent" is the question the row exists to
+    answer.
+  */
+  try {
+    await actionsRepo.decideApproval({
       jobId: job.id,
       status: 'REJECTED',
       note: input.note ?? null,
       decidedBy: input.decidedBy,
       editedOutput: null,
-    })
-    .catch(() => undefined);
+    });
+  } catch (error) {
+    if (!(error instanceof NotFoundError)) throw error;
+    await actionsRepo.createApproval(job.id, job.validatedOutput ?? job.generatedOutput ?? '');
+    await actionsRepo.decideApproval({
+      jobId: job.id,
+      status: 'REJECTED',
+      note: input.note ?? null,
+      decidedBy: input.decidedBy,
+      editedOutput: null,
+    });
+  }
   await jobsRepo.updateJob(job.id, {
     status: 'CANCELLED',
     lastError: input.note ?? 'Rejected by the operator.',

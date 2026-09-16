@@ -92,8 +92,43 @@ in the middle that belongs to us.
 
 **It is not a channel.** No agent reads from it, writes to it, or knows it
 exists. `packages/channels` carries an agent's identity; this carries the
-installation's. Nothing an owner types into Telegram makes AI17Z do anything: a
-bot token is a bearer credential and a chat is not an authenticated session.
+installation's. What arrives here reaches the owner's own controls and nowhere
+else: it cannot become something an agent says, and it cannot become part of a
+prompt.
+
+**It is a command surface, which it deliberately was not at first.** The
+reasoning for refusing — a bot token is a bearer credential and a chat is not an
+authenticated session — was right about the risk and wrong about the
+conclusion. An owner told at three in the morning that an account is waiting on
+a security challenge, on a machine at home, could read it and do nothing. A
+notification nobody can act on is half a feature.
+
+So the boundary moved rather than went away, and `telegramCommands.ts` is where
+it lives:
+
+- **One chat, and only one.** Every update from any other chat is dropped
+  *without a reply*. A refusal confirms the bot is live and attached to
+  something worth attacking, to whoever typed at it.
+- **A closed list of verbs.** Nothing interprets free text. What is not in
+  `COMMANDS` is not a command, and no message becomes an instruction to an
+  agent, a prompt, or a shell.
+- **Every verb goes through what already exists.** An approval is `approveJob`,
+  the same call the web UI makes, with the same policy check on the text. A
+  pause is `setPauseAll`. There is no second path, so there is no second set of
+  gates to keep in step.
+- **Nothing sensitive comes back.** No token, no cookie, no provider
+  credential, no memory, and no free text from a model.
+- **Anything that changes something is audited.** Who, what, and when. Remote
+  control of somebody's accounts is worth a row.
+
+The paired chat speaks for the **installation**, not for one owner, matching
+the notifications it already receives. The alternative is the half-feature
+again: a phone that says a draft is waiting and will not let you answer it.
+
+`/mute <hours>` silences the phone for up to a day and loses nothing — the
+notification is still raised, still deduped and still in the app — and the
+settings screen says a mute is in force, so a transport that is connected,
+enabled and quiet is never a mystery.
 
 **It is not a second opinion about what is worth saying.** Everything has
 already been raised, deduped and severity-assigned. Telegram only chooses which
