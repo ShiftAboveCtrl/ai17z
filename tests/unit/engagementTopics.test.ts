@@ -24,6 +24,42 @@ const base = {
   topics: ['governance', 'token distribution', 'incentives'],
 };
 
+describe('the words a topic is made of', () => {
+  /*
+    A topic is written as a phrase a person would say, and phrases contain
+    ordinary words. "what agents get wrong" contributed "what", which is four
+    characters and therefore counted, so every question matched every agent.
+
+    Measured against a real agent's sixteen topics: "what time does the match
+    start tonight" and "what a goal that was" both came back on-subject for an
+    agent that follows browser automation. That is precisely the football post
+    the outreach rule exists to prevent, arriving through the check meant to
+    stop it.
+  */
+  const topics = ['what agents get wrong', 'browser automation', 'running models on your own machine'];
+
+  it('does not match a post because it used an ordinary word', () => {
+    expect(touchesTopics('what time does the match start tonight', topics)).toBe(false);
+    expect(touchesTopics('what a goal that was, absolute screamer', topics)).toBe(false);
+    expect(touchesTopics('what did you have for lunch', topics)).toBe(false);
+    // "your" and "own" come from the third topic and carry no subject either.
+    expect(touchesTopics('bring your own bottle', topics)).toBe(false);
+  });
+
+  it('still matches on the words that do carry the subject', () => {
+    expect(touchesTopics('the browser keeps dying', topics)).toBe(true);
+    expect(touchesTopics('what agents get wrong about memory', topics)).toBe(true);
+    expect(touchesTopics('automation is the easy part', topics)).toBe(true);
+    expect(touchesTopics('running a model locally', topics)).toBe(true);
+  });
+
+  it('reads a hyphenated topic as its words', () => {
+    // "local-first software" is one topic and three words, and a post about
+    // local software is about it.
+    expect(touchesTopics('local software beats the cloud here', ['local-first software'])).toBe(true);
+  });
+});
+
 describe('recognising the subject', () => {
   it('matches on any meaningful word of a topic', () => {
     expect(touchesTopics('the distribution changed again', ['token distribution'])).toBe(true);

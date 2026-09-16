@@ -4,7 +4,7 @@
   "version": "1.0.0-beta.29",
   "license": "MIT",
   "type": "module",
-  "description": "XBAM — a local-first universal autonomous-agent platform.",
+  "description": "XBAM \u2014 a local-first universal autonomous-agent platform.",
   "engines": {
     "node": ">=22"
   },
@@ -35,6 +35,7 @@
     "build:web": "npm --workspace @xbam/web run build",
     "typecheck": "tsc -b tsconfig.json --pretty false && tsc -p tests/e2e/tsconfig.json --noEmit && npm --workspace @xbam/web exec tsc -- --noEmit",
     "test": "vitest run",
+    "evaluate": "tsx tools/scenarios/evaluate.mts",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "session:e2e": "tsx tools/e2e-session.mts",
