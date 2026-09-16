@@ -422,6 +422,64 @@ export function isDeadPage(page: Page): boolean {
 }
 
 /**
+ * A new tab that does not bring Chrome to the front.
+ *
+ * ## The problem this solves
+ *
+ * `context.newPage()` goes out as CDP `Target.createTarget` with no
+ * `background` flag, and Chrome's default for a created target is to activate
+ * it: the tab opens *and the window comes forward*. On somebody's own desktop
+ * that means AI17Z interrupts whatever they were doing, every time it opens a
+ * tab. Recycling made it worse, because recycling opens tabs on purpose.
+ *
+ * CDP has the flag already. `Target.createTarget` with `background: true`
+ * creates the tab without activating the window, which is exactly what a
+ * browser doing background work should do, and is a cleaner answer than
+ * minimising Chrome afterwards -- that still steals focus first and gives it
+ * back, which is visible and horrible.
+ *
+ * ## Why it is written this way
+ *
+ * Playwright does not expose the flag, so the target is created over a raw
+ * browser-level CDP session and the resulting page is picked up from the
+ * context's own `page` event. Waiting for the event rather than diffing
+ * `pages()` is what makes it safe when two roles are created at once.
+ *
+ * Falls back to `context.newPage()` whenever any of that is unavailable: a
+ * Playwright-Chromium persistent context has no browser-level CDP session, and
+ * an installation running one should still get its tabs. A tab that steals
+ * focus is worse than the alternative; a tab that never opens is worse than
+ * both.
+ */
+async function openBackgroundPage(context: BrowserContext): Promise<Page> {
+  const browser = context.browser();
+  if (!browser) return context.newPage();
+
+  try {
+    const cdp = await browser.newBrowserCDPSession();
+    try {
+      const appeared = new Promise<Page>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('the new tab never appeared')), 15_000);
+        timer.unref?.();
+        context.once('page', (page) => {
+          clearTimeout(timer);
+          resolve(page);
+        });
+      });
+      await cdp.send('Target.createTarget', { url: 'about:blank', background: true });
+      return await appeared;
+    } finally {
+      // Released either way: a browser session left open is a listener held for
+      // the life of the process.
+      await cdp.detach().catch(() => undefined);
+    }
+  } catch (error) {
+    log.debug('could not open a background tab, falling back', { message: errorMessage(error) });
+    return context.newPage();
+  }
+}
+
+/**
  * The page for a role, created once and reused.
  *
  * Recovery is per role: a closed or crashed tab is replaced on its own without
@@ -464,7 +522,7 @@ export async function acquireTab(
   }
 
   const adopted = await findExisting(context, role);
-  const page = adopted ?? (await context.newPage());
+  const page = adopted ?? (await openBackgroundPage(context));
   await writeTag(page, role);
 
   const state: TabState = {
