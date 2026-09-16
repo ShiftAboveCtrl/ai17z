@@ -95,13 +95,52 @@ function lightCompile(draft: string, input: CompileInput): { text: string; chang
     }
   }
 
-  for (const pattern of TRIMMABLE_CLOSERS) {
-    const trimmed = text.replace(pattern, '');
-    if (trimmed !== text && trimmed.trim().length > 0) {
-      text = trimmed.trimEnd();
-      changes.push('dropped a helpdesk sign-off');
+  /*
+    Sign-offs stack, so they are taken off until none is left.
+
+    Every closer is anchored to the end of the text, and a single pass takes
+    exactly one of them. A model that writes "Hope that helps -- let me know if
+    you have any other questions!" therefore lost the second half and kept the
+    first, leaving "Hope that helps --": a dangling helpdesk phrase and a
+    trailing dash.
+
+    Nobody noticed because the length ceiling used to cut the reply before that
+    point. Removing the chop is what made it visible, which is the ordinary way
+    a masked defect surfaces.
+
+    Bounded rather than `while (true)`, because a pattern that matched its own
+    output would otherwise take the worker with it.
+  */
+  for (let pass = 0; pass < TRIMMABLE_CLOSERS.length; pass += 1) {
+    /*
+      The punctuation that joined the sign-off to the sentence goes first, so
+      the next closer can match.
+
+      "Hope that helps -- let me know if you have any other questions!" loses
+      the second phrase and is left as "Hope that helps --". Every closer is
+      anchored to the end, so with a dash still hanging there the first phrase
+      no longer matches and survives. Stripping the dangling punctuation inside
+      the loop is what lets the stack come apart.
+    */
+    const tidied = text.replace(/[\s,;:]*[-–—―]+\s*$/u, '').trimEnd();
+    if (tidied.length > 0) text = tidied;
+
+    let dropped = false;
+    for (const pattern of TRIMMABLE_CLOSERS) {
+      const trimmed = text.replace(pattern, '');
+      if (trimmed !== text && trimmed.trim().length > 0) {
+        text = trimmed.trimEnd();
+        dropped = true;
+      }
     }
+    if (!dropped) break;
+    if (!changes.includes('dropped a helpdesk sign-off')) changes.push('dropped a helpdesk sign-off');
   }
+
+  // And once more at the end, for a sign-off that was itself the last thing
+  // attached by a dash.
+  const dangling = text.replace(/[\s,;:]*[-–—―]+\s*$/u, '').trimEnd();
+  if (dangling !== text && dangling.length > 0) text = dangling;
 
   for (const [pattern, plain] of PLAINER) {
     if (pattern.test(text)) {
