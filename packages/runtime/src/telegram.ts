@@ -16,10 +16,21 @@
  *     already been through `notify`: raised, deduped, severity assigned, mute
  *     honoured. This only chooses whether the owner wants that particular kind
  *     on their phone, and sends it.
- *   - **not a command channel.** Incoming messages are read exactly once, during
- *     pairing, to learn which chat to send to. Nothing an owner types into
- *     Telegram can make AI17Z do anything -- a bot token is a bearer credential
- *     and a chat is not an authenticated session.
+ *   - **not a channel an agent can reach.** What arrives here goes to the
+ *     owner's own controls and nowhere else. It cannot become something an
+ *     agent says, and it cannot become part of a prompt.
+ *
+ * It **is** a command surface, which it deliberately was not at first. The
+ * reasoning for refusing -- a bot token is a bearer credential and a chat is
+ * not an authenticated session -- was right about the risk and wrong about the
+ * conclusion: an owner told at three in the morning that an account is waiting
+ * on a security challenge, on a machine at home, could read it and do nothing.
+ * A notification nobody can act on is half a feature.
+ *
+ * So the boundary moved rather than went away, and `telegramCommands.ts` is
+ * where it lives: one chat and only one, a closed list of verbs, every verb
+ * going through the machinery that already exists, and nothing sensitive in a
+ * reply.
  */
 import { ops as opsRepo } from '@xbam/database';
 import type { NotificationRecord, NotificationSeverity } from '@xbam/database';
@@ -97,6 +108,15 @@ export interface TelegramConfig {
   /** Hours between "still running" messages, or 0 for none. */
   heartbeatHours: number;
   lastHeartbeatAt: string | null;
+  /**
+   * Quiet until this moment, set from the phone with `/mute`.
+   *
+   * A mute has an end, which is what makes it different from switching the
+   * transport off: an owner silencing a noisy night still wants to be told
+   * about the next thing. Nothing is dropped -- everything muted is still
+   * raised, still deduped and still in the app; it just does not arrive here.
+   */
+  mutedUntil: string | null;
 }
 
 const DEFAULTS: TelegramConfig = {
@@ -115,6 +135,7 @@ const DEFAULTS: TelegramConfig = {
   minSeverity: 'WARNING',
   heartbeatHours: 0,
   lastHeartbeatAt: null,
+  mutedUntil: null,
 };
 
 export async function loadConfig(): Promise<TelegramConfig> {
@@ -127,8 +148,21 @@ export async function loadConfig(): Promise<TelegramConfig> {
   };
 }
 
-async function saveConfig(config: TelegramConfig): Promise<void> {
+export async function saveConfig(config: TelegramConfig): Promise<void> {
   await opsRepo.setSetting(SETTING_KEY, config);
+}
+
+/**
+ * When the phone is quiet until, or null when it is not.
+ *
+ * Expiry is read rather than swept: a mute that has run out is simply no
+ * longer in the future, and a background job to clear a timestamp is a moving
+ * part bought for nothing.
+ */
+export async function telegramMuted(): Promise<string | null> {
+  const config = await loadConfig();
+  if (!config.mutedUntil) return null;
+  return new Date(config.mutedUntil).getTime() > Date.now() ? config.mutedUntil : null;
 }
 
 /**
@@ -150,6 +184,8 @@ export interface TelegramStatus {
   categories: Record<TelegramCategory, boolean>;
   minSeverity: NotificationSeverity;
   heartbeatHours: number;
+  /** Quiet until, when the owner silenced it from their phone. */
+  mutedUntil: string | null;
   lastDeliveryAt: string | null;
   lastError: string | null;
   lastErrorAt: string | null;
@@ -172,6 +208,7 @@ export async function telegramStatus(): Promise<TelegramStatus> {
     categories: config.categories,
     minSeverity: config.minSeverity,
     heartbeatHours: config.heartbeatHours,
+    mutedUntil: await telegramMuted(),
     lastDeliveryAt: delivery.lastOkAt,
     lastError: delivery.lastError,
     lastErrorAt: delivery.lastErrorAt,
@@ -348,6 +385,10 @@ export const telegramTransport: NotificationTransport = {
 
   async wants(notification) {
     const config = await loadConfig();
+    // Muted from the phone. Declined here rather than earlier, so `notify`
+    // still raises it, still dedupes it, and it is still in the app: a mute
+    // silences the phone and never loses the notification.
+    if (await telegramMuted()) return false;
     if (SEVERITY_RANK[notification.severity] < SEVERITY_RANK[config.minSeverity]) return false;
     return config.categories[categoryFor(notification.kind)] !== false;
   },
@@ -375,6 +416,9 @@ export const telegramTransport: NotificationTransport = {
 export async function telegramHeartbeat(fetchImpl: typeof fetch = fetch): Promise<boolean> {
   const config = await loadConfig();
   if (!config.enabled || !config.tokenSealed || !config.chatId || config.heartbeatHours <= 0) return false;
+  // A heartbeat during a mute is the one message somebody explicitly asked not
+  // to get, and it is the least urgent thing this sends.
+  if (await telegramMuted()) return false;
 
   const dueAfter = config.lastHeartbeatAt
     ? new Date(config.lastHeartbeatAt).getTime() + config.heartbeatHours * 3_600_000

@@ -143,12 +143,13 @@ export interface TelegramUpdate {
 /**
  * What has been said to the bot.
  *
- * Used once, during pairing, to learn which chat to send to. AI17Z does not
- * poll this in normal running: a notification transport has nothing to do with
- * incoming messages, and reading them continuously would make this a channel.
+ * Read during pairing, to learn which chat to send to, and then on the worker's
+ * own sweep so the owner's commands arrive. Only the paired chat's messages are
+ * ever acted on -- see `telegramCommands.ts` for why that is the whole of the
+ * authentication and what it is allowed to do.
  *
- * `offset` acknowledges everything before it, so the pairing step does not
- * re-read a message it has already considered.
+ * `offset` acknowledges everything before it, so nothing is read twice and a
+ * pairing code cannot be replayed out of a backlog.
  */
 export async function getUpdates(
   token: string,

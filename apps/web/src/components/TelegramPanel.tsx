@@ -18,6 +18,7 @@ interface TelegramStatus {
   categories: Record<string, boolean>;
   minSeverity: Severity;
   heartbeatHours: number;
+  mutedUntil: string | null;
   lastDeliveryAt: string | null;
   lastError: string | null;
   lastErrorAt: string | null;
@@ -310,10 +311,37 @@ export function TelegramPanel() {
             </Field>
           </div>
 
-          <p className="max-w-prose text-xs leading-relaxed text-bone-faint">
-            Telegram is where AI17Z tells you things. It is not somewhere you can tell AI17Z to do things: nothing you
-            send the bot is read after pairing, and no agent can see this chat or post to it.
-          </p>
+          {/*
+            A silence somebody caused from their phone, said here.
+
+            Without this the settings screen shows a connected, enabled,
+            everything-on transport that is sending nothing, and the only way
+            to find out why is to remember typing /mute at three in the
+            morning.
+          */}
+          {status.mutedUntil && (
+            <div className="rounded-lg border border-dashed border-ink-line px-3.5 py-3">
+              <p className="text-sm text-bone-dim">
+                Muted from Telegram until {new Date(status.mutedUntil).toLocaleString()}.
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-bone-faint">
+                Nothing is being lost. Everything is still raised and still in the app; it is just not arriving on your
+                phone. Send <code className="font-mono">/unmute</code> to the bot, or turn it off and on here.
+              </p>
+            </div>
+          )}
+
+          <div>
+            <p className="eyebrow mb-3">What you can ask it</p>
+            <p className="max-w-prose text-xs leading-relaxed text-bone-faint">
+              Send <code className="font-mono">/help</code> to the bot for the list. It can tell you what is running,
+              show you drafts that are waiting, approve or decline one, pause everything, and go quiet for a few hours.
+            </p>
+            <p className="mt-3 max-w-prose text-xs leading-relaxed text-bone-faint">
+              Only the chat you paired is listened to, and anything else is ignored without a reply. An approval from
+              here goes through the same checks as one made in the app, and no agent can see this chat or post to it.
+            </p>
+          </div>
         </div>
       )}
 
