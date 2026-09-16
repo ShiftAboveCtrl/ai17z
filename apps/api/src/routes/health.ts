@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { HealthComponent, HealthReport } from '@xbam/shared/contracts';
 import {
-  currentBudget,
-  currentPressure,
+  budgetFor,
+  pressureFor,
+  readHostMemory,
   describeBudget,
   describeVersion,
   nowIso,
@@ -213,17 +214,18 @@ async function collect(): Promise<HealthReport> {
     a precision it does not have. A platform that will not answer is reported
     as running normally rather than as a problem.
   */
-  const budget = currentBudget();
-  const pressure = currentPressure();
+  const hostMemory = readHostMemory();
+  const budget = budgetFor(hostMemory.totalBytes);
+  const pressure = pressureFor(hostMemory);
   components.push({
     name: 'Memory',
     status: pressure === 'CRITICAL' ? 'degraded' : 'healthy',
     detail:
       pressure === 'NORMAL'
-        ? `Normal. ${describeBudget(budget, pressure)}`
+        ? `Normal. ${describeBudget(budget, pressure, hostMemory.inContainer)}`
         : pressure === 'PRESSURED'
-          ? `Memory is tight, so AI17Z is running less in the background. ${describeBudget(budget, pressure)}`
-          : `Memory is very tight, so AI17Z has paused background work to keep the browser alive. ${describeBudget(budget, pressure)}`,
+          ? `Memory is tight, so AI17Z is running less in the background. ${describeBudget(budget, pressure, hostMemory.inContainer)}`
+          : `Memory is very tight, so AI17Z has paused background work to keep the browser alive. ${describeBudget(budget, pressure, hostMemory.inContainer)}`,
     optional: true,
     kind: 'browser',
     checkedAt,

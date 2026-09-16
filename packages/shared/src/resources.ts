@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { freemem, totalmem, platform } from 'node:os';
 
 /**
@@ -42,6 +43,17 @@ export type PressureState = (typeof PRESSURE_STATES)[number];
 export interface HostMemory {
   /** Bytes of physical memory. Available on every platform Node supports. */
   totalBytes: number;
+  /**
+   * Whether this process is inside a container, and so cannot see the machine.
+   *
+   * It matters for what is *said*, not for what is decided. `totalmem` inside a
+   * container reports the container's share -- on Windows the API container
+   * read 30.9 GB of a 63 GB machine -- and a health row that calls that "the
+   * machine" is telling the owner something untrue. The process that decides
+   * Chrome's budget is the browser worker, which runs on the host and sees the
+   * real figure, so the decision was never wrong. The sentence was.
+   */
+  inContainer: boolean;
   /**
    * Bytes not currently in use, where the platform will say.
    *
@@ -205,7 +217,15 @@ export function readHostMemory(): HostMemory {
     // A platform that will not answer is reported as not having answered.
     availableBytes = null;
   }
-  return { totalBytes, availableBytes };
+  let inContainer = false;
+  try {
+    inContainer = existsSync('/.dockerenv');
+  } catch {
+    // Not being able to tell is the same as not being in one, for the purpose
+    // of choosing a word.
+    inContainer = false;
+  }
+  return { totalBytes, availableBytes, inContainer };
 }
 
 /** This machine's budget, measured now. */
@@ -219,9 +239,13 @@ export function currentPressure(): PressureState {
 }
 
 /** For the health screen, which shows the owner what AI17Z decided and why. */
-export function describeBudget(budget: ResourceBudget, state: PressureState): string {
+export function describeBudget(budget: ResourceBudget, state: PressureState, inContainer = false): string {
   const gb = (bytes: number) => `${(bytes / GB).toFixed(1)} GB`;
-  const machine = `${gb(budget.totalBytes)} machine (${budget.memoryClass.toLowerCase()})`;
+  // Inside a container this is the container's share, not the machine's, and
+  // saying "machine" there is simply false.
+  const machine = inContainer
+    ? `${gb(budget.totalBytes)} available to AI17Z (${budget.memoryClass.toLowerCase()})`
+    : `${gb(budget.totalBytes)} machine (${budget.memoryClass.toLowerCase()})`;
   const chrome = `browser budget ${gb(budget.chromeSoftBytes)}, ceiling ${gb(budget.chromeHardBytes)}`;
   const doing =
     state === 'NORMAL'
