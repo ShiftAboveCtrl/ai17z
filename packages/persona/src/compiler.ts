@@ -32,6 +32,26 @@ const TRIMMABLE_CLOSERS = [
   /\s*(hope that (makes sense|clarifies)[^.!?]*[.!?]?)$/i,
 ];
 
+/**
+ * Punctuation left hanging where a removal used to join onto a sentence.
+ *
+ * A sign-off is attached by whatever the model reached for, and the em dash
+ * rule means the same phrase arrives as a dash in one draft and a comma in the
+ * next: `removeEmDashes` runs before the voice compiler, so
+ * *"Hope that helps -- let me know if you have any other questions!"* reaches
+ * this file as *"Hope that helps, let me know if..."*. Take the second phrase
+ * off and what is left ends in a comma, which is exactly what stops the first
+ * phrase matching a closer anchored to the end.
+ *
+ * So the joiner is the offence, not the dash specifically. Nothing that ends a
+ * sentence is in here: a full stop, a question mark and an ellipsis are all
+ * places a reply is allowed to stop.
+ */
+const DANGLING_END = /[\s,;:–—―-]+$/u;
+
+/** The same, at the front, where a stock phrase was lifted out mid-sentence. */
+const DANGLING_START = /^[\s,;:–—―-]+/u;
+
 /** Corporate and marketing words with plain replacements. */
 const PLAINER: [RegExp, string][] = [
   [/\bleverage\b/gi, 'use'],
@@ -117,12 +137,12 @@ function lightCompile(draft: string, input: CompileInput): { text: string; chang
       the next closer can match.
 
       "Hope that helps -- let me know if you have any other questions!" loses
-      the second phrase and is left as "Hope that helps --". Every closer is
-      anchored to the end, so with a dash still hanging there the first phrase
-      no longer matches and survives. Stripping the dangling punctuation inside
-      the loop is what lets the stack come apart.
+      the second phrase and is left as "Hope that helps,", the dash having
+      already become a comma upstream. Every closer is anchored to the end, so
+      with a joiner still hanging there the first phrase no longer matches and
+      survives. Stripping it inside the loop is what lets the stack come apart.
     */
-    const tidied = text.replace(/[\s,;:]*[-–—―]+\s*$/u, '').trimEnd();
+    const tidied = text.replace(DANGLING_END, '');
     if (tidied.length > 0) text = tidied;
 
     let dropped = false;
@@ -138,8 +158,8 @@ function lightCompile(draft: string, input: CompileInput): { text: string; chang
   }
 
   // And once more at the end, for a sign-off that was itself the last thing
-  // attached by a dash.
-  const dangling = text.replace(/[\s,;:]*[-–—―]+\s*$/u, '').trimEnd();
+  // attached by a joiner.
+  const dangling = text.replace(DANGLING_END, '');
   if (dangling !== text && dangling.length > 0) text = dangling;
 
   for (const [pattern, plain] of PLAINER) {
@@ -147,6 +167,20 @@ function lightCompile(draft: string, input: CompileInput): { text: string; chang
       text = text.replace(pattern, plain);
       changes.push('replaced stock phrasing with plainer words');
     }
+  }
+
+  /*
+    A stock phrase lifted from the front leaves the same mess at the other end.
+
+    "It is important to note that, with regard to X, adoption compounds" has
+    its opener replaced with nothing and begins ", with regard to X" -- a reply
+    that opens on a comma, which reads as a fragment of something else. The
+    substitutions are deliberately blunt because they have to be; repairing
+    what they leave behind is this line's job, not theirs.
+  */
+  const opening = text.replace(DANGLING_START, '');
+  if (opening !== text && opening.length > 0) {
+    text = opening.charAt(0).toUpperCase() + opening.slice(1);
   }
 
   // Habits the agent measurably does not have. Only near-never rates count:
