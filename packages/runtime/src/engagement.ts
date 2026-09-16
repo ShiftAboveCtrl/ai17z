@@ -150,11 +150,43 @@ export interface ReplyValueInput {
 }
 
 /**
+ * Words that carry no subject, however long they are.
+ *
+ * A topic is written as a phrase a person would say, and phrases contain
+ * ordinary words. "what agents get wrong" contributed "what", which is four
+ * characters and therefore counted, so every question matched every agent:
+ * measured, "what time does the match start tonight" and "what a goal that
+ * was" both came back as on-subject for an agent that follows browser
+ * automation.
+ *
+ * That is exactly the football post the outreach rule below exists to prevent,
+ * arriving through the check meant to stop it.
+ */
+const NOT_A_SUBJECT = new Set([
+  'what', 'when', 'where', 'which', 'that', 'this', 'these', 'those', 'your', 'yours', 'their',
+  'them', 'they', 'from', 'with', 'into', 'onto', 'over', 'under', 'about', 'after', 'before',
+  'have', 'been', 'being', 'does', 'doing', 'done', 'will', 'would', 'could', 'should', 'than',
+  'then', 'some', 'more', 'most', 'only', 'also', 'just', 'like', 'make', 'made', 'each', 'other',
+  'others', 'there', 'here', 'very', 'much', 'many', 'such', 'own', 'get', 'gets', 'and', 'the',
+  'for', 'not', 'but', 'you', 'all', 'any', 'out', 'off', 'its', 'can',
+]);
+
+/**
  * Whether a message is about anything this agent cares about.
  *
  * Word-level and generous: a topic of "token distribution" matches a post about
  * distribution, because the point is to tell "adjacent to my subject" from
  * "nothing to do with me", not to score relevance precisely.
+ *
+ * Generous about vocabulary, not about grammar. A word that carries no subject
+ * is dropped before matching, because a topic phrase written the way a person
+ * speaks inevitably contains some, and one of them turns the whole check into
+ * "did they use a common word".
+ *
+ * **This is the only topic matcher.** `engagementWorth.ts` had a second one
+ * that required the whole phrase verbatim, so an agent that follows "browser
+ * automation" never once recognised a post about a renderer. One question, one
+ * answer.
  */
 export function touchesTopics(text: string, topics: string[]): boolean {
   if (topics.length === 0) return true;
@@ -162,8 +194,8 @@ export function touchesTopics(text: string, topics: string[]): boolean {
   return topics.some((topic) =>
     topic
       .toLowerCase()
-      .split(/\s+/)
-      .filter((word) => word.length >= 4)
+      .split(/[\s-]+/)
+      .filter((word) => word.length >= 4 && !NOT_A_SUBJECT.has(word))
       .some((word) => haystack.includes(` ${word}`)),
   );
 }
@@ -273,6 +305,23 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
   // kind, it is being a bot that replies to everything.
   if (gateOnTopic) {
     if (onTopic) add('about something this agent follows', 10);
+    /*
+      Somebody the agent has actually spoken with is a relevance signal in its
+      own right.
+
+      The same reasoning `salience.ts` already applies to a watched repository:
+      attaching a project says more about what an agent follows than a word in
+      a topics list does, so a REPO_EVENT is never declined as unrelated. A
+      person who has written sixteen times is at least as strong a signal.
+
+      Measured across the evaluation corpus: five of twenty-one messages were
+      scored "nothing to do with what this agent follows", and one of them was
+      a regular correspondent asking a direct follow-up about a bug the agent
+      had been fixing. Topics are phrases like "browser automation"; people
+      write "the renderer stopped answering". The list cannot carry every way
+      of saying a thing, and it should not have to carry the people either.
+    */
+    else if (input.relationship?.known) add('somebody this agent has talked to before', 0);
     else add('nothing to do with what this agent follows', -30);
   }
 

@@ -1,4 +1,5 @@
 import type { SalienceFactor } from '@xbam/shared/contracts';
+import { touchesTopics } from './engagement';
 import { unpromptedSubject } from './reticence';
 
 /**
@@ -86,11 +87,27 @@ const STALE_HOURS = 48;
 const BAIT =
   /(\b(rt|retweet|repost|like)\s*(and|\+|&)\s*(follow|rt|retweet|comment)|\bdrop\s+(your|a)\s+\w+\s+below|\bwho\s+wants\b|\bgiveaway\b|\bairdrop\b|\btag\s+\d|\bfirst\s+\d+\s+(people|repl)|\bcomment\s+["']?\w+["']?\s+(and|to)\b)/i;
 
-/** Word-boundary matching, the same discipline `subjectsIn` uses. */
+/**
+ * Whether a post is about one of this agent's subjects.
+ *
+ * This matched the whole topic phrase, word-boundary exact. A topic of
+ * "browser automation" therefore only counted when somebody wrote those two
+ * words in that order, which almost nobody does: they write "the renderer
+ * stopped answering" or "selectors keep changing".
+ *
+ * The consequence was measurable rather than theoretical. On a live account a
+ * week of proposals scored on relationship, substance and recency and almost
+ * never on subject, so the agent was liking people it knew rather than posts
+ * about the things it follows. That is the opposite of what the factor is for.
+ *
+ * `touchesTopics` in `engagement.ts` had the generous word-level reading all
+ * along, and the reply heuristic has used it for as long as it has existed.
+ * Two matchers for one question, disagreeing, is the thing this codebase keeps
+ * saying it does not want, so there is one now and this is the caller that
+ * changed.
+ */
 function mentions(haystack: string, term: string): boolean {
-  const escaped = term.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (escaped.length < 2) return false;
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}([^\\p{L}\\p{N}]|$)`, 'iu').test(haystack);
+  return touchesTopics(haystack, [term]);
 }
 
 /**
