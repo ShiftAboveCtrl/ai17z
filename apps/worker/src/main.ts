@@ -167,7 +167,7 @@ async function main(): Promise<void> {
         nothing else here has one: a minute is the tick, the offset in settings
         is what stops a message being handled twice, and a second scheduler is
         a second thing that can drift. A minute is also the right latency for
-        a person typing at their phone -- a long poll would answer faster and
+        a person typing at their phone. A long poll would answer faster and
         would hold a connection open for the life of the worker to do it.
       */
       const handled = await pollTelegramCommands();

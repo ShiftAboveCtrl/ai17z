@@ -3,8 +3,8 @@
 -- The Response Lab answers the question an owner asks before they will let an
 -- agent near their account: what would it say to this, and why that. Answering
 -- it honestly means using a real post rather than a typed approximation,
--- because most of what decides a reply -- who wrote it, what was said above,
--- when it happened, what had to be looked up -- is exactly what a typed
+-- because most of what decides a reply, meaning who wrote it, what was said
+-- above, when it happened and what had to be looked up, is exactly what a typed
 -- approximation leaves out.
 --
 -- ### Why this is a browser task

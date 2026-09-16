@@ -21,8 +21,8 @@
  *     agent says, and it cannot become part of a prompt.
  *
  * It **is** a command surface, which it deliberately was not at first. The
- * reasoning for refusing -- a bot token is a bearer credential and a chat is
- * not an authenticated session -- was right about the risk and wrong about the
+ * reasoning for refusing, that a bot token is a bearer credential and a chat
+ * is not an authenticated session, was right about the risk and wrong about the
  * conclusion: an owner told at three in the morning that an account is waiting
  * on a security challenge, on a machine at home, could read it and do nothing.
  * A notification nobody can act on is half a feature.
@@ -113,7 +113,7 @@ export interface TelegramConfig {
    *
    * A mute has an end, which is what makes it different from switching the
    * transport off: an owner silencing a noisy night still wants to be told
-   * about the next thing. Nothing is dropped -- everything muted is still
+   * about the next thing. Nothing is dropped: everything muted is still
    * raised, still deduped and still in the app; it just does not arrive here.
    */
   mutedUntil: string | null;

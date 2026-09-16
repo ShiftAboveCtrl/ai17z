@@ -22,8 +22,8 @@ const log = createLogger('rehearsal-post');
  *
  * ### Why the thread as well as the post
  *
- * A reply on its own frequently means nothing -- "same" or "what did he
- * roundtrip on?" is answerable only from what is above it -- and the whole
+ * A reply on its own frequently means nothing. "same" or "what did he
+ * roundtrip on?" is answerable only from what is above it, and the whole
  * value of rehearsing against a real post is that the real context comes with
  * it. The ancestors are what the agent would see on a status page, so they are
  * what it is given here.

@@ -145,7 +145,7 @@ export interface TelegramUpdate {
  *
  * Read during pairing, to learn which chat to send to, and then on the worker's
  * own sweep so the owner's commands arrive. Only the paired chat's messages are
- * ever acted on -- see `telegramCommands.ts` for why that is the whole of the
+ * ever acted on. See `telegramCommands.ts` for why that is the whole of the
  * authentication and what it is allowed to do.
  *
  * `offset` acknowledges everything before it, so nothing is read twice and a

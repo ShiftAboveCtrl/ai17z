@@ -137,8 +137,8 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
         person.
 
         The four conversational types are the inbox's ordinary subject: somebody
-        said something. But an agent also proposes things nobody sent it -- an
-        original post, a follow-up on a promise -- and those arrive on a
+        said something. But an agent also proposes things nobody sent it: an
+        original post, a follow-up on a promise. Those arrive on a
         SCHEDULED_TRIGGER event. Held for review, they were counted by the badge
         and shown by nothing.
 

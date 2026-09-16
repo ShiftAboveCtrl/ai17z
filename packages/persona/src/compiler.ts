@@ -173,7 +173,7 @@ function lightCompile(draft: string, input: CompileInput): { text: string; chang
     A stock phrase lifted from the front leaves the same mess at the other end.
 
     "It is important to note that, with regard to X, adoption compounds" has
-    its opener replaced with nothing and begins ", with regard to X" -- a reply
+    its opener replaced with nothing and begins ", with regard to X", a reply
     that opens on a comma, which reads as a fragment of something else. The
     substitutions are deliberately blunt because they have to be; repairing
     what they leave behind is this line's job, not theirs.
@@ -219,7 +219,7 @@ function lightCompile(draft: string, input: CompileInput): { text: string; chang
     What used to be here was a second ceiling derived from the voice
     fingerprint: `p90Chars * 1.3` or `medianChars * 2.5`, whichever was larger.
     On the live agent that came to about 175 characters, because a fingerprint
-    with no stored samples is derived from the persona's **style examples** --
+    with no stored samples is derived from the persona's **style examples**:
     thirty-two illustrative snippets from "ha. okay that's fair" upwards. Those
     show a register, not an extent, and taking a maximum from them is a category
     error.

@@ -20,8 +20,8 @@ const log = createLogger('telegram-commands');
  *
  * This file is a deliberate reversal of one sentence that used to be in
  * `telegram.ts`: "not a command channel". The reasoning behind it was sound and
- * is kept -- a bot token is a bearer credential and a chat is not an
- * authenticated session -- but the conclusion was wrong for the case that
+ * is kept, that a bot token is a bearer credential and a chat is not an
+ * authenticated session, but the conclusion was wrong for the case that
  * matters. An owner who gets "an account is waiting on a security challenge" at
  * three in the morning, on a machine at home, could read it and do nothing
  * about it. A notification nobody can act on is half a feature.
@@ -29,7 +29,7 @@ const log = createLogger('telegram-commands');
  * So the boundary moved rather than disappeared, and it moved to four places:
  *
  *   1. **One chat, and only one.** Every update from any chat other than the
- *      paired one is dropped without a reply. Not answered with a refusal --
+ *      paired one is dropped without a reply. Not answered with a refusal,
  *      dropped. A refusal confirms the bot is live and attached to something
  *      worth attacking, to whoever typed at it.
  *   2. **A closed list of verbs.** Nothing here interprets free text, and no
@@ -47,7 +47,7 @@ const log = createLogger('telegram-commands');
  * ## Still not a channel
  *
  * No agent reads this, writes to it, or knows it exists. What arrives here
- * reaches the owner's own controls and nothing else -- it cannot become
+ * reaches the owner's own controls and nothing else: it cannot become
  * something an agent says, and it cannot become part of a prompt.
  *
  * ## It speaks for the installation, not for one owner
@@ -80,8 +80,8 @@ export interface CommandSpec {
 /**
  * Everything the bot will do.
  *
- * Read-heavy on purpose. The two that change the most -- pausing and approving
- * -- are the two an owner actually needs a phone for, and both are reversible:
+ * Read-heavy on purpose. The two that change the most, pausing and approving,
+ * are the two an owner actually needs a phone for, and both are reversible:
  * a pause is lifted, and a declined draft was never sent. Nothing here deletes
  * anything, changes a policy, touches a credential, or makes an agent say
  * something the pipeline did not already write and check.
@@ -119,7 +119,7 @@ export function helpText(): string {
     '<b>What you can ask me</b>',
     '',
     ...COMMANDS.map(
-      (command) => `<code>/${command.name}${command.args ? ` ${command.args}` : ''}</code> - ${escapeHtml(command.blurb)}`,
+      (command) => `<code>/${command.name}${command.args ? ` ${command.args}` : ''}</code> · ${escapeHtml(command.blurb)}`,
     ),
     '',
     '<i>Ids are the first eight characters. Typing more of one is fine.</i>',
@@ -426,7 +426,7 @@ export async function pollTelegramCommands(fetchImpl: typeof fetch = fetch): Pro
       Somebody else's message.
 
       Dropped without a reply. A bot can be messaged by anyone who knows its
-      username, and answering a stranger -- even with a refusal -- confirms
+      username, and answering a stranger, even with a refusal, confirms
       that this bot is live and attached to something worth attacking.
     */
     if (message.chat.id !== config.chatId) continue;

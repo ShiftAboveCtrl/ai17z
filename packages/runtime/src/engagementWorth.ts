@@ -216,7 +216,7 @@ export function worthEngaging(post: EngagementCandidate, context: EngagementCont
     A repost needs the subject *and* the substance, not merely a high total.
 
     Without this a post by somebody the agent talks to a lot, arriving within
-    the hour, could be reposted on relationship and freshness alone -- which is
+    the hour, could be reposted on relationship and freshness alone, which is
     how an account becomes somebody's amplifier rather than a reader.
   */
   const onSubject = factors.some((factor) => factor.name === 'subject');

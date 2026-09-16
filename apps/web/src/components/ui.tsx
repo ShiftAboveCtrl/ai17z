@@ -526,7 +526,7 @@ export function ChoiceGroup({
         reported "OnOff", "allowedAsk" and "meOff" on the reach controls, which
         is "On | Off" and "Allowed | Ask me | Off" with nothing between them.
 
-        Still overridable, and eleven callers do override it -- the setup screens
+        Still overridable, and eleven callers do override it: the setup screens
         want a grid rather than a row. Passing one replaces this entirely, which
         is what those callers already expect.
       */

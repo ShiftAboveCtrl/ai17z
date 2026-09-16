@@ -13,8 +13,8 @@ const AGENT_COLUMNS = `
  * How many agents are in each state, across the installation.
  *
  * Not owner-scoped, unlike `listAgents`, and deliberately so: the two callers
- * are the health surfaces -- the owner notification transport and the
- * diagnostics -- which describe the machine rather than one person's agents.
+ * are the health surfaces, the owner notification transport and the
+ * diagnostics, which describe the machine rather than one person's agents.
  * It returns counts and nothing else, so it cannot become a way to enumerate
  * somebody else's agents.
  */
