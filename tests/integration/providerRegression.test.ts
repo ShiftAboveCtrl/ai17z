@@ -63,6 +63,28 @@ async function replyUsing(model: string) {
     },
     model,
   });
+  /*
+    The rewriter, which until now was never configured and so never ran.
+
+    `createFixture` sets a `primary` model and nothing else, so `voice_rewrite`
+    resolved to no target, `generate` refused with `no_model_configured`, and
+    the voice step recorded "model rewrite unavailable" and published whatever
+    the deterministic pass produced. The half of this subsystem that costs
+    money and does the actual work had no integration coverage at all, and the
+    fingerprint length chop was hiding that by cutting every draft down to
+    size on its own.
+
+    `mock-condense` obeys the brief the way a model is supposed to: it keeps
+    whole sentences until the stated typical length is reached and says less,
+    rather than cutting a thought in half.
+  */
+  await providers.setModelConfig({
+    agentId: fixture.agentId,
+    role: 'voice_rewrite',
+    providerCredentialId: fixture.providerId,
+    model: 'mock-condense',
+    parameters: {},
+  });
   const fingerprint = await teachVoice(fixture.agentId);
 
   const outcome = await ingestNormalizedEvent({

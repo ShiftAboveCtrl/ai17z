@@ -150,7 +150,29 @@ export async function compileForJob(input: CompileForJobInput): Promise<CompileF
         maxCalls: input.maxCalls,
         messages: [{ role: 'user', content: brief }],
       });
-      const rewritten = result.text.trim().replace(/^["']|["']$/g, '');
+      const returned = result.text.trim().replace(/^["']|["']$/g, '');
+      /*
+        The rewrite is a draft too.
+
+        It comes from a model with a house style exactly like the one that
+        wrote the first draft, so it arrives with the same tells -- and until
+        this line it went to X without the deterministic pass ever seeing it.
+        A brief that says "no sign-offs" is a request; the cheap pass is the
+        enforcement, and skipping it on the last text before publication was
+        enforcing the rule everywhere except where it mattered most.
+
+        Only the free pass runs here. Whether to pay for a second call was
+        already decided above, and a rewrite of a rewrite is a loop.
+      */
+      const rewritten =
+        returned.length > 0
+          ? compileVoice({
+              draft: returned,
+              fingerprint,
+              policy,
+              maxCharacters: input.policy.output.maxCharacters,
+            }).text
+          : returned;
       if (rewritten.length > 0) {
         // Only keep the rewrite if it actually helped. A rewrite that scores
         // worse is a worse reply, whatever it cost.

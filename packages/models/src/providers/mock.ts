@@ -16,6 +16,7 @@ const LABEL = 'Mock';
  *   mock-long          returns text longer than a typical channel limit
  *   mock-chatty        same substance in a breezy assistant register
  *   mock-formal        same substance in a stiff corporate register
+ *   mock-condense      obeys a voice rewrite brief by saying less, never by cutting
  */
 export const mockAdapter: ProviderAdapter = {
   kind: 'mock',
@@ -40,6 +41,8 @@ export const mockAdapter: ProviderAdapter = {
       text = '   ';
     } else if (model === 'mock-long') {
       text = 'This mock reply is deliberately long. '.repeat(20);
+    } else if (model === 'mock-condense') {
+      text = condenseToBrief(lastUser);
     } else if (model === 'mock-chatty' || model === 'mock-formal') {
       // Two deliberately opposite house styles, for proving that an agent still
       // sounds like itself after the voice compiler regardless of which model
@@ -96,4 +99,36 @@ function extractIncoming(userMessage: string): string {
 function truncateWords(text: string, maxWords: number): string {
   const words = text.split(/\s+/);
   return words.length <= maxWords ? text : `${words.slice(0, maxWords).join(' ')}...`;
+}
+
+/**
+ * A model that actually does what a voice rewrite brief asks of it.
+ *
+ * Without this there was no integration coverage of the rewrite path at all:
+ * the fixtures configure a `primary` model and nothing else, so the
+ * `voice_rewrite` role resolved to nothing, `generate` refused with
+ * `no_model_configured`, and the caller recorded "model rewrite unavailable"
+ * and published the deterministic pass. The path that was supposed to be
+ * exercised was never entered, and nothing said so.
+ *
+ * What it does is the one thing a rewriter is for and a slicer cannot do:
+ * **say less**. Whole sentences are kept until the stated typical length is
+ * reached, and at least one always is, so the answer is shorter without ever
+ * being a cut-off thought. It invents no words, which keeps it a stand-in for
+ * a model rather than a second implementation of the voice compiler.
+ */
+function condenseToBrief(brief: string): string {
+  const draft = brief.match(/\n\s*DRAFT\s*\n([\s\S]*)$/)?.[1]?.trim() ?? brief.trim();
+  const typical = Number(brief.match(/Typical reply: about (\d+) characters/)?.[1] ?? '200');
+
+  // Kept with their terminators, so what comes back still ends somewhere.
+  const sentences = draft.match(/[^.!?]+[.!?]*/g)?.map((s) => s.trim()).filter(Boolean) ?? [draft];
+
+  let kept = sentences[0] ?? draft;
+  for (const sentence of sentences.slice(1)) {
+    const next = `${kept} ${sentence}`;
+    if (next.length > typical) break;
+    kept = next;
+  }
+  return kept;
 }
