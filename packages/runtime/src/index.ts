@@ -23,6 +23,7 @@ export * from './easyMode';
 export * from './originate';
 export * from './emoji';
 export * from './punctuation';
+export * from './rehearse';
 export * from './character';
 export * from './research';
 export * from './plan';

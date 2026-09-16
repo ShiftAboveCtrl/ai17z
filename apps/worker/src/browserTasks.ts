@@ -553,6 +553,37 @@ export class BrowserTaskRunner {
         };
       }
 
+      case 'REHEARSE_X_POST': {
+        // The Response Lab's only contact with X.
+        //
+        // Here rather than in the API for the same reason READ_X_ACCOUNT is:
+        // the API owns no browser. What happens after the read is the ordinary
+        // pipeline running as a dry run, so this task publishes nothing and
+        // has no branch that could.
+        const postRef = typeof task.params.postRef === 'string' ? task.params.postRef : '';
+        const agentId = typeof task.params.agentId === 'string' ? task.params.agentId : '';
+        if (!postRef) throw new Error('A rehearsal needs a post to rehearse against.');
+        if (!agentId) throw new Error('A rehearsal needs the agent it is rehearsing.');
+
+        const { rehearseAgainstPost } = await import('./rehearsalPost');
+        const run = await rehearseAgainstPost({
+          readerAccountId: account.id,
+          agentId,
+          postRef,
+          requestedBy: typeof task.params.requestedBy === 'string' ? task.params.requestedBy : null,
+        });
+
+        return {
+          outcome: run.outcome,
+          detail: run.detail,
+          jobId: run.jobId,
+          backend: run.backend,
+          gaps: run.gaps,
+          handle: run.subject?.authorHandle ?? null,
+          text: run.subject?.text ?? null,
+        };
+      }
+
       default:
         return { detail: `Unknown task kind: ${task.kind}` };
     }

@@ -49,6 +49,15 @@ export const BROWSER_TASK_KINDS = [
    * in it.
    */
   'READ_X_ACCOUNT',
+  /**
+   * Read one real post, so an agent can be tried against it without publishing.
+   *
+   * Here for the same reason as the two above: the lab needs the signed-in
+   * browser and only the worker has one. What it does with what it read is
+   * manufacture an event and run the ordinary pipeline as a dry run, so the
+   * read is the only part that touches X at all.
+   */
+  'REHEARSE_X_POST',
 ] as const;
 export type BrowserTaskKind = (typeof BROWSER_TASK_KINDS)[number];
 
