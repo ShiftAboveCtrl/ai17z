@@ -1,0 +1,135 @@
+# How something gets from the world to X and back
+
+Every other architecture document here describes one subsystem. This describes
+the path between them, so that a question like *where does X reading happen* has
+one answer you can find without reading five files.
+
+It is deliberately a map of **where responsibilities live**, not a list of
+features. If you are adding something, the useful question is which of these
+boxes it belongs in, and the answer is almost always "an existing one".
+
+## The path
+
+```
+  X          GitHub       the open web       the owner        the clock
+   │            │               │                │                │
+   └────────────┴───────────────┴────────────────┴────────────────┘
+                                │
+                         OBSERVATIONS
+         events · discoveries · repo_events · x_account_observations
+                                │
+                   ┌────────────┴────────────┐
+                   │                         │
+              INGEST                    DELIBERATION
+       is this work for an agent?    is this worth attending to?
+                   │                         │
+                   │                    agent_attention
+                   │                    agent_goals
+                   │                    agent_reflections
+                   │                         │
+                   │                    INTENTIONS
+                   │              content_ideas · agent_engagements
+                   │                         │
+                   └────────────┬────────────┘
+                                │
+                              JOBS
+                  one durable unit of work, with a lease
+                                │
+                        THE TEN STEPS
+     context → media → relationship → stance → engagement decision →
+     research → memory → prompt → model → voice → validator
+                                │
+                    ┌───────────┴───────────┐
+                    │                       │
+              APPROVAL                   ACTIONS
+        owner gate, when policy      one remote side effect,
+        or the validator asks        behind an idempotency key
+                    │                       │
+                    └───────────┬───────────┘
+                                │
+                     BROWSER / TOOLSPACE
+              the one signed-in Chrome, four role tabs
+                                │
+                          VERIFICATION
+                  the target is what we think it is
+                                │
+                            OUTCOME
+        actions · voice samples · relationships · stances · traces
+                                │
+                        back to OBSERVATIONS
+```
+
+## Where each responsibility lives, exactly once
+
+| Question | Answer |
+| --- | --- |
+| Where does X reading happen? | `packages/channels/src/x/intelligence/`. Nothing else may read X. |
+| Where are actions executed? | `performCapabilityAction` in `packages/runtime/src/capabilityActions.ts`, then the channel adapter. There is no second executor. |
+| Where is agent context built? | The ten steps in `packages/runtime/src/steps/`, assembled by `@xbam/prompts`. |
+| Where are approvals decided? | `packages/runtime/src/approvals.ts`. The web and Telegram both call it. |
+| Where is social voice finalised? | `compileForJob` in `packages/runtime/src/voice.ts`, then `validateOutput`. |
+| Where is health classified? | `collectHealth` in `packages/runtime/src/health.ts`. The Health screen and Telegram render the same report. |
+| Where does deliberation happen? | `packages/runtime/src/deliberate.ts`, with `salience.ts` deciding what is worth attending to. |
+| Where does memory become durable? | `packages/memory`, written by the pipeline and by `consolidate` in `deliberate.ts`. |
+| Where are GitHub events observed? | `packages/runtime/src/repoWatcher.ts`. Read-only, four GET endpoints. |
+| Where are engagement decisions made? | `engagementWorth.ts` judges, `engage.ts` acts. `engagement.ts` decides replies. |
+| Is this message about the agent's subjects? | `touchesTopics` in `engagement.ts`. One matcher, used by both heuristics. |
+| Is this the same post written two ways? | `canonicalTarget` in `capabilityActions.ts`. |
+| What may this machine afford? | `budgetFor` in `packages/shared/src/resources.ts`. Everything it returns is enforced. |
+
+## Four words that mean four different things
+
+These are abused easily and the abuse is expensive, so they are worth stating.
+
+**An event is an observation.** Something happened, somewhere, and this
+installation recorded it. An event is not work and does not imply any. Its
+uniqueness is `(channel, account, remote_event_id)`, which is what makes several
+radar monitors seeing one post into one post.
+
+**A job is durable work for one agent.** It has a lease, a state machine, and
+exactly one reason to exist. A job that nothing will run is not a job; it is a
+record, and a record belongs in the table for the thing it records. That
+distinction was learned the expensive way: the engagement runner left its record
+job claimable, so the pipeline ran the whole thing a second time.
+
+**An action is one remote side effect.** It is the only thing in the system that
+reaches another service, it carries an idempotency key, and the key is built
+from a *canonical* target, because one post written two ways was two actions
+until it was not.
+
+**An approval is an owner gate.** One state, whatever asked for it and whatever
+answers. A transport does not get its own approval semantics: Telegram calls
+`approveJob` exactly as the web does, and gets the same policy check on the text.
+
+## Rules that hold the shape
+
+**Nothing downstream of a channel adapter knows what X looks like.** No selector,
+no cookie, no vendor payload leaves `packages/channels`.
+
+**The API owns no browsers.** Anything needing the signed-in session records a
+`browser_tasks` row and the worker executes it. That is why looking somebody up,
+collecting a persona, and rehearsing against a real post are all browser tasks
+rather than API calls.
+
+**A rehearsal is not a sighting and not a message.** The Response Lab runs the
+real pipeline so its answer is worth something, which means it manufactures a
+real event. That event carries its own id and a `rehearsal` marker, and the
+inbox and mentions read models skip it.
+
+**Absent is never zero.** A count nobody could read is not a count of zero,
+anywhere in the reading layer or downstream of it.
+
+**Silence is a branch.** A decision not to reply ends a job as `CANCELLED` with
+its reasons, never as a failure.
+
+## Where to add things
+
+- A new thing an agent can *read*: extend `x/intelligence` or add a watcher
+  beside `repoWatcher.ts`. It produces observations and stops there.
+- A new thing an agent can *do*: a capability in `packages/runtime`, registered
+  in Toolspace, executed through `performCapabilityAction`. Not a new executor.
+- A new reason to *not* do something: a factor in the relevant heuristic, with a
+  named reason. A score without its reasons is not shippable.
+- A new thing to *tell the owner*: `notify.ts` decides whether it is worth
+  saying. No subsystem calls a transport directly.
+- A new *health* signal: a component in `collectHealth`. Both surfaces get it.
