@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@xbam/shared": "*",
+    "@xbam/browser": "*",
+    "@xbam/channels": "*",
     "@xbam/database": "*",
     "@xbam/jobs": "*",
+    "@xbam/persona": "*",
     "@xbam/runtime": "*",
-    "@xbam/channels": "*",
-    "@xbam/browser": "*"
+    "@xbam/shared": "*"
   }
 }

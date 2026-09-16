@@ -9,6 +9,7 @@
     "preview": "vite preview --port 8080"
   },
   "dependencies": {
+    "@xbam/shared": "*",
     "@react-three/drei": "^9.117.3",
     "@react-three/fiber": "^8.17.10",
     "framer-motion": "^11.15.0",
