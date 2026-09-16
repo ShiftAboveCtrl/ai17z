@@ -341,6 +341,18 @@ export function TelegramPanel() {
               Only the chat you paired is listened to, and anything else is ignored without a reply. An approval from
               here goes through the same checks as one made in the app, and no agent can see this chat or post to it.
             </p>
+            {/*
+              Said rather than left to be discovered.
+
+              The paired chat is the whole of the authentication, so if it is a
+              group then everybody in that group has these controls. That is a
+              reasonable thing to want and an unreasonable thing to find out by
+              accident.
+            */}
+            <p className="mt-3 max-w-prose text-xs leading-relaxed text-bone-faint">
+              The chat is what identifies you, so anyone who can write in it can use these commands. If you paired a
+              group, everybody in that group can pause your agents and decide what they send.
+            </p>
           </div>
         </div>
       )}

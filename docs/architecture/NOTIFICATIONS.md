@@ -122,7 +122,9 @@ it lives:
   control of somebody's accounts is worth a row.
 
 The paired chat speaks for the **installation**, not for one owner, matching
-the notifications it already receives. The alternative is the half-feature
+the notifications it already receives, and **the chat is the whole of the
+authentication**: if it is a group, everybody in that group has these controls.
+The settings screen says so rather than leaving it to be discovered. The alternative is the half-feature
 again: a phone that says a draft is waiting and will not let you answer it.
 
 `/mute <hours>` silences the phone for up to a day and loses nothing, since the
