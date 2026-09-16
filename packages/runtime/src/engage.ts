@@ -64,6 +64,15 @@ const RETRY_SECONDS = 15 * 60;
 /** Given up on after this many attempts. */
 const MAX_ATTEMPTS = 3;
 
+/**
+ * How long the record job is held out of the queue while the action runs.
+ *
+ * Long enough that nothing claims it while `performCapabilityAction` works,
+ * short enough that a job orphaned by a crash is eventually reconciled by the
+ * ordinary pipeline rather than sitting for ever.
+ */
+const QUEUE_HOLD_MS = 60 * 60_000;
+
 export interface EngagementOutcome {
   id: string;
   kind: 'LIKE' | 'REPOST';
@@ -164,7 +173,7 @@ async function act(row: EngagementRow): Promise<EngagementOutcome> {
       raw: { origin: 'engagement', engagementId: row.id, score: row.score },
     });
 
-    return jobsRepo.createJob(tx, {
+    const created = await jobsRepo.createJob(tx, {
       eventId: event.id,
       agentId: row.agentId,
       accountId: row.accountId,
@@ -180,9 +189,37 @@ async function act(row: EngagementRow): Promise<EngagementOutcome> {
       conversationId: null,
       requiresBrowser: getChannelAdapter(account.channel).requiresBrowser,
     });
+
+    /*
+      This job is a record, not work for the queue.
+
+      A new job is `RECEIVED`, which is claimable, and `run_at` defaults to
+      now. So the job created here was picked up by the ordinary worker while
+      this function was still performing the action, and the whole pipeline ran
+      on it: context, memory, a model call, validation, and a second execution.
+      Measured on the live installation the first time an agent acted on its own
+      choice: two of the four jobs had been run twice, and one post had two
+      action rows.
+
+      That is the "no second executor" rule broken at the level above the
+      executor. The executor is shared; the *intention* was being carried out
+      twice.
+
+      Held out of the claim in the same transaction that creates it, so there is
+      no window at all. `settleJob` below moves it to a settled state the moment
+      the action resolves, and a settled job is not claimable whatever its
+      `run_at` says. If this process dies in between, the job becomes claimable
+      again after the hold and the pipeline runs it once, which is what the
+      action's idempotency key is for.
+    */
+    await jobsRepo.updateJob(created.job.id, { runAt: new Date(Date.now() + QUEUE_HOLD_MS).toISOString() }, tx);
+    return created;
   });
 
   const jobId = outcome.job.id;
+  // Recorded before the attempt, not after it: a retried attempt used to leave
+  // the proposal pointing at no job at all.
+  await engagementsRepo.attachJob(row.id, jobId);
 
   try {
     const done = await performCapabilityAction({
@@ -205,6 +242,13 @@ async function act(row: EngagementRow): Promise<EngagementOutcome> {
         ? 'Rehearsed only: this installation is in dry-run.'
         : `Done. ${done.detail}`.trim();
 
+    // The record job says what happened, and stops being work. A settled job is
+    // not claimable whatever its run_at says.
+    await jobsRepo.updateJob(jobId, {
+      status: dryRun ? 'DRY_RUN_COMPLETED' : 'EXECUTED',
+      touch: ['executedAt'],
+      releaseLock: true,
+    });
     await engagementsRepo.settle(row.id, 'DONE', detail, jobId);
     await observability.emitTrace({
       jobId,
@@ -220,9 +264,18 @@ async function act(row: EngagementRow): Promise<EngagementOutcome> {
     // Given up on rather than retried for ever: the same discipline the job
     // queue applies, so a post that cannot be liked does not become a loop.
     if (row.attempts >= MAX_ATTEMPTS) {
+      await jobsRepo.updateJob(jobId, { status: 'PERMANENT_FAILURE', lastError: why, releaseLock: true });
       await engagementsRepo.settle(row.id, 'FAILED', `Gave up after ${row.attempts} attempts: ${why}`, jobId);
       return { id: row.id, kind: row.kind, status: 'FAILED' as const, detail: why };
     }
+    /*
+      Tried again by this loop, not by the queue.
+
+      The record job is cancelled rather than left claimable: the next attempt
+      makes its own, and two rows attempting one intention is the thing this
+      whole arrangement exists to prevent.
+    */
+    await jobsRepo.updateJob(jobId, { status: 'CANCELLED', lastError: why, releaseLock: true });
     log.debug('an engagement did not go through, it will be tried again', { id: row.id, message: why });
     return { id: row.id, kind: row.kind, status: 'WAITING' as const, detail: why };
   }

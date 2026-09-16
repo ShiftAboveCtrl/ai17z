@@ -192,6 +192,17 @@ export async function settle(
   );
 }
 
+/**
+ * Records which job is attempting this, before it is known how it went.
+ *
+ * "Which job attempted this" is a fair question while it is still being
+ * attempted, and `settle` only answers it once the attempt is over. An
+ * attempt that is retried left the row pointing at nothing at all.
+ */
+export async function attachJob(id: string, jobId: string): Promise<void> {
+  await query('UPDATE agent_engagements SET job_id = $2, updated_at = now() WHERE id = $1', [id, jobId]);
+}
+
 /** An owner saying yes to one, which only moves it out of PROPOSED. */
 export async function approve(id: string, agentId: string): Promise<boolean> {
   const rows = await query(

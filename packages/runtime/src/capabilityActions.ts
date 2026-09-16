@@ -57,7 +57,31 @@ export function capabilityIdempotencyKey(input: {
   capabilityId: string;
   targetRef: string;
 }): string {
-  return `${input.jobIdempotencyKey}|cap:${input.capabilityId}|${input.targetRef}`;
+  return `${input.jobIdempotencyKey}|cap:${input.capabilityId}|${canonicalTarget(input.targetRef)}`;
+}
+
+/**
+ * One post is one target, however it was written.
+ *
+ * The guarantee above is only as good as the spelling: a caller passing a
+ * status id and a caller passing that post's address were two targets, so one
+ * post got two action rows and the unique index had nothing to say about it.
+ * Measured on a live account, where an agent's own like and the pipeline's
+ * execution of the same job each wrote one, because one carried
+ * `2100096754989314242` and the other
+ * `https://x.com/007Ledger/status/2100096754989314242`.
+ *
+ * The same trap `deliberate.ts` already names: an address can be written
+ * several ways, and a key built on the spelling is not a key.
+ *
+ * Only the shape it can recognise is normalised. Anything else is left exactly
+ * as it came, because guessing at an unfamiliar target is how two genuinely
+ * different actions become one.
+ */
+export function canonicalTarget(targetRef: string): string {
+  const status = targetRef.match(/\/status(?:es)?\/(\d{5,25})/);
+  if (status) return status[1]!;
+  return targetRef.trim();
 }
 
 export async function performCapabilityAction(
