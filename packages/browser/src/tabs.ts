@@ -471,19 +471,18 @@ async function openBackgroundPage(context: BrowserContext): Promise<Page> {
     const cdp = await browser.newBrowserCDPSession();
     try {
       const appeared = new Promise<Page>((resolve, reject) => {
-        let timer: ReturnType<typeof setTimeout>;
+        const done = (settle: () => void) => {
+          clearTimeout(timer);
+          context.off('page', onPage);
+          settle();
+        };
         const onPage = (page: Page) => {
           // Somebody else's tab, or one the browser opened for its own
           // reasons. Left where it is.
           if (page.url() !== startUrl) return;
-          clearTimeout(timer);
-          context.off('page', onPage);
-          resolve(page);
+          done(() => resolve(page));
         };
-        timer = setTimeout(() => {
-          context.off('page', onPage);
-          reject(new Error('the new tab never appeared'));
-        }, 15_000);
+        const timer = setTimeout(() => done(() => reject(new Error('the new tab never appeared'))), 15_000);
         timer.unref?.();
         context.on('page', onPage);
       });
