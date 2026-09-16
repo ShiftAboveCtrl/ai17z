@@ -60,6 +60,8 @@ interface Goal {
   priority: number;
   status: string;
   progress: number;
+  /** What deliberation found bearing on this. The API has always sent it. */
+  evidence: Evidence[];
   resolution: string;
   createdAt: string;
   resolvedAt: string | null;
@@ -467,7 +469,10 @@ export function MindView({ agentId }: { agentId: string }) {
         )}
       </Panel>
 
-      <Panel title="What it is trying to do" lede="Goals you set are pinned — it can work on them and cannot decide they stopped mattering.">
+      <Panel
+        title="What it is trying to do"
+        lede="Goals you set are pinned, so it cannot decide they stopped mattering. It gathers what it finds bearing on them. How far along something is stays your judgement."
+      >
         <form className="mb-4 flex flex-wrap items-center gap-2" onSubmit={addGoal}>
           <input
             className="field min-w-0 flex-1 text-[13px]"
@@ -489,7 +494,20 @@ export function MindView({ agentId }: { agentId: string }) {
             <Card
               key={entry.id}
               title={entry.summary}
-              score={entry.status === 'ACTIVE' ? `${entry.progress}%` : entry.status.toLowerCase()}
+              /*
+                What it found, not a percentage nothing computes.
+
+                `progress` is the owner's number and starts at zero, so a bar
+                was the most prominent thing on every goal ever created and it
+                said nothing. The evidence count is a fact the agent produced.
+              */
+              score={
+                entry.status === 'ACTIVE'
+                  ? entry.evidence.length > 0
+                    ? `${entry.evidence.length} found`
+                    : 'nothing yet'
+                  : entry.status.toLowerCase()
+              }
               meta={[
                 entry.origin === 'OWNER' ? 'you set this' : 'it set this itself',
                 entry.pinned ? 'pinned' : '',
@@ -511,7 +529,13 @@ export function MindView({ agentId }: { agentId: string }) {
                 </button>
               }
             >
-              {entry.status === 'ACTIVE' && <Bar value={entry.progress} />}
+              {entry.status === 'ACTIVE' && entry.progress > 0 && <Bar value={entry.progress} />}
+              {entry.evidence.length > 0 && (
+                <Gaps
+                  items={entry.evidence.map((item) => `${item.kind}: ${item.note || item.ref}`)}
+                  label="What it has found bearing on this"
+                />
+              )}
             </Card>
           ))}
         </div>

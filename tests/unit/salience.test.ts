@@ -83,9 +83,43 @@ describe('what is worth attending to', () => {
   it('weighs something that bears on an active goal', () => {
     const verdict = scoreObservation(
       observation(),
-      context({ goals: ['understand how agent memory survives a restart'] }),
+      context({ goals: [{ id: 'goal-1', summary: 'understand how agent memory survives a restart' }] }),
     );
     expect(verdict.factors.map((f) => f.name)).toContain('goal');
+  });
+
+  /*
+    The factor knew which goal all along and threw the answer away.
+
+    Without the id, `noteGoalEvidence` had nothing to be called with, which is
+    why it had no caller outside a test and a goal's evidence stayed exactly as
+    the owner created it.
+  */
+  it('says which goal it was, so the goal can be given the evidence', () => {
+    const verdict = scoreObservation(
+      observation(),
+      context({ goals: [{ id: 'goal-1', summary: 'understand how agent memory survives a restart' }] }),
+    );
+    expect(verdict.bearsOnGoal).toBe('goal-1');
+  });
+
+  it('names no goal when nothing bears on one', () => {
+    expect(scoreObservation(observation(), context()).bearsOnGoal).toBeNull();
+  });
+
+  /*
+    A declined observation is not evidence for anything.
+
+    Evidence is a record of what the agent actually attended to, so something
+    it declined to think about must not turn up under a goal as though it had.
+  */
+  it('names no goal on something it declined', () => {
+    const verdict = scoreObservation(
+      observation({ text: 'short' }),
+      context({ goals: [{ id: 'goal-1', summary: 'understand how agent memory survives a restart' }] }),
+    );
+    expect(verdict.declined).not.toBeNull();
+    expect(verdict.bearsOnGoal).toBeNull();
   });
 
   it('counts engagement only when somebody actually counted it', () => {

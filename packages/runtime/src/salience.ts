@@ -66,8 +66,15 @@ export interface KnownPerson {
 export interface SalienceContext {
   /** What this agent talks about, from the persona it already has. */
   topics: string[];
-  /** What it is currently trying to do. */
-  goals: string[];
+  /**
+   * What it is currently trying to do, each with the goal it came from.
+   *
+   * The id travels because scoring already works out which goal an
+   * observation bears on, and dropping it here is what made that answer
+   * unusable: the factor could say "bears on something it is working on" and
+   * nothing downstream could say which thing.
+   */
+  goals: { id: string; summary: string }[];
   /** What is already on its mind, as summaries, for novelty. */
   onItsMind: string[];
   /** People it knows, by lower-cased handle. */
@@ -88,6 +95,13 @@ export interface Salience {
   kind: AttentionKind;
   /** The dedupe key. Two sightings of one thing must be one item. */
   fingerprint: string;
+  /**
+   * The goal this bears on, by id, where it bears on one.
+   *
+   * Null on every decline, because a declined observation was not attended to
+   * and evidence for a goal is a record of what the agent actually looked at.
+   */
+  bearsOnGoal: string | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -226,6 +240,7 @@ export function scoreObservation(observation: Observation, context: SalienceCont
     declined: { reason, detail },
     kind,
     fingerprint,
+    bearsOnGoal: null,
   });
 
   if (text.length < MIN_TEXT) {
@@ -267,11 +282,11 @@ export function scoreObservation(observation: Observation, context: SalienceCont
   }
 
   // ── Relevance to what it is trying to do ──────────────────────────────────
-  const goalHit = context.goals.find((goal) => overlap(text, goal) > 0.25);
+  const goalHit = context.goals.find((goal) => overlap(text, goal.summary) > 0.25);
   if (goalHit) {
     factors.push({
       name: 'goal',
-      detail: `Bears on something it is working on: ${goalHit.slice(0, 120)}`,
+      detail: `Bears on something it is working on: ${goalHit.summary.slice(0, 120)}`,
       points: 25,
     });
   }
@@ -391,7 +406,7 @@ export function scoreObservation(observation: Observation, context: SalienceCont
     return declineWith('too_faint', `Scored ${salience}, below the floor of ${SALIENCE_FLOOR}.`);
   }
 
-  return { salience, factors, declined: null, kind, fingerprint };
+  return { salience, factors, declined: null, kind, fingerprint, bearsOnGoal: goalHit?.id ?? null };
 }
 
 /**
