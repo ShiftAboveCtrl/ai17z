@@ -2990,6 +2990,23 @@ if ($LocalPackage) {
 } else {
   $found = Get-Ai17zRelease $tag
   if (-not $found.Ok) {
+    <#
+      A 403 is GitHub rate limiting the address, not a broken connection.
+
+      GitHub allows sixty unauthenticated API requests an hour per address, and
+      one address is shared by everybody behind an office router, a VPN or a
+      campus network. "Check your internet connection" sends that person to
+      debug the one thing that is working, and waiting is the only thing that
+      fixes it. Measured here: a machine that had just downloaded a release to
+      check its published hashes could not then install, and the message said
+      the network was unreachable while the network was fine.
+    #>
+    if ([int]$found.Status -eq 403) {
+      Set-Ai17zStep 'app' 'failed' 'GitHub is rate limiting this network'
+      Stop-Ai17z 'AI17Z could not be downloaded.' `
+        ("GitHub limits how often one network may ask it for a release, and this network has reached that limit.`nYour internet connection is not the problem, and nothing on this PC was changed.") `
+        'Wait an hour and run AI17Z Setup again.'
+    }
     Set-Ai17zStep 'app' 'failed' 'could not reach GitHub'
     Stop-Ai17z 'AI17Z could not be downloaded.' `
       ('GitHub answered ' + $found.Status + '.' + "`nNothing on this PC was changed.") `
