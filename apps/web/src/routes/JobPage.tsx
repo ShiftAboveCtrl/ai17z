@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, Check, RefreshCw, Square, X } from 'lucide-react';
 import { ApiError, artifactObjectUrl, post } from '@app/lib/api';
 import { usePolling, useResource } from '@app/lib/hooks';
+import { ReplyInspector } from '@app/components/ReplyInspector';
 import type { JobDetail } from '@app/lib/types';
 import { clockTime, humanStatus, timeAgo, toneFor } from '@app/lib/format';
 import { ErrorPanel, Loading, Spinner, StatusDot } from '@app/components/ui';
@@ -161,6 +162,23 @@ export function JobPage() {
           reply={job.validatedOutput ?? job.generatedOutput ?? null}
         />
       </div>
+
+      {/*
+        Why it said that, before what happened.
+
+        This page was the raw trace: every event, every model call, every row.
+        That answers "what happened" for somebody who already knows the
+        pipeline, and it is the wrong shape for the question people actually
+        arrive with. The staged account was written for the Response Lab and
+        lived inside it, so the only answers anybody could inspect were
+        rehearsals -- while `explainRehearsal` takes any job id and is built
+        from rows an ordinary reply already writes. Nothing about it was ever
+        specific to a rehearsal except where it was rendered.
+
+        The trace stays, underneath, because "what happened" is still the right
+        question once "why" has been answered.
+      */}
+      <ReplyInspector agentId={job.agentId} jobId={job.id} published={!job.dryRun} />
 
       <ContextPanel job={job} retrievals={retrievals} />
 
