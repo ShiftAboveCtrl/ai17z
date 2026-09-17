@@ -236,12 +236,22 @@ export async function collectHealth(): Promise<HealthReport> {
   components.push({
     name: 'Memory',
     status: pressure === 'CRITICAL' ? 'degraded' : 'healthy',
+    /*
+      What actually happens, rather than what sounded reassuring.
+
+      This used to say background work had been paused. Nothing read the field
+      that would have paused it: the only consumer of the throttle was the job
+      worker's concurrency, so the sentence described behaviour the product did
+      not have. Both halves are fixed, and this is the half that is words: an
+      owner reading "mentions are still answered" can check that, and a vague
+      claim about background work is exactly what made the original wrong.
+    */
     detail:
       pressure === 'NORMAL'
         ? `Normal. ${describeBudget(budget, pressure, hostMemory.inContainer)}`
         : pressure === 'PRESSURED'
-          ? `Memory is tight, so AI17Z is running less in the background. ${describeBudget(budget, pressure, hostMemory.inContainer)}`
-          : `Memory is very tight, so AI17Z has paused background work to keep the browser alive. ${describeBudget(budget, pressure, hostMemory.inContainer)}`,
+          ? `Memory is tight. Watching repositories and feeds is paused and fewer jobs run at once. Mentions, replies and your own commands are unaffected. ${describeBudget(budget, pressure, hostMemory.inContainer)}`
+          : `Memory is very tight. Only work somebody is waiting on is running: mentions, replies, your commands and recovery. Thinking and engagement are paused until it clears. ${describeBudget(budget, pressure, hostMemory.inContainer)}`,
     optional: true,
     kind: 'browser',
     checkedAt,

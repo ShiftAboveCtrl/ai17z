@@ -1,4 +1,4 @@
-import { createLogger, errorMessage } from '@xbam/shared';
+import { createLogger, errorMessage, loopAllowed, settledPressure, throttleFor, type LoopPriority } from '@xbam/shared';
 
 const log = createLogger('loop');
 
@@ -21,7 +21,19 @@ const log = createLogger('loop');
  * It is never a thing to exit for. Individual loops still catch what they can
  * handle usefully; this is the floor under all of them.
  */
-export function startLoop(name: string, intervalMs: number, tick: () => Promise<void>): NodeJS.Timeout {
+/**
+ * What this loop gives up when the machine is short of memory.
+ *
+ * Defaults to STANDARD, so a loop added without thinking about it is throttled
+ * only when things are critical rather than being either unstoppable or the
+ * first thing dropped.
+ */
+export function startLoop(
+  name: string,
+  intervalMs: number,
+  tick: () => Promise<void>,
+  priority: LoopPriority = 'STANDARD',
+): NodeJS.Timeout {
   const swallow = (error: unknown): void => {
     log.error('a loop tick failed and was swallowed so the worker keeps running', {
       loop: name,
@@ -41,6 +53,18 @@ export function startLoop(name: string, intervalMs: number, tick: () => Promise<
     // throws, so a test that only counts ticks passes while the guarantee is
     // broken. Under a test runner the exception is caught and reported; in the
     // worker it is fatal.
+    /*
+      Skip rather than queue, when memory says this is not worth starting.
+
+      The pressure verdict is smoothed, so a machine hovering at a threshold
+      does not start and abandon the same work every few seconds. ESSENTIAL
+      loops never reach this branch: somebody is waiting on every one of them.
+    */
+    if (!loopAllowed(priority, throttleFor(settledPressure()).runLoopsDownTo)) {
+      log.debug('skipped a tick to leave memory for work somebody is waiting on', { loop: name, priority });
+      return;
+    }
+
     try {
       const running = tick();
       // Defended rather than assumed: the signature says Promise, and the whole

@@ -86,7 +86,7 @@ async function main(): Promise<void> {
       .catch((e) => log.warn('heartbeat failed', { message: errorMessage(e) }));
   };
   await announce();
-  const heartbeat = startLoop('heartbeat', 60_000, announce);
+  const heartbeat = startLoop('heartbeat', 60_000, announce, 'ESSENTIAL');
 
   /**
    * Frees browser tasks nothing is going to finish.
@@ -177,7 +177,7 @@ async function main(): Promise<void> {
     }
   };
   await sweep();
-  const sweeper = startLoop('recovery-sweep', 60_000, sweep);
+  const sweeper = startLoop('recovery-sweep', 60_000, sweep, 'ESSENTIAL');
 
   /**
    * Looks at feeds that are due.
@@ -196,7 +196,7 @@ async function main(): Promise<void> {
     const fresh = outcomes.reduce((total, outcome) => total + outcome.fresh.length, 0);
     if (fresh > 0) log.info('feeds produced something new', { feeds: outcomes.length, entries: fresh });
   };
-  const feedWatcher = startLoop('feed-watch', 60_000, watchFeeds);
+  const feedWatcher = startLoop('feed-watch', 60_000, watchFeeds, 'OPTIONAL');
 
   /**
    * Lets agents think between the things they are asked.
@@ -229,7 +229,7 @@ async function main(): Promise<void> {
       });
     }
   };
-  const deliberation = startLoop('deliberation', 60_000, thinkAhead);
+  const deliberation = startLoop('deliberation', 60_000, thinkAhead, 'STANDARD');
 
   /**
    * Follows what the projects an owner watches actually did.
@@ -249,7 +249,7 @@ async function main(): Promise<void> {
     const fresh = outcomes.reduce((total, outcome) => total + outcome.fresh, 0);
     if (fresh > 0) log.info('watched repositories did something', { repos: outcomes.length, events: fresh });
   };
-  const repoWatcher = startLoop('repo-watch', 60_000, watchRepos);
+  const repoWatcher = startLoop('repo-watch', 60_000, watchRepos, 'OPTIONAL');
 
   /**
    * Takes the likes and reposts an agent proposed for itself.
@@ -276,7 +276,7 @@ async function main(): Promise<void> {
       });
     }
   };
-  const engagement = startLoop('engagement', 90_000, engageAhead);
+  const engagement = startLoop('engagement', 90_000, engageAhead, 'STANDARD');
 
   /**
    * Publishes what each account's three tabs are doing.
@@ -327,7 +327,7 @@ async function main(): Promise<void> {
       published.delete(accountId);
     }
   };
-  const tabReporter = capabilities.browserCapable ? startLoop('tab-health', 10_000, publishTabs) : null;
+  const tabReporter = capabilities.browserCapable ? startLoop('tab-health', 10_000, publishTabs, 'ESSENTIAL') : null;
 
   const poller = new ChannelPoller();
   const browserTaskRunner = new BrowserTaskRunner(workerId);

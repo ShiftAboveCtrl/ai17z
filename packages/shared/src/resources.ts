@@ -153,23 +153,102 @@ export function pressureFor(memory: HostMemory): PressureState {
 /**
  * What to do less of, given the pressure.
  *
- * Returned as a multiplier rather than a second set of limits, so there is one
- * place that says how big the budget is and one that says how much of it to use.
- * Durable work is never dropped -- `pauseBackground` delays it.
+ * Returned as a multiplier and an ordering rather than a second set of limits,
+ * so there is one place that says how big the budget is and one that says how
+ * much of it to use. Durable work is never dropped: a job that is not claimed
+ * stays queued, and a loop that skips a tick runs on the next one.
  */
 export function throttleFor(state: PressureState): {
   concurrencyFactor: number;
-  pauseBackground: boolean;
+  /** The least important work still worth starting. */
+  runLoopsDownTo: LoopPriority;
   recycleIdleTabs: boolean;
 } {
   switch (state) {
     case 'CRITICAL':
-      return { concurrencyFactor: 0.34, pauseBackground: true, recycleIdleTabs: true };
+      return { concurrencyFactor: 0.34, runLoopsDownTo: 'ESSENTIAL', recycleIdleTabs: true };
     case 'PRESSURED':
-      return { concurrencyFactor: 0.5, pauseBackground: true, recycleIdleTabs: true };
+      return { concurrencyFactor: 0.5, runLoopsDownTo: 'STANDARD', recycleIdleTabs: true };
     default:
-      return { concurrencyFactor: 1, pauseBackground: false, recycleIdleTabs: false };
+      return { concurrencyFactor: 1, runLoopsDownTo: 'OPTIONAL', recycleIdleTabs: false };
   }
+}
+
+/**
+ * How much an agent gives up before it stops answering people.
+ *
+ * Ordered most important first, and the order is the whole point. Memory
+ * pressure used to be a boolean that said "pause background work", which
+ * nothing read -- so the health row claimed everything speculative had stopped
+ * while in fact only job concurrency moved. Both halves were wrong: the claim,
+ * and the idea that one switch is the right shape.
+ *
+ * An agent that stops noticing mentions to save memory has stopped being an
+ * agent. An agent that stops backfilling a repository has given up something
+ * nobody will miss for ten minutes.
+ *
+ * ESSENTIAL  Somebody is waiting: inbound mentions and replies, the owner's
+ *            own commands, recovering a job a dead worker left, and saying the
+ *            worker is alive. Never skipped, at any pressure.
+ * STANDARD   The agent acting on its own: deciding what is worth answering,
+ *            and thinking about what it has seen. Skipped only when critical.
+ * OPTIONAL   Speculative: watching repositories and feeds, refreshing a persona
+ *            nothing is waiting on. First to go.
+ */
+export const LOOP_PRIORITIES = ['ESSENTIAL', 'STANDARD', 'OPTIONAL'] as const;
+export type LoopPriority = (typeof LOOP_PRIORITIES)[number];
+
+/** Whether work of this priority may start, given what the throttle allows. */
+export function loopAllowed(priority: LoopPriority, allowedDownTo: LoopPriority): boolean {
+  return LOOP_PRIORITIES.indexOf(priority) <= LOOP_PRIORITIES.indexOf(allowedDownTo);
+}
+
+/**
+ * How long a worse reading must hold before it is believed, and a better one.
+ *
+ * Asymmetric on purpose. `freemem` moves constantly -- a Chrome tab opening, a
+ * build starting, a compaction finishing -- and the old code re-read it on
+ * every tick with no memory of the last answer, so a machine hovering near a
+ * threshold would pause and resume background work every few seconds. That is
+ * worse than either state: the work never finishes and every partial attempt is
+ * paid for twice.
+ *
+ * Getting worse is believed quickly, because the thing being avoided is the
+ * operating system killing a renderer. Getting better is believed slowly,
+ * because a dip in usage is not the same as the pressure having passed.
+ */
+export const PRESSURE_WORSEN_MS = 20_000;
+export const PRESSURE_RECOVER_MS = 120_000;
+
+/** A pressure verdict and how long the current raw reading has disagreed with it. */
+export interface PressureHold {
+  state: PressureState;
+  /** The raw reading that has been arguing for a change, if any. */
+  pending: PressureState | null;
+  /** When `pending` first appeared. */
+  pendingSince: number;
+}
+
+export function freshHold(state: PressureState = 'NORMAL'): PressureHold {
+  return { state, pending: null, pendingSince: 0 };
+}
+
+const SEVERITY: Record<PressureState, number> = { NORMAL: 0, PRESSURED: 1, CRITICAL: 2 };
+
+/**
+ * The next verdict, given what was believed and what was just measured.
+ *
+ * Pure, so the hysteresis is testable without waiting two minutes.
+ */
+export function settlePressure(hold: PressureHold, measured: PressureState, now: number): PressureHold {
+  if (measured === hold.state) return { state: hold.state, pending: null, pendingSince: 0 };
+
+  // A different raw reading. Start or continue its case.
+  const pendingSince = hold.pending === measured ? hold.pendingSince : now;
+  const worsening = SEVERITY[measured] > SEVERITY[hold.state];
+  const needed = worsening ? PRESSURE_WORSEN_MS : PRESSURE_RECOVER_MS;
+  if (now - pendingSince >= needed) return { state: measured, pending: null, pendingSince: 0 };
+  return { state: hold.state, pending: measured, pendingSince };
 }
 
 /**
@@ -207,9 +286,32 @@ export function currentBudget(): ResourceBudget {
   return budgetFor(readHostMemory().totalBytes);
 }
 
-/** This machine's pressure, measured now. */
+/** This machine's pressure, measured now, with no memory of what it was. */
 export function currentPressure(): PressureState {
   return pressureFor(readHostMemory());
+}
+
+/**
+ * The verdict this process is acting on, smoothed.
+ *
+ * Module state, deliberately: pressure is a property of the machine this
+ * process is running on, every loop in it should agree about what that is, and
+ * an answer that changes between two callers in the same tick is how the job
+ * worker and the loops came to disagree. Each process keeps its own, which is
+ * correct rather than unfortunate -- the browser worker runs on the host and
+ * the API runs in a container, and they are genuinely looking at different
+ * machines.
+ */
+let held = freshHold();
+
+export function settledPressure(now: number = Date.now()): PressureState {
+  held = settlePressure(held, pressureFor(readHostMemory()), now);
+  return held.state;
+}
+
+/** For tests, and for a worker that wants to start from a known state. */
+export function resetPressureHold(state: PressureState = 'NORMAL'): void {
+  held = freshHold(state);
 }
 
 /** For the health screen, which shows the owner what AI17Z decided and why. */
