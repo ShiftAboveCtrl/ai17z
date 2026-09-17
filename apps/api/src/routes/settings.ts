@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { ops, prompts as promptsRepo, users as usersRepo } from '@xbam/database';
+import { ops, users as usersRepo } from '@xbam/database';
 import { envBool, envString } from '@xbam/shared';
 import { setUpdatesEnabled, skipVersion, updateState } from '@xbam/runtime';
 import { handler, parseBody, parseQuery, requireUser } from '../http';
@@ -42,22 +42,15 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  app.get(
-    '/api/prompt-templates',
-    handler(async (request) => {
-      await requireUser(request);
-      return { items: await promptsRepo.listTemplates() };
-    }),
-  );
-
   /**
    * What has been done to this installation, and by whom.
    *
    * This route is named for the audit log and returned the AI4CZ import
-   * history, which is a different thing entirely and is now at
-   * `/api/import-runs`. Nothing called either, so nothing breaks; what changes
-   * is that the fifty-three places that write an audit row are finally
-   * readable.
+   * history, which is a different thing entirely. Nothing called either, so
+   * nothing broke when they were separated; what changed is that the
+   * fifty-three places that write an audit row are finally readable. The
+   * import history had no caller and no screen either way, and is read from
+   * the database by whoever is running an import.
    *
    * It matters more since Telegram became a command surface: a paired chat can
    * pause every agent and approve what they send, and "remote control of
@@ -79,15 +72,6 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         ops.auditActions(),
       ]);
       return { items, actions };
-    }),
-  );
-
-  /** The AI4CZ import history, which is what `/api/audit` used to return. */
-  app.get(
-    '/api/import-runs',
-    handler(async (request) => {
-      await requireUser(request);
-      return { items: await ops.listImportRuns() };
     }),
   );
 
