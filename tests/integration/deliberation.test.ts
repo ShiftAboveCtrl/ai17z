@@ -932,6 +932,38 @@ describe('what reaches a reply', () => {
     expect(chosen).toHaveLength(1);
   });
 
+  /*
+    What it is working on is part of what it has been thinking about.
+
+    Goals reached `salience.ts`, where they decide what is worth noticing, and
+    went no further. An agent holding three goals its owner had set could be
+    asked what it was working on and had nothing durable to answer from.
+  */
+  it('carries what it is working on into a reply', async () => {
+    const agent = await agentThatThinks();
+    await mind.addGoal({
+      agentId: agent.agentId,
+      summary: 'Work out why browser reads go flaky under load.',
+      origin: 'OWNER',
+      pinned: true,
+    });
+
+    // Deliberately nothing to do with the goal: a goal is pinned and durable,
+    // so it is not waiting for somebody to use the right word.
+    const chosen = await mindForMessage(agent.agentId, 'morning, how is it going?', false);
+    expect(chosen.some((item) => item.kind === 'GOAL')).toBe(true);
+    expect(chosen.find((item) => item.kind === 'GOAL')?.summary).toContain('flaky');
+  });
+
+  it('does not turn a conversation into a status report', async () => {
+    const agent = await agentThatThinks();
+    for (let i = 0; i < 5; i += 1) {
+      await mind.addGoal({ agentId: agent.agentId, summary: `Goal number ${i} worth working on.`, origin: 'OWNER' });
+    }
+    const chosen = await mindForMessage(agent.agentId, 'morning', false);
+    expect(chosen.filter((item) => item.kind === 'GOAL').length).toBeLessThanOrEqual(2);
+  });
+
   it('renders a thing it suspects as a thing it suspects', async () => {
     const { renderMind } = await import('@xbam/prompts');
     const rendered = renderMind([
