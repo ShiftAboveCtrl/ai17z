@@ -11,6 +11,7 @@ import {
   type AnyCapability,
 } from '@xbam/tools';
 import { zodToDescription } from './capabilityInputShape';
+import { shortlistCapabilities, type Shortlist } from './capabilityRelevance';
 
 const log = createLogger('capability-loop');
 
@@ -69,6 +70,28 @@ export interface LoopResult {
   }[];
   /** True when the loop stopped because it ran out of steps or time. */
   exhausted: boolean;
+  /**
+   * What was on offer, and how much was narrowed away to get there.
+   *
+   * Carried out so a caller can record it: "the model was shown these eight of
+   * seventy-three" is the difference between a capability nobody wanted and one
+   * the agent never saw, and those need different fixes.
+   */
+  shortlist: Shortlist;
+}
+
+/**
+ * The text a shortlist is judged against.
+ *
+ * The last thing a person said, plus the system layer that frames the job.
+ * Not the whole conversation: an exchange that mentioned GitHub twenty minutes
+ * ago should not keep offering repository reads to somebody now asking about
+ * the weather.
+ */
+function taskText(messages: ChatMessage[]): string {
+  const lastUser = [...messages].reverse().find((message) => message.role === 'user');
+  const firstSystem = messages.find((message) => message.role === 'system');
+  return [lastUser?.content ?? '', firstSystem?.content ?? ''].join(' ');
 }
 
 /**
@@ -104,10 +127,27 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
    * the model is allowed to ask, and the owner's approval is the point of that
    * setting rather than a reason to hide it.
    */
-  const offered = listModelCallable().filter((capability) => {
+  const available = listModelCallable().filter((capability) => {
     const stored = options.permissions.get(capability.id) ?? null;
     return (stored ?? defaultPermission(capability.effect, capability.risk)) !== 'DISABLED';
   });
+
+  /*
+    Everything available is not the same as everything worth showing.
+
+    The menu is prompt, and the catalogue outgrew the question: seventy-three
+    capabilities render 20,535 characters, against a 3,010-character prompt on
+    an ordinary reply. Measured on a live agent with this loop enabled, that
+    menu produced no capability call at all -- asked the time in Tokyo it ran a
+    web search and answered "I don't know" while `time.now` was listed.
+
+    So the model is shown the few that bear on what it is answering. Narrowing,
+    not gating: every one of these was already permitted, and a task that
+    matches nothing is offered nothing, which is the right answer for "nice
+    one" and costs no tokens at all.
+  */
+  const shortlist: Shortlist = shortlistCapabilities(available, taskText(options.messages));
+  const offered = shortlist.offered;
   const messages: ChatMessage[] = [...options.messages];
   const steps: LoopResult['steps'] = [];
 
@@ -116,6 +156,12 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
   if (offered.length > 0) {
     messages.push({ role: 'system', content: preamble(offered) });
   }
+  logger.debug('capabilities offered to the model', {
+    considered: shortlist.considered,
+    offered: offered.length,
+    families: shortlist.families,
+    ids: offered.map((capability) => capability.id),
+  });
 
   let exhausted = false;
   for (let step = 1; step <= maxSteps; step += 1) {
@@ -128,7 +174,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     const turn = parseTurn(raw);
 
     if (turn.kind === 'answer') {
-      return { answer: turn.text, steps, exhausted: false };
+      return { answer: turn.text, steps, exhausted: false, shortlist };
     }
 
     if (turn.kind === 'malformed') {
@@ -204,7 +250,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
   const finalRaw = await options.generate(messages);
   const finalTurn = parseTurn(finalRaw);
   const answer = finalTurn.kind === 'answer' ? finalTurn.text : stripCalls(finalRaw);
-  return { answer, steps, exhausted };
+  return { answer, steps, exhausted, shortlist };
 }
 
 function preamble(offered: AnyCapability[]): string {
