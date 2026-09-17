@@ -176,6 +176,17 @@ export function renderMind(
     LESSON: 'You worked out',
     NARRATIVE: 'You have been following',
     IDEA: 'You have been meaning to say',
+    /*
+      Not an attention item, and it belongs here anyway.
+
+      A goal is the most durable thing an agent holds: pinned, owner-set, and
+      the one answer to "what are you working on". It reached `salience.ts`,
+      where it decides what is worth noticing, and stopped there -- so an agent
+      asked what it was working on had nothing to answer from and made
+      something up. Confidence is not hedged for these, because a goal is not a
+      claim about the world that might be wrong.
+    */
+    GOAL: 'You are trying to',
   };
   return items
     .map((item) => {

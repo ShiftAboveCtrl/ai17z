@@ -1059,13 +1059,38 @@ export async function wakeDueAgents(limit = 3): Promise<WakeOutcome[]> {
  * of its own head an agent brings to a conversation, and past it a prompt stops
  * being context and becomes a journal dump.
  */
+/**
+ * How many goals travel into a prompt.
+ *
+ * Two. A goal is durable and pinned, so it does not need to earn its place the
+ * way an observation does, but an agent that lists everything it is working on
+ * before answering a question has turned a conversation into a status report.
+ */
+const GOALS_IN_PROMPT = 2;
+
 export async function mindForMessage(
   agentId: string,
   text: string,
   isPost: boolean,
 ): Promise<{ kind: AttentionKind; summary: string; confidence: number }[]> {
+  /*
+    What it is trying to do travels with what it has been thinking about.
+
+    Goals reached `salience.ts`, where they decide what is worth noticing, and
+    went no further. So an agent asked what it was working on had nothing
+    durable to answer from, while holding three goals its owner had set. They
+    are pinned and few, so they are not relevance-filtered: an agent that only
+    mentions its goal when somebody uses the right word does not have a goal,
+    it has a keyword.
+  */
+  const goals = (await mind.listGoals(agentId, { status: 'ACTIVE', limit: GOALS_IN_PROMPT })).map((goal) => ({
+    kind: 'GOAL' as AttentionKind,
+    summary: goal.summary,
+    confidence: 1,
+  }));
+
   const items = await mind.onItsMind(agentId, { limit: 30 });
-  if (items.length === 0) return [];
+  if (items.length === 0) return goals;
 
   const chosen = isPost
     ? items
@@ -1086,9 +1111,12 @@ export async function mindForMessage(
         .slice(0, DELIBERATION_LIMITS.inPrompt)
         .map((scored) => scored.item);
 
-  return chosen.map((item) => ({
-    kind: item.kind,
-    summary: item.summary,
-    confidence: Number(item.confidence),
-  }));
+  return [
+    ...goals,
+    ...chosen.map((item) => ({
+      kind: item.kind,
+      summary: item.summary,
+      confidence: Number(item.confidence),
+    })),
+  ];
 }
