@@ -66,6 +66,19 @@ all still run.
 goals, hypotheses and lessons. It may not change what it is permitted to do. The
 autonomy ladder is owner-set only.
 
+**A goal is set by the owner and evidenced by the agent.** `addGoal` has one
+caller and it is the owner's API: deliberation cannot create a goal, and cannot
+decide one has stopped mattering, which is what pinning an owner's goal means.
+What it does do is record what it found bearing on one. Scoring already works
+out which goal an observation relates to, so an observation that is attended to
+and bears on a goal becomes evidence on it, once, on first attention rather
+than on every reinforcement.
+
+How far along a goal is stays the owner's number. Nothing in deliberation moves
+`progress`, for the same reason nothing in `salience.ts` calls a model: an
+agent that scored its own goals as progressing would be marking its own
+homework, and that is the judgement an owner most needs to make themselves.
+
 ## Attention is deterministic, and that is not a cost decision
 
 Nothing in `salience.ts` calls a model. `docs/ENGINEERING.md` says a score
