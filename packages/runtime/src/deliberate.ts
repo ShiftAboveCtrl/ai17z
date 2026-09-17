@@ -984,7 +984,22 @@ export async function wakeAgent(
   const backoff = somethingHappened ? 1 : Math.min(QUIET_BACKOFF_MAX, Math.pow(2, wake.quietWakes));
   const nextWakeAt = new Date(now.getTime() + wake.intervalSeconds * backoff * 1000).toISOString();
 
-  await mind.noteWake(agentId, { reason, quiet: !somethingHappened, nextWakeAt, didDeep: deep });
+  await mind.noteWake(agentId, {
+    reason,
+    quiet: !somethingHappened,
+    nextWakeAt,
+    didDeep: deep,
+    /*
+      How far it looked, which is when it read and not when it finished.
+
+      A wake that reflects spends a model call's worth of seconds after the
+      read, and stamping the end of that would skip everything that arrived
+      during it. `now` is taken before anything is queried, so it can only ever
+      be earlier than the read, and re-reading a moment costs nothing: attention
+      upserts on a fingerprint, so a second sighting reinforces one item.
+    */
+    looked: now.toISOString(),
+  });
   await mind.recordReflection({
     agentId,
     kind: deep ? 'DEEP' : autonomyAtLeast(wake.autonomy, 'THINK') ? 'PERIODIC' : 'LIGHT',
