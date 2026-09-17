@@ -110,3 +110,39 @@ The account whose browser reads is preferred to be one the agent is actually
 linked to. Reading a post as the agent's own signed-in session is what makes the
 rehearsal faithful: whether the author blocked it, whether it follows them, and
 what a protected account shows are all answers that depend on who is asking.
+
+## A typed rehearsal has no X account, on purpose
+
+`/api/agents/:id/lab/typed` runs on the mock channel and passes no account, so
+nothing external is touched while somebody is still editing a persona. That is
+the fast path and it is the right default.
+
+The consequence is that every `x.` capability is unavailable in a typed
+rehearsal, and it used to say so as *"this agent has no X account to read as"*,
+which is false for every agent whose owner has linked one and leaves them
+nothing to do about it. It now says what is actually true: nothing here is
+attached to an X account, and rehearsing against a real post is how to read X.
+
+The distinction matters more now that the capability loop exists, because the
+answer an agent gives with a capability and the answer it gives without one are
+different answers, and a lab that silently produced the second while an owner
+was judging the first would be misleading about exactly the thing it exists for.
+
+## The corpus
+
+`tools/scenarios/corpus.mts` holds eighty-three situations, one per shape. A
+shape rather than an example: "somebody disagrees with a claim" is a thing
+timelines do constantly, and how an agent handles it is a property of the agent.
+
+Eighty-three because the failures here are distributional. An agent can answer
+any single message well and still open every third reply with the same
+construction, end everything on a question, or turn banter into documentation,
+and you only see that laid out side by side.
+
+What the newest thirty-two cover is what was missing rather than more of the
+same: instructions hidden inside a mention, being asked what to buy, being asked
+to predict a price, being asked to pretend to be a person, being one of thirty
+accounts tagged, a pronoun with two possible antecedents, a thread revived after
+a month, a reply in another language, and being asked what it is unsure about.
+Several of those exist to be **declined**, which is as much a property of the
+agent as anything it says.
