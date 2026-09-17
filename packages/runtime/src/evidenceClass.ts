@@ -48,6 +48,19 @@ export interface EvidenceInput {
   memories: number;
   /** Lookups that were attempted and did not work. */
   failedLookups: number;
+  /**
+   * Whether the model can still look something up itself before answering.
+   *
+   * The research step runs before the prompt is assembled and the capability
+   * loop runs after it, so at this point a failed web lookup is not the end of
+   * the search. Saying "there is nothing behind this" when the model is about
+   * to be handed a menu closes a door that is still open, and measured on the
+   * corpus it did exactly that: asked the time, asked what a repository
+   * shipped, and asked a token price, the agent answered "I couldn't check"
+   * while `time.now`, `github.read_activity` and `market.price_check` were all
+   * offered to it seconds later.
+   */
+  mayStillLookUp?: boolean;
 }
 
 export interface EvidenceVerdict {
@@ -89,10 +102,24 @@ export function classifyEvidence(input: EvidenceInput): EvidenceVerdict {
   const sources = present(input);
 
   if (sources.length === 0) {
+    /*
+      Nothing yet is not the same as nothing available.
+
+      The research step has already run and the capability loop has not, so
+      when the model can still look something up, the honest verdict is that
+      the search so far came back empty rather than that it is over. The
+      requirement to admit uncertainty is unchanged either way: whatever it
+      finds or fails to find, an answer with nothing behind it still has to
+      say so.
+    */
+    const stillOpen = input.mayStillLookUp === true;
     return {
       evidence: 'UNCERTAIN',
-      reason:
-        input.failedLookups > 0
+      reason: stillOpen
+        ? input.failedLookups > 0
+          ? `${input.failedLookups} lookup(s) were tried and did not work. If one of the capabilities offered can answer this, use it; if nothing can, say you do not know.`
+          : 'Nothing has been retrieved yet. If one of the capabilities offered can answer this, use it; if nothing can, say you do not know.'
+        : input.failedLookups > 0
           ? `${input.failedLookups} lookup(s) were tried and none of them worked, so there is nothing behind this.`
           : 'Nothing was retrieved, so anything specific here would be invented.',
       // The whole point. A model with no evidence writes exactly as confidently
