@@ -98,6 +98,9 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     marketFindings: findings.filter((f) => f.kind === 'token').length,
     memories: memories.filter((m) => m.scope !== 'KNOWLEDGE').length,
     failedLookups: research?.failed?.length ?? 0,
+    // The loop runs after this prompt is assembled, so a failed web lookup is
+    // not the end of the search when the model is about to be offered a menu.
+    mayStillLookUp: bundle.policy.tools.capabilityLoop,
   });
 
   await observability.emitTrace({

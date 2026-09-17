@@ -77,3 +77,55 @@ describe('what an answer rests on', () => {
     expect(evidence({ marketFindings: 1, projectPassages: 1 }).reason).toContain('and');
   });
 });
+
+/**
+ * A failed web lookup is not the end of the search.
+ *
+ * The research step runs before the prompt is assembled and the capability
+ * loop runs after it. Telling the model "there is nothing behind this" while
+ * it is about to be handed a menu closes a door that is still open, and on the
+ * evaluation corpus it did exactly that: asked the time, asked what a
+ * repository shipped and asked a token price, the agent answered "I couldn't
+ * check" while `time.now`, `github.read_activity` and `market.price_check`
+ * were offered to it seconds later.
+ */
+describe('when the model can still look something up', () => {
+  const nothing = {
+    hasConversationContext: false,
+    projectPassages: 0,
+    webFindings: 0,
+    marketFindings: 0,
+    memories: 0,
+  };
+
+  it('does not say the search is over while the menu is still open', () => {
+    const verdict = classifyEvidence({ ...nothing, failedLookups: 1, mayStillLookUp: true });
+    expect(verdict.evidence).toBe('UNCERTAIN');
+    expect(verdict.reason).not.toContain('there is nothing behind this');
+    expect(verdict.reason).toMatch(/capabilities offered/i);
+  });
+
+  it('still says so plainly when there is nothing left to try', () => {
+    const verdict = classifyEvidence({ ...nothing, failedLookups: 1, mayStillLookUp: false });
+    expect(verdict.reason).toContain('there is nothing behind this');
+  });
+
+  /*
+    The safety property is unchanged.
+
+    Whatever it finds or fails to find, an answer with nothing behind it still
+    has to say so. A model with no evidence writes exactly as confidently as
+    one with plenty, which is the whole reason this verdict exists.
+  */
+  it('requires uncertainty to be admitted either way', () => {
+    for (const mayStillLookUp of [true, false]) {
+      expect(classifyEvidence({ ...nothing, failedLookups: 2, mayStillLookUp }).shouldAdmitUncertainty).toBe(true);
+      expect(classifyEvidence({ ...nothing, failedLookups: 0, mayStillLookUp }).shouldAdmitUncertainty).toBe(true);
+    }
+  });
+
+  it('is unchanged when the flag is absent, which is every existing caller', () => {
+    const verdict = classifyEvidence({ ...nothing, failedLookups: 1 });
+    expect(verdict.reason).toContain('there is nothing behind this');
+  });
+});

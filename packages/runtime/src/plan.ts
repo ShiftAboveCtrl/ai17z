@@ -132,11 +132,22 @@ export async function hasPlanner(agentId: string): Promise<boolean> {
 /**
  * How long a planning call may take before it is not worth having.
  *
- * Six seconds is generous for a classifier answering forty tokens, and short
- * enough that a provider having a bad minute costs a reply six seconds rather
- * than a timeout's worth.
+ * Six seconds was a guess at what "generous for a classifier answering forty
+ * tokens" meant, and the measurement says otherwise. Across forty-five real
+ * planning calls on a live installation: p25 2.5s, median 10.6s, p75 15.6s,
+ * longest 60s. Against a six-second bound that is nineteen plans used and
+ * twenty-six discarded, so the feature failed more often than it worked *and*
+ * charged almost every reply the full six seconds to find that out.
+ *
+ * Three and a half seconds is where the distribution actually has a shoulder.
+ * It keeps the plans that arrive quickly, which are most of the ones that
+ * arrive at all, and it halves what a reply pays when none does. The rest fall
+ * back to the deterministic rules, which is not a degraded mode: the rules are
+ * the floor this was always allowed to refine and never allowed to replace.
+ *
+ * If a provider gets faster, raise it and measure again rather than assuming.
  */
-const PLAN_TIMEOUT_MS = 6_000;
+const PLAN_TIMEOUT_MS = 3_500;
 
 export async function planLookups(
   agentId: string,

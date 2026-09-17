@@ -16,13 +16,15 @@
  * `--keep` leaves the rehearsal jobs in place to inspect on the Lab screen.
  */
 import { agents as agentsRepo, jobs as jobsRepo, query } from '@xbam/database';
-import { explainRehearsal, rehearse } from '@xbam/runtime';
+import { bootstrapRuntime, explainRehearsal, rehearse } from '@xbam/runtime';
 import { CORPUS } from './corpus.mts';
+import { drainAgentJobs } from '../../tests/support/runner';
 
 const args = process.argv.slice(2);
 const agentArg = args.includes('--agent') ? args[args.indexOf('--agent') + 1] : undefined;
 const only = args.includes('--only') ? args[args.indexOf('--only') + 1] : undefined;
 const keep = args.includes('--keep');
+const inProcess = args.includes('--in-process');
 
 /** A reply that stops without a sentence ending is one nobody finished. */
 const finished = (text: string) => /[.!?)"'”’…]\s*$/.test(text.trim());
@@ -65,11 +67,20 @@ async function main(): Promise<void> {
     runs.push({ id: entry.id, shape: entry.shape, jobId: run.jobId, looksLike: entry.looksLike });
     process.stdout.write('.');
   }
-  console.log('\nqueued. waiting for the worker...\n');
+  if (inProcess) {
+    // Capabilities and tools register on bootstrap, and nothing has done it in
+    // this process: without it the pipeline runs against an empty registry.
+    await bootstrapRuntime();
+    console.log('\nqueued. running them here...\n');
+    await drainAgentJobs(agentId, 400);
+  } else {
+    console.log('\nqueued. waiting for the worker...\n');
+  }
 
   // The worker settles these; this only waits. A rehearsal that never settles
   // is a finding in itself, so the wait is bounded and says so.
-  const deadline = Date.now() + 10 * 60_000;
+  // Already drained when running in process; the loop below then just reads.
+  const deadline = inProcess ? Date.now() : Date.now() + 10 * 60_000;
   const settled = new Set<string>();
   while (settled.size < runs.length && Date.now() < deadline) {
     for (const run of runs) {
