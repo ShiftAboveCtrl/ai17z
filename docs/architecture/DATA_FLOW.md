@@ -76,6 +76,9 @@ boxes it belongs in, and the answer is almost always "an existing one".
 | Is this message about the agent's subjects? | `touchesTopics` in `engagement.ts`. One matcher, used by both heuristics. |
 | Is this the same post written two ways? | `canonicalTarget` in `capabilityActions.ts`. |
 | What may this machine afford? | `budgetFor` in `packages/shared/src/resources.ts`. Everything it returns is enforced. |
+| Which capabilities may the model choose from? | `shortlistCapabilities` in `capabilityRelevance.ts`, then `runCapabilityLoop`. |
+| What does an agent give up under memory pressure? | `throttleFor` and `loopAllowed` in `resources.ts`. Loops declare a priority. |
+| Why did a reply say that? | `explainRehearsal`, drawn by `ReplyInspector` on any job, rehearsed or published. |
 
 ## Four words that mean four different things
 
@@ -102,6 +105,34 @@ answers. A transport does not get its own approval semantics: Telegram calls
 `approveJob` exactly as the web does, and gets the same policy check on the text.
 
 ## Rules that hold the shape
+
+**The model is shown the few capabilities that bear on the question, never all
+of them.** Seventy-three render 20,535 characters of menu against a
+3,010-character prompt, and an agent handed that called nothing at all: asked
+the time it ran a web search and answered "I don't know" while `time.now` was
+in the list. The narrowing is deterministic and reads only what a capability
+already declares about itself, so a new one is shortlisted without editing
+anything. A task that matches nothing is offered nothing, which is correct for
+banter and costs no tokens.
+
+**`CAPABILITY_OFFERED` records what was on the menu beside what was used.**
+"The agent did not look it up" has two causes with one symptom, never
+shortlisted or shortlisted and declined, and they need opposite fixes.
+
+**A failed lookup before the prompt is not the end of the search.** The
+research step runs before assembly and the capability loop runs after it, so
+the evidence verdict must not close a door the model is about to be offered.
+The requirement to admit uncertainty is unchanged either way.
+
+**An agent gives up speculation before it gives up answering people.** Loops
+declare ESSENTIAL, STANDARD or OPTIONAL. Mentions arriving, the owner's
+commands and recovery never stop at any pressure; watching repositories goes
+first. The pressure verdict is smoothed asymmetrically, twenty seconds to
+believe it got worse and two minutes to believe it got better, because
+`freemem` moves every second and an unsmoothed verdict starts and abandons the
+same work repeatedly.
+
+
 
 **Nothing downstream of a channel adapter knows what X looks like.** No selector,
 no cookie, no vendor payload leaves `packages/channels`.

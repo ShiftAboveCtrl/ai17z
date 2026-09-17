@@ -45,8 +45,12 @@ import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
  * The worker republishes its tabs every ten seconds; anything older than the
  * presence window describes a browser that is no longer there. This is the same
  * rule the account screen applies to the same snapshot, and there is one of it.
+ *
+ * Exported so the notification that tells an owner their agent cannot see X
+ * asks the same question this screen does. Two answers to "is a browser
+ * running" is the thing this codebase keeps saying it does not want.
  */
-async function browserRunning(): Promise<boolean> {
+export async function browserRunning(): Promise<boolean> {
   return accountsRepo.anyFreshBrowserSession(WORKER_PRESENT_SECONDS);
 }
 

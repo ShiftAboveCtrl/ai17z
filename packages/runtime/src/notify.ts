@@ -38,7 +38,10 @@ import {
 } from '@xbam/database';
 import type { NotificationRecord } from '@xbam/database';
 import { createLogger, workerAbsenceSentence } from '@xbam/shared';
+import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import { pauseState } from './killSwitch';
+import { browserRunning } from './health';
+import { browserEnabled } from '@xbam/browser';
 
 const log = createLogger('notify');
 
@@ -226,6 +229,102 @@ export async function checkWorkerPresence(): Promise<NotificationRecord | null> 
 }
 
 /**
+ * How long "waiting for Chrome" has to hold before anybody is told.
+ *
+ * A restart legitimately spends minutes here: the containers rebuild, the
+ * worker starts, and only then does it open a browser. Telling somebody about
+ * that is teaching them to ignore the thing that matters. Ten minutes is
+ * comfortably past a normal start and well short of a morning.
+ */
+const BROWSER_GRACE_MS = 10 * 60_000;
+
+/**
+ * When this process first saw a worker running with no browser behind it.
+ *
+ * Module state rather than a stored column: the question is "has this been
+ * true for a while", every process can answer it for itself, and a restart
+ * starting the clock again is correct rather than unfortunate.
+ */
+let waitingForChromeSince: number | null = null;
+
+/**
+ * A worker is running and nothing is driving a browser.
+ *
+ * This existed as a dedupe key and a resolve and was never raised, so the one
+ * condition that makes an X agent silently stop being one had no notification
+ * behind it at all. It is not hypothetical: after a power cut the containers
+ * came back on their own, the health screen correctly read "Waiting for
+ * Chrome", and nothing said so to anybody. The installation looked healthy and
+ * could not see or answer a single mention until a person opened the launcher.
+ *
+ * Critical, for the same reason a missing model is: nothing here fixes itself.
+ * The containerised worker cannot drive a browser on the host, so no amount of
+ * waiting produces one.
+ *
+ * The grace period is what stops this firing on every ordinary restart, and
+ * `accountIsWell` already clears it when a browser comes back.
+ */
+export async function checkBrowserPresence(input: {
+  /** False when this installation is deliberately running without a browser. */
+  browserEnabled: boolean;
+  /** Whether a worker is reporting live tabs, by the one rule health uses. */
+  browserRunning: boolean;
+  now?: number;
+}): Promise<NotificationRecord | null> {
+  const now = input.now ?? Date.now();
+
+  if (!input.browserEnabled || input.browserRunning) {
+    waitingForChromeSince = null;
+    return null;
+  }
+
+  // Nothing has reported at all: that is the worker's own notification to
+  // raise, and two criticals for one cause is how an owner learns to dismiss
+  // both without reading them.
+  const alive = await workersRepo.present();
+  if (alive.length === 0) {
+    waitingForChromeSince = null;
+    return null;
+  }
+
+  // An installation with no account that needs a browser is not waiting for
+  // one, and should never be told it is.
+  const accounts = await accountsRepo.allAccounts().catch(() => []);
+  const needsBrowser = accounts.some(
+    (account) =>
+      account.enabled &&
+      account.status === 'CONNECTED' &&
+      isChannelImplemented(account.channel) &&
+      getChannelAdapter(account.channel).requiresBrowser,
+  );
+  if (!needsBrowser) {
+    waitingForChromeSince = null;
+    return null;
+  }
+
+  waitingForChromeSince ??= now;
+  if (now - waitingForChromeSince < BROWSER_GRACE_MS) return null;
+
+  log.warn('a worker is running with no browser behind it', { forMs: now - waitingForChromeSince });
+  return notificationsRepo.raise({
+    kind: 'BROWSER_GONE',
+    severity: 'CRITICAL',
+    title: 'AI17Z cannot see X',
+    body:
+      'A worker is running, but nothing has opened a browser, so nothing can be read from X or posted to it. ' +
+      'This is what a machine looks like after it restarted and nobody opened AI17Z again.',
+    actionLabel: 'Open health',
+    actionHref: '/health',
+    dedupeKey: notificationKey.browserGone('any'),
+  });
+}
+
+/** For tests, and for a process that wants to start the clock again. */
+export function resetBrowserWait(): void {
+  waitingForChromeSince = null;
+}
+
+/**
  * Everything is paused.
  *
  * Information rather than a problem: somebody pressed the button on purpose.
@@ -287,6 +386,23 @@ export async function sweepNotifications(): Promise<{ raised: number; resolved: 
   };
 
   if (await checkWorkerPresence()) raised += 1;
+
+  /*
+    A worker running with nothing driving a browser.
+
+    Asked through the same rule the Health screen uses, so there is one answer
+    to "is a browser running" rather than two. The condition is bounded by its
+    own grace period, because an ordinary restart spends minutes legitimately
+    waiting for Chrome.
+  */
+  if (
+    await checkBrowserPresence({
+      browserEnabled: browserEnabled(),
+      browserRunning: await browserRunning().catch(() => true),
+    })
+  ) {
+    raised += 1;
+  }
 
   const pause = await pauseState();
   if (pause.paused) count(await everythingPaused({ by: pause.by, reason: pause.reason }));
