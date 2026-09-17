@@ -473,6 +473,16 @@ export const TRACE_EVENT_TYPES = [
    * told, including when it was refused.
    */
   'CAPABILITY_USED',
+  /**
+   * What the model was shown, as distinct from what it used.
+   *
+   * "The agent did not look it up" has two causes with one symptom: the
+   * capability was never offered, or it was offered and the model did not take
+   * it. The first is a shortlisting problem, the second a prompt problem, and
+   * they need different fixes. Ids and counts only: what the shortlist decided,
+   * never any reasoning about it.
+   */
+  'CAPABILITY_OFFERED',
 ] as const;
 export const TraceEventType = enumOf(TRACE_EVENT_TYPES).schema;
 export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];

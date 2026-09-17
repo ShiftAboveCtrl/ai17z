@@ -240,6 +240,34 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
       paused: (await pauseState().catch(() => ({ paused: false }))).paused,
     });
     text = loop.answer;
+    /*
+      What it was shown, not only what it used.
+
+      "The agent did not look it up" has two completely different causes with
+      the same symptom: the capability was never offered, or it was offered and
+      the model did not take it. The first is a shortlisting problem and the
+      second is a prompt problem, and without this row an owner cannot tell
+      them apart. Ids and counts only, which is what the shortlist decided
+      rather than any reasoning about it.
+    */
+    await observability.emitTrace({
+      jobId: bundle.job.id,
+      agentId: bundle.agent.id,
+      type: 'CAPABILITY_OFFERED',
+      level: 'debug',
+      message:
+        loop.shortlist.offered.length === 0
+          ? `Nothing on the menu bore on this, out of ${loop.shortlist.considered} available.`
+          : `Offered ${loop.shortlist.offered.length} of ${loop.shortlist.considered}: ${loop.shortlist.offered
+              .map((capability) => capability.id)
+              .join(', ')}`,
+      data: {
+        considered: loop.shortlist.considered,
+        offered: loop.shortlist.offered.map((capability) => capability.id),
+        families: loop.shortlist.families,
+        used: loop.steps.map((step) => step.capabilityId),
+      },
+    });
     for (const step of loop.steps) {
       await observability.emitTrace({
         jobId: bundle.job.id,
