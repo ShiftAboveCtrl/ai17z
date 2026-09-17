@@ -1,5 +1,5 @@
 import type { JobRecord } from '@xbam/shared/contracts';
-import { createLogger, currentPressure, errorMessage, sleep, throttleFor } from '@xbam/shared';
+import { createLogger, errorMessage, settledPressure, sleep, throttleFor } from '@xbam/shared';
 import { jobs as jobsRepo } from '@xbam/database';
 import { capabilitiesFor, runRecoverySweep, type QueueOptions } from './queue';
 
@@ -72,10 +72,14 @@ export class JobWorker {
 
           So this delays rather than drops. Claimed jobs are unaffected, nothing
           leaves the queue, and the floor is one: an installation under pressure
-          still makes progress, just slowly. Measured per tick rather than
-          cached, so recovery is automatic and gradual as memory frees up.
+          still makes progress, just slowly.
+
+          The verdict is smoothed rather than re-read raw on every tick. It used
+          to be raw, and `freemem` moves constantly, so a machine hovering near
+          a threshold changed its mind about how much work to allow every few
+          seconds. Recovery is still automatic; it is now also steady.
         */
-        const allowed = Math.max(1, Math.floor(this.options.concurrency * throttleFor(currentPressure()).concurrencyFactor));
+        const allowed = Math.max(1, Math.floor(this.options.concurrency * throttleFor(settledPressure()).concurrencyFactor));
         const capacity = allowed - this.inFlight.size;
         if (capacity <= 0) {
           await sleep(this.options.pollIntervalMs);

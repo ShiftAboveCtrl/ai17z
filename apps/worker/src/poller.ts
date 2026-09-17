@@ -31,7 +31,7 @@ export class ChannelPoller {
   start(): void {
     if (this.timer) return;
     log.info('channel poller starting', { tickMs: this.tickMs, perTick: this.perTick });
-    this.timer = startLoop('poller', this.tickMs, () => this.tick());
+    this.timer = startLoop('poller', this.tickMs, () => this.tick(), 'ESSENTIAL');
   }
 
   stop(): void {

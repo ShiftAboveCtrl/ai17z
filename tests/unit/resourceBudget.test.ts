@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   budgetFor,
   describeBudget,
+  freshHold,
+  loopAllowed,
   memoryClassFor,
   pressureFor,
+  settlePressure,
   throttleFor,
+  PRESSURE_RECOVER_MS,
+  PRESSURE_WORSEN_MS,
   type MemoryClass,
 } from '@xbam/shared';
 
@@ -130,16 +135,38 @@ describe('what pressure changes', () => {
   it('changes nothing at all when there is no pressure', () => {
     const normal = throttleFor('NORMAL');
     expect(normal.concurrencyFactor).toBe(1);
-    expect(normal.pauseBackground).toBe(false);
+    // Everything runs, down to the most speculative loop there is.
+    expect(normal.runLoopsDownTo).toBe('OPTIONAL');
   });
 
   it('delays background work rather than dropping it', () => {
     // Durable jobs are never lost to memory pressure. They wait.
     for (const state of ['PRESSURED', 'CRITICAL'] as const) {
-      expect(throttleFor(state).pauseBackground).toBe(true);
       expect(throttleFor(state).concurrencyFactor).toBeLessThan(1);
       expect(throttleFor(state).concurrencyFactor).toBeGreaterThan(0);
     }
+  });
+
+  /*
+    The agent stops speculating before it stops answering people.
+
+    This used to be one boolean saying "pause background work", which nothing
+    read: the health row claimed everything speculative had stopped while only
+    job concurrency had moved. An ordering is both honest and enforceable.
+  */
+  it('gives up speculation first and never gives up answering people', () => {
+    expect(throttleFor('PRESSURED').runLoopsDownTo).toBe('STANDARD');
+    expect(throttleFor('CRITICAL').runLoopsDownTo).toBe('ESSENTIAL');
+
+    // Mentions, the owner's commands and recovery run at every pressure there is.
+    for (const state of ['NORMAL', 'PRESSURED', 'CRITICAL'] as const) {
+      expect(loopAllowed('ESSENTIAL', throttleFor(state).runLoopsDownTo)).toBe(true);
+    }
+    // Watching repositories is the first thing dropped.
+    expect(loopAllowed('OPTIONAL', throttleFor('PRESSURED').runLoopsDownTo)).toBe(false);
+    // Thinking survives merely tight memory and stops when it is critical.
+    expect(loopAllowed('STANDARD', throttleFor('PRESSURED').runLoopsDownTo)).toBe(true);
+    expect(loopAllowed('STANDARD', throttleFor('CRITICAL').runLoopsDownTo)).toBe(false);
   });
 
   it('does less as pressure rises', () => {
@@ -208,6 +235,66 @@ describe('reducing work under pressure', () => {
     // can lose a durable job, which is the property that makes throttling safe
     // to do automatically.
     expect(allowed(8, 'CRITICAL')).toBeLessThan(8);
-    expect(throttleFor('CRITICAL').pauseBackground).toBe(true);
+    expect(allowed(8, 'CRITICAL')).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A verdict that does not change its mind every few seconds.
+ *
+ * `freemem` moves constantly, and the throttle used to be re-read raw on every
+ * tick with no memory of the last answer. A machine hovering near a threshold
+ * would therefore start and abandon the same background work repeatedly, which
+ * is worse than either state: nothing finishes and every partial attempt is
+ * paid for twice.
+ */
+describe('hysteresis', () => {
+  const at = (ms: number) => 1_000_000 + ms;
+
+  it('does not believe a worse reading the instant it appears', () => {
+    const hold = settlePressure(freshHold('NORMAL'), 'PRESSURED', at(0));
+    expect(hold.state).toBe('NORMAL');
+    expect(hold.pending).toBe('PRESSURED');
+  });
+
+  it('believes a worse reading that holds', () => {
+    let hold = settlePressure(freshHold('NORMAL'), 'PRESSURED', at(0));
+    hold = settlePressure(hold, 'PRESSURED', at(PRESSURE_WORSEN_MS));
+    expect(hold.state).toBe('PRESSURED');
+  });
+
+  it('forgets a worse reading that goes away before it counts', () => {
+    let hold = settlePressure(freshHold('NORMAL'), 'PRESSURED', at(0));
+    hold = settlePressure(hold, 'NORMAL', at(1_000));
+    expect(hold.state).toBe('NORMAL');
+    expect(hold.pending).toBeNull();
+  });
+
+  /*
+    Recovery is slower than deterioration, deliberately.
+
+    The thing being avoided is the operating system killing a renderer, so
+    getting worse is believed quickly. A dip in usage is not the same as the
+    pressure having passed, so getting better is believed slowly.
+  */
+  it('takes longer to believe things are better than that they are worse', () => {
+    expect(PRESSURE_RECOVER_MS).toBeGreaterThan(PRESSURE_WORSEN_MS);
+
+    let hold = freshHold('CRITICAL');
+    hold = settlePressure(hold, 'NORMAL', at(0));
+    hold = settlePressure(hold, 'NORMAL', at(PRESSURE_WORSEN_MS));
+    // Long enough to have been believed if it were getting worse.
+    expect(hold.state).toBe('CRITICAL');
+    hold = settlePressure(hold, 'NORMAL', at(PRESSURE_RECOVER_MS));
+    expect(hold.state).toBe('NORMAL');
+  });
+
+  it('does not oscillate across a threshold', () => {
+    let hold = freshHold('NORMAL');
+    // Ten flaps inside the worsening window: the verdict must not move.
+    for (let i = 0; i < 10; i += 1) {
+      hold = settlePressure(hold, i % 2 === 0 ? 'PRESSURED' : 'NORMAL', at(i * 1_000));
+    }
+    expect(hold.state).toBe('NORMAL');
   });
 });
