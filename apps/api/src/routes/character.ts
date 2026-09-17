@@ -59,16 +59,6 @@ export async function characterRoutes(app: FastifyInstance): Promise<void> {
       .send(characterTemplate());
   });
 
-  /** The questions themselves, for a UI that wants to render them. */
-  app.get(
-    '/api/character-questions',
-    handler(async (request) => {
-      await requireUser(request);
-      const { CHARACTER_QUESTIONS } = await import('@xbam/shared/contracts');
-      return { questions: CHARACTER_QUESTIONS };
-    }),
-  );
-
   /**
    * Describe the character in your own words; the agent's model fills it in.
    *
