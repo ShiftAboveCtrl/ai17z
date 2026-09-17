@@ -350,7 +350,20 @@ export function IntelligenceSection({
             <Field label="Attempts" htmlFor="mretry" hint="Tries against this provider before the fallback takes over.">
               <input id="mretry" className="field" inputMode="numeric" value={maxRetries} onChange={(e) => setMaxRetries(e.target.value)} placeholder="2" />
             </Field>
-            <Field label="Reasoning effort" htmlFor="mreason" hint="Reasoning models only. Ignored elsewhere.">
+            {/*
+              Worth an owner's attention on the small roles rather than the big
+              one. Measured on a live installation: choosing what to look up
+              cost 345 prompt tokens and 1,804 completion tokens, and rewriting
+              one sentence cost 205 in and 6,305 out, because the working is
+              charged to the completion. Those two calls are most of what makes
+              a reply take three minutes, and the answer is here rather than in
+              any prompt. `npm run latency` prints both columns.
+            */}
+            <Field
+              label="Reasoning effort"
+              htmlFor="mreason"
+              hint="Reasoning models only. Low is usually right for the classifier and voice roles: they answer in one short shape, and the thinking is charged to the reply's time."
+            >
               <select id="mreason" className="field" value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
                 <option value="">Not set</option>
                 <option value="low">Low</option>

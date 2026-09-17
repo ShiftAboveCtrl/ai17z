@@ -36,7 +36,22 @@ export async function contextFor(accountId: string | null, jobId: string | null)
  */
 export async function browserReadiness(accountId: string | null) {
   if (!accountId) {
-    return { status: 'UNAVAILABLE' as const, why: 'This agent has no X account to read as.' };
+    /*
+      Says which of the two things it is, because they are not the same and the
+      old sentence only described one of them.
+
+      A job with no account is almost always a typed rehearsal: the Response Lab
+      runs those on the mock channel on purpose, so nothing external is touched
+      while somebody is still editing a persona. An agent whose owner has linked
+      X sees "this agent has no X account", which is false and unactionable. The
+      thing to do is rehearse against a real post instead, and this now says so.
+    */
+    return {
+      status: 'UNAVAILABLE' as const,
+      why:
+        'Nothing here is attached to an X account, so X cannot be read as anybody. ' +
+        'A typed rehearsal runs on the mock channel by design; rehearse against a real post to read X.',
+    };
   }
   const present = await workersRepo.browserWorkerPresent().catch(() => false);
   if (!present) {

@@ -85,28 +85,54 @@ const calls = await query<{
   median_ms: number;
   p90_ms: number;
   wasted: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
 }>(
   `SELECT coalesce(model_role, '(none)') AS role,
           purpose,
           count(*)::int AS calls,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) AS median_ms,
           percentile_cont(0.9) WITHIN GROUP (ORDER BY latency_ms) AS p90_ms,
-          count(*) FILTER (WHERE status <> 'SUCCEEDED')::int AS wasted
+          -- COMPLETED, not SUCCEEDED. The column takes STARTED, COMPLETED or
+          -- FAILED, so the wrong word here made every single call read as one
+          -- that did not succeed, on a live installation where two thirds of
+          -- them had. A measurement tool that is confidently wrong is worse
+          -- than no measurement tool, because somebody acts on it.
+          count(*) FILTER (WHERE status <> 'COMPLETED')::int AS wasted,
+          /*
+            Both halves, because they answer different questions and the second
+            one is usually the surprise.
+
+            Prompt tokens are what AI17Z sends and therefore what AI17Z can do
+            something about. Completion tokens are what the model chose to
+            write, and on a reasoning model the working is charged there too:
+            measured on a live installation, choosing a search query cost 345
+            tokens in and 1,804 out, and rewriting one sentence in the agent's
+            voice cost 205 in and 6,305 out. That is where a three-minute reply
+            goes, and no amount of trimming the prompt touches it. What does is
+            the role's own parameters, which are the owner's to set.
+          */
+          avg(prompt_tokens) FILTER (WHERE status = 'COMPLETED') AS prompt_tokens,
+          avg(completion_tokens) FILTER (WHERE status = 'COMPLETED') AS completion_tokens
      FROM model_calls
     WHERE latency_ms > 0
     GROUP BY 1, 2
     ORDER BY count(*) DESC
     LIMIT 12`,
 );
+const tokens = (value: number | null) => (value === null ? '?' : String(Math.round(Number(value))));
 for (const row of calls) {
   const median = `${(Number(row.median_ms) / 1000).toFixed(1)}s`;
   const p90 = `${(Number(row.p90_ms) / 1000).toFixed(1)}s`;
   const failed = row.wasted > 0 ? `  ${row.wasted} did not succeed` : '';
   console.log(
-    `  ${`${row.role}/${row.purpose}`.padEnd(38)} ${String(row.calls).padStart(5)}   median ${median.padStart(9)}   p90 ${p90.padStart(9)}${failed}`,
+    `  ${`${row.role}/${row.purpose}`.padEnd(38)} ${String(row.calls).padStart(5)}   median ${median.padStart(9)}   p90 ${p90.padStart(9)}   ${`${tokens(row.prompt_tokens)} in`.padStart(9)} ${`${tokens(row.completion_tokens)} out`.padStart(10)}${failed}`,
   );
 }
 
+console.log();
+console.log('  "out" larger than "in" on a small structured task is a reasoning');
+console.log('  model writing its working. That is a role parameter, not a prompt.');
 console.log();
 console.log('  Read the whole-reply row first. The rest say which part to argue with.');
 process.exit(0);

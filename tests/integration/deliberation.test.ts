@@ -871,6 +871,24 @@ describe('the wake schedule', () => {
     expect((await mind.getWake(agent.agentId))!.lastWakeAt).toBe(before);
   });
 
+  it('records how far it looked, not when it finished', async () => {
+    /*
+      A wake that reflects spends a model call's worth of seconds after it has
+      read. Stamping the end of that skips everything that arrived during it,
+      and the window only moves forward, so those are gone for good.
+
+      Proved by handing the wake the moment it starts: what ends up on the row
+      has to be that, and not the clock at the end of the statement.
+    */
+    const agent = await agentThatThinks();
+    const startedAt = new Date(Date.now() - 90_000);
+
+    await wakeAgent(agent.agentId, { now: startedAt });
+
+    const after = await mind.getWake(agent.agentId);
+    expect(new Date(after!.lastWakeAt!).getTime()).toBe(startedAt.getTime());
+  });
+
   it('leaves the window open when a wake was refused rather than run', async () => {
     // Paused is not looked. Advancing here means everything that arrived during
     // the pause is skipped the moment somebody unpauses, and the window only

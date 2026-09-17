@@ -532,23 +532,39 @@ export async function claimDueWakes(limit: number, holdSeconds: number): Promise
 /**
  * What the wake decided, and when to come back.
  *
- * `looked` is the one subtle argument. Moving `last_wake_at` is a claim that
- * this agent has now seen everything up to this moment, because that timestamp
- * is where the next wake's observation window starts. A wake that was refused
- * before it read anything -- paused, or one that threw -- has seen nothing, and
- * saying otherwise silently throws away whatever arrived while it was failing.
- * So the reason and the backoff are recorded either way and the window is left
- * where it was.
+ * `looked` is the one subtle argument, and it has three cases because there are
+ * three. Moving `last_wake_at` is a claim that this agent has now seen
+ * everything up to some moment, because that timestamp is where the next wake's
+ * observation window starts.
  *
- * Leaving it open is the safe direction. The window is bounded by the
- * observation limit and by `salience.ts` declining anything older than three
- * days as history, so an agent that was paused for a week does not come back to
- * a week of backlog. The opposite mistake is unrecoverable: an observation
- * skipped this way is skipped for good, because the window only moves forward.
+ * `false` is a wake that was refused before it read anything: paused, or one
+ * that threw. It has seen nothing, and saying otherwise silently throws away
+ * whatever arrived while it was failing.
+ *
+ * A timestamp is **how far it actually looked**, which is when it read rather
+ * than when it finished. A wake that reflects spends half a minute on a model
+ * call, and stamping the end of that would skip everything that arrived during
+ * it. Re-reading a few milliseconds costs nothing, because attention upserts on
+ * a fingerprint and a second sighting reinforces one item.
+ *
+ * Absent is now, for callers with nothing to read.
+ *
+ * Leaving the window open is the safe direction throughout. It is bounded by
+ * the observation limit and by `salience.ts` declining anything older than
+ * three days as history, so an agent that was paused for a week does not come
+ * back to a week of backlog. The opposite mistake is unrecoverable: an
+ * observation skipped this way is skipped for good, because the window only
+ * moves forward.
  */
 export async function noteWake(
   agentId: string,
-  input: { reason: string; quiet: boolean; nextWakeAt?: string | null; didDeep?: boolean; looked?: boolean },
+  input: {
+    reason: string;
+    quiet: boolean;
+    nextWakeAt?: string | null;
+    didDeep?: boolean;
+    looked?: false | string;
+  },
 ): Promise<void> {
   const sets = [
     'last_reason = $2',
@@ -557,6 +573,7 @@ export async function noteWake(
     'quiet_wakes = CASE WHEN $3 THEN agent_wake.quiet_wakes + 1 ELSE 0 END',
     'updated_at = now()',
   ];
+  const params: unknown[] = [agentId, input.reason.slice(0, 1000), input.quiet];
   if (input.looked !== false) {
     /*
       Recorded when the wake finishes, and nowhere else.
@@ -570,9 +587,13 @@ export async function noteWake(
       also what stops their agent reporting that it has never looked however
       often they ask.
     */
-    sets.push('last_wake_at = now()');
+    if (typeof input.looked === 'string') {
+      params.push(input.looked);
+      sets.push(`last_wake_at = $${params.length}`);
+    } else {
+      sets.push('last_wake_at = now()');
+    }
   }
-  const params: unknown[] = [agentId, input.reason.slice(0, 1000), input.quiet];
   if (input.nextWakeAt) {
     params.push(input.nextWakeAt);
     sets.push(`next_wake_at = $${params.length}`);
