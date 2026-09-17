@@ -282,6 +282,40 @@ decision, so they are one capability now. What the built-in had that the other
 did not -- reading more than a handful of somebody's posts -- moved across as an
 argument.
 
+## What the model is shown
+
+Not this. Seventy-three capabilities render 20,535 characters of menu against a
+3,010-character prompt, and an agent handed that called nothing at all: asked
+the time it ran a web search and answered "I don't know" while `time.now` was
+on the list it had just been given. Every capability below was reachable,
+permissioned, tested and audited, and in practice unreachable.
+
+`capabilityRelevance.ts` shortlists, and it is deterministic and makes no model
+call, for the same reason `salience.ts` does not: **which tools a later model
+call may see is exactly the judgement an owner needs to be able to inspect,
+correct and tune.** A model deciding what the model gets shown is a second
+opinion nobody can read.
+
+It reads only what a capability already declares about itself: its id, its
+family, and its description. So a new capability is shortlisted without editing
+anything here, provided its description uses the words somebody would use to ask
+for it. That is the constraint a description now has to meet, and it is worth
+saying out loud because it was previously free to be written for a person
+reading a settings screen.
+
+Measured against the families above: a question about a contract address offers
+the `contract` family; liquidity offers `market` and `solana`; a governance
+proposal offers `governance`; a block height offers `bitcoin` and `chain`.
+**Banter offers nothing**, which is both correct and the cheapest thing the loop
+can do.
+
+**`CAPABILITY_OFFERED` records the menu beside what was used.** "It did not look
+that up" has two causes with one symptom: never shortlisted, or shortlisted and
+declined. The first is a shortlisting problem and the second is a prompt
+problem, they need opposite fixes, and without the row nobody can tell them
+apart. It is written on every job that runs the loop and it is a stage in the
+explanation an owner reads, not only a line in the raw trace.
+
 ## What the Toolspace refuses to do
 
 These are properties, not preferences, and each has a test behind it.
