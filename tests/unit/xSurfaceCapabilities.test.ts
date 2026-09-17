@@ -82,6 +82,10 @@ describe('the X surface capabilities', () => {
       logger: console as never,
     });
     expect(readiness.status).toBe('UNAVAILABLE');
-    expect(readiness.why).toContain('no X account');
+    // What has no account is the job, not the agent. See the same case in
+    // `xCapabilities.test.ts` for why the old wording was wrong.
+    expect(readiness.why).toMatch(/attached to an X account/i);
+    expect(readiness.why).toMatch(/real post/i);
+    expect(readiness.why).not.toMatch(/this agent has no X account/i);
   });
 });

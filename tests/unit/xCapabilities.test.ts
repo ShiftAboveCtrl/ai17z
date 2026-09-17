@@ -78,8 +78,17 @@ describe('the X read capabilities', () => {
   });
 
   it('says why it cannot run rather than failing later', async () => {
-    // An agent with no X account has nothing to read X as, and the reason is
-    // about the agent rather than about the capability.
+    /*
+      Nothing to read X as, and the reason is about what is running rather than
+      about the capability.
+
+      It used to say "this agent has no X account", which is false for every
+      agent whose owner has linked one: what has no account is the job, and a
+      job with none is almost always a typed rehearsal, which runs on the mock
+      channel by design. So the sentence has to say which of the two it is and
+      what to do instead, and that is what is asserted here rather than the old
+      wording.
+    */
     const readiness = await getCapability('x.read_post')!.readiness!({
       agentId: 'a',
       jobId: null,
@@ -88,7 +97,10 @@ describe('the X read capabilities', () => {
       logger: console as never,
     });
     expect(readiness.status).toBe('UNAVAILABLE');
-    expect(readiness.why).toContain('no X account');
+    expect(readiness.why).toMatch(/attached to an X account/i);
+    expect(readiness.why).toMatch(/real post/i);
+    // And never the claim that was wrong.
+    expect(readiness.why).not.toMatch(/this agent has no X account/i);
   });
 });
 
