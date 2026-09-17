@@ -3,7 +3,9 @@ import { accounts as accountsRepo, agents as agentsRepo, notifications as notifi
 import {
   accountIsWell,
   accountNeedsUser,
+  checkBrowserPresence,
   checkWorkerPresence,
+  resetBrowserWait,
   notificationKey,
   notificationSummary,
   sweepNotifications,
@@ -276,5 +278,134 @@ describe('ordering', () => {
     await checkWorkerPresence();
     const open = await notificationsRepo.listOpen({ agentId: fixture.agentId });
     expect(open.some((n) => n.kind === 'WORKER_STOPPED')).toBe(true);
+  });
+});
+
+/**
+ * A worker running with nothing driving a browser.
+ *
+ * This condition had a dedupe key and a resolve and was never raised, so the
+ * one failure that silently stops an X agent being one had no notification
+ * behind it. It is not hypothetical: after a power cut the containers came
+ * back on their own, the health screen correctly read "Waiting for Chrome",
+ * and nothing told anybody. The installation looked healthy and could not read
+ * or answer a single mention until a person opened the launcher.
+ */
+/** A worker reporting in, so "no browser" is not really "no worker". */
+async function workerIsRunning(): Promise<void> {
+  await query(
+    `INSERT INTO workers (id, role, browser_capable, jobs_capable) VALUES ($1,'worker',false,true)
+     ON CONFLICT (id) DO UPDATE SET last_seen_at = now()`,
+    [`w-${uniqueSuffix()}`],
+  );
+}
+
+describe('a worker with no browser behind it', () => {
+  const tenMinutes = 10 * 60_000;
+
+  it('says nothing while a browser is running', async () => {
+    const fixture = await createFixture();
+    await makeAccount(fixture.ownerId, 'CONNECTED');
+    await workerIsRunning();
+    resetBrowserWait();
+    expect(await checkBrowserPresence({ browserEnabled: true, browserRunning: true })).toBeNull();
+  });
+
+  /*
+    An ordinary restart legitimately spends minutes here: the containers
+    rebuild, the worker starts, and only then does it open a browser. Telling
+    somebody about that teaches them to ignore the thing that matters.
+  */
+  it('gives a restart time to open a browser before saying anything', async () => {
+    const fixture = await createFixture();
+    await makeAccount(fixture.ownerId, 'CONNECTED');
+    await workerIsRunning();
+    resetBrowserWait();
+    const start = Date.now();
+    expect(await checkBrowserPresence({ browserEnabled: true, browserRunning: false, now: start })).toBeNull();
+    expect(
+      await checkBrowserPresence({ browserEnabled: true, browserRunning: false, now: start + tenMinutes - 1_000 }),
+    ).toBeNull();
+  });
+
+  it('tells the owner once it has gone on too long', async () => {
+    const fixture = await createFixture();
+    await makeAccount(fixture.ownerId, 'CONNECTED');
+    await workerIsRunning();
+    resetBrowserWait();
+    const start = Date.now();
+    await checkBrowserPresence({ browserEnabled: true, browserRunning: false, now: start });
+    const raised = await checkBrowserPresence({
+      browserEnabled: true,
+      browserRunning: false,
+      now: start + tenMinutes + 1_000,
+    });
+    expect(raised).not.toBeNull();
+    expect(raised?.kind).toBe('BROWSER_GONE');
+    // Critical for the same reason a missing model is: nothing here fixes
+    // itself, because a containerised worker cannot drive a browser on the host.
+    expect(raised?.severity).toBe('CRITICAL');
+  });
+
+  it('forgets the wait as soon as a browser appears', async () => {
+    const fixture = await createFixture();
+    await makeAccount(fixture.ownerId, 'CONNECTED');
+    await workerIsRunning();
+    resetBrowserWait();
+    const start = Date.now();
+    await checkBrowserPresence({ browserEnabled: true, browserRunning: false, now: start });
+    await checkBrowserPresence({ browserEnabled: true, browserRunning: true, now: start + 1_000 });
+    // The clock restarted, so the old wait cannot age into a notification.
+    expect(
+      await checkBrowserPresence({ browserEnabled: true, browserRunning: false, now: start + tenMinutes + 2_000 }),
+    ).toBeNull();
+  });
+
+  /*
+    One cause, one critical.
+
+    With no worker at all this is the worker's own notification to raise, and
+    two criticals for one cause is how somebody learns to dismiss both without
+    reading either.
+  */
+  it('stands aside when the real problem is that no worker is running', async () => {
+    const fixture = await createFixture();
+    await makeAccount(fixture.ownerId, 'CONNECTED');
+    resetBrowserWait();
+    const start = Date.now();
+    await checkBrowserPresence({ browserEnabled: true, browserRunning: false, now: start });
+    expect(
+      await checkBrowserPresence({ browserEnabled: true, browserRunning: false, now: start + 11 * 60_000 }),
+    ).toBeNull();
+  });
+
+  it('says nothing on an installation that runs without a browser', async () => {
+    const fixture = await createFixture();
+    await makeAccount(fixture.ownerId, 'CONNECTED');
+    await workerIsRunning();
+    resetBrowserWait();
+    const start = Date.now();
+    await checkBrowserPresence({ browserEnabled: false, browserRunning: false, now: start });
+    expect(
+      await checkBrowserPresence({ browserEnabled: false, browserRunning: false, now: start + tenMinutes + 1_000 }),
+    ).toBeNull();
+  });
+
+  /*
+    An installation with no account that needs a browser is not waiting for one.
+
+    A mock channel needs no session, and telling somebody their agent cannot see
+    X when it was never going to is the kind of wrong notification that makes
+    people stop reading them.
+  */
+  it('says nothing when no account needs a browser', async () => {
+    await createFixture();
+    await workerIsRunning();
+    resetBrowserWait();
+    const start = Date.now();
+    await checkBrowserPresence({ browserEnabled: true, browserRunning: false, now: start });
+    expect(
+      await checkBrowserPresence({ browserEnabled: true, browserRunning: false, now: start + tenMinutes + 1_000 }),
+    ).toBeNull();
   });
 });
