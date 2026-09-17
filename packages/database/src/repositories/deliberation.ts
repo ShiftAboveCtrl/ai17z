@@ -488,11 +488,33 @@ export async function setWake(
  * the due time forward in the statement that selects the row. That is what
  * stops a restart waking every agent at once and what makes the loop
  * restart-safe without any state in the process.
+ *
+ * **It must not stamp `last_wake_at`, and this is the second time that window
+ * has been closed by accident.** `UPDATE ... RETURNING` returns the *new* row,
+ * so a claim that also set `last_wake_at = now()` handed the wake a window
+ * beginning at the instant it started. `wakeAgent` reads exactly that value to
+ * ask what has happened since the agent last looked, so every scheduled wake
+ * looked at the few microseconds between the claim and the query and saw
+ * nothing. Measured on a live installation: nineteen consecutive reflections
+ * reading `considered: 0` with a hundred and forty-two events sitting inside
+ * the window they should have covered, and not one model call made in a day.
+ * Deliberation observed nothing at all, and the working set held only the items
+ * a person had produced by pressing "think now" -- which does not go through
+ * this claim and therefore worked.
+ *
+ * `noteWake` records it at the end of the wake instead, which is where it
+ * belongs and where its own comment already said it was: a wake that dies
+ * half-way then leaves the window open, and the next one reads it again. That
+ * is the safe direction. Attention upserts on a fingerprint, so seeing the same
+ * thing twice reinforces one item rather than making a second.
+ *
+ * The lease is `next_wake_at`, which this still moves. Nothing about
+ * "two workers cannot wake one agent" rests on the timestamp that was removed.
  */
 export async function claimDueWakes(limit: number, holdSeconds: number): Promise<WakeRow[]> {
   return mapRows<WakeRow>(
     await query(
-      `UPDATE agent_wake SET next_wake_at = now() + make_interval(secs => $2), last_wake_at = now()
+      `UPDATE agent_wake SET next_wake_at = now() + make_interval(secs => $2)
         WHERE agent_id IN (
           SELECT w.agent_id FROM agent_wake w
             JOIN agents a ON a.id = w.agent_id
@@ -507,28 +529,49 @@ export async function claimDueWakes(limit: number, holdSeconds: number): Promise
   );
 }
 
-/** What the wake decided, and when to come back. */
+/**
+ * What the wake decided, and when to come back.
+ *
+ * `looked` is the one subtle argument. Moving `last_wake_at` is a claim that
+ * this agent has now seen everything up to this moment, because that timestamp
+ * is where the next wake's observation window starts. A wake that was refused
+ * before it read anything -- paused, or one that threw -- has seen nothing, and
+ * saying otherwise silently throws away whatever arrived while it was failing.
+ * So the reason and the backoff are recorded either way and the window is left
+ * where it was.
+ *
+ * Leaving it open is the safe direction. The window is bounded by the
+ * observation limit and by `salience.ts` declining anything older than three
+ * days as history, so an agent that was paused for a week does not come back to
+ * a week of backlog. The opposite mistake is unrecoverable: an observation
+ * skipped this way is skipped for good, because the window only moves forward.
+ */
 export async function noteWake(
   agentId: string,
-  input: { reason: string; quiet: boolean; nextWakeAt?: string | null; didDeep?: boolean },
+  input: { reason: string; quiet: boolean; nextWakeAt?: string | null; didDeep?: boolean; looked?: boolean },
 ): Promise<void> {
   const sets = [
     'last_reason = $2',
     // Backing off a quiet agent is what stops it asking the same question of a
     // paid model every half hour for ever. Reset the moment anything happens.
     'quiet_wakes = CASE WHEN $3 THEN agent_wake.quiet_wakes + 1 ELSE 0 END',
-    /*
-      Recorded when the wake finishes rather than when it was claimed.
-
-      `claimDueWakes` also stamps it, which covers the scheduled path. An owner
-      pressing "think now" never goes through the claim, so without this their
-      agent said it had never looked however often they asked -- and the next
-      wake would read the same window again, because the window starts at the
-      last wake.
-    */
-    'last_wake_at = now()',
     'updated_at = now()',
   ];
+  if (input.looked !== false) {
+    /*
+      Recorded when the wake finishes, and nowhere else.
+
+      This is the only statement that moves it. `claimDueWakes` used to stamp it
+      as well, which sounds harmless and is not: the claim returns the row it
+      just wrote, so the wake it was starting got a window beginning at its own
+      first instant and observed nothing, for ever. See the comment there.
+
+      An owner pressing "think now" never goes through the claim, so this is
+      also what stops their agent reporting that it has never looked however
+      often they ask.
+    */
+    sets.push('last_wake_at = now()');
+  }
   const params: unknown[] = [agentId, input.reason.slice(0, 1000), input.quiet];
   if (input.nextWakeAt) {
     params.push(input.nextWakeAt);

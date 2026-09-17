@@ -40,6 +40,13 @@ export interface PlanInput {
   links: string[];
   /** What the rules decided, used as the fallback and shown to the model. */
   deterministic: Lookup[];
+  /**
+   * How long to wait for the model, from the owner's response speed setting.
+   *
+   * Zero means do not ask at all. Absent means the default below, which is what
+   * every caller that has no opinion about speed should pass.
+   */
+  timeoutMs?: number;
 }
 
 export interface Plan {
@@ -146,6 +153,12 @@ export async function hasPlanner(agentId: string): Promise<boolean> {
  * the floor this was always allowed to refine and never allowed to replace.
  *
  * If a provider gets faster, raise it and measure again rather than assuming.
+ *
+ * It is a default rather than the only answer, because it is also the number
+ * the owner's response speed setting moves: FAST does not ask at all, BALANCED
+ * takes this, and THOROUGH waits twenty seconds, which is past the measured p75
+ * and therefore keeps most of the plans instead of a quarter of them. The
+ * caller passes it in; nothing here decides how patient an agent should be.
  */
 const PLAN_TIMEOUT_MS = 3_500;
 
@@ -155,6 +168,15 @@ export async function planLookups(
   input: PlanInput,
 ): Promise<Plan> {
   const rules: Plan = { lookups: input.deterministic, needsImage: input.hasMedia, decidedBy: 'rules' };
+  /*
+    Zero means the owner asked for a reply that does not stop to plan one.
+
+    Reported as a fallback with a reason rather than silently, because "the
+    rules decided" and "the rules decided because you chose Fast" are different
+    answers to the same question on the screen that explains a reply.
+  */
+  const bound = input.timeoutMs ?? PLAN_TIMEOUT_MS;
+  if (bound <= 0) return { ...rules, fellBackBecause: 'this agent answers at the Fast setting, which does not plan' };
   if (!worthPlanning(input)) return rules;
   if (!(await hasPlanner(agentId))) return rules;
 
@@ -180,7 +202,7 @@ export async function planLookups(
         messages: [{ role: 'user', content: `${INSTRUCTION}\n\n${described}` }],
       }),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`planning took longer than ${PLAN_TIMEOUT_MS}ms`)), PLAN_TIMEOUT_MS),
+        setTimeout(() => reject(new Error(`planning took longer than ${bound}ms`)), bound),
       ),
     ]);
 

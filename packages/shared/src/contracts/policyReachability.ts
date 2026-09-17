@@ -112,6 +112,12 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'rate.workingHours.startHour': { where: 'ADVANCED_ONLY' },
   'rate.workingHours.timezone': { where: 'ADVANCED_ONLY' },
   'relationships.callbacksAllowedFrom': { where: 'INTERNAL', why: "Which familiarity levels may be referred back to." },
+  // Advanced only, deliberately. Easy Mode asks eleven questions about who the
+  // agent is and what it may do, and "how many optional model calls may a reply
+  // make" is not one an owner can answer before they have watched one. Easy
+  // leaves it at BALANCED and reports it as something Advanced can express,
+  // which is exactly what `readEasyView` is for.
+  responseSpeed: { where: 'ADVANCED_ONLY' },
   'relationships.mirrorHostility': { where: 'DEPRECATED', why: "Superseded by the DEFLECT rule, which is not optional." },
   'relationships.regularsGetBrevity': { where: 'DEPRECATED', why: "Relationship voice shaping. Applied from familiarity, not configured." },
   'relationships.strangerExplains': { where: 'DEPRECATED', why: "Relationship voice shaping." },

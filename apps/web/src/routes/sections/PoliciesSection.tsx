@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
+import { RESPONSE_SPEEDS, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contracts';
 import { ApiError, get, put } from '@app/lib/api';
 import { ChoiceGroup, ChoiceOption, Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
 import { Section, useSubHeading } from './Section';
@@ -163,6 +164,33 @@ export function PoliciesSection({
             label="Require target verification"
             description="Refuse to act unless the adapter positively identified the exact remote object."
           />
+          {/*
+            Each of these three turns real model calls on or off, and the words
+            beside them come from the same record the runtime reads, so a
+            setting cannot come to describe something it no longer does. A speed
+            control that adjusts a label would be worse than none: somebody
+            moves it, nothing changes, and they conclude the product is slow.
+          */}
+          <Field
+            label="Response speed"
+            hint="How many optional model calls a single reply may make. Reading the thread, memory, looking things up and the checks before sending happen at every setting."
+          >
+            <ChoiceGroup label="Response speed" className="space-y-2">
+              {RESPONSE_SPEEDS.map((speed) => (
+                <ChoiceOption
+                  key={speed}
+                  selected={draft.responseSpeed === speed}
+                  onSelect={() => patch((n) => void (n.responseSpeed = speed))}
+                  className={`block w-full rounded-lg border px-3.5 py-2.5 text-left text-sm transition-colors ${draft.responseSpeed === speed ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone' : 'border-ink-line text-bone-dim hover:border-bone-faint'}`}
+                >
+                  <span className="block font-medium text-bone">{RESPONSE_SPEED_PROFILES[speed].label}</span>
+                  <span className="mt-0.5 block break-words text-[12px] text-bone-faint">
+                    {RESPONSE_SPEED_PROFILES[speed].blurb}
+                  </span>
+                </ChoiceOption>
+              ))}
+            </ChoiceGroup>
+          </Field>
           <Toggle
             checked={draft.safety.reviewOnValidationFailure}
             onChange={(v) => patch((n) => void (n.safety.reviewOnValidationFailure = v))}

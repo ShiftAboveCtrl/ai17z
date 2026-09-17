@@ -193,6 +193,39 @@ it still declines anything past `STALE_HOURS` on its own terms. Both are tested,
 including the case where an old post arrives today and is let through the window
 and then declined for being old.
 
+### The claim must not close the window it is opening
+
+`claimDueWakes` moves `next_wake_at` forward in the statement that selects the
+agent, exactly like the account poller and the feed watcher. It must **not**
+also stamp `last_wake_at`, and it did.
+
+`UPDATE ... RETURNING` returns the row as written, so a claim that stamped it
+handed the wake it had just started a window beginning at that wake's own first
+instant. Every scheduled wake therefore looked at the few microseconds between
+the claim and the query, and there was never anything in them. Measured on a
+live installation: nineteen consecutive reflections recording `considered: 0`,
+a hundred and forty-two events sitting inside the window they should have
+covered, three hundred and ten keyword matches ingested over two days, and not
+one classifier call made. The working set held twenty-three items, all of them
+produced by a person pressing "think now" -- which does not go through the claim
+and therefore worked, which is also why nothing looked broken.
+
+`noteWake` records it when the wake finishes, which is where its own comment
+already said it belonged. Two consequences follow and both are deliberate:
+
+- **A wake that did not look does not move the window.** Paused, or one that
+  threw, records its reason and its backoff and leaves the window where it was.
+  Saying otherwise discards whatever arrived while it was failing.
+- **Leaving it open is the safe direction.** The window is bounded by
+  `observationsPerWake` and by `salience.ts` declining anything past
+  `STALE_HOURS`, so an agent paused for a week does not come back to a week of
+  backlog. The opposite mistake is the unrecoverable one.
+
+This is the same trap as the `occurred_at` window above, one layer up, and it
+survived for the same reason: every test drove `wakeAgent` directly, which is
+the path an owner's "think now" takes, and the claim is only on the worker's.
+`deliberation.test.ts` now asserts through `wakeDueAgents` for that reason.
+
 ## What it will not raise by itself
 
 Until deliberation, an agent only spoke when spoken to. A person had put the

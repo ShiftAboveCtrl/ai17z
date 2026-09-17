@@ -278,9 +278,21 @@ const STAGES: { key: string; name: string; types: TraceEventType[] }[] = [
     types: ['ENGAGEMENT_DECIDED', 'INTENT_SELECTED'] as TraceEventType[],
   },
   {
+    /*
+      What it was offered as well as what it used.
+
+      "It did not look that up" has two causes with one symptom: the capability
+      was never on the menu, or it was on the menu and the model answered
+      without it. They need opposite fixes -- the first is shortlisting, the
+      second is the prompt -- and a stage that shows only `CAPABILITY_USED`
+      reads identically in both cases. That is the whole reason
+      `CAPABILITY_OFFERED` is written, and leaving it out of here would have
+      left it visible only in the raw trace, which is the log this screen
+      exists to stop people reading.
+    */
     key: 'lookups',
     name: 'Looked things up',
-    types: ['RESEARCH_DONE', 'CAPABILITY_USED'] as TraceEventType[],
+    types: ['RESEARCH_DONE', 'CAPABILITY_OFFERED', 'CAPABILITY_USED'] as TraceEventType[],
   },
   {
     key: 'memory',

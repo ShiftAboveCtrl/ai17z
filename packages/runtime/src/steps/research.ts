@@ -1,5 +1,5 @@
 
-import { MediaInventory } from '@xbam/shared/contracts';
+import { MediaInventory, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contracts';
 
 import { createLogger } from '@xbam/shared';
 import {
@@ -74,6 +74,11 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
     hasMedia,
     links,
     deterministic: byRules,
+    // The owner's answer to "how long may a reply spend deciding what to look
+    // up". Zero on Fast, which skips the call entirely and says so.
+    timeoutMs: RESPONSE_SPEED_PROFILES[bundle.policy.responseSpeed].modelPlansResearch
+      ? RESPONSE_SPEED_PROFILES[bundle.policy.responseSpeed].planTimeoutMs
+      : 0,
   });
   // The owner's cap on how many lookups one message may cause.
   //
