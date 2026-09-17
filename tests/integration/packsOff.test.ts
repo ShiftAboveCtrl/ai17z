@@ -169,15 +169,22 @@ async function everyPackOff(agentId: string): Promise<void> {
   for (const pack of TOOLPACKS) await setToolpack({ agentId, packId: pack.id, on: false });
 }
 
-/** What the loop would actually put in front of the model, for one real agent. */
-async function menuFor(agentId: string): Promise<string> {
+/**
+ * What the loop would actually put in front of the model, for one real agent.
+ *
+ * The task matters now. The loop shows the capabilities that bear on what is
+ * being answered, so a menu is only evidence about permission if the task asks
+ * for the thing: "say ok" correctly produces no menu at all, which would make
+ * every assertion below pass for the wrong reason.
+ */
+async function menuFor(agentId: string, task: string): Promise<string> {
   const settings = await capabilitySettings(agentId);
   let menu = '';
   await runCapabilityLoop({
     agentId,
     jobId: null,
     accountId: null,
-    messages: [{ role: 'user', content: 'say ok' } as ChatMessage],
+    messages: [{ role: 'user', content: task } as ChatMessage],
     permissions: settings.permissions,
     configs: settings.configs,
     paused: false,
@@ -282,7 +289,11 @@ describe('an agent with every Toolspace pack switched off', () => {
     const fixture = await createFixture({ policy: LOOP_ON });
     await everyPackOff(fixture.agentId);
 
-    const menu = await menuFor(fixture.agentId);
+    const menu = await menuFor(
+      fixture.agentId,
+      'what time is it, what is on that website, what did the repo ship, what is the gas price, ' +
+        'is the contract verified, what has he been posting, and is there a paper about it?',
+    );
     for (const prefix of ['web.', 'feed.', 'company.', 'research.', 'entity.', 'chain.', 'x.', 'contract.']) {
       expect(menu, `${prefix} is in a pack that is off and must not be offered`).not.toContain(prefix);
     }
@@ -339,7 +350,7 @@ describe('turning one pack on and off again', () => {
 
     // --- on -----------------------------------------------------------------
     await setToolpack({ agentId: fixture.agentId, packId: 'reference', on: true });
-    const onMenu = await menuFor(fixture.agentId);
+    const onMenu = await menuFor(fixture.agentId, 'can you look up that arxiv paper and the study behind it?');
     expect(onMenu).toContain('research.paper_lookup');
     // Only that pack. A pack switch reaching past its own prefixes would be a
     // bulk edit nobody asked for.
@@ -382,7 +393,9 @@ describe('turning one pack on and off again', () => {
 
     // --- off again ----------------------------------------------------------
     await setToolpack({ agentId: fixture.agentId, packId: 'reference', on: false });
-    expect(await menuFor(fixture.agentId)).not.toContain('research.paper_lookup');
+    expect(await menuFor(fixture.agentId, 'can you look up that arxiv paper and the study behind it?')).not.toContain(
+      'research.paper_lookup',
+    );
 
     // And the agent goes on working with it off.
     const outcome = await ingestNormalizedEvent({
