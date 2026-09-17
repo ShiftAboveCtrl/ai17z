@@ -297,3 +297,24 @@ export async function reconcileDrafting(staleMs = 10 * 60_000, maxAttempts = 3):
     used: used.length,
   };
 }
+
+/**
+ * What the agent has actually posted lately, newest first.
+ *
+ * Posts only, not replies. An agent may answer the same question all day
+ * without repeating itself, because each answer is to a different person; an
+ * account that posts the same observation three times in sixteen hours is
+ * repeating itself to everybody at once, which is the failure this exists to
+ * measure. Measured on a live account: three posts about one feature between
+ * 10:51 and 02:31, each derived from a reply the agent had just written.
+ */
+export async function recentPosts(agentId: string, limit = 12): Promise<string[]> {
+  const rows = await query<{ text: string }>(
+    `SELECT COALESCE(a.payload ->> 'text', '') AS text
+       FROM actions a JOIN jobs j ON j.id = a.job_id
+      WHERE j.agent_id = $1 AND a.type = 'POST' AND a.status = 'EXECUTED' AND a.dry_run = false
+      ORDER BY a.executed_at DESC NULLS LAST LIMIT $2`,
+    [agentId, Math.min(Math.max(limit, 1), 50)],
+  );
+  return rows.map((row) => row.text).filter((text) => text.trim().length > 0);
+}

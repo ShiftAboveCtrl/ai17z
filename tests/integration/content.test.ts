@@ -1,10 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { content, stances } from '@xbam/database';
+import { content, query, stances } from '@xbam/database';
 import { harvestIdeas, nextPost, releaseIdea } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
 installHarness();
+
+/**
+ * A post this agent really published, as the rows `recentPosts` reads.
+ *
+ * Written directly because what is being tested is the repetition guard, not
+ * the pipeline that produces a post: going through the pipeline would need a
+ * model, and the guard only ever looks at executed POST actions.
+ */
+async function publishPost(fixture: { agentId: string }, text: string): Promise<void> {
+  const suffix = Math.random().toString(16).slice(2, 10);
+  const [event] = await query<{ id: string }>(
+    `INSERT INTO events (channel, type, remote_event_id, text)
+     VALUES ('mock', 'SCHEDULED_TRIGGER', $1, 'a post') RETURNING id`,
+    [`ev-${suffix}`],
+  );
+  const [job] = await query<{ id: string }>(
+    `INSERT INTO jobs (event_id, agent_id, channel, action_type, idempotency_key, status)
+     VALUES ($1, $2, 'mock', 'POST', $3, 'EXECUTED') RETURNING id`,
+    [event!.id, fixture.agentId, `post-${suffix}`],
+  );
+  await query(
+    `INSERT INTO actions (job_id, agent_id, channel, type, status, dry_run, payload, idempotency_key, executed_at)
+     VALUES ($1, $2, 'mock', 'POST', 'EXECUTED', false, $3::jsonb, $4, now())`,
+    [job!.id, fixture.agentId, JSON.stringify({ text }), `act-${suffix}`],
+  );
+}
 
 describe('where ideas come from', () => {
   it('captures a question worth answering in public', async () => {
@@ -98,6 +124,56 @@ describe('where ideas come from', () => {
     };
     await harvestIdeas(exchange);
     expect(await harvestIdeas(exchange)).toHaveLength(0);
+  });
+});
+
+/*
+  The failure an owner actually saw.
+
+  ai17zos posted three near-identical things about one feature between 10:51
+  and 02:31, each derived from a reply it had written minutes earlier. The
+  evidence gate passed every time, because a single conversation about one
+  subject produces evidence quickly, and nothing asked whether the account had
+  just said this to everybody.
+*/
+describe('not saying the same thing to everybody twice', () => {
+  const holdAndHarvest = async (fixture: { agentId: string }, outgoing: string) => {
+    const position = {
+      agentId: fixture.agentId,
+      subject: 'Telegram',
+      position: 'POSITIVE' as const,
+      summary: 'Better evidence changes the memory, and the alert is what makes that visible.',
+      confidence: 0.9,
+    };
+    await stances.assert({ ...position, evidence: { excerpt: 'the alert makes it visible' } });
+    await stances.assert({ ...position, evidence: { excerpt: 'you see the update happen' } });
+    return harvestIdeas({
+      agentId: fixture.agentId,
+      jobId: null,
+      incoming: 'so what does the alert actually do',
+      outgoing,
+      handle: 'bob',
+    });
+  };
+
+  it('offers a subject the account has not just posted about', async () => {
+    const fixture = await createFixture();
+    const captured = await holdAndHarvest(
+      fixture,
+      'Memory updating silently is how an agent quietly gets worse. The Telegram alert is the part I like, because better evidence changes the record.',
+    );
+    expect(captured.some((idea) => idea.kind === 'opinion')).toBe(true);
+  });
+
+  it('declines a subject the account posted about an hour ago', async () => {
+    const fixture = await createFixture();
+    await publishPost(fixture, 'The memory should change when the evidence changes. The Telegram alert is what makes that visible.');
+
+    const captured = await holdAndHarvest(
+      fixture,
+      'Memory updating silently is how an agent quietly gets worse. The Telegram alert is the part I like, because better evidence changes the record.',
+    );
+    expect(captured.some((idea) => idea.kind === 'opinion')).toBe(false);
   });
 });
 
