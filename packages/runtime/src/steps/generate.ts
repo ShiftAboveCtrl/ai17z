@@ -1,5 +1,5 @@
 
-import { positionsConflict } from '@xbam/shared/contracts';
+import { positionsConflict, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contracts';
 import type {
   QualityReport,
   RelationshipContext,
@@ -237,6 +237,10 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
       generate: callModel,
       permissions: settings.permissions,
       configs: settings.configs,
+      // One stop rather than four on FAST. Every step is a whole extra model
+      // call, so this is the lever that costs the most when it is used and
+      // nothing at all when the model answers without asking for anything.
+      maxSteps: RESPONSE_SPEED_PROFILES[bundle.policy.responseSpeed].capabilitySteps,
       paused: (await pauseState().catch(() => ({ paused: false }))).paused,
     });
     text = loop.answer;
@@ -388,15 +392,25 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
   if (!policy.voice.enabled || !draft) return;
 
   const context = job.resolvedContext;
+  const speed = RESPONSE_SPEED_PROFILES[policy.responseSpeed];
   const compiled = await compileForJob({
     agentId: bundle.agent.id,
     jobId: job.id,
     draft,
     policy,
     recipientHandle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
-    // A dry run is for seeing what would be said, so it is worth showing the
-    // real thing; but a rewrite costs money and a dry run is not going out.
-    allowModelCall: !job.dryRun,
+    /*
+      A dry run is for seeing what would be said, so it is worth showing the
+      real thing; but a rewrite costs money and a dry run is not going out.
+
+      And the rewrite is the single largest optional cost in a reply: 24.9
+      seconds at the median against 10.2 for the answer itself. That is what
+      FAST gives up, and it is the honest thing for it to give up, because the
+      free deterministic pass still runs and still catches a helpdesk sign-off.
+      What FAST loses is the rewrite of a correctly-sized reply that merely
+      reads slightly unlike the agent.
+    */
+    allowModelCall: !job.dryRun && speed.voiceRewrite,
     maxCalls: policy.budget.maxModelCallsPerJob,
   });
 

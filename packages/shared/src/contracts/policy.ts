@@ -299,6 +299,100 @@ export const ToolPolicy = z.object({
 });
 export type ToolPolicy = z.infer<typeof ToolPolicy>;
 
+/**
+ * How much a reply is allowed to cost in time before it is sent.
+ *
+ * Three settings rather than a number of seconds, because seconds are not what
+ * an owner is choosing between. What actually varies is how many extra model
+ * calls a single reply makes, and each of the three below turns real ones on or
+ * off. **There is no setting here that does nothing**, which is the whole
+ * hazard of a control like this: a speed switch that adjusts a label is worse
+ * than no switch, because it invites somebody to move it and conclude the
+ * product is slow anyway.
+ *
+ * Measured on a live installation before this existed, over the reply pipeline:
+ *
+ * | call | median | what it does |
+ * | --- | --- | --- |
+ * | the answer itself | 10.2s | writes the reply |
+ * | the voice rewrite | 24.9s | rewrites it in the agent's own register |
+ * | the research plan | 10.6s | chooses what to look up, bounded at 3.5s |
+ *
+ * So the voice rewrite is the single largest optional cost in a reply, and the
+ * research plan is the one that most often times out having been paid for.
+ * Those are what FAST gives up. It does not give up looking things up, reading
+ * the thread, memory, the validator, or the deterministic voice pass, none of
+ * which are model calls.
+ *
+ * THOROUGH is not "the same but labelled differently": it raises the research
+ * plan's bound from 3.5 seconds to twenty. The measured distribution has a p75
+ * of 15.6 seconds, so 3.5 keeps about a quarter of the plans that would arrive
+ * and twenty keeps most of them. An agent on THOROUGH looks up what a model
+ * chose; one on BALANCED usually looks up what the deterministic rules chose.
+ */
+export const RESPONSE_SPEEDS = ['FAST', 'BALANCED', 'THOROUGH'] as const;
+export const ResponseSpeed = z.enum(RESPONSE_SPEEDS);
+export type ResponseSpeed = (typeof RESPONSE_SPEEDS)[number];
+
+/**
+ * What each setting actually changes, in one place.
+ *
+ * The runtime reads the numbers and the interface reads the words, so a setting
+ * cannot come to describe something it no longer does. `tests/unit/responseSpeed.test.ts`
+ * asserts the three differ from each other in at least one lever, which is the
+ * property that stops this becoming a switch that changes nothing.
+ */
+export interface ResponseSpeedProfile {
+  /** Whether a reply may be rewritten in the agent's voice by a model. */
+  voiceRewrite: boolean;
+  /** Whether a cheap model may choose what to look up, rather than the rules. */
+  modelPlansResearch: boolean;
+  /** How long that choice is given before the rules stand. */
+  planTimeoutMs: number;
+  /** How many times the model may stop and ask for a capability mid-answer. */
+  capabilitySteps: number;
+  /** Shown beside the control. */
+  label: string;
+  blurb: string;
+}
+
+export const RESPONSE_SPEED_PROFILES: Record<ResponseSpeed, ResponseSpeedProfile> = {
+  FAST: {
+    voiceRewrite: false,
+    modelPlansResearch: false,
+    planTimeoutMs: 0,
+    capabilitySteps: 1,
+    label: 'Fast',
+    blurb:
+      'Answers with one model call. It still reads the thread, remembers, looks things up and is checked before it goes out, but it is not rewritten in the agent’s voice by a model and the rules decide what to look up.',
+  },
+  BALANCED: {
+    voiceRewrite: true,
+    modelPlansResearch: true,
+    planTimeoutMs: 3_500,
+    capabilitySteps: 4,
+    label: 'Balanced',
+    blurb: 'The default. Rewrites in the agent’s voice, and lets a cheap model choose what to look up if it answers quickly.',
+  },
+  THOROUGH: {
+    voiceRewrite: true,
+    modelPlansResearch: true,
+    planTimeoutMs: 20_000,
+    capabilitySteps: 4,
+    label: 'Thorough',
+    blurb:
+      'Waits for the model that chooses what to look up rather than falling back to the rules when it is slow. Adds up to twenty seconds to a reply that needs research.',
+  },
+};
+
+/** The levers, for anything that needs to prove two settings differ. */
+export const RESPONSE_SPEED_LEVERS = [
+  'voiceRewrite',
+  'modelPlansResearch',
+  'planTimeoutMs',
+  'capabilitySteps',
+] as const;
+
 /** The complete, versioned policy document attached to an agent. */
 export const PolicyConfig = z.object({
   automation: z
@@ -331,6 +425,13 @@ export const PolicyConfig = z.object({
   tone: ToneMirroring.default({}),
   /** How the agent's own way of writing is enforced, whatever model wrote it. */
   voice: VoicePolicy.default({}),
+  /**
+   * How much time a reply may spend on optional model calls.
+   *
+   * BALANCED is exactly what every agent already did, so this field arriving
+   * changes nothing about an existing installation until somebody moves it.
+   */
+  responseSpeed: ResponseSpeed.default('BALANCED'),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 

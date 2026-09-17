@@ -738,6 +738,18 @@ export async function formEngagements(agentId: string, observations: Observation
 
   let proposed = 0;
   for (const observation of observations) {
+    /*
+      Bounded per wake, and the bound is about judgement rather than about load.
+
+      A wake reads up to a hundred and twenty observations, and the ones after a
+      quiet spell or a restart are exactly the wakes that have a lot to look at.
+      Acknowledging forty posts because forty accumulated is not a decision
+      anybody made about any of them, and it is the shape `engagementWorth.ts`
+      argues against: an account that amplifies whatever it happened to see.
+      The strongest are first because `recentObservations` orders by recency and
+      the score declines with age.
+    */
+    if (proposed >= DELIBERATION_LIMITS.engagementsPerWake) break;
     // Only what somebody else posted on X. The agent's own actions, its
     // stances, its commitments and a repository's commits are all observations
     // and none of them is a post anybody can like.
@@ -841,7 +853,10 @@ export async function wakeAgent(
   */
   const paused = await pauseState();
   if (paused.paused) {
-    await mind.noteWake(agentId, { reason: 'Everything is paused.', quiet: true });
+    // `looked: false`, because it did not. Moving the window here would mean
+    // everything that arrived during the pause was silently skipped the moment
+    // somebody unpaused, and the window only ever moves forward.
+    await mind.noteWake(agentId, { reason: 'Everything is paused.', quiet: true, looked: false });
     return emptyOutcome(agentId, wake.autonomy, 'Everything is paused.', 'paused');
   }
 
@@ -1032,7 +1047,10 @@ export async function wakeDueAgents(limit = 3): Promise<WakeOutcome[]> {
       // retried every tick.
       log.warn('a wake failed', { agentId: row.agentId, message: errorMessage(error) });
       await mind
-        .noteWake(row.agentId, { reason: `Thinking failed: ${errorMessage(error)}`, quiet: true })
+        // The reason and the backoff are recorded; the window is not moved. A
+        // wake that threw did not finish looking, and a broken classifier must
+        // not quietly consume a day of observations on its way past.
+        .noteWake(row.agentId, { reason: `Thinking failed: ${errorMessage(error)}`, quiet: true, looked: false })
         .catch(() => undefined);
     }
   }

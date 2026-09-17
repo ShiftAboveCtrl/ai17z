@@ -132,6 +132,25 @@ believe it got worse and two minutes to believe it got better, because
 `freemem` moves every second and an unsmoothed verdict starts and abandons the
 same work repeatedly.
 
+**A speed setting turns model calls on and off, or it is a label.** The three
+response speeds are one record in `contracts/policy.ts` that the runtime reads
+for its numbers and the interface reads for its words, so a setting cannot come
+to describe something it no longer does, and `responseSpeed.test.ts` fails if
+any two of them do the same thing. What varies is the voice rewrite (24.9s at
+the median, the largest optional cost in a reply), whether a cheap model chooses
+what to look up and how long it is given, and how many times the model may stop
+to ask for a capability. What never varies is reading the thread, memory, the
+lookups themselves, the validator or the deterministic voice pass, because a
+faster reply that is checked less is not a speed setting, it is a different
+promise.
+
+**A claim moves a due time and nothing else.** `claimDueWakes`, the account
+poller and the feed watcher all move the next-due column in the statement that
+selects the row. A claim that also stamps "last looked at" closes the window the
+work it is claiming is about to read, because `UPDATE ... RETURNING` returns the
+row as written. That cost deliberation every scheduled observation it ever had.
+See `DELIBERATION.md`.
+
 
 
 **Nothing downstream of a channel adapter knows what X looks like.** No selector,

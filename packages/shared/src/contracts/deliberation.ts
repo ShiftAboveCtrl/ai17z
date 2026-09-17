@@ -170,6 +170,22 @@ export const DELIBERATION_LIMITS = {
   summary: 300,
   /** How many observations one wake considers. */
   observationsPerWake: 120,
+  /**
+   * Posts one wake may decide are worth acknowledging.
+   *
+   * A wake reads up to `observationsPerWake`, so without a bound here a single
+   * catch-up can queue dozens of likes: the worker's cadence and the account
+   * ceiling still pace them out, so nothing arrives on X at once, but a backlog
+   * of forty pending acknowledgements is not a judgement anybody made. An agent
+   * that finds forty things worth acknowledging in one wake has not been
+   * reading, it has been catching up, and `engagementWorth.ts` is written for
+   * the first of those.
+   *
+   * Five is the number of things a person might plausibly like in half an hour
+   * of scrolling. It bites only on a wake that had a lot to look at, which is
+   * exactly the case it exists for.
+   */
+  engagementsPerWake: 5,
 } as const;
 
 /** Salience below which an item is not worth keeping in the working set. */

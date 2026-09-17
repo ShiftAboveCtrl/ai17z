@@ -823,6 +823,70 @@ describe('the wake schedule', () => {
     // And nothing is due immediately afterwards.
     expect((await wakeDueAgents(5)).map((o) => o.agentId)).not.toContain(agent.agentId);
   });
+
+  /*
+    The defect that made this whole feature do nothing on a real installation,
+    a second time and one layer up from the first.
+
+    Every other test here calls `wakeAgent` directly, which is the path an owner
+    pressing "think now" takes. The worker takes a different one: it claims the
+    agent first, and the claim used to stamp `last_wake_at` in the same
+    statement it selected the row with. `UPDATE ... RETURNING` returns the new
+    row, so the wake it had just started was handed a window beginning at its
+    own first instant and there was never anything inside it.
+
+    Measured on a live installation before this: nineteen consecutive
+    reflections reading `considered: 0`, a hundred and forty-two events sitting
+    in the window they should have covered, and not one classifier call in a
+    day. The working set held only what a person had produced by pressing the
+    button. So this asserts through `wakeDueAgents` on purpose: asserting
+    through `wakeAgent` is what let it past.
+  */
+  it('sees what arrived before it was claimed, through the loop the worker runs', async () => {
+    const agent = await agentThatThinks();
+    await somebodySaid(agent.accountId, 'Agent memory that survives a restart is the hard part of autonomous agents.');
+
+    const outcomes = await wakeDueAgents(5);
+    const mine = outcomes.find((outcome) => outcome.agentId === agent.agentId);
+    expect(mine).toBeDefined();
+    expect(mine!.observed).toBeGreaterThan(0);
+    expect(mine!.attended).toBe(1);
+  });
+
+  it('does not move the window when it claims an agent', async () => {
+    const agent = await agentThatThinks();
+    // A wake that finished, an hour ago, with the next one already due.
+    await mind.noteWake(agent.agentId, {
+      reason: 'looked',
+      quiet: true,
+      nextWakeAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const before = (await mind.getWake(agent.agentId))!.lastWakeAt;
+
+    const claimed = await mind.claimDueWakes(5, 300);
+    expect(claimed.map((row) => row.agentId)).toContain(agent.agentId);
+
+    // Both the row the claim handed back and the row still in the database.
+    expect(claimed.find((row) => row.agentId === agent.agentId)!.lastWakeAt).toBe(before);
+    expect((await mind.getWake(agent.agentId))!.lastWakeAt).toBe(before);
+  });
+
+  it('leaves the window open when a wake was refused rather than run', async () => {
+    // Paused is not looked. Advancing here means everything that arrived during
+    // the pause is skipped the moment somebody unpauses, and the window only
+    // ever moves forward.
+    const agent = await agentThatThinks();
+    await mind.noteWake(agent.agentId, { reason: 'looked', quiet: true });
+    const before = (await mind.getWake(agent.agentId))!.lastWakeAt;
+
+    await setPauseAll({ paused: true, by: null });
+    const outcome = await wakeAgent(agent.agentId);
+    expect(outcome.reason).toMatch(/paused/i);
+
+    const after = await mind.getWake(agent.agentId);
+    expect(after!.lastWakeAt).toBe(before);
+    expect(after!.lastReason).toMatch(/paused/i);
+  });
 });
 
 describe('reflection', () => {

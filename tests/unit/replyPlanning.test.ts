@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { refersToSomethingElse, textStandsAlone } from '@xbam/shared';
-import { parsePlan, questionsIn, whatToResearch, worthPlanning } from '@xbam/runtime';
+import { parsePlan, planLookups, questionsIn, whatToResearch, worthPlanning } from '@xbam/runtime';
 
 /**
  * Deciding what to look at before replying.
@@ -163,6 +163,31 @@ describe('asking a model to plan, only where it pays', () => {
     expect(worthPlanning({ ...base, hasMedia: true })).toBe(true);
     expect(worthPlanning({ ...base, incoming: 'what is this?' })).toBe(true);
     expect(worthPlanning({ ...base, links: ['https://example.com'] })).toBe(true);
+  });
+
+  /*
+    The Fast setting, at the one place it can be proved without a provider.
+
+    A bound of zero returns before anything is resolved, asked or awaited, which
+    is the property that makes it worth having: no model is chosen, no classifier
+    row is read, and the reply does not stop. It says why, because "the rules
+    decided" and "the rules decided because you chose Fast" are different
+    answers on the screen that explains a reply.
+  */
+  it('does not ask at all when the owner chose Fast, and says so', async () => {
+    const rules = [{ kind: 'search' as const, query: 'weather in Chicago today', reason: 'the rules found it' }];
+    const plan = await planLookups('no-such-agent', null, {
+      incoming: 'whats the weather like in Chicago today?',
+      parent: null,
+      hasMedia: false,
+      links: [],
+      deterministic: rules,
+      timeoutMs: 0,
+    });
+
+    expect(plan.decidedBy).toBe('rules');
+    expect(plan.lookups).toEqual(rules);
+    expect(plan.fellBackBecause).toMatch(/Fast/);
   });
 });
 

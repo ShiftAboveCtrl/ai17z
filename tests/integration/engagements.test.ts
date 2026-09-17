@@ -7,7 +7,7 @@ import {
   engagements as engagementsRepo,
   jobs as jobsRepo,
 } from '@xbam/database';
-import { CLAIMABLE_JOB_STATUSES } from '@xbam/shared/contracts';
+import { CLAIMABLE_JOB_STATUSES, DELIBERATION_LIMITS } from '@xbam/shared/contracts';
 import { formEngagements, runDueEngagements, setPauseAll, type Observation } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -74,6 +74,27 @@ describe('proposing something worth acknowledging', () => {
     // no reasons is not shippable anywhere in this codebase.
     expect(row!.factors.length).toBeGreaterThan(0);
     for (const factor of row!.factors) expect(factor.detail.length).toBeGreaterThan(0);
+  });
+
+  it('stops after a handful, however much one wake had to look at', async () => {
+    /*
+      A wake reads up to a hundred and twenty observations, and the ones that
+      have a lot to look at are exactly the ones after a quiet spell or a
+      restart. Acknowledging forty posts because forty accumulated is not a
+      decision anybody made about any of them.
+
+      Twenty posts here, every one of them on this agent's subject and every one
+      of them something `worthEngaging` would take on its own.
+    */
+    const agent = await agentThatEngages();
+    const many = Array.from({ length: 20 }, () => seen());
+
+    const proposed = await formEngagements(agent.agentId, many);
+
+    expect(proposed).toBe(DELIBERATION_LIMITS.engagementsPerWake);
+    expect(await engagementsRepo.listEngagements(agent.agentId)).toHaveLength(
+      DELIBERATION_LIMITS.engagementsPerWake,
+    );
   });
 
   it('proposes once however many times the post is seen', async () => {
