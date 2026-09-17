@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { resetPressureHold } from '@xbam/shared';
 import { startLoop } from '../../apps/worker/src/loop';
 
 /**
@@ -89,5 +90,63 @@ describe('a worker loop', () => {
     // Recovery is the point: a database that comes back must find the loop
     // still turning.
     expect(calls).toBeGreaterThan(3);
+  });
+});
+
+/**
+ * What an agent gives up before it stops answering people.
+ *
+ * Memory pressure used to be a boolean that said "pause background work",
+ * which nothing read: the health row claimed everything speculative had
+ * stopped while only job concurrency had moved. An ordering is enforceable,
+ * and this is where it is enforced.
+ */
+describe('what a loop gives up under memory pressure', () => {
+  const tick = async () => {
+    /* counted by the caller */
+  };
+
+  const countTicks = async (priority: 'ESSENTIAL' | 'STANDARD' | 'OPTIONAL', pressure: 'NORMAL' | 'PRESSURED' | 'CRITICAL') => {
+    resetPressureHold(pressure);
+    let calls = 0;
+    const timer = startLoop(
+      'test',
+      5,
+      async () => {
+        calls += 1;
+        await tick();
+      },
+      priority,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    clearInterval(timer);
+    return calls;
+  };
+
+  it('never stops the work somebody is waiting on', async () => {
+    // Mentions arriving, the owner's own commands, recovering a job a dead
+    // worker left. An agent that stops noticing people to save memory has
+    // stopped being an agent.
+    for (const pressure of ['NORMAL', 'PRESSURED', 'CRITICAL'] as const) {
+      expect(await countTicks('ESSENTIAL', pressure)).toBeGreaterThan(0);
+    }
+  });
+
+  it('drops the speculative work first', async () => {
+    expect(await countTicks('OPTIONAL', 'NORMAL')).toBeGreaterThan(0);
+    // Watching a repository is the thing nobody misses for ten minutes.
+    expect(await countTicks('OPTIONAL', 'PRESSURED')).toBe(0);
+    expect(await countTicks('OPTIONAL', 'CRITICAL')).toBe(0);
+  });
+
+  it('keeps the agent thinking until things are critical', async () => {
+    expect(await countTicks('STANDARD', 'NORMAL')).toBeGreaterThan(0);
+    expect(await countTicks('STANDARD', 'PRESSURED')).toBeGreaterThan(0);
+    expect(await countTicks('STANDARD', 'CRITICAL')).toBe(0);
+  });
+
+  it('resumes when the pressure clears', async () => {
+    expect(await countTicks('OPTIONAL', 'CRITICAL')).toBe(0);
+    expect(await countTicks('OPTIONAL', 'NORMAL')).toBeGreaterThan(0);
   });
 });
