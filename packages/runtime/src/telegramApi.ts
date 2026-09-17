@@ -180,19 +180,94 @@ export async function sendMessage(
   html: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
+  const body = {
+    chat_id: chatId,
+    text: html,
+    parse_mode: 'HTML',
+    // A notification about a link should not unfurl the link. The preview is
+    // usually a localhost address the phone cannot reach anyway.
+    link_preview_options: { is_disabled: true },
+  };
+  try {
+    await callTelegram(token, 'sendMessage', body, fetchImpl);
+  } catch (error) {
+    /*
+      A formatting mistake must not become silence.
+
+      Telegram refuses the whole message when it cannot parse the entities, so
+      one unescaped placeholder loses everything the message was for. That is
+      not hypothetical: `/help` rendered `/show <id>` literally, Telegram
+      answered `Unsupported start tag "id"`, and an owner asking what they
+      could type received nothing at all while `/health` kept working.
+
+      The escaping bug is fixed where it belongs. This is the second half:
+      anything that still cannot be parsed goes out as plain text, with the
+      tags stripped, so a future mistake costs the formatting rather than the
+      message. Only a parse failure is retried -- an invalid token, a blocked
+      bot or a chat that is gone are real errors and still raise.
+    */
+    if (!isParseFailure(error)) throw error;
+    await callTelegram(
+      token,
+      'sendMessage',
+      { ...body, text: stripTags(html), parse_mode: undefined },
+      fetchImpl,
+    );
+  }
+}
+
+/**
+ * Offers the command list to Telegram itself, so the app can autocomplete it.
+ *
+ * Convenience only. `/help` answers out of `COMMANDS` whatever this does, and
+ * nothing here is allowed to decide what a command is: the list is the same
+ * closed set, and a name Telegram does not accept simply does not appear in the
+ * menu. Best-effort by design -- a bot that cannot publish its menu still works
+ * completely, so a failure here is logged by the caller and changes nothing.
+ *
+ * Scoped to the one paired chat rather than set globally, because the bot may
+ * be reachable by anybody who knows its username and a menu is an invitation.
+ */
+export async function publishCommands(
+  token: string,
+  chatId: number,
+  commands: { command: string; description: string }[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
   await callTelegram(
     token,
-    'sendMessage',
+    'setMyCommands',
     {
-      chat_id: chatId,
-      text: html,
-      parse_mode: 'HTML',
-      // A notification about a link should not unfurl the link. The preview is
-      // usually a localhost address the phone cannot reach anyway.
-      link_preview_options: { is_disabled: true },
+      commands: commands.map((entry) => ({
+        // Telegram accepts lower-case letters, digits and underscores, 1 to 32.
+        command: entry.command.toLowerCase().slice(0, 32),
+        description: entry.description.slice(0, 256),
+      })),
+      scope: { type: 'chat', chat_id: chatId },
     },
     fetchImpl,
   );
+}
+
+/** Telegram's wording for "this is not HTML I can read". */
+function isParseFailure(error: unknown): boolean {
+  return /can't parse entities|unsupported start tag|unclosed start tag|can't find end tag/i.test(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+/**
+ * The same words without the markup.
+ *
+ * Deliberately blunt: this only ever runs after Telegram has already said the
+ * markup is unreadable, so preserving it is not an option worth having.
+ */
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
 }
 
 /**
