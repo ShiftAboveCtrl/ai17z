@@ -1072,7 +1072,7 @@ export async function mindForMessage(
   agentId: string,
   text: string,
   isPost: boolean,
-): Promise<{ kind: AttentionKind; summary: string; confidence: number }[]> {
+): Promise<{ kind: AttentionKind | 'GOAL'; summary: string; confidence: number }[]> {
   /*
     What it is trying to do travels with what it has been thinking about.
 
@@ -1084,7 +1084,7 @@ export async function mindForMessage(
     it has a keyword.
   */
   const goals = (await mind.listGoals(agentId, { status: 'ACTIVE', limit: GOALS_IN_PROMPT })).map((goal) => ({
-    kind: 'GOAL' as AttentionKind,
+    kind: 'GOAL' as const,
     summary: goal.summary,
     confidence: 1,
   }));

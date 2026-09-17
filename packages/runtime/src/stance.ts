@@ -135,7 +135,7 @@ function looksLikeAName(word: string): boolean {
 
 function startsASentence(text: string, index: number): boolean {
   let at = index - 1;
-  while (at >= 0 && /["'“”‘’(\[]/.test(text[at]!)) at -= 1;
+  while (at >= 0 && /["'“”‘’([]/.test(text[at]!)) at -= 1;
   while (at >= 0 && /\s/.test(text[at]!)) at -= 1;
   if (at < 0) return true;
   return /[.!?:;—–]/.test(text[at]!);

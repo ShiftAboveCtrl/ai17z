@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FlaskConical, Link2, MessageSquare } from 'lucide-react';
 import { ApiError, get, post } from '@app/lib/api';
 import { useElapsed, useResource } from '@app/lib/hooks';
 import { ChoiceGroup, ChoiceOption, EmptyState, Field, Spinner, Working } from '@app/components/ui';
-import { Gaps, Panel } from './shared';
+import { Panel } from './shared';
+import { ReplyInspector } from '@app/components/ReplyInspector';
 
 /**
  * The Response Lab.
@@ -33,36 +34,6 @@ import { Gaps, Panel } from './shared';
  * behind that flag.
  */
 
-interface LabInput {
-  key: string;
-  name: string;
-  why: string;
-  value: string | null;
-  present: boolean;
-}
-
-interface LabStage {
-  key: string;
-  name: string;
-  outcome: 'RAN' | 'DECIDED_AGAINST' | 'SKIPPED' | 'FAILED' | 'WAITING';
-  detail: string;
-  at: string | null;
-}
-
-interface LabExplanation {
-  jobId: string;
-  status: string;
-  dryRun: boolean;
-  finished: boolean;
-  subject: { handle: string | null; text: string; url: string | null; at: string | null };
-  draft: string | null;
-  answer: string | null;
-  silence: string | null;
-  inputs: LabInput[];
-  stages: LabStage[];
-  gaps: string[];
-}
-
 interface TaskRow {
   id: string;
   status: string;
@@ -70,14 +41,6 @@ interface TaskRow {
   error: string | null;
 }
 
-/** How the outcome of a stage reads, and how it looks. */
-const OUTCOME: Record<LabStage['outcome'], { label: string; tone: string }> = {
-  RAN: { label: 'ran', tone: 'text-bone-dim' },
-  DECIDED_AGAINST: { label: 'decided against', tone: 'text-bone-dim' },
-  SKIPPED: { label: 'did not run', tone: 'text-bone-faint' },
-  FAILED: { label: 'failed', tone: 'text-signal-fail' },
-  WAITING: { label: 'waiting', tone: 'text-bone-faint' },
-};
 
 export function LabView({ agentId }: { agentId: string }) {
   const [mode, setMode] = useState<'typed' | 'post'>('typed');
@@ -210,7 +173,7 @@ export function LabView({ agentId }: { agentId: string }) {
         <ReadingThePost taskId={taskId} detail={reading} onJob={setJobId} onFailed={setError} />
       )}
 
-      {jobId && <Explanation agentId={agentId} jobId={jobId} />}
+      {jobId && <ReplyInspector agentId={agentId} jobId={jobId} />}
 
       {!jobId && !taskId && !busy && (
         <div className="mt-8">
@@ -291,17 +254,6 @@ function ReadingThePost({
 }
 
 /** The wait while the pipeline runs, with the elapsed time the rule asks for. */
-function Thinking() {
-  const seconds = useElapsed(true);
-  return (
-    <Working
-      label="Thinking"
-      seconds={seconds}
-      slowHint="It is running the same steps a real reply runs, including anything it decided to look up."
-    />
-  );
-}
-
 /**
  * What fed the answer, and what happened to it.
  *
@@ -310,110 +262,3 @@ function Thinking() {
  * an owner who is happy with the draft never has to read them, and one who is
  * not goes straight to the row that explains it.
  */
-function Explanation({ agentId, jobId }: { agentId: string; jobId: string }) {
-  const [data, setData] = useState<LabExplanation | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setData(await get<LabExplanation>(`/api/agents/${agentId}/lab/${jobId}`));
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'That rehearsal could not be read back.');
-    }
-  }, [agentId, jobId]);
-
-  const finished = data?.finished ?? false;
-  useEffect(() => {
-    void load();
-    // A settled rehearsal does not change again, so the polling stops rather
-    // than asking a finished question every second and a half for as long as
-    // the tab is open.
-    if (finished) return undefined;
-    const timer = setInterval(() => {
-      void load();
-    }, 1_500);
-    return () => clearInterval(timer);
-  }, [load, finished]);
-
-  if (error) return <p className="mt-8 break-words text-sm text-signal-fail">{error}</p>;
-  if (!data) {
-    return (
-      <div className="mt-8">
-        <Thinking />
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <Panel
-        title={data.silence ? 'It decided not to answer' : 'What it would say'}
-        lede={
-          data.finished
-            ? data.silence
-              ? 'Silence is a decision here, not a failure, and it comes with its reasons.'
-              : 'This was never sent. It is what would have gone out.'
-            : 'Still working.'
-        }
-      >
-        {data.silence ? (
-          <p className="break-words rounded-xl border border-ink-line px-4 py-3.5 text-[15px] leading-relaxed text-bone-dim">
-            {data.silence}
-          </p>
-        ) : (
-          <>
-            <p className="break-words rounded-xl border border-ink-line px-4 py-3.5 text-[15px] leading-relaxed text-bone">
-              {data.answer ?? 'Nothing yet.'}
-            </p>
-            {data.draft && data.draft !== data.answer && (
-              <details className="mt-3">
-                <summary className="cursor-pointer text-[12px] text-bone-faint">
-                  What the model wrote, before the voice pass
-                </summary>
-                <p className="mt-2 break-words rounded-lg border border-dashed border-ink-line px-3.5 py-3 text-[13px] leading-relaxed text-bone-faint">
-                  {data.draft}
-                </p>
-              </details>
-            )}
-          </>
-        )}
-      </Panel>
-
-      <Panel title="What it could see" lede="The observable inputs this answer rests on. Anything absent is named rather than left blank.">
-        <ul className="space-y-2">
-          {data.inputs.map((input) => (
-            <li key={input.key} className="rounded-xl border border-ink-line px-4 py-3">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h3 className="text-[14px] font-light text-bone">{input.name}</h3>
-                {!input.present && (
-                  <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-bone-faint">nothing</span>
-                )}
-              </div>
-              <p className="mt-1 text-[12px] leading-relaxed text-bone-faint">{input.why}</p>
-              {input.value && (
-                <p className="mt-2 break-words text-[13px] leading-relaxed text-bone-dim">{input.value}</p>
-              )}
-            </li>
-          ))}
-        </ul>
-        <Gaps items={data.gaps} label="Not known" />
-      </Panel>
-
-      <Panel title="How it got there" lede="Every stage of the pipeline, and what it decided. Read off the job’s own trace, so it is what happened rather than an account of it.">
-        <ol className="space-y-2">
-          {data.stages.map((stage) => (
-            <li key={stage.key} className="rounded-xl border border-ink-line px-4 py-3">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h3 className="text-[14px] font-light text-bone">{stage.name}</h3>
-                <span className={`ml-auto font-mono text-[10px] uppercase tracking-[0.2em] ${OUTCOME[stage.outcome].tone}`}>
-                  {OUTCOME[stage.outcome].label}
-                </span>
-              </div>
-              <p className="mt-1.5 break-words text-[12px] leading-relaxed text-bone-faint">{stage.detail}</p>
-            </li>
-          ))}
-        </ol>
-      </Panel>
-    </>
-  );
-}

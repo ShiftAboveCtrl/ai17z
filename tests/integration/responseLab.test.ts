@@ -228,6 +228,44 @@ describe('what fed the answer', () => {
   });
 });
 
+/*
+  The same account, for a reply that really went out.
+
+  The explanation was written for the Lab and rendered only there, so the only
+  answers an owner could inspect were rehearsals -- while it is assembled
+  entirely from rows an ordinary reply already writes and takes any job id.
+  The job page now shows it above the raw trace, and this is the guarantee that
+  makes that worth doing.
+*/
+describe('inspecting a reply that was not a rehearsal', () => {
+  it('explains a published job the same way it explains a rehearsal', async () => {
+    const fixture = await labAgent();
+    const suffix = Math.random().toString(16).slice(2, 10);
+    const [event] = await query<{ id: string }>(
+      `INSERT INTO events (channel, type, remote_event_id, text, remote_author_handle, occurred_at)
+       VALUES ('mock', 'MENTION', $1, 'what do you make of durable agent memory?', 'someone', now())
+       RETURNING id`,
+      [`ev-${suffix}`],
+    );
+    const [job] = await query<{ id: string }>(
+      `INSERT INTO jobs (event_id, agent_id, channel, action_type, idempotency_key, status, dry_run,
+                         generated_output, validated_output)
+       VALUES ($1, $2, 'mock', 'REPLY', $3, 'EXECUTED', false, $4, $4) RETURNING id`,
+      [event!.id, fixture.agentId, `job-${suffix}`, 'Durable is the wrong word for it.'],
+    );
+
+    const explained = await explainRehearsal(job!.id);
+    expect(explained.jobId).toBe(job!.id);
+    // A real reply, and the account of it is the same shape.
+    expect(explained.dryRun).toBe(false);
+    expect(explained.answer).toContain('Durable');
+    expect(explained.stages.length).toBeGreaterThan(0);
+    // Absent inputs are named rather than left blank, which is the property
+    // that makes this readable when something did not run.
+    expect(explained.inputs.length).toBeGreaterThan(0);
+  });
+});
+
 describe('a rehearsal is not a message', () => {
   it('stays out of the owner’s inbox, and out of the badge', async () => {
     /*
