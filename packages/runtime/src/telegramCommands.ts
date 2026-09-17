@@ -10,7 +10,7 @@ import { approveJob, rejectJob } from './approvals';
 import { collectHealth } from './health';
 import { pauseState, setPauseAll } from './killSwitch';
 import { loadConfig, saveConfig, telegramMuted, type TelegramConfig } from './telegram';
-import { escapeHtml, getUpdates, sendMessage } from './telegramApi';
+import { escapeHtml, getUpdates, publishCommands, sendMessage } from './telegramApi';
 
 const log = createLogger('telegram-commands');
 
@@ -122,6 +122,15 @@ export const COMMANDS: CommandSpec[] = [
 const BY_NAME = new Map(COMMANDS.map((command) => [command.name, command]));
 
 /**
+ * Whether the command menu has been offered to Telegram this worker lifetime.
+ *
+ * Module state rather than a stored field: it is a convenience that costs one
+ * API call, republishing after a restart is harmless, and persisting it would
+ * mean a schema change for something nothing depends on.
+ */
+let menuPublished = false;
+
+/**
  * Short names people reach for, mapped to the real one.
  *
  * **Nothing that changes something is reachable by a word Telegram itself
@@ -149,12 +158,27 @@ const ALIASES: Record<string, string> = {
   s: 'status',
 };
 
+/**
+ * The command list, as Telegram HTML.
+ *
+ * `args` is escaped, and that is the whole of this function's history. The
+ * blurb was escaped and the argument placeholder was not, so `/show <id>` went
+ * out as a literal `<id>`; Telegram parses the message as HTML and answered
+ * `Bad Request: can't parse entities: Unsupported start tag "id"`. The send
+ * threw, the catch logged a warning nobody reads, and the owner asking for
+ * help got silence. `/health` carries no placeholder, which is exactly why it
+ * worked and this did not.
+ *
+ * Four of the eleven commands take an argument, so four of them were enough to
+ * break the one command whose job is to explain the other ten.
+ */
 export function helpText(): string {
   const lines = [
     '<b>What you can ask me</b>',
     '',
     ...COMMANDS.map(
-      (command) => `<code>/${command.name}${command.args ? ` ${command.args}` : ''}</code> · ${escapeHtml(command.blurb)}`,
+      (command) =>
+        `<code>/${command.name}${command.args ? ` ${escapeHtml(command.args)}` : ''}</code> · ${escapeHtml(command.blurb)}`,
     ),
     '',
     '<i>Ids are the first eight characters. Typing more of one is fine.</i>',
@@ -472,6 +496,28 @@ export async function pollTelegramCommands(fetchImpl: typeof fetch = fetch): Pro
   if (!config.enabled || !config.tokenSealed || !config.chatId) return 0;
 
   const token = openSecret(config.tokenSealed);
+
+  /*
+    Offer the menu to Telegram, once, and never depend on it.
+
+    `/help` answers out of `COMMANDS` whatever happens here; this only lets the
+    app autocomplete the same closed list. Once per worker lifetime rather than
+    per sweep, because it is a convenience and not a heartbeat, and a restart
+    republishing it is harmless. Best-effort: a bot that cannot publish a menu
+    works exactly as well, so this never fails a sweep.
+  */
+  if (!menuPublished) {
+    menuPublished = true;
+    await publishCommands(
+      token,
+      config.chatId,
+      COMMANDS.map((command) => ({ command: command.name, description: command.blurb })),
+      fetchImpl,
+    ).catch((error: unknown) => {
+      log.debug('could not publish the Telegram command menu', { message: errorMessage(error) });
+    });
+  }
+
   let updates;
   try {
     updates = await getUpdates(token, config.updateOffset ?? undefined, fetchImpl);
