@@ -76,10 +76,28 @@ export function renderMenu(capabilities: AnyCapability[], describeInput: (c: Any
   return lines.join('\n');
 }
 
-/** The instruction that goes with the menu. */
+/**
+ * The instruction that goes with the menu.
+ *
+ * "You may" lost. Measured across the evaluation corpus with the loop enabled
+ * and the right capability shortlisted: asked the time with `time.now` on the
+ * menu, and asked what a repository shipped with `github.read_activity` on the
+ * menu, the model called neither and answered "I couldn't check". It did call
+ * `agent.diagnostics` when asked about itself, so the mechanism was working
+ * and the wording was not.
+ *
+ * The cause is placement and competition. This arrives as a system message
+ * after a persona prompt of several thousand characters telling the model to
+ * be brief and stay in voice, and a permission loses to an instruction every
+ * time. The menu is only ever shown when something on it bears on the question
+ * -- banter is offered nothing at all -- so the stronger line costs nothing on
+ * the messages that need no lookup, and it is still a decision the model makes
+ * rather than one taken for it.
+ */
 export function renderInstructions(): string {
   return [
-    'You may look something up before answering, using exactly one of the capabilities listed above.',
+    'One of the capabilities listed above may answer part of what you were asked.',
+    'If it does, use it before you answer. Saying you could not check something you were given a way to check is wrong.',
     '',
     'To use one, reply with only this and nothing else:',
     CALL_OPEN,
@@ -88,6 +106,7 @@ export function renderInstructions(): string {
     '',
     'The result comes back and you may then use another or write your answer.',
     'Do not describe what a capability would return. Ask for it, or answer without it.',
+    'If none of them fits, answer without one. Do not force a call that does not belong.',
     'When you have what you need, write the answer on its own with no tags.',
   ].join('\n');
 }
