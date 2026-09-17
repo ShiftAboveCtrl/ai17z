@@ -62,6 +62,22 @@ export interface HarvestInput {
 }
 
 /**
+ * How many recent posts count as "lately" for repetition.
+ *
+ * Twelve is roughly a week for an account that posts once or twice a day, and
+ * a subject that has not come up in a week is a subject worth raising again.
+ */
+const POSTS_THAT_COUNT_AS_RECENT = 12;
+
+/** Whether the account has already said something about this subject lately. */
+async function postedAboutRecently(agentId: string, subject: string): Promise<boolean> {
+  const needle = subject.trim().toLowerCase();
+  if (needle.length < 3) return false;
+  const posts = await contentRepo.recentPosts(agentId, POSTS_THAT_COUNT_AS_RECENT);
+  return posts.some((post) => post.toLowerCase().includes(needle));
+}
+
+/**
  * Notices whether an exchange left something worth saying later.
  *
  * Deliberately conservative: most conversations produce no idea at all, and a
@@ -113,7 +129,23 @@ export async function harvestIdeas(input: HarvestInput): Promise<IdeaRow[]> {
   const held = stance[0];
   if (held && Number(held.confidence) >= 0.6 && input.outgoing.length > 80) {
     const evidence = await stancesRepo.countEvidence(held.id);
-    if (evidence >= STANCE_EVIDENCE_FOR_A_POST) {
+    /*
+      Not a subject the account has just posted about.
+
+      The evidence count says the agent keeps coming back to something. It does
+      not say anybody else wants to hear it again. On a live account a
+      conversation about one feature produced four pieces of evidence inside a
+      day, cleared this gate every time, and became three posts in sixteen
+      hours that all said the same thing -- each one derived from a reply the
+      agent had written minutes earlier.
+
+      A reply is to one person and repeating yourself to different people is
+      just answering. A post is to everybody at once, so the same subject twice
+      running is the account being boring in public. Revisiting is allowed once
+      the subject has left the recent window, which is what "new angle" looks
+      like from here.
+    */
+    if (evidence >= STANCE_EVIDENCE_FOR_A_POST && !(await postedAboutRecently(input.agentId, held.subject))) {
       await add('opinion', `Say more about ${held.subject}: ${held.summary}`, 70);
     }
   }

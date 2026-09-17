@@ -113,6 +113,34 @@ export async function loadStanceContext(agentId: string, text: string): Promise<
  * fill the ledger with positions on "the market" and "people", which are not
  * things anybody wants an agent to be pinned to.
  */
+/**
+ * Whether the word at this offset opens a sentence.
+ *
+ * The start of the text, or the first word after a full stop, question mark,
+ * exclamation mark, newline, or one of the dashes people write a clause break
+ * with. Quotes and brackets are skipped over, because `"Better evidence..."`
+ * opens a sentence just as much as `Better evidence...` does.
+ */
+/**
+ * A word that is a name wherever it appears.
+ *
+ * An internal capital or a digit is something no ordinary word has: `GitHub`,
+ * `AI17Z`, `DeFi`, `X402`. Without this the sentence-start rule throws away
+ * real subjects for the crime of being the first word, and "GitHub ability is
+ * holding up" would record no position about GitHub.
+ */
+function looksLikeAName(word: string): boolean {
+  return /[A-Z0-9]/.test(word.slice(1));
+}
+
+function startsASentence(text: string, index: number): boolean {
+  let at = index - 1;
+  while (at >= 0 && /["'“”‘’(\[]/.test(text[at]!)) at -= 1;
+  while (at >= 0 && /\s/.test(text[at]!)) at -= 1;
+  if (at < 0) return true;
+  return /[.!?:;—–]/.test(text[at]!);
+}
+
 export function candidateSubjects(text: string): string[] {
   const withoutUrls = text.replace(/https?:\/\/\S+/g, ' ');
   const found = new Set<string>();
@@ -122,9 +150,27 @@ export function candidateSubjects(text: string): string[] {
   // one stance, which is the opposite of what this table is for.
   for (const match of withoutUrls.matchAll(/\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){0,2})\b/g)) {
     const phrase = match[1]!.trim();
-    // A capitalised word at the start of a sentence is usually just a sentence.
-    if (phrase.split(/\s+/).length === 1 && withoutUrls.indexOf(phrase) === 0) continue;
-    if (phrase.length >= 4) found.add(phrase);
+    /*
+      A capitalised word starting a sentence is a sentence, not a subject.
+
+      This rule was already here and only ever applied to the first sentence,
+      because it compared against `indexOf(phrase) === 0`. Every sentence after
+      the first therefore donated its opening word, and on a live account that
+      produced positions held at 0.92 confidence about "Better", "Good",
+      "Keep", "Best", "Open", "Leaving" and "Permanent". Eight of twelve
+      stances were sentence openers.
+
+      That is the same failure the retired `narratives` table had, for the same
+      reason: this function finds the subject of a position in one sentence and
+      was being handed whole replies.
+    */
+    if (phrase.split(/\s+/).length === 1 && startsASentence(withoutUrls, match.index ?? 0) && !looksLikeAName(phrase)) {
+      continue;
+    }
+    // "The Telegram" and "Telegram" are one subject, and holding two positions
+    // on it is how an agent contradicts itself in public.
+    const subject = phrase.replace(/^(?:The|A|An)\s+/, '').trim();
+    if (subject.length >= 4) found.add(subject);
   }
   for (const match of withoutUrls.matchAll(/#([A-Za-z][A-Za-z0-9_]{2,30})/g)) {
     found.add(match[1]!);
