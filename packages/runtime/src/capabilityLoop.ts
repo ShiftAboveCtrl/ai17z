@@ -81,17 +81,34 @@ export interface LoopResult {
 }
 
 /**
- * The text a shortlist is judged against.
+ * The text a shortlist is judged against: **what was asked, and nothing else.**
  *
- * The last thing a person said, plus the system layer that frames the job.
- * Not the whole conversation: an exchange that mentioned GitHub twenty minutes
- * ago should not keep offering repository reads to somebody now asking about
- * the weather.
+ * The last thing a person said. Not the whole conversation, because an exchange
+ * that mentioned GitHub twenty minutes ago should not keep offering repository
+ * reads to somebody now asking about the weather.
+ *
+ * And **not the system layer**, which is the fix here. It used to be included on
+ * the reasoning that it frames the job, and on a fixture it is short enough to
+ * do no harm. On a real job it is the assembled persona: measured at 3,767
+ * characters against a fifty-character question, listing every subject the agent
+ * writes about. So the shortlist stopped being about the question and became
+ * about the agent's interests, which are the same for every message it ever
+ * receives.
+ *
+ * Measured on a live installation, asked "what time is it where you are right
+ * now, actually": with the question alone the shortlist is `time.now`; with the
+ * system layer appended it is eight GitHub, contract and market reads and
+ * `time.now` does not appear at all. The agent answered "I couldn't check the
+ * current time", which is exactly the symptom shortlisting was added to remove,
+ * reintroduced one layer up.
+ *
+ * A task that genuinely needs the agent's own context still gets it: the model
+ * has the whole prompt when it decides. This only chooses what to put on the
+ * menu, and a menu chosen from the persona is the same menu every time.
  */
-function taskText(messages: ChatMessage[]): string {
+export function taskText(messages: ChatMessage[]): string {
   const lastUser = [...messages].reverse().find((message) => message.role === 'user');
-  const firstSystem = messages.find((message) => message.role === 'system');
-  return [lastUser?.content ?? '', firstSystem?.content ?? ''].join(' ');
+  return lastUser?.content ?? '';
 }
 
 /**
