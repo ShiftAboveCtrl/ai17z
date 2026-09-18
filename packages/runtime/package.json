@@ -1,6 +1,6 @@
 {
   "name": "@xbam/runtime",
-  "version": "1.0.0-beta.32",
+  "version": "1.0.0-beta.33",
   "private": true,
   "type": "module",
   "exports": {

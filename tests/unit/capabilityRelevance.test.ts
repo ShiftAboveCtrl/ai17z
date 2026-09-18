@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { bootstrapRuntime, shortlistCapabilities, familyOf, SHORTLIST_LIMIT, zodToDescription } from '@xbam/runtime';
+import { bootstrapRuntime, shortlistCapabilities, familyOf, taskText, SHORTLIST_LIMIT, zodToDescription } from '@xbam/runtime';
 import { listModelCallable, renderMenu, type AnyCapability } from '@xbam/tools';
 
 /**
@@ -116,5 +116,57 @@ describe('families', () => {
     expect(familyOf('x.read_post')).toBe('x');
     expect(familyOf('time.now')).toBe('time');
     expect(familyOf('nodots')).toBe('nodots');
+  });
+});
+
+describe('what the shortlist is judged against', () => {
+  /*
+    The menu comes from the question, and from nothing else.
+
+    `taskText` used to append the first system message, on the reasoning that it
+    frames the job. On a fixture the system layer is a sentence and it does no
+    harm. On a real job it is the assembled persona, measured at 3,767
+    characters against a fifty-character question and listing every subject the
+    agent writes about. The shortlist stopped answering "what was asked" and
+    started answering "what does this agent care about", which is the same for
+    every message it will ever receive.
+  */
+  const PERSONA = [
+    'You are an AI17Z agent. You write about autonomous agents, agent memory,',
+    'local-first software, open source, browser automation, model providers and',
+    'routing, workers, jobs and queues, retries, idempotency and recovery. You',
+    'follow the repository ShiftAboveCtrl/ai17z and read its releases and its',
+    'activity. You have discussed markets, tokens, contract addresses and',
+    'liquidity with people before.',
+  ].join(' ');
+
+  it('is the last thing the person said, and only that', () => {
+    expect(
+      taskText([
+        { role: 'system', content: PERSONA },
+        { role: 'user', content: 'what time is it?' },
+        { role: 'assistant', content: 'Let me look.' },
+        { role: 'user', content: 'what time is it where you are right now, actually' },
+      ]),
+    ).toBe('what time is it where you are right now, actually');
+  });
+
+  it('offers the clock for a question about the time', () => {
+    const offered = shortlistCapabilities(all, 'what time is it where you are right now, actually').offered;
+    expect(offered.map((c) => c.id)).toContain('time.now');
+  });
+
+  /*
+    The measurement behind the fix, kept as a test so the reason survives.
+
+    This asserts the failure the old task text produced: against the real
+    registry, the persona alone pushes the clock off a menu of eight. If this
+    ever stops being true the comment above is no longer describing anything,
+    and somebody should find out why before trusting it.
+  */
+  it('is measurably wrong if the persona is mixed in', () => {
+    const question = 'what time is it where you are right now, actually';
+    const polluted = shortlistCapabilities(all, `${question} ${PERSONA}`).offered.map((c) => c.id);
+    expect(polluted).not.toContain('time.now');
   });
 });
