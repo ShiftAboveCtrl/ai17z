@@ -49,6 +49,19 @@ export interface LoopOptions {
   messages: ChatMessage[];
   /** Runs one model call. Supplied so the loop never picks a model itself. */
   generate(messages: ChatMessage[]): Promise<string>;
+  /**
+   * What was actually asked, for choosing the menu.
+   *
+   * Supplied by the caller because only the caller knows it. `messages` is the
+   * assembled prompt, and its last user message is not a question: it is the
+   * whole user layer, with memory, evidence, the sender, output rules and the
+   * task framing around one line of incoming text. Judging relevance against
+   * that block offers reads for the words in the framing.
+   *
+   * Absent falls back to the last user message, which is right for a caller
+   * that really is holding a conversation rather than assembling a prompt.
+   */
+  task?: string;
   /** What the owner configured, by capability id. Absent means the default. */
   permissions: Map<string, CapabilityPermission>;
   paused: boolean;
@@ -163,7 +176,10 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
     matches nothing is offered nothing, which is the right answer for "nice
     one" and costs no tokens at all.
   */
-  const shortlist: Shortlist = shortlistCapabilities(available, taskText(options.messages));
+  const shortlist: Shortlist = shortlistCapabilities(
+    available,
+    options.task?.trim() || taskText(options.messages),
+  );
   const offered = shortlist.offered;
   const messages: ChatMessage[] = [...options.messages];
   const steps: LoopResult['steps'] = [];

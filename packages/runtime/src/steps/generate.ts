@@ -235,6 +235,17 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
       accountId: bundle.job.accountId,
       messages: prompt.messages,
       generate: callModel,
+      /*
+        What was asked, for choosing the menu, and only what was asked.
+
+        `prompt.messages` is the assembled prompt: its last user message carries
+        memory, evidence, the sender, the task framing and the output rules
+        around one line of incoming text. Judging relevance against that block
+        offers reads for the words in the framing rather than for the question,
+        which is how an agent asked the time on a live installation was offered
+        eight X reads and answered that it could not check.
+      */
+      task: bundle.job.resolvedContext?.incomingText || bundle.event.text || '',
       permissions: settings.permissions,
       configs: settings.configs,
       // One stop rather than four on FAST. Every step is a whole extra model

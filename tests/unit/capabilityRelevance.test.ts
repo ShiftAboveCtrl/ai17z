@@ -170,3 +170,71 @@ describe('what the shortlist is judged against', () => {
     expect(polluted).not.toContain('time.now');
   });
 });
+
+describe('the menu comes from the question, not from the prompt around it', () => {
+  /*
+    The second half of the same defect, and the one that actually shipped.
+
+    Dropping the system layer was necessary and not sufficient. The prompt's
+    *user* layer is not a question either: it is memory, evidence, the sender,
+    the task framing and the output rules, assembled around one line of incoming
+    text. Measured on the installed build after the first fix, asked "what time
+    is it where you are right now, actually", the trace recorded eight X reads
+    offered and still no clock, because the framing says reply, message, channel
+    and names a handle.
+
+    So the caller passes what was asked. This pins the difference.
+  */
+  const ASSEMBLED_USER_LAYER = [
+    'WHAT YOU REMEMBER',
+    'An old AI agent emailed. Bring these up only where they actually bear on what is being said.',
+    '',
+    'LOOKED UP JUST NOW',
+    'Could not check: what time is it where you are right now, actually?.',
+    '',
+    'EVIDENCE',
+    '1 lookup(s) were tried and did not work. Say plainly that you do not know.',
+    '',
+    'FROM',
+    '@kinggavii',
+    '',
+    'INCOMING MESSAGE:',
+    'what time is it where you are right now, actually',
+    '',
+    'TASK',
+    'Write one Mock channel reply, as Shift, to @kinggavii. They are speaking to you.',
+    'Answer them, address them, not a third party.',
+    '',
+    'OUTPUT RULES',
+    '- Stay under 280 characters.',
+    '- One or two sentences. Do not end with a question unless it is the actual point.',
+    '- No surrounding quotation marks, no preamble, no sign-off.',
+  ].join('\n');
+
+  it('offers the clock when it is given the question', () => {
+    const offered = shortlistCapabilities(all, 'what time is it where you are right now, actually').offered;
+    expect(offered.map((c) => c.id)).toContain('time.now');
+  });
+
+  /*
+    What the user layer costs, stated as a ranking rather than as an absence.
+
+    An earlier version of this asserted the clock disappears entirely from a
+    reconstructed prompt. It does not, and the reconstruction is why: this
+    fixture names the time twice, in the failed-lookup line and in the incoming
+    message, where the real prompt carries far more around it. Asserting a
+    disappearance that depends on how faithfully somebody paraphrased a prompt
+    is a test that measures the fixture.
+
+    The ranking is the honest claim and it is the one that matters: given the
+    question the clock is first, and given the whole layer it is buried under
+    reads for words that belong to the framing rather than to what was asked.
+  */
+  it('buries it under the framing when it is given the whole user layer', () => {
+    const asked = shortlistCapabilities(all, 'what time is it where you are right now, actually').offered;
+    const framed = shortlistCapabilities(all, ASSEMBLED_USER_LAYER).offered;
+
+    expect(asked[0]!.id).toBe('time.now');
+    expect(framed.findIndex((c) => c.id === 'time.now')).toBeGreaterThan(0);
+  });
+});
