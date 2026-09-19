@@ -50,7 +50,7 @@ export interface AssembleInput {
    * exactly as confidently as one with plenty, and that is the sentence that
    * gets somebody a wrong answer stated as fact.
    */
-  evidence?: { evidence: string; reason: string; shouldAdmitUncertainty: boolean };
+  evidence?: { evidence: string; reason: string; shouldAdmitUncertainty: boolean; mayStillLookUp?: boolean };
   /**
    * What this installation is and how it is doing, for an agent in support
    * mode. Absent for every other agent, which is most of them.
@@ -171,7 +171,19 @@ function renderEvidenceNote(evidence: AssembleInput['evidence']): string {
   return [
     'EVIDENCE',
     evidence.reason,
-    'Say plainly that you do not know, or that you could not check. Do not fill the gap with something that sounds right.',
+    /*
+      Admitting uncertainty is not the same as refusing to look.
+
+      When the capability loop is about to run there is still a way to find
+      out, and an unconditional "say you do not know" here is an instruction to
+      refuse before the model has seen its menu. Measured: offered
+      `github.read_activity` and nothing else, the agent answered that it could
+      not check what had shipped. The requirement itself is unchanged, and the
+      second half of this sentence is the whole of the old one.
+    */
+    evidence.mayStillLookUp
+      ? 'Check first if one of the capabilities offered can answer this. If none can, say plainly that you do not know, or that you could not check. Do not fill the gap with something that sounds right.'
+      : 'Say plainly that you do not know, or that you could not check. Do not fill the gap with something that sounds right.',
     '',
   ].join('\n');
 }
@@ -184,7 +196,7 @@ function renderEvidenceNote(evidence: AssembleInput['evidence']): string {
  * finding keeps the name of where it came from, and the block ends by saying
  * this was looked up rather than known.
  */
-function renderResearchBlock(research: unknown): string {
+function renderResearchBlock(research: unknown, mayStillLookUp = false): string {
   const result = research as
     | { findings?: { source: string; title: string; summary: string; url: string | null }[]; failed?: { query: string; reason: string }[] }
     | undefined;
@@ -201,7 +213,13 @@ function renderResearchBlock(research: unknown): string {
   }
   if (failed.length > 0) {
     lines.push(`Could not check: ${failed.map((f) => f.query.slice(0, 60)).join('; ')}.`);
-    lines.push('Say you do not know rather than guessing at those.');
+    // A web lookup failing is not the end of the search while a capability is
+    // still on the way. See renderEvidenceNote.
+    lines.push(
+      mayStillLookUp
+        ? 'A capability offered below may still answer those. Try it before saying you do not know, and do not guess at them.'
+        : 'Say you do not know rather than guessing at those.',
+    );
   }
   lines.push('');
   lines.push(
@@ -356,7 +374,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     threadTranscript: renderTranscript(context.thread, persona.displayName),
     parentText: context.parentText ?? '',
     parentAttachments: renderParentAttachments(parentInventory, mediaContext?.onParentPost ?? false),
-    researchBlock: renderResearchBlock(research),
+    researchBlock: renderResearchBlock(research, input.evidence?.mayStillLookUp === true),
     evidenceNote: renderEvidenceNote(input.evidence),
     supportBlock: renderSupportBlock(input.support),
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
