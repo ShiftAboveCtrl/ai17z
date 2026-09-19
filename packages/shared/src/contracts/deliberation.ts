@@ -162,6 +162,24 @@ export const DELIBERATION_LIMITS = {
   workingSet: 60,
   /** Items handed to a prompt. Past this a prompt is a journal dump. */
   inPrompt: 8,
+  /**
+   * Of those, how many an agent's own conclusions may take when it is choosing
+   * its own subject.
+   *
+   * Reserved rather than boosted. Ranking is by salience, and an observation
+   * enters high because something just happened while a conclusion drawn from
+   * several of them enters low: measured on a live installation, the top eight
+   * were five repository events and three posts, every one seen exactly once,
+   * at 39 to 56, while the hypothesis the agent had actually formed sat at 32
+   * and a question at 22. Nothing it worked out for itself could ever be in
+   * front of it while it decided what to say.
+   *
+   * Two, because this is a floor for the mature ones and not a quota to fill.
+   * Most wakes produce nothing eligible and the whole of the prompt goes to
+   * what was observed, which is the right answer when nothing has been
+   * concluded yet.
+   */
+  synthesisInPrompt: 2,
   /** Goals an agent may hold at once. More than this is not a set of goals. */
   goals: 12,
   /** Evidence references kept on one item. */
