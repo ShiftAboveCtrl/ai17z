@@ -114,7 +114,7 @@ const ASKS_THE_CLOCK = [
   /\bwhat(?:'s| is)\s+today'?s\s+date\b/i,
 ];
 
-const asksTheClock = (text: string): boolean => ASKS_THE_CLOCK.some((re) => re.test(text));
+export const asksTheClock = (text: string): boolean => ASKS_THE_CLOCK.some((re) => re.test(text));
 
 export interface ResearchSubject {
   /** What the person said to the agent. */
