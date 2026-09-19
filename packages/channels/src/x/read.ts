@@ -1,5 +1,6 @@
 import type { XMediaItem, XPost, XProfile, XSearchResult, XThread } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
+import { accounts as accountsRepo } from '@xbam/database';
 import type { ChannelContext } from '../contract';
 import { SEL, X_URLS } from './selectors';
 import { resolveBranch, type ArticleSnapshot } from './conversation';
@@ -177,8 +178,29 @@ export function asXProfile(user: XUser, recentPosts: XPost[]): XProfile {
  * Returns `null` for the outcomes where the rendered page is a reasonable next
  * attempt, and throws for the ones where asking again is the wrong thing to do.
  */
-export function canonical<T>(result: XReadResult<T>, what: string): T | null {
+export function canonical<T>(result: XReadResult<T>, what: string, ctx?: ChannelContext): T | null {
   if (result.outcome === 'OK') return result.data;
+  /*
+    Somebody has to be told the session is gone.
+
+    The reading layer names this outcome and stops asking, which is right, and
+    for a long time that was the end of it: the account went on saying
+    CONNECTED, the health row went on saying "X is read through the signed-in
+    browser", and the only thing that could correct either was an owner
+    pressing a health check by hand, because nothing schedules one. So an
+    installation whose session had expired looked healthy while its radar
+    monitors quietly returned nothing. Measured on ai17z-test, where both
+    `x.read_profile` and `x.search` refused while every screen said fine.
+
+    `SESSION_EXPIRED` already exists for exactly this and already drives the
+    owner notification. Only from CONNECTED, which is the same rule the health
+    task uses: an account that never had a session is NEEDS_AUTH and not this.
+  */
+  if (result.outcome === 'NEEDS_SIGN_IN' && ctx?.account && ctx.account.status === 'CONNECTED') {
+    void accountsRepo
+      .updateAccount(ctx.account.id, { status: 'SESSION_EXPIRED', lastError: result.detail })
+      .catch(() => undefined);
+  }
   const stop = refusal(result.outcome, result.detail, what);
   if (stop) throw stop;
   return null;
@@ -208,6 +230,7 @@ export async function readPost(ctx: ChannelContext, reference: string): Promise<
   const structured = canonical(
     await xIntelligence.getPost(statusId, { channel: ctx, freshness: 'LIVE' }),
     `The post ${statusId}`,
+    ctx,
   );
   if (structured) return asXPost(structured);
 
@@ -265,6 +288,7 @@ export async function readProfile(
   const structured = canonical(
     await xIntelligence.resolveUser(handle, { channel: ctx, freshness: 'MODERATE' }),
     `@${handle}`,
+    ctx,
   );
   if (structured && structured.userId) {
     // Nothing asked for means nothing read. The radar reads its own profile
@@ -430,6 +454,7 @@ export async function searchPosts(
   const structured = canonical(
     await xIntelligence.searchPosts({ query, limit, latest: mode === 'LIVE' }, { channel: ctx, freshness: 'LIVE' }),
     `Results for "${query}"`,
+    ctx,
   );
   if (structured) {
     return {
@@ -508,6 +533,7 @@ export async function readThread(ctx: ChannelContext, reference: string): Promis
   const structured = canonical(
     await xIntelligence.getThread(focalStatusId, { channel: ctx, freshness: 'LIVE' }),
     `The conversation around ${focalStatusId}`,
+    ctx,
   );
   if (structured && structured.length > 0) {
     const root = structured[0]!;

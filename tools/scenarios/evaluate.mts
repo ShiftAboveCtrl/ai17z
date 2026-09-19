@@ -17,6 +17,7 @@
  */
 import { agents as agentsRepo, jobs as jobsRepo, query } from '@xbam/database';
 import { bootstrapRuntime, explainRehearsal, rehearse } from '@xbam/runtime';
+import { opener } from '@xbam/persona';
 import { CORPUS } from './corpus.mts';
 import { drainAgentJobs } from '../../tests/support/runner';
 
@@ -143,8 +144,20 @@ async function main(): Promise<void> {
 
   // The distributional checks, which are the reason this runs as a batch.
   const answered = rows.filter((row) => row.chars > 0);
-  const openings = answered.map((row) => row.answer.split(/\s+/).slice(0, 2).join(' ').toLowerCase());
-  const repeatedOpening = [...new Set(openings)].filter((o) => openings.filter((x) => x === o).length > 1);
+  /*
+    Counted the way the repetition guard compares them, and with the counts.
+
+    Splitting raw text made "I don't" and "I don’t" two different openings, so
+    seven replies that open identically were reported as four and three, and a
+    bare list never said how many there were of anything.
+  */
+  const openings = answered.map((row) => opener(row.answer, 2)).filter(Boolean);
+  const openingCounts = new Map<string, number>();
+  for (const open of openings) openingCounts.set(open, (openingCounts.get(open) ?? 0) + 1);
+  const repeatedOpening = [...openingCounts.entries()]
+    .filter(([, n]) => n > 1)
+    .sort((a, b) => b[1] - a[1])
+    .map(([open, n]) => `${open} (${n})`);
   const endsOnQuestion = answered.filter((row) => row.answer.trim().endsWith('?'));
 
   console.log('─'.repeat(70));
@@ -155,6 +168,20 @@ async function main(): Promise<void> {
   console.log(`helpdesk tells: ${rows.filter((r) => r.tell).length}`);
   console.log(`ends on a question: ${endsOnQuestion.length} of ${answered.length}`);
   console.log(`repeated two-word openings: ${repeatedOpening.join(', ') || 'none'}`);
+  /*
+    Said out loud, because the number above invites the wrong conclusion.
+
+    The repetition guard compares a draft against what this agent has actually
+    published, and a rehearsal publishes nothing: `stepExecute` records output
+    only when the status is not DRY_RUN, which is right, because a dry run said
+    nothing. So every case here is judged against an empty history and the
+    count is the model's raw tendency rather than what would reach X. An owner
+    reading a list of repeats could otherwise conclude the guard is broken when
+    it was never engaged.
+  */
+  if (repeatedOpening.length > 0) {
+    console.log('  (rehearsals publish nothing, so the repetition guard had no history to compare against here)');
+  }
 
   if (!keep) {
     // The rehearsals are left in the job history either way; this only stops
