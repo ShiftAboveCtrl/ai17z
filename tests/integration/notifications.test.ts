@@ -409,3 +409,55 @@ describe('a worker with no browser behind it', () => {
     ).toBeNull();
   });
 });
+
+/**
+ * The owner is told when the model behind every agent stops answering.
+ *
+ * `providerFailing` and `providerRecovered` were fully written: a severity, a
+ * body naming the provider and what it said, a link to the providers screen
+ * and a dedupe key. Nothing ever called either of them. The only two matches
+ * in the tree were `notificationKey.providerFailing(...)`, which is the key
+ * helper rather than the notification, so a provider refusing calls was
+ * visible only to somebody already looking at the Health screen.
+ *
+ * Raised from the credential's own last status, which is what that screen
+ * reads, so the two cannot disagree.
+ */
+describe('a provider that has stopped answering', () => {
+  const raise = async (lastStatus: string | null, enabled = true) => {
+    const fixture = await createFixture();
+    await query('UPDATE provider_credentials SET last_status = $2, enabled = $3 WHERE id = $1', [
+      fixture.providerId,
+      lastStatus,
+      enabled,
+    ]);
+    await sweepNotifications();
+    const open = await notificationsRepo.listOpen({ limit: 50 });
+    return open.filter(
+      (n: { dedupeKey: string | null }) => n.dedupeKey === notificationKey.providerFailing(fixture.providerId),
+    );
+  };
+
+  it('raises one when the credential last failed', async () => {
+    const found = await raise('401 Unauthorized');
+    expect(found).toHaveLength(1);
+    expect(found[0]!.body).toMatch(/401/);
+  });
+
+  it('says nothing about one that is answering', async () => {
+    expect(await raise('healthy')).toHaveLength(0);
+  });
+
+  /*
+    Never tested is not failing. An installation that has not run a check yet
+    has nothing to report, and saying otherwise on first start is how a
+    notification stops meaning anything.
+  */
+  it('says nothing about one nobody has tested', async () => {
+    expect(await raise(null)).toHaveLength(0);
+  });
+
+  it('says nothing about one the owner switched off', async () => {
+    expect(await raise('401 Unauthorized', false)).toHaveLength(0);
+  });
+});
