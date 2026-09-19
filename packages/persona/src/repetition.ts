@@ -68,7 +68,15 @@ function longestSharedRun(candidate: string, other: string): number {
   return best;
 }
 
-function opener(text: string, count = 4): string {
+/**
+ * The first few words, as this file compares them.
+ *
+ * Exported so the Response Lab counts openings the way the guard does. It was
+ * splitting raw text, so "I don't" and "I don’t" were two different openings
+ * and seven identical ones were reported as four and three. An instrument an
+ * owner reads to judge repetition must measure what the product enforces.
+ */
+export function opener(text: string, count = 4): string {
   return words(text).slice(0, count).join(' ');
 }
 

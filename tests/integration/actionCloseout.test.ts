@@ -262,13 +262,13 @@ describe('a claim it could not get is not an attempt', () => {
       accountId: account.id,
       kind: 'LIKE',
       remoteId: `post-${Date.now()}`,
-      remoteUrl: null,
+      remoteUrl: undefined,
       authorHandle: 'someone',
       excerpt: 'worth reading',
       score: 70,
       factors: [],
       confidence: 0.8,
-      attentionId: null,
+      attentionId: undefined,
     });
     expect(proposed).not.toBeNull();
 
