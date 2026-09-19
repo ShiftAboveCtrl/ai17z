@@ -39,7 +39,7 @@ async function aBrowserWorkerExists(): Promise<void> {
     jobsCapable: false,
     hostname: 'test',
     version: 'test',
-    tools: [],
+    tools: {},
   });
   expect(await workersRepo.browserWorkerPresent()).toBe(true);
 }
