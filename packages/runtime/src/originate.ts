@@ -137,7 +137,30 @@ export async function originatePost(input: {
   });
 
   if (!outcome.created) {
-    await releaseIdea(agent.id, brief.idea.id);
+    /*
+      The idea names the job that already took it, and the reconciler decides.
+
+      Putting it straight back is what starved the queue. The key is anchored
+      to the idea and never expires, so this branch is permanent for that idea:
+      the claim takes the highest-scoring unused idea every time, finds the job
+      again, releases it unchanged, and the one behind it is never reached.
+      Measured on a live installation, an idea whose job an owner rejected on
+      the 7th was still being picked every six hours on the 19th, and nothing
+      had been posted since the 17th.
+
+      `releaseIdea` also charges nothing, so the reconciler's own guard against
+      exactly this, setting an idea aside once it has failed enough times, could
+      never fire, because attempts stayed at zero for ever.
+
+      Naming the job instead leaves the idea `drafting`, which takes it out of
+      the claim immediately, and hands it to `reconcileDrafting` to resolve by
+      asking that job how it went: published means used, rejected or failed
+      charges an attempt and says why, and enough of those sets it aside with
+      its reason kept. That is the lifecycle this already has, rather than a
+      second one written here, and an owner's rejection stays honoured rather
+      than being retried or quietly resurrected.
+    */
+    await contentRepo.attachJob(agent.id, brief.idea.id, outcome.job.id);
     return { posted: false, reason: 'A job for this idea already exists.', jobId: outcome.job.id };
   }
 

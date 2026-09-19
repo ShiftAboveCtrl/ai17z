@@ -1,5 +1,6 @@
 import {
   accounts as accountsRepo,
+  actions as actionsRepo,
   agents as agentsRepo,
   capabilities as capabilitiesRepo,
   engagements as engagementsRepo,
@@ -236,6 +237,27 @@ async function act(row: EngagementRow): Promise<EngagementOutcome> {
       dryRun,
     });
 
+    /*
+      A claim somebody else holds is not a like.
+
+      This branch used to read `done.detail` and call everything success. The
+      executor returns "not performed, not already done" for a dry run and for
+      an action another worker is holding, and only the prose told them apart.
+      So an action left EXECUTING by an earlier attempt made every later one
+      report DONE: twelve on a live installation, jobs EXECUTED, nothing sent
+      to X, and the twelve then filled the daily ceiling of twelve and declined
+      four real candidates. The account stopped liking anything for a day while
+      its own records said it was working.
+
+      Left WAITING instead, so the proposal is tried again once the stale claim
+      is retaken, and the ceiling is not spent on something that did not happen.
+    */
+    if (done.outcome === 'IN_PROGRESS') {
+      await jobsRepo.updateJob(jobId, { status: 'CANCELLED', lastError: done.detail, releaseLock: true });
+      await engagementsRepo.deferAttempt(row.id, RETRY_SECONDS, done.detail);
+      return { id: row.id, kind: row.kind, status: 'WAITING' as const, detail: done.detail };
+    }
+
     const detail = done.alreadyDone
       ? 'Already done on X, so nothing was sent again.'
       : dryRun
@@ -265,6 +287,9 @@ async function act(row: EngagementRow): Promise<EngagementOutcome> {
     // queue applies, so a post that cannot be liked does not become a loop.
     if (row.attempts >= MAX_ATTEMPTS) {
       await jobsRepo.updateJob(jobId, { status: 'PERMANENT_FAILURE', lastError: why, releaseLock: true });
+      // Nothing is executing once the record job has stopped, and a row saying
+      // otherwise blocks every later claim on that key.
+      await actionsRepo.failInFlightForJob(jobId, why);
       await engagementsRepo.settle(row.id, 'FAILED', `Gave up after ${row.attempts} attempts: ${why}`, jobId);
       return { id: row.id, kind: row.kind, status: 'FAILED' as const, detail: why };
     }
@@ -276,6 +301,7 @@ async function act(row: EngagementRow): Promise<EngagementOutcome> {
       whole arrangement exists to prevent.
     */
     await jobsRepo.updateJob(jobId, { status: 'CANCELLED', lastError: why, releaseLock: true });
+    await actionsRepo.failInFlightForJob(jobId, why);
     log.debug('an engagement did not go through, it will be tried again', { id: row.id, message: why });
     return { id: row.id, kind: row.kind, status: 'WAITING' as const, detail: why };
   }
