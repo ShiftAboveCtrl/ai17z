@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { DELIBERATION_LIMITS } from '@xbam/shared/contracts';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -1056,5 +1057,144 @@ describe('what reaches a reply', () => {
     // never had it.
     expect(rendered).toContain('though you are not sure');
     expect(rendered.split('\n')[1]).not.toContain('though you are not sure');
+  });
+});
+
+/**
+ * What an agent has in front of it while choosing its own subject.
+ *
+ * Measured on a live installation before this existed: across 281 real prompts
+ * the agent's own conclusions appeared in none of them. Not one HYPOTHESIS,
+ * CONCERN, QUESTION or LESSON. Goals reached 7 and observations reached 21,
+ * and everything the agent had actually worked out for itself was write-only
+ * state.
+ *
+ * The arithmetic, not a bug: a post's prompt takes the top eight by salience,
+ * and an observation enters high because something just happened while a
+ * conclusion drawn from several of them enters low. The top eight on that
+ * installation were five repository events and three posts, every one seen
+ * exactly once, at 39 to 56, while the hypothesis the agent had formed sat at
+ * 32 and a question at 22.
+ *
+ * So a small reserve, and only for the ones that have matured. Nothing is
+ * boosted, because raising a score would change what the working set retires
+ * and what the next wake attends to, and this is only about what is visible at
+ * the moment of deciding what to say.
+ */
+describe('a conclusion the agent reached competes with what it just saw', () => {
+  /** Raw observations, scored the way a fresh repository event scores. */
+  async function crowdedWithThingsItSaw(agentId: string, howMany = 8): Promise<void> {
+    for (let i = 0; i < howMany; i += 1) {
+      await mind.remember({
+        agentId,
+        kind: 'NARRATIVE',
+        summary: `Something that happened a moment ago, number ${i}.`,
+        salience: 56 - i,
+        fingerprint: `seen-once-${i}`,
+      });
+    }
+  }
+
+  const matured = (over: Record<string, unknown> = {}) => ({
+    kind: 'HYPOTHESIS' as const,
+    summary: 'The bottleneck for autonomous agents is shifting from capability to enforceable platform limits.',
+    salience: 32,
+    confidence: 0.82,
+    evidence: [
+      { kind: 'DISCOVERY', ref: 'a', note: 'one', at: new Date().toISOString() },
+      { kind: 'DISCOVERY', ref: 'b', note: 'two', at: new Date().toISOString() },
+    ],
+    fingerprint: 'matured-hypothesis',
+    ...over,
+  });
+
+  it('is in front of it, even though eight things it saw outrank it', async () => {
+    const agent = await agentThatThinks();
+    await crowdedWithThingsItSaw(agent.agentId);
+    await mind.remember({ agentId: agent.agentId, ...matured() });
+
+    const forPost = await mindForMessage(agent.agentId, '', true);
+    expect(forPost.map((item) => item.kind)).toContain('HYPOTHESIS');
+    // And the prompt is still mostly what it saw, which is the point.
+    expect(forPost.filter((item) => item.kind === 'NARRATIVE').length).toBeGreaterThanOrEqual(5);
+  });
+
+  /*
+    The reserve is a ceiling, not a quota. An agent that has concluded nothing
+    gets a prompt made entirely of observations, which is correct when nothing
+    has been concluded yet.
+  */
+  it('gives the whole prompt to observations when nothing has matured', async () => {
+    const agent = await agentThatThinks();
+    await crowdedWithThingsItSaw(agent.agentId, 10);
+
+    const forPost = await mindForMessage(agent.agentId, '', true);
+    expect(forPost).toHaveLength(DELIBERATION_LIMITS.inPrompt);
+    expect(forPost.every((item) => item.kind === 'NARRATIVE')).toBe(true);
+  });
+
+  /*
+    One sighting is an impression. The prompt would introduce it as something
+    the agent worked out, and a claim resting on a single source is not that.
+  */
+  it('leaves out a conclusion resting on one piece of evidence', async () => {
+    const agent = await agentThatThinks();
+    await crowdedWithThingsItSaw(agent.agentId);
+    await mind.remember({
+      agentId: agent.agentId,
+      ...matured({
+        kind: 'QUESTION',
+        summary: 'How do autonomous agents handle trust when they transact with each other?',
+        salience: 22,
+        confidence: 0.5,
+        evidence: [{ kind: 'DISCOVERY', ref: 'only', note: 'one', at: new Date().toISOString() }],
+        fingerprint: 'thin-question',
+      }),
+    });
+
+    const forPost = await mindForMessage(agent.agentId, '', true);
+    expect(forPost.map((item) => item.kind)).not.toContain('QUESTION');
+  });
+
+  it('never takes more than the reserve, however many have matured', async () => {
+    const agent = await agentThatThinks();
+    await crowdedWithThingsItSaw(agent.agentId);
+    for (let i = 0; i < 5; i += 1) {
+      await mind.remember({
+        agentId: agent.agentId,
+        ...matured({ summary: `A conclusion it reached, number ${i}.`, fingerprint: `matured-${i}` }),
+      });
+    }
+
+    const forPost = await mindForMessage(agent.agentId, '', true);
+    const synthesised = forPost.filter((item) => item.kind === 'HYPOTHESIS');
+    expect(synthesised.length).toBeLessThanOrEqual(DELIBERATION_LIMITS.synthesisInPrompt);
+    expect(forPost).toHaveLength(DELIBERATION_LIMITS.inPrompt);
+  });
+
+  /*
+    Replies are untouched. Relevance to what was said decides there, and a
+    conclusion about something else must not arrive because it happens to be
+    mature: an agent that answers a question about its browser by raising an
+    unrelated hypothesis reads as one that cannot tell what it is talking about.
+  */
+  it('does not put it into a reply it has nothing to do with', async () => {
+    const agent = await agentThatThinks();
+    await mind.remember({ agentId: agent.agentId, ...matured() });
+
+    const forReply = await mindForMessage(agent.agentId, 'is your browser connected right now?', false);
+    expect(forReply.map((item) => item.kind)).not.toContain('HYPOTHESIS');
+  });
+
+  it('still reaches a reply that is actually about it', async () => {
+    const agent = await agentThatThinks();
+    await mind.remember({ agentId: agent.agentId, ...matured() });
+
+    const forReply = await mindForMessage(
+      agent.agentId,
+      'do you think the bottleneck for autonomous agents is capability or enforceable platform limits?',
+      false,
+    );
+    expect(forReply.map((item) => item.kind)).toContain('HYPOTHESIS');
   });
 });

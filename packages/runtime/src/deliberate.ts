@@ -1101,6 +1101,72 @@ export async function wakeDueAgents(limit = 3): Promise<WakeOutcome[]> {
  */
 const GOALS_IN_PROMPT = 2;
 
+/**
+ * The kinds that are the agent's own conclusion rather than something it saw.
+ *
+ * An INTEREST or a NARRATIVE is an observation it decided to keep. These are
+ * what it made of them, and they are the only ones this reserves room for.
+ *
+ * CURIOSITY is deliberately not here. `curiosity.ts` already picks one per
+ * wake and hands it to the research step, so it has a route of its own and
+ * does not need a reserved place in a prompt as well.
+ */
+const SYNTHESISED: readonly AttentionKind[] = ['HYPOTHESIS', 'CONCERN', 'QUESTION', 'LESSON'] as const;
+
+/** A day, for reading freshness below. */
+const DAY_MS = 24 * 3_600_000;
+
+/**
+ * Whether a conclusion has earned a place beside what the agent just saw.
+ *
+ * Every signal here is one the item already carries, and each excludes a
+ * different way of being not ready. Evidence, because a claim resting on one
+ * sighting is an impression and the prompt would present it as something the
+ * agent worked out. Confidence, because something still being settled belongs
+ * on the working set rather than in front of a decision. Current, because a
+ * conclusion nothing has touched in a fortnight is not what it is thinking
+ * about now. Unresolved, because a question already answered is a memory.
+ *
+ * Measured against the two the live agent held: a hypothesis at 0.82 with six
+ * pieces of evidence passes, and a question at 0.50 with one does not. That is
+ * the discrimination wanted. The thresholds are the ones `formIntentions`
+ * already uses for confidence, so an agent does not have two ideas about what
+ * counts as settled.
+ */
+function maturedIntoSomething(item: AttentionRow, now: number): boolean {
+  if (!SYNTHESISED.includes(item.kind)) return false;
+  if (item.state !== 'ACTIVE') return false;
+  if (Number(item.confidence) < 0.6) return false;
+  if ((item.evidence?.length ?? 0) < 2) return false;
+  const touched = new Date(item.lastReinforcedAt ?? item.updatedAt).getTime();
+  return Number.isFinite(touched) && now - touched <= 14 * DAY_MS;
+}
+
+/**
+ * What an agent has in front of it while choosing its own subject.
+ *
+ * Ranked by salience, as before, with a small reserved floor so a conclusion
+ * that has matured is not crowded out by things seen once. Nothing is boosted
+ * and nothing is forced: the reserve is a ceiling on how many may take it, the
+ * rest of the prompt is filled exactly as it was, and an agent that has
+ * concluded nothing eligible gets a prompt made entirely of observations.
+ *
+ * Reserving rather than reweighting on purpose. Raising the score of a
+ * conclusion would change what the working set retires and what the wake loop
+ * attends to next, and this is only about what is visible at the moment of
+ * deciding what to say.
+ */
+function forChoosingItsOwnSubject(items: AttentionRow[], limit: number): AttentionRow[] {
+  const now = Date.now();
+  const reserved = Math.min(DELIBERATION_LIMITS.synthesisInPrompt, Math.max(0, limit - 1));
+  const mature = items.filter((item) => maturedIntoSomething(item, now)).slice(0, reserved);
+  const taken = new Set(mature.map((item) => item.id));
+  // The majority is untouched: the same ranking, minus anything already taken.
+  const rest = items.filter((item) => !taken.has(item.id)).slice(0, limit - mature.length);
+  // Salience order overall, so the prompt still reads strongest first.
+  return [...mature, ...rest].sort((a, b) => b.salience - a.salience);
+}
+
 export async function mindForMessage(
   agentId: string,
   text: string,
@@ -1126,15 +1192,20 @@ export async function mindForMessage(
   if (items.length === 0) return goals;
 
   const chosen = isPost
-    ? items
-        /*
-          A post is the agent choosing its own subject, which is the one place
-          reticence applies. Filtered here as well as in `formIntentions`,
-          because a post can also be written from an idea a person put in the
-          backlog, and this is the last point before any text exists.
-        */
-        .filter((item) => !unpromptedSubject(`${item.summary} ${item.detail}`))
-        .slice(0, DELIBERATION_LIMITS.inPrompt)
+    ? forChoosingItsOwnSubject(
+        items.filter(
+          /*
+            A post is the agent choosing its own subject, which is the one
+            place reticence applies. Filtered here as well as in
+            `formIntentions`, because a post can also be written from an idea a
+            person put in the backlog, and this is the last point before any
+            text exists. Applied before the reserve, so a conclusion about
+            something an agent may not raise unprompted cannot take a slot.
+          */
+          (item) => !unpromptedSubject(`${item.summary} ${item.detail}`),
+        ),
+        DELIBERATION_LIMITS.inPrompt,
+      )
     : items
         .map((item) => ({ item, relevance: overlap(text, `${item.summary} ${item.detail}`) }))
         // A quarter of the distinctive words in common. Lower and an agent
