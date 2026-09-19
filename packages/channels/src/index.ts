@@ -65,6 +65,8 @@ export {
   toCandidates,
   // Whether a refusal ends the poll or the rendered page is tried instead.
   fromReadResult as radarPollResultFrom,
+  // Records a session X has stopped accepting, from the polling path.
+  noteSignedOut,
   type RadarReadContext,
 } from './x/radarIntelligence';
 export { fingerprint } from './x/index';

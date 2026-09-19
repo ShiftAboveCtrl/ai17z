@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { accounts as accountsRepo, query } from '@xbam/database';
-import { canonicalOrPage as canonical } from '@xbam/channels';
+import { canonicalOrPage as canonical, noteSignedOut } from '@xbam/channels';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -91,5 +91,35 @@ describe('a read that finds the session gone says so', () => {
     expect(() => canonical(readResult('RATE_LIMITED'), 'a profile', ctxFor(account))).toThrow();
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect((await statusOf(account.id)).status).toBe('CONNECTED');
+  });
+});
+
+/**
+ * The polling path records it too, and that is the one that notices first.
+ *
+ * `read.ts` covers a read somebody asked for. The radar polls on its own
+ * schedule all day, so a session that has stopped being accepted shows up
+ * there long before anybody opens a screen, and that file had its own handling
+ * for the outcome which only ever wrote a sentence onto the source's row.
+ *
+ * `fromReadResult` is deliberately given only what it reads, so it can be
+ * tested without a browser. The recording belongs to the callers that hold the
+ * channel context, which is where the account is.
+ */
+describe('the radar records a lost session as well', () => {
+  it('marks the account when a monitor is told to sign in', async () => {
+    const fixture = await createFixture();
+    const account = await connectedAccount(fixture);
+
+    noteSignedOut(
+      { channel: ctxFor(account), selfHandles: [], limit: 5, cursor: null, target: null } as never,
+      'NEEDS_SIGN_IN',
+      'X asked for a sign-in, so nothing was read.',
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const after = await statusOf(account.id);
+    expect(after.status).toBe('SESSION_EXPIRED');
+    expect(after.last_error).toMatch(/sign-in/i);
   });
 });
