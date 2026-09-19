@@ -1,4 +1,5 @@
 import { accounts as accountsRepo, workers as workersRepo } from '@xbam/database';
+import { capabilitiesFor, type WorkerRole } from '@xbam/jobs';
 import { buildChannelContext } from './channelContext';
 
 /**
@@ -60,6 +61,34 @@ export async function browserReadiness(accountId: string | null) {
       why: 'Nothing that can open a browser is running. This is AI17Z itself rather than anything about this agent.',
     };
   }
+
+  /*
+    And whether *this* process is the one that can.
+
+    The question above is about the installation and this one is about the
+    program asking it, and they are not the same. A jobs-only worker passes the
+    first check happily, because a browser worker is indeed running somewhere,
+    and then fails in the implementation with "Google Chrome could not be
+    found". Measured on a live installation: `x.read_profile` shortlisted,
+    offered, chosen by the model and executed inside the container, which has
+    no Chrome and is never going to have one.
+
+    That is the third place this same mistake has been found in one day, the
+    others being the engagement loop and the actions it left in flight. The
+    rule the product states is that only the worker owns browsers; what was
+    missing is that each process has to know whether it is that worker.
+
+    Unset means `all`, which is what a checkout, the tests and a single-process
+    installation are, so nothing that could drive a browser stops being able to.
+  */
+  const role = (process.env.AI17Z_WORKER_ROLE ?? 'all') as WorkerRole;
+  if (!capabilitiesFor(role).browserCapable) {
+    return {
+      status: 'UNAVAILABLE' as const,
+      why: 'This part of AI17Z does not drive a browser. The one that does will pick this up instead.',
+    };
+  }
+
   return { status: 'AVAILABLE' as const };
 }
 
