@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_TEMPLATES, assemblePrompt } from '@xbam/prompts';
+import { classifyEvidence } from '@xbam/runtime';
 import { DEFAULT_POLICY } from '@xbam/shared';
 
 const template = DEFAULT_TEMPLATES.find((t: { key: string }) => t.key === 'reply.default')!;
@@ -141,5 +142,59 @@ describe('a failed lookup does not close a door the capability loop still has op
     const text = withResearch(false);
     expect(text).toMatch(/Say you do not know rather than guessing at those\./);
     expect(text).toMatch(/Say plainly that you do not know/);
+  });
+});
+
+/**
+ * Deferring to a capability is not the same as having an answer.
+ *
+ * The note now says to check the capabilities before saying it does not know,
+ * and that is the sentence most likely to be read as permission. It is not.
+ * A capability that was offered and never called, or called and failed,
+ * produced nothing, and nothing is what the reply has to admit to. The verdict
+ * is computed before the loop runs and cannot see it either way, which is the
+ * property being pinned here.
+ */
+describe('an offered capability is not evidence and does not license a guess', () => {
+  const verdict = (mayStillLookUp: boolean) =>
+    classifyEvidence({
+      hasConversationContext: false,
+      projectPassages: 0,
+      webFindings: 0,
+      marketFindings: 0,
+      memories: 0,
+      failedLookups: 1,
+      mayStillLookUp,
+    });
+
+  it('still requires the reply to admit it does not know', () => {
+    // Both ways round: being about to be offered a menu changes what to try
+    // first and never whether an empty answer has to say it is empty.
+    expect(verdict(true).shouldAdmitUncertainty).toBe(true);
+    expect(verdict(false).shouldAdmitUncertainty).toBe(true);
+    expect(verdict(true).evidence).toBe('UNCERTAIN');
+  });
+
+  it('never tells the model it may fill the gap', () => {
+    for (const mayStillLookUp of [true, false]) {
+      const text = assemblePrompt({
+        layers: template.layers,
+        templateKey: template.key,
+        templateVersion: 1,
+        persona: persona as never,
+        policy: DEFAULT_POLICY,
+        context: { ...context, meta: { research: { findings: [], failed: [{ query: 'q', reason: 'no answer' }] } } } as never,
+        memories: [],
+        channelName: 'X',
+        toolDescriptions: [],
+        memoryCharBudget: 2_000,
+        actionType: 'REPLY',
+        evidence: { ...verdict(mayStillLookUp), evidence: 'UNCERTAIN' },
+      })
+        .messages.map((m: { content: string }) => m.content)
+        .join('\n');
+      expect(text, String(mayStillLookUp)).toMatch(/Do not fill the gap with something that sounds right\./);
+      expect(text, String(mayStillLookUp)).toMatch(/do not guess|Do not fill the gap/i);
+    }
   });
 });

@@ -60,6 +60,7 @@ export * from './xCapabilityContext';
 export * from './capabilityPermissions';
 export * from './capabilityActions';
 export * from './capabilityRelevance';
+export * from './researchCoverage';
 export * from './capabilityViews';
 /*
   The key the pipeline claims an action under, so a test can hold it against
