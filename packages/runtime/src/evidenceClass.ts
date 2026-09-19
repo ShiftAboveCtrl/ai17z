@@ -75,6 +75,19 @@ export interface EvidenceVerdict {
    * writes exactly as confidently as one with plenty.
    */
   shouldAdmitUncertainty: boolean;
+  /**
+   * Whether the model still has a way to find out, carried so the prompt can
+   * say so rather than working it out a second time.
+   *
+   * Softening the reason above was not enough on its own. The prompt puts two
+   * flat instructions around it, "say you do not know rather than guessing at
+   * those" beside the failed lookups and "say plainly that you do not know"
+   * under EVIDENCE, and two instructions to refuse drown out one conditional
+   * sentence that permits a capability. Measured: asked what a repository
+   * shipped, offered `github.read_activity` and `github.read_release` and
+   * nothing else, the agent answered that it could not check.
+   */
+  mayStillLookUp: boolean;
 }
 
 /** The sources that actually produced something, most specific first. */
@@ -125,6 +138,7 @@ export function classifyEvidence(input: EvidenceInput): EvidenceVerdict {
       // The whole point. A model with no evidence writes exactly as confidently
       // as one with plenty, so this is where it has to be told to say so.
       shouldAdmitUncertainty: true,
+      mayStillLookUp: stillOpen,
     };
   }
 
@@ -137,6 +151,7 @@ export function classifyEvidence(input: EvidenceInput): EvidenceVerdict {
       evidence: 'MULTI_SOURCE',
       reason: `Rests on ${retrieved.map((s) => WORDS[s]).join(' and ')}.`,
       shouldAdmitUncertainty: false,
+      mayStillLookUp: input.mayStillLookUp === true,
     };
   }
 
@@ -147,5 +162,6 @@ export function classifyEvidence(input: EvidenceInput): EvidenceVerdict {
     // Something was asked for and nothing came back, even though something else
     // did: the gap is real and the answer should not paper over it.
     shouldAdmitUncertainty: input.failedLookups > 0,
+    mayStillLookUp: input.mayStillLookUp === true,
   };
 }

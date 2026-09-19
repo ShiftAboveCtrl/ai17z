@@ -125,3 +125,33 @@ describe('the shapes a question arrives in', () => {
     expect(whatToResearch({ incoming: busy }).length).toBeLessThanOrEqual(3);
   });
 });
+
+/**
+ * The clock is not a subject to search for.
+ *
+ * "what time is it where you are right now, actually" carries "right now",
+ * which is in TIME_SENSITIVE because almost everything else carrying it really
+ * does change by the day. So the question went to the web, found nothing, and
+ * arrived in the prompt as a failed lookup. Measured on a real job afterwards:
+ * the shortlist was correct and offered `time.now` and nothing else, and the
+ * reply was still "I couldn't check your local time", because a model told
+ * plainly that a lookup failed says so rather than reaching for its own menu.
+ *
+ * Both halves are pinned here because fixing one alone does nothing: skipping
+ * the question leaves the fallback to search the same sentence as a subject.
+ */
+describe('asking the time is never a web search', () => {
+  it('looks up nothing at all for the clock', () => {
+    expect(all({ incoming: 'what time is it where you are right now, actually', parent: null })).toEqual([]);
+    expect(all({ incoming: "what's the time over there?", parent: null })).toEqual([]);
+    expect(all({ incoming: 'what day is it today', parent: null })).toEqual([]);
+  });
+
+  /*
+    Narrow on purpose. A time or a date somebody asks about in the world is an
+    ordinary question with an answer somewhere, and a clock cannot answer it.
+  */
+  it('still searches for a time or date out in the world', () => {
+    expect(queries({ incoming: 'what time did the launch actually happen today?', parent: null })).not.toEqual([]);
+  });
+});

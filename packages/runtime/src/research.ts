@@ -87,6 +87,35 @@ const TIME_SENSITIVE = [
   /\b(?:price|pump|dump|listing|airdrop|launch|hack|exploit|outage|announcement)\b/i,
 ];
 
+/**
+ * Asking what the time or date is now.
+ *
+ * The one question carrying "right now" where those words mean the clock
+ * rather than the news, which is why it has to be said out loud: everything
+ * else in TIME_SENSITIVE really does change by the day, and a clock question
+ * matches it by accident.
+ *
+ * Never a web search. A search engine answers this with pages about clocks,
+ * and the thing that answers it exactly is `time.now`, which the model is
+ * offered a moment later. The cost is not the wasted lookup: a lookup that
+ * fails arrives in the prompt as a failure, and told plainly that this could
+ * not be checked the model says so and never reaches for the clock in its own
+ * menu. Measured on a real job, offered `time.now` and nothing else, the reply
+ * was "I couldn't check your local time".
+ *
+ * Deliberately narrow. Only the question about now: "what time is it", not
+ * "what time did the launch happen" or "what's the date of the mainnet
+ * launch", which are ordinary questions about the world and belong on the web.
+ */
+const ASKS_THE_CLOCK = [
+  /\bwhat\s+time\s+is\s+it\b/i,
+  /\bwhat(?:'s| is)\s+the\s+time\b/i,
+  /\bwhat\s+(?:day|date)\s+is\s+it\b/i,
+  /\bwhat(?:'s| is)\s+today'?s\s+date\b/i,
+];
+
+const asksTheClock = (text: string): boolean => ASKS_THE_CLOCK.some((re) => re.test(text));
+
 export interface ResearchSubject {
   /** What the person said to the agent. */
   incoming: string;
@@ -470,6 +499,9 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
     // will, confidently.
     if (refersToSomethingElse(question) && (subject.hasUnreadMedia || subject.parent)) continue;
 
+    // The clock is answered by a capability or not at all. See ASKS_THE_CLOCK.
+    if (asksTheClock(question)) continue;
+
     // Not everything with a question mark needs the internet. "you around?"
     // does not, and neither does "worth it?". Two conditions together: long
     // enough to name its own subject, and either current or a matter of fact.
@@ -492,6 +524,12 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
   // Only if they asked nothing specific of their own. "What is this about?"
   // has no subject in it -- the subject is the post above.
   if (!answeredSomething && (asking || timeSensitive)) {
+    // Skipping the clock question above is not enough on its own: with nothing
+    // answered, "right now" still reads as time-sensitive here, and the
+    // subject this branch would search is that same question. See
+    // ASKS_THE_CLOCK.
+    if (asksTheClock(subject.incoming) && !asking) return lookups;
+
     // A post whose substance is a picture has no subject in its text, and
     // searching the words around a picture returns whatever those words happen
     // to collocate with. That is how "Nothing as waking up on a 30k roundtrip
