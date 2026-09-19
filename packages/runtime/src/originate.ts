@@ -144,9 +144,15 @@ export async function originatePost(input: {
       to the idea and never expires, so this branch is permanent for that idea:
       the claim takes the highest-scoring unused idea every time, finds the job
       again, releases it unchanged, and the one behind it is never reached.
-      Measured on a live installation, an idea whose job an owner rejected on
-      the 7th was still being picked every six hours on the 19th, and nothing
-      had been posted since the 17th.
+
+      Measured on a live installation, with the two dates kept apart because
+      they are not the same fact. The idea and its job were twelve days old,
+      created on the 7th. The jam started when an operator rejected that job at
+      07:21 on the 17th: the idea went back to unused, outscored everything
+      else, and won every claim from then on. The last post published was at
+      02:31 that morning, about five hours earlier, so the outage was two and a
+      half days rather than twelve. A newer idea created at 18:49 on the 17th
+      was never reached at all.
 
       `releaseIdea` also charges nothing, so the reconciler's own guard against
       exactly this, setting an idea aside once it has failed enough times, could
