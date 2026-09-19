@@ -276,7 +276,25 @@ async function main(): Promise<void> {
       });
     }
   };
-  const engagement = startLoop('engagement', 90_000, engageAhead, 'STANDARD');
+  /*
+    Only where a browser can actually be driven.
+
+    Every engagement kind there is is an action on X, and X is driven through
+    the real signed-in Chrome this process may or may not have. Ungated, a
+    jobs-only worker claimed proposals it could never perform and failed them
+    with "Google Chrome could not be found": measured on a live installation
+    inside one minute, three permanent failures from the container worker
+    beside two successes from the native one, on the same account.
+
+    The cost is not the noise. `claimDue` moves the attempt forward in the
+    statement that selects the row, so a worker with no browser spends the
+    three attempts a proposal gets, and something a browser-capable worker was
+    about to do is given up on instead. The same gate the tab reporter below
+    already uses, for the same reason.
+  */
+  const engagement = capabilities.browserCapable
+    ? startLoop('engagement', 90_000, engageAhead, 'STANDARD')
+    : null;
 
   /**
    * Publishes what each account's three tabs are doing.
@@ -360,7 +378,7 @@ async function main(): Promise<void> {
     clearInterval(feedWatcher);
     clearInterval(deliberation);
     clearInterval(repoWatcher);
-    clearInterval(engagement);
+    if (engagement) clearInterval(engagement);
     if (tabReporter) clearInterval(tabReporter);
     // Withdraw immediately rather than waiting for the heartbeat to lapse: a
     // clean shutdown knows it is leaving.
