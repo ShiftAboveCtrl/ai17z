@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { resetPressureHold } from '@xbam/shared';
 import { startLoop } from '../../apps/worker/src/loop';
@@ -148,5 +150,41 @@ describe('what a loop gives up under memory pressure', () => {
   it('resumes when the pressure clears', async () => {
     expect(await countTicks('OPTIONAL', 'CRITICAL')).toBe(0);
     expect(await countTicks('OPTIONAL', 'NORMAL')).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Work that needs a browser is only started where there is one.
+ *
+ * Every engagement kind there is is an action on X, driven through the real
+ * signed-in Chrome a given worker process may or may not have. The loop was
+ * started unconditionally, so a jobs-only worker claimed proposals it could
+ * never perform. Measured on a live installation inside a single minute: three
+ * permanent failures reading "Google Chrome could not be found" from the
+ * container worker, beside two successes from the native one, on the same
+ * account.
+ *
+ * The cost is not the noise in the action ledger. `claimDue` moves the attempt
+ * forward in the statement that selects the row, so a worker with no browser
+ * spends the three attempts a proposal gets and something a browser-capable
+ * worker was about to do is given up on instead.
+ *
+ * Read from the source because the loop is created inside the worker's own
+ * startup, and starting that needs a database, a browser and a process to own
+ * them. What matters is the gate, and the gate is here.
+ */
+describe('the engagement loop', () => {
+  const main = readFileSync(resolve(__dirname, '../../apps/worker/src/main.ts'), 'utf8');
+
+  it('is only started by a worker that can drive a browser', () => {
+    const start = main.indexOf("startLoop('engagement'");
+    expect(start, 'the engagement loop should still exist').toBeGreaterThan(0);
+    // The gate sits immediately before it, the same shape the tab reporter uses.
+    const before = main.slice(Math.max(0, start - 200), start);
+    expect(before).toMatch(/capabilities\.browserCapable/);
+  });
+
+  it('still clears its timer on shutdown now that it can be absent', () => {
+    expect(main).toMatch(/if \(engagement\) clearInterval\(engagement\)/);
   });
 });
