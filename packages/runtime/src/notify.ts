@@ -34,6 +34,7 @@ import {
   agents as agentsRepo,
   notifications as notificationsRepo,
   providers as providersRepo,
+  users as usersRepo,
   workers as workersRepo,
 } from '@xbam/database';
 import type { NotificationRecord } from '@xbam/database';
@@ -408,6 +409,46 @@ export async function sweepNotifications(): Promise<{ raised: number; resolved: 
   if (pause.paused) count(await everythingPaused({ by: pause.by, reason: pause.reason }));
   else {
     await everythingReleased();
+  }
+
+  /*
+    A provider that has stopped answering.
+
+    `providerFailing` and `providerRecovered` were written, given a severity, a
+    dedupe key and a link to the providers screen, and then never called by
+    anything. So the one thing an owner most needs telling at three in the
+    morning, that the model behind every agent is refusing calls, was visible
+    only to somebody already looking at the Health screen.
+
+    Read the same way that screen reads it, from the credential's own last
+    status, so the two cannot disagree. Resolved rather than skipped when it
+    recovers, for the reason the account loop below gives: something already
+    standing has to clear on the next sweep rather than waiting for another
+    event.
+  */
+  for (const owner of await usersRepo.listUsers()) {
+    for (const credential of await providersRepo.listProviders(owner.id)) {
+      if (!credential.enabled) {
+        await providerRecovered(credential.id);
+        continue;
+      }
+      // Never tested is not failing. An installation that has not run a check
+      // yet has nothing to report, and saying otherwise on first start is how
+      // a notification stops meaning anything.
+      const failing = Boolean(credential.lastStatus) && credential.lastStatus !== 'healthy';
+      if (failing) {
+        count(
+          await providerFailing({
+            credentialId: credential.id,
+            provider: credential.provider,
+            label: credential.label,
+            detail: credential.lastStatus ?? 'It stopped answering.',
+          }),
+        );
+      } else {
+        await providerRecovered(credential.id);
+      }
+    }
   }
 
   for (const account of await accountsRepo.allAccounts()) {
