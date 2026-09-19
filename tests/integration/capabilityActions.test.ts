@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { actions as actionsRepo, jobs as jobsRepo, query } from '@xbam/database';
-import { capabilityIdempotencyKey, ingestNormalizedEvent } from '@xbam/runtime';
+import { accounts as accountsRepo, actions as actionsRepo, jobs as jobsRepo, query } from '@xbam/database';
+import { capabilityIdempotencyKey, ingestNormalizedEvent, performCapabilityAction } from '@xbam/runtime';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture, seedCatalogue } from '../support/fixtures';
 
@@ -181,5 +181,64 @@ describe('claiming a capability action', () => {
     });
     expect(derived).not.toBe(job.idempotency_key);
     expect(await jobsRepo.getJob(job.id)).toBeTruthy();
+  });
+});
+
+/**
+ * The executor names the ending it reached, and a held claim is not success.
+ *
+ * `performed: false, alreadyDone: false` was returned for a verified dry run
+ * and for a claim another worker was holding, and only `detail` told them
+ * apart. `engage.ts` read that as a completed like: on a live installation
+ * twelve engagements were recorded DONE with the reason "Done. Something else
+ * is already doing this.", their jobs EXECUTED, and nothing sent to X. The
+ * daily ceiling counts DONE, so those twelve filled a ceiling of twelve and
+ * four real candidates were then declined for being over it.
+ */
+describe('what the executor reports when it could not get the claim', () => {
+  it('says IN_PROGRESS rather than looking like a success', async () => {
+    const { fixture, job } = await jobFor();
+    const account = await accountsRepo.createAccount({
+      ownerId: fixture.ownerId,
+      channel: 'mock',
+      handle: `held_${Date.now().toString(36).slice(-6)}`,
+      displayName: 'Held',
+    });
+    const targetRef = 'a-post-somebody-else-is-liking';
+    const key = capabilityIdempotencyKey({
+      jobIdempotencyKey: job.idempotency_key,
+      capabilityId: 'x.like',
+      targetRef,
+    });
+
+    // Somebody else has it, and has not finished.
+    const held = await actionsRepo.claimAction({
+      jobId: job.id,
+      agentId: fixture.agentId,
+      accountId: account.id,
+      channel: 'mock',
+      type: 'LIKE',
+      dryRun: false,
+      idempotencyKey: key,
+      payload: {},
+      targetRef,
+    });
+    expect(held.outcome).toBe('CLAIMED');
+
+    const result = await performCapabilityAction({
+      agentId: fixture.agentId,
+      jobId: job.id,
+      accountId: account.id,
+      capabilityId: 'x.like',
+      type: 'LIKE',
+      targetRef,
+      text: '',
+      jobIdempotencyKey: job.idempotency_key,
+      dryRun: false,
+    });
+
+    expect(result.outcome, 'the ending is a value, not something to read out of prose').toBe('IN_PROGRESS');
+    expect(result.performed).toBe(false);
+    expect(result.alreadyDone, 'and it must not read as already done either').toBe(false);
   });
 });

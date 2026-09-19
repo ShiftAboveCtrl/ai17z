@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { actions as actionsRepo, jobs as jobsRepo, query } from '@xbam/database';
+import {
+  accounts as accountsRepo,
+  actions as actionsRepo,
+  engagements as engagementsRepo,
+  jobs as jobsRepo,
+  query,
+} from '@xbam/database';
 import { failPermanently, scheduleRetry, sendToReview, waitForInFlight } from '@xbam/jobs';
 import { ingestNormalizedEvent } from '@xbam/runtime';
 import { installHarness, mockEvent } from '../support/harness';
@@ -177,5 +183,108 @@ describe('waiting for an action that is still in flight', () => {
     await scheduleRetry(job, 'VALIDATED', 'The composer was still empty after typing, twice.');
 
     expect((await jobsRepo.requireJob(job.id)).attemptCount).toBe(before + 1);
+  });
+});
+
+/**
+ * A claim somebody else is holding must never be recorded as a completed act.
+ *
+ * Found on a live installation, and it had cost the account a day of
+ * engagement. Twelve `agent_engagements` rows read DONE with the reason
+ * "Done. Something else is already doing this.", their record jobs were
+ * EXECUTED, and nothing had been sent to X. The daily ceiling counts DONE, so
+ * those twelve filled a ceiling of twelve and the next four real candidates
+ * were declined for being over it.
+ *
+ * The executor returns `performed: false, alreadyDone: false` for two entirely
+ * different endings: a verified dry run, and a claim it could not get. Only the
+ * prose told them apart, so the ending is a value now.
+ */
+describe('the executor says which ending it reached', () => {
+  it('reports a claim another worker holds as IN_PROGRESS, not as success', async () => {
+    const fixture = await createFixture();
+    await seedCatalogue();
+    const job = await newJob(fixture.agentId);
+    const key = `inflight-${job.id}`;
+
+    const first = await actionsRepo.claimAction({
+      jobId: job.id,
+      agentId: fixture.agentId,
+      accountId: job.accountId,
+      channel: 'mock',
+      type: 'LIKE',
+      dryRun: false,
+      idempotencyKey: key,
+      payload: {},
+      targetRef: 'a-post',
+    });
+    expect(first.outcome).toBe('CLAIMED');
+
+    // A second caller on the same key, while the first is still holding it.
+    const second = await actionsRepo.claimAction({
+      jobId: job.id,
+      agentId: fixture.agentId,
+      accountId: job.accountId,
+      channel: 'mock',
+      type: 'LIKE',
+      dryRun: false,
+      idempotencyKey: key,
+      payload: {},
+      targetRef: 'a-post',
+    });
+    expect(second.outcome, 'a held claim is not a free one').toBe('IN_PROGRESS');
+
+    // And the row is still EXECUTING, which is what made the caller guess.
+    const rows = await query<{ status: string }>('SELECT status FROM actions WHERE idempotency_key = $1', [key]);
+    expect(rows[0]!.status).toBe('EXECUTING');
+  });
+});
+
+/**
+ * An engagement that could not get its claim is not charged an attempt.
+ *
+ * Each proposal gets three, and `claimDue` holds for two minutes, so counting
+ * a claim it never got spent all three inside six minutes. An abandoned action
+ * needs ten before it may be retaken, so one orphaned row could defeat a
+ * proposal for good, before the recovery that exists for it could run.
+ */
+describe('a claim it could not get is not an attempt', () => {
+  it('gives the attempt back and defers past the stale window', async () => {
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({
+      ownerId: fixture.ownerId,
+      channel: 'mock',
+      handle: `eng_${Date.now().toString(36).slice(-6)}`,
+      displayName: 'Engager',
+    });
+    const proposed = await engagementsRepo.propose({
+      agentId: fixture.agentId,
+      accountId: account.id,
+      kind: 'LIKE',
+      remoteId: `post-${Date.now()}`,
+      remoteUrl: null,
+      authorHandle: 'someone',
+      excerpt: 'worth reading',
+      score: 70,
+      factors: [],
+      confidence: 0.8,
+      attentionId: null,
+    });
+    expect(proposed).not.toBeNull();
+
+    const claimed = (await engagementsRepo.claimDue(5, 120)).find((r) => r.id === proposed!.id)!;
+    expect(claimed.attempts, 'claimDue charges one on the way out').toBe(1);
+
+    await engagementsRepo.deferAttempt(proposed!.id, 15 * 60, 'Something else is already doing this.');
+
+    const after = await query<{ attempts: number; next_attempt_at: string; reason: string }>(
+      'SELECT attempts, next_attempt_at, reason FROM agent_engagements WHERE id = $1',
+      [proposed!.id],
+    );
+    expect(after[0]!.attempts, 'the attempt it never made is given back').toBe(0);
+    expect(after[0]!.reason).toMatch(/already doing this/i);
+    // Past the ten minutes an abandoned action needs before it can be retaken.
+    const waitMs = new Date(after[0]!.next_attempt_at).getTime() - Date.now();
+    expect(waitMs).toBeGreaterThan(10 * 60_000);
   });
 });

@@ -171,6 +171,30 @@ export async function claimDue(limit: number, holdSeconds: number): Promise<Enga
 }
 
 /**
+ * Put one back without charging it an attempt.
+ *
+ * A claim another worker is holding is not a try that failed: nothing was
+ * asked of X, and counting it spends the three this proposal gets. With a
+ * two-minute hold that used up every attempt inside six minutes, which is
+ * shorter than the ten an abandoned action needs before it can be retaken, so
+ * a single orphaned row could defeat the proposal permanently.
+ *
+ * Deferred past that window instead, and the attempt claimDue just charged is
+ * given back.
+ */
+export async function deferAttempt(id: string, seconds: number, reason: string): Promise<void> {
+  await query(
+    `UPDATE agent_engagements
+        SET next_attempt_at = now() + make_interval(secs => $2),
+            attempts = greatest(attempts - 1, 0),
+            reason = $3,
+            updated_at = now()
+      WHERE id = $1`,
+    [id, seconds, reason.slice(0, 1000)],
+  );
+}
+
+/**
  * Settle one, with the reason.
  *
  * A proposal that stops being worth doing is DECLINED and says why, rather than

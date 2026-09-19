@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { content, query } from '@xbam/database';
+import { accounts as accountsRepo, content, query } from '@xbam/database';
+import { originatePost } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -202,5 +203,86 @@ describe('how an idea ages', () => {
 
     await content.reconcileDrafting();
     expect((await statusOf(mine.id)).status).toBe('unused');
+  });
+});
+
+/**
+ * One idea nobody can publish must not silence every idea behind it.
+ *
+ * Measured on a live installation: an owner rejected a post on the 7th, and on
+ * the 19th the posting engine was still picking that same idea every six hours
+ * and stopping with "A job for this idea already exists". Nothing had been
+ * published since the 17th, and a newer idea sat behind it untouched. Read off
+ * the runtime, the agent's silence looked like judgement and was a jam.
+ *
+ * The mechanism: a POST's idempotency key is anchored to the idea and never
+ * expires, so once a job exists that branch is permanent for that idea. Putting
+ * it straight back made it `unused` again, and the claim takes the highest
+ * scoring unused idea every time, so it won for ever. It charged no attempt
+ * either, so the reconciler's own guard against an unpublishable idea blocking
+ * the queue could never fire: attempts stayed at zero.
+ */
+describe('an idea whose job already exists does not jam the queue', () => {
+  it('lets the next idea through, and honours the rejection durably', async () => {
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({
+      ownerId: fixture.ownerId,
+      channel: 'mock',
+      handle: `poster_${Date.now().toString(36).slice(-6)}`,
+      displayName: 'Poster',
+    });
+    await accountsRepo.linkAgentAccount({
+      agentId: fixture.agentId,
+      accountId: account.id,
+      triggerEventTypes: ['MENTION'],
+      actionType: 'POST',
+      enabled: true,
+    });
+    // The posting engine refuses a draft agent, which is correct and is not
+    // what this test is about.
+    await query(`UPDATE agents SET state = 'ACTIVE' WHERE id = $1`, [fixture.agentId]);
+
+    // A, scored above B so the claim always prefers it.
+    const a = await content.addIdea({ agentId: fixture.agentId, summary: 'The idea an owner turned down.', score: 95 });
+    const b = await content.addIdea({ agentId: fixture.agentId, summary: 'The idea waiting behind it.', score: 40 });
+
+    // A is taken, published for real, and the operator rejects it.
+    const first = await originatePost({ agentId: fixture.agentId, accountId: account.id });
+    expect(first.jobId, `declined: ${first.reason}`).toBeTruthy();
+    expect((await statusOf(a.id)).status).not.toBe('unused');
+    await query(`UPDATE jobs SET status = 'CANCELLED', last_error = 'Rejected by the operator.' WHERE id = $1`, [
+      first.jobId,
+    ]);
+    await content.reconcileDrafting();
+
+    // Durable: the rejection is recorded against the idea, not thrown away.
+    const rejected = await statusOf(a.id);
+    expect(rejected.attempts).toBe(1);
+    expect(rejected.lastError).toMatch(/Rejected by the operator/);
+
+    /*
+      Now the jam. A is `unused` again and still outscores B, so it wins the
+      claim, and its job already exists. Three cycles, which is also what it
+      takes for the reconciler to set A aside.
+    */
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await originatePost({ agentId: fixture.agentId, accountId: account.id });
+      await content.reconcileDrafting();
+    }
+
+    // B was reachable rather than starved behind A.
+    const after = await statusOf(b.id);
+    expect(after.status, 'the idea behind it was never even looked at').not.toBe('unused');
+
+    // And A is set aside with its reason kept, never deleted and never retried
+    // into a second real post.
+    const settled = await statusOf(a.id);
+    expect(['discarded', 'used', 'drafting']).toContain(settled.status);
+    expect(settled.lastError).toMatch(/Rejected by the operator/);
+    const posts = await query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM jobs WHERE agent_id = $1 AND action_type = 'POST' AND dry_run = false`,
+      [fixture.agentId],
+    );
+    expect(Number(posts[0]!.n), 'one rejected idea must not become several real post jobs').toBeLessThanOrEqual(2);
   });
 });

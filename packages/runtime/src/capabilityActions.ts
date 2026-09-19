@@ -36,6 +36,24 @@ export interface CapabilityActionRequest {
 }
 
 export interface CapabilityActionResult {
+  /**
+   * What actually happened, as a value rather than as prose.
+   *
+   * `performed` and `alreadyDone` are both false for two completely different
+   * endings: a dry run that verified the target and stopped, and a claim that
+   * found another worker already holding this action. The only thing telling
+   * them apart was `detail`, which is written for a model to read, so a caller
+   * branching on the first two booleans got "not performed, not already done"
+   * and had to guess.
+   *
+   * It guessed wrong. `engage.ts` treated a claim it could not get as a
+   * completed like: twelve engagements on a live installation are recorded DONE
+   * with the reason "Done. Something else is already doing this.", their record
+   * jobs are EXECUTED, and nothing was ever sent to X. Those twelve then filled
+   * the agent's daily ceiling of twelve, which declined four real candidates,
+   * so the account stopped liking anything at all for a day.
+   */
+  outcome: 'PERFORMED' | 'ALREADY_DONE' | 'IN_PROGRESS' | 'VERIFIED_ONLY';
   performed: boolean;
   /** True when the remote already had it and nothing was sent again. */
   alreadyDone: boolean;
@@ -107,6 +125,7 @@ export async function performCapabilityAction(
   // Somebody already did this. Not an error and not a reason to do it again.
   if (claim.outcome === 'ALREADY_EXECUTED') {
     return {
+      outcome: 'ALREADY_DONE',
       performed: false,
       alreadyDone: true,
       remoteActionId: claim.action.remoteActionId,
@@ -116,6 +135,7 @@ export async function performCapabilityAction(
   }
   if (claim.outcome === 'IN_PROGRESS') {
     return {
+      outcome: 'IN_PROGRESS',
       performed: false,
       alreadyDone: false,
       remoteActionId: null,
@@ -159,6 +179,7 @@ export async function performCapabilityAction(
         remoteActionId: already.remoteActionId,
       });
       return {
+        outcome: 'ALREADY_DONE',
         performed: false,
         alreadyDone: true,
         remoteActionId: already.remoteActionId,
@@ -190,7 +211,27 @@ async function runAction(
   // navigates to its own target: anything can have used the action tab in
   // between, and acting on whatever happens to be loaded is how an automation
   // replies to the wrong post.
-  const verification = await adapter.verifyAction(context, outgoing);
+  /*
+    Verification can throw, and a throw here used to leave the row EXECUTING.
+
+    Only `executeAction` below was inside a try. Verifying needs the browser,
+    which is the part most likely to fail, and an action abandoned mid-claim is
+    not a harmless bookkeeping error: the next attempt on that key is told
+    another worker is already on it, which is how twelve likes on a live
+    installation were recorded as done without anything being sent.
+
+    Settled as FAILED rather than left open, and the error still propagates, so
+    the caller decides what the job does.
+  */
+  const verification = await adapter.verifyAction(context, outgoing).catch(async (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    await actionsRepo.completeAction(actionId, {
+      status: 'FAILED',
+      errorClass: error instanceof PipelineError ? error.errorClass : 'RETRYABLE',
+      lastError: message,
+    });
+    throw error;
+  });
   if (!verification.verified) {
     await actionsRepo.completeAction(actionId, {
       status: 'FAILED',
@@ -207,6 +248,7 @@ async function runAction(
       verification: verification as unknown as Record<string, unknown>,
     });
     return {
+      outcome: 'VERIFIED_ONLY',
       performed: false,
       alreadyDone: false,
       remoteActionId: null,
@@ -225,6 +267,7 @@ async function runAction(
       verification: result.verification as unknown as Record<string, unknown>,
     });
     return {
+      outcome: 'PERFORMED',
       performed: true,
       alreadyDone: false,
       remoteActionId: result.remoteActionId,
