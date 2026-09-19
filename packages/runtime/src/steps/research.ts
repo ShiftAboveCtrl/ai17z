@@ -21,6 +21,8 @@ import {
   whatToResearch,
 } from '../research';
 import { planLookups } from '../plan';
+import { withoutWhatACapabilityAnswers } from '../researchCoverage';
+import { capabilitySettings } from '../capabilityPermissions';
 
 import type { JobBundle } from '../loadJob';
 
@@ -86,13 +88,46 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
   // worth looking up put the most important first, so trimming the tail keeps
   // the best of a plan that was too ambitious rather than discarding it.
   const researchCap = bundle.policy.budget.maxResearchCallsPerEvent;
-  const lookups = capResearch(plan.lookups, researchCap);
-  if (plan.lookups.length > lookups.length) {
+  const capped = capResearch(plan.lookups, researchCap);
+  if (plan.lookups.length > capped.length) {
     log.info('trimmed the research plan to the configured limit', {
       jobId: job.id,
       planned: plan.lookups.length,
       allowed: researchCap,
     });
+  }
+
+  /*
+    A question something here already answers does not go to a search engine.
+
+    Both the rules and the model's plan arrive here, which is why the rule is
+    stated once and in this place rather than in either of them. It is only
+    meaningful when the loop is on: with it off nothing will ever be offered,
+    so the web is the only source and taking it away would turn an answerable
+    question into a shrug.
+
+    A dropped lookup is not an answered one. The capability can still fail or
+    go uncalled, and the evidence verdict below is unchanged either way.
+  */
+  let lookups = capped;
+  if (bundle.policy.tools.capabilityLoop) {
+    const settings = await capabilitySettings(bundle.agent.id).catch(() => null);
+    if (settings) {
+      const covered = await withoutWhatACapabilityAnswers(capped, {
+        agentId: bundle.agent.id,
+        jobId: job.id,
+        accountId: job.accountId,
+        permissions: settings.permissions,
+      });
+      lookups = covered.kept;
+      for (const drop of covered.dropped) {
+        log.info('left a lookup to a capability that answers it', {
+          jobId: job.id,
+          query: drop.query,
+          capabilityId: drop.capabilityId,
+        });
+      }
+    }
   }
 
   // The answer is in the picture and the agent cannot see pictures.

@@ -1,6 +1,6 @@
 import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
-import { asksTheClock, type Lookup } from './research';
+import type { Lookup } from './research';
 
 const log = createLogger('plan');
 
@@ -212,20 +212,7 @@ export async function planLookups(
     // A plan that asks for an image where there is none is not a plan. Trusting
     // it would make the prompt admit to a gap that does not exist.
     return {
-      /*
-        The clock is enforced here rather than asked for in the instruction
-        above, for the reason the emoji and the dash are enforced on finished
-        text: an instruction is advice, and this one is about the case the
-        model gets wrong. Measured against the classifier this agent actually
-        runs, "what time is it right now?" was planned as
-        `search:what time is it right now?`, which is the lookup that fails and
-        then tells the model it could not check. The rules already drop it; a
-        plan that reaches past them drops it too.
-
-        Only the clock question, so a time or date out in the world is still an
-        ordinary search. See ASKS_THE_CLOCK in research.ts.
-      */
-      lookups: parsed.lookups.filter((lookup) => !(lookup.kind === 'search' && asksTheClock(lookup.query))),
+      lookups: parsed.lookups,
       needsImage: parsed.needsImage && input.hasMedia,
       decidedBy: 'model',
     };
