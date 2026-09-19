@@ -1,3 +1,4 @@
+import { accounts as accountsRepo } from '@xbam/database';
 import type { RadarCandidate, RadarPollResult, RadarSourceKind } from '@xbam/shared/contracts';
 import type { ChannelContext } from '../contract';
 import { xIntelligence, STOP_ASKING, type XPostRecord, type XReadResult } from './intelligence';
@@ -121,6 +122,7 @@ async function search(ctx: RadarReadContext, query: string, eventType: string): 
     { query, limit: Math.max(ctx.limit, 1), latest: true },
     { channel: ctx.channel, budget: RADAR_BUDGET },
   );
+  noteSignedOut(ctx, answer.outcome, answer.detail);
   return fromReadResult(answer, ctx, eventType, `search:${query}`);
 }
 
@@ -139,6 +141,7 @@ async function watchAccount(ctx: RadarReadContext, target: string): Promise<Rada
 
   if (resolved.outcome !== 'OK' || !resolved.data) {
     if (STOP_ASKING.includes(resolved.outcome)) {
+      noteSignedOut(ctx, resolved.outcome, resolved.detail);
       return { candidates: [], cursor: null, error: refusal(resolved.outcome, resolved.detail, `@${handle}`) };
     }
     return null;
@@ -158,6 +161,7 @@ async function watchAccount(ctx: RadarReadContext, target: string): Promise<Rada
     },
     { channel: ctx.channel, budget: RADAR_BUDGET },
   );
+  noteSignedOut(ctx, timeline.outcome, timeline.detail);
   return fromReadResult(timeline, ctx, 'POST', `account:${handle}`);
 }
 
@@ -192,6 +196,29 @@ export function fromReadResult(
   // SCHEMA_CHANGED or UNAVAILABLE: the structured read could not run, and the
   // rendered page is exactly the fallback that exists for it.
   return null;
+}
+
+/**
+ * Record a session that has stopped being accepted, from the polling path too.
+ *
+ * The same rule `canonical` applies to a read somebody asked for, applied here
+ * because this is the path that would notice first: the radar polls on its own
+ * schedule, all day, and a dead session shows up on every one of those long
+ * before anybody opens a screen. This file had its own handling for the
+ * outcome and it only ever wrote a sentence onto the source's row, so the
+ * account went on reading CONNECTED while every monitor quietly returned
+ * nothing.
+ *
+ * Only from CONNECTED, and deliberately not awaited: telling the owner must
+ * not slow a poll down or fail one.
+ */
+export function noteSignedOut(ctx: RadarReadContext, outcome: string, detail: string): void {
+  if (outcome !== 'NEEDS_SIGN_IN') return;
+  const account = ctx.channel?.account;
+  if (!account || account.status !== 'CONNECTED') return;
+  void accountsRepo
+    .updateAccount(account.id, { status: 'SESSION_EXPIRED', lastError: detail || 'X asked for a sign-in.' })
+    .catch(() => undefined);
 }
 
 /** The refusal in words an owner reads on the source's row, never a code. */
