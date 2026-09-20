@@ -116,23 +116,45 @@ echo "### installing $TAG from the network, as published"
 #
 # Seen for real: `curl: (56) The requested URL returned error: 403` from the
 # macOS arm64 runner, while the Intel one beside it installed fine.
+#
+# The retry turns on the attempt having failed, never on what it printed. A
+# condition written as a text match only fires for the wordings somebody thought
+# of, and the Windows half of this workflow proved how that ends: it matched on
+# (403), (409) and (429) in output that was empty on every run, so the retry it
+# appears to have could never once have happened. An exit status is there
+# whatever the failure was and whatever it managed to say about it.
+#
+# Two attempts, and no more. What it printed is still read, but only to describe
+# what happened once both of them have failed.
+
+# Both attempts failed, and the report has to name which kind of failure it is
+# rather than assume one. A shared runner's hourly API ceiling says nothing
+# about the release; anything else is a finding about what was published.
+# Either way this fails.
+why_it_failed() {
+  if printf '%s' "$2" | grep -qE '403|429|rate limit|could not be read|could not be reached'; then
+    printf 'this runner could not reach the GitHub API after a retry (the second attempt exited %s). That is the sixty-an-hour ceiling on an address it shares, not something about the release.' "$1"
+  else
+    printf 'the published installer failed twice, ninety seconds apart, exiting %s the second time. Everything else in this run reached the same release from the same URLs, so this is a finding about what was published rather than about this runner.' "$1"
+  fi
+}
 install_once() {
   bash "$ROOM/install-ai17z-macos.sh" --release "$TAG" --into "$TARGET" --yes --no-start 2>&1
 }
-out="$(install_once)"
-if printf '%s' "$out" | grep -qE '403|could not be read|could not be reached'; then
-  echo "  GitHub refused that. Waiting ninety seconds and trying once more, which is"
-  echo "  what the installer itself tells somebody to do."
+out="$(install_once)"; code=$?
+if [ "$code" -ne 0 ]; then
+  echo "  That attempt exited $code. Waiting ninety seconds and trying once more,"
+  echo "  which is what the installer itself tells somebody to do."
+  printf '%s\n' "$out" | sed 's/^/    /' | tail -20
   sleep 90
-  out="$(install_once)"
-  if printf '%s' "$out" | grep -qE '403|could not be read|could not be reached'; then
-    # Twice. The ceiling is an hour long, so ninety seconds was never going to
-    # clear it -- and this has to be unmistakable rather than look like a
-    # finding about the release. Everything else in this run installed the same
-    # release from the same URLs.
-    bad "this runner could not reach the GitHub API after a retry. That is the sixty-an-hour ceiling on an address it shares, not something about the release."
+  out="$(install_once)"; code=$?
+  if [ "$code" -ne 0 ]; then
+    # Twice. The API ceiling is an hour long, so ninety seconds was never going
+    # to clear that one, and either way this has to say which it was rather
+    # than let a runner's shared address read as a fault in the release.
+    bad "$(why_it_failed "$code" "$out")"
   else
-    ok "it was refused once and the retry worked"
+    ok "the first attempt failed and the retry worked"
   fi
 fi
 printf '%s\n' "$out" | sed 's/^/    /' | tail -40

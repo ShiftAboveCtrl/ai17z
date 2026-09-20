@@ -76,6 +76,13 @@ export interface CompileForJobInput {
   /** Allows the expensive path. False during a dry run or a tight budget. */
   allowModelCall: boolean;
   maxCalls: number;
+  /**
+   * Whether this is the agent choosing its own subject rather than answering.
+   *
+   * Only repetition reads it, and only to decide whether an identical opening
+   * is decisive on its own. See `RepetitionOptions.openerIsDecisive`.
+   */
+  isPost?: boolean;
 }
 
 export interface CompileForJobResult {
@@ -109,7 +116,11 @@ export async function compileForJob(input: CompileForJobInput): Promise<CompileF
         Boolean(input.recipientHandle) &&
         row.recipientHandle?.toLowerCase() === input.recipientHandle?.replace(/^@+/, '').toLowerCase(),
     })),
-    { signaturePhrases: policy.signaturePhrases, signatureRestHours: policy.signatureRestHours },
+    {
+      signaturePhrases: policy.signaturePhrases,
+      signatureRestHours: policy.signatureRestHours,
+      openerIsDecisive: input.isPost === true,
+    },
   );
 
   const generic = scoreGeneric(input.draft, { avoid: policy.avoid, avoidPhrases: policy.avoidPhrases });
@@ -202,7 +213,11 @@ export async function compileForJob(input: CompileForJobInput): Promise<CompileF
   const finalRepetition = scoreRepetition(
     text,
     recent.map((row) => ({ text: row.text, at: row.postedAt })),
-    { signaturePhrases: policy.signaturePhrases, signatureRestHours: policy.signatureRestHours },
+    {
+      signaturePhrases: policy.signaturePhrases,
+      signatureRestHours: policy.signatureRestHours,
+      openerIsDecisive: input.isPost === true,
+    },
   );
 
   return {

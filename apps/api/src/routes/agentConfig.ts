@@ -18,7 +18,6 @@ import {
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import { getCapability } from '@xbam/tools';
 import {
-  capabilityViews,
   setCapabilityPermission,
   setToolpack,
   toolpackViews,
@@ -834,11 +833,27 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  // Trying the agent out without anybody seeing it.
-  //
-  // There is no job and no action on this path, which is the safety rather than
-  // a flag on one: every remote call in this system is made by an action
-  // belonging to a job, so the code that reaches X is not reachable from here.
+  /*
+    Trying the agent out without anybody seeing it.
+
+    There is no job and no action on this path, which is the safety rather than
+    a flag on one: every remote call in this system is made by an action
+    belonging to a job, so the code that reaches X is not reachable from here.
+
+    This and `/compare` below are deliberately API only, and saying so is the
+    point of this comment. Studio's Lab view reaches the Response Lab, which
+    runs the whole pipeline as a rehearsal and answers "what would really have
+    happened". The playground holds memory, thread and research still on
+    purpose, so that two personas can be compared with everything else fixed --
+    a different question, and one an owner asks far less often than they ask
+    the first.
+
+    So there is no screen, and a screen must not be invented to give these one.
+    What they need instead is to be reachable and to stay honest, which is what
+    `tests/integration/playgroundApi.test.ts` holds: the owner boundary, the
+    shapes, and the property the whole path rests on, that nothing here creates
+    a job or an action.
+  */
   app.post(
     '/api/agents/:id/playground',
     handler(async (request) => {
@@ -1139,36 +1154,22 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  /**
-   * Every capability this agent has, and whether it would run right now.
-   *
-   * Under `/toolspace` rather than `/capabilities`, which is already taken by
-   * `agent_account_capabilities` -- what an agent is permitted to do on a
-   * channel. Two things called capability in one product is one too many, and
-   * the collision was a route Fastify refused to register.
-   *
-   * Derived, never stored: the permission is a setting and the status is a fact
-   * about this minute. The same `resolvePermission` the loop uses answers it, so
-   * a screen cannot say something would run while the runtime refuses it.
-   */
-  app.get(
-    '/api/agents/:id/toolspace',
-    handler(async (request) => {
-      const user = await requireUser(request);
-      const agent = await ownedAgent(params(request).id!, user);
-      const links = await accountsRepo.listAgentAccounts(agent.id);
-      const paused = (await pauseState().catch(() => ({ paused: false }))).paused;
-      return {
-        items: await capabilityViews({
-          agentId: agent.id,
-          // The account a capability would act as. The first linked one, which
-          // is the only one an agent has today.
-          accountId: links[0]?.accountId ?? null,
-          paused,
-        }),
-      };
-    }),
-  );
+  /*
+    The flat list of every capability was served here and nothing asked for it.
+
+    `/toolspace/packs` answers with `packs` plus `ungrouped`, which is every
+    capability there is, so this was the same content in a different shape. The
+    screen fetched both for a while and that cost something real rather than
+    only being redundant: this was the one an individual switch reloaded, while
+    every row on screen was drawn from the pack view, so changing a capability
+    refreshed nothing an owner could see. The screen stopped fetching it; the
+    route stayed.
+
+    Removed for the reason the duplicate bridges route was, and the reason the
+    `narratives` table was: two answers to one question is the thing this
+    codebase keeps saying it does not want, and the one nothing renders is the
+    one that goes quietly wrong. Nothing the pack view is built on changed.
+  */
 
   /**
    * The same decisions, grouped the way somebody would ask for them.

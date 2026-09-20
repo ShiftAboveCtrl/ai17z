@@ -48,14 +48,51 @@ describe('a model an agent is pointed at', () => {
     // The provider is retested and no longer lists the model this agent uses.
     await providersRepo.updateProvider(fixture.providerId, { availableModels: ['something-else'] });
 
-    const detail = body<{ models: { model: string; providerModels: string[]; providerLabel: string }[] }>(
+    const detail = body<{ models: { model: string; providerModels: string[]; providerLabel: string; providerCheckedAt: string | null }[] }>(
       await app.inject({ method: 'GET', url: `/api/agents/${fixture.agentId}`, headers: auth }),
     );
     const primary = detail.models[0]!;
     const warning = staleModel(primary);
     expect(warning).toBeTruthy();
     expect(warning).toContain('mock-echo');
-    expect(warning).toMatch(/cannot generate/i);
+    // It says what it noticed, and names the two things it could mean. What it
+    // may not do is pick one of them, which is what the sentence used to do.
+    expect(warning).toMatch(/did not list/i);
+    expect(warning).toMatch(/out of date/i);
+    expect(warning).not.toMatch(/cannot generate/i);
+    expect(warning).not.toMatch(/no longer offers/i);
+  });
+
+  /**
+   * The list has an age, and the age is most of what an absence from it means.
+   *
+   * Measured on ai17z-test rather than imagined: the stored list was
+   * `["deepseek-flash", "deepseek-v4-pro"]`, taken five days earlier and never
+   * refreshed, and the screen carried a red "unavailable" chip against four of
+   * the seven roles. `deepseek-v4-flash` had completed twelve calls in the
+   * previous three hours. An owner reading that would have gone and
+   * reconfigured four roles that worked.
+   */
+  it('says when the list it is judging against was taken', async () => {
+    const fixture = await createFixture();
+    const auth = await signIn(fixture.ownerEmail);
+    await providersRepo.updateProvider(fixture.providerId, { availableModels: ['something-else'] });
+
+    const detail = body<{
+      models: { model: string; providerModels: string[]; providerLabel: string; providerCheckedAt: string | null }[];
+    }>(await app.inject({ method: 'GET', url: `/api/agents/${fixture.agentId}`, headers: auth }));
+
+    const primary = detail.models[0]!;
+    // Carried through the API rather than derived in the browser, so the
+    // screen and the runtime are reading one fact.
+    expect(primary).toHaveProperty('providerCheckedAt');
+
+    expect(staleModel(primary)).toMatch(/last checked/i);
+
+    // And with no date it still refuses to invent one.
+    const undated = staleModel({ ...primary, providerCheckedAt: null });
+    expect(undated).toMatch(/when it was last checked\./);
+    expect(undated).not.toMatch(/Invalid Date/);
   });
 
   it('says nothing when the provider publishes no list', async () => {
@@ -65,7 +102,7 @@ describe('a model an agent is pointed at', () => {
     const auth = await signIn(fixture.ownerEmail);
     await providersRepo.updateProvider(fixture.providerId, { availableModels: [] });
 
-    const detail = body<{ models: { model: string; providerModels: string[]; providerLabel: string }[] }>(
+    const detail = body<{ models: { model: string; providerModels: string[]; providerLabel: string; providerCheckedAt: string | null }[] }>(
       await app.inject({ method: 'GET', url: `/api/agents/${fixture.agentId}`, headers: auth }),
     );
     expect(staleModel(detail.models[0]!)).toBeNull();

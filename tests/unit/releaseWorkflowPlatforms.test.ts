@@ -296,6 +296,94 @@ describe('the release builds every platform from one tag', () => {
       }
     });
 
+    /**
+     * The retry that could never once have fired.
+     *
+     * Two releases in a row failed a qualification job on the same thing, and
+     * the second one showed why the guard against it did not work. Beta 4.6's
+     * Windows job reported `install.ps1 -WhatIfOnly exited 1:` with nothing
+     * after the colon, and no retry ran.
+     *
+     * install.ps1 says everything through Write-Host, which writes to the
+     * information stream, and `2>&1` merges stderr and nothing else. Measured
+     * rather than reasoned about: the same script block captured with `2>&1`
+     * yields an empty string and with `*>&1` yields its output. So the text
+     * was empty on every run the job has ever done, the annotation could never
+     * carry a reason, and a retry conditional on finding (403), (409) or (429)
+     * in that text was unreachable code wearing the shape of a safeguard.
+     *
+     * A retry has to turn on the thing that failed, which is the attempt.
+     */
+    it('retries on the attempt failing, never on what the attempt printed', () => {
+      const windows = jobs(qualification).windows!;
+      // Every stream, or the output being judged is not the output there was.
+      expect(windows).toContain('-WhatIfOnly *>&1');
+      expect(windows).not.toContain('-WhatIfOnly 2>&1');
+      // And the condition is the exit status on its own. An HTTP code in the
+      // text may describe a failure afterwards; it may not decide whether one
+      // happened.
+      expect(windows).toContain('$result = Invoke-Once');
+      expect(windows).toMatch(/if \(\$result\.Code -ne 0\) \{\r?\n[^}]*Start-Sleep -Seconds 90/);
+      expect(windows).not.toMatch(/\$result\.Code -ne 0 -and \$result\.Text -match/);
+
+      // The same rule in the two installers that already had the shape of it.
+      for (const script of [
+        read('.github/scripts/qualify-published-macos.sh'),
+        read('.github/scripts/qualify-published-ubuntu.sh'),
+      ]) {
+        expect(script).toContain('out="$(install_once)"; code=$?');
+        expect(script).toContain('if [ "$code" -ne 0 ]; then');
+        // Not the old condition, which asked the output whether to try again.
+        expect(script).not.toMatch(/if printf '%s' "\$out" \| grep -qE '403/);
+      }
+    });
+
+    it('tries exactly twice, waits the ninety seconds, and then fails', () => {
+      // Bounded on both sides. A retry that cannot happen is what this is
+      // correcting; a retry that can happen repeatedly would turn a shared
+      // runner's bad hour into an hour of runner time, and a genuine fault in
+      // a published installer into a job that never finishes.
+      const windows = jobs(qualification).windows!;
+      expect(windows.match(/Invoke-Once\b/g)?.length).toBe(3); // one definition, two calls
+      expect(windows.match(/Start-Sleep -Seconds 90/g)?.length).toBe(1);
+      expect(windows).not.toMatch(/\b(while|foreach|for)\s*\(/);
+      // And a second failure is still a failure. Nothing here may turn a
+      // broken installer into a pass.
+      expect(windows).toContain('throw "install.ps1 -WhatIfOnly exited $($result.Code) on both attempts"');
+
+      for (const script of [
+        read('.github/scripts/qualify-published-macos.sh'),
+        read('.github/scripts/qualify-published-ubuntu.sh'),
+      ]) {
+        expect(script.match(/install_once\b/g)?.length).toBe(3);
+        expect(script.match(/^\s*sleep 90$/gm)?.length).toBe(1);
+        expect(script).toContain('bad "$(why_it_failed "$code" "$out")"');
+      }
+    });
+
+    it('says which kind of failure it was, rather than assuming one', () => {
+      // A runner's shared sixty-an-hour ceiling says nothing about the
+      // release. Anything else is a finding about what was published. Both
+      // fail, and the report has to tell somebody which they are looking at,
+      // because the two need opposite responses: re-run the job, or stop the
+      // release.
+      const windows = jobs(qualification).windows!;
+      expect(windows).toContain('sixty-an-hour ceiling');
+      expect(windows).toContain('a finding about what was published');
+      // An attempt that printed nothing at all still gets said out loud, which
+      // is the case that started this.
+      expect(windows).toContain("(it printed nothing at all)");
+
+      for (const script of [
+        read('.github/scripts/qualify-published-macos.sh'),
+        read('.github/scripts/qualify-published-ubuntu.sh'),
+      ]) {
+        expect(script).toContain('why_it_failed()');
+        expect(script).toContain('sixty-an-hour ceiling');
+        expect(script).toContain('a finding about what was published');
+      }
+    });
+
     it('refuses a rehearsal, which published nothing to qualify', () => {
       expect(qualification).toContain('rehearsal-*)');
     });

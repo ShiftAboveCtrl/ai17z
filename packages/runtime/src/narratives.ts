@@ -124,7 +124,22 @@ export function termsIn(text: string): string[] {
 
 interface Bucket {
   posts: number;
-  byTerm: Map<string, { mentions: number; authors: Set<string> }>;
+  /**
+   * Who said it, and what to call them, kept apart on purpose.
+   *
+   * `authors` is identity and answers "how many accounts", so it holds the
+   * numeric id wherever there is one. `handles` is what an owner reads, so it
+   * holds only things that are actually a handle. They were one set, and the
+   * examples line rendered it as `@${entry}`, which prints an account's
+   * numeric id as though it were its name, and prints a bare `@` for a post
+   * whose author was neither.
+   *
+   * Seen on ai17z-test: "326 accounts, including @_anika_7, @, @nathanoyler".
+   * That `@` is a post with no id and no handle, and it was also being counted
+   * as one of the 326. An author nobody could identify is not an account, for
+   * the same reason an unmeasured count is not zero.
+   */
+  byTerm: Map<string, { mentions: number; authors: Set<string>; handles: Set<string> }>;
 }
 
 function bucketOf(posts: NarrativePost[]): Bucket {
@@ -133,13 +148,21 @@ function bucketOf(posts: NarrativePost[]): Bucket {
     bucket.posts += 1;
     // Identity first, the handle as a fallback. A post discovered before the
     // radar could see ids has none, and its author should still be counted.
-    const author = post.authorId || post.handle.replace(/^@+/, '').toLowerCase();
+    const handle = post.handle.replace(/^@+/, '').toLowerCase();
+    const author = post.authorId || handle;
     // Counted once per post: a post that says "restaking" four times is one
     // account saying it, and rewarding repetition rewards spam.
     for (const term of termsIn(post.text)) {
-      const entry = bucket.byTerm.get(term) ?? { mentions: 0, authors: new Set<string>() };
+      const entry = bucket.byTerm.get(term) ?? {
+        mentions: 0,
+        authors: new Set<string>(),
+        handles: new Set<string>(),
+      };
       entry.mentions += 1;
-      entry.authors.add(author);
+      // An author with neither an id nor a handle is not a known account and
+      // must not become one by being an empty string.
+      if (author) entry.authors.add(author);
+      if (handle) entry.handles.add(handle);
       bucket.byTerm.set(term, entry);
     }
   }
@@ -199,7 +222,9 @@ export function readNarratives(
       priorShare === undefined || newlySeen ? undefined : Number((share / priorShare).toFixed(2));
 
     const rising = lift !== undefined && lift >= RISING_LIFT;
-    const examples = [...entry.authors].slice(0, 3);
+    // Named from the handles rather than the identity keys: the screen writes
+    // these as `@name`, and an identity key is as likely to be a numeric id.
+    const examples = [...entry.handles].slice(0, 3);
     narratives.push({
       term,
       authors: entry.authors.size,

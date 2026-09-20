@@ -1,6 +1,5 @@
 import type { XMediaItem, XPost, XProfile, XSearchResult, XThread } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
-import { accounts as accountsRepo } from '@xbam/database';
 import type { ChannelContext } from '../contract';
 import { SEL, X_URLS } from './selectors';
 import { resolveBranch, type ArticleSnapshot } from './conversation';
@@ -16,6 +15,7 @@ import {
   type XReadResult,
   type XUser,
 } from './intelligence';
+import { noteSessionExpired } from './sessionState';
 
 // Re-exported so the public surface of the channel package is unchanged: these
 // moved into `counts.ts` when the radar needed them too, and a file that both
@@ -192,15 +192,12 @@ export function canonical<T>(result: XReadResult<T>, what: string, ctx?: Channel
     monitors quietly returned nothing. Measured on ai17z-test, where both
     `x.read_profile` and `x.search` refused while every screen said fine.
 
-    `SESSION_EXPIRED` already exists for exactly this and already drives the
-    owner notification. Only from CONNECTED, which is the same rule the health
-    task uses: an account that never had a session is NEEDS_AUTH and not this.
+    Through `noteSessionExpired`, which is the only thing that writes this and
+    holds both conditions: that the account was connected, and that this process
+    is the one driving the browser. The radar had its own copy of the first rule
+    and neither had the second.
   */
-  if (result.outcome === 'NEEDS_SIGN_IN' && ctx?.account && ctx.account.status === 'CONNECTED') {
-    void accountsRepo
-      .updateAccount(ctx.account.id, { status: 'SESSION_EXPIRED', lastError: result.detail })
-      .catch(() => undefined);
-  }
+  void noteSessionExpired(ctx?.account, result.outcome, result.detail);
   const stop = refusal(result.outcome, result.detail, what);
   if (stop) throw stop;
   return null;

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   parseAnalytics,
@@ -152,6 +154,29 @@ describe("reading a post's own analytics", () => {
   it('leaves a figure it could not read absent rather than zero', () => {
     const reading = parseAnalytics([{ label: 'Impressions', value: '-' }]);
     expect('impressions' in reading).toBe(false);
+  });
+
+  it('refuses without naming a cause it cannot know', () => {
+    /*
+      A page with no figures on it has three explanations and this layer can
+      tell them apart from none: the post belongs to somebody else, X did not
+      render them, or they are no longer at the address this asks for.
+
+      It used to answer with the first of those as a statement. Measured on
+      ai17z-test against two posts the signed-in account had written itself:
+      both refused with "Only the author's own posts have them", the agent
+      repeated it to the owner, and then invented a mechanism to explain it.
+      A refusal that asserts a reason is worse than one that admits it has
+      none, because nothing downstream can tell the difference between a cause
+      and a guess once it is written as prose.
+    */
+    const source = readFileSync(resolve(__dirname, '../../packages/channels/src/x/analytics.ts'), 'utf8');
+    const refusal = source.slice(source.indexOf("'analytics_not_available'"));
+    expect(refusal).toContain('showed no figures');
+    expect(refusal).toContain('this is not evidence of either');
+    // The sentence that stated one of the causes as the finding.
+    const thrown = refusal.slice(0, refusal.indexOf('    }'));
+    expect(thrown).not.toContain("Only the author's own posts have them");
   });
 });
 

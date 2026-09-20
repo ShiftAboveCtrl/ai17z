@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
@@ -112,6 +113,22 @@ export function applyEnvFile(contents: string): void {
     }
     process.env[key] = value;
   }
+}
+
+/**
+ * Which process this is, as the workers table knows it.
+ *
+ * One derivation, because two would be worse than none. `apps/worker` writes a
+ * row under this id and anything asking "am I the worker that owns the
+ * browser?" has to ask about the same id, or the answer is about a row that
+ * does not exist.
+ *
+ * The pid is in it deliberately. A worker is a process rather than a machine,
+ * and two on one host is the ordinary arrangement here: the containerised one
+ * takes jobs and the native one drives Chrome.
+ */
+export function thisWorkerId(): string {
+  return envString('AI17Z_WORKER_ID', `${hostname()}-${process.pid}`);
 }
 
 export function envString(key: string, fallback: string): string {

@@ -151,6 +151,9 @@ const MODEL_CONFIG_COLUMNS = `
   -- model the provider has retired looks entirely healthy and fails every
   -- generation, and nothing else in the system would notice.
   pc.available_models AS provider_models,
+  -- And when it was asked, because an absence from a list is only as strong as
+  -- the list is fresh. Without this the verdict had to guess, and did.
+  pc.last_checked_at AS provider_checked_at,
   pc.last_status AS provider_status`;
 
 export async function listModelConfigs(agentId: string): Promise<ModelConfig[]> {

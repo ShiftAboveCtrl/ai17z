@@ -55,6 +55,33 @@ export async function heartbeat(input: {
   );
 }
 
+/**
+ * Whether this particular process is a live worker that drives a browser.
+ *
+ * Not the same question as `browserWorkerPresent`, and the difference is one a
+ * live account has already paid for. That one asks whether the installation
+ * has a browser worker anywhere; this asks whether the caller is it.
+ *
+ * A registration is the standing. `apps/worker` is the only thing that writes
+ * a row here, so a script, a harness or a checkout pointed at this database has
+ * no row under its id and gets `false`, which is correct, because such a
+ * process derives its own profile directory from its own storage location, sees
+ * an empty profile, and is told to sign in. That is a fact about where it
+ * looked and not a fact about the account.
+ *
+ * Measured, on ai17z-main: a harness run outside the installation launched a
+ * Chrome on a profile that had never been signed in, X asked it to sign in, and
+ * a healthy CONNECTED account was marked SESSION_EXPIRED on the strength of it.
+ */
+export async function isLiveBrowserWorker(id: string): Promise<boolean> {
+  const row = await queryOne<{ n: number }>(
+    `SELECT count(*)::int AS n FROM workers
+      WHERE id = $1 AND browser_capable AND last_seen_at > now() - ($2::int * interval '1 second')`,
+    [id, WORKER_PRESENT_SECONDS],
+  );
+  return (row?.n ?? 0) > 0;
+}
+
 export async function goodbye(id: string): Promise<void> {
   await query('DELETE FROM workers WHERE id = $1', [id]);
 }

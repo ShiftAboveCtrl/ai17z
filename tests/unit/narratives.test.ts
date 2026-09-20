@@ -162,6 +162,54 @@ describe('counting voices rather than names', () => {
       postedAt: hoursAgo(1),
     }));
 
+  it('names the examples by handle, never by the identity it counted with', () => {
+    /*
+      The examples line is written as `@name`, and what it was given was the
+      identity key: the numeric id wherever there was one. So an account whose
+      id was known rendered as `@900` on a screen that reads "326 accounts,
+      including ...".
+
+      Identity and display are different questions. Counting has to prefer the
+      id, because a handle changes and the same person then counts twice.
+      Naming has to prefer the handle, because that is the only half a person
+      recognises.
+    */
+    const posts = withIds(13, 'restaking yields are compressing');
+    const found = readNarratives(posts, { now }).narratives.find((n) => n.term === 'restaking');
+    expect(found).toBeDefined();
+    expect(found!.examples.length).toBeGreaterThan(0);
+    for (const example of found!.examples) {
+      expect(example).toMatch(/^acct\d+$/);
+      expect(example).not.toMatch(/^\d+$/);
+    }
+  });
+
+  it('does not turn an author it could not identify into an account', () => {
+    /*
+      Seen on ai17z-test: "326 accounts, including @_anika_7, @, @nathanoyler".
+
+      That bare `@` is a post carrying neither an id nor a handle. It became an
+      empty string, the empty string went into the set that answers "how many
+      accounts", and it was then rendered as somebody's name. Absent is not an
+      account here for the same reason absent is never zero anywhere else in
+      this codebase.
+    */
+    const posts = chorus('restaking yields are compressing', 13, 1);
+    posts.push({
+      statusId: 'nameless',
+      handle: '',
+      text: 'restaking yields are compressing',
+      postedAt: hoursAgo(1),
+    });
+
+    const found = readNarratives(posts, { now }).narratives.find((n) => n.term === 'restaking');
+    expect(found).toBeDefined();
+    // Fourteen posts, thirteen accounts anybody could name.
+    expect(found!.mentions).toBe(14);
+    expect(found!.authors).toBe(13);
+    expect(found!.examples).not.toContain('');
+  });
+
   it('counts somebody who renamed themselves mid-window once', () => {
     const posts = withIds(13, 'restaking yields are compressing');
     // The fourteenth post is the first author again, under a new handle.

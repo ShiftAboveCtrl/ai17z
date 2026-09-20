@@ -171,7 +171,28 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
         -- account does, or if the agent that worked it does. An account deleted
         -- since must not take its history out of the inbox.
         AND (acc.owner_id = $1 OR ag.owner_id = $1)
-      ORDER BY e.ingested_at DESC
+      /*
+        Anything waiting on a person sorts first, and only then by recency.
+
+        This is the same defect as the one above, arriving by a different route,
+        and the principle it was fixed on is the one that fixes it again:
+        something waiting on a decision must be reachable, or the decision
+        cannot be made.
+
+        Last time the WHERE clause excluded them. This time the window did. The
+        list is capped, the cap is applied after ordering by arrival, and a busy
+        account fills it: measured on ai17z-test, where the screen said "Needs
+        you 0" and "Nothing is waiting on you" while a job from eight days
+        earlier sat in REVIEW_REQUIRED. Outreach showed exactly 200, which is
+        the whole cap, and the thing needing a decision was behind all of it.
+
+        Ordering rather than a second query, because the counts have to be taken
+        from the same rows the list returns or the chips disagree with what is
+        under them. With this the cap trims outreach, which is what a cap is
+        for, instead of trimming the two buckets the screen exists to show.
+      */
+      ORDER BY (j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED')) DESC,
+               e.ingested_at DESC
       LIMIT $2`,
     [ownerId, Math.min(limit, 500)],
   );

@@ -146,6 +146,61 @@ describe('noticing repetition', () => {
     expect(result.score).toBeGreaterThan(50);
   });
 
+  /*
+    The pair that got through, kept verbatim.
+
+    Published four days apart on a live account, with a byte-identical opening
+    sentence, a byte-identical closing sentence, and one clause changed in the
+    middle. The overlap rule fired first at 78 against a rewrite threshold of
+    80, so nothing was asked for and the trace said the draft sounded like the
+    agent.
+  */
+  const POSTED_FIRST =
+    'The part of AI17Z worth poking at is the self-hosted Chrome runtime. It runs in a real signed-in browser ' +
+    'on your own machine, and that holds up better than a narrative. I won\'t predict numbers, but that one is ' +
+    'worth your time.';
+  const POSTED_AGAIN =
+    'The part of AI17Z worth poking at is the self-hosted Chrome runtime. It runs in a real signed-in browser ' +
+    'on your own machine. That holds up better than a narrative because you can inspect what actually ran. ' +
+    'I won\'t predict numbers, but that one is worth your time.';
+
+  it('scores the live pair under the threshold when it is a reply', () => {
+    // Unchanged, deliberately. This is the behaviour for a reply and it is the
+    // behaviour that shipped; what was wrong was applying it to a post.
+    const result = scoreRepetition(POSTED_AGAIN, [{ text: POSTED_FIRST, at: yesterday }]);
+    expect(result.score).toBe(78);
+    expect(result.score).toBeLessThan(80);
+  });
+
+  it('will not let a post open exactly like one the agent already made', () => {
+    /*
+      A reply opening the same way to two different people is mildly repetitive
+      and nobody sees both. A post opening the same way twice goes to one
+      timeline, where the two sit above each other.
+
+      So the opening is decided first on a post rather than last. It used to sit
+      in an else-if behind the overlap it was competing with, which is why a
+      pair sharing a whole opening sentence was judged on its phrasing
+      percentage and let through.
+    */
+    const result = scoreRepetition(POSTED_AGAIN, [{ text: POSTED_FIRST, at: yesterday }], {
+      openerIsDecisive: true,
+    });
+    expect(result.score).toBeGreaterThan(80);
+    expect(result.reason).toMatch(/opens exactly like something this agent already posted/);
+  });
+
+  it('still leaves a post that merely shares a subject alone', () => {
+    // The rule is about the opening, not about the topic. An agent that may
+    // never return to a subject does not have interests.
+    const result = scoreRepetition(
+      'Self-hosting the browser is the part that changes what you can verify.',
+      [{ text: POSTED_FIRST, at: yesterday }],
+      { openerIsDecisive: true },
+    );
+    expect(result.score).toBeLessThan(50);
+  });
+
   it('leaves genuinely different text alone', () => {
     const result = scoreRepetition('Fees matter more than the headlines suggest.', [
       { text: 'Builders keep building whatever the price does.', at: yesterday },

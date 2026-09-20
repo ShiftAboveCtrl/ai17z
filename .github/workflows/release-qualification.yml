@@ -213,24 +213,69 @@ jobs:
           # requests an hour is shared with whoever else is on this machine.
           # A refusal is the ceiling; a second refusal ninety seconds later is
           # a finding.
+          #
+          # Both halves of that used to be unreachable, and Beta 4.6 is what
+          # showed it: this job failed with `install.ps1 -WhatIfOnly exited 1:`
+          # and nothing after the colon, and no retry ran.
+          #
+          # install.ps1 says everything through Write-Host, which writes to the
+          # information stream. `2>&1` merges stderr and nothing else, so the
+          # captured text was empty on every run this has ever done. The
+          # annotation could never carry a reason, and a retry conditional on
+          # finding (403), (409) or (429) in that text could never fire, because
+          # an empty string matches no code.
+          #
+          # So: capture every stream, and turn the retry on the attempt having
+          # failed rather than on what it managed to print. The exit status is
+          # the thing that actually failed, and it is there whether the refusal
+          # came from GitHub, from a network the runner could not use, or from
+          # the installer itself. A second failure is still a failure. The
+          # only thing that changes is that the first one now gets the retry it
+          # was always meant to get, and the report says what happened.
           $source = Get-Content "$room\install.ps1" -Raw
           function Invoke-Once {
-            $out = & ([scriptblock]::Create($source)) -Release $tag -NewInstance -WhatIfOnly 2>&1 | Out-String
-            return @{ Text = $out; Code = $LASTEXITCODE }
+            $text = ''
+            try {
+              # A refusal inside install.ps1 is a throw rather than an exit,
+              # because it runs inside somebody's own session and `exit` there
+              # would close their terminal. Caught, so that a refusal is a
+              # failed attempt this can retry and report, rather than ending
+              # the job with a stack trace and no exit code at all.
+              $global:LASTEXITCODE = 0
+              $text = & ([scriptblock]::Create($source)) -Release $tag -NewInstance -WhatIfOnly *>&1 | Out-String
+              # A script block that ran no native command leaves $LASTEXITCODE
+              # exactly as it was, so it is cleared above rather than inherited
+              # from an earlier step.
+              $code = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+              return @{ Text = $text; Code = $code }
+            } catch {
+              return @{ Text = ($text + [Environment]::NewLine + $_.Exception.Message).Trim(); Code = 1 }
+            }
           }
           $result = Invoke-Once
-          if ($result.Code -ne 0 -and $result.Text -match '\(40[39]\)|\(429\)') {
-            "  GitHub refused that. Waiting ninety seconds and trying once more."
+          if ($result.Code -ne 0) {
+            "  That attempt exited $($result.Code). Waiting ninety seconds and trying once more."
+            $result.Text
             Start-Sleep -Seconds 90
             $result = Invoke-Once
           }
           $result.Text
 
-          if ($result.Code -ne 0 -and $null -ne $result.Code) {
+          if ($result.Code -ne 0) {
             # Into an annotation, because Actions logs need admin rights on this
             # repository to read and "exited 1" on its own has already cost one
             # round trip today. Newlines go through as %0A.
-            $detail = ($result.Text -split "`r?`n" | Select-Object -Last 25) -join '%0A'
-            "::error::install.ps1 -WhatIfOnly exited $($result.Code): $detail"
-            throw "install.ps1 -WhatIfOnly exited $($result.Code)"
+            #
+            # Which kind of failure it is gets said out loud. A shared runner's
+            # hourly API ceiling says nothing about the release; anything else
+            # is a finding about the published installer. Both still fail.
+            $detail = ($result.Text -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 25) -join '%0A'
+            if (-not $detail) { $detail = '(it printed nothing at all)' }
+            $kind = if ($result.Text -match '\(40[39]\)|\(429\)|rate limit') {
+              'twice, ninety seconds apart, and both times GitHub refused the unauthenticated API. That is the sixty-an-hour ceiling on an address this runner shares, not something about the release'
+            } else {
+              'twice, ninety seconds apart. Everything else in this run reached the same release from the same URLs, so this is a finding about what was published'
+            }
+            "::error::install.ps1 -WhatIfOnly failed $kind. Last exit $($result.Code): $detail"
+            throw "install.ps1 -WhatIfOnly exited $($result.Code) on both attempts"
           }
