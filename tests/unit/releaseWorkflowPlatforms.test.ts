@@ -350,6 +350,36 @@ describe('the release builds every platform from one tag', () => {
       expect(windows).toContain('the release says $want');
     });
 
+    it('asks for the asset by the name the manifest composes', () => {
+      /*
+        The qualifiers compose the asset name in shell, because a shell script
+        cannot import TypeScript. That is one implementation more than the rule
+        allows, so the two are held against each other here: if they drift, the
+        deterministic gate asks for a file the release does not publish and the
+        job fails for a reason that has nothing to do with the package.
+
+        The same reasoning as the installers already in this file.
+      */
+      const macos = read('.github/scripts/qualify-published-macos.sh');
+      const ubuntu = read('.github/scripts/qualify-published-ubuntu.sh');
+
+      // What the scripts build, with their own variable names.
+      expect(macos).toContain('PACKAGE="AI17Z-macos-$ARCH-$VERSION.tar.gz"');
+      expect(ubuntu).toContain('PACKAGE="ai17z_${VERSION}_${ARCH}.deb"');
+
+      // And what the one implementation produces for the same inputs.
+      expect(macosPackageAsset(VERSION, 'arm64')).toBe(`AI17Z-macos-arm64-${VERSION}.tar.gz`);
+      expect(macosPackageAsset(VERSION, 'x64')).toBe(`AI17Z-macos-x64-${VERSION}.tar.gz`);
+      expect(ubuntuPackageAsset(VERSION, 'x64')).toBe(`ai17z_${VERSION}_amd64.deb`);
+      expect(ubuntuPackageAsset(VERSION, 'arm64')).toBe(`ai17z_${VERSION}_arm64.deb`);
+
+      // The scripts derive VERSION from the tag and ARCH from the machine, so
+      // neither can quietly become something else.
+      for (const script of [macos, ubuntu]) expect(script).toContain('VERSION="${TAG#v}"');
+      expect(macos).toContain('ARCH="$(uname -m)"');
+      expect(ubuntu).toContain('ARCH="$(dpkg --print-architecture)"');
+    });
+
     it('keeps the stranger route, bounded, and does not let it decide', () => {
       for (const script of [
         read('.github/scripts/qualify-published-macos.sh'),
