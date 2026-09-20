@@ -75,6 +75,40 @@ async function settledJob(input: { agentId: string; eventType: string; actionTyp
   return job!.id;
 }
 
+/**
+ * Something the radar saw that produced no work at all.
+ *
+ * The commonest row in a real inbox, and the one with no job on it. Ownership
+ * reaches it through the account rather than through an agent, because there is
+ * no job in between.
+ */
+async function unqueuedEvent(input: { accountId: string }) {
+  const suffix = uniqueSuffix();
+  await query(
+    `INSERT INTO events (channel, account_id, remote_event_id, type, remote_author_handle, text, occurred_at)
+     VALUES ('mock', $1, $2, 'KEYWORD_MATCH', 'stranger', 'a post mentioning something', now())`,
+    [input.accountId, `unqueued-${suffix}`],
+  );
+}
+
+/**
+ * An account for this owner, so an event with no job still belongs to somebody.
+ *
+ * Ownership reaches a row through its account or through the agent that worked
+ * it. A row nothing was queued for has no agent, so without an account it is
+ * owned by nobody and never reaches the query at all, and a test built on one
+ * passes without proving anything.
+ */
+async function accountFor(ownerId: string): Promise<string> {
+  const suffix = uniqueSuffix();
+  const [row] = await query<{ id: string }>(
+    `INSERT INTO accounts (owner_id, channel, handle, display_name, status)
+     VALUES ($1, 'mock', $2, 'Noise', 'CONNECTED') RETURNING id`,
+    [ownerId, `noise_${suffix}`],
+  );
+  return row!.id;
+}
+
 /** What the badge says: jobs held for a person, across everything. */
 async function badgeCount(): Promise<number> {
   const counts = await jobsRepo.countJobsByStatus();
@@ -169,18 +203,33 @@ describe('a busy account cannot bury a decision', () => {
       actionType: 'REPLY',
     });
 
-    // Everything that arrives afterwards, more of it than the window holds.
-    // Each carries a settled job, both because that is what the live rows look
-    // like and because ownership reaches these through the agent that worked
-    // them.
+    /*
+      Everything that arrives afterwards, more of it than the window holds, and
+      in the shape the live installation actually has.
+
+      Half carry a settled job. Half carry no job at all, which is the ordinary
+      case for a keyword match: something was recorded and nothing was queued
+      for it. That half is what the first version of this test was missing, and
+      missing it hid a real defect. `j.status` is NULL on those rows, `NULL IN
+      (...)` is NULL rather than false, and `ORDER BY ... DESC` puts NULLs
+      first, so every unqueued row sorted ahead of the decision this exists to
+      rescue. The fix shipped, the screen still said nothing was waiting, and
+      only the installed runtime showed it.
+    */
+    const accountId = await accountFor(fixture.ownerId);
     const noise = 12;
     for (let i = 0; i < noise; i += 1) {
-      await settledJob({
-        agentId: fixture.agentId,
-        eventType: 'KEYWORD_MATCH',
-        actionType: 'REPLY',
-      });
+      if (i % 2 === 0) {
+        await settledJob({ agentId: fixture.agentId, eventType: 'KEYWORD_MATCH', actionType: 'REPLY' });
+      } else {
+        await unqueuedEvent({ accountId });
+      }
     }
+
+    // The unqueued half has to actually be in the answer, or this proves
+    // nothing about how it sorts. They are owned through the account.
+    const everything = await inboxRepo.ownerInbox(fixture.ownerId, 100);
+    expect(everything.filter((item) => item.jobId === null).length).toBeGreaterThan(0);
 
     // A window smaller than what arrived after it, which is the live case in
     // miniature: two hundred newer rows and the decision behind them.
