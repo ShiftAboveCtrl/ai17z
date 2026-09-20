@@ -238,6 +238,14 @@ const analyticsCapability = defineCapability({
   }),
   output: z.object({
     statusId: z.string(),
+    /**
+     * What X calls Views on the post, under that name.
+     *
+     * Separate from impressions on purpose. Nothing established that the two
+     * are the same measurement, and a field that renames a metric lets a model
+     * state a figure X never gave. Absent when it was not measured.
+     */
+    views: z.number().int().nonnegative().optional(),
     impressions: z.number().int().nonnegative().optional(),
     likes: z.number().int().nonnegative().optional(),
     reposts: z.number().int().nonnegative().optional(),
@@ -248,6 +256,16 @@ const analyticsCapability = defineCapability({
     linkClicks: z.number().int().nonnegative().optional(),
     /** Labels X showed that nothing here maps. Named rather than dropped. */
     unmapped: z.array(z.string()),
+    /**
+     * Which of X's two surfaces answered, because they are different claims.
+     *
+     * DETAILED is the author's analytics view. VIEWS_ONLY is the view count on
+     * the post, which is the impressions figure and nothing else. Without this
+     * a model reads an absent profile-visit count as a measured zero.
+     */
+    source: z.enum(['DETAILED', 'VIEWS_ONLY']),
+    /** What could not be read, so absence is never mistaken for a measurement. */
+    gaps: z.array(z.string()),
   }),
   modelCallable: true,
   timeoutMs: 60_000,
@@ -266,6 +284,9 @@ const analyticsCapability = defineCapability({
           accountId: ctx.accountId,
           remotePostId: statusId,
           source: 'POST_ANALYTICS',
+          // Each under the name it was measured under. A view count stored as
+          // impressions is the same conflation one layer down.
+          views: reading.views ?? null,
           impressions: reading.impressions ?? null,
           likes: reading.likes ?? null,
           reposts: reading.reposts ?? null,

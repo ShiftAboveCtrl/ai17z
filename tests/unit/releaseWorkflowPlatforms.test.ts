@@ -314,50 +314,80 @@ describe('the release builds every platform from one tag', () => {
      *
      * A retry has to turn on the thing that failed, which is the attempt.
      */
-    it('retries on the attempt failing, never on what the attempt printed', () => {
-      const windows = jobs(qualification).windows!;
-      // Every stream, or the output being judged is not the output there was.
-      expect(windows).toContain('-WhatIfOnly *>&1');
-      expect(windows).not.toContain('-WhatIfOnly 2>&1');
-      // And the condition is the exit status on its own. An HTTP code in the
-      // text may describe a failure afterwards; it may not decide whether one
-      // happened.
-      expect(windows).toContain('$result = Invoke-Once');
-      expect(windows).toMatch(/if \(\$result\.Code -ne 0\) \{\r?\n[^}]*Start-Sleep -Seconds 90/);
-      expect(windows).not.toMatch(/\$result\.Code -ne 0 -and \$result\.Text -match/);
-
-      // The same rule in the two installers that already had the shape of it.
+    /**
+     * Qualification must not depend on anonymous API luck.
+     *
+     * The published installer resolves a release through api.github.com without
+     * a token, because that is what a stranger runs. A hosted runner shares its
+     * address, the anonymous budget is sixty an hour, and twice in three
+     * releases that budget was gone: the job failed, the owner pressed re-run,
+     * and the release had been correct the whole time. The Intel Mac installed
+     * it from the same URLs while the arm64 one was refused.
+     *
+     * So the two questions were separated. Whether the published package is
+     * correct is answered from the tag's own addresses and no API at all.
+     * Whether a stranger's route still works is answered too, and reported,
+     * but a shared ceiling is not allowed to decide it.
+     */
+    it('proves the package from the tag rather than from an API lookup', () => {
       for (const script of [
         read('.github/scripts/qualify-published-macos.sh'),
         read('.github/scripts/qualify-published-ubuntu.sh'),
       ]) {
-        expect(script).toContain('out="$(install_once)"; code=$?');
-        expect(script).toContain('if [ "$code" -ne 0 ]; then');
-        // Not the old condition, which asked the output whether to try again.
-        expect(script).not.toMatch(/if printf '%s' "\$out" \| grep -qE '403/);
+        // The asset by its exact published address, which contains the tag.
+        expect(script).toContain('curl -fsSL -o "$ROOM/$PACKAGE" "$DL/$PACKAGE"');
+        // Checked against the hash that same tag published.
+        expect(script).toContain('"$ROOM/SHA256SUMS.txt"');
+        expect(script).toContain('the package hashes $got and SHA256SUMS.txt says');
+        // And installed from those bytes, with no release resolution involved.
+        expect(script).toContain('installing that exact package, with no network lookup at all');
       }
+      // The Windows job's gate is the pair of hash comparisons it already had,
+      // both against the tag, and it now has a token so the parts that do ask
+      // GitHub are not competing for the anonymous budget.
+      const windows = jobs(qualification).windows!;
+      expect(windows).toContain('GITHUB_TOKEN: ${{ github.token }}');
+      expect(windows).toContain('the release says $want');
     });
 
-    it('tries exactly twice, waits the ninety seconds, and then fails', () => {
-      // Bounded on both sides. A retry that cannot happen is what this is
-      // correcting; a retry that can happen repeatedly would turn a shared
-      // runner's bad hour into an hour of runner time, and a genuine fault in
-      // a published installer into a job that never finishes.
-      const windows = jobs(qualification).windows!;
-      expect(windows.match(/Invoke-Once\b/g)?.length).toBe(3); // one definition, two calls
-      expect(windows.match(/Start-Sleep -Seconds 90/g)?.length).toBe(1);
-      expect(windows).not.toMatch(/\b(while|foreach|for)\s*\(/);
-      // And a second failure is still a failure. Nothing here may turn a
-      // broken installer into a pass.
-      expect(windows).toContain('throw "install.ps1 -WhatIfOnly exited $($result.Code) on both attempts"');
-
+    it('keeps the stranger route, bounded, and does not let it decide', () => {
       for (const script of [
         read('.github/scripts/qualify-published-macos.sh'),
         read('.github/scripts/qualify-published-ubuntu.sh'),
       ]) {
-        expect(script.match(/install_once\b/g)?.length).toBe(3);
-        expect(script.match(/^\s*sleep 90$/gm)?.length).toBe(1);
-        expect(script).toContain('bad "$(why_it_failed "$code" "$out")"');
+        // Still run, because it is the route people actually use.
+        expect(script).toContain('the anonymous route a stranger actually takes');
+        // Exactly two attempts, with one wait between them.
+        expect(script.match(/^\s*wait_for_the_ceiling$/gm)?.length).toBe(1);
+        expect(script.match(/smoke_code=\$\?/g)?.length).toBe(2);
+        // The verdict is the shared one, not a fresh text match per script.
+        expect(script).toContain('qualify-attempt-verdict.sh');
+        expect(script).toContain('attempt_verdict "$smoke_code" "$smoke"');
+        // A ceiling is said out loud and counted as neither pass nor fail.
+        expect(script).toContain('shared hourly');
+        // Anything else still fails the job, so a broken installer cannot hide
+        // behind the excuse that saved a rate-limited one.
+        expect(script).toContain('failed for something other than the API ceiling');
+      }
+      const windows = jobs(qualification).windows!;
+      expect(windows).toContain('::notice::');
+      expect(windows).toContain('shared hourly ceiling');
+    });
+
+    it('stops at the cause rather than reporting its consequences', () => {
+      /*
+        Everything after the install asks the installed copy about itself, so a
+        runner that never installed anything reported fourteen failures for one
+        fact. Measured on Beta 4.7: "5 passed, 14 failed" for a release the
+        other Mac installed perfectly from the same URLs.
+      */
+      for (const script of [
+        read('.github/scripts/qualify-published-macos.sh'),
+        read('.github/scripts/qualify-published-ubuntu.sh'),
+      ]) {
+        expect(script).toContain('finish()');
+        // Every path that establishes there is nothing installed stops there.
+        expect(script.match(/^\s*finish$/gm)?.length ?? 0).toBeGreaterThanOrEqual(3);
       }
     });
 

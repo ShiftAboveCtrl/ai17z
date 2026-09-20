@@ -94,7 +94,25 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => {
       await requireUser(request);
       const query = parseQuery(z.object({ agentId: z.string().uuid().optional() }), request);
-      return { counts: await jobsRepo.countJobsByStatus(query.agentId) };
+      /*
+        Two numbers, because the screen asks two questions.
+
+        `counts` is every status, which is what a breakdown of the queue needs.
+        `awaitingAPerson` is the one an owner is shown, and it is not the sum of
+        two of the statuses: a Response Lab rehearsal is held in a decision
+        state and publishes nothing, so there is nothing to decide about it.
+
+        The screen used to add the two statuses itself, which made it the fourth
+        place in this codebase computing "waiting for you" and the third getting
+        it wrong. Measured on ai17z-test, where the activity header said two
+        were waiting while the filter chip beneath it, reading the inbox, said
+        none.
+      */
+      const [counts, awaitingAPerson] = await Promise.all([
+        jobsRepo.countJobsByStatus(query.agentId),
+        jobsRepo.countAwaitingAPerson(query.agentId),
+      ]);
+      return { counts, awaitingAPerson };
     }),
   );
 

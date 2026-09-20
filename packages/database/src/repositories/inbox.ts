@@ -1,6 +1,7 @@
 import { mapRows } from '../mapper';
 import { query } from '../pool';
 import { stateOf, type MentionState } from './mentions';
+import { NOT_A_REHEARSAL } from './jobs';
 
 /**
  * One place to operate every agent an owner has.
@@ -166,7 +167,7 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
           Measured on the test installation the moment the first real-post
           rehearsal ran: the badge went from one to two.
         */
-        AND coalesce((e.payload ->> 'rehearsal')::boolean, false) = false
+        AND ${NOT_A_REHEARSAL}
         -- Owned through either side: an event belongs to this owner if its
         -- account does, or if the agent that worked it does. An account deleted
         -- since must not take its history out of the inbox.

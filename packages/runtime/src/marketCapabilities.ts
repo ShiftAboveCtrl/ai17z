@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { defineCapability, registerCapability } from '@xbam/tools';
 import { GECKO_FAMILY, ask, familyHealth, type GeckoQuery, type GeckoResult, type Provenance } from '@xbam/upstream';
+import { PipelineError } from '@xbam/shared';
 
 /**
  * What a token is trading at, and where.
@@ -317,6 +318,14 @@ const history = defineCapability({
     chain: z.string(),
     poolAddress: z.string(),
     timeframe: z.string(),
+    /**
+     * Rows the source sent that were not candles.
+     *
+     * Zero is the ordinary answer. Anything else means the format moved and
+     * the history below is partial, which is worth knowing before drawing a
+     * conclusion from it.
+     */
+    unreadableRows: z.number().int().nonnegative(),
     candles: z.array(
       z.object({
         at: z.string(),
@@ -341,14 +350,37 @@ const history = defineCapability({
       timeframe: input.timeframe,
       limit: input.limit,
     });
-    const list = (read.data as { attributes?: { ohlcv_list?: unknown[] } } | null)?.attributes?.ohlcv_list ?? [];
+    /*
+      A pool with no history and a payload this cannot read are different
+      answers, and `?? []` made them the same one.
+
+      The list being absent means the shape changed, not that nothing has
+      traded: a pool that genuinely has no candles answers with an empty list,
+      which is a measurement. Reporting the first as the second hands an agent
+      "this pool has no price history" about a pool that may have plenty, and
+      nothing downstream can tell it was a guess.
+    */
+    const payload = read.data as { attributes?: { ohlcv_list?: unknown } } | null;
+    const list = payload?.attributes?.ohlcv_list;
+    if (!Array.isArray(list)) {
+      throw PipelineError.retryable(
+        'ohlcv_shape_changed',
+        `${read.provenance.host} answered for this pool without a candle list, so its price history ` +
+          'could not be read. That is a change in the source rather than a pool with no trades.',
+      );
+    }
+
+    // Rows that are not a candle are counted rather than quietly dropped: a
+    // format change that halves the answer should be visible in it.
+    const usable = list.filter((row): row is unknown[] => Array.isArray(row) && row.length >= 6);
+    const unreadable = list.length - usable.length;
 
     return {
       chain: input.chain,
       poolAddress: input.poolAddress,
       timeframe: input.timeframe,
-      candles: (Array.isArray(list) ? list : [])
-        .filter((row): row is unknown[] => Array.isArray(row) && row.length >= 6)
+      unreadableRows: unreadable,
+      candles: usable
         .map((row) => ({
           at: new Date(Number(row[0]) * 1000).toISOString(),
           open: String(row[1]),

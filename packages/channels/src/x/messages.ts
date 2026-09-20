@@ -2,7 +2,7 @@ import type { XAuthor, XInbox, XDirectMessageThread } from '@xbam/shared/contrac
 import { PipelineError } from '@xbam/shared';
 import type { ChannelContext } from '../contract';
 import { SEL } from './selectors';
-import { goto, settle, withSession, type Page } from './page';
+import { goto, refuseIfXBroke, settle, withSession, type Page } from './page';
 
 /**
  * The direct message inbox, read and never written.
@@ -98,6 +98,17 @@ export async function readInbox(ctx: ChannelContext, request: { limit?: number }
     }
 
     const threads = toThreads(rows);
+    /*
+      An empty inbox and an inbox that would not load look the same from here.
+
+      Every other reader in this layer already makes that distinction:
+      notifications, the timelines and the connection lists all ask whether X
+      broke before accepting nothing as an answer. This one did not, so a
+      refused page, a rate limit or a sign-in prompt would have arrived
+      downstream as "nobody has messaged you", which is a measurement rather
+      than a gap and would be recorded as one.
+    */
+    if (threads.length === 0) await refuseIfXBroke(session.page, 'the message inbox');
     return { threads: threads.slice(0, limit), more: threads.length > limit };
   });
 }
@@ -153,6 +164,9 @@ export async function readConversation(
       }))
       .filter((message) => message.text.length > 0);
 
+    // Same distinction as the inbox above: a conversation with nothing in it and
+    // one that would not render are different answers.
+    if (messages.length === 0) await refuseIfXBroke(session.page, 'that conversation');
     return { conversationId: id, messages, truncated: messages.length >= limit };
   });
 }
