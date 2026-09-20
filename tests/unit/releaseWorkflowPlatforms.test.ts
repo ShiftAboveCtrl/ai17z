@@ -341,6 +341,15 @@ describe('the release builds every platform from one tag', () => {
         expect(script).toContain('the package hashes $got and SHA256SUMS.txt says');
         // And installed from those bytes, with no release resolution involved.
         expect(script).toContain('installing that exact package, with no network lookup at all');
+        /*
+          Through the installer with the package it already has, never a raw
+          package manager. Beta 4.8 used `dpkg -i` directly, which skipped the
+          installer's own handling including `--no-start`, so the package's
+          checks ran against a machine whose Docker had not been started and
+          failed on something the qualifier was never asking about.
+        */
+        expect(script).toContain('--package "$ROOM/$PACKAGE" --sha256 "$want"');
+        expect(script).not.toMatch(/sudo dpkg -i "\$ROOM/);
       }
       // The Windows job's gate is the pair of hash comparisons it already had,
       // both against the tag, and it now has a token so the parts that do ask
@@ -402,6 +411,29 @@ describe('the release builds every platform from one tag', () => {
       const windows = jobs(qualification).windows!;
       expect(windows).toContain('::notice::');
       expect(windows).toContain('shared hourly ceiling');
+      /*
+        The ceiling decides how a failure is reported, never whether the retry
+        happens. Those were transposed once: the test was attached to the retry
+        branch, so a refused runner printed a notice, skipped its retry and then
+        fell into the throw below it, and the job both excused the failure and
+        failed. Beta 4.8 went out that way.
+
+        So the retry turns on the exit status alone, and the ceiling is asked
+        only inside the branch that has already established the second attempt
+        failed too.
+      */
+      // The retry branch is the first of the two, and it must not mention the
+      // ceiling at all: it turns on the exit status alone.
+      const firstBranch = windows.slice(
+        windows.indexOf('$result = Invoke-Once'),
+        windows.indexOf('if ($result.Code -ne 0) {', windows.indexOf('Start-Sleep -Seconds 90')),
+      );
+      expect(firstBranch).toContain('Start-Sleep -Seconds 90');
+      expect(firstBranch).not.toContain('::notice::');
+      expect(firstBranch).not.toContain('-match $ceiling');
+      // And the reporting branch is an if/else, so exactly one of the two runs.
+      expect(windows).toContain('if ($result.Text -match $ceiling) {');
+      expect(windows).toContain('else {');
     });
 
     it('stops at the cause rather than reporting its consequences', () => {
@@ -428,8 +460,10 @@ describe('the release builds every platform from one tag', () => {
       // because the two need opposite responses: re-run the job, or stop the
       // release.
       const windows = jobs(qualification).windows!;
-      expect(windows).toContain('sixty-an-hour ceiling');
-      expect(windows).toContain('a finding about what was published');
+      // A refusal the runner could not help is reported and not counted.
+      expect(windows).toContain('shared hourly ceiling');
+      // Anything else is a failure, and says it was not the runner's fault.
+      expect(windows).toContain("not for anything this runner could blame on GitHub");
       // An attempt that printed nothing at all still gets said out loud, which
       // is the case that started this.
       expect(windows).toContain("(it printed nothing at all)");

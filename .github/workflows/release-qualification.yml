@@ -275,11 +275,7 @@ jobs:
             like that ceiling is reported and not counted, and anything else
             still fails the job.
           #>
-          $ceiling = $result.Text -match '\(40[39]\)|\(429\)|rate.?limit|Retry-After|could not be read'
-          if ($result.Code -ne 0 -and $ceiling) {
-            "::notice::GitHub refused this runner's anonymous API twice. That is the shared hourly ceiling rather than anything about $tag, whose published install.ps1 matched its hash above."
-          }
-          elseif ($result.Code -ne 0) {
+          if ($result.Code -ne 0) {
             "  That attempt exited $($result.Code). Waiting ninety seconds and trying once more."
             $result.Text
             Start-Sleep -Seconds 90
@@ -288,20 +284,35 @@ jobs:
           $result.Text
 
           if ($result.Code -ne 0) {
-            # Into an annotation, because Actions logs need admin rights on this
-            # repository to read and "exited 1" on its own has already cost one
-            # round trip today. Newlines go through as %0A.
-            #
-            # Which kind of failure it is gets said out loud. A shared runner's
-            # hourly API ceiling says nothing about the release; anything else
-            # is a finding about the published installer. Both still fail.
-            $detail = ($result.Text -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 25) -join '%0A'
-            if (-not $detail) { $detail = '(it printed nothing at all)' }
-            $kind = if ($result.Text -match '\(40[39]\)|\(429\)|rate limit') {
-              'twice, ninety seconds apart, and both times GitHub refused the unauthenticated API. That is the sixty-an-hour ceiling on an address this runner shares, not something about the release'
-            } else {
-              'twice, ninety seconds apart. Everything else in this run reached the same release from the same URLs, so this is a finding about what was published'
+            <#
+              What this proves, and what it no longer decides.
+
+              The hash checks above are the gate: install.ps1 is taken from the
+              tag's own address, compared against the SHA256SUMS.txt that tag
+              published, and compared against the file this commit holds. None
+              of it touches an API, so none of it can be refused for want of an
+              anonymous quota.
+
+              What ran below is the stranger's route, which resolves the release
+              through api.github.com without a token because that is what a
+              stranger's does. Sixty requests an hour to an address a hosted
+              runner shares is not a fact about a release, and across three
+              releases it is what failed twice. So a refusal that is
+              recognisably that ceiling is reported and not counted, and
+              anything else still fails the job.
+
+              Said in an annotation either way: Actions logs need admin rights
+              on this repository to read, and "exited 1" on its own has already
+              cost a round trip. Newlines go through as %0A.
+            #>
+            $ceiling = '\(40[39]\)|\(429\)|rate.?limit|Retry-After|could not be read|could not work out which release'
+            if ($result.Text -match $ceiling) {
+              "::notice::GitHub refused this runner's anonymous API twice. That is the shared hourly ceiling rather than anything about $tag, whose published install.ps1 was taken from the tag and matched the hash that tag published."
             }
-            "::error::install.ps1 -WhatIfOnly failed $kind. Last exit $($result.Code): $detail"
-            throw "install.ps1 -WhatIfOnly exited $($result.Code) on both attempts"
+            else {
+              $detail = ($result.Text -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 25) -join '%0A'
+              if (-not $detail) { $detail = '(it printed nothing at all)' }
+              "::error::install.ps1 -WhatIfOnly failed twice, ninety seconds apart, and not for anything this runner could blame on GitHub. Last exit $($result.Code): $detail"
+              throw "install.ps1 -WhatIfOnly exited $($result.Code) on both attempts"
+            }
           }

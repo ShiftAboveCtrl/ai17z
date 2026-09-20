@@ -216,7 +216,7 @@ fi
 
 echo
 echo "### installing that exact package, with no network lookup at all"
-out="$(sudo dpkg -i "$ROOM/$PACKAGE" 2>&1)"
+out="$(bash "$ROOM/install-ai17z-ubuntu.sh" --package "$ROOM/$PACKAGE" --sha256 "$want" --yes --no-start 2>&1)"
 code=$?
 if [ "$code" -ne 0 ]; then
   bad "the published package would not install (exit $code). $(printf '%s' "$out" | grep -v '^[[:space:]]*$' | tail -4 | tr '\n' '/')"
