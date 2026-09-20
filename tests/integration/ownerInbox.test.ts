@@ -45,6 +45,27 @@ async function heldJob(input: { ownerId: string; agentId: string; eventType: str
   return job!.id;
 }
 
+/** The ordinary row: something that arrived and was dealt with. */
+async function settledJob(input: { agentId: string; eventType: string; actionType: string }) {
+  const persona = await agentsRepo.getActivePersona(input.agentId);
+  const policy = await agentsRepo.getActivePolicy(input.agentId);
+  const suffix = uniqueSuffix();
+
+  const [event] = await query<{ id: string }>(
+    `INSERT INTO events (channel, remote_event_id, type, remote_author_handle, text, occurred_at)
+     VALUES ('mock', $1, $2, 'stranger', 'a post mentioning something', now()) RETURNING id`,
+    [`noise-${suffix}`, input.eventType],
+  );
+  const [job] = await query<{ id: string }>(
+    `INSERT INTO jobs (event_id, agent_id, channel, action_type, idempotency_key, dry_run,
+       max_attempts, priority, persona_version_id, policy_version_id, status)
+     VALUES ($1, $2, 'mock', $3, $4, true, 5, 100, $5, $6, 'CANCELLED')
+     RETURNING id`,
+    [event!.id, input.agentId, input.actionType, `noise:${suffix}`, persona!.id, policy!.id],
+  );
+  return job!.id;
+}
+
 /** What the badge says: jobs held for a person, across everything. */
 async function badgeCount(): Promise<number> {
   const counts = await jobsRepo.countJobsByStatus();
@@ -111,6 +132,57 @@ describe('deciding makes it go away', () => {
       expect(items.filter((item) => inboxRepo.bucketOf(item) === 'NEEDS_REVIEW')).toHaveLength(0);
       expect(await badgeCount()).toBe(0);
     }
+  });
+});
+
+describe('a busy account cannot bury a decision', () => {
+  it('keeps what needs a person inside the window however much arrives after it', async () => {
+    /*
+      The same defect as the one this file was written for, arriving by a
+      different route.
+
+      The list is capped and the cap is applied after ordering by arrival, so a
+      busy account fills the window with things nobody has to decide anything
+      about. Measured on ai17z-test: the screen said "Needs you 0" and "Nothing
+      is waiting on you" while a job from eight days earlier sat in
+      REVIEW_REQUIRED. Outreach showed exactly 200, which is the whole cap, and
+      the thing needing a decision was behind all of it.
+
+      The counts are taken from the rows the list returns, on purpose, so the
+      chips cannot disagree with what is under them. That makes the ordering the
+      only place this can be fixed without breaking that property.
+    */
+    const fixture = await createFixture();
+    const held = await heldJob({
+      ownerId: fixture.ownerId,
+      agentId: fixture.agentId,
+      eventType: 'MENTION',
+      actionType: 'REPLY',
+    });
+
+    // Everything that arrives afterwards, more of it than the window holds.
+    // Each carries a settled job, both because that is what the live rows look
+    // like and because ownership reaches these through the agent that worked
+    // them.
+    const noise = 12;
+    for (let i = 0; i < noise; i += 1) {
+      await settledJob({
+        agentId: fixture.agentId,
+        eventType: 'KEYWORD_MATCH',
+        actionType: 'REPLY',
+      });
+    }
+
+    // A window smaller than what arrived after it, which is the live case in
+    // miniature: two hundred newer rows and the decision behind them.
+    const items = await inboxRepo.ownerInbox(fixture.ownerId, 5);
+    expect(items.length).toBe(5);
+
+    const counts = inboxRepo.countBuckets(items);
+    expect(counts.NEEDS_REVIEW).toBe(1);
+    expect(items.some((item) => item.jobId === held)).toBe(true);
+    // And it is reachable rather than merely counted, which is the whole point.
+    expect(inboxRepo.bucketOf(items[0]!)).toBe('NEEDS_REVIEW');
   });
 });
 

@@ -93,7 +93,35 @@ export interface RepetitionOptions {
   /** How long a signature phrase must rest before reuse stops being fine. */
   signatureRestHours?: number;
   now?: Date;
+  /**
+   * Whether an identical opening is decisive on its own.
+   *
+   * True for an original post, false for a reply, and the difference is not a
+   * matter of degree. A reply opening the same way to two different people is
+   * mildly repetitive and nobody sees both. A post opening the same way twice
+   * goes to one timeline, where the two sit above each other and the agent
+   * reads as a loop.
+   *
+   * Measured on ai17z-main, which is why this exists. Two original posts four
+   * days apart shared a byte-identical opening sentence and a byte-identical
+   * closing sentence, with one clause changed in the middle. The overlap rule
+   * fired first at 78 and the rewrite threshold was 80, so nothing was asked
+   * for. The `sameOpener` branch below would have recognised it, and never got
+   * the chance, because it sits in an else-if behind the overlap it was
+   * competing with.
+   */
+  openerIsDecisive?: boolean;
 }
+
+/**
+ * What an identical opening scores on a post.
+ *
+ * Above the default rewrite threshold of 80 on purpose: the point is that the
+ * rewriter is asked, every time, rather than only when the rest of the phrasing
+ * happens to overlap as well. Below the 95 ceiling the run rule can reach, so a
+ * whole sentence lifted wholesale still ranks worse than a shared opening.
+ */
+const OPENER_ON_A_POST = 90;
 
 /**
  * Scores how much a candidate repeats what the agent recently said.
@@ -124,7 +152,17 @@ export function scoreRepetition(
     let score = 0;
     let reason: string | null = null;
 
-    if (overlap >= 0.5) {
+    /*
+      On a post, an identical opening is decided first rather than last.
+
+      The branches below are ordered by how strong each signal is on its own,
+      and that ordering is right for a reply. For a post it buried the signal
+      that matters most: the opening is the part a timeline shows twice.
+    */
+    if (options.openerIsDecisive && sameOpener) {
+      score = OPENER_ON_A_POST;
+      reason = 'opens exactly like something this agent already posted';
+    } else if (overlap >= 0.5) {
       score = Math.round(overlap * 100);
       reason = `${Math.round(overlap * 100)}% of the phrasing appeared in a recent reply`;
     } else if (run >= 7) {

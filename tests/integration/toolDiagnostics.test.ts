@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildServer } from '../../apps/api/src/server';
 import { agents as agentsRepo } from '@xbam/database';
+import { collectDiagnostics } from '@xbam/tools';
 import { PolicyConfig } from '@xbam/shared/contracts';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -112,6 +113,28 @@ describe('why a tool is not running', () => {
     );
     expect(readiness.length).toBeGreaterThan(0);
     expect(readiness.every((r) => r.state === 'OFF')).toBe(true);
+  });
+
+  it('says which mechanism a health row is about, because the names collide', async () => {
+    /*
+      `agent_tools` and `agent_capability_permissions` are separate on purpose.
+      What that did not account for is that the built-in catalogue's three
+      entries have Toolspace capabilities covering the same ground, under the
+      same names, because the purposes are the same.
+
+      Measured on ai17z-test: Health said "Current time is switched off for
+      this agent" while `capability_invocations` recorded `time.now` SUCCEEDED
+      "Current time answered." for that agent in that hour. Same words, two
+      subsystems, opposite claims, on the screen that exists to answer whether
+      it is working.
+    */
+    const fixture = await createFixture();
+    const health = await collectDiagnostics(fixture.agentId);
+    expect(health.tools.length).toBeGreaterThan(0);
+    for (const row of health.tools) {
+      expect(row.name).toContain('(built-in tool)');
+      expect(row.detail).toContain('Toolspace capabilities are separate');
+    }
   });
 
   it('refuses to allow a tool on somebody else\'s agent', async () => {

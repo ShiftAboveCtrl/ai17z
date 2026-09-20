@@ -164,20 +164,64 @@ export const ModelConfig = z.object({
    * model is missing.
    */
   providerModels: z.array(z.string()).default([]),
+  /**
+   * When that list was taken, because a list has an age and the age decides
+   * what an absence from it means.
+   *
+   * Without this the check could only say "not in the list" and had to guess
+   * at what that implied. It guessed "retired", and on a live installation it
+   * was wrong: see `staleModel`.
+   */
+  providerCheckedAt: z.string().nullable().default(null),
   providerStatus: z.string().nullable().default(null),
 });
 export type ModelConfig = z.infer<typeof ModelConfig>;
 
 /**
- * Whether an agent's chosen model is still one its provider offers.
+ * Whether an agent's chosen model is one its provider listed when last asked.
  *
  * Null when there is nothing to say: no list to check against, which is the
  * ordinary case for providers that do not publish one.
+ *
+ * ## It used to answer a question it could not answer
+ *
+ * The sentence was "<provider> no longer offers "<model>". This agent cannot
+ * generate with it." Both halves are conclusions, and the only fact underneath
+ * them is that a name is absent from a stored list.
+ *
+ * Measured on ai17z-test, where that sentence was shown against four of the
+ * seven roles at once. The stored list was `["deepseek-flash",
+ * "deepseek-v4-pro"]`, taken five days earlier and never refreshed, and
+ * `deepseek-v4-flash` had completed twelve calls in the previous three hours.
+ * So the screen told an owner that four working roles were dead, in a place
+ * where the obvious response is to go and reconfigure them.
+ *
+ * The comment on `providerModels` already had the right instinct for the
+ * neighbouring case: an empty list "is not evidence the model is missing". A
+ * list that is merely old is the same kind of not-evidence, and this now says
+ * what it knows and when it knew it rather than what it suspects. The warning
+ * is kept, because an agent pointed at a genuinely retired model does read as
+ * healthy everywhere and fail every generation. What it may not do is state a
+ * cause as a fact.
  */
-export function staleModel(config: Pick<ModelConfig, 'model' | 'providerModels' | 'providerLabel'>): string | null {
+export function staleModel(
+  config: Pick<ModelConfig, 'model' | 'providerModels' | 'providerLabel' | 'providerCheckedAt'>,
+): string | null {
   if (config.providerModels.length === 0) return null;
   if (config.providerModels.includes(config.model)) return null;
-  return `${config.providerLabel} no longer offers "${config.model}". This agent cannot generate with it.`;
+  const when = asOf(config.providerCheckedAt);
+  return (
+    `${config.providerLabel} did not list "${config.model}" ${when}. ` +
+    'That may mean it was retired, or only that the list is out of date.'
+  );
+}
+
+/** "when it was last checked, on 15 September", or just the vaguer half. */
+function asOf(checkedAt: string | null | undefined): string {
+  if (!checkedAt) return 'when it was last checked';
+  const at = new Date(checkedAt);
+  if (Number.isNaN(at.getTime())) return 'when it was last checked';
+  return `when it was last checked, on ${at.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}`;
 }
 
 export const ModelParameters = z.object({

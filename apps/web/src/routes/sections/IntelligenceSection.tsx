@@ -249,6 +249,13 @@ export function IntelligenceSection({
             // A model the provider has retired reads as healthy on every screen
             // and fails every generation. Said on the row, where somebody is
             // already looking at their models, rather than in a log.
+            //
+            // Worth saying and not worth shouting. This is an absence from a
+            // stored list rather than a failure anybody has seen, and when the
+            // list is old it is routinely wrong: four working roles on
+            // ai17z-test carried a red "unavailable" chip while the model
+            // behind them was answering. So the row says what was noticed and
+            // leaves the conclusion to the owner, who can see the date in it.
             const stale = config ? staleModel(config) : null;
             return (
               <IndexedRow
@@ -257,7 +264,7 @@ export function IntelligenceSection({
                 label={entry.label}
                 title={config ? config.model : 'Not set'}
                 meta={stale ?? (config ? `${config.providerLabel} · ${config.provider}` : entry.hint)}
-                status={stale ? <span className="chip border-signal-fail/40 text-signal-fail">unavailable</span> : undefined}
+                status={stale ? <span className="chip border-signal-warn/40 text-signal-warn">check this</span> : undefined}
                 onClick={() => openEditor(entry.role)}
               />
             );

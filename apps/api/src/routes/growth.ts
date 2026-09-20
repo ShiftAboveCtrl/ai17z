@@ -2,7 +2,6 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
-  bridgesFor,
   contentSignalsFor,
   launchesFor,
   narrativesFor,
@@ -106,20 +105,24 @@ export async function growthRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  /** Who leads somewhere the agent does not already reach, and why. */
-  app.get(
-    '/api/agents/:id/growth/bridges',
-    handler(async (request) => {
-      const user = await requireUser(request);
-      const agent = await ownedAgent(params(request).id!, user);
-      const accountId = await linkedAccount(agent.id);
-      if (!accountId) return { ...noAccount, items: [] };
-      // The owner is passed so the scores can use profiles this owner has
-      // already had read. Nothing is read here; an account nobody has looked
-      // at keeps its gaps and says so.
-      return { ok: true, items: await bridgesFor(agent.id, accountId, { ownerUserId: user.id }) };
-    }),
-  );
+  /*
+    Who leads somewhere the agent does not already reach was served from here
+    and from `/api/agents/:id/people`, and only the second of the two was ever
+    asked.
+
+    They were not two views of one answer. Both called `bridgesFor` with the
+    same agent, the same account and the same owner, and this one returned the
+    scores on their own while the People route returns them with the
+    relationship and whatever has been read about the person attached. So this
+    was the same query with less in the answer, which is the shape of thing that
+    goes stale without anybody noticing: nothing renders it, so nothing fails
+    when it stops agreeing with the screen beside it.
+
+    Removed rather than wired to a surface of its own. Two answers to one
+    question is exactly what retiring the `narratives` table was about, and
+    `bridgesFor` itself is untouched: the People screen is its caller and the
+    canonical place an owner reads this.
+  */
 
   /**
    * Which of the posts the agent has seen are worth speaking into.

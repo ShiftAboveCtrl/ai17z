@@ -100,12 +100,33 @@ export async function readPostAnalytics(
 
     const pairs = await readFigures(session.page);
     if (pairs.length === 0) {
-      // Either the post is not this account's, or X did not render. Both are
-      // "no answer", and inventing zeroes for a post somebody else wrote would
-      // be worse than saying nothing.
+      /*
+        No figures, and this cannot tell why. Inventing zeroes for a post
+        somebody else wrote would be worse than saying nothing, so it refuses
+        either way, but it must refuse without naming a cause it does not
+        know.
+
+        It used to say "Only the author's own posts have them", which is one of
+        the causes stated as though it were the finding. Measured on ai17z-test
+        against two posts the signed-in account had written itself: both came
+        back with that sentence, and the agent repeated it to the owner and
+        then went further, explaining a mechanism that does not exist. A
+        refusal that asserts a reason is worse than one that admits it has
+        none, because everything downstream treats it as a fact.
+
+        The open question is which of the three it is, and it is left open here
+        rather than guessed at: the post is somebody else's, X did not render
+        the figures, or the page this navigates to is no longer where they are.
+        The third is worth checking against a live signed-in session, because
+        this is the only place in the reading layer that builds an `/i/status/`
+        address while everything else uses `/i/web/status/`, and because the
+        pairing below is positional and says itself that a redesign is exactly
+        what breaks it.
+      */
       throw PipelineError.permanent(
         'analytics_not_available',
-        `X did not show analytics for ${statusId}. Only the author's own posts have them.`,
+        `X showed no figures for ${statusId}. That happens when the post is not this account's, ` +
+          'and it also happens when X does not render them, so this is not evidence of either.',
       );
     }
     return { statusId, reading: parseAnalytics(pairs) };

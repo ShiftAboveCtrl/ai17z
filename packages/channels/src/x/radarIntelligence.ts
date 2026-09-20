@@ -1,8 +1,8 @@
-import { accounts as accountsRepo } from '@xbam/database';
 import type { RadarCandidate, RadarPollResult, RadarSourceKind } from '@xbam/shared/contracts';
 import type { ChannelContext } from '../contract';
 import { xIntelligence, STOP_ASKING, type XPostRecord, type XReadResult } from './intelligence';
 import { normalizeHandle } from './targets';
+import { noteSessionExpired } from './sessionState';
 
 /**
  * The radar, reading X through the one layer AI17Z reads X through.
@@ -213,12 +213,11 @@ export function fromReadResult(
  * not slow a poll down or fail one.
  */
 export function noteSignedOut(ctx: RadarReadContext, outcome: string, detail: string): void {
-  if (outcome !== 'NEEDS_SIGN_IN') return;
-  const account = ctx.channel?.account;
-  if (!account || account.status !== 'CONNECTED') return;
-  void accountsRepo
-    .updateAccount(account.id, { status: 'SESSION_EXPIRED', lastError: detail || 'X asked for a sign-in.' })
-    .catch(() => undefined);
+  // Through the same writer the canonical read path uses, which holds both
+  // conditions: the account was connected, and this process is the one driving
+  // the browser. This file used to hold its own copy of the first rule, so the
+  // second had to be added twice or it protected one path and not the other.
+  void noteSessionExpired(ctx.channel?.account, outcome, detail);
 }
 
 /** The refusal in words an owner reads on the source's row, never a code. */

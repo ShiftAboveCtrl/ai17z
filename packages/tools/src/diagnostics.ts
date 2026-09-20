@@ -266,6 +266,26 @@ async function radarHealth(accountId: string | null): Promise<ComponentHealth[]>
   }
 }
 
+/**
+ * The older built-in tools, said in a way that cannot be read as the newer ones.
+ *
+ * `agent_tools` and `agent_capability_permissions` are deliberately separate
+ * and documented as such. What was not accounted for is that the three things
+ * in the built-in catalogue have Toolspace capabilities covering the same
+ * ground, and the names are identical because the purposes are.
+ *
+ * Measured on ai17z-test: the Health screen said "Current time is switched off
+ * for this agent" and "Own status is switched off for this agent", while
+ * `capability_invocations` for the same agent, in the same hour, recorded
+ * `time.now` SUCCEEDED "Current time answered." and `agent.diagnostics`
+ * SUCCEEDED "Own status answered." The same words, from two subsystems, making
+ * opposite claims, on a screen whose entire purpose is answering "is it
+ * working".
+ *
+ * The split is not the problem and is not changed here. Presenting one of them
+ * under a name indistinguishable from the other is, so each row says which
+ * mechanism it is talking about and where the other one lives.
+ */
 async function toolHealth(agentId: string): Promise<ComponentHealth[]> {
   try {
     const [items, policy] = await Promise.all([opsRepo.listAgentTools(agentId), agentsRepo.getActivePolicy(agentId)]);
@@ -273,11 +293,11 @@ async function toolHealth(agentId: string): Promise<ComponentHealth[]> {
     return items.map((tool: { key: string; name?: string | null; enabled: boolean }) => {
       const verdict = toolReadiness({ key: tool.key, name: tool.name ?? undefined, enabled: tool.enabled }, allowed);
       return {
-        name: tool.name ?? tool.key,
+        name: `${tool.name ?? tool.key} (built-in tool)`,
         state: (verdict.state === 'READY' ? 'HEALTHY' : verdict.state === 'OFF' ? 'OFF' : 'DEGRADED') as HealthState,
         // Already written for a person, and written here rather than anywhere
         // a value could reach it.
-        detail: verdict.summary,
+        detail: `${verdict.summary} This is the built-in tool of that name. Toolspace capabilities are separate and have their own permissions.`,
         lastSucceededAt: null,
         failingForMinutes: null,
       };

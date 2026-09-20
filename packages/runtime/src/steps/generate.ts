@@ -410,6 +410,10 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
     draft,
     policy,
     recipientHandle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+    // A post is the agent choosing its own subject, and repetition judges the
+    // two differently. Taken from the action rather than the event, because
+    // that is what decides where the text lands.
+    isPost: job.actionType === 'POST',
     /*
       A dry run is for seeing what would be said, so it is worth showing the
       real thing; but a rewrite costs money and a dry run is not going out.
@@ -509,14 +513,39 @@ export async function stepQualityGate(bundle: JobBundle): Promise<void> {
     },
   });
 
-  if (report.repetition.score > policy.voice.repetitionRewriteAbove) {
+  /*
+    Anything that matched is written down, whether or not it crossed the line.
+
+    It used to be recorded only above the rewrite threshold. The score and the
+    matched text were in QUALITY_SCORED's data all along, but the event that
+    names the problem never fired and the message beside it read as approval.
+
+    Measured on ai17z-main: two original posts four days apart sharing a
+    byte-identical opening and closing sentence. The score was 78 against a
+    threshold of 80, so no REPETITION_DETECTED was emitted and the trace said
+    "Sounds like this agent." An owner asking why it posted nearly the same
+    thing twice had to know to open the data of a different event to find out.
+
+    The level still separates them: above the threshold something was asked for
+    and below it nothing was, which is a real difference and stays visible.
+  */
+  const crossed = report.repetition.score > policy.voice.repetitionRewriteAbove;
+  if (report.repetition.reason) {
     await observability.emitTrace({
       jobId: job.id,
       agentId: bundle.agent.id,
       type: 'REPETITION_DETECTED',
-      level: 'warn',
-      message: report.repetition.reason ?? 'Too close to something already said.',
-      data: { matched: report.repetition.matched, matchedAt: report.repetition.matchedAt },
+      level: crossed ? 'warn' : 'info',
+      message: crossed
+        ? (report.repetition.reason ?? 'Too close to something already said.')
+        : `${report.repetition.reason}. Under the rewrite threshold of ${policy.voice.repetitionRewriteAbove}, so nothing was asked for.`,
+      data: {
+        score: report.repetition.score,
+        threshold: policy.voice.repetitionRewriteAbove,
+        crossed,
+        matched: report.repetition.matched,
+        matchedAt: report.repetition.matchedAt,
+      },
     });
   }
 

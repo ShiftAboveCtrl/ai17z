@@ -1,5 +1,5 @@
 import { hostname } from 'node:os';
-import { createLogger, describeVersion, envInt, envString, errorMessage, loadEnv } from '@xbam/shared';
+import { createLogger, describeVersion, envInt, envString, errorMessage, loadEnv, thisWorkerId } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   browserTasks,
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   // one place, so it is something a person can read rather than discover.
   installTelegramTransport();
 
-  const workerId = envString('AI17Z_WORKER_ID', `${hostname()}-${process.pid}`);
+  const workerId = thisWorkerId();
 
   // A containerised worker has no browser and no display, so it must not claim
   // browser-backed work. Run a second worker natively with role=browser for that.
