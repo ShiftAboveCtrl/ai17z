@@ -191,8 +191,17 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
         from the same rows the list returns or the chips disagree with what is
         under them. With this the cap trims outreach, which is what a cap is
         for, instead of trimming the two buckets the screen exists to show.
+
+        The coalesce below is the whole of it working. Most rows here have no
+        job at all: something was recorded and nothing was queued for it, which
+        is the ordinary case for a keyword match. The status is then NULL, a
+        NULL IN test is NULL rather than false, and a descending sort puts NULLs
+        first. So the first attempt at this sorted every unqueued row ahead of
+        the decision it was meant to rescue, and the screen still said nothing
+        was waiting. Measured on ai17z-test after that shipped: the held job was
+        still outside the window, behind rows with no job on them.
       */
-      ORDER BY (j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED')) DESC,
+      ORDER BY coalesce(j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED'), false) DESC,
                e.ingested_at DESC
       LIMIT $2`,
     [ownerId, Math.min(limit, 500)],
