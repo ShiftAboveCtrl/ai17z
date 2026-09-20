@@ -47,6 +47,7 @@ interface PublishedPost {
   remote_post_id: string;
   text: string;
   published_at: string;
+  views: number | null;
   impressions: number | null;
   likes: number | null;
   reposts: number | null;
@@ -61,6 +62,15 @@ export function AnalyticsView({ agentId }: { agentId: string }) {
   const posts = useResource<{ items: PublishedPost[] }>(`/api/agents/${agentId}/growth/posts`);
   const account = useResource<{ readings: AccountReading[] }>(`/api/agents/${agentId}/growth/account`);
   const items = posts.data?.items ?? [];
+  /*
+    Which figure this account actually has.
+
+    An account with X's own analytics view has impressions; one without it has
+    the view count X writes on the post. Both are real and they are not the same
+    measurement, so the table names whichever it is showing rather than calling
+    the view count impressions.
+  */
+  const anyImpressions = items.some((row) => row.impressions !== null);
   const readings = account.data?.readings ?? [];
   const first = readings[0];
   const last = readings[readings.length - 1];
@@ -125,7 +135,7 @@ export function AnalyticsView({ agentId }: { agentId: string }) {
               meta={finding.detail}
             >
               <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-bone-faint">
-                engagements per thousand impressions
+                engagements per thousand times seen
               </p>
             </Card>
           ))}
@@ -150,7 +160,17 @@ export function AnalyticsView({ agentId }: { agentId: string }) {
               <thead>
                 <tr className="font-mono text-[10px] uppercase tracking-[0.2em] text-bone-faint">
                   <th className="py-2 pr-4 font-normal">Post</th>
-                  <th className="py-2 pr-4 text-right font-normal">Impressions</th>
+                  {/*
+                    Whichever of the two X actually gave.
+
+                    Views is what X writes on a post and what most accounts
+                    ever see. Impressions comes only from X's own analytics
+                    view, which an account without that entitlement does not
+                    get. They are different measurements, so the column is
+                    named after the one behind the numbers rather than calling
+                    both of them impressions.
+                  */}
+                  <th className="py-2 pr-4 text-right font-normal">{anyImpressions ? 'Impressions' : 'Views'}</th>
                   <th className="py-2 pr-4 text-right font-normal">Likes</th>
                   <th className="py-2 pr-4 text-right font-normal">Replies</th>
                   <th className="py-2 text-right font-normal">Read</th>
@@ -170,7 +190,9 @@ export function AnalyticsView({ agentId }: { agentId: string }) {
                       </a>
                       <p className="mt-1 text-[11px] text-bone-faint">{timeAgo(row.published_at)}</p>
                     </td>
-                    <td className="py-2.5 pr-4 text-right font-mono text-bone-dim">{figure(row.impressions)}</td>
+                    <td className="py-2.5 pr-4 text-right font-mono text-bone-dim">
+                      {figure(anyImpressions ? row.impressions : row.views)}
+                    </td>
                     <td className="py-2.5 pr-4 text-right font-mono text-bone-dim">{figure(row.likes)}</td>
                     <td className="py-2.5 pr-4 text-right font-mono text-bone-dim">{figure(row.replies)}</td>
                     <td className="py-2.5 text-right text-[11px] text-bone-faint">

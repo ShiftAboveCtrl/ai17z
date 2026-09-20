@@ -179,7 +179,10 @@ export class SocialRadar {
             reposts: poll.targetCounts.reposts ?? null,
             likes: poll.targetCounts.likes ?? null,
             bookmarks: poll.targetCounts.bookmarks ?? null,
-            impressions: poll.targetCounts.views ?? null,
+            // Under the name X used. The count group says "views", and calling
+            // that impressions stores a figure X never gave. Impressions come
+            // only from X's own analytics view, which this path never reads.
+            views: poll.targetCounts.views ?? null,
           })
           .catch(() => undefined);
       }

@@ -87,7 +87,11 @@ export async function collectHealth(): Promise<HealthReport> {
     try {
       const counts = await jobsRepo.countJobsByStatus();
       const stuck = counts.RETRYABLE_FAILURE ?? 0;
-      const review = (counts.REVIEW_REQUIRED ?? 0) + (counts.WAITING_FOR_APPROVAL ?? 0);
+      // Through the one definition, so this cannot drift from the inbox an
+      // owner reaches the decisions from. It used to add the two decision
+      // statuses together, which counted rehearsals: work that publishes
+      // nothing and that nobody can decide anything about.
+      const review = await jobsRepo.countAwaitingAPerson();
       components.push({
         name: 'Queue',
         status: 'healthy',

@@ -70,7 +70,7 @@ export function ActivityPage() {
 
   const jobs = useResource<{ items: JobSummary[]; total: number }>(path);
   const mentions = useResource<{ items: MentionRow[]; counts: Record<MentionState, number> }>(mentionPath);
-  const counts = useResource<{ counts: Record<string, number> }>(
+  const counts = useResource<{ counts: Record<string, number>; awaitingAPerson: number }>(
     agentId ? `/api/jobs/counts?agentId=${agentId}` : '/api/jobs/counts',
   );
 
@@ -87,8 +87,14 @@ export function ActivityPage() {
     hasLive || filter === 'live',
   );
 
-  const needsReview =
-    (counts.data?.counts.WAITING_FOR_APPROVAL ?? 0) + (counts.data?.counts.REVIEW_REQUIRED ?? 0);
+  /*
+    Taken from the one definition rather than added up here.
+
+    Adding the two decision statuses counts rehearsals, which publish nothing
+    and settle nothing, so this header said two were waiting while the chip
+    below it said none.
+  */
+  const needsReview = counts.data?.awaitingAPerson ?? 0;
 
   // The two numbers somebody running a social account actually wants: how many
   // people got an answer, and how many did not.

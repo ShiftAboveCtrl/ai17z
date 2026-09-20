@@ -182,6 +182,13 @@ jobs:
 
       - name: The published install.ps1, checked and then run in WhatIf
         shell: pwsh
+        # For the rate limit and nothing else. Every call this makes is of
+        # public data and works signed out; the token is what stops a shared
+        # runner's exhausted anonymous budget deciding whether a release
+        # qualifies. The `-WhatIfOnly` run below is deliberately left
+        # unauthenticated, because that is the route a stranger takes.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = '${{ needs.which.outputs.tag }}'
@@ -253,7 +260,26 @@ jobs:
             }
           }
           $result = Invoke-Once
-          if ($result.Code -ne 0) {
+          <#
+            What this proves, and what it no longer decides.
+
+            The hash checks above are the gate: they take install.ps1 from the
+            tag's own address, compare it against the SHA256SUMS.txt that tag
+            published, and compare that against the file this commit holds.
+            None of it touches an API.
+
+            The run below is the stranger's route, which resolves the release
+            through api.github.com without a token. Sixty requests an hour to an
+            address a hosted runner shares is not a fact about a release, and
+            twice in three releases it was what failed. So a refusal that looks
+            like that ceiling is reported and not counted, and anything else
+            still fails the job.
+          #>
+          $ceiling = $result.Text -match '\(40[39]\)|\(429\)|rate.?limit|Retry-After|could not be read'
+          if ($result.Code -ne 0 -and $ceiling) {
+            "::notice::GitHub refused this runner's anonymous API twice. That is the shared hourly ceiling rather than anything about $tag, whose published install.ps1 matched its hash above."
+          }
+          elseif ($result.Code -ne 0) {
             "  That attempt exited $($result.Code). Waiting ninety seconds and trying once more."
             $result.Text
             Start-Sleep -Seconds 90

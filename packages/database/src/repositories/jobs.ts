@@ -339,6 +339,52 @@ export async function listJobs(filters: JobListFilters): Promise<{ items: JobSum
   return { items: mapRows<JobSummary>(rows), total: totalRow?.count ?? 0 };
 }
 
+/**
+ * What "waiting for you to decide" means, written once.
+ *
+ * Two conditions, and the second is the one that was missing everywhere except
+ * the inbox. A job is waiting on a person when it is held in a decision state
+ * **and** it is something a decision could actually be made about.
+ *
+ * A Response Lab rehearsal is not. It manufactures an event so the rehearsal
+ * runs the ordinary ten steps, which is what makes the lab worth trusting, and
+ * it publishes nothing by construction. Held for review, it looked exactly like
+ * work an owner had to settle.
+ *
+ * Measured on ai17z-test: the health screen said "2 messages are waiting for
+ * you to decide" and one of the two was a rehearsal. The inbox already knew to
+ * leave those out, so the two surfaces disagreed about one question, and the
+ * one an owner could actually act from showed the smaller number.
+ *
+ * Expressed as SQL rather than as a list of statuses because the rehearsal test
+ * needs the event, and because a second predicate that drifts from this one is
+ * exactly the defect being fixed. `j` is the jobs row and `e` its event.
+ */
+export const NOT_A_REHEARSAL = "coalesce((e.payload ->> 'rehearsal')::boolean, false) = false";
+
+export const AWAITING_A_PERSON = `j.status IN ('REVIEW_REQUIRED', 'WAITING_FOR_APPROVAL')
+       AND ${NOT_A_REHEARSAL}`;
+
+/**
+ * How many decisions are genuinely waiting on somebody.
+ *
+ * The number a person is shown, so it counts what a person could act on. Scoped
+ * to an agent when asked, across the installation when not.
+ */
+export async function countAwaitingAPerson(agentId?: string): Promise<number> {
+  const row = agentId
+    ? await queryOne<{ n: number }>(
+        `SELECT count(*)::int AS n FROM jobs j JOIN events e ON e.id = j.event_id
+          WHERE ${AWAITING_A_PERSON} AND j.agent_id = $1`,
+        [agentId],
+      )
+    : await queryOne<{ n: number }>(
+        `SELECT count(*)::int AS n FROM jobs j JOIN events e ON e.id = j.event_id
+          WHERE ${AWAITING_A_PERSON}`,
+      );
+  return row?.n ?? 0;
+}
+
 export async function countJobsByStatus(agentId?: string): Promise<Record<string, number>> {
   const rows = agentId
     ? await query<{ status: string; count: number }>(

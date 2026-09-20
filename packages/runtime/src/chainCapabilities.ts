@@ -376,7 +376,9 @@ const logs = defineCapability({
   name: 'Read events a contract emitted',
   description:
     'Events emitted by one contract over a bounded range of blocks. ' +
-    `The range may cover at most ${MAX_LOG_SPAN} blocks, because a wider question is one no public node will answer.`,
+    `The range may cover at most ${MAX_LOG_SPAN} blocks, because a wider question is one no public node will answer. ` +
+    'Free public nodes often decline this method outright whatever the range, so this can be unavailable on an ' +
+    'installation where every other chain read works. Ask chain.health which sources are answering.',
   category: 'READ',
   effect: 'READ',
   risk: 'LOW',

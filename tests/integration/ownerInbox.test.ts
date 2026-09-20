@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { agents as agentsRepo, inbox as inboxRepo, jobs as jobsRepo, query } from '@xbam/database';
 import { installHarness } from '../support/harness';
@@ -24,15 +26,22 @@ installHarness();
  */
 
 /** A job held for a person, on an event of whatever kind. */
-async function heldJob(input: { ownerId: string; agentId: string; eventType: string; actionType: string }) {
+async function heldJob(input: {
+  ownerId: string;
+  agentId: string;
+  eventType: string;
+  actionType: string;
+  /** A Response Lab rehearsal, which publishes nothing and settles nothing. */
+  rehearsal?: boolean;
+}) {
   const persona = await agentsRepo.getActivePersona(input.agentId);
   const policy = await agentsRepo.getActivePolicy(input.agentId);
   const suffix = uniqueSuffix();
 
   const [event] = await query<{ id: string }>(
-    `INSERT INTO events (channel, remote_event_id, type, remote_author_handle, text, occurred_at)
-     VALUES ('mock', $1, $2, 'someone', 'something worth deciding about', now()) RETURNING id`,
-    [`inbox-${suffix}`, input.eventType],
+    `INSERT INTO events (channel, remote_event_id, type, remote_author_handle, text, occurred_at, payload)
+     VALUES ('mock', $1, $2, 'someone', 'something worth deciding about', now(), $3::jsonb) RETURNING id`,
+    [`inbox-${suffix}`, input.eventType, JSON.stringify(input.rehearsal ? { rehearsal: true } : {})],
   );
   const [job] = await query<{ id: string }>(
     `INSERT INTO jobs (event_id, agent_id, channel, action_type, idempotency_key, dry_run,
@@ -210,5 +219,154 @@ describe('what it still leaves out', () => {
     // Somebody said something. That belongs in the inbox whether or not it is
     // still waiting on anybody.
     expect(await inboxRepo.ownerInbox(fixture.ownerId)).toHaveLength(1);
+  });
+});
+
+/**
+ * The number an owner is shown has to be a number they can act on.
+ *
+ * Measured on ai17z-test: the health screen said "2 messages are waiting for
+ * you to decide" while the inbox showed nothing waiting. One of the two was a
+ * Response Lab rehearsal. A rehearsal manufactures an event so it runs the
+ * ordinary ten steps, which is what makes the lab worth trusting, and it
+ * publishes nothing by construction, so there is no decision to make about it.
+ *
+ * The inbox already knew that. Health and the Telegram status reply each added
+ * the two decision statuses together instead, so three surfaces answered one
+ * question three ways and the one an owner could actually act from was the one
+ * showing the smaller number.
+ */
+describe('what is waiting for a person', () => {
+  it('counts a live decision and not a rehearsal held beside it', async () => {
+    const fixture = await createFixture();
+    const live = await heldJob({
+      ownerId: fixture.ownerId,
+      agentId: fixture.agentId,
+      eventType: 'MENTION',
+      actionType: 'REPLY',
+    });
+    await heldJob({
+      ownerId: fixture.ownerId,
+      agentId: fixture.agentId,
+      eventType: 'MENTION',
+      actionType: 'REPLY',
+      rehearsal: true,
+    });
+
+    // Both are held in a decision state, so the raw status count sees two.
+    const raw = await jobsRepo.countJobsByStatus();
+    expect((raw.REVIEW_REQUIRED ?? 0) + (raw.WAITING_FOR_APPROVAL ?? 0)).toBe(2);
+
+    // The number a person is shown is the one they can act on.
+    expect(await jobsRepo.countAwaitingAPerson()).toBe(1);
+
+    // And it is the same one the inbox offers them, which is the property that
+    // matters: the count and the list have to mean the same thing.
+    const items = await inboxRepo.ownerInbox(fixture.ownerId);
+    const counts = inboxRepo.countBuckets(items);
+    expect(counts.NEEDS_REVIEW).toBe(1);
+    expect(items.some((item) => item.jobId === live)).toBe(true);
+  });
+
+  it('counts nothing when every held job is a rehearsal', async () => {
+    // The live case exactly: a screen saying something waits while nothing does.
+    const fixture = await createFixture();
+    await heldJob({
+      ownerId: fixture.ownerId,
+      agentId: fixture.agentId,
+      eventType: 'MENTION',
+      actionType: 'REPLY',
+      rehearsal: true,
+    });
+    expect(await jobsRepo.countAwaitingAPerson()).toBe(0);
+    expect(inboxRepo.countBuckets(await inboxRepo.ownerInbox(fixture.ownerId)).NEEDS_REVIEW).toBe(0);
+  });
+
+  it('leaves a settled job out, whatever it settled as', async () => {
+    // A decision already made is not a decision waiting to be made.
+    const fixture = await createFixture();
+    const held = await heldJob({
+      ownerId: fixture.ownerId,
+      agentId: fixture.agentId,
+      eventType: 'MENTION',
+      actionType: 'REPLY',
+    });
+    expect(await jobsRepo.countAwaitingAPerson()).toBe(1);
+    await query("UPDATE jobs SET status = 'CANCELLED' WHERE id = $1", [held]);
+    expect(await jobsRepo.countAwaitingAPerson()).toBe(0);
+  });
+
+  it('scopes to one agent when asked', async () => {
+    const mine = await createFixture();
+    const theirs = await createFixture();
+    await heldJob({ ownerId: mine.ownerId, agentId: mine.agentId, eventType: 'MENTION', actionType: 'REPLY' });
+    await heldJob({ ownerId: theirs.ownerId, agentId: theirs.agentId, eventType: 'MENTION', actionType: 'REPLY' });
+    expect(await jobsRepo.countAwaitingAPerson()).toBe(2);
+    expect(await jobsRepo.countAwaitingAPerson(mine.agentId)).toBe(1);
+  });
+});
+
+/**
+ * One question, one answer, everywhere it is asked.
+ *
+ * "Waiting for you to decide" was computed in four places. The inbox had it
+ * right; health, the Telegram status reply and the activity header each added
+ * the two decision statuses together, which counts Response Lab rehearsals.
+ *
+ * Measured on ai17z-test: the activity header said two were waiting while the
+ * filter chip directly beneath it, reading the inbox, said none. The agent card
+ * and the health screen agreed with the header. Three surfaces were wrong and
+ * the one an owner could actually act from was the one that was right.
+ */
+describe('there is one definition of what is waiting', () => {
+  it('is not spelled out anywhere a fourth time', () => {
+    const root = resolve(__dirname, '../..');
+    const files = [
+      'packages/runtime/src/health.ts',
+      'packages/runtime/src/telegramCommands.ts',
+      'apps/web/src/routes/ActivityPage.tsx',
+      'apps/api/src/routes/jobs.ts',
+      // The agent card, which had its own statement rather than a sum and was
+      // the fifth place answering this question.
+      'apps/api/src/routes/agentConfig.ts',
+    ];
+    for (const file of files) {
+      const source = readFileSync(resolve(root, file), 'utf8');
+      /*
+        Nobody adds the two statuses together any more. Each of these either
+        calls `countAwaitingAPerson` or reads what it returned, so a rehearsal
+        cannot be counted as a decision in one place and not another.
+      */
+      expect(source, `${file} still adds the decision statuses by hand`).not.toMatch(
+        /WAITING_FOR_APPROVAL \?\? 0\) \+|REVIEW_REQUIRED \?\? 0\) \+/,
+      );
+      // And nothing writes the status pair into SQL of its own either, which is
+      // how the agent card came to disagree with the inbox beneath it.
+      expect(source, `${file} has its own statement for this`).not.toMatch(
+        /status IN \('REVIEW_REQUIRED', 'WAITING_FOR_APPROVAL'\)/,
+      );
+    }
+  });
+
+  it('serves it from the API so a screen never has to derive it', async () => {
+    const fixture = await createFixture();
+    await heldJob({
+      ownerId: fixture.ownerId,
+      agentId: fixture.agentId,
+      eventType: 'MENTION',
+      actionType: 'REPLY',
+    });
+    await heldJob({
+      ownerId: fixture.ownerId,
+      agentId: fixture.agentId,
+      eventType: 'MENTION',
+      actionType: 'REPLY',
+      rehearsal: true,
+    });
+    // The raw breakdown still exists, because a queue view needs it.
+    const raw = await jobsRepo.countJobsByStatus(fixture.agentId);
+    expect((raw.REVIEW_REQUIRED ?? 0) + (raw.WAITING_FOR_APPROVAL ?? 0)).toBe(2);
+    // And the number a person is shown is the one they can act on.
+    expect(await jobsRepo.countAwaitingAPerson(fixture.agentId)).toBe(1);
   });
 });

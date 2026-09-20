@@ -1,8 +1,9 @@
 import { PipelineError } from '@xbam/shared';
 import type { ChannelContext } from '../contract';
-import { goto, settle, withSession, type Page } from './page';
-import { parseCount } from './counts';
-import { extractStatusId } from './targets';
+import { SEL } from './selectors';
+import { goto, readArticle, refuseIfXBroke, selfHandles, settle, withSession, type Page } from './page';
+import { parseCount, readCounts } from './counts';
+import { extractStatusId, normalizeHandle } from './targets';
 
 /**
  * What X tells the author about their own post.
@@ -24,6 +25,17 @@ const RENDER_TIMEOUT_MS = 8_000;
 
 /** The metrics this file is willing to claim, in our own vocabulary. */
 export interface PostAnalyticsReading {
+  /**
+   * What X calls "Views" on the post, kept under that name.
+   *
+   * This used to be folded into `impressions`, on the strength of a label table
+   * that maps the word. Nothing established the two are the same measurement,
+   * and a reading that renames a metric is a reading that misstates one. X
+   * writes "58,814 views" in the count group and "Views" beside the figure on
+   * the post; it never says impressions there.
+   */
+  views?: number;
+  /** Only ever set when X's own analytics view said "Impressions". */
   impressions?: number;
   likes?: number;
   reposts?: number;
@@ -34,6 +46,20 @@ export interface PostAnalyticsReading {
   linkClicks?: number;
   /** X's own labels that were on the page and are not mapped here. */
   unmapped: string[];
+  /**
+   * Where the figures came from, because the two sources are not the same claim.
+   *
+   * `DETAILED` is X's own analytics view for the author: impressions, profile
+   * visits, link clicks, detail expands. `VIEWS_ONLY` is the view count X shows
+   * on the post itself, which is the impressions figure and nothing else.
+   *
+   * A caller that cannot tell them apart will read an absent profile-visit
+   * count as a measured zero, which is the mistake this whole boundary exists
+   * to prevent.
+   */
+  source: 'DETAILED' | 'VIEWS_ONLY';
+  /** What could not be read, named rather than left as a silent absence. */
+  gaps: string[];
 }
 
 /**
@@ -45,9 +71,21 @@ export interface PostAnalyticsReading {
  * account's follower count. A substring match here writes the wrong number into
  * the right column, which no test that only checks the row exists would catch.
  */
-const LABELS: Record<string, keyof Omit<PostAnalyticsReading, 'unmapped'>> = {
+/**
+ * The half of a reading that is a number.
+ *
+ * Named rather than derived by subtraction, because a reading also carries
+ * where it came from and what it could not read, and neither of those is a
+ * figure a label can be mapped onto.
+ */
+type PostAnalyticsMetric = Exclude<keyof PostAnalyticsReading, 'unmapped' | 'source' | 'gaps'>;
+
+const LABELS: Record<string, PostAnalyticsMetric> = {
+  // Each label maps to the metric of that name and to no other. "Views" and
+  // "Impressions" are different words and X uses both; which one it used is a
+  // fact about the page and is preserved rather than normalised away.
   impressions: 'impressions',
-  views: 'impressions',
+  views: 'views',
   likes: 'likes',
   reposts: 'reposts',
   retweets: 'reposts',
@@ -67,7 +105,7 @@ const LABELS: Record<string, keyof Omit<PostAnalyticsReading, 'unmapped'>> = {
  * existing.
  */
 export function parseAnalytics(pairs: { label: string; value: string }[]): PostAnalyticsReading {
-  const reading: PostAnalyticsReading = { unmapped: [] };
+  const reading: PostAnalyticsReading = { unmapped: [], source: 'DETAILED', gaps: [] };
   for (const pair of pairs) {
     const label = pair.label.trim().toLowerCase().replace(/\s+/g, ' ');
     const key = LABELS[label];
@@ -95,41 +133,113 @@ export async function readPostAnalytics(
   }
 
   return withSession(ctx, 'RESEARCH', async (session) => {
-    await goto(session.page, `https://x.com/i/status/${statusId}/analytics`);
+    /*
+      The post first, and the analytics from there, because that is the only
+      route that works.
+
+      This used to navigate straight to `/i/status/<id>/analytics`. Measured
+      against the live signed-in session on a post the account had written
+      itself: that address renders the home timeline. So does
+      `/<handle>/status/<id>/analytics` on a hard navigation, waited out for
+      fifteen seconds. The address was never the difficult part; X's router
+      only resolves it from inside the application.
+
+      So the post page is loaded, and the link X puts there is followed the way
+      the application follows it. That link is also how eligibility is
+      established: X shows it to the author and to nobody else, so its absence
+      is an answer rather than a guess about one.
+    */
+    await goto(session.page, `https://x.com/i/web/status/${statusId}`);
     await settle();
+    await refuseIfXBroke(session.page, 'that post');
 
-    const pairs = await readFigures(session.page);
-    if (pairs.length === 0) {
-      /*
-        No figures, and this cannot tell why. Inventing zeroes for a post
-        somebody else wrote would be worse than saying nothing, so it refuses
-        either way, but it must refuse without naming a cause it does not
-        know.
+    /*
+      Whose post this is, established rather than inferred from a link.
 
-        It used to say "Only the author's own posts have them", which is one of
-        the causes stated as though it were the finding. Measured on ai17z-test
-        against two posts the signed-in account had written itself: both came
-        back with that sentence, and the agent repeated it to the owner and
-        then went further, explaining a mechanism that does not exist. A
-        refusal that asserts a reason is worse than one that admits it has
-        none, because everything downstream treats it as a fact.
+      An earlier version used the presence of the analytics link as the
+      eligibility test, on the reasoning that X shows it to the author. Measured
+      against the live signed-in session on somebody else's post: the link is
+      there too, reading "58.8K Views". It is on every post, so it proves
+      nothing about who wrote one.
 
-        The open question is which of the three it is, and it is left open here
-        rather than guessed at: the post is somebody else's, X did not render
-        the figures, or the page this navigates to is no longer where they are.
-        The third is worth checking against a live signed-in session, because
-        this is the only place in the reading layer that builds an `/i/status/`
-        address while everything else uses `/i/web/status/`, and because the
-        pairing below is positional and says itself that a redesign is exactly
-        what breaks it.
-      */
+      The canonical signal is the one the rest of this layer already uses: the
+      focal article's author against this session's own handles. Anchored on the
+      article that links to this status id, exactly as the action path does,
+      because on a status page the parent renders above the focal post and "the
+      first article" is reliably somebody else's.
+    */
+    const anchor = `${SEL.tweetArticle}:has(a[href*="/status/${statusId}"])`;
+    const onPage = await session.page.locator(anchor).first().isVisible({ timeout: RENDER_TIMEOUT_MS }).catch(() => false);
+    if (!onPage) {
+      throw PipelineError.permanent('focal_article_not_found', `The post ${statusId} is not on its own page any more.`);
+    }
+
+    const article = await readArticle(session.page, anchor);
+    const author = normalizeHandle(article.authorHandle ?? '');
+    const mine = selfHandles(ctx);
+    if (!author || !mine.includes(author)) {
       throw PipelineError.permanent(
         'analytics_not_available',
-        `X showed no figures for ${statusId}. That happens when the post is not this account's, ` +
-          'and it also happens when X does not render them, so this is not evidence of either.',
+        `${statusId} was written by @${author ?? 'somebody this could not identify'}, and this account is ` +
+          `@${mine[0] ?? 'unknown'}. X shows a post's own figures to whoever wrote it.`,
       );
     }
-    return { statusId, reading: parseAnalytics(pairs) };
+
+    /*
+      What X shows on the post, read through the one reader for it.
+
+      `readCounts` takes the count group's own label, which is where X writes
+      "288 replies, 155 reposts, 696 likes, 60 bookmarks, 58814 views". Absent
+      figures stay absent: the label is the only place that distinguishes
+      nobody replied from we could not see how many did.
+    */
+    const counts = await readCounts(session.page, anchor);
+
+    const link = session.page.locator(`a[href$="/${statusId}/analytics"]`).first();
+    if (await link.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await link.click({ timeout: RENDER_TIMEOUT_MS }).catch(() => undefined);
+      await settle(1_200, 2_500);
+    }
+
+    const pairs = await readFigures(session.page);
+    if (pairs.length > 0) return { statusId, reading: parseAnalytics(pairs) };
+
+    /*
+      X did not render a detailed view, so what the post itself showed is the
+      answer.
+
+      Measured on the live account: the address changes, the title becomes the
+      post's, and the content stays the post with its counts. X gates the
+      detailed figures, so an account without that entitlement sees the link and
+      is then shown the post.
+
+      Everything here came from the count group, under the names X used. What
+      the group did not carry stays absent, because a figure nobody measured is
+      not a figure that was nought. The detailed metrics have no values at all
+      on this path and are not mentioned as though they might.
+    */
+    const measured = Object.entries(counts).filter(([, value]) => value !== undefined);
+    if (measured.length === 0) {
+      throw PipelineError.permanent(
+        'analytics_not_available',
+        `X rendered no figures for ${statusId}: not its detailed view, and no count group on the post ` +
+          'either. There is nothing here to report.',
+      );
+    }
+
+    return {
+      statusId,
+      reading: {
+        ...Object.fromEntries(measured),
+        unmapped: [],
+        source: 'VIEWS_ONLY',
+        gaps: [
+          "X did not render its detailed analytics view for this account, so these are the figures it " +
+            'shows on the post itself. Impressions, profile visits, link clicks and detail expands were ' +
+            'not measured and are absent rather than zero.',
+        ],
+      },
+    };
   });
 }
 

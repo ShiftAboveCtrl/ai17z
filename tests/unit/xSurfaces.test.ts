@@ -158,25 +158,115 @@ describe("reading a post's own analytics", () => {
 
   it('refuses without naming a cause it cannot know', () => {
     /*
-      A page with no figures on it has three explanations and this layer can
-      tell them apart from none: the post belongs to somebody else, X did not
-      render them, or they are no longer at the address this asks for.
-
-      It used to answer with the first of those as a statement. Measured on
-      ai17z-test against two posts the signed-in account had written itself:
-      both refused with "Only the author's own posts have them", the agent
-      repeated it to the owner, and then invented a mechanism to explain it.
-      A refusal that asserts a reason is worse than one that admits it has
-      none, because nothing downstream can tell the difference between a cause
-      and a guess once it is written as prose.
+      A post with no analytics has more than one explanation and this layer can
+      tell them apart from none. It used to answer with one of them as a
+      statement: "Only the author's own posts have them", said against two posts
+      the signed-in account had written itself. The agent repeated it to the
+      owner and then invented a mechanism to explain it.
     */
     const source = readFileSync(resolve(__dirname, '../../packages/channels/src/x/analytics.ts'), 'utf8');
-    const refusal = source.slice(source.indexOf("'analytics_not_available'"));
-    expect(refusal).toContain('showed no figures');
-    expect(refusal).toContain('this is not evidence of either');
-    // The sentence that stated one of the causes as the finding.
-    const thrown = refusal.slice(0, refusal.indexOf('    }'));
-    expect(thrown).not.toContain("Only the author's own posts have them");
+    expect(source).not.toContain("Only the author's own posts have them");
+    // What it says instead is what it established: who wrote the post, and who
+    // this account is. Both are read rather than assumed, and the sentence
+    // names them, so nothing downstream has to guess which of the two it was.
+    expect(source).toContain('was written by @');
+    expect(source).toContain("X shows a post's own figures to whoever wrote it");
+  });
+
+  it('reaches analytics the only way that works, from the post', () => {
+    /*
+      Measured against the live signed-in session, on a post the account had
+      written itself: `/i/status/<id>/analytics` renders the home timeline, and
+      so does `/<handle>/status/<id>/analytics` on a hard navigation waited out
+      for fifteen seconds. X's router only resolves that address from inside the
+      application, so the post is loaded and the link X puts there is followed.
+
+      Pinned at the source because the alternative is a browser, and the thing
+      being pinned is which address is built rather than what came back.
+    */
+    const source = readFileSync(resolve(__dirname, '../../packages/channels/src/x/analytics.ts'), 'utf8');
+    // The post, by the canonical id-only address the rest of the layer uses.
+    expect(source).toContain('https://x.com/i/web/status/${statusId}');
+    // And never a hard navigation to an analytics address, which is what it did.
+    expect(source).not.toMatch(/goto\([^)]*\/analytics/);
+    expect(source).not.toContain('https://x.com/i/status/');
+    // The link is the eligibility test as well as the route.
+    expect(source).toContain('a[href$="/${statusId}/analytics"]');
+  });
+
+  it('never renames a metric X did not use', () => {
+    /*
+      "Views" was being folded into `impressions`.
+
+      Nothing established that the two are the same measurement. Measured on a
+      live signed-in session: X writes "288 replies, 155 reposts, 696 likes, 60
+      bookmarks, 58814 views" in the count group under a post and "Views" beside
+      the figure, and never says impressions there. Its detailed analytics view,
+      where an account has one, does say impressions, and that is a different
+      number arrived at a different way.
+
+      A reading that renames a metric is a reading that misstates one, and a
+      model handed `impressions` will say impressions.
+    */
+    const views = parseAnalytics([{ label: 'Views', value: '58,814' }]);
+    expect(views.views).toBe(58814);
+    expect('impressions' in views).toBe(false);
+
+    const impressions = parseAnalytics([{ label: 'Impressions', value: '12,405' }]);
+    expect(impressions.impressions).toBe(12405);
+    expect('views' in impressions).toBe(false);
+  });
+
+  it('separates a detailed reading from one taken off the post', () => {
+    // The two are different claims about different surfaces, and a caller that
+    // cannot tell them apart reads an absent profile-visit count as measured.
+    const full = parseAnalytics([
+      { label: 'Impressions', value: '12,405' },
+      { label: 'Profile visits', value: '2.4K' },
+    ]);
+    expect(full.source).toBe('DETAILED');
+    expect(full.gaps).toEqual([]);
+    expect(full.profileVisits).toBe(2400);
+  });
+
+  it('never turns an unmeasured figure into a zero', () => {
+    // Every metric absent from the page stays absent. Nothing in a reading may
+    // arrive downstream as a measured nought.
+    const reading = parseAnalytics([{ label: 'Views', value: '31' }]);
+    expect(reading.views).toBe(31);
+    for (const metric of ['impressions', 'likes', 'reposts', 'replies', 'quotes', 'bookmarks', 'profileVisits', 'linkClicks']) {
+      expect(metric in reading).toBe(false);
+    }
+  });
+
+  it('establishes whose post it is rather than inferring it from a link', () => {
+    /*
+      The eligibility test used to be the presence of X's analytics link, on the
+      reasoning that X shows it to the author.
+
+      Measured against the live session on somebody else's post: the link is
+      there too, reading "58.8K Views". It is on every post and proves nothing
+      about who wrote one. The canonical signal is the one the rest of this
+      layer already uses, the focal article's author against this session's own
+      handles.
+    */
+    const source = readFileSync(resolve(__dirname, '../../packages/channels/src/x/analytics.ts'), 'utf8');
+    expect(source).toContain('selfHandles(ctx)');
+    expect(source).toContain('mine.includes(author)');
+    // Anchored on the article that links to this status id, never on position.
+    expect(source).toContain(':has(a[href*="/status/${statusId}"])');
+  });
+
+  it('reports only what it measured when the detailed view did not render', () => {
+    const source = readFileSync(resolve(__dirname, '../../packages/channels/src/x/analytics.ts'), 'utf8');
+    expect(source).toContain("source: 'VIEWS_ONLY'");
+    // Built from what the count group actually carried, not from a fixed shape.
+    expect(source).toContain('Object.fromEntries(measured)');
+    // And it says which figures were not measured, so absence is never read as
+    // a nought by whatever comes next.
+    expect(source).toContain('absent rather than zero');
+    // Nothing left to report is a refusal rather than an empty success.
+    expect(source).toContain('There is nothing here to report');
   });
 });
 
@@ -216,5 +306,44 @@ describe('reading the inbox', () => {
 
   it('drops a row with no conversation id, because nothing could reach it again', () => {
     expect(toThreads([row({ conversationId: '', text: 'hello' })])).toHaveLength(0);
+  });
+});
+
+/**
+ * Nothing found and nothing readable are different answers.
+ *
+ * X's own error page has no articles on it, no notification rows, no
+ * conversation rows and no user cells. So does a healthy surface with nothing
+ * on it. A reader that cannot tell them apart hands "nobody has messaged you"
+ * downstream as a measurement, and the record keeps it as one.
+ *
+ * The inbox and the conversation reader did not make that distinction while
+ * every reader beside them did. Pinned across the whole layer rather than on
+ * the two that were wrong, because the next one added will be wrong the same
+ * way unless something says so.
+ */
+describe('an empty surface is not an unreadable one', () => {
+  const root = resolve(__dirname, '../../packages/channels/src/x');
+
+  it('every surface reader checks the page before accepting nothing', () => {
+    for (const file of ['messages.ts', 'notifications.ts', 'timelines.ts', 'connections.ts']) {
+      const source = readFileSync(resolve(root, file), 'utf8');
+      // Each has at least one place where an empty result is questioned rather
+      // than returned. The wording differs; the discipline does not.
+      const guards = source.match(/length === 0/g)?.length ?? 0;
+      expect(guards, `${file} accepts an empty result without asking why`).toBeGreaterThan(0);
+      // How it asks is the file's own business. `connections.ts` looks for a
+      // user cell and throws its own refusal, which is more precise for a list
+      // X will not show a stranger. What matters is that nothing accepts an
+      // empty page as an empty answer without establishing which it is.
+      const asks = source.includes('refuseIfXBroke') || source.includes('PipelineError.permanent');
+      expect(asks, `${file} never establishes whether the page was readable`).toBe(true);
+    }
+  });
+
+  it('the inbox and a conversation both ask, which is what they did not do', () => {
+    const source = readFileSync(resolve(root, 'messages.ts'), 'utf8');
+    expect(source).toContain("refuseIfXBroke(session.page, 'the message inbox')");
+    expect(source).toContain("refuseIfXBroke(session.page, 'that conversation')");
   });
 });

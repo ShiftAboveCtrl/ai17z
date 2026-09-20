@@ -18,6 +18,8 @@ export interface PostAnalyticsRow extends Record<string, unknown> {
   remote_post_id: string;
   action_id: string | null;
   observed_at: string;
+  /** What X calls Views on the post. Never a copy of impressions. */
+  views: number | null;
   impressions: number | null;
   likes: number | null;
   reposts: number | null;
@@ -35,6 +37,7 @@ export interface PostObservation {
   remotePostId: string;
   actionId?: string | null;
   source: AnalyticsSource;
+  views?: number | null;
   impressions?: number | null;
   likes?: number | null;
   reposts?: number | null;
@@ -57,8 +60,8 @@ export async function record(observation: PostObservation): Promise<PostAnalytic
   const rows = await query<PostAnalyticsRow>(
     `INSERT INTO post_analytics
        (agent_id, account_id, remote_post_id, action_id, source,
-        impressions, likes, reposts, replies, quotes, bookmarks, profile_visits, link_clicks)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        views, impressions, likes, reposts, replies, quotes, bookmarks, profile_visits, link_clicks)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT DO NOTHING
      RETURNING *`,
     [
@@ -67,6 +70,7 @@ export async function record(observation: PostObservation): Promise<PostAnalytic
       observation.remotePostId,
       observation.actionId ?? null,
       observation.source,
+      observation.views ?? null,
       observation.impressions ?? null,
       observation.likes ?? null,
       observation.reposts ?? null,
@@ -116,7 +120,11 @@ export async function growth(remotePostId: string): Promise<{ metric: string; fr
   if (readings.length < 2) return null;
   const first = readings[0]!;
   const last = readings[readings.length - 1]!;
-  const metrics: (keyof PostAnalyticsRow)[] = ['impressions', 'likes', 'reposts', 'replies', 'bookmarks'];
+  // Views and impressions are both here because they are different
+  // measurements and an account may have readings of either. Whichever was
+  // measured is the one with two points, and the other is filtered out below
+  // for being null rather than being assumed to equal it.
+  const metrics: (keyof PostAnalyticsRow)[] = ['views', 'impressions', 'likes', 'reposts', 'replies', 'bookmarks'];
   return metrics
     .map((metric) => ({ metric: String(metric), from: first[metric] as number | null, to: last[metric] as number | null }))
     .filter((row): row is { metric: string; from: number; to: number } => row.from !== null && row.to !== null);
@@ -128,6 +136,8 @@ export interface PublishedPostRow extends Record<string, unknown> {
   text: string;
   published_at: string;
   action_type: string;
+  /** What X calls Views on the post. Null where it was not measured. */
+  views: number | null;
   impressions: number | null;
   likes: number | null;
   reposts: number | null;
@@ -154,10 +164,10 @@ export async function publishedWithReadings(agentId: string, limit = 100): Promi
             COALESCE(a.payload->>'text', '')     AS text,
             COALESCE(a.executed_at, a.created_at) AS published_at,
             a.type                               AS action_type,
-            p.impressions, p.likes, p.reposts, p.replies, p.observed_at
+            p.views, p.impressions, p.likes, p.reposts, p.replies, p.observed_at
        FROM actions a
        LEFT JOIN LATERAL (
-              SELECT impressions, likes, reposts, replies, observed_at
+              SELECT views, impressions, likes, reposts, replies, observed_at
                 FROM post_analytics
                WHERE post_analytics.remote_post_id = a.remote_action_id
                ORDER BY observed_at DESC

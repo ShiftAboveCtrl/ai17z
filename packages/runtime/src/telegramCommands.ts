@@ -243,14 +243,16 @@ function excerpt(text: string | null | undefined, limit = 220): string {
 }
 
 async function statusReply(): Promise<string> {
-  const [paused, counts, open, present, muted] = await Promise.all([
+  const [paused, held, open, present, muted] = await Promise.all([
     pauseState(),
-    jobsRepo.countJobsByStatus(),
+    // The same definition the health screen and the inbox use. An owner asking
+    // Telegram what is waiting must not get a different number from the one on
+    // the screen they would go and act from.
+    jobsRepo.countAwaitingAPerson(),
     notificationsRepo.countOpen(),
     workersRepo.present(),
     telegramMuted(),
   ]);
-  const held = (counts.WAITING_FOR_APPROVAL ?? 0) + (counts.REVIEW_REQUIRED ?? 0);
   const states = await agentsRepo.countAgentsByState();
   const total = Object.values(states).reduce((sum, count) => sum + count, 0);
   const active = states.ACTIVE ?? 0;

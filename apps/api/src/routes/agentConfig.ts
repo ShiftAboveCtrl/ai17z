@@ -46,6 +46,7 @@ import {
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
+  jobs as jobsRepo,
   capabilities as capabilitiesRepo,
   posting as postingRepo,
   relationships as relationshipsRepo,
@@ -1087,22 +1088,28 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
             WHERE agent_id = $1 AND status = ANY($2::text[])`,
           [agent.id, [...IN_FLIGHT_JOB_STATUSES]],
         ),
-        query<{ n: number }>(
-          `SELECT count(*)::int AS n FROM jobs
-            WHERE agent_id = $1 AND status IN ('REVIEW_REQUIRED', 'WAITING_FOR_APPROVAL')`,
-          [agent.id],
-        ),
+        /*
+          Through the one definition, scoped to this agent.
+
+          This was its own statement, and it counted the two decision statuses
+          without asking whether anything could be decided. A Response Lab
+          rehearsal is held in one of them and publishes nothing, so the agent
+          card said "2 messages are waiting for you to decide" on an
+          installation where one of the two was a rehearsal and the inbox
+          offered a single row.
+        */
+        jobsRepo.countAwaitingAPerson(agent.id),
       ]);
 
       return {
         status: liveStatus({
           diagnostics,
-          inFlight: inFlight.map((row) => ({
+          inFlight: inFlight.map((row: { status: string; current_node_key: string | null; action_type: string }) => ({
             status: row.status,
             currentNodeKey: row.current_node_key,
             actionType: row.action_type,
           })),
-          awaitingPeople: waiting[0]?.n ?? 0,
+          awaitingPeople: waiting,
         }),
         diagnostics,
       };
