@@ -89,8 +89,18 @@ if [ -f assets/SHA256SUMS.txt ]; then
   # hash they cannot establish.
   missing=0
   for name in "${ASSETS[@]}"; do
+    # What is published alongside the packages rather than installed from.
+    #
+    # The checksums are the installable trust chain and nothing else: the
+    # command and the setup program both refuse a payload whose hash they
+    # cannot establish against this file, which is exactly why the list is
+    # narrow. Notes, a manifest and two reports are read, not unpacked, and
+    # putting them in that list would say they are something they are not.
+    #
+    # `release-notes.md` was added to the release before it was added here,
+    # and this is the check that caught it.
     case "$name" in
-      SHA256SUMS.txt|release-manifest.json|RELEASE_VALIDATION_REPORT.md|AI17Z-Setup-Audit-*) continue ;;
+      SHA256SUMS.txt|release-manifest.json|release-notes.md|RELEASE_VALIDATION_REPORT.md|AI17Z-Setup-Audit-*) continue ;;
     esac
     grep -q "  $name\$" assets/SHA256SUMS.txt || { bad "$name is published with no hash"; missing=1; }
   done

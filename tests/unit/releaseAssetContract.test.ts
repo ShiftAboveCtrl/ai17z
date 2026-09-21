@@ -102,3 +102,72 @@ describe('the release publishes exactly what the installer goes looking for', ()
     expect(workflow).toContain('raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1');
   });
 });
+
+/**
+ * Every published asset is either checksummed or deliberately not.
+ *
+ * The checksums are the installable trust chain: `install.ps1` verifies the
+ * setup program against them and the setup program verifies the application
+ * package against them, and neither will unpack a payload whose hash it cannot
+ * establish. So the list is narrow on purpose, and the post-publish check
+ * enforces the other direction, that nothing installable was published without
+ * a line.
+ *
+ * Which means adding an asset is a decision with two valid answers and one
+ * invalid one: hash it, or say why it is not installable. Doing neither
+ * publishes a release the checker rejects, after it is published and after the
+ * tag is spent. That happened when the release notes were added as an asset.
+ *
+ * This holds the two lists against each other so the next person gets a
+ * failing test rather than a failed release.
+ */
+describe('a published asset is hashed or knowingly exempt', () => {
+  const root = resolve(__dirname, '../..');
+  const workflow = readFileSync(resolve(root, '.github/workflows/release.yml'), 'utf8');
+  const verifier = readFileSync(resolve(root, '.github/scripts/verify-published-release.sh'), 'utf8');
+
+  /** The `files:` block of the publish step, one pattern per line. */
+  const published = (() => {
+    const at = workflow.indexOf('          files: |');
+    const block = workflow.slice(at, workflow.indexOf('\n\n', at));
+    return block
+      .split('\n')
+      .slice(1)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#'))
+      .map((line) => line.replace(/^dist\//, '').replace(/^docs\//, ''));
+  })();
+
+  /** The names the post-publish check skips rather than demanding a hash for. */
+  const exempt = (() => {
+    const line = /case "\$name" in\s*\n\s*([^)]+)\) continue ;;/.exec(verifier)?.[1] ?? '';
+    return line.split('|').map((entry) => entry.trim());
+  })();
+
+  const hashed = (() => {
+    const at = workflow.indexOf('sha256sum ');
+    return workflow.slice(at, workflow.indexOf('| tee SHA256SUMS.txt', at));
+  })();
+
+  it('found the three lists it is comparing', () => {
+    expect(published.length).toBeGreaterThan(8);
+    expect(exempt.length).toBeGreaterThan(3);
+    expect(hashed).toContain('AI17Z-App-');
+  });
+
+  it('every published pattern is hashed or listed as exempt', () => {
+    const orphans = published.filter((pattern) => {
+      const stem = pattern.replace(/\*.*$/, '');
+      if (hashed.includes(stem)) return false;
+      return !exempt.some((entry) => entry.replace(/\*.*$/, '') === stem || entry === pattern);
+    });
+    expect(orphans, `published with neither a hash nor an exemption: ${orphans.join(', ')}`).toEqual([]);
+  });
+
+  it('keeps the notes exempt rather than pretending they are installable', () => {
+    // Read over the network by the update check, and deliberately allowed to
+    // be absent: a release from before they existed still updates.
+    expect(exempt).toContain('release-notes.md');
+    expect(hashed).not.toContain('release-notes.md');
+  });
+});
