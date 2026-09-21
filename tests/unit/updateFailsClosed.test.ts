@@ -190,3 +190,89 @@ describe('the updaters ask for that decision rather than making it', () => {
     }
   });
 });
+
+/**
+ * Where an update finds out what has been released.
+ *
+ * The unauthenticated REST allowance is sixty requests an hour per address,
+ * and an AI17Z installation already spends it: an agent told to watch a
+ * repository polls GitHub through REST, several endpoints at a time. Two
+ * installations on one home connection exhaust sixty an hour between them, and
+ * the thing that goes blind is the updater. Measured on a real machine: the
+ * core budget read `0 of 60`, the release was published and downloadable, and
+ * the updater reported that it could not reach GitHub to see which version.
+ * It refused correctly, which is the only reason that was a nuisance rather
+ * than a bad install.
+ *
+ * The fix is not a token and not a wait. Discovery moved to the releases feed
+ * on `github.com`, which is not charged against that allowance and which lists
+ * prereleases, and every file is then addressed at its exact tag. So an owner
+ * updating and an agent watching can no longer starve each other.
+ *
+ * These hold the property in the three scripts that actually update a machine,
+ * because none of them can import the TypeScript that states it.
+ */
+describe('update discovery does not spend the REST budget', () => {
+  const updaters = {
+    ubuntu: read('packaging/ubuntu/ai17z-update.sh'),
+    macos: read('packaging/macos/ai17z-update.sh'),
+    windows: read('packaging/windows/Setup-AI17Z.ps1'),
+  };
+
+  it('discovers a release through the feed on every platform', () => {
+    // Windows carries the URL itself. The two Unix updaters reach it through
+    // the helper they share, which is where a networking rule belongs.
+    expect(updaters.windows).toContain('releases.atom');
+    expect(read('packaging/unix/ai17z-paths.sh')).toContain('releases.atom');
+    for (const platform of ['ubuntu', 'macos'] as const) {
+      expect(updaters[platform]).toContain('ai17z_latest_release_tag');
+    }
+  });
+
+  it.each(Object.entries(updaters))('%s asks api.github.com for nothing at all', (_name, script) => {
+    // An allowed-hosts list may still name the API, and so may the comment
+    // explaining why this no longer calls it. What must not exist is a request
+    // built against it, which is what spends the budget, and a line that builds
+    // one carries the scheme as well as the host.
+    const requests = script
+      .split('\n')
+      .filter((line) => line.includes('api.github.com') && line.includes('http'))
+      .filter((line) => !line.includes('ALLOWED_HOSTS') && !line.includes('AllowedHosts'));
+    expect(requests).toEqual([]);
+  });
+
+  it.each(Object.entries(updaters))('%s still checks what it downloaded', (_name, script) => {
+    // Discovery moving off the API changes where the answer comes from and
+    // nothing about whether the bytes are checked before they are installed.
+    expect(script).toContain('SHA256SUMS.txt');
+  });
+
+  it('the Unix updaters share one implementation of it', () => {
+    // Two copies of a networking rule is how both platforms came to have the
+    // same version-comparison fault. The helper lives beside that one.
+    const shared = read('packaging/unix/ai17z-paths.sh');
+    expect(shared).toContain('ai17z_latest_release_tag');
+    expect(shared).toContain('ai17z_release_asset_url');
+    for (const platform of ['ubuntu', 'macos'] as const) {
+      expect(updaters[platform]).toContain('ai17z_latest_release_tag');
+      expect(updaters[platform]).toContain('ai17z_release_asset_url');
+    }
+  });
+
+  it('a feed that says nothing is a refusal, never a guessed version', () => {
+    for (const script of [updaters.ubuntu, updaters.macos]) {
+      // An empty tag stops the update and reports it. Nothing downstream may
+      // run with a version nobody found.
+      expect(script).toMatch(/\[ -n "\$TAG" \] \|\| oops/);
+    }
+    // The Windows side returns a failure object rather than a release.
+    expect(updaters.windows).toMatch(/if \(-not \$chosen\) \{ return \[pscustomobject\]@\{ Ok = \$false/);
+  });
+
+  it('a release with no manifest published yet is not offered', () => {
+    // The feed carries an entry the moment a release is created and the
+    // packages arrive afterwards, so the manifest is what says it is finished.
+    expect(updaters.windows).toContain('release-manifest.json');
+    expect(updaters.windows).toMatch(/if \(-not \$probe\.Ok\)/);
+  });
+});

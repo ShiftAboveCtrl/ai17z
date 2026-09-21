@@ -18,7 +18,6 @@ APP_ROOT="${AI17Z_APP_ROOT:-/usr/lib/ai17z/app}"
 ai17z_resolve_paths "$APP_ROOT"
 
 REPOSITORY="ShiftAboveCtrl/ai17z"
-API="https://api.github.com/repos/${REPOSITORY}/releases"
 ALLOWED_HOSTS="api.github.com github.com objects.githubusercontent.com release-assets.githubusercontent.com"
 
 CHECK_ONLY=0; ASSUME_YES=0; WANT_RELEASE=""
@@ -72,14 +71,19 @@ printf '\n  %sAI17Z%s  %s\n\n' "$GREEN" "$OFF" "$CURRENT"
 # 1. Which release
 # ---------------------------------------------------------------------------
 step "Checking for a newer AI17Z"
+# Which release, found without spending the REST budget.
+#
+# `ai17z_latest_release_tag` reads the releases feed on github.com rather than
+# asking api.github.com, because an agent watching a repository already spends
+# that sixty-an-hour allowance and the updater is what goes blind when it runs
+# out. Nothing is guessed: an empty answer is reported and the update stops.
 if [ -n "$WANT_RELEASE" ]; then
-  RELEASE_JSON="$(fetch_stdout "${API}/tags/${WANT_RELEASE}")" || oops "Release ${WANT_RELEASE} could not be read." "" ""
+  TAG="$WANT_RELEASE"
 else
-  RELEASE_JSON="$(fetch_stdout "${API}?per_page=10")" || oops "AI17Z could not be reached." \
-    "Nothing was changed." "Check your internet connection and try again."
+  TAG="$(ai17z_latest_release_tag "$REPOSITORY")"
 fi
-TAG="$(printf '%s' "$RELEASE_JSON" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
-[ -n "$TAG" ] || oops "No release was found." "" ""
+[ -n "$TAG" ] || oops "AI17Z could not be reached." \
+  "Nothing was changed." "Check your internet connection and try again."
 VERSION="${TAG#v}"
 
 if [ "$VERSION" = "$CURRENT" ]; then
@@ -186,7 +190,7 @@ gate_said_nothing() { # why
 }
 
 step "Checking compatibility"
-MANIFEST_URL="$(printf '%s' "$RELEASE_JSON" | grep -o 'https://[^"]*/release-manifest\.json' | head -1)"
+MANIFEST_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" 'release-manifest.json')"
 if [ -n "$MANIFEST_URL" ]; then
   WORK="$(mktemp -d)"; chmod 700 "$WORK"
   if fetch "$WORK/manifest.json" "$MANIFEST_URL"; then
@@ -233,8 +237,8 @@ fi
 step "Downloading AI17Z ${VERSION}"
 [ -n "$WORK" ] || { WORK="$(mktemp -d)"; chmod 700 "$WORK"; }
 DEB_NAME="ai17z_${VERSION}_${ARCH}.deb"
-DEB_URL="$(printf '%s' "$RELEASE_JSON" | grep -o "https://[^\"]*/${DEB_NAME}" | head -1)"
-SUMS_URL="$(printf '%s' "$RELEASE_JSON" | grep -o 'https://[^"]*/SHA256SUMS\.txt' | head -1)"
+DEB_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" "$DEB_NAME")"
+SUMS_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" 'SHA256SUMS.txt')"
 [ -n "$DEB_URL" ] || oops "Release ${TAG} has no package for ${ARCH}." \
   "Nothing was changed. AI17Z ${CURRENT} is still installed." ""
 [ -n "$SUMS_URL" ] || oops "Release ${TAG} publishes no SHA256SUMS.txt." \

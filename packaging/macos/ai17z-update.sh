@@ -23,7 +23,6 @@ HERE="$(dirname "$APP_ROOT")"
 ai17z_resolve_paths "$APP_ROOT"
 
 REPOSITORY="ShiftAboveCtrl/ai17z"
-API="https://api.github.com/repos/${REPOSITORY}/releases"
 ALLOWED_HOSTS="api.github.com github.com objects.githubusercontent.com release-assets.githubusercontent.com"
 
 CHECK_ONLY=0; ASSUME_YES=0; WANT_RELEASE=""
@@ -68,12 +67,18 @@ case "$(uname -m)" in arm64) ARCH=arm64 ;; x86_64) ARCH=x64 ;; *) oops "Unsuppor
 printf '\n  %sAI17Z%s  %s\n\n' "$GREEN" "$OFF" "$CURRENT"
 
 step "Checking for a newer AI17Z"
+# Which release, found without spending the REST budget.
+#
+# `ai17z_latest_release_tag` reads the releases feed on github.com rather than
+# asking api.github.com, because an agent watching a repository already spends
+# that sixty-an-hour allowance and the updater is what goes blind when it runs
+# out. Nothing is guessed: an empty answer is reported and the update stops.
 if [ -n "$WANT_RELEASE" ]; then
-  RELEASE_JSON="$(fetch_stdout "${API}/tags/${WANT_RELEASE}")" || oops "Release ${WANT_RELEASE} could not be read." "" ""
+  TAG="$WANT_RELEASE"
 else
-  RELEASE_JSON="$(fetch_stdout "${API}?per_page=10")" || oops "AI17Z could not be reached." "Nothing was changed." ""
+  TAG="$(ai17z_latest_release_tag "$REPOSITORY")"
 fi
-TAG="$(printf '%s' "$RELEASE_JSON" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+[ -n "$TAG" ] || oops "AI17Z could not be reached." "Nothing was changed." ""
 [ -n "$TAG" ] || oops "No release was found." "" ""
 VERSION="${TAG#v}"
 
@@ -171,7 +176,7 @@ gate_said_nothing() { # why
 
 step "Checking compatibility"
 WORK="$(mktemp -d)"; chmod 700 "$WORK"
-MANIFEST_URL="$(printf '%s' "$RELEASE_JSON" | grep -o 'https://[^"]*/release-manifest\.json' | head -1)"
+MANIFEST_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" 'release-manifest.json')"
 if [ -n "$MANIFEST_URL" ] && fetch "$WORK/manifest.json" "$MANIFEST_URL"; then
   NODE_BIN="$(ai17z_node)"
   DOCKER_VERSION="$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '')"
@@ -203,8 +208,8 @@ fi
 
 step "Downloading AI17Z ${VERSION}"
 TAR_NAME="AI17Z-macos-${ARCH}-${VERSION}.tar.gz"
-TAR_URL="$(printf '%s' "$RELEASE_JSON" | grep -o "https://[^\"]*/${TAR_NAME}" | head -1)"
-SUMS_URL="$(printf '%s' "$RELEASE_JSON" | grep -o 'https://[^"]*/SHA256SUMS\.txt' | head -1)"
+TAR_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" "$TAR_NAME")"
+SUMS_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" 'SHA256SUMS.txt')"
 [ -n "$TAR_URL" ] || oops "Release ${TAG} has no Mac package for ${ARCH}." "Nothing was changed." ""
 [ -n "$SUMS_URL" ] || oops "Release ${TAG} publishes no SHA256SUMS.txt." "Nothing was changed." ""
 fetch "$WORK/$TAR_NAME" "$TAR_URL"; fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
