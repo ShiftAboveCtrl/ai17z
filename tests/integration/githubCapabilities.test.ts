@@ -130,6 +130,31 @@ describe('what a project did', () => {
     expect(result.detail).toMatch(/does not follow someone\/else/);
   });
 
+  it('says the empty list is not a count of that project, and names what to ask for', async () => {
+    const agent = await agentWatching('example/proj');
+    const result = await run<{ events: unknown[]; watching: string[]; detail: string }>(
+      'github.read_activity',
+      { repo: 'someone/else', limit: 10 },
+      agent.agentId,
+    );
+
+    /*
+      The regression this holds. A model asked what had been happening in the
+      ai17z repository guessed a name nobody follows, was told so, and then
+      reported that the events list came back empty, of a project with 156
+      recorded events under the name it had just been handed.
+
+      The empty array is right. What was missing is the sentence saying it is
+      an unmatched question rather than a measurement, and the sentence telling
+      the model which name would answer. Both are asserted, because the first
+      without the second leaves the model correct and still stuck.
+    */
+    expect(result.events).toEqual([]);
+    expect(result.detail).toMatch(/none of this is a count of its activity/);
+    expect(result.detail).toMatch(/Ask again for example\/proj/);
+    expect(result.watching).toContain('example/proj');
+  });
+
   it('will not read another agent’s watches', async () => {
     const mine = await agentWatching('example/proj');
     const stranger = await agentWatching('private/thing');

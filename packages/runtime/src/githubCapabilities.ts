@@ -95,11 +95,29 @@ const readActivity = defineCapability({
         detail: 'This agent does not follow any repository, so it knows nothing about what any project has done.',
       };
     }
+    /*
+      A name nobody follows is an unanswered question, never a quiet project.
+
+      The empty list here says the question did not match, and a reader that
+      takes it for a measurement reports that a busy repository has done
+      nothing. Measured on the installed product: asked what had been happening
+      in the ai17z repository, the model guessed `ai17z/ai17z`, was told
+      correctly that this agent follows `shiftabovectrl/ai17z` instead, and
+      answered that the events list "came back empty" while 156 recorded events
+      sat under the name it had just been given.
+
+      So the sentence names what to ask for instead. It is the same rule the X
+      reading layer states as "absent is never zero", one layer up: the caller
+      here is a model, and what it acts on is this sentence.
+    */
     if (input.repo && !watched.repos.includes(input.repo.toLowerCase())) {
+      const instead = watched.repos.join(', ');
       return {
         events: [],
         watching: watched.repos,
-        detail: `This agent does not follow ${input.repo}. It follows ${watched.repos.join(', ')}.`,
+        detail:
+          `This agent does not follow ${input.repo}, so nothing here is about it and none of this is a count of ` +
+          `its activity. It follows ${instead}. Ask again for ${watched.repos[0]} if that is the one meant.`,
       };
     }
 
