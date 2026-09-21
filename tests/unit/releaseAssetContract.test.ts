@@ -170,4 +170,50 @@ describe('a published asset is hashed or knowingly exempt', () => {
     expect(exempt).toContain('release-notes.md');
     expect(hashed).not.toContain('release-notes.md');
   });
+
+  /**
+   * And the third list, which is the one that cost the second release.
+   *
+   * A published file owes two separate things, and they are decided in two
+   * separate places: a line in the checksums, and an attestation. Both are
+   * waived for the same small set, the files published straight from the
+   * checkout rather than made by a build job, because a file no build produced
+   * is a file no build attested and asking can only be answered no.
+   *
+   * The exemption was added to the first list and missed in the second, so the
+   * release was published, tagged, and rejected again by the same step for a
+   * different half of it. Anything waived from hashing is waived from
+   * attestation for exactly the same reason, so the two sets have to match.
+   */
+  const notAttested = (() => {
+    const at = verifier.indexOf('build provenance, as a stranger would ask');
+    const loop = verifier.slice(at, verifier.indexOf('\ndone', at));
+    const skip = /case "\$name" in\s*\n\s*([^)]+)\) continue ;;/.exec(loop)?.[1] ?? '';
+    return skip.split('|').map((entry) => entry.trim()).filter(Boolean);
+  })();
+
+  it('waives attestation for exactly what it waives hashing for', () => {
+    const fromTheCheckout = ['RELEASE_VALIDATION_REPORT.md', 'release-notes.md'];
+    for (const name of fromTheCheckout) {
+      expect(notAttested, `${name} is published but never built, so it cannot be attested`).toContain(name);
+      expect(exempt, `${name} is published but not installed from`).toContain(name);
+    }
+  });
+
+  it('waives attestation for those two and nothing else', () => {
+    /*
+      Exactly, in both directions.
+
+      Not hashed is not the same question as not attested. `SHA256SUMS.txt` and
+      `release-manifest.json` are exempt from the checksums because a file
+      cannot usefully list its own hash and because a manifest is read rather
+      than unpacked, but a build job makes both of them, so both are attested
+      and must stay so. The only files that cannot be attested are the ones no
+      build produced.
+
+      Held as an exact set so that widening it is a decision somebody makes
+      here rather than a release somebody spends finding out.
+    */
+    expect([...notAttested].sort()).toEqual(['RELEASE_VALIDATION_REPORT.md', 'release-notes.md']);
+  });
 });

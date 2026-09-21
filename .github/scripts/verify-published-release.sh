@@ -155,7 +155,17 @@ echo "### build provenance, as a stranger would ask for it"
 for name in "${ASSETS[@]}"; do
   # Published from the checkout rather than built, so it is not a build subject
   # and is not claimed to be one.
-  [ "$name" = RELEASE_VALIDATION_REPORT.md ] && continue
+  #
+  # Two files, and they are exempt for one reason rather than two: neither is
+  # produced by a build job, so neither is named when the build attests what it
+  # made, and asking whether they are attested can only ever be answered no.
+  # `release-notes.md` was added to the release and missed here, which cost a
+  # second release after the first was spent on missing the checksum list. The
+  # lists that decide what a published file owes are now held against each
+  # other by a test.
+  case "$name" in
+    RELEASE_VALIDATION_REPORT.md|release-notes.md) continue ;;
+  esac
   [ -f "assets/$name" ] || continue
   digest="$(sha256sum "assets/$name" | awk '{print $1}')"
   code="$(curl -s -o "att.json" -w '%{http_code}' "${AUTH[@]}" \
