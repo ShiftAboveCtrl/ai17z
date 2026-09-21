@@ -116,6 +116,58 @@ export const CHECKSUMS_ASSET = 'SHA256SUMS.txt';
 export const MANIFEST_ASSET = 'release-manifest.json';
 
 /**
+ * The release notes, published as the Markdown they were written in.
+ *
+ * The same text the release page shows, as a file at an exact tag. An update
+ * check reads it from here rather than asking the API for the release body,
+ * because the body arrives as rendered HTML through every route that does not
+ * cost an API request, and the panel renders Markdown.
+ */
+export const NOTES_ASSET = 'release-notes.md';
+
+/**
+ * Where an installation looks to find out what has been released.
+ *
+ * Deliberately `github.com` and not `api.github.com`, and that is the whole
+ * point of this function existing rather than a URL being written inline.
+ *
+ * The REST API allows sixty requests an hour to an unauthenticated address,
+ * and an AI17Z installation already spends that budget on something else: a
+ * repository an owner asked their agent to watch is polled through the REST
+ * API, four endpoints at a time. Two installations on one home connection
+ * during an active week exhaust sixty an hour between them, and what breaks is
+ * not the watching. It is the update check, which then cannot discover a
+ * release that is sitting there published. Measured: the core budget read
+ * `0 of 60` and the updater reported that it could not reach GitHub to see
+ * which version, correctly refusing rather than guessing, while the release it
+ * was looking for had been downloadable the whole time.
+ *
+ * The releases feed is ordinary `github.com` and is not charged against that
+ * budget. Measured across three consecutive fetches: the REST budget read 56
+ * before and 56 after. It also lists prereleases, which is the reason
+ * `/releases/latest` was rejected for this job long before any of the above:
+ * it hides exactly the releases this product ships.
+ *
+ * So an owner's update check and an agent's repository watching no longer draw
+ * on one budget, and neither can starve the other.
+ */
+export function releasesFeedUrl(repository: string): string {
+  return `https://github.com/${repository}/releases.atom`;
+}
+
+/**
+ * One published file of one release, addressed by the tag it belongs to.
+ *
+ * Exact tag rather than "latest", so what is fetched is decided before the
+ * request rather than by whatever the server considers newest at that moment.
+ * This is the same address the release qualification gate uses, and it needs no
+ * API call, which is what makes an update independent of the budget above.
+ */
+export function releaseAssetUrl(repository: string, tag: string, asset: string): string {
+  return `https://github.com/${repository}/releases/download/${tag}/${asset}`;
+}
+
+/**
  * Every package a platform must publish, by name.
  *
  * Not "whatever was found in the directory". `release-manifest.mts` used to

@@ -28,7 +28,21 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ops } from '@xbam/database';
-import { INSTALL_METHODS, buildVersion, compareVersions, createLogger, errorMessage, nowIso, releaseName } from '@xbam/shared';
+import {
+  INSTALL_METHODS,
+  MANIFEST_ASSET,
+  NOTES_ASSET,
+  buildVersion,
+  compareVersions,
+  createLogger,
+  errorMessage,
+  nowIso,
+  releaseAssetUrl,
+  releaseName,
+  releasesFeedUrl,
+  windowsInstallerAsset,
+  windowsSetupAsset,
+} from '@xbam/shared';
 import type { InstallMethod } from '@xbam/shared';
 
 const log = createLogger('updates');
@@ -198,104 +212,185 @@ interface CachedCheck {
  */
 export { compareVersions } from '@xbam/shared';
 
-interface GitHubRelease {
-  tag_name?: string;
-  name?: string;
-  body?: string;
-  html_url?: string;
-  published_at?: string;
-  draft?: boolean;
-  prerelease?: boolean;
-  assets?: { name?: string; browser_download_url?: string }[];
+
+/** How many feed entries are read. Bounds the work regardless of feed size. */
+const FEED_ENTRIES = 20;
+
+interface FeedEntry {
+  tag: string;
+  /** What the release is called, which is a title somebody may have written. */
+  title: string;
+  /** When the feed says it was last touched. */
+  updated: string;
 }
 
-function toRelease(raw: GitHubRelease): ReleaseInfo | null {
-  const tag = raw.tag_name?.trim();
-  if (!tag) return null;
-  const version = tag.replace(/^v/, '');
+/**
+ * What the releases feed is currently advertising, newest first.
+ *
+ * Parsed rather than deserialised, because three fields are wanted and an XML
+ * parser is a dependency this does not otherwise need.
+ *
+ * The tag comes from the entry's own link, `.../releases/tag/<tag>`, and not
+ * from the title: a title is written by a person and a tag is the thing every
+ * filename and comparison here is built from.
+ *
+ * A draft release has no feed entry at all, which is the same exclusion the
+ * REST path used to have to apply by hand.
+ */
+function entriesFromFeed(xml: string): FeedEntry[] {
+  const entries: FeedEntry[] = [];
+  for (const chunk of xml.split('<entry').slice(1, FEED_ENTRIES + 1)) {
+    const tag = /releases\/tag\/([^"'<>\s]+)/.exec(chunk)?.[1];
+    if (!tag) continue;
+    entries.push({
+      tag: decodeXml(tag),
+      title: decodeXml(/<title[^>]*>([\s\S]*?)<\/title>/.exec(chunk)?.[1]?.trim() ?? ''),
+      updated: /<updated[^>]*>([\s\S]*?)<\/updated>/.exec(chunk)?.[1]?.trim() ?? '',
+    });
+  }
+  return entries;
+}
 
-  // By name, not by position.
-  //
-  // This took "the first asset ending in .exe", which was unambiguous while
-  // there was one. There are now two, and which one an installation should be
-  // offered depends on how it was installed -- so handing out whichever GitHub
-  // happened to list first would tell half of them to run the wrong one. The
-  // old rule survives as a fallback so a release published before either name
-  // existed still resolves to something.
-  const assets = raw.assets ?? [];
-  const assetNamed = (prefix: string, extension: string) =>
-    assets.find(
-      (asset) =>
-        asset.name?.toLowerCase().startsWith(prefix) && asset.name.toLowerCase().endsWith(extension),
-    );
-  const anyExe = assets.find((asset) => asset.name?.toLowerCase().endsWith('.exe'));
-  // The older full installer, still published because the installations that
-  // were made with it update by running a newer one.
-  const installer = assetNamed('ai17z-setup-', '.exe') ?? anyExe;
-  // The setup program itself, as a script. A release from before the terminal
-  // route has none, and null is the honest answer there.
-  const setup = assetNamed('install-ai17z-', '.ps1') ?? null;
+/** The five entities an Atom document may use around a tag. */
+function decodeXml(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
 
-  // GitHub defaults a release's name to its tag, and a heading that reads
-  // `v1.0.0-beta.2` above the notes tells somebody nothing they did not get
-  // from the number beside it. A name that is only the tag is treated as no
-  // name and rendered; a name somebody actually wrote is left alone.
-  const named = releaseName(version);
-  const written = raw.name?.trim();
-  const name = written && written !== tag && written !== version ? written : named.title;
-
-  return {
-    version,
-    tag,
-    name,
-    label: named.short,
-    channel: named.channel,
-    notes: raw.body?.trim() ?? '',
-    url: raw.html_url ?? `https://github.com/${REPOSITORY}/releases/tag/${tag}`,
-    installerUrl: installer?.browser_download_url ?? null,
-    setupUrl: setup?.browser_download_url ?? null,
-    publishedAt: raw.published_at ?? nowIso(),
-    prerelease: Boolean(raw.prerelease),
-  };
+/** One bounded GET that must not be allowed to hang or run away. */
+async function get(url: string, accept: string): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      headers: {
+        accept,
+        // GitHub asks for one, and an unidentified client is refused more
+        // readily. It names the product and nothing about the machine.
+        'user-agent': 'AI17Z',
+      },
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
  * The newest release this installation would accept.
  *
- * `/releases/latest` is not used, because it excludes prereleases entirely --
- * which would leave everybody running a release candidate with no way to hear
- * about the next one.
+ * Nothing here calls the REST API, and that is the point rather than a detail.
+ * An installation whose agent watches a repository spends the unauthenticated
+ * REST budget on that watching, and when the budget is gone the update check
+ * used to go with it: the release was published, downloadable, and invisible.
+ * The feed and the per-tag assets are ordinary `github.com` and are not charged
+ * against it, so watching and updating can no longer starve each other.
+ *
+ * `/releases/latest` is still not used, for the reason it never was: it
+ * excludes prereleases entirely, which is every release this product has made.
+ *
+ * Three steps, and each one refuses rather than guesses:
+ *
+ *   1. the feed says which tags exist, newest first
+ *   2. the tag says the version, and the channel rule says whether this
+ *      installation is allowed to see it
+ *   3. that tag's own manifest confirms the release is actually finished
+ *
+ * Step three is what stops a half-published release being offered. A release
+ * appears in the feed the moment it is created, and its assets arrive after;
+ * a manifest that is not there yet means the packages are not there either.
  */
 export async function fetchLatestRelease(current = buildVersion().version): Promise<ReleaseInfo | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const feed = await get(releasesFeedUrl(REPOSITORY), 'application/atom+xml');
+  if (!feed.ok) {
+    throw new Error(`The releases feed answered ${feed.status} ${feed.statusText}`.trim());
+  }
+  const onPrerelease = compareVersions(current, current.replace(/-.*$/, '')) < 0;
+
+  const candidates = entriesFromFeed(await feed.text())
+    .map((entry) => ({ ...entry, version: entry.tag.replace(/^v/, '') }))
+    .filter((entry) => entry.version.length > 0)
+    // A tag carrying a prerelease part is a prerelease, which is exactly what
+    // the release workflow tells GitHub: it sets the flag from the tag and
+    // says so. Somebody on a stable version is never shown a candidate build.
+    .filter((entry) => onPrerelease || !entry.version.includes('-'))
+    .sort((a, b) => compareVersions(b.version, a.version));
+
+  const newest = candidates[0];
+  if (!newest) return null;
+
+  const manifest = await get(
+    releaseAssetUrl(REPOSITORY, newest.tag, MANIFEST_ASSET),
+    'application/json',
+  );
+  if (!manifest.ok) {
+    throw new Error(
+      `${newest.tag} is published but its ${MANIFEST_ASSET} is not, so the packages for it are not ready to install yet.`,
+    );
+  }
+  const described = (await manifest.json()) as { version?: unknown; tag?: unknown };
+
+  // The manifest is the authority on what the release calls itself. A tag and
+  // a manifest that disagree is a release built from something other than what
+  // the tag points at, and offering it would install a version nobody named.
+  const version = typeof described.version === 'string' ? described.version.replace(/^v/, '') : '';
+  if (version !== newest.version) {
+    throw new Error(
+      `${newest.tag} publishes a manifest for ${version || 'nothing recognisable'}, so the two disagree about what it is.`,
+    );
+  }
+
+  // GitHub defaults a release's title to its tag, and a heading that reads
+  // `v1.0.0-beta.2` above the notes tells somebody nothing they did not get
+  // from the number beside it. A title that is only the tag is treated as no
+  // title and rendered; a title somebody actually wrote is left alone.
+  const named = releaseName(version);
+  const written = newest.title.trim();
+  const name = written && written !== newest.tag && written !== version ? written : named.title;
+
+  return {
+    version,
+    tag: newest.tag,
+    name,
+    label: named.short,
+    channel: named.channel,
+    notes: await fetchNotes(newest.tag),
+    url: `https://github.com/${REPOSITORY}/releases/tag/${newest.tag}`,
+    // Composed rather than looked up. `releaseManifest.ts` is the one place
+    // that spells an asset name, so asking it costs no request and cannot
+    // disagree with what the release actually published.
+    installerUrl: releaseAssetUrl(REPOSITORY, newest.tag, windowsInstallerAsset(version)),
+    setupUrl: releaseAssetUrl(REPOSITORY, newest.tag, windowsSetupAsset(version)),
+    publishedAt: newest.updated || nowIso(),
+    prerelease: version.includes('-'),
+  };
+}
+
+/**
+ * The release notes, as the Markdown they were written in.
+ *
+ * Published as an asset for the same reason everything else here is: it is
+ * reachable at an exact tag without an API call. The feed carries a rendered
+ * HTML copy, which is the wrong thing to hand a Markdown renderer.
+ *
+ * A release from before this asset existed simply has none, and the panel
+ * already says so in a sentence. Notes are worth reading and are not worth
+ * failing an update check over, so this is the one step here that shrugs.
+ */
+async function fetchNotes(tag: string): Promise<string> {
   try {
-    const response = await fetch(`https://api.github.com/repos/${REPOSITORY}/releases?per_page=20`, {
-      headers: {
-        accept: 'application/vnd.github+json',
-        // GitHub asks for one, and an unidentified client is rate-limited
-        // harder. It names the product and nothing about the machine.
-        'user-agent': 'AI17Z',
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`GitHub answered ${response.status} ${response.statusText}`.trim());
-    }
-    const raw = (await response.json()) as GitHubRelease[];
-    const onPrerelease = compareVersions(current, current.replace(/-.*$/, '')) < 0;
-
-    const candidates = raw
-      .filter((entry) => !entry.draft)
-      .map(toRelease)
-      .filter((entry): entry is ReleaseInfo => entry !== null)
-      // Somebody on a stable version is never shown a candidate build.
-      .filter((entry) => onPrerelease || !entry.prerelease)
-      .sort((a, b) => compareVersions(b.version, a.version));
-
-    return candidates[0] ?? null;
-  } finally {
-    clearTimeout(timer);
+    const response = await get(releaseAssetUrl(REPOSITORY, tag, NOTES_ASSET), 'text/plain');
+    if (!response.ok) return '';
+    return (await response.text()).trim();
+  } catch {
+    // Offline, slow, or not published. None of those is a reason to tell
+    // somebody there is no update when there is one.
+    return '';
   }
 }
 

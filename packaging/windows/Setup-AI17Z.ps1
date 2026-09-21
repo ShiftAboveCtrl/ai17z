@@ -1996,6 +1996,45 @@ function Save-Ai17zDownload {
   }
 }
 
+<#
+  Which release to install, found without spending the REST budget.
+
+  This used to ask api.github.com, and that is the defect it now avoids. The
+  unauthenticated REST allowance is sixty requests an hour per address, and an
+  AI17Z installation already spends it elsewhere: an agent told to watch a
+  repository polls it through REST, several endpoints at a time. Two
+  installations on one connection exhaust sixty an hour between them, and the
+  thing that breaks is the updater, which then cannot see a release that is
+  published and downloadable. Measured: the budget read 0 of 60 and this
+  reported that it could not reach GitHub to see which version.
+
+  The releases feed is ordinary github.com and is not charged against that
+  allowance. Measured across three fetches: 56 before, 56 after. It lists
+  prereleases, which /releases/latest does not, and every AI17Z release so far
+  is one.
+
+  Assets are then composed rather than looked up. Their names are fixed by the
+  release, so an address built from the tag needs no request to discover and
+  cannot disagree with what was published. Whether the file is really there is
+  still settled by fetching it, and by the checksum afterwards.
+#>
+function Get-Ai17zAssetsForTag {
+  param([string] $Tag)
+  $version = $Tag -replace '^v', ''
+  $base = 'https://github.com/' + $script:Ai17zSetup.Repository + '/releases/download/' + $Tag + '/'
+  $names = @(
+    'release-manifest.json',
+    'release-notes.md',
+    $script:Ai17zAssets.Checksums,
+    [string]::Format($script:Ai17zAssets.Package, $version)
+  )
+  $assets = @()
+  foreach ($name in $names) {
+    $assets += [pscustomobject]@{ name = $name; browser_download_url = ($base + $name) }
+  }
+  return $assets
+}
+
 function Get-Ai17zRelease {
   param([string] $Tag)
   # A tag goes into a URL path, so it is checked before it is concatenated into
@@ -2004,20 +2043,39 @@ function Get-Ai17zRelease {
   if ($Tag -and -not (Test-Ai17zReleaseTag $Tag)) {
     throw ('"' + $Tag + '" is not a release version. Releases are named like v1.0.0 or v1.0.0-beta.1.')
   }
-  $base = 'https://api.github.com/repos/' + $script:Ai17zSetup.Repository + '/releases'
-  $url = if ($Tag) { $base + '/tags/' + $Tag } else { $base + '?per_page=10' }
-  $answer = Get-Ai17zText $url 'application/vnd.github+json'
-  if (-not $answer.Ok) {
-    return [pscustomobject]@{ Ok = $false; Status = $answer.Status; Release = $null }
+
+  $chosen = $Tag
+  if (-not $chosen) {
+    $feed = 'https://github.com/' + $script:Ai17zSetup.Repository + '/releases.atom'
+    $answer = Get-Ai17zText $feed 'application/atom+xml'
+    if (-not $answer.Ok) {
+      return [pscustomobject]@{ Ok = $false; Status = $answer.Status; Release = $null }
+    }
+    # Newest first, which is the order the feed is published in. The tag comes
+    # from the entry's own link rather than its title, because a title is
+    # written by a person and a tag is what every filename here is built from.
+    $found = [regex]::Matches($answer.Body, 'releases/tag/([^"''<>\s]+)')
+    foreach ($match in $found) {
+      $candidate = $match.Groups[1].Value
+      if (Test-Ai17zReleaseTag $candidate) { $chosen = $candidate; break }
+    }
+    if (-not $chosen) { return [pscustomobject]@{ Ok = $false; Status = 404; Release = $null } }
   }
-  $parsed = $answer.Body | ConvertFrom-Json
-  $release = $parsed
-  if (-not $Tag) {
-    # The newest published release, prereleases included: every AI17Z release so
-    # far is one, and /releases/latest excludes them entirely.
-    $release = @($parsed | Where-Object { -not $_.draft } | Select-Object -First 1)[0]
+
+  # A release appears in the feed when it is created and its packages arrive
+  # after, so the manifest is what says the release is finished. Absent means
+  # not ready to install, which is a different answer from not existing, and
+  # both are refusals rather than a guess at an older version.
+  $manifestUrl = 'https://github.com/' + $script:Ai17zSetup.Repository + '/releases/download/' + $chosen + '/release-manifest.json'
+  $probe = Get-Ai17zText $manifestUrl 'application/json'
+  if (-not $probe.Ok) {
+    return [pscustomobject]@{ Ok = $false; Status = $probe.Status; Release = $null }
   }
-  if (-not $release) { return [pscustomobject]@{ Ok = $false; Status = 404; Release = $null } }
+
+  $release = [pscustomobject]@{
+    tag_name = $chosen
+    assets   = (Get-Ai17zAssetsForTag $chosen)
+  }
   return [pscustomobject]@{ Ok = $true; Status = 200; Release = $release }
 }
 

@@ -133,6 +133,39 @@ ai17z_version_is_newer() { # candidate installed
     "$root/packaging/preflight.mts" --newer "$1" "$2" 2>/dev/null) || printf ''
 }
 
+# The newest published release tag, found without spending the REST budget.
+#
+# Reads the releases feed on github.com rather than asking api.github.com. The
+# unauthenticated REST allowance is sixty requests an hour per address, and an
+# AI17Z installation already spends it elsewhere: an agent told to watch a
+# repository polls it through REST, several endpoints at a time. Two
+# installations on one connection exhaust sixty an hour between them, and what
+# breaks is the updater, which then cannot see a release that is published and
+# downloadable. Measured on Windows, where the same coupling exists: the budget
+# read 0 of 60 and the updater reported it could not reach GitHub.
+#
+# The feed is not charged against that allowance (measured: 56 before three
+# fetches, 56 after) and it lists prereleases, which `/releases/latest` does
+# not and which is every AI17Z release so far.
+#
+# Prints the tag, or nothing. Nothing is a refusal for the caller to report; it
+# is never a reason to guess a version.
+ai17z_latest_release_tag() { # repository
+  local repository="$1"
+  curl -fsSL --proto '=https' --tlsv1.2 --retry 3 \
+    "https://github.com/${repository}/releases.atom" 2>/dev/null \
+    | grep -o 'releases/tag/[^"]*' | head -1 | sed 's|releases/tag/||'
+}
+
+# Where one published file of one release lives, addressed by its own tag.
+#
+# Exact tag rather than "latest", so what is fetched is decided before the
+# request. No API call, which is what keeps an update independent of the
+# allowance above.
+ai17z_release_asset_url() { # repository tag asset
+  printf 'https://github.com/%s/releases/download/%s/%s' "$1" "$2" "$3"
+}
+
 # One value out of the environment file.
 #
 # `tail`, not `head`: a duplicated key resolves last-wins, which is what compose

@@ -594,22 +594,22 @@ async function seedConversation(
 
 async function realPostScenarios(want = 4): Promise<Scenario[]> {
   const { chromium } = await import('playwright');
-  const { readFileSync } = await import('node:fs');
+  // Asked, not spelled out. See the note in `checkWebSearch`: a relative path
+  // built here resolves against whatever directory this was started from, and
+  // leaves out the segment that keeps two installations apart.
+  const { existingChrome, resolveProfileDir } = await import('@xbam/browser');
   const [account] = await query<{ id: string }>(
     `SELECT id FROM accounts WHERE channel = 'x' AND status = 'CONNECTED' LIMIT 1`,
   );
   if (!account) return [];
 
-  let recorded: { cdpUrl?: string };
-  try {
-    recorded = JSON.parse(readFileSync(`storage/browser-profiles/${account.id}/ai17z-cdp.json`, 'utf8'));
-  } catch {
+  const alive = await existingChrome(resolveProfileDir(account.id, null)).catch(() => null);
+  if (!alive) {
     console.log('  (no browser open, skipping the real-post scenarios)\n');
     return [];
   }
-  if (!recorded.cdpUrl) return [];
 
-  const browser = await chromium.connectOverCDP(recorded.cdpUrl, { timeout: 15_000 });
+  const browser = await chromium.connectOverCDP(alive.cdpUrl, { timeout: 15_000 });
   const page = await browser.contexts()[0]!.newPage();
   const found: Scenario[] = [];
 
@@ -684,21 +684,32 @@ async function realPostScenarios(want = 4): Promise<Scenario[]> {
 async function checkWebSearch(): Promise<string> {
   const { chromium } = await import('playwright');
   const { webSearch } = await import('@xbam/channels');
-  const { readFileSync } = await import('node:fs');
+  /*
+    Where the browser is, asked rather than spelled out.
+
+    This used to read `storage/browser-profiles/<account>/ai17z-cdp.json` by
+    hand. Three things were wrong with that and all three are the same mistake:
+    the path was relative, so it resolved against whatever directory this was
+    started from; it left out the instance segment that keeps two installations
+    on one machine apart; and it ignored `AI17Z_BROWSER_PROFILE_DIR`, which is
+    what every installed copy sets. So the Response Lab could not be run
+    against a real installation, which is the only place it has a browser to
+    run against, and where a stale file happened to exist it connected to a
+    port whose Chrome had been gone for days.
+
+    `resolveProfileDir` is the one function that answers this, and
+    `existingChrome` is the one that decides whether what it finds is usable.
+  */
+  const { existingChrome, resolveProfileDir } = await import('@xbam/browser');
   const [account] = await query<{ id: string }>(
     `SELECT id FROM accounts WHERE channel = 'x' AND status = 'CONNECTED' LIMIT 1`,
   );
   if (!account) return 'no connected account';
 
-  let recorded: { cdpUrl?: string };
-  try {
-    recorded = JSON.parse(readFileSync(`storage/browser-profiles/${account.id}/ai17z-cdp.json`, 'utf8'));
-  } catch {
-    return 'no browser open';
-  }
-  if (!recorded.cdpUrl) return 'no browser open';
+  const alive = await existingChrome(resolveProfileDir(account.id, null)).catch(() => null);
+  if (!alive) return 'no browser open';
 
-  const browser = await chromium.connectOverCDP(recorded.cdpUrl, { timeout: 15_000 });
+  const browser = await chromium.connectOverCDP(alive.cdpUrl, { timeout: 15_000 });
   const page = await browser.contexts()[0]!.newPage();
   try {
     const results = await webSearch(page, 'ethereum news today');
@@ -861,20 +872,16 @@ function parseLive(argv: string[]): LiveMode | null {
 /** Reads a posted reply back off X, because "the job says EXECUTED" is not proof. */
 async function confirmOnX(statusUrl: string): Promise<{ url: string; text: string } | null> {
   const { chromium } = await import('playwright');
-  const { readFileSync } = await import('node:fs');
+  // Asked, not spelled out. See the note in `checkWebSearch`.
+  const { existingChrome, resolveProfileDir } = await import('@xbam/browser');
   const [account] = await query<{ id: string }>(
     `SELECT id FROM accounts WHERE channel = 'x' AND status = 'CONNECTED' LIMIT 1`,
   );
   if (!account) return null;
-  let recorded: { cdpUrl?: string };
-  try {
-    recorded = JSON.parse(readFileSync(`storage/browser-profiles/${account.id}/ai17z-cdp.json`, 'utf8'));
-  } catch {
-    return null;
-  }
-  if (!recorded.cdpUrl) return null;
+  const alive = await existingChrome(resolveProfileDir(account.id, null)).catch(() => null);
+  if (!alive) return null;
 
-  const browser = await chromium.connectOverCDP(recorded.cdpUrl, { timeout: 15_000 });
+  const browser = await chromium.connectOverCDP(alive.cdpUrl, { timeout: 15_000 });
   const page = await browser.contexts()[0]!.newPage();
   try {
     await page.goto(statusUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
@@ -959,6 +966,8 @@ async function main(): Promise<void> {
 
   const results: { scenario: Scenario; outcome: Outcome; complaint: string | null }[] = [];
   const posted: { name: string; url: string; text: string | null }[] = [];
+  /** Scenarios that queued nothing, which means they were never tested. */
+  const neverRan: { name: string; why: string }[] = [];
   const eventIds = new Map<string, string>();
   const jobIds = new Map<string, string>();
 
@@ -1016,6 +1025,20 @@ async function main(): Promise<void> {
       },
       // Only --live turns this off, and only for real X posts.
       dryRun: !live,
+      /*
+        Named, because this is one agent being deliberately put through
+        something rather than the radar finding work.
+
+        `ingest.ts` treats a named agent as the manual trigger it is, which is
+        what lets it run against an installation whose automation is
+        MANUAL_ONLY or MONITOR_ONLY. Without it the Response Lab is unusable on
+        exactly the installations most worth running it on: measured against a
+        MANUAL_ONLY agent, all eighty-three were recorded and none was queued.
+
+        It does not weaken anything. OFF still does no work at all, every job
+        is still asserted to be a dry run, and only --live publishes.
+      */
+      onlyAgentId: agent.id,
     });
 
     const created = outcome.jobs[0];
@@ -1027,6 +1050,20 @@ async function main(): Promise<void> {
       const mark = scenario.reuseEventIdOf ? 'ok' : '? ';
       console.log(`  ${mark} ${scenario.name.padEnd(22)} ${'NOT QUEUED'.padEnd(20)} ${why}`);
       if (scenario.reuseEventIdOf) console.log('      (correct: the same post was already recorded, so it is not answered twice)');
+      /*
+        A scenario that queued nothing did not run, and a run that tested
+        nothing must not read as a run that found nothing wrong.
+
+        Measured: pointed at an agent whose automation was MANUAL_ONLY, every
+        one of the eighty-three was recorded and none was queued, and this
+        printed "0 scenarios, 0 problems" and exited zero. That is the same
+        mistake as an empty list standing in for an answer, in the one place
+        whose whole job is to tell somebody whether the agent still works.
+
+        The duplicate scenario is the exception and is the only one: there,
+        queueing nothing is exactly what is being tested.
+      */
+      if (!scenario.reuseEventIdOf) neverRan.push({ name: scenario.name, why });
       console.log();
       continue;
     }
@@ -1109,6 +1146,23 @@ posted ${posted.length} real repl${posted.length === 1 ? 'y' : 'ies'}:`);
   if (search.startsWith('PROBLEM')) console.log(`
   web search is not working: ${search.slice(9)}`);
   console.log(`\n${results.length} scenarios, ${problems.length} problem${problems.length === 1 ? '' : 's'}`);
+
+  if (neverRan.length > 0) {
+    // Said last and loudest, because it is the one outcome somebody reading a
+    // summary would otherwise mistake for a pass.
+    const reasons = [...new Set(neverRan.map((entry) => entry.why))];
+    console.log(
+      `\n${neverRan.length} scenario${neverRan.length === 1 ? '' : 's'} never ran, so ${
+        neverRan.length === 1 ? 'it was' : 'they were'
+      } not tested:`,
+    );
+    for (const reason of reasons) {
+      const named = neverRan.filter((entry) => entry.why === reason).map((entry) => entry.name);
+      console.log(`  ${reason}  (${named.length}: ${named.slice(0, 6).join(', ')}${named.length > 6 ? ', ...' : ''})`);
+    }
+    console.log('\nThis is not a pass. Nothing above was exercised.');
+    process.exitCode = 1;
+  }
   for (const p of problems) console.log(`  - ${p.scenario.name}: ${p.complaint}`);
   await closePool();
 }

@@ -917,6 +917,11 @@ jobs:
             dist/AI17Z-Setup-Audit-*.json
             dist/SHA256SUMS.txt
             docs/RELEASE_VALIDATION_REPORT.md
+            # The same notes as the body above, as the Markdown they were
+            # written in. An update check reads them from here, because every
+            # route that hands back the release body costs an API request and
+            # returns rendered HTML, and the panel renders Markdown.
+            release-notes.md
 
   # ---------------------------------------------------------------------------
   # And then find out what was published.
