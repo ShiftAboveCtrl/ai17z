@@ -121,7 +121,39 @@ capabilities are offered or not offered together.
 because the id shape has no hyphen in it and a Plugin id cannot contain an
 underscore, so the mapping is reversible.
 
+## Being found
+
+A Plugin that nothing offers is a Plugin nobody can use, and this is the one
+place where being new rather than built in used to cost something real.
+
+`capabilityRelevance.ts` lifts a whole family when the task names it, using
+`FAMILY_HINTS` -- a map of the families that ship with AI17Z. An installed
+Plugin's family is in no such map, so it scored nothing however well its own
+words matched, and the only way to reach one was to say its id out loud. Found
+on a real installation: a Plugin whose title and description both said
+`temperature` scored 1 against a floor of 2 for "what is the temperature
+there", and was offered for "the next berth slot" only because `berth` is in
+its id.
+
+So a family this build has no hints for derives them from what its own
+capabilities declare: the words of their titles. The capability's title counts
+in its own score there too, which nothing read before. Both read only what a
+Plugin already had to write down, both are deterministic with no model call,
+and both are scoped to unhinted families, so the twenty built-in families score
+exactly as they did.
+
+A task that matches nothing is still offered nothing. This makes a Plugin
+reachable by the words somebody would use about it, which is what the
+capability system already promised; it does not put one on every menu.
+
 ## The network boundary
+
+**A Plugin cannot reach a private address or plain http, whatever it declares.**
+`safeFetch` judges every hop, refuses anything that is not https, and refuses
+addresses that are not on the public internet. A manifest naming `127.0.0.1`
+validates and then fails at the moment it tries to fetch, with a sentence
+saying so. That is the canonical layer doing its job rather than a Plugin rule.
+
 
 The allowlist is checked **twice**:
 

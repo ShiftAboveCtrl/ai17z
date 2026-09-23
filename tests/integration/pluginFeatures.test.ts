@@ -8,10 +8,11 @@ import {
   pluginViews,
   research,
   setPluginEnabled,
+  shortlistCapabilities,
   uninstallPlugin,
 } from '@xbam/runtime';
 import { buildVersion, pluginCapabilityId } from '@xbam/shared';
-import { registerBuiltinCapabilities, resetCapabilitiesForTest } from '@xbam/tools';
+import { listModelCallable, registerBuiltinCapabilities, resetCapabilitiesForTest } from '@xbam/tools';
 import { setCapabilityPermission } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -271,5 +272,45 @@ describe('a Plugin owner panel', () => {
     await installPlugin({ raw: json(ALMANAC), source: 'LOCAL' });
     await uninstallPlugin(PLUGIN_ID);
     expect(await pluginPanels()).toHaveLength(0);
+  });
+});
+
+describe('an installed Plugin is findable by the words it uses about itself', () => {
+  /**
+   * The failure this pins was found on a real installation, not in a test.
+   *
+   * `FAMILY_HINTS` names the families that ship with AI17Z, so an installed
+   * Plugin's family scored nothing however well its own words matched, and the
+   * only way to reach one was to say its id. The Almanac below is called
+   * `almanac` and its capability is `look_up`, so a question about looking a
+   * term up has to find it on the strength of its title and description alone.
+   */
+  it('is offered for a question its own title answers', async () => {
+    const fixture = await createFixture();
+    expect((await installPlugin({ raw: json(ALMANAC), source: 'LOCAL' })).ok).toBe(true);
+    await setPluginEnabled({ agentId: fixture.agentId, pluginId: PLUGIN_ID, enabled: true });
+
+    const shortlist = shortlistCapabilities(listModelCallable(), 'look something up in the almanac');
+    expect(shortlist.offered.map((capability) => capability.id)).toContain(CAPABILITY);
+  });
+
+  it('is not offered for a question that has nothing to do with it', async () => {
+    // The other half, and the reason this is a shortlister rather than a menu:
+    // a task that matches nothing is offered nothing.
+    const fixture = await createFixture();
+    await installPlugin({ raw: json(ALMANAC), source: 'LOCAL' });
+    await setPluginEnabled({ agentId: fixture.agentId, pluginId: PLUGIN_ID, enabled: true });
+
+    const shortlist = shortlistCapabilities(listModelCallable(), 'nice one, thanks');
+    expect(shortlist.offered.map((capability) => capability.id)).not.toContain(CAPABILITY);
+  });
+
+  it('does not change what the built-in families are offered for', async () => {
+    // The fix derives hints only for a family this build has none for, so the
+    // twenty that ship with AI17Z score exactly as they did.
+    await installPlugin({ raw: json(ALMANAC), source: 'LOCAL' });
+    const shortlist = shortlistCapabilities(listModelCallable(), 'what time is it');
+    expect(shortlist.offered.map((capability) => capability.id)).toContain('time.now');
+    expect(shortlist.offered.map((capability) => capability.id)).not.toContain(CAPABILITY);
   });
 });
