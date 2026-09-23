@@ -1,26 +1,24 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { CapabilityPermission, CapabilityView } from '@xbam/shared/contracts';
-import { put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
-import { ChoiceGroup, ChoiceOption, Field, Spinner } from '@app/components/ui';
+import { Spinner } from '@app/components/ui';
 import { IndexedRow, Section, SubHeading } from './Section';
 
 /**
  * What the agent may reach for, and what it has reached for.
  *
- * **Packs first.** A person deciding about their agent wants to say "it may
- * look things up on chains", not to rule on `chain.read_receipt`. So the
- * default view is a handful of named groups, and the individual switches are
- * behind Advanced for the people who want them.
+ * **This reads and does not write.** Plugins is where an owner decides, and
+ * this says the same things about the same agent with a way through to it.
+ * Two screens that both look authoritative about one setting is how something
+ * ends up allowed on one and refused on the other, and the fix is not to make
+ * them agree carefully -- it is to have one of them be the place.
  *
- * A pack is a projection: its state is computed from the capability permissions
- * underneath it and turning one on writes them. There is no second store, which
- * is why an owner who changes one capability in Advanced sees the pack read
- * MIXED rather than the two screens quietly disagreeing.
- *
- * Turning a pack on sets each capability to *its own default* -- reads allowed,
- * anything that changes something still off or asking. "Let it look at X" is
- * not consent to let it post.
+ * A pack is a projection: its state is computed from the capability
+ * permissions underneath it, never stored, which is why what is shown here
+ * cannot drift from what the runtime does. The Plugins screen computes its own
+ * summary from the same comparison, so the word beside a pack here and the
+ * word beside the same Plugin there are the same word.
  *
  * Status is not permission. A capability can be allowed and still unavailable
  * because nothing can open a browser, and telling somebody "you have not
@@ -87,34 +85,11 @@ export function CapabilitiesSection({ index, agentId }: { index: number; agentId
     `/api/agents/${agentId}/toolspace/packs`,
   );
   const history = useResource<{ items: Invocation[] }>(`/api/agents/${agentId}/toolspace/invocations`);
-  const [saving, setSaving] = useState<string | null>(null);
-  /** Which pack has its individual switches showing. One at a time. */
+  /** Which pack has its individual capabilities showing. One at a time. */
   const [open, setOpen] = useState<string | null>(null);
-
-  const set = async (id: string, permission: CapabilityPermission) => {
-    setSaving(id);
-    try {
-      await put(`/api/agents/${agentId}/toolspace/${id}`, { permission });
-      // The pack's own word has to move with this: switching one capability off
-      // inside Advanced is exactly what turns a pack from On to Some.
-      packView.reload();
-    } finally {
-      setSaving(null);
-    }
-  };
 
   const packs = packView.data?.packs ?? [];
   const ungrouped = packView.data?.ungrouped ?? [];
-
-  const setPack = async (packId: string, on: boolean) => {
-    setSaving(packId);
-    try {
-      await put(`/api/agents/${agentId}/toolspace/packs/${packId}`, { on });
-      packView.reload();
-    } finally {
-      setSaving(null);
-    }
-  };
 
   return (
     <Section
@@ -123,54 +98,47 @@ export function CapabilitiesSection({ index, agentId }: { index: number; agentId
       eyebrow="Capabilities"
       heading="What it can reach for"
       lede="What the model may choose while it is answering."
-      explain="Reading is allowed by default, because an agent that looks something up unasked is useful. Anything that changes something stays off or asks until you say otherwise — turning a group on does not change that."
+      explain="Reading is allowed by default, because an agent that looks something up unasked is useful. Anything that changes something stays off or asks until you say otherwise. This page shows what is set; Plugins is where it is changed."
     >
       {packView.loading && <Spinner />}
+
+      <p className="text-[13px] leading-relaxed text-bone-dim break-words">
+        These are set under{' '}
+        <Link to="/plugins" className="underline underline-offset-2 hover:text-bone">
+          Plugins
+        </Link>
+        , where each group is a Plugin and each capability has its own switch. Shown here so this page can say what
+        the agent may reach for without being a second place to decide it.
+      </p>
 
       {packs.map((pack, i) => (
         <IndexedRow key={pack.id} index={i + 1} label={PACK_WORDS[pack.state]} title={pack.name}>
           <p className="text-[13px] leading-relaxed text-bone-dim break-words">{pack.summary}</p>
           <p className="mt-1 text-[12px] leading-relaxed text-bone-faint break-words">{pack.detail}</p>
 
-          <div className="mt-3">
-            <Field
-              label="Whether it may"
-              hint={
-                pack.state === 'MIXED'
-                  ? 'You have changed some of these individually. Turning the group on or off replaces those choices.'
-                  : 'Turning this on gives it the reading. Anything that changes something still asks.'
-              }
-            >
-              <ChoiceGroup label="Whether it may">
-                <ChoiceOption selected={pack.state === 'ON'} onSelect={() => setPack(pack.id, true)}>
-                  On
-                </ChoiceOption>
-                <ChoiceOption selected={pack.state === 'OFF'} onSelect={() => setPack(pack.id, false)}>
-                  Off
-                </ChoiceOption>
-              </ChoiceGroup>
-            </Field>
-            {saving === pack.id && <Spinner />}
-          </div>
+          <p className="mt-3 text-[12px] leading-relaxed text-bone-faint break-words">
+            {pack.state === 'MIXED'
+              ? 'Some of these have been set individually.'
+              : pack.state === 'ON'
+                ? 'On. Anything in it that changes something still asks or stays off.'
+                : 'Off.'}{' '}
+            <Link to="/plugins" className="underline underline-offset-2 hover:text-bone-dim">
+              Change it under Plugins
+            </Link>
+          </p>
 
           <button
             type="button"
             className="mt-3 text-[12px] text-bone-faint underline underline-offset-2 hover:text-bone-dim"
             onClick={() => setOpen(open === pack.id ? null : pack.id)}
           >
-            {open === pack.id ? 'Hide the individual switches' : `Advanced: all ${pack.total} individually`}
+            {open === pack.id ? 'Hide the individual capabilities' : `All ${pack.total} individually`}
           </button>
 
           {open === pack.id && (
             <div className="mt-3 border-t border-ink-line pt-3">
               {pack.capabilities.map((capability, j) => (
-                <CapabilityRow
-                  key={capability.id}
-                  capability={capability}
-                  index={j}
-                  saving={saving === capability.id}
-                  onSet={set}
-                />
+                <CapabilityRow key={capability.id} capability={capability} index={j} />
               ))}
             </div>
           )}
@@ -181,13 +149,7 @@ export function CapabilitiesSection({ index, agentId }: { index: number; agentId
         <>
           <SubHeading>Everything else</SubHeading>
           {ungrouped.map((capability, i) => (
-            <CapabilityRow
-              key={capability.id}
-              capability={capability}
-              index={i}
-              saving={saving === capability.id}
-              onSet={set}
-            />
+            <CapabilityRow key={capability.id} capability={capability} index={i} />
           ))}
         </>
       )}
@@ -215,17 +177,7 @@ export function CapabilitiesSection({ index, agentId }: { index: number; agentId
   );
 }
 
-function CapabilityRow({
-  capability,
-  index,
-  saving,
-  onSet,
-}: {
-  capability: CapabilityView;
-  index: number;
-  saving: boolean;
-  onSet: (id: string, permission: CapabilityPermission) => void;
-}) {
+function CapabilityRow({ capability, index }: { capability: CapabilityView; index: number }) {
   return (
     <IndexedRow index={index + 1} label={capability.category} title={capability.name}>
       <p className="text-[13px] leading-relaxed text-bone-dim break-words">{capability.description}</p>
@@ -242,22 +194,9 @@ function CapabilityRow({
         </p>
       )}
 
-      <div className="mt-3">
-        <Field label="Whether it may" hint={WORDS[capability.permission].hint}>
-          <ChoiceGroup label="Whether it may">
-            {(['ALLOWED', 'OWNER_APPROVAL', 'DISABLED'] as CapabilityPermission[]).map((permission) => (
-              <ChoiceOption
-                key={permission}
-                selected={capability.permission === permission}
-                onSelect={() => onSet(capability.id, permission)}
-              >
-                {WORDS[permission].label}
-              </ChoiceOption>
-            ))}
-          </ChoiceGroup>
-        </Field>
-        {saving && <Spinner />}
-      </div>
+      <p className="mt-3 text-[12px] leading-relaxed text-bone-dim break-words">
+        {WORDS[capability.permission].label}. {WORDS[capability.permission].hint}
+      </p>
     </IndexedRow>
   );
 }

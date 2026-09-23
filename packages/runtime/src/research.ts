@@ -790,6 +790,22 @@ export interface ResearchOptions {
    * is still a gap.
    */
   sources?: { web?: boolean; market?: boolean };
+  /**
+   * Extra places to look, contributed by Plugins the owner installed.
+   *
+   * Tried after the built-in ones rather than instead of them, because a
+   * Plugin is an addition to what AI17Z can reach and never a replacement for
+   * it. Each is a capability behind its own permission, readiness, quota and
+   * timeout, so a source that is off simply is not here.
+   *
+   * A source that answers nothing is recorded as a gap under its own name.
+   * "Looked there and it had nothing" and "never looked" are different things
+   * to tell a model, and only one of them is a reason to say you do not know.
+   */
+  extraSources?: readonly {
+    sourceName: string;
+    lookUp(query: string): Promise<Finding[]>;
+  }[];
 }
 
 /** Long enough for two searches on a slow day, short enough to still be a reply. */
@@ -879,8 +895,37 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
       continue;
     }
 
+    /*
+      Plugin-contributed sources, before the browser.
+
+      Before rather than after because a source an owner installed on purpose
+      is a better answer to the question than a general web search is, and
+      because the budget is spent in order: a Plugin that answers in 200ms
+      should not be reached only once a slow search engine has used the time
+      up. Each one is bounded by its own declared timeout inside the
+      invocation, so a wedged Plugin cannot take the budget with it.
+
+      They add to the findings rather than short-circuiting: two sources
+      answering the same question is evidence, and the prompt attributes both.
+    */
+    for (const source of options.extraSources ?? []) {
+      if (remaining() <= 0) break;
+      try {
+        const found = await withDeadline(source.lookUp(lookup.query), remaining());
+        if (found.length > 0) findings.push(...found);
+        else failed.push({ query: lookup.query, reason: `${source.sourceName} had nothing for this.` });
+      } catch (error) {
+        failed.push({ query: lookup.query, reason: `${source.sourceName}: ${errorMessage(error)}` });
+      }
+    }
+
     if (!options.search) {
-      failed.push({ query: lookup.query, reason: 'No browser was available to search with.' });
+      // Not a gap when a Plugin already answered this one. "No browser was
+      // available" printed beside a finding tells the model its answer is
+      // incomplete when it is not, and the model hedges accordingly.
+      if (!findings.some((finding) => finding.query === lookup.query)) {
+        failed.push({ query: lookup.query, reason: 'No browser was available to search with.' });
+      }
       continue;
     }
     try {

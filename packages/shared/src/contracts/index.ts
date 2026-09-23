@@ -22,6 +22,7 @@ export * from './portable';
 export * from './portablePackage';
 export * from './providerKeys';
 export * from './policyReachability';
+export * from './plugins';
 export * from './providerCatalogue';
 export * from './readiness';
 export * from './modelRoleStatus';

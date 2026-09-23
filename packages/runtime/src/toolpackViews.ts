@@ -43,7 +43,7 @@ export interface ToolpackView {
  * owner switched off is not, and that makes the pack MIXED rather than quietly
  * showing ON while something inside it is refused.
  */
-function atLeastDefault(current: CapabilityPermission, fallback: CapabilityPermission): boolean {
+export function atLeastDefault(current: CapabilityPermission, fallback: CapabilityPermission): boolean {
   const rank: Record<CapabilityPermission, number> = { DISABLED: 0, OWNER_APPROVAL: 1, ALLOWED: 2 };
   return rank[current] >= rank[fallback];
 }

@@ -7,6 +7,7 @@ import { healthRoutes } from './routes/health';
 import { agentRoutes } from './routes/agents';
 import { agentConfigRoutes } from './routes/agentConfig';
 import { registerInboxRoutes as inboxRoutes } from './routes/inbox';
+import { registerPluginRoutes as pluginRoutes } from './routes/plugins';
 import { easyRoutes, easyStartRoutes } from './routes/easy';
 import { characterRoutes } from './routes/character';
 import { providerRoutes } from './routes/providers';
@@ -72,6 +73,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(agentRoutes);
   await app.register(agentConfigRoutes);
   await app.register(inboxRoutes);
+  await app.register(pluginRoutes);
   await app.register(easyRoutes);
   await app.register(easyStartRoutes);
   await app.register(characterRoutes);

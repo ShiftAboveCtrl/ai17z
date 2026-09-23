@@ -31,6 +31,7 @@ export * as postAnalytics from './repositories/postAnalytics';
 export * as growth from './repositories/growth';
 export * as experiments from './repositories/experiments';
 export * as capabilityPermissions from './repositories/capabilityPermissions';
+export * as plugins from './repositories/plugins';
 export * as workers from './repositories/workers';
 export * as radar from './repositories/radar';
 export * as mentions from './repositories/mentions';

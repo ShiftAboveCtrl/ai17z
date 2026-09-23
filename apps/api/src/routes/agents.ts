@@ -25,6 +25,7 @@ import {
   MIN_AVATAR_EDGE,
   clearAgentAvatar,
   duplicateAgent,
+  applyCoreRecommended,
   ensureAgentPipeline,
   setAgentAvatar,
 } from '@xbam/runtime';
@@ -93,6 +94,28 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         createdBy: user.id,
       });
       await ensureAgentPipeline(agent.id);
+      /*
+        What a brand new agent starts able to reach for.
+
+        Written explicitly rather than left to fall back on each capability's
+        default, so that what the Plugins screen shows on day one is what the
+        runtime will actually do, and so that changing the recommended set
+        later cannot quietly re-open something for an agent that already
+        exists. `applyCoreRecommended` refuses to touch an agent that already
+        has decisions, which is what makes this safe to call from the one
+        place an agent is created rather than from three.
+
+        Deliberately not called by the import path: an imported agent's
+        decisions came with it, and writing defaults first would leave every
+        capability the package did not mention sitting at this installation's
+        recommendation rather than at what its owner chose.
+
+        It must not be able to fail the creation. An agent that exists with no
+        permission rows works -- every capability falls back to its own
+        default -- and an agent that failed to be created because a default
+        could not be written does not.
+      */
+      await applyCoreRecommended(agent.id).catch(() => undefined);
       await ops.audit({ actorUserId: user.id, action: 'agent.created', entityType: 'agent', entityId: agent.id });
       return agent;
     }),

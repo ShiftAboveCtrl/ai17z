@@ -62,6 +62,10 @@ export * from './capabilityActions';
 export * from './capabilityRelevance';
 export * from './researchCoverage';
 export * from './capabilityViews';
+export * from './plugins';
+export * from './pluginCapabilities';
+export * from './pluginFeatures';
+export * from './pluginRegistry';
 /*
   The key the pipeline claims an action under, so a test can hold it against
   the one `performCapabilityAction` builds. Two writers spelling one key

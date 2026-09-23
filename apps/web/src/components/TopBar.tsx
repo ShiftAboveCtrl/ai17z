@@ -52,6 +52,9 @@ export function TopBar() {
           <NavLink to="/activity" className={link}>
             Activity
           </NavLink>
+          <NavLink to="/plugins" className={link}>
+            Plugins
+          </NavLink>
           <NavLink to="/health" className={link}>
             Health
           </NavLink>
@@ -108,6 +111,9 @@ export function TopBar() {
         </NavLink>
         <NavLink to="/activity" className={link}>
           Activity
+        </NavLink>
+        <NavLink to="/plugins" className={link}>
+          Plugins
         </NavLink>
         <NavLink to="/health" className={link}>
           Health
