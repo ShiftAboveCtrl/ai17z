@@ -115,6 +115,17 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'browser_sessions', column: 'mode', values: BROWSER_MODES },
   { table: 'browser_tasks', column: 'kind', values: BROWSER_TASK_KINDS },
   { table: 'events', column: 'type', values: EVENT_TYPES },
+  {
+    table: 'installed_plugins',
+    column: 'source',
+    // `PLUGIN_SOURCES` less `BUILT_IN`, which deliberately has no row: a
+    // built-in Plugin is a toolpack that ships with the application, so there
+    // is nothing for it to be a record of. Written out rather than derived, so
+    // that adding a fourth source fails here until somebody decides whether a
+    // built-in has become recordable.
+    values: ['LOCAL', 'AI17Z_REGISTRY'],
+    note: 'Where an installed Plugin came from. BUILT_IN is excluded because a built-in has no row.',
+  },
   { table: 'jobs', column: 'error_class', values: ERROR_CLASSES },
   { table: 'jobs', column: 'status', values: JOB_STATUSES },
   { table: 'memories', column: 'memory_type', values: MEMORY_TYPES },

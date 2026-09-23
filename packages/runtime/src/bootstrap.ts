@@ -25,6 +25,7 @@ import {
   useSecContact,
 } from '@xbam/upstream';
 import { InstallationQuotaCoordinator } from './upstreamQuota';
+import { registerInstalledPlugins } from './plugins';
 import { registerChainCapabilities } from './chainCapabilities';
 import { registerContractCapabilities } from './contractCapabilities';
 import { registerDefiCapabilities } from './defiCapabilities';
@@ -72,6 +73,20 @@ export async function bootstrapRuntime(): Promise<void> {
   // by calling GitHub. An agent cannot add a watch and cannot reach a project
   // its owner has not pointed it at.
   registerGithubCapabilities();
+
+  // Plugins an owner installed, registered the same way and into the same
+  // registry as everything above. There is no second invocation engine and no
+  // downloaded code: each one is a declaration this process turns into an
+  // ordinary capability, so the loop, the permission model, readiness, the
+  // quota and the audit trail all treat it exactly as they treat a built-in.
+  //
+  // Failing to register one must not stop the runtime starting. An
+  // installation whose Plugin cannot be read is an installation with one
+  // capability missing, and refusing to boot over it would take the agent
+  // down with it.
+  await registerInstalledPlugins().catch((error: unknown) => {
+    log.warn('some installed Plugins could not be registered', { error: errorMessage(error) });
+  });
 
   // Every upstream call in this process now goes through a coordinator that
   // other processes can see. The default one counts alone, which is right for a

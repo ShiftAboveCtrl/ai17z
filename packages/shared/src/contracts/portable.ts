@@ -26,13 +26,41 @@ import { PolicyConfig } from './policy';
 /**
  * Bumped when a change would make an older importer read this wrongly.
  *
- * 2 added `toolspace`. The schema is strict, so a build that reads version 1
- * would refuse a document carrying that key -- correctly, but with a zod
- * complaint about an unrecognised field rather than the sentence the version
- * check exists to produce. One reads "Update before importing it"; the other
- * reads like the file is broken.
+ * 2 added `toolspace`. 3 added `plugins`. The schema is strict, so a build
+ * that reads version 2 would refuse a document carrying that key -- correctly,
+ * but with a zod complaint about an unrecognised field rather than the
+ * sentence the version check exists to produce. One reads "Update before
+ * importing it"; the other reads like the file is broken.
  */
-export const PORTABLE_AGENT_VERSION = 2;
+export const PORTABLE_AGENT_VERSION = 3;
+
+/**
+ * A Plugin this agent was using, named rather than carried.
+ *
+ * The manifest is deliberately absent, and that is the whole design of this
+ * field. A document that carried one would be a document that installs a
+ * third-party HTTP capability on whatever machine opens it, and these get
+ * emailed around: a preset somebody downloaded would silently give an agent a
+ * remote endpoint its new owner never approved. So what travels is the
+ * identity of the Plugin and what the owner configured about it, and the
+ * install has to be re-established here, by somebody, on purpose.
+ *
+ * `config` is non-secret configuration only. A credential is sealed under one
+ * installation's master key and belongs to that installation, exactly as a
+ * provider key does. There is nowhere in this shape to put one.
+ */
+export const PortablePlugin = z
+  .object({
+    id: z.string().max(64),
+    name: z.string().max(120).default(''),
+    publisher: z.string().max(120).default(''),
+    version: z.string().max(40).default(''),
+    /** Where the copy this agent used came from, so a note can say where. */
+    source: z.enum(['LOCAL', 'AI17Z_REGISTRY']).default('LOCAL'),
+    config: z.record(z.unknown()).default({}),
+  })
+  .strict();
+export type PortablePlugin = z.infer<typeof PortablePlugin>;
 
 /**
  * Where a knowledge source's content lives, without the content.
@@ -163,6 +191,16 @@ export const PortableAgent = z
      * is why it defaults rather than being required.
      */
     toolspace: z.array(PortableCapability).max(200).default([]),
+
+    /**
+     * Which installed Plugins this agent was using, by identity.
+     *
+     * Never a manifest and never a secret. An importer that already has the
+     * same Plugin from the same publisher applies the configuration; one that
+     * does not says which Plugin is missing and where it came from, so the
+     * decisions in `toolspace` stop being a list of ids nobody can explain.
+     */
+    plugins: z.array(PortablePlugin).max(50).default([]),
   })
   // Strict, so an unknown field is a refusal rather than something that rides
   // along into an installation nobody inspected.

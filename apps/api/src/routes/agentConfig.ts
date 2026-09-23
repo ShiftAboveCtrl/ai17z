@@ -19,7 +19,6 @@ import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@
 import { getCapability } from '@xbam/tools';
 import {
   setCapabilityPermission,
-  setToolpack,
   toolpackViews,
   pauseState,
   collectDiagnostics,
@@ -1196,26 +1195,22 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     }),
   );
 
-  app.put(
-    '/api/agents/:id/toolspace/packs/:packId',
-    handler(async (request) => {
-      const user = await requireUser(request);
-      const agent = await ownedAgent(params(request).id!, user);
-      const body = parseBody(z.object({ on: z.boolean() }), request);
-      const packId = params(request).packId!;
-      const { changed } = await setToolpack({ agentId: agent.id, packId, on: body.on });
-      await ops.audit({
-        actorUserId: user.id,
-        action: 'toolpack.set',
-        entityType: 'agent',
-        entityId: agent.id,
-        // Every capability it touched, because a bulk edit somebody cannot see
-        // the effect of is a bulk edit nobody can audit.
-        data: { packId, on: body.on, changed },
-      });
-      return { ok: true, changed };
-    }),
-  );
+  /*
+    Turning a pack on used to be answered here, and is answered by
+    `PUT /api/agents/:id/plugins/:pluginId` now.
+
+    A built-in Plugin *is* a toolpack, so those were two routes writing the
+    same rows from two screens that both looked authoritative about one
+    setting. Plugins is the place an owner decides, this agent's own page
+    shows what is set and links there, and `setToolpack` is still the one
+    implementation underneath -- `setPluginEnabled` calls it rather than
+    having a second copy of the rule that agrees today.
+
+    Retired for the reason the flat `/toolspace` route above was: the route
+    nothing renders is the one that goes quietly wrong. Nothing the pack view
+    is built on changed, and `GET /toolspace/packs` stays, because the agent
+    page still reads it.
+  */
 
   app.put(
     '/api/agents/:id/toolspace/:capabilityId',

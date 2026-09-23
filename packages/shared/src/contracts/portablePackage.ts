@@ -235,6 +235,16 @@ export const AgentPackageSummary = z
        * what that screen exists to prevent.
        */
       toolspace: z.number().int(),
+      /**
+       * Plugins the file names, which is not the same as Plugins it carries.
+       *
+       * It carries none: a package holds a Plugin's identity and its
+       * non-secret configuration, never its manifest, so opening one installs
+       * nothing. Counted here because "what is in this file" is the question
+       * this screen exists to answer, and a number an owner can see is how
+       * they find out the answer is not "a remote endpoint".
+       */
+      plugins: z.number().int().default(0),
     }),
     hasAvatar: z.boolean(),
     /**

@@ -7,6 +7,7 @@ import {
   registerContractCapabilities,
   registerXCapabilities,
   setCapabilityPermission,
+  pluginViews,
   setToolpack,
   toolpackViews,
 } from '@xbam/runtime';
@@ -204,5 +205,67 @@ describe('what a pack says about itself', () => {
     const fixture = await createFixture();
     registerEverything();
     await expect(setToolpack({ agentId: fixture.agentId, packId: 'not-a-pack', on: true })).rejects.toThrow();
+  });
+});
+
+describe('the built-in Plugins, as a product', () => {
+  it('is the six toolpacks and not a copy of them', async () => {
+    const fixture = await createFixture();
+    registerEverything();
+    const views = await pluginViews({ agentId: fixture.agentId, accountId: null, paused: false });
+    const builtIn = views.filter((view) => view.source === 'BUILT_IN');
+
+    // Every pack that has members, and nothing invented beside them.
+    const packsWithMembers = TOOLPACKS.filter((pack) => capabilitiesInPack(pack.id).length > 0);
+    expect(builtIn.map((view) => view.id).sort()).toEqual(packsWithMembers.map((pack) => pack.id).sort());
+
+    // The capabilities are the pack's own, registered once. A Plugin layer
+    // that copied them would show the same id under two owners.
+    const seen = new Map<string, string>();
+    for (const view of views) {
+      for (const capability of view.capabilities) {
+        expect(seen.has(capability.id), `${capability.id} appears under two Plugins`).toBe(false);
+        seen.set(capability.id, view.id);
+      }
+    }
+    for (const view of builtIn) {
+      expect(view.capabilities.map((c) => c.id).sort(), view.id).toEqual(
+        capabilitiesInPack(view.id).map((c) => c.id).sort(),
+      );
+    }
+  });
+
+  it('says nothing about a version, a host or a quota, because it has none', async () => {
+    const fixture = await createFixture();
+    registerEverything();
+    const views = await pluginViews({ agentId: fixture.agentId, accountId: null, paused: false });
+    for (const view of views.filter((entry) => entry.source === 'BUILT_IN')) {
+      expect(view.version, view.id).toBeNull();
+      expect(view.removable, view.id).toBe(false);
+      expect(view.hosts, view.id).toEqual([]);
+      expect(view.quotaPerHour, view.id).toBeNull();
+      expect(view.configFields, view.id).toEqual([]);
+      expect(view.features, view.id).toEqual([]);
+      expect(view.panel, view.id).toBeNull();
+    }
+  });
+
+  it('keeps registered, ready and used as three separate answers', async () => {
+    // The distinction the whole screen rests on. A capability can be
+    // registered, permitted, and still unable to run -- and never yet used.
+    const fixture = await createFixture();
+    registerEverything();
+    const views = await pluginViews({ agentId: fixture.agentId, accountId: null, paused: false });
+    const every = views.flatMap((view) => view.capabilities);
+    expect(every.length).toBeGreaterThan(0);
+    for (const capability of every) {
+      // A status, a permission, and a last-used answer that is allowed to be
+      // null. Collapsing any two of these is how a screen starts lying.
+      expect(typeof capability.status).toBe('string');
+      expect(typeof capability.permission).toBe('string');
+      expect(capability.lastUsedAt === null || typeof capability.lastUsedAt === 'string').toBe(true);
+    }
+    expect(every.some((capability) => capability.status !== 'AVAILABLE')).toBe(true);
+    expect(every.every((capability) => capability.lastUsedAt === null)).toBe(true);
   });
 });

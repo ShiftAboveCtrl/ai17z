@@ -301,6 +301,7 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
     knowledgeSources: 0,
     memories: 0,
     toolspace: 0,
+    plugins: 0,
   };
   const unreadable = (problem: string): AgentPackageSummary => ({
     valid: false,
@@ -388,6 +389,18 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
       'This agent has capabilities switched on -- things it may reach for while it answers. Importing carries those decisions, and anything that writes still asks you or stays off until you say otherwise.',
     );
   }
+  if (pkg.agent.plugins.length > 0) {
+    // What a file like this could have been, said so nobody has to guess.
+    // The count above is a number; this is the property that makes the number
+    // safe, and an owner deciding whether to open a stranger's package is
+    // deciding about exactly this.
+    notes.push(
+      `This agent used ${pkg.agent.plugins.length} Plugin(s): ` +
+        `${pkg.agent.plugins.map((plugin) => plugin.name || plugin.id).join(', ')}. ` +
+        'The file names them and does not carry them, so importing installs nothing. ' +
+        'Install any you want yourself, and enter their credentials again -- those never travel.',
+    );
+  }
 
   return {
     valid: true,
@@ -405,6 +418,7 @@ export function inspectPackage(raw: string | Buffer): AgentPackageSummary {
       knowledgeSources: pkg.agent.knowledge.length,
       memories: pkg.learned?.memories.length ?? 0,
       toolspace: pkg.agent.toolspace.length,
+      plugins: pkg.agent.plugins.length,
     },
     hasAvatar: pkg.avatar !== null,
     notes,

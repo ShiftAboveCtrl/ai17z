@@ -23,6 +23,8 @@ import {
 import { planLookups } from '../plan';
 import { withoutWhatACapabilityAnswers } from '../researchCoverage';
 import { capabilitySettings } from '../capabilityPermissions';
+import { pauseState } from '../killSwitch';
+import { pluginResearchSources } from '../pluginFeatures';
 
 import type { JobBundle } from '../loadJob';
 
@@ -109,9 +111,13 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
     A dropped lookup is not an answered one. The capability can still fail or
     go uncalled, and the evidence verdict below is unchanged either way.
   */
+  // Read once and used twice: to leave a lookup to a capability that already
+  // answers it, and to decide which Plugin research sources this agent may
+  // reach. Two reads of one answer is two chances for them to disagree.
+  const settings = await capabilitySettings(bundle.agent.id).catch(() => null);
+
   let lookups = capped;
   if (bundle.policy.tools.capabilityLoop) {
-    const settings = await capabilitySettings(bundle.agent.id).catch(() => null);
     if (settings) {
       const covered = await withoutWhatACapabilityAnswers(capped, {
         agentId: bundle.agent.id,
@@ -197,11 +203,38 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
     .filter(Boolean)
     .join('\n');
 
+  /*
+    Sources an owner added by installing a Plugin.
+
+    Each is one of that Plugin's own declared capabilities, reached through
+    `invokeCapability`, so this adds no permission model, no network path and
+    no audit trail of its own. A Plugin the owner switched off contributes
+    nothing here, because the permission it contributes nothing through is the
+    same row the Plugins screen writes.
+  */
+  const extraSources = await pluginResearchSources({
+    agentId: bundle.agent.id,
+    jobId: job.id,
+    accountId: job.accountId,
+    permissions: settings?.permissions ?? new Map(),
+    // PAUSE ALL stops a Plugin being reached for, the same as it stops
+    // everything else a capability does. Asked here rather than assumed,
+    // because the pause can be switched on while this job is running.
+    paused: (await pauseState().catch(() => ({ paused: false }))).paused,
+    logger: log,
+  }).catch((error: unknown) => {
+    // A Plugin that cannot be read costs this reply one source, not the
+    // reply. The gap is visible because nothing claims to have looked.
+    log.warn('a Plugin research source could not be prepared', { jobId: job.id, error: String(error) });
+    return [];
+  });
+
   const result = await research(lookups, {
     search,
     tokenContext,
     knownAddresses: bundle.policy.output.verifiedAddresses,
     sources: bundle.policy.tools.research,
+    extraSources,
   });
 
   // Search the provider runs on its own side, reaching X's own index.

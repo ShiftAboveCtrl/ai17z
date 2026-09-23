@@ -24,6 +24,7 @@ import {
   capabilityPermissions as capabilityPermissionsRepo,
   knowledge as knowledgeRepo,
   ops as opsRepo,
+  plugins as pluginsRepo,
   posting as postingRepo,
   providers as providersRepo,
 } from '@xbam/database';
@@ -39,7 +40,7 @@ export async function exportAgent(agentId: string): Promise<PortableAgent> {
   const agent = await agentsRepo.getAgent(agentId);
   if (!agent) throw new BadRequestError('That agent no longer exists.');
 
-  const [persona, policy, models, tools, toolspace, knowledge, cadence, posting] = await Promise.all([
+  const [persona, policy, models, tools, toolspace, knowledge, cadence, posting, installedPlugins] = await Promise.all([
     agentsRepo.getActivePersona(agentId),
     agentsRepo.getActivePolicy(agentId),
     providersRepo.listModelConfigs(agentId),
@@ -51,7 +52,27 @@ export async function exportAgent(agentId: string): Promise<PortableAgent> {
     // than quietly omitted.
     Promise.resolve(null),
     postingRepo.getSchedule(agentId).catch(() => null),
+    pluginsRepo.listInstalledPlugins().catch(() => []),
   ]);
+
+  /*
+    Plugins travel as an identity and a configuration, never as a manifest.
+
+    Carrying the manifest would make this document an installer: a preset
+    somebody downloaded would give their agent a third-party HTTP endpoint
+    they never approved, on their own machine, beside their provider keys.
+    So an importer is told which Plugin this agent used and has to install it
+    itself, which is the same decision the original owner made.
+
+    The sealed secrets are not read here at all. There is no query for them,
+    the same way there is no query for a session or a memory.
+  */
+  const pluginConfigs = await Promise.all(
+    installedPlugins.map(async (record: { id: string; manifest: { name: string; config: { key: string; secret: boolean }[] } ; publisher: string; version: string; source: string }) => ({
+      record,
+      config: await pluginsRepo.getPluginConfig(agentId, record.id).catch(() => ({})),
+    })),
+  );
 
   if (!persona) throw new BadRequestError('That agent has no persona, so there is nothing to export.');
 
@@ -92,6 +113,24 @@ export async function exportAgent(agentId: string): Promise<PortableAgent> {
       location: source.location,
       include: source.include ?? [],
       enabled: source.enabled,
+    })),
+    plugins: pluginConfigs.map(({ record, config }) => ({
+      id: record.id,
+      name: record.manifest.name,
+      publisher: record.publisher,
+      version: record.version,
+      source: record.source as 'LOCAL' | 'AI17Z_REGISTRY',
+      // Non-secret by construction -- a secret is in `agent_plugin_secrets`
+      // and nothing here reads it -- and stripped anyway, because the config
+      // is a free-form document and somebody will eventually put a token in
+      // one. The same treatment a tool's config gets, for the same reason.
+      config: withoutSecrets(
+        Object.fromEntries(
+          Object.entries(config).filter(
+            ([key]) => !record.manifest.config.find((field) => field.key === key)?.secret,
+          ),
+        ),
+      ),
     })),
     capabilities: [],
     // What the owner switched on and how they set it up. A decision, so it
@@ -218,6 +257,60 @@ export async function importAgent(input: {
       }
     } catch {
       notes.push(`This installation has no capability called "${capability.id}", so what was decided about it could not be carried over.`);
+    }
+  }
+
+  /*
+    Plugins the agent was using.
+
+    A Plugin that is already installed here, from the same publisher, gets its
+    configuration applied. One that is not is named with its publisher and
+    version so the owner can go and install it, rather than left as a handful
+    of capability ids in `toolspace` that this installation refused with no
+    explanation of what they belonged to.
+
+    Nothing installs anything. The document carries no manifest, and a file
+    that arrived by email does not get to add a remote endpoint to somebody's
+    machine.
+  */
+  for (const plugin of doc.plugins) {
+    const here = await pluginsRepo.getInstalledPlugin(plugin.id).catch(() => null);
+    if (!here) {
+      notes.push(
+        `This agent used the Plugin "${plugin.name || plugin.id}"${plugin.version ? ` ${plugin.version}` : ''}` +
+          `${plugin.publisher ? ` from ${plugin.publisher}` : ''}, which is not installed here. Install it and what was ` +
+          'decided about its capabilities will apply.',
+      );
+      continue;
+    }
+    if (plugin.publisher && here.publisher !== plugin.publisher) {
+      // Same id, different publisher, which is a substitution rather than the
+      // same Plugin. Its configuration is not applied to it.
+      notes.push(
+        `"${plugin.id}" is installed here from ${here.publisher} and this agent used ${plugin.publisher}'s. ` +
+          'That is a different Plugin with the same name, so its configuration was not carried over.',
+      );
+      continue;
+    }
+    const declared = new Map(here.manifest.config.map((field) => [field.key, field]));
+    const config = Object.fromEntries(
+      Object.entries(plugin.config).filter(([key]) => {
+        const field = declared.get(key);
+        return Boolean(field) && !field!.secret;
+      }),
+    );
+    if (Object.keys(config).length > 0) {
+      await pluginsRepo
+        .setPluginConfig(agent.id, plugin.id, config)
+        .catch(() => notes.push(`The configuration for "${plugin.id}" could not be carried over.`));
+    }
+    if (here.manifest.config.some((field) => field.secret && field.required)) {
+      // Said rather than discovered when the first lookup fails. A sealed
+      // credential belongs to the installation that sealed it.
+      notes.push(
+        `"${here.manifest.name}" needs a credential, and credentials never travel with an agent. ` +
+          'Enter it again under Plugins before it can run.',
+      );
     }
   }
 

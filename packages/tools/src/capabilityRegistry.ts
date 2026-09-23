@@ -31,6 +31,22 @@ export function registerCapability<I, O>(capability: Capability<I, O>): void {
   CAPABILITIES.set(capability.id, capability as unknown as AnyCapability);
 }
 
+/**
+ * Take a capability back out of the registry.
+ *
+ * For Plugins, which are the only things that arrive and leave while the
+ * process is running. Uninstalling one has to stop it being callable before
+ * its configuration is deleted, or the model can choose something whose
+ * credential has just gone.
+ *
+ * Deliberately not a general-purpose unregister: a built-in that could be
+ * removed at runtime is a registry whose contents depend on what happened
+ * earlier, which is the thing `registerCapability` refuses for.
+ */
+export function unregisterCapability(id: string): boolean {
+  return CAPABILITIES.delete(id);
+}
+
 export function getCapability(id: string): AnyCapability | null {
   return CAPABILITIES.get(id) ?? null;
 }
