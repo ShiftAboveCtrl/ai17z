@@ -19,7 +19,6 @@ import { agents as agentsRepo, jobs as jobsRepo, query } from '@xbam/database';
 import { bootstrapRuntime, explainRehearsal, rehearse } from '@xbam/runtime';
 import { opener } from '@xbam/persona';
 import { CORPUS } from './corpus.mts';
-import { drainAgentJobs } from '../../tests/support/runner';
 
 const args = process.argv.slice(2);
 const agentArg = args.includes('--agent') ? args[args.indexOf('--agent') + 1] : undefined;
@@ -73,6 +72,18 @@ async function main(): Promise<void> {
     // this process: without it the pipeline runs against an empty registry.
     await bootstrapRuntime();
     console.log('\nqueued. running them here...\n');
+    /*
+      Imported here rather than at the top, because `tests/` is not shipped.
+
+      `tools/` is a build input -- the images are built from the installed
+      directory -- so this file is present in an installed copy, and a
+      top-level import of the test runner made it fail to load there at all:
+      ERR_MODULE_NOT_FOUND before a line of it ran, including for the ordinary
+      run that needs no runner and is exactly the run an installation can do,
+      because it has a worker of its own. A shipped file that cannot start is
+      worse than one that is absent.
+    */
+    const { drainAgentJobs } = await import('../../tests/support/runner');
     await drainAgentJobs(agentId, 400);
   } else {
     console.log('\nqueued. waiting for the worker...\n');
