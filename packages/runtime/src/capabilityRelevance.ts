@@ -184,6 +184,42 @@ export function shortlistCapabilities(
     if (hits > 0) familyScore.set(family, hits * 3);
   }
 
+  /*
+    A family nothing here has hints for still has to be findable.
+
+    `FAMILY_HINTS` names the families that ship with AI17Z, which is fine right
+    up until a family arrives that this file has never heard of: an installed
+    Plugin's. Its family then scored zero however well its own words matched,
+    so the only way to reach one was to say its id out loud -- an imported
+    Plugin called `berth-times` answered "the next berth slot at Falmouth" and
+    was invisible to "what is the temperature there", with `temperature` in
+    both its title and its description. Measured on a real installation: score
+    1 against a floor of 2.
+
+    So a family with no hints derives them from what its own capabilities
+    declare: the words of their titles. That is the same promise the
+    description scoring already makes, applied at the family level, and it
+    reads only what a Plugin already had to write down. Deterministic and with
+    no model call, for the reason `salience.ts` gives: which tools a later
+    model call may see is exactly the judgement an owner needs to inspect.
+
+    Families that do have hints are untouched, so none of the built-in
+    families can shift.
+  */
+  const derived = new Map<string, Set<string>>();
+  for (const capability of available) {
+    const family = familyOf(capability.id);
+    if (family in FAMILY_HINTS) continue;
+    let bag = derived.get(family);
+    if (!bag) derived.set(family, (bag = new Set<string>()));
+    for (const word of words(capability.name)) bag.add(word);
+  }
+  for (const [family, hints] of derived) {
+    let hits = 0;
+    for (const hint of hints) if (mentions(asked, hint)) hits += 1;
+    if (hits > 0) familyScore.set(family, hits * 3);
+  }
+
   const scored = available.map((capability) => {
     const family = familyOf(capability.id);
     let score = familyScore.get(family) ?? 0;
@@ -191,6 +227,20 @@ export function shortlistCapabilities(
     // The id says what it answers: `read_post`, `price_check`, `paper_search`.
     for (const word of words(capability.id.replace(/[._]/g, ' '))) {
       if (asked.has(word)) score += 2;
+    }
+    /*
+      And so does the title, which was read by nothing at all.
+
+      A capability's id is written for a programmer and its title for a person,
+      so the title is the one carrying the words somebody would actually use.
+      Only counted for a family this file has no hints for, so the twenty
+      built-in families score exactly as they did: this is here to make an
+      installed Plugin reachable, not to re-tune capabilities that already are.
+    */
+    if (!(family in FAMILY_HINTS)) {
+      for (const word of words(capability.name)) {
+        if (asked.has(word)) score += 2;
+      }
     }
     /*
       The description is written for the model, so the words it uses are the
