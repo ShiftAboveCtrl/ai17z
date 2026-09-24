@@ -6,6 +6,7 @@ import {
 } from '@xbam/shared';
 import {
   actions as actionsRepo,
+  autonomy as autonomyRepo,
   jobs as jobsRepo,
   observability,
   stances as stancesRepo,
@@ -20,6 +21,7 @@ import {
   decideEngagement,
   recentRepliesTo,
 } from '../engagement';
+import { asksToBeLeftAlone } from '../doNotContact';
 
 import { loadThreadContext } from '../arcs';
 import { mindForMessage } from '../deliberate';
@@ -54,6 +56,42 @@ export async function stepRelationship(bundle: JobBundle): Promise<void> {
       'relationship_blocked',
       `@${loaded.context.handle} is blocked for this agent.`,
     );
+  }
+
+  /*
+    Somebody asking to be left alone, recorded the moment they say it.
+
+    Deterministic, because "did they ask us to stop" is exactly the judgement
+    an owner most needs to be able to inspect and correct, and one a model
+    would answer differently on different days for a call nobody can audit.
+
+    Recorded here rather than at the end because it has to hold even if this
+    job then fails: the request was made whether or not the reply worked. It
+    stops the agent approaching them; whether it answers *this* message is
+    still the engagement heuristic's decision and the owner's policy, which is
+    why nothing is thrown.
+  */
+  const askedToStop = asksToBeLeftAlone(context?.incomingText ?? bundle.event.text);
+  if (askedToStop && loaded.context.handle) {
+    await autonomyRepo
+      .addDoNotContact({
+        agentId: bundle.agent.id,
+        channel: job.channel,
+        handle: loaded.context.handle,
+        remoteUserId: bundle.event.remoteAuthorId,
+        source: 'THEY_ASKED',
+        evidence: askedToStop.evidence,
+        reason: askedToStop.reason,
+      })
+      .catch(() => undefined);
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'RELATIONSHIP_LOADED',
+      level: 'warn',
+      message: `@${loaded.context.handle} asked this agent to stop contacting them. It will not approach them again.`,
+      data: { doNotContact: true, evidence: askedToStop.evidence },
+    });
   }
 
   // Where this conversation has got to, which is a different question from who
@@ -315,7 +353,25 @@ export async function outreachHeadroom(
   agentId: string,
   outreach: PolicyConfig['outreach'],
   handle: string | null,
+  channel = 'x',
 ): Promise<string | null> {
+  /*
+    Somebody who asked to be left alone, first, before any budget arithmetic.
+
+    Durable, so it survives a restart and an upgrade, and checked here because
+    this is the one function every unprompted approach goes through. Answering
+    them if they write in is a different decision and is not gated here: this
+    stops the agent speaking to them first, which is exactly what they asked.
+  */
+  if (handle) {
+    const listed = await autonomyRepo.findDoNotContact(agentId, channel, handle).catch(() => null);
+    if (listed) {
+      return `@${handle.replace(/^@+/, '')} asked this agent to stop contacting them${
+        listed.createdAt ? ` on ${listed.createdAt.slice(0, 10)}` : ''
+      }, so it will not approach them.`;
+    }
+  }
+
   if (outreach.maxPerDay === 0) return 'This agent is not set to approach anybody unprompted.';
   const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
   const today = await actionsRepo.approachesSince(agentId, since);

@@ -176,3 +176,93 @@ export const IntentDecision = z.object({
   temperature: ConversationTemperature,
 });
 export type IntentDecision = z.infer<typeof IntentDecision>;
+
+/**
+ * What an agent may spend on going looking for people, and when.
+ *
+ * Separate from `OutreachPolicy`, which is about whether one particular post is
+ * worth speaking under. This is about the shape of the activity as a whole: how
+ * often the agent goes looking at all, for how long, how much it may spend
+ * while it is looking, and the hours it leaves alone.
+ *
+ * Every number here is a **ceiling, not a target**. An agent that has not used
+ * its budget is not behind on anything, and nothing in the runtime tries to
+ * spend what is left. The defaults are deliberately small: measured on a live
+ * installation, the previous absence of any of this produced 648 observations
+ * and 642 full pipeline runs in eight hours, 163 vision calls, 263,000 tokens,
+ * and not one public action.
+ *
+ * None of it applies to somebody who wrote to the agent. Direct inbound has its
+ * own capacity and is never charged against these, because a budget for
+ * approaching strangers that also silences a question is not a budget, it is an
+ * outage.
+ */
+export const GrowthPolicy = z.object({
+  /**
+   * Whether the agent goes looking at all.
+   *
+   * Defaults to true so an upgrade changes nothing about whether growth
+   * happens. What changes is how much of it there can be.
+   */
+  enabled: z.boolean().default(true),
+
+  /** Where the agent's day is, for the quiet window below. */
+  timezone: z.string().max(64).default('UTC'),
+  /**
+   * The hours optional growth is left alone, as local hours [start, end).
+   *
+   * Eight continuous hours by default. An account that goes looking for people
+   * at four in the morning reads as a machine to everybody who sees the
+   * timestamp, and the agent has nothing to gain from the hours nobody is
+   * awake. Overnight windows are allowed and are the normal case.
+   *
+   * This pauses **optional** growth only. A mention arriving at three in the
+   * morning is still answered, subject to the account's own quiet hours, which
+   * are a different and broader setting.
+   */
+  quietHoursStart: z.number().int().min(0).max(23).default(23),
+  quietHoursEnd: z.number().int().min(0).max(23).default(7),
+
+  /** How many times a day the agent may go looking. */
+  maxSessionsPerDay: z.number().int().min(0).max(48).default(8),
+  /** How long one session may last before it ends itself. */
+  sessionMinutes: z.number().int().min(1).max(240).default(15),
+  /** How long the agent waits after a session before starting another. */
+  cooldownMinutes: z.number().int().min(0).max(1_440).default(45),
+
+  /**
+   * How many candidates may reach expensive thinking in one session.
+   *
+   * The cheap triage decides what gets this far. Two is the point of the
+   * funnel: observe many, reject nearly all of it for nothing, think hard
+   * about a couple.
+   */
+  maxCandidatesPerSession: z.number().int().min(0).max(50).default(2),
+
+  /** Optional model calls, per session and per rolling day. */
+  maxModelCallsPerSession: z.number().int().min(0).max(200).default(4),
+  maxModelCallsPerDay: z.number().int().min(0).max(2_000).default(24),
+
+  /** Looking things up on the open web, per session and per rolling day. */
+  maxResearchPerSession: z.number().int().min(0).max(50).default(2),
+  maxResearchPerDay: z.number().int().min(0).max(500).default(8),
+
+  /** Things the agent says on its own initiative, per rolling day. */
+  maxOriginalPostsPerDay: z.number().int().min(0).max(100).default(3),
+  maxRepostsPerDay: z.number().int().min(0).max(100).default(2),
+
+  /**
+   * Three that default to nothing, and should.
+   *
+   * Automated likes at scale are a bot signature whatever else the account
+   * does. Follow and unfollow churn is the oldest growth trick there is and
+   * everybody recognises it. An unsolicited direct message is the one act here
+   * that lands in somebody's private inbox, and nothing about growth justifies
+   * it. Each is a number rather than a flag so an owner who wants one can say
+   * how much, but the default is none.
+   */
+  maxLikesPerDay: z.number().int().min(0).max(1_000).default(0),
+  maxFollowsPerDay: z.number().int().min(0).max(1_000).default(0),
+  maxUnsolicitedMessagesPerDay: z.number().int().min(0).max(100).default(0),
+});
+export type GrowthPolicy = z.infer<typeof GrowthPolicy>;

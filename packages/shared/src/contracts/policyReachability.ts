@@ -98,6 +98,57 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'output.minCharacters': { where: 'ADVANCED_ONLY' },
   'output.stripSurroundingQuotes': { where: 'ADVANCED_ONLY' },
   'output.verifiedAddresses': { where: 'ADVANCED_ONLY' },
+  /*
+    What the agent may spend going looking for people, and when.
+
+    The ones the owner is shown are the ones that answer "why has it gone
+    quiet": the hours, the session shape and the two budgets that actually
+    stop it. The per-session halves of those budgets and the per-kind action
+    ceilings are deliberately internal, because they are the inside of a rule
+    whose outside is already on the screen, and a panel that listed all
+    fifteen would be a form rather than an answer.
+  */
+  'growth.enabled': { where: 'ADVANCED_ONLY' },
+  'growth.timezone': { where: 'ADVANCED_ONLY' },
+  'growth.quietHoursStart': { where: 'ADVANCED_ONLY' },
+  'growth.quietHoursEnd': { where: 'ADVANCED_ONLY' },
+  'growth.maxSessionsPerDay': { where: 'ADVANCED_ONLY' },
+  'growth.sessionMinutes': { where: 'ADVANCED_ONLY' },
+  'growth.cooldownMinutes': { where: 'ADVANCED_ONLY' },
+  'growth.maxModelCallsPerDay': { where: 'ADVANCED_ONLY' },
+  'growth.maxResearchPerDay': { where: 'ADVANCED_ONLY' },
+  'growth.maxCandidatesPerSession': {
+    where: 'INTERNAL',
+    why: 'How many candidates reach expensive thinking inside one session. The session length and the daily budgets are the controls; this is the shape of the funnel between them.',
+  },
+  'growth.maxModelCallsPerSession': {
+    where: 'INTERNAL',
+    why: 'The per-session half of the model budget. The daily figure is what an owner reasons about, and this only spreads it across sessions.',
+  },
+  'growth.maxResearchPerSession': {
+    where: 'INTERNAL',
+    why: 'The per-session half of the lookup budget, for the same reason as the model one above.',
+  },
+  'growth.maxOriginalPostsPerDay': {
+    where: 'INTERNAL',
+    why: 'How often the agent may speak unprompted. The posting schedule is already the owner-facing control for that, and two numbers for one question is how they come to disagree.',
+  },
+  'growth.maxRepostsPerDay': {
+    where: 'INTERNAL',
+    why: 'A ceiling on amplifying somebody else. Reposting is switched on through capabilities, which is where an owner decides whether it happens at all.',
+  },
+  'growth.maxLikesPerDay': {
+    where: 'INTERNAL',
+    why: 'Zero by default, because automated likes at scale are a bot signature whatever else an account does. Raising it is a deliberate edit rather than a control to hand somebody.',
+  },
+  'growth.maxFollowsPerDay': {
+    where: 'INTERNAL',
+    why: 'Zero by default. Follow and unfollow churn is the oldest growth trick there is and everybody recognises it.',
+  },
+  'growth.maxUnsolicitedMessagesPerDay': {
+    where: 'INTERNAL',
+    why: 'Zero by default. An unsolicited direct message lands in somebody private inbox, and nothing about growth justifies one.',
+  },
   'outreach.cooldownDaysPerAuthor': { where: 'ADVANCED_ONLY' },
   'outreach.enabled': { where: 'EASY_AND_ADVANCED' },
   'outreach.maxPerDay': { where: 'ADVANCED_ONLY' },

@@ -230,3 +230,77 @@ describe('the bound can only decline what the real run would decline', () => {
     ).toBeTruthy();
   });
 });
+
+describe('a budget that is checked but never runs is not a budget', () => {
+  /*
+    Found on a live installation twenty minutes after the release that was
+    meant to introduce this: 219 unanswered proposals against a limit of five,
+    and jobs still being created for more.
+
+    `outreachHeadroom` uses the pooled query. `withTransaction` refuses a
+    pooled query taken inside it, precisely because such a query cannot see the
+    transaction's own writes and can deadlock the pool. The call site caught
+    what it threw and carried on, so the daily budget and the back pressure
+    were both dead code that always answered "no reason to stop".
+
+    The guard was written, the comment was right, and nothing was running. So
+    this test drives ingest rather than `outreachHeadroom`, because the
+    function was never the part that was broken.
+  */
+  it('stops creating approaches once the owner has a pile of unanswered ones', async () => {
+    const fixture = await watching({
+      policy: {
+        outreach: { ...DEFAULT_POLICY.outreach, enabled: true, mode: 'REVIEW' as const, maxPerDay: 2 },
+        engagement: { ...DEFAULT_POLICY.engagement, strategy: 'SELECTIVE' as const },
+      },
+      persona: { topics: ['agent memory', 'browser automation'] },
+    });
+
+    const worthIt = (n: number) =>
+      found(
+        'Genuine question about agent memory: how do you keep a working set from turning into a queue of ' +
+          `everything the thing has ever seen? Everything I try degrades into a log. Attempt ${n}.`,
+        n,
+      );
+
+    // Two get through, which is the allowance.
+    for (let i = 0; i < 2; i += 1) {
+      const outcome = await ingestNormalizedEvent({ accountId: fixture.accountId, event: worthIt(i) });
+      expect(outcome.jobs, `approach ${i}`).toHaveLength(1);
+      await query(`UPDATE jobs SET status = 'REVIEW_REQUIRED' WHERE id = $1`, [outcome.jobs[0]!.job.id]);
+    }
+
+    // The third is refused, and says why in a sentence the owner can act on.
+    const blocked = await ingestNormalizedEvent({ accountId: fixture.accountId, event: worthIt(99) });
+    expect(blocked.jobs, 'the pile is the back pressure').toHaveLength(0);
+    expect(blocked.skipped[0]!.reason).toMatch(/waiting for you to decide/i);
+    expect(blocked.skipped[0]!.reason).toMatch(/Answering some of those makes room/i);
+  }, 120_000);
+
+  it('never counts somebody who wrote in against the approach allowance', async () => {
+    // A mention waiting on a judgement is not an approach, and charging it
+    // against the outreach budget would let a full inbox silence the agent.
+    const fixture = await watching({
+      policy: { outreach: { ...DEFAULT_POLICY.outreach, enabled: true, mode: 'REVIEW' as const, maxPerDay: 1 } },
+      persona: { topics: ['agent memory'] },
+    });
+
+    const mention = await ingestNormalizedEvent({
+      accountId: fixture.accountId,
+      onlyAgentId: fixture.agentId,
+      event: mockEvent('what do you make of this?', { remoteAuthorHandle: 'a_real_person' }),
+    });
+    expect(mention.jobs).toHaveLength(1);
+    await query(`UPDATE jobs SET status = 'REVIEW_REQUIRED' WHERE id = $1`, [mention.jobs[0]!.job.id]);
+
+    // One mention held for review, and the approach allowance is untouched.
+    const approach = await ingestNormalizedEvent({
+      accountId: fixture.accountId,
+      event: found(
+        'Genuine question about agent memory: how do you stop a working set becoming a queue of everything it saw?',
+        7,
+      ),
+    });
+    expect(approach.jobs, 'an inbox must not silence outreach').toHaveLength(1);
+  }, 120_000);
+});

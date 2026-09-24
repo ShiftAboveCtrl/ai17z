@@ -25,6 +25,7 @@ import { RelationshipsSection } from './sections/RelationshipsSection';
 import { BeliefsSection } from './sections/BeliefsSection';
 import { VoiceSection } from './sections/VoiceSection';
 import { BehaviourSection } from './sections/BehaviourSection';
+import { AutonomySection } from './sections/AutonomySection';
 import { PipelineSection } from './sections/PipelineSection';
 import { ToolsSection } from './sections/ToolsSection';
 import { CapabilitiesSection } from './sections/CapabilitiesSection';
@@ -57,7 +58,7 @@ const AREAS = [
   { id: 'character', label: 'Character', blurb: 'Who it is, and how it writes.', sections: ['identity', 'voice', 'beliefs'] },
   { id: 'reach', label: 'Reach', blurb: 'Where it speaks, what it thinks with, what it can use.', sections: ['accounts', 'intelligence', 'capabilities', 'tools'] },
   { id: 'memory', label: 'Memory', blurb: 'What it knows, and who it knows.', sections: ['memory', 'knowledge', 'relationships', 'learned'] },
-  { id: 'behaviour', label: 'Behaviour', blurb: 'What it does on its own, and what it is allowed to do.', sections: ['content', 'behaviour', 'policies', 'pipeline'] },
+  { id: 'behaviour', label: 'Behaviour', blurb: 'What it does on its own, and what it is allowed to do.', sections: ['content', 'behaviour', 'autonomy', 'policies', 'pipeline'] },
 ] as const;
 
 type AreaId = (typeof AREAS)[number]['id'];
@@ -514,15 +515,21 @@ export function AgentPage() {
           <>
             <ContentSection index={1} agentId={agent.id} />
             <BehaviourSection index={2} agentId={agent.id} />
+            {/*
+              Between what it did and what it is permitted to do, because that
+              is the order an owner reads them in: the account has gone quiet,
+              the track record says so, and this says why.
+            */}
+            <AutonomySection index={3} agentId={agent.id} />
             <PoliciesSection
-              index={3}
+              index={4}
               agentId={agent.id}
               policy={policy?.config ?? null}
               version={policy?.version ?? 1}
               onSaved={reload}
             />
             <PipelineSection
-              index={4}
+              index={5}
               pipeline={pipeline}
               triggerLabel={channel ? `When someone mentions ${agent.name}.` : `When ${agent.name} receives an event.`}
             />

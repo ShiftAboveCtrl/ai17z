@@ -31,6 +31,7 @@ export * as postAnalytics from './repositories/postAnalytics';
 export * as growth from './repositories/growth';
 export * as experiments from './repositories/experiments';
 export * as capabilityPermissions from './repositories/capabilityPermissions';
+export * as autonomy from './repositories/autonomy';
 export * as plugins from './repositories/plugins';
 export * as workers from './repositories/workers';
 export * as radar from './repositories/radar';
@@ -82,6 +83,7 @@ export type { WorkerRow } from './repositories/workers';
 // browser-session freshness check both measure against it, so there is one.
 export { WORKER_PRESENT_SECONDS } from './repositories/workers';
 export type { RadarSourceRow, DiscoveryRow } from './repositories/radar';
+export type { GrowthSessionRow, DoNotContactRow, OwnerSignalRow, AccountHealth, AccountHealthRow } from './repositories/autonomy';
 export type { EventMediaRow, EventQuoteRow, EventLinkRow } from './repositories/media';
 export type { AttentionRow, GoalRow, ReflectionRow, WakeRow, RememberInput } from './repositories/deliberation';
 export type { RelationshipRow, CallbackRow } from './repositories/relationships';
