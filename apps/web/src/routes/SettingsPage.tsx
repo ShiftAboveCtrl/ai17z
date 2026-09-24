@@ -155,7 +155,7 @@ export function SettingsPage() {
   };
 
   return (
-    <main className="mx-auto max-w-page px-6 pb-24 pt-24 sm:px-10 sm:pt-28">
+    <main className="mx-auto max-w-page px-6 pb-24 pt-32 sm:px-10 sm:pt-28">
       <header className="mb-16">
         <FadeIn>
           <p className="eyebrow mb-2">{user?.email}</p>

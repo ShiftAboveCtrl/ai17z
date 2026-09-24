@@ -134,7 +134,7 @@ export function ActivityPage() {
   };
 
   return (
-    <main className="mx-auto max-w-page px-6 pb-24 pt-24 sm:px-10 sm:pt-28">
+    <main className="mx-auto max-w-page px-6 pb-24 pt-32 sm:px-10 sm:pt-28">
       <header className="mb-8">
         <FadeIn>
           <p className="eyebrow mb-2">
