@@ -16,6 +16,8 @@ interface RadarSource {
   lastSuccessAt: string | null;
   lastResultAt: string | null;
   lastError: string | null;
+  /** Why it had nothing to show, when nothing was the honest answer. */
+  idleReason: string | null;
   consecutiveFailures: number;
   nextPollAt: string | null;
   config: { intervalSeconds?: number; mayTrigger?: boolean };
@@ -184,6 +186,19 @@ export function RadarPanel({ accountId }: { accountId: string }) {
               )}
               {source.lastError && (
                 <p className="mt-1 break-words text-xs leading-relaxed text-signal-fail">{source.lastError}</p>
+              )}
+              {/*
+                Why a healthy source has nothing to show.
+
+                A source with no error and no results is ambiguous, and that
+                ambiguity hid an eight-day outage behind a green light: the
+                replies monitor spent every cycle on something else, reported
+                success each time, and read no threads at all. "Checked and
+                found nothing" and "there was nothing to check" are different
+                facts about an account and only one of them is fine.
+              */}
+              {!source.lastError && source.idleReason && (
+                <p className="mt-1 break-words text-xs leading-relaxed text-bone-dim">{source.idleReason}</p>
               )}
             </li>
           ))}

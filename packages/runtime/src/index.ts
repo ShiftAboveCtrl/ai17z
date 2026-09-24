@@ -17,6 +17,7 @@ export * from './steps';
 export * from './loadJob';
 export * from './channelContext';
 export * from './approvals';
+export * from './attentionQueue';
 export * from './defaultPipeline';
 export * from './bootstrap';
 export * from './easyMode';

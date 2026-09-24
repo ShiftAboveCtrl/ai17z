@@ -64,11 +64,31 @@ export interface MentionRow {
   priorFromPerson: number;
 }
 
+/**
+ * Which kinds of event count as somebody writing to the agent.
+ *
+ * A keyword match is not one. It is something the agent went looking for,
+ * and it arrives in numbers no direct inbound ever does: measured on a live
+ * installation, 2,106 keyword matches against 15 mentions and replies in the
+ * same 72 hours. Kept available because an owner may want to see what the
+ * radar found, and separable because otherwise it drowns everything else.
+ */
+export const DIRECT_INBOUND_TYPES = ['MENTION', 'REPLY', 'DIRECT_MESSAGE'] as const;
+const ALL_INBOUND_TYPES = [...DIRECT_INBOUND_TYPES, 'KEYWORD_MATCH'] as const;
+
 export interface MentionFilter {
   agentId?: string | null;
   accountId?: string | null;
   /** Restrict to one state. Omit for everything. */
   state?: MentionState | null;
+  /**
+   * Only what somebody addressed to the agent.
+   *
+   * The inbox exists to answer "who said something and did they get an
+   * answer", and with the radar running that question is unanswerable from a
+   * list the radar dominates.
+   */
+  directOnly?: boolean | null;
   /**
    * Everything one person said, rather than everything everybody said.
    *
@@ -149,7 +169,7 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
             AND earlier.ingested_at < e.ingested_at
             AND ($2::uuid IS NULL OR earlier.account_id = $2)
        ) p ON true
-      WHERE e.type IN ('MENTION', 'REPLY', 'DIRECT_MESSAGE', 'KEYWORD_MATCH')
+      WHERE e.type = ANY ($5::text[])
         AND ($2::uuid IS NULL OR e.account_id = $2)
         AND ($1::uuid IS NULL OR j.agent_id = $1 OR j.id IS NULL)
         AND ($4::text IS NULL OR lower(e.remote_author_handle) = lower($4))
@@ -170,6 +190,30 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
           and its dry-run draft as an answer that went out.
         */
         AND coalesce((e.payload ->> 'rehearsal')::boolean, false) = false
+        /*
+          The state filter, in SQL, ahead of the limit.
+
+          It used to be applied in JavaScript after the LIMIT, which is only
+          harmless while the newest rows are a mixture. They are not: with the
+          radar running, the most recent two hundred events on a live
+          installation were every one of them a keyword match, so asking for
+          REPLIED took the newest forty, found no reply among them, and
+          answered with an empty list. The three replies that had gone out
+          were 449 events further back.
+
+          An owner reading that concluded the agent had stopped answering
+          people. It had not; the question was being asked of the wrong forty
+          rows.
+        */
+        AND ($6::text IS NULL OR $6 = CASE
+          WHEN j.status IS NULL THEN 'NOT_ACTIONED'
+          WHEN j.status = 'EXECUTED' THEN 'REPLIED'
+          WHEN j.status = 'DRY_RUN_COMPLETED' THEN 'DRY_RUN'
+          WHEN j.status = 'CANCELLED' THEN 'DECLINED'
+          WHEN j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED') THEN 'NEEDS_REVIEW'
+          WHEN j.status IN ('PERMANENT_FAILURE', 'RETRYABLE_FAILURE') THEN 'FAILED'
+          ELSE 'WORKING'
+        END)
       ORDER BY e.ingested_at DESC
       LIMIT $3`,
     [
@@ -177,15 +221,21 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
       filter.accountId ?? null,
       Math.min(filter.limit ?? 50, 200),
       filter.authorHandle ? filter.authorHandle.replace(/^@+/, '') : null,
+      filter.directOnly ? [...DIRECT_INBOUND_TYPES] : [...ALL_INBOUND_TYPES],
+      filter.state ?? null,
     ],
   );
 
-  const mapped = mapRows<Omit<MentionRow, 'state'>>(rows).map((row) => ({
+  /*
+    `stateOf` still decides the word, and the CASE above has to agree with it.
+    `tests/integration/mentionsInbox.test.ts` holds one against the other for
+    every job status there is, because two spellings of one mapping is exactly
+    the thing that goes quietly wrong.
+  */
+  return mapRows<Omit<MentionRow, 'state'>>(rows).map((row) => ({
     ...row,
     state: stateOf(row.jobStatus),
   }));
-
-  return filter.state ? mapped.filter((row) => row.state === filter.state) : mapped;
 }
 
 /**
@@ -220,7 +270,53 @@ export function stateOf(jobStatus: string | null): MentionState {
 
 /** How many mentions are in each state, for the filter chips above the list. */
 export async function countMentionStates(filter: MentionFilter): Promise<Record<MentionState, number>> {
-  const all = await listMentions({ ...filter, state: null, limit: 200 });
+  /*
+    Counted over everything, not over a window.
+
+    This used to count the newest two hundred rows, which on a live
+    installation were two hundred keyword matches, so every chip read zero
+    except DECLINED. A count that disagrees with the list beneath it is bad;
+    a count that agrees with it and is wrong about the system is worse,
+    because there is then nothing to notice.
+
+    The window that remains is the caller's own `limit` on the list, which is
+    about how much to render rather than about what is true.
+  */
+  const types = filter.directOnly ? [...DIRECT_INBOUND_TYPES] : [...ALL_INBOUND_TYPES];
+  const rows = await query<{ state: string; n: string }>(
+    `WITH latest_job AS (
+       SELECT DISTINCT ON (event_id) event_id, agent_id, status
+         FROM jobs
+        WHERE ($1::uuid IS NULL OR agent_id = $1)
+        ORDER BY event_id, created_at DESC
+     )
+     SELECT CASE
+              WHEN j.status IS NULL THEN 'NOT_ACTIONED'
+              WHEN j.status = 'EXECUTED' THEN 'REPLIED'
+              WHEN j.status = 'DRY_RUN_COMPLETED' THEN 'DRY_RUN'
+              WHEN j.status = 'CANCELLED' THEN 'DECLINED'
+              WHEN j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED') THEN 'NEEDS_REVIEW'
+              WHEN j.status IN ('PERMANENT_FAILURE', 'RETRYABLE_FAILURE') THEN 'FAILED'
+              ELSE 'WORKING'
+            END AS state,
+            count(*)::text AS n
+       FROM events e
+       LEFT JOIN latest_job j ON j.event_id = e.id
+      WHERE e.type = ANY ($3::text[])
+        AND ($2::uuid IS NULL OR e.account_id = $2)
+        AND ($1::uuid IS NULL OR j.agent_id = $1 OR j.event_id IS NULL)
+        AND ($4::text IS NULL OR lower(e.remote_author_handle) = lower($4))
+        AND (e.account_id IS NOT NULL OR j.event_id IS NOT NULL)
+        AND coalesce((e.payload ->> 'rehearsal')::boolean, false) = false
+      GROUP BY 1`,
+    [
+      filter.agentId ?? null,
+      filter.accountId ?? null,
+      types,
+      filter.authorHandle ? filter.authorHandle.replace(/^@+/, '') : null,
+    ],
+  );
+
   const counts = {
     REPLIED: 0,
     WORKING: 0,
@@ -230,6 +326,8 @@ export async function countMentionStates(filter: MentionFilter): Promise<Record<
     DRY_RUN: 0,
     NOT_ACTIONED: 0,
   } as Record<MentionState, number>;
-  for (const row of all) counts[row.state] += 1;
+  for (const row of rows) {
+    if (row.state in counts) counts[row.state as MentionState] = Number(row.n);
+  }
   return counts;
 }

@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { usePolling, useResource } from '@app/lib/hooks';
 import { post } from '@app/lib/api';
 import type { JobSummary, MentionRow, MentionState } from '@app/lib/types';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { EmptyState, ErrorPanel, Loading } from '@app/components/ui';
 import { Explain } from '@app/components/Explain';
+import { timeAgo } from '@app/lib/format';
 import { JobCard } from '@app/components/JobCard';
 import { MentionCard } from '@app/components/MentionCard';
 
@@ -20,8 +21,43 @@ import { MentionCard } from '@app/components/MentionCard';
  */
 const VIEWS = [
   { key: 'inbox', label: 'Mentions' },
+  { key: 'waiting', label: 'Waiting for you' },
   { key: 'jobs', label: 'Jobs' },
 ] as const;
+
+/**
+ * What an owner is being asked, in the order a person should meet them.
+ *
+ * The same six the runtime ranks by, spelled here because the browser cannot
+ * import the runtime. They are held against each other in
+ * `tests/unit/attentionQueue.test.ts` rather than being trusted to agree.
+ */
+const KIND_LABELS: Record<string, string> = {
+  SECURITY: 'Needs you to sign in or clear a security check',
+  DIRECT_INBOUND: 'Somebody wrote to this agent',
+  IRREVERSIBLE: 'Something that cannot be taken back',
+  AGENT_DECISION: 'A decision the agent made',
+  GROWTH_OPPORTUNITY: 'A conversation that looks worth joining',
+  ROUTINE_GROWTH: 'Speaking first to somebody who did not ask',
+};
+
+interface AttentionItem {
+  jobId: string;
+  kind: string;
+  eventType: string;
+  authorHandle: string | null;
+  createdAt: string;
+  value: number | null;
+}
+
+interface AttentionWindowData {
+  visible: AttentionItem[];
+  /** Kept and counted rather than deleted. Never hidden from the owner. */
+  backlogCount: number;
+  backlogByKind: Record<string, number>;
+  staleCount: number;
+  groupedCount: number;
+}
 
 const MENTION_FILTERS: { key: MentionState | 'all'; label: string }[] = [
   { key: 'all', label: 'Everything' },
@@ -52,6 +88,16 @@ export function ActivityPage() {
   const [view, setView] = useState<(typeof VIEWS)[number]['key']>('inbox');
   const [filter, setFilter] = useState<(typeof FILTERS)[number]['key']>('all');
   const [mentionFilter, setMentionFilter] = useState<MentionState | 'all'>('all');
+  /*
+    Who wrote to the agent, as opposed to what it came across.
+
+    With the radar running, these are not comparable quantities. Measured on a
+    live installation over seventy-two hours: 2,058 posts found by watching
+    keywords against fifteen mentions and replies from actual people. A list
+    holding both is a list of the first, and the question this page exists to
+    answer is the second.
+  */
+  const [directOnly, setDirectOnly] = useState(true);
 
   const path = useMemo(() => {
     const query = new URLSearchParams({ limit: '30' });
@@ -69,6 +115,9 @@ export function ActivityPage() {
   }, [agentId, mentionFilter]);
 
   const jobs = useResource<{ items: JobSummary[]; total: number }>(path);
+  const waiting = useResource<AttentionWindowData>(
+    agentId ? `/api/jobs/waiting?agentId=${agentId}` : '/api/jobs/waiting',
+  );
   const mentions = useResource<{ items: MentionRow[]; counts: Record<MentionState, number> }>(mentionPath);
   const counts = useResource<{ counts: Record<string, number>; awaitingAPerson: number }>(
     agentId ? `/api/jobs/counts?agentId=${agentId}` : '/api/jobs/counts',
@@ -82,6 +131,7 @@ export function ActivityPage() {
       jobs.reload();
       counts.reload();
       mentions.reload();
+      waiting.reload();
     },
     3000,
     hasLive || filter === 'live',
@@ -128,6 +178,7 @@ export function ActivityPage() {
       jobs.reload();
       counts.reload();
       mentions.reload();
+      waiting.reload();
     } finally {
       setStopping(false);
     }
@@ -188,6 +239,24 @@ export function ActivityPage() {
 
       <div className="scroll-x mb-10 -mx-6 px-6 sm:mx-0 sm:px-0">
         <div className="flex gap-2">
+          {/*
+            Who wrote in, as opposed to what the agent came across.
+
+            These are not comparable quantities and a list holding both is a
+            list of the second. Measured on a live installation over
+            seventy-two hours: 2,058 posts found by watching keywords against
+            fifteen messages from actual people.
+          */}
+          {view === 'inbox' && (
+            <button
+              type="button"
+              onClick={() => setDirectOnly((on) => !on)}
+              aria-pressed={directOnly}
+              className={CHIP(directOnly)}
+            >
+              {directOnly ? 'Sent to this agent' : 'Everything the radar saw'}
+            </button>
+          )}
           {view === 'inbox'
             ? MENTION_FILTERS.map((f) => (
                 <button
@@ -201,6 +270,8 @@ export function ActivityPage() {
                   {f.key !== 'all' && mentions.data ? ` ${mentions.data.counts[f.key] ?? 0}` : ''}
                 </button>
               ))
+            : view === 'waiting'
+            ? null
             : FILTERS.map((f) => (
                 <button
                   key={f.key}
@@ -215,7 +286,68 @@ export function ActivityPage() {
         </div>
       </div>
 
-      {view === 'inbox' ? (
+      {view === 'waiting' ? (
+        waiting.loading && !waiting.data ? (
+          <Loading label="Loading what is waiting" />
+        ) : waiting.error ? (
+          <ErrorPanel title="What is waiting could not be loaded." detail={waiting.error} />
+        ) : (waiting.data?.visible.length ?? 0) === 0 ? (
+          <EmptyState
+            title="Nothing is waiting for you."
+            detail="Decisions the agent cannot make on its own appear here."
+          />
+        ) : (
+          <div className="space-y-6">
+            <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-2">
+              {waiting.data?.visible.map((item, index) => (
+                <FadeIn key={item.jobId} delay={Math.min(index * 0.04, 0.3)}>
+                  <Link to={`/jobs/${item.jobId}`} className="card block p-6 hover:border-signal-calm/50">
+                    <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-signal-wait">
+                      {KIND_LABELS[item.kind] ?? item.kind}
+                    </p>
+                    <p className="mt-3 break-words text-sm text-bone">
+                      {item.authorHandle ? `@${item.authorHandle}` : 'No author recorded'}
+                    </p>
+                    <p className="mt-1 break-words font-mono text-[10px] text-bone-faint">
+                      {item.eventType.toLowerCase().replace(/_/g, ' ')} · {timeAgo(item.createdAt)}
+                      {item.value !== null ? ` · scored ${item.value}` : ''}
+                    </p>
+                  </Link>
+                </FadeIn>
+              ))}
+            </div>
+            {/*
+              What did not fit, said plainly.
+
+              This list is capped so no single repetitive kind of request can
+              fill it, which makes the count below the whole difference between
+              a short list and a short list hiding sixty-five things. Nothing
+              is deleted, and answering what is shown brings the rest forward.
+            */}
+            {(waiting.data?.backlogCount ?? 0) > 0 && (
+              <p className="break-words text-sm text-bone-dim">
+                {waiting.data!.backlogCount} more {waiting.data!.backlogCount === 1 ? 'is' : 'are'} waiting behind
+                these:{' '}
+                {Object.entries(waiting.data!.backlogByKind)
+                  .map(([kind, n]) => `${n} × ${(KIND_LABELS[kind] ?? kind).toLowerCase()}`)
+                  .join(', ')}
+                . They come forward as you answer these.
+              </p>
+            )}
+            {(waiting.data?.groupedCount ?? 0) > 0 && (
+              <p className="break-words text-sm text-bone-faint">
+                {waiting.data!.groupedCount} asked about something already shown here, so they are not asked twice.
+              </p>
+            )}
+            {(waiting.data?.staleCount ?? 0) > 0 && (
+              <p className="break-words text-sm text-bone-faint">
+                {waiting.data!.staleCount} stopped being a live decision, because the post is gone or the request was
+                overtaken. They are kept, and no longer take a place here.
+              </p>
+            )}
+          </div>
+        )
+      ) : view === 'inbox' ? (
         mentions.loading && !mentions.data ? (
           <Loading label="Loading mentions" />
         ) : mentions.error ? (

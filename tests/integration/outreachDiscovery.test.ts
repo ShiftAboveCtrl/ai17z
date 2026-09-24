@@ -28,7 +28,19 @@ function watchedPost(remoteId: string): RadarCandidate {
     authorHandle: 'stranger',
     authorId: null,
     authorDisplayName: 'A stranger',
-    text: 'Shipping something today that nobody asked me about.',
+    /*
+      Worth approaching, and it has to be.
+
+      This used to read "Shipping something today that nobody asked me about",
+      which scores 35 against an outreach bar of 65 -- so once the engagement
+      judgement moved ahead of job creation, no job was created and a test
+      about account links started failing for a reason that had nothing to do
+      with account links. The property here is that turning outreach on is the
+      whole decision; proving it needs a post the agent would actually take.
+    */
+    text:
+      'I have been trying to work out how an agent should keep a working set across a restart, and every framework ' +
+      'I have tried forgets the whole thing the moment the process dies. Has anyone actually solved this properly?',
     parentRemoteId: null,
     conversationRemoteId: remoteId,
     occurredAt: new Date().toISOString(),

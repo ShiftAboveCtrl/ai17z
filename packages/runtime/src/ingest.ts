@@ -1,4 +1,10 @@
-import type { ActionType, Capability, JobRecord, NormalizedEvent as NormalizedEventType } from '@xbam/shared/contracts';
+import type {
+  ActionType,
+  Capability,
+  JobRecord,
+  NormalizedEvent as NormalizedEventType,
+  RelationshipContext,
+} from '@xbam/shared/contracts';
 import { z } from 'zod';
 import { NormalizedEvent, PolicyConfig } from '@xbam/shared/contracts';
 import { PipelineError, actionIdempotencyKey, createLogger, envInt, sanitizeText } from '@xbam/shared';
@@ -11,10 +17,14 @@ import {
   jobs as jobsRepo,
   observability,
   prompts as promptsRepo,
+  relationships as relationshipsRepo,
   withTransaction,
+  type Tx,
 } from '@xbam/database';
 import { REPLY_TEMPLATE_KEY } from '@xbam/prompts';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
+import { cannotPossiblyEngage, recentRepliesTo } from './engagement';
+import { outreachHeadroom } from './steps/social';
 
 const log = createLogger('ingest');
 
@@ -115,6 +125,95 @@ const RETROACTIVE_WORK_WINDOW_MS = 6 * 60 * 60_000;
  * real mentions the first time X changed its markup.
  */
 const MAX_POST_AGE_MS = envInt('AI17Z_MAX_POST_AGE_MINUTES', 120) * 60_000;
+
+/**
+ * The same window, for somebody who wrote to the agent directly.
+ *
+ * The two hours above are right about an opportunity the radar found: joining
+ * a stranger's two-hour-old thread uninvited is late, and joining their
+ * two-day-old one is a bot working through a backlog.
+ *
+ * A mention or a reply is not that. Somebody addressed this account and is
+ * waiting. Being slow to answer them is a worse fault than being slow, and it
+ * is the agent's own discovery latency that made it late, not theirs.
+ *
+ * Measured on a live installation before this existed: sixteen mentions and
+ * replies from real people were recorded and never considered, every one of
+ * them because it was first seen between three and a hundred and fifty-one
+ * hours after it was written. Not one produced a job, an answer, or anything
+ * the owner could see. The freshness rule was working exactly as written; what
+ * was wrong was applying an uninvited-outreach rule to somebody's question.
+ *
+ * A day, because a question answered the next morning is still an answer and
+ * still reads as a person catching up, while a week later reads as a machine
+ * that found an old row. Anything past it is still recorded, still in the
+ * inbox, and still answerable by hand.
+ */
+const MAX_DIRECT_POST_AGE_MS = envInt('AI17Z_MAX_DIRECT_POST_AGE_MINUTES', 24 * 60) * 60_000;
+
+/** Somebody wrote to the agent, as opposed to the radar finding a post. */
+const DIRECT_INBOUND = new Set(['MENTION', 'REPLY', 'DIRECT_MESSAGE']);
+
+/**
+ * How old this kind of event may be and still be worth answering.
+ *
+ * Exported so the rule can be held to without an account, a link and a
+ * browser: what is worth pinning is the decision, and the decision is this
+ * function.
+ */
+export function freshnessWindowFor(type: string): number {
+  return DIRECT_INBOUND.has(type) ? MAX_DIRECT_POST_AGE_MS : MAX_POST_AGE_MS;
+}
+
+/**
+ * How far apart a backlog of late answers is spaced.
+ *
+ * Twelve minutes, so a dozen mentions found after a day offline go out across
+ * two hours rather than in six minutes.
+ */
+const CATCH_UP_SPACING_MS = 12 * 60_000;
+
+/** The most a catch-up answer will be held back, however deep the backlog. */
+const MAX_CATCH_UP_DELAY_MS = 6 * 60 * 60_000;
+
+/**
+ * When a late answer should go out, given how many are already queued.
+ *
+ * Answering somebody a day later is right; answering twelve people a day later
+ * within six minutes of each other is a machine working through a backlog, and
+ * it reads as one to every person who sees it. The rate limit is no help here:
+ * thirty seconds between actions is what it is for, and thirty seconds twelve
+ * times is the burst.
+ *
+ * This is the case the two-hour window used to prevent by refusing the work
+ * outright. Widening it to a day for direct inbound -- which is right, because
+ * the lateness is the agent's own discovery and not theirs -- gives that fault
+ * somewhere to reappear, so the spacing has to arrive with it.
+ *
+ * Only for catch-up. A mention that is genuinely new runs now, which is almost
+ * every mention: the ordinary case is a post minutes old and this returns null
+ * for it. And a delay is not a decision -- each job re-reads freshness, the
+ * conversation and the person when its turn comes, so an opportunity that
+ * stopped being one in the meantime is declined then rather than sent.
+ */
+async function catchUpDelayMs(
+  tx: Tx,
+  agentId: string,
+  type: string,
+  age: number | null,
+): Promise<Date | null> {
+  if (age === null || age <= MAX_POST_AGE_MS || !DIRECT_INBOUND.has(type)) return null;
+  const rows = await tx
+    .many<{ n: string }>(
+      `SELECT count(*)::text AS n FROM jobs
+        WHERE agent_id = $1 AND run_at > now()
+          AND status NOT IN ('EXECUTED','DRY_RUN_COMPLETED','CANCELLED','PERMANENT_FAILURE')`,
+      [agentId],
+    )
+    .catch(() => [] as { n: string }[]);
+  const queued = Number(rows[0]?.n ?? 0);
+  return new Date(Date.now() + Math.min((queued + 1) * CATCH_UP_SPACING_MS, MAX_CATCH_UP_DELAY_MS));
+}
 
 /** How old the post is, or null when nothing readable said. */
 function postAgeMs(occurredAt: string | null | undefined, now = Date.now()): number | null {
@@ -244,6 +343,53 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
     policiesById.set(link.agentId, await agentsRepo.getActivePolicy(link.agentId));
   }
 
+  /*
+    What it takes to know, before spending anything, that this one is a no.
+
+    Only gathered for a post the agent came across rather than one addressed to
+    it, and only when there is an agent to gather it for. Three indexed reads
+    against the amount of work a keyword match was costing before the decision
+    was taken: a status page walked, every picture on it described by a vision
+    model, a relationship assembled, a pipeline run. See `cannotPossiblyEngage`.
+  */
+  const triage = new Map<string, { topics: string[]; relationship: RelationshipContext | null; recent: number }>();
+  // The account's own handle decides whether a keyword match is actually
+  // addressed to the agent, which takes it out of unprompted territory
+  // entirely. `policy.content.selfHandles` is an aliases list nobody fills in.
+  let selfHandle: string | null = null;
+  if (event.type === 'KEYWORD_MATCH' && !options.onlyAgentId) {
+    selfHandle = accountId ? ((await accountsRepo.getAccount(accountId))?.handle ?? null) : null;
+    for (const link of links) {
+      if (triage.has(link.agentId)) continue;
+      const persona = await agentsRepo.getActivePersona(link.agentId).catch(() => null);
+      const relationship = event.remoteAuthorHandle
+        ? await relationshipsRepo
+            .find({ agentId: link.agentId, channel: event.channel, handle: event.remoteAuthorHandle })
+            .catch(() => null)
+        : null;
+      triage.set(link.agentId, {
+        topics: persona?.topics ?? [],
+        // Only the three fields the score reads. The full context is assembled
+        // later by the step that needs all of it; building it here would be
+        // the expensive work this exists to avoid.
+        relationship: relationship
+          ? {
+              known: true,
+              handle: relationship.handle,
+              familiarity: relationship.familiarity,
+              historyLine: '',
+              topics: [],
+              summary: null,
+              ownerNote: null,
+              disposition: relationship.disposition,
+              callback: null,
+            }
+          : null,
+        recent: await recentRepliesTo(link.agentId, event.remoteAuthorHandle).catch(() => 0),
+      });
+    }
+  }
+
   const pendingTraces: Array<{ jobId: string; agentId: string; data: Record<string, unknown> }> = [];
 
   const outcome = await withTransaction(async (tx) => {
@@ -254,14 +400,15 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
     // a person can act on it, but no work is queued: it is history, not a
     // conversation. A manual trigger is somebody deciding otherwise.
     const age = postAgeMs(event.occurredAt);
-    if (age !== null && age > MAX_POST_AGE_MS && !options.onlyAgentId) {
+    const window = freshnessWindowFor(event.type);
+    if (age !== null && age > window && !options.onlyAgentId) {
       const hours = Math.round(age / 3_600_000);
       for (const link of links) {
         outcome.skipped.push({
           agentId: link.agentId,
           reason:
             hours >= 1
-              ? `posted about ${hours}h ago, past the ${Math.round(MAX_POST_AGE_MS / 60_000)} minute freshness window`
+              ? `posted about ${hours}h ago, past the ${Math.round(window / 60_000)} minute freshness window`
               : `posted ${Math.round(age / 60_000)} minutes ago, past the freshness window`,
         });
       }
@@ -377,6 +524,72 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         continue;
       }
 
+      /*
+        The cheap half of a decision the expensive half was making anyway.
+
+        Deliberately placed *after* the event, the conversation and the inbound
+        message are written. Nothing is lost by declining here: the post is on
+        record, it is in the inbox, and a person can still act on it. What does
+        not happen is the status page being walked, the pictures on it being
+        described by a vision model, and a pipeline running to reach the same
+        conclusion.
+
+        Only for a post the agent came across. A mention or a reply goes
+        through the full run whatever it scores, because somebody asked.
+      */
+      const bounds = triage.get(agent.id);
+      if (bounds && event.type === 'KEYWORD_MATCH') {
+        const selfHandles = [selfHandle, ...policy.content.selfHandles]
+          .filter((h): h is string => Boolean(h))
+          .map((h) => h.replace(/^@+/, '').toLowerCase());
+        const directlyAddressed = selfHandles.some((self) => event.text.toLowerCase().includes(`@${self}`));
+        /*
+          A thread the agent is already in is not an approach to a stranger.
+
+          `stepEngagement` settles this with `alreadyInThread`, and it changes
+          which bar applies: a conversation the agent is part of is held to the
+          ordinary reply threshold rather than to the much higher outreach one.
+          Declining here on the outreach bar would therefore refuse something
+          the full run would have taken, which is the one thing this whole
+          design promises not to do.
+
+          The conversation was written a few lines above, so the answer is a
+          read of the rows that are already there. Anything the agent has said
+          in this thread settles it, and the full pipeline decides.
+        */
+        const spokenHere = await conversationsRepo.hasSpokenIn(tx, conversation.id);
+        /*
+          The budget and the per-person cooldown, asked before the work rather
+          than after it.
+
+          These are the same two checks `stepEngagement` has always made, and
+          the same function makes them. They were simply being made at the far
+          end of a pipeline run: an agent that had already approached its five
+          people for the day still walked a status page and described every
+          picture on it before being told it had no approaches left.
+
+          A day's budget and a seven-day per-author cooldown are exactly the
+          kind of thing a job should never be created to discover.
+        */
+        const unprompted = !directlyAddressed && !spokenHere;
+        const declined = !unprompted
+          ? null
+          : (await outreachHeadroom(agent.id, policy.outreach, event.remoteAuthorHandle).catch(() => null)) ??
+            cannotPossiblyEngage({
+              text: event.text,
+              directlyAddressed,
+              topics: bounds.topics,
+              outreach: policy.outreach,
+              policy: policy.engagement,
+              relationship: bounds.relationship,
+              recentRepliesToPerson: bounds.recent,
+            });
+        if (declined) {
+          outcome.skipped.push({ agentId: agent.id, reason: declined });
+          continue;
+        }
+      }
+
       const idempotencyKey = actionIdempotencyKey({
         channel: event.channel,
         accountId,
@@ -400,6 +613,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         promptTemplateVersionId: template.id,
         conversationId: conversation.id,
         requiresBrowser,
+        runAt: await catchUpDelayMs(tx, agent.id, event.type, age),
       });
       outcome.jobs.push({ job, created, agentId: agent.id });
 

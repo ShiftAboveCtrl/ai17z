@@ -82,6 +82,7 @@ export {
   handleFromUrl,
   looksUnavailable,
   looksLikeXBroke,
+  postedAtFromStatusId,
   UNAVAILABLE_MARKERS,
   RETRYABLE_MARKERS,
 } from './x/targets';
