@@ -47,7 +47,7 @@ export class SocialRadar {
     this.running = true;
     try {
       for (const source of await radarRepo.claimDueSources(this.perTick, this.claimHoldSeconds)) {
-        await this.pollOne(source);
+        await this.pollWithinItsClaim(source);
       }
     } catch (error) {
       log.warn('radar tick failed', { message: errorMessage(error) });
@@ -56,7 +56,77 @@ export class SocialRadar {
     }
   }
 
-  private async pollOne(source: RadarSourceRow): Promise<void> {
+  /**
+   * One poll, which is never allowed to outlive the claim it was given.
+   *
+   * `running` is a mutex with no owner but this loop, so a `pollOne` that never
+   * settles does not slow the radar down -- it ends it. Every later tick returns
+   * at the first line, no source is ever claimed again, and because nothing
+   * failed, every source keeps its last status. The account goes on reporting
+   * seven healthy monitors while nothing has been read for hours.
+   *
+   * Observed on two installations at once, on different versions, which is what
+   * proved it was not a regression in either: both radars stopped claiming
+   * within ten seconds of each other and stayed stopped for ninety-five
+   * minutes, HEALTHY throughout, while the channel poller went on using the
+   * same browser every two minutes. Reproduced deliberately afterwards by
+   * restarting one of them: it claimed its three direct sources, opened the
+   * notifications tab, and never came back.
+   *
+   * The thing that hangs is below this and varies -- an evaluation against a
+   * renderer that has stopped answering is the one this codebase has already
+   * paid for once. Bounding each of those is worth doing and is not enough on
+   * its own, because the guarantee has to hold for the next one nobody has
+   * found yet. This is the floor: whatever happens underneath, the loop lives.
+   *
+   * The deadline is the claim hold, because that is already the moment this
+   * source becomes claimable by anybody else. A poll still running then has
+   * outlived its own lease by definition, and needs no second number to say so.
+   *
+   * The hung promise is not cancellable and is left to settle or not. What
+   * changes is that it no longer holds the radar: the source is recorded as
+   * degraded, in words, and the loop moves on.
+   */
+  private async pollWithinItsClaim(source: RadarSourceRow): Promise<void> {
+    const deadlineMs = this.claimHoldSeconds * 1_000;
+    let timer: NodeJS.Timeout | undefined;
+    const overdue = new Promise<'overdue'>((resolve) => {
+      timer = setTimeout(() => resolve('overdue'), deadlineMs);
+    });
+
+    try {
+      const outcome = await Promise.race([this.pollOne(source).then(() => 'done' as const), overdue]);
+      if (outcome !== 'overdue') return;
+
+      log.warn('a radar source outlived its claim and was left behind', {
+        kind: source.kind,
+        target: source.target,
+        afterSeconds: this.claimHoldSeconds,
+      });
+      await radarRepo
+        .recordPoll({
+          sourceId: source.id,
+          nextPollAt: new Date(Date.now() + this.backoff(source, deadlineMs)),
+          found: 0,
+          error:
+            `This source stopped answering part-way through and was given up on after ` +
+            `${this.claimHoldSeconds} seconds. Nothing was read, which is not the same as nothing being there.`,
+        })
+        .catch(() => undefined);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Protected rather than private so the guarantee above can be tested.
+   *
+   * What has to be proved is that the loop survives a poll that never settles,
+   * and there is no way to make a real poll hang on demand. A test that stands
+   * in for this one by checking a timer in isolation proves the timer, not the
+   * radar.
+   */
+  protected async pollOne(source: RadarSourceRow): Promise<void> {
     const account = await accountsRepo.getAccount(source.accountId);
     if (!account || !isChannelImplemented(account.channel)) return;
 

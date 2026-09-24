@@ -89,8 +89,38 @@ const SCROLL_PIXELS = 2_000;
  * makes an article carrying a quoted post report the quoted post's id as its
  * own.
  */
+/**
+ * How long one read of a timeline is given before it is abandoned.
+ *
+ * `evaluateAll` sends work to the renderer and waits for it to come back. A
+ * renderer that has stopped answering -- out of memory, wedged on X's own
+ * bundles, mid-navigation -- never answers, and this call has no deadline of
+ * its own. `.catch(() => [])` looks like it covers that and does not: a promise
+ * that never settles is never rejected.
+ *
+ * This codebase has paid for that shape once already, on the mentions tab, and
+ * paid for it again here: the radar's whole loop died behind a single read of
+ * the notifications tab and every source went on reporting healthy for ninety
+ * minutes.
+ *
+ * Fifteen seconds because the work is a `map` over at most sixty nodes that
+ * takes milliseconds on a renderer that is answering at all. Anything near
+ * this is not slow, it is gone.
+ */
+const READ_TIMEOUT_MS = 15_000;
+
+/** What an unanswered read returns, typed once so the race has a shape. */
+const EMPTY_READ: {
+  href: string | null;
+  nameBlock: string;
+  text: string;
+  createdAt: string | null;
+  isReply: boolean;
+  isQuote: boolean;
+}[] = [];
+
 export async function readAllArticles(page: Page, limit: number): Promise<Seen[]> {
-  const raw = await page
+  const evaluation = page
     .locator(SEL.tweetArticle)
     .evaluateAll(
       (nodes, max) =>
@@ -130,6 +160,19 @@ export async function readAllArticles(page: Page, limit: number): Promise<Seen[]
           isQuote: boolean;
         }[],
     );
+
+  // An empty read either way, and the difference matters upstream: a renderer
+  // that did not answer is reported by `refuseIfXBroke` as a failure to read
+  // rather than as a quiet surface, because the page text cannot be got either.
+  let timer: NodeJS.Timeout | undefined;
+  const raw = await Promise.race([
+    evaluation,
+    new Promise<typeof EMPTY_READ>((resolve) => {
+      timer = setTimeout(() => resolve(EMPTY_READ), READ_TIMEOUT_MS);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 
   return raw.map((item) => {
     const url = item.href ? `https://x.com${item.href.startsWith('/') ? item.href : `/${item.href}`}` : null;
