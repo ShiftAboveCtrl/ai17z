@@ -121,3 +121,57 @@ export function looksLikeXBroke(pageText: string): boolean {
   const haystack = pageText.toLowerCase();
   return RETRYABLE_MARKERS.some((marker) => haystack.includes(marker));
 }
+
+/**
+ * X's epoch, from which every status id counts.
+ *
+ * A status id is a snowflake: the top forty-one bits are milliseconds since
+ * this moment, which is Twitter's own epoch and has never moved.
+ */
+const X_EPOCH_MS = 1_288_834_974_657n;
+
+/** The oldest id this will vouch for, below which the arithmetic is guesswork. */
+const FIRST_SNOWFLAKE_ID = 300_000_000_000_000n;
+
+/**
+ * When a post was written, read out of its own id.
+ *
+ * The rendered `time` element is the obvious source and is the one preferred
+ * everywhere, but it is not always there: X's notifications surface renders
+ * rows that carry no timestamp at all, and a virtualised article caught
+ * mid-render can lose it too. The monitors answered that with
+ * `createdAt ?? new Date()`, which does not record "X did not say" -- it
+ * records a specific claim that the post was written at the moment AI17Z
+ * happened to look at it.
+ *
+ * Measured on a live installation, after it came back from being off for two
+ * days: six mentions were recorded with the ingest time as their post time and
+ * were wrong by up to forty-four hours. The freshness gate is fed exactly this
+ * field, so the consequences ran both ways in one minute. A mention written
+ * twenty-three hours earlier looked new and was answered in public. A mention
+ * written three hours earlier, whose timestamp *was* readable, was refused for
+ * being stale. The gate was working; what it was being told was invented.
+ *
+ * The id cannot be invented. It is in the permalink that identifies the post
+ * at all, so if there is a candidate there is an id, and the answer is exact
+ * rather than approximate: checked against three posts on that installation
+ * whose timestamps X did render, all three agreed to the minute.
+ *
+ * Null for anything that is not a plausible snowflake, because a wrong
+ * timestamp is what this function exists to stop producing.
+ */
+export function postedAtFromStatusId(statusId: string | null | undefined): string | null {
+  if (!statusId || !/^\d{5,25}$/.test(statusId)) return null;
+  let id: bigint;
+  try {
+    id = BigInt(statusId);
+  } catch {
+    return null;
+  }
+  if (id < FIRST_SNOWFLAKE_ID) return null;
+  const ms = Number((id >> 22n) + X_EPOCH_MS);
+  // A time in the future, or before X existed, means the assumption is wrong
+  // about this id and the honest answer is that nothing was read.
+  if (!Number.isFinite(ms) || ms > Date.now() + 60_000) return null;
+  return new Date(ms).toISOString();
+}

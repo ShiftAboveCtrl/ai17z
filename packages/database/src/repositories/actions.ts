@@ -267,6 +267,34 @@ export async function approachesSince(agentId: string, sinceIso: string): Promis
   return row?.n ?? 0;
 }
 
+/**
+ * Unprompted approaches already written and waiting on the owner.
+ *
+ * `approachesSince` counts what was *published*, which is the right meaning of
+ * "approaches made today" and the wrong one for deciding whether to write
+ * another. An agent set to show approaches before sending them publishes
+ * nothing, so that count stays at zero for ever and every qualifying candidate
+ * adds one more proposal.
+ *
+ * Measured on a live installation: one hundred and five decisions waiting, all
+ * of them proposed approaches, growing by about seventeen an hour, for an agent
+ * whose policy permits five approaches a day. Nothing was wrong with the
+ * budget; it was counting the wrong thing to hold a queue back.
+ */
+export async function pendingApproaches(agentId: string): Promise<number> {
+  const row = await queryOne<{ n: number }>(
+    `SELECT count(*)::int AS n
+       FROM jobs j
+       JOIN events e ON e.id = j.event_id
+      WHERE j.agent_id = $1
+        AND j.status IN ('REVIEW_REQUIRED', 'WAITING_FOR_APPROVAL')
+        AND e.type = 'KEYWORD_MATCH'
+        AND coalesce((e.payload ->> 'rehearsal')::boolean, false) = false`,
+    [agentId],
+  );
+  return row?.n ?? 0;
+}
+
 /** When this agent last approached a given person unasked, if it ever has. */
 export async function lastApproachTo(agentId: string, handle: string): Promise<string | null> {
   const row = await queryOne<{ executed_at: string }>(

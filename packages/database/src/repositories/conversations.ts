@@ -78,6 +78,25 @@ export async function recordMessage(
   );
 }
 
+/**
+ * Whether the agent has already said anything in this conversation.
+ *
+ * Its own question rather than a `recentMessages` the caller filters, because
+ * the caller is ingest and ingest is inside a transaction: a pooled read there
+ * cannot see the transaction's own uncommitted writes and can deadlock the
+ * pool, which is why `withTransaction` refuses one outright. Taking the `tx`
+ * is the whole point of the function existing.
+ *
+ * Cheaper too. The answer is one row either way.
+ */
+export async function hasSpokenIn(tx: Tx, conversationId: string): Promise<boolean> {
+  const row = await tx.one<{ found: boolean }>(
+    `SELECT true AS found FROM messages WHERE conversation_id = $1 AND direction = 'OUTBOUND' LIMIT 1`,
+    [conversationId],
+  );
+  return Boolean(row?.found);
+}
+
 export async function recentMessages(conversationId: string, limit = 20): Promise<ContextMessage[]> {
   const rows = await query(
     `SELECT direction AS role, remote_message_id, author_handle, body AS text, created_at

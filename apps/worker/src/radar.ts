@@ -93,12 +93,19 @@ export class SocialRadar {
        * Nothing is lost by spending the cycle: the post check happens on the
        * next one, a minute or two later.
        */
-      if (await this.dueForAccountReading(source.accountId)) {
-        await this.observeOwnAccount(source.accountId).catch(() => undefined);
+      if (this.dueForAccountReading(source)) {
+        const read = await this.observeOwnAccount(source.accountId).catch((error) => errorMessage(error));
         await radarRepo.recordPoll({
           sourceId: source.id,
           nextPollAt: new Date(Date.now() + interval),
           found: 0,
+          // The attempt is what moves the cadence on, never the outcome. See
+          // `dueForAccountReading` for the eight days this cost.
+          sideWork: true,
+          idleReason:
+            read === null
+              ? 'spent this cycle reading the account itself; the next one checks a thread'
+              : `spent this cycle trying to read the account and could not: ${read}`,
         });
         return;
       }
@@ -108,10 +115,14 @@ export class SocialRadar {
         // Nothing posted recently is not a failure; there is simply nothing to
         // check, and saying so beats recording a spurious success.
         //
+        // Said in words, because a healthy source with no results and no error
+        // is ambiguous, and the ambiguity is what let this source look fine
+        // while it had not read a thread in over a week.
         await radarRepo.recordPoll({
           sourceId: source.id,
           nextPollAt: new Date(Date.now() + interval),
           found: 0,
+          idleReason: 'nothing posted in the last 72 hours, so there is no thread to check for replies',
         });
         return;
       }
@@ -243,17 +254,36 @@ export class SocialRadar {
    * spend cycles that could be finding replies; longer would take days to draw
    * a second point, and one point is not a series.
    */
-  private async dueForAccountReading(accountId: string): Promise<boolean> {
-    const last = await postAnalyticsRepo.lastAccountReadingAt(accountId).catch(() => null);
-    if (!last) return true;
-    return Date.now() - new Date(last).getTime() >= ACCOUNT_READING_INTERVAL_MS;
+  private dueForAccountReading(source: RadarSourceRow): boolean {
+    /*
+      Asked of the attempt, never of the result.
+
+      This used to ask `post_analytics` when the last reading was *stored*. A
+      reading that fails stores nothing, so the first failure made the source
+      permanently due: every poll took this branch, tried the profile, failed,
+      recorded a healthy zero, and returned before looking at a single thread.
+
+      Measured on a live installation: the last stored reading was 09-15 17:47,
+      the last thread checked was 09-15 23:44, and the source then polled every
+      three minutes for eight days reporting HEALTHY the whole time. Roughly
+      three thousand eight hundred polls that read nothing, found nothing, and
+      said nothing was wrong.
+
+      A failure now costs exactly one cycle, the same as a success, and says so
+      on the source. That is also why the reason is written down rather than
+      merely logged: a source with no error and no results is ambiguous, and
+      that ambiguity is the whole of what hid this.
+    */
+    if (!source.lastSideWorkAt) return true;
+    return Date.now() - new Date(source.lastSideWorkAt).getTime() >= ACCOUNT_READING_INTERVAL_MS;
   }
 
-  private async observeOwnAccount(accountId: string): Promise<void> {
+  /** Reads the account's own profile. Returns null on success, or what stopped it. */
+  private async observeOwnAccount(accountId: string): Promise<string | null> {
     const account = await accountsRepo.getAccount(accountId);
-    if (!account?.handle) return;
+    if (!account?.handle) return 'this account has no handle';
     const [link] = await accountsRepo.listAccountAgents(accountId);
-    if (!link) return;
+    if (!link) return 'no agent is linked to this account';
 
     const ctx = await buildChannelContext(account, null);
     // The profile only. This wants two numbers, and asking for a timeline it
@@ -262,7 +292,7 @@ export class SocialRadar {
     if (profile.followerCount === undefined && profile.followingCount === undefined) {
       // X showed neither number. Absent is not zero, and a row of nulls is not
       // a reading -- it would occupy the minute the real one needs.
-      return;
+      return 'X showed neither a follower nor a following count';
     }
     await postAnalyticsRepo.recordAccount({
       agentId: link.agentId,
@@ -276,6 +306,7 @@ export class SocialRadar {
       handle: profile.handle,
       followers: profile.followerCount ?? null,
     });
+    return null;
   }
 
   /**

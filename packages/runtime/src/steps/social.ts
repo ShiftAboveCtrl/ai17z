@@ -1,6 +1,6 @@
 
 
-import type { RelationshipContext } from '@xbam/shared/contracts';
+import type { PolicyConfig, RelationshipContext } from '@xbam/shared/contracts';
 import {
   PipelineError,
 } from '@xbam/shared';
@@ -245,7 +245,8 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
   // not a score. And recorded as a decision rather than a failure: a cap that
   // has been reached is not something to retry an hour later, because by then
   // the post is old and approaching it is stranger than not.
-  const outreachLimit = unprompted && policy.outreach.enabled ? await outreachHeadroom(bundle, handle) : null;
+  const outreachLimit =
+    unprompted && policy.outreach.enabled ? await outreachHeadroom(bundle.agent.id, policy.outreach, handle) : null;
   if (outreachLimit) {
     await observability.emitTrace({
       jobId: job.id,
@@ -310,18 +311,40 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
  * counted from what was actually published: a dry run approached nobody, and a
  * draft that was never sent is not an approach.
  */
-async function outreachHeadroom(bundle: JobBundle, handle: string | null): Promise<string | null> {
-  const { outreach } = bundle.policy;
-
+export async function outreachHeadroom(
+  agentId: string,
+  outreach: PolicyConfig['outreach'],
+  handle: string | null,
+): Promise<string | null> {
   if (outreach.maxPerDay === 0) return 'This agent is not set to approach anybody unprompted.';
   const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-  const today = await actionsRepo.approachesSince(bundle.agent.id, since);
+  const today = await actionsRepo.approachesSince(agentId, since);
   if (today >= outreach.maxPerDay) {
     return `Already approached ${today} ${today === 1 ? 'person' : 'people'} unprompted today, which is the limit.`;
   }
 
+  /*
+    A proposal the owner has not answered is an approach in waiting.
+
+    The budget above counts what was published, which is the correct meaning of
+    "approaches made today" and the wrong thing to ask before writing another
+    one. An agent set to REVIEW publishes nothing, so that count is zero for
+    ever and there is no back pressure at all: measured on a live installation,
+    one hundred and five proposals waiting and rising by seventeen an hour, for
+    an agent permitted five approaches a day.
+
+    Stockpiling is not the same as approaching, so this is not a second budget
+    with a second number to tune -- it is the same allowance, applied to what
+    is outstanding. Propose a few, wait for a decision, propose a few more.
+    Answering any of them makes room immediately.
+  */
+  const waiting = await actionsRepo.pendingApproaches(agentId);
+  if (waiting >= outreach.maxPerDay) {
+    return `${waiting} unprompted approaches are already waiting for you to decide on, which is as many as this agent may make in a day. Answering some of those makes room for new ones.`;
+  }
+
   if (handle && outreach.cooldownDaysPerAuthor > 0) {
-    const last = await actionsRepo.lastApproachTo(bundle.agent.id, handle);
+    const last = await actionsRepo.lastApproachTo(agentId, handle);
     if (last) {
       const days = (Date.now() - Date.parse(last)) / 86_400_000;
       if (Number.isFinite(days) && days < outreach.cooldownDaysPerAuthor) {

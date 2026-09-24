@@ -18,6 +18,16 @@ export interface RadarSourceRow {
   consecutiveFailures: number;
   cursor: string | null;
   nextPollAt: string | null;
+  /** When this source last spent a cycle on something other than its feed. */
+  lastSideWorkAt: string | null;
+  /**
+   * Why there is nothing to show, when that is not a failure.
+   *
+   * A source with no error and no results is ambiguous, and the ambiguity hid
+   * an eight-day outage behind a green light. "Checked and found nothing" and
+   * "there was nothing to check" are different facts about an account.
+   */
+  idleReason: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -68,10 +78,37 @@ export async function deleteSource(id: string): Promise<void> {
 }
 
 /**
+ * The sources that exist because somebody wrote to the agent.
+ *
+ * The other two kinds are the agent going looking: a keyword it watches, an
+ * account it follows. Both are worth having and neither is urgent, and the
+ * difference between the two groups is the whole of what this ordering is
+ * about.
+ */
+export const DIRECT_SOURCE_KINDS = ['notifications', 'mention_search', 'reply_search', 'own_threads'];
+
+/**
  * Sources due for a poll, claimed so two workers cannot both take one.
  *
  * Same shape as the account poller: the schedule lives in the row, and the claim
  * moves it forward in the statement that reads it.
+ *
+ * **Direct inbound is taken before optional discovery, always.** A poll costs a
+ * page load on one signed-in browser, so the sources are competing for a real
+ * and small resource, and a tick can only take a few of them. Ordered by
+ * lateness alone -- which is what `next_poll_at` on its own means -- a keyword
+ * that came due first is polled before a mention that came due second, and on
+ * a live installation the direct sources were running four to six minutes late
+ * while the keyword sources were not yet due at all.
+ *
+ * That is the wrong way round at any load. Somebody who wrote to the account is
+ * waiting for an answer; a keyword search is the agent browsing. When there is
+ * not enough capacity for both, the browsing is what gives way, and if direct
+ * demand ever saturates the browser outright then optional discovery stopping
+ * is the correct outcome rather than a fault.
+ *
+ * Lateness still decides within each group, so no individual source can be
+ * passed over indefinitely by its own peers.
  */
 export async function claimDueSources(limit: number, holdSeconds: number): Promise<RadarSourceRow[]> {
   return mapRows<RadarSourceRow>(
@@ -82,12 +119,14 @@ export async function claimDueSources(limit: number, holdSeconds: number): Promi
             JOIN accounts a ON a.id = rs.account_id
            WHERE rs.enabled AND a.enabled AND a.status = 'CONNECTED'
              AND (rs.next_poll_at IS NULL OR rs.next_poll_at <= now())
-           ORDER BY (rs.config->>'priority')::int DESC NULLS LAST, rs.next_poll_at NULLS FIRST
+           ORDER BY (rs.kind = ANY ($3::text[])) DESC,
+                    (rs.config->>'priority')::int DESC NULLS LAST,
+                    rs.next_poll_at NULLS FIRST
            LIMIT $1
            FOR UPDATE SKIP LOCKED
         )
         RETURNING *`,
-      [limit, holdSeconds],
+      [limit, holdSeconds, DIRECT_SOURCE_KINDS],
     ),
   );
 }
@@ -106,6 +145,14 @@ export async function recordPoll(input: {
   found: number;
   cursor?: string | null;
   error?: string | null;
+  /**
+   * Why this poll has nothing to show, when nothing is the honest answer.
+   *
+   * Null clears it, which is what a poll that actually read a feed should do.
+   */
+  idleReason?: string | null;
+  /** Set when this poll was spent on the account rather than on the feed. */
+  sideWork?: boolean;
 }): Promise<void> {
   const failed = Boolean(input.error);
   await query(
@@ -114,7 +161,12 @@ export async function recordPoll(input: {
             last_success_at = CASE WHEN $3 THEN last_success_at ELSE now() END,
             last_result_at  = CASE WHEN $4 > 0 THEN now() ELSE last_result_at END,
             last_error = $5,
-            cursor = coalesce($6, cursor),
+            -- Never advanced on a failure. A cursor is a claim that everything
+            -- below it has been seen, and a poll that could not read the page
+            -- has seen nothing: moving it would close the gap it just opened.
+            cursor = CASE WHEN $3 THEN cursor ELSE coalesce($6, cursor) END,
+            idle_reason = $7,
+            last_side_work_at = CASE WHEN $8 THEN now() ELSE last_side_work_at END,
             consecutive_failures = CASE WHEN $3 THEN consecutive_failures + 1 ELSE 0 END,
             status = CASE
               WHEN NOT $3 THEN 'HEALTHY'
@@ -123,7 +175,16 @@ export async function recordPoll(input: {
             END,
             updated_at = now()
       WHERE id = $1`,
-    [input.sourceId, input.nextPollAt, failed, input.found, input.error ?? null, input.cursor ?? null],
+    [
+      input.sourceId,
+      input.nextPollAt,
+      failed,
+      input.found,
+      input.error ?? null,
+      input.cursor ?? null,
+      input.idleReason ?? null,
+      input.sideWork ?? false,
+    ],
   );
 }
 

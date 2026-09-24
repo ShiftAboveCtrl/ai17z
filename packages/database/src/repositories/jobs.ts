@@ -29,6 +29,14 @@ export interface CreateJobInput {
   conversationId?: string | null;
   /** True when advancing this job needs a browser, so only a browser-capable worker claims it. */
   requiresBrowser: boolean;
+  /**
+   * When this job first becomes claimable. Now, unless something says later.
+   *
+   * The queue has always had `run_at` -- it is half of the claim index -- and
+   * nothing at creation time ever set it. Catch-up after downtime is the case
+   * that needs it: see `catchUpDelayMs` in the runtime's ingest.
+   */
+  runAt?: Date | null;
 }
 
 export interface CreateJobResult {
@@ -58,12 +66,13 @@ export async function createJob(tx: Tx, input: CreateJobInput): Promise<CreateJo
     input.promptTemplateVersionId,
     input.conversationId ?? null,
     input.requiresBrowser,
+    input.runAt ?? null,
   ];
   const inserted = await tx.one(
     `INSERT INTO jobs (event_id, agent_id, account_id, channel, action_type, idempotency_key,
        dry_run, max_attempts, priority, persona_version_id, policy_version_id,
-       pipeline_version_id, prompt_template_version_id, conversation_id, requires_browser)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       pipeline_version_id, prompt_template_version_id, conversation_id, requires_browser, run_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,coalesce($16, now()))
      ON CONFLICT (idempotency_key) DO NOTHING
      RETURNING ${COLUMNS}`,
     params,
@@ -436,4 +445,56 @@ export async function lastExecutedActionAt(agentId: string): Promise<string | nu
     [agentId],
   );
   return row?.at ? new Date(row.at).toISOString() : null;
+}
+
+/**
+ * Everything waiting on a person, with what it takes to rank it.
+ *
+ * Deliberately returns rows rather than a decision. `attentionWindow` in
+ * `@xbam/runtime` does the ordering, the grouping and the ceiling, and it is
+ * pure -- so what is worth pinning in a test is the judgement rather than a
+ * query. The same predicate as `countAwaitingAPerson`, because two spellings
+ * of "waiting for you" is exactly the defect that one was written to fix.
+ *
+ * The engagement score comes off the trace the decision already wrote, and the
+ * deleted-post flag off the job's own recorded failure. Neither is a new
+ * column: a request that needs a field nothing else maintains is a request
+ * that will be wrong the first time somebody forgets.
+ */
+export async function listAwaitingAPerson(agentId?: string, limit = 300): Promise<
+  {
+    jobId: string;
+    agentId: string;
+    eventType: string;
+    actionType: string;
+    authorHandle: string | null;
+    conversationRef: string | null;
+    createdAt: string;
+    value: number | null;
+    sourceGone: boolean;
+  }[]
+> {
+  return mapRows(
+    await query(
+      `SELECT j.id AS job_id,
+              j.agent_id,
+              e.type AS event_type,
+              j.action_type,
+              e.remote_author_handle AS author_handle,
+              coalesce(e.remote_conversation_id, e.remote_event_id) AS conversation_ref,
+              j.created_at,
+              (SELECT (t.data ->> 'value')::int
+                 FROM trace_events t
+                WHERE t.job_id = j.id AND t.type = 'ENGAGEMENT_DECIDED'
+                ORDER BY t.id DESC LIMIT 1) AS value,
+              coalesce(j.last_error ILIKE '%no longer exists%', false) AS source_gone
+         FROM jobs j
+         JOIN events e ON e.id = j.event_id
+        WHERE ${AWAITING_A_PERSON}
+          AND ($1::uuid IS NULL OR j.agent_id = $1)
+        ORDER BY j.created_at DESC
+        LIMIT $2`,
+      [agentId ?? null, limit],
+    ),
+  );
 }

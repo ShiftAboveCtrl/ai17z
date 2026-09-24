@@ -2,7 +2,14 @@ import type { RadarCandidate, RadarPollResult, RadarSourceKind } from '@xbam/sha
 import { errorMessage } from '@xbam/shared';
 import type { Page } from '@xbam/browser';
 import { articleForStatus, SEL, X_URLS } from './selectors';
-import { extractStatusId, handleFromUrl, normalizeHandle, normalizeTargetId } from './targets';
+import {
+  extractStatusId,
+  handleFromUrl,
+  normalizeHandle,
+  normalizeTargetId,
+  postedAtFromStatusId,
+} from './targets';
+import { refuseIfXBroke } from './page';
 import { readCounts } from './counts';
 
 /**
@@ -169,6 +176,30 @@ async function harvest(ctx: MonitorContext, eventType: string, sourceLabel: stri
   }
   if (snapshots.length === 0) snapshots = await readAllArticles(ctx.page, wanted);
 
+  /*
+    An empty page is not an empty answer, and this was the one reader that
+    treated it as one.
+
+    `refuseIfXBroke` is called by the profile reader, the search reader, the
+    timeline readers, the message readers and the notifications capability --
+    every surface an owner or a capability reads. It was never called here, in
+    the radar's own discovery path, which is the one thing that runs unattended
+    and is the only evidence anybody has that nothing was said.
+
+    That single omission is why two surfaces disagreed about the same account.
+    Asking for a mention search by hand went through the reader that checks, and
+    said "Something went wrong". The monitor loaded the same broken page, found
+    no articles, returned an empty list, and was recorded as a healthy poll that
+    found nothing. The surface reporting the error was the one telling the
+    truth.
+
+    Thrown rather than returned so it lands in `guarded` as a source error: the
+    source goes DEGRADED, backs off, keeps its cursor, and says on the browser
+    panel what X said. Silence and a failure to read are different facts and an
+    owner has to be able to tell them apart.
+  */
+  if (snapshots.length === 0) await refuseIfXBroke(ctx.page, sourceLabel);
+
   const candidates: RadarCandidate[] = [];
   const seen = new Set<string>();
 
@@ -195,10 +226,28 @@ async function harvest(ctx: MonitorContext, eventType: string, sourceLabel: stri
       text: snapshot.text,
       parentRemoteId: null,
       conversationRemoteId: snapshot.statusId,
-      // What X says, not when we happened to look. Falls back to now only when
-      // the element could not be read, which is the safe direction: an unknown
-      // age is treated as current rather than silently dropped.
-      occurredAt: snapshot.createdAt ?? new Date().toISOString(),
+      /*
+        What X says, then what the id says, and only then the clock.
+
+        The fallback used to go straight from the rendered timestamp to `now`,
+        on the reasoning that an unknown age is safer treated as current than
+        silently dropped. That reasoning was sound and the implementation was
+        not: `now` is not an unknown, it is a specific false claim, and the
+        freshness gate reads this field.
+
+        Measured on a live installation coming back from two days off: six
+        mentions were stored with the ingest time as their post time, wrong by
+        up to forty-four hours. In the same minute a twenty-three-hour-old
+        mention was answered in public because it looked new, and a
+        three-hour-old one was refused for being stale because its timestamp
+        happened to be readable. The notifications surface is where this bites,
+        because its rows frequently carry no `time` element at all.
+
+        The id is a snowflake and carries the post's own time, exact to the
+        millisecond, and it is in the permalink that made this a candidate at
+        all. `now` remains only for the case where even that says nothing.
+      */
+      occurredAt: snapshot.createdAt ?? postedAtFromStatusId(snapshot.statusId) ?? new Date().toISOString(),
       eventType,
       raw: { source: sourceLabel },
     });

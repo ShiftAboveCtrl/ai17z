@@ -155,3 +155,107 @@ describe('a monitor reading a feed longer than one screen', () => {
     expect(found.map((c) => c.authorHandle)).not.toContain('someone12');
   }, 60_000);
 });
+
+/**
+ * X answering with its own error page is not the account being quiet.
+ *
+ * Every other reader in this package already refuses that: the profile reader,
+ * the search reader, the timeline readers, the message readers and the
+ * notifications capability all call `refuseIfXBroke` when they come back with
+ * nothing. The radar's monitors did not, and the radar is the one thing that
+ * runs unattended.
+ *
+ * On a live installation that produced two surfaces disagreeing about one
+ * account. A mention search run by hand said "Something went wrong"; the
+ * monitor loaded the same page, read no articles, and was recorded as a
+ * healthy poll that found nothing. The owner was shown an error on one screen
+ * and a healthy green source on another, and the error was the true one.
+ */
+describe('a monitor reading a page X could not render', () => {
+  const brokeHtml = `<!doctype html>
+<html><body style="margin:0">
+  <div>Something went wrong. Try reloading.</div>
+  <button>Retry</button>
+</body></html>`;
+
+  const emptyHtml = `<!doctype html>
+<html><body style="margin:0">
+  <div>Nothing to see here &mdash; yet</div>
+</body></html>`;
+
+  it('reports a failure rather than an empty answer', async () => {
+    const page = await freshPage(brokeHtml);
+
+    await expect(
+      xMonitors.harvestForTest({ page, selfHandles: ['agent'], target: null, limit: 20, cursor: null }),
+    ).rejects.toThrow(/something went wrong/i);
+  }, 60_000);
+
+  it('still calls a genuinely quiet surface quiet', async () => {
+    // The distinction is the whole point. A surface with nothing on it must
+    // not start reporting errors, or the fix is worse than the fault.
+    const page = await freshPage(emptyHtml);
+
+    const found = await xMonitors.harvestForTest({
+      page,
+      selfHandles: ['agent'],
+      target: null,
+      limit: 20,
+      cursor: null,
+    });
+    expect(found).toEqual([]);
+  }, 60_000);
+});
+
+/**
+ * A post with no rendered timestamp still has a knowable age.
+ *
+ * The notifications surface frequently renders rows carrying no `time` element
+ * at all, and the fallback was the clock. That is not "X did not say"; it is a
+ * claim that the post was written at the moment AI17Z looked at it.
+ */
+describe('a feed whose articles carry no timestamp', () => {
+  /** The same feed, with the `time` element taken out. */
+  function untimedFeed(): string {
+    return `<!doctype html>
+<html><body style="margin:0">
+  <div id="feed"></div>
+  <script>
+    const feed = document.getElementById('feed');
+    const ids = ['2102538437152969003', '2102844317307973872'];
+    ids.forEach((id, i) => {
+      const article = document.createElement('article');
+      article.setAttribute('data-testid', 'tweet');
+      article.innerHTML =
+        '<div data-testid="User-Name"><span>Someone</span><span>@person' + i + '</span></div>' +
+        '<a href="/person' + i + '/status/' + id + '">link</a>' +
+        '<div data-testid="tweetText">A question for the agent</div>';
+      feed.appendChild(article);
+    });
+  </script>
+</body></html>`;
+  }
+
+  it('dates each post from its own id rather than from the clock', async () => {
+    const page = await freshPage(untimedFeed());
+
+    const found = await xMonitors.harvestForTest({
+      page,
+      selfHandles: ['agent'],
+      target: null,
+      limit: 20,
+      cursor: null,
+    });
+
+    expect(found.length).toBe(2);
+    // The real post times of two real mentions, one of which was answered in
+    // public as though it had just arrived.
+    expect(found[0]!.occurredAt?.slice(0, 16)).toBe('2026-09-22T23:20');
+    expect(found[1]!.occurredAt?.slice(0, 16)).toBe('2026-09-23T19:35');
+
+    // And neither is the moment we looked, which is what was recorded before.
+    for (const candidate of found) {
+      expect(Date.now() - new Date(candidate.occurredAt!).getTime()).toBeGreaterThan(60_000);
+    }
+  }, 60_000);
+});

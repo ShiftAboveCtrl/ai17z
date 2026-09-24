@@ -47,13 +47,17 @@ describe('how old is too old', () => {
     expect(outcome.jobs).toHaveLength(1);
   });
 
-  it('records a day-old post without queueing anything', async () => {
+  it('records a post older than the window without queueing anything', async () => {
     const fixture = await createFixture();
     const account = await linkedAccount(fixture.ownerId, fixture.agentId);
 
+    // Thirty hours, not twenty-four. The direct window is a day, so a
+    // "day-old" post sits exactly on the boundary and whether it passed came
+    // down to how many milliseconds elapsed between building the fixture and
+    // reading the clock again.
     const outcome = await ingestNormalizedEvent({
       accountId: account.id,
-      event: mockEvent('this was yesterday', { occurredAt: agesAgo(24 * 60 * 60_000) }),
+      event: mockEvent('this was the day before yesterday', { occurredAt: agesAgo(30 * 60 * 60_000) }),
     });
 
     expect(outcome.jobs).toHaveLength(0);
@@ -116,16 +120,33 @@ describe('how old is too old', () => {
   });
 
   it('leaves the queue clear for what actually arrived', async () => {
-    // The point of all of it: a backlog of history must not delay the message
-    // somebody just sent.
+    /*
+      The point of all of it: a backlog of history must not delay the message
+      somebody just sent.
+
+      This used to be proved by the backlog producing no jobs at all, because
+      anything over two hours old was refused outright. That was the wrong
+      protection for a mention. Every one of these five is a real person who
+      wrote to the agent between three and seven hours ago, and refusing them
+      was the fault, not the safeguard: sixteen such messages were found
+      recorded and never considered on a live installation.
+
+      So they are answered, and the property this test is named for is kept by
+      *when* rather than by *whether*. The one that just arrived runs now; the
+      backlog is spaced out behind it and re-evaluates itself when each turn
+      comes.
+    */
     const fixture = await createFixture();
     const account = await linkedAccount(fixture.ownerId, fixture.agentId);
 
+    const backlog: string[] = [];
     for (let i = 0; i < 5; i += 1) {
-      await ingestNormalizedEvent({
+      const outcome = await ingestNormalizedEvent({
         accountId: account.id,
         event: mockEvent(`history ${i}`, { occurredAt: agesAgo((i + 3) * 60 * 60_000) }),
       });
+      expect(outcome.jobs, 'somebody who wrote hours ago still gets an answer').toHaveLength(1);
+      backlog.push(outcome.jobs[0]!.job.id);
     }
     const recent = await ingestNormalizedEvent({
       accountId: account.id,
@@ -133,7 +154,15 @@ describe('how old is too old', () => {
     });
 
     const queued = await jobsRepo.listJobs({ agentId: fixture.agentId, limit: 50 });
-    expect(queued.items).toHaveLength(1);
-    expect(queued.items[0]!.id).toBe(recent.jobs[0]!.job.id);
+    expect(queued.items).toHaveLength(6);
+
+    // Exactly one of them is claimable now, and it is the new one.
+    const claimableNow = queued.items.filter((job) => new Date(job.runAt).getTime() <= Date.now() + 1_000);
+    expect(claimableNow.map((job) => job.id)).toEqual([recent.jobs[0]!.job.id]);
+
+    // And the backlog is genuinely spread rather than all landing together a
+    // minute later, which would be the same burst with a delay in front of it.
+    const times = queued.items.filter((job) => backlog.includes(job.id)).map((job) => new Date(job.runAt).getTime());
+    expect(Math.max(...times) - Math.min(...times)).toBeGreaterThan(30 * 60_000);
   });
 });

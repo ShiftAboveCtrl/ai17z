@@ -13,7 +13,7 @@ import {
   ops,
   type UserRow,
 } from '@xbam/database';
-import { approveJob, cancelJob, rejectJob, retryJob } from '@xbam/runtime';
+import { approveJob, attentionWindow, cancelJob, rejectJob, retryJob } from '@xbam/runtime';
 import { Pagination, handler, params, parseBody, parseQuery, requireUser } from '../http';
 
 async function ownedAgent(agentId: string, user: UserRow) {
@@ -36,6 +36,17 @@ const MentionFilters = Pagination.extend({
   state: z
     .enum(['REPLIED', 'WORKING', 'NEEDS_REVIEW', 'DECLINED', 'FAILED', 'DRY_RUN', 'NOT_ACTIONED'])
     .optional(),
+  /**
+   * Only what somebody addressed to the agent.
+   *
+   * A keyword match is something the agent went looking for, and it arrives
+   * in numbers direct inbound never does. Without this an owner cannot ask
+   * "who wrote to me" at all.
+   */
+  directOnly: z
+    .union([z.literal('1'), z.literal('true'), z.literal('0'), z.literal('false')])
+    .optional()
+    .transform((value) => value === '1' || value === 'true'),
 });
 
 export async function jobRoutes(app: FastifyInstance): Promise<void> {
@@ -81,9 +92,16 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
           agentId: query.agentId ?? null,
           accountId: query.accountId ?? null,
           state: query.state ?? null,
+          directOnly: query.directOnly,
           limit: query.limit,
         }),
-        mentionsRepo.countMentionStates({ agentId: query.agentId ?? null, accountId: query.accountId ?? null }),
+        mentionsRepo.countMentionStates({
+          agentId: query.agentId ?? null,
+          accountId: query.accountId ?? null,
+          // Counted over the same set the list is drawn from, or the chips
+          // describe a different question than the rows beneath them.
+          directOnly: query.directOnly,
+        }),
       ]);
       return { items, counts };
     }),
@@ -113,6 +131,25 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
         jobsRepo.countAwaitingAPerson(query.agentId),
       ]);
       return { counts, awaitingAPerson };
+    }),
+  );
+
+  /**
+   * The decisions an owner is actually shown, bounded and in order.
+   *
+   * Measured on a live installation: seventy-one jobs were waiting, every one
+   * of them an unprompted approach found by a keyword search and not one of
+   * them a message from a person. `attentionWindow` decides what fits; this
+   * route only fetches the rows and hands them over, so the ordering has a
+   * test that needs no database.
+   */
+  app.get(
+    '/api/jobs/waiting',
+    handler(async (request) => {
+      await requireUser(request);
+      const query = parseQuery(z.object({ agentId: z.string().uuid().optional() }), request);
+      const pending = await jobsRepo.listAwaitingAPerson(query.agentId);
+      return attentionWindow(pending);
     }),
   );
 
