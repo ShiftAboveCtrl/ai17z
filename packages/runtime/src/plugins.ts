@@ -136,7 +136,7 @@ function stateOf(members: { permission: CapabilityPermission; fallback: Capabili
  * its capabilities' permissions, its readiness is a fact about this minute,
  * and a cached copy of either is a screen that can be wrong.
  */
-export async function pluginViews(input: {
+export async function pluginsAndCore(input: {
   agentId: string;
   accountId: string | null;
   paused: boolean;
@@ -150,7 +150,7 @@ export async function pluginViews(input: {
    * updates rather than saying there are none.
    */
   updates?: Record<string, string>;
-}): Promise<PluginView[]> {
+}): Promise<{ plugins: PluginView[]; core: PluginCapabilityView[] }> {
   const installed = await pluginsRepo.listInstalledPlugins();
   const stored = await permissionsRepo.listForAgent(input.agentId);
   const byId = new Map(stored.map((row) => [row.capability_id, row.permission]));
@@ -309,7 +309,62 @@ export async function pluginViews(input: {
       ),
     );
   }
-  return views;
+
+  /*
+    The capabilities that belong to no pack, which is not the same as none.
+
+    `time.now`, `memory.search` and `agent.diagnostics` answer about the clock,
+    the agent's own memory and its own health. They are real, registered,
+    model-callable capabilities that an owner can switch, and grouping the
+    other seventy into six Plugins is exactly what made them disappear from
+    the only screen that manages any of this.
+
+    They are returned beside the Plugins rather than inside an invented
+    seventh one, for the reason `toolpackViews` already returns
+    `{ packs, ungrouped }`: a group nobody would recognise is a worse answer
+    than saying plainly that these belong to none.
+  */
+  const grouped = new Set(views.flatMap((view) => view.capabilities.map((capability) => capability.id)));
+  const core: PluginCapabilityView[] = [];
+  for (const capability of listCapabilities()) {
+    if (grouped.has(capability.id)) continue;
+    if (pluginOfCapability(capability.id)) continue;
+    const view = truth.get(capability.id);
+    const last = lastByCapability.get(capability.id) ?? null;
+    core.push({
+      id: capability.id,
+      name: capability.name,
+      description: capability.description,
+      category: capability.category,
+      effect: capability.effect,
+      risk: capability.risk,
+      modelCallable: capability.modelCallable,
+      permission:
+        view?.permission ?? byId.get(capability.id) ?? defaultPermission(capability.effect, capability.risk),
+      status: view?.status ?? 'UNAVAILABLE',
+      ...(view?.why ? { why: view.why } : {}),
+      lastUsedAt: last?.at ?? null,
+      lastOutcome: last?.outcome ?? null,
+    });
+  }
+
+  return { plugins: views, core };
+}
+
+/**
+ * Just the Plugins, for everything that only wants those.
+ *
+ * The work is done once in `pluginsAndCore`: probing readiness for every
+ * registered capability is the expensive half, and computing it twice to
+ * answer two halves of one question is how a screen gets slow.
+ */
+export async function pluginViews(input: {
+  agentId: string;
+  accountId: string | null;
+  paused: boolean;
+  updates?: Record<string, string>;
+}): Promise<PluginView[]> {
+  return (await pluginsAndCore(input)).plugins;
 }
 
 /**

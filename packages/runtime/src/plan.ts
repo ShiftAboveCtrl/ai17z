@@ -1,6 +1,6 @@
 import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
-import type { Lookup } from './research';
+import { namesSomethingCheckable, questionsIn, type Lookup } from './research';
 
 const log = createLogger('plan');
 
@@ -59,14 +59,54 @@ export interface Plan {
   fellBackBecause?: string;
 }
 
-/** Below this there is nothing to plan: no question, no media, no link. */
+/**
+ * Whether asking a model what to look up could change the answer.
+ *
+ * The planner exists for the middle of the range: the rules are right about
+ * both ends and blind where the question is what a sentence *means* rather
+ * than what it matches. So this is a test for being in that middle, not a
+ * test for punctuation.
+ *
+ * It used to be `incoming.includes('?')`, which sent every question to a
+ * model. Measured on a real installation: "what does AI17Z actually do?" and
+ * "how long have you been running?" each cost a `reply.plan` call of about two
+ * seconds and several hundred output tokens, to be told -- correctly -- that
+ * there was nothing to look up. Both are questions about the agent itself, and
+ * no amount of planning makes the web the place to answer them.
+ *
+ * What is left is genuinely uncertain:
+ *
+ * - media or a link, where the rules cannot see what is in it
+ * - the rules already found something, where a model may sharpen or drop it
+ * - a question that names something checkable, which is the canonical test
+ *   `research.ts` already applies before it will reach the web at all
+ * - a question under a post, because the post is the subject and the rules
+ *   cannot read what it is about. "thoughts?" says nothing by itself and
+ *   everything once you have read what it sits under
+ *
+ * What is left out is a self-contained question naming nothing checkable and
+ * sitting under nothing: "how long have you been running?" is about the agent,
+ * and no amount of planning makes the web the place to answer it.
+ *
+ * Skipping is not deciding the answer needs no research. The deterministic
+ * rules still ran and still decide, exactly as they do when no planner is
+ * configured at all.
+ */
 export function worthPlanning(input: PlanInput): boolean {
-  return (
-    input.hasMedia ||
-    input.links.length > 0 ||
-    input.incoming.includes('?') ||
-    input.deterministic.length > 0
-  );
+  if (input.hasMedia) return true;
+  if (input.links.length > 0) return true;
+  if (input.deterministic.length > 0) return true;
+  const questions = questionsIn(input.incoming);
+  /*
+    Asking at all, which is not the same as asking something `questionsIn`
+    will hand back. That helper drops anything under two words, correctly,
+    because "ok?" is not a research subject -- but "thoughts?" under a post is
+    precisely the case a model should look at, and the subject is the post.
+  */
+  const asks = questions.length > 0 || input.incoming.includes('?');
+  if (!asks) return false;
+  if (input.parent) return true;
+  return questions.some((question) => namesSomethingCheckable(question));
 }
 
 const INSTRUCTION = [

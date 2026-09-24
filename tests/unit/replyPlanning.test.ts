@@ -158,11 +158,49 @@ describe('asking a model to plan, only where it pays', () => {
     ).toBe(false);
   });
 
-  it('plans when there is a picture, or a question, or a link', () => {
+  it('plans where the rules are blind: a picture, a link, or something already found', () => {
     const base = { incoming: 'ok', parent: null, hasMedia: false, links: [], deterministic: [] };
     expect(worthPlanning({ ...base, hasMedia: true })).toBe(true);
-    expect(worthPlanning({ ...base, incoming: 'what is this?' })).toBe(true);
     expect(worthPlanning({ ...base, links: ['https://example.com'] })).toBe(true);
+    expect(
+      worthPlanning({
+        ...base,
+        deterministic: [{ kind: 'search', query: 'gas fees today', reason: 'the rules found it' }],
+      }),
+    ).toBe(true);
+  });
+
+  it('plans a bare question under a post, because the post is the subject', () => {
+    // "thoughts?" says nothing by itself and everything once you have read
+    // what it sits under, which is exactly what the rules cannot do.
+    const base = { incoming: 'thoughts?', hasMedia: false, links: [], deterministic: [] };
+    expect(worthPlanning({ ...base, parent: 'The fee change lands on Tuesday.' })).toBe(true);
+    expect(worthPlanning({ ...base, parent: null })).toBe(false);
+  });
+
+  it('plans a question that names something checkable', () => {
+    const base = { incoming: '', parent: null, hasMedia: false, links: [], deterministic: [] };
+    expect(worthPlanning({ ...base, incoming: 'what is Ethereum doing today?' })).toBe(true);
+    expect(worthPlanning({ ...base, incoming: 'what is $SOL worth?' })).toBe(true);
+  });
+
+  it('does not plan a question about the agent itself', () => {
+    /*
+      The saving this exists for, measured on a real installation.
+
+      `worthPlanning` used to be `incoming.includes('?')`, so every question
+      reached the classifier. "how long have you been running?" cost a
+      `reply.plan` call of about two seconds and several hundred output tokens
+      to be told, correctly, that there was nothing to look up. It names
+      nothing checkable and sits under nothing, so there is nothing a model
+      could find that the rules did not.
+
+      The rules still ran. This is only about whether asking a second model
+      could change their answer.
+    */
+    const base = { parent: null, hasMedia: false, links: [], deterministic: [] };
+    expect(worthPlanning({ ...base, incoming: 'how long have you been running?' })).toBe(false);
+    expect(worthPlanning({ ...base, incoming: 'are you a real person?' })).toBe(false);
   });
 
   /*

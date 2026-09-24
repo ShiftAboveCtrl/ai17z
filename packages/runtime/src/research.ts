@@ -359,7 +359,7 @@ const FACT_WORD =
  * the middle. Wrongly not searching costs a reply that says it does not know;
  * wrongly searching costs a reply built on something irrelevant.
  */
-function namesSomethingCheckable(question: string): boolean {
+export function namesSomethingCheckable(question: string): boolean {
   if (FACT_WORD.test(question)) return true;
   // A capitalised word that is not merely the first one.
   if (/\S\s+[A-Z][A-Za-z]{2,}/.test(question)) return true;

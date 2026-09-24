@@ -20,6 +20,8 @@ import type {
 import { del, get, post, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { ChoiceGroup, ChoiceOption, EmptyState, Field, RetryablePanel, Working } from '@app/components/ui';
+import { AnimatedText, FadeIn } from '@app/components/motion';
+import { Explain } from '@app/components/Explain';
 
 /**
  * Plugins, as a place rather than a setting.
@@ -74,7 +76,7 @@ interface PanelView {
   runs: Invocation[];
 }
 
-type Tab = 'installed' | 'discover' | 'settings';
+type Tab = 'installed' | 'capabilities' | 'discover' | 'settings';
 
 const STATE_WORD: Record<PluginView['state'], string> = {
   ON: 'On',
@@ -96,6 +98,9 @@ const FEATURE_WORD: Record<string, string> = {
 
 const when = (value: string) => new Date(value).toLocaleString();
 
+/** One capability, as every surface on this page receives it. */
+type PluginCapability = PluginView['capabilities'][number];
+
 /**
  * One capability, with the switch that decides it.
  *
@@ -108,7 +113,7 @@ function CapabilityRow({
   agentId,
   onChanged,
 }: {
-  capability: PluginView['capabilities'][number];
+  capability: PluginCapability;
   agentId: string;
   onChanged: () => void;
 }) {
@@ -620,7 +625,7 @@ export function PluginsPage() {
 
   /** Updates are a separate ask, so the page does not wait on a registry. */
   const [checkUpdates, setCheckUpdates] = useState(false);
-  const plugins = useResource<{ plugins: PluginView[]; checkedForUpdates: boolean }>(
+  const plugins = useResource<{ plugins: PluginView[]; core: PluginCapability[]; checkedForUpdates: boolean }>(
     chosen ? `/api/agents/${chosen}/plugins${checkUpdates ? '?updates=1' : ''}` : null,
     [chosen, checkUpdates],
   );
@@ -637,18 +642,58 @@ export function PluginsPage() {
     history.reload();
   };
 
+  // What the eyebrow says, from the same answer every other surface reads.
+  const core = plugins.data?.core ?? [];
+  const total = (plugins.data?.plugins ?? []).reduce((n, plugin) => n + plugin.capabilities.length, 0) + core.length;
+
   return (
-    <main className="mx-auto w-full max-w-4xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-lg font-medium text-bone">Plugins</h1>
-        <p className="mt-1 text-xs text-bone-faint">
-          What your agents can reach for. A Plugin is a group of capabilities: turning one on decides what may be
-          offered, and each capability still answers for itself about whether it is ready.
-        </p>
+    /*
+      The shell and the header every other top-level page uses.
+
+      This page had invented both: `max-w-4xl px-4 py-8` and a plain small
+      `h1`, against the `pt-24 sm:pt-28` shell and the eyebrow / monument
+      heading / `Explain` that Home, Activity and Settings share. The header
+      is `fixed` -- 67px on a desktop and 117px where it wraps to two rows --
+      so a page opening with 32px of padding put its own title behind it.
+
+      Taking the convention rather than patching a margin is what makes this
+      clear the navigation at every width, and it is why the page now looks
+      like the rest of the application instead of like a screen somebody
+      added afterwards.
+
+      `pt-32` below 640px rather than `pt-24`: that is where the navigation
+      wraps to two rows and becomes 117px tall, which 96px of padding does not
+      clear. Every page sharing this shell had the same overlap and it was
+      only visible on a narrow window. `sm:pt-28` is unchanged, because from
+      640px the navigation is one 67px row again.
+    */
+    <main className="mx-auto max-w-page px-6 pb-24 pt-32 sm:px-10 sm:pt-28">
+      <header className="mb-8">
+        <FadeIn>
+          <p className="eyebrow mb-2">
+            {total > 0 ? `${total} capabilit${total === 1 ? 'y' : 'ies'}` : 'Reading what is installed'}
+            {core.length > 0 ? ` · ${core.length} in no Plugin` : ''}
+          </p>
+        </FadeIn>
+        <AnimatedText
+          as="h1"
+          text="Plugins"
+          className="monument text-[12vw] leading-[0.95] sm:text-[4.4vw] lg:text-[3.2rem]"
+        />
+        <Explain label="this page" className="mt-3">
+          <p>
+            <strong>What your agents can reach for.</strong> A Plugin is a group of capabilities: turning one on
+            decides what may be offered, and each capability still answers for itself about whether it is ready.
+          </p>
+          <p>
+            Installed shows the groups. All capabilities shows every one of them individually, including the few that
+            belong to no group at all, with search and filters for finding one by name.
+          </p>
+        </Explain>
       </header>
 
       <div className="mb-5 flex flex-wrap items-center gap-2">
-        {(['installed', 'discover', 'settings'] as Tab[]).map((name) => (
+        {(['installed', 'capabilities', 'discover', 'settings'] as Tab[]).map((name) => (
           <button
             key={name}
             type="button"
@@ -660,7 +705,7 @@ export function PluginsPage() {
             {name}
           </button>
         ))}
-        {list.length > 0 && tab === 'installed' ? (
+        {list.length > 0 && (tab === 'installed' || tab === 'capabilities') ? (
           <label className="ml-auto flex items-center gap-2 text-[11px] text-bone-faint">
             Deciding for
             <select
@@ -707,6 +752,13 @@ export function PluginsPage() {
             onChanged={reload}
           />
         </>
+      ) : tab === 'capabilities' ? (
+        <AllCapabilities
+          resource={plugins}
+          agentId={chosen}
+          history={history.data?.items ?? []}
+          onChanged={reload}
+        />
       ) : tab === 'discover' ? (
         <DiscoverTab registry={registry.data ?? null} onInstalled={reload} />
       ) : (
@@ -1088,6 +1140,166 @@ function SettingsTab({ resource }: { resource: ReturnType<typeof useResource<Reg
           Agents
         </Link>
       </p>
+    </div>
+  );
+}
+
+/**
+ * Every capability the agent has, in one list.
+ *
+ * Grouping seventy capabilities into six Plugins is the right product answer
+ * and it is not a complete one: an owner also has to be able to find one
+ * capability by name, see which Plugin holds it, and change it. Three of them
+ * belong to no Plugin at all -- the clock, the agent's own memory, and its own
+ * health -- and grouping is exactly what made those disappear from the only
+ * screen that manages any of this.
+ *
+ * Nothing here is a second source of truth. Every row is a capability from the
+ * same answer the cards are drawn from, and the switch writes the same
+ * permission row, through the same route the agent's own page has always used.
+ */
+function AllCapabilities({
+  resource,
+  agentId,
+  history,
+  onChanged,
+}: {
+  resource: ReturnType<typeof useResource<{ plugins: PluginView[]; core: PluginCapability[]; checkedForUpdates: boolean }>>;
+  agentId: string | null;
+  history: Invocation[];
+  onChanged: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [owner, setOwner] = useState('all');
+  const [effect, setEffect] = useState<'all' | 'READ' | 'WRITE'>('all');
+  const [state, setState] = useState<'all' | 'on' | 'off'>('all');
+  const [ready, setReady] = useState<'all' | 'ready' | 'not'>('all');
+
+  if (resource.loading && !resource.data) return <Working label="Reading every capability" seconds={0} />;
+  if (resource.error) {
+    return <RetryablePanel title="That did not load" detail={resource.error} onRetry={resource.reload} />;
+  }
+  if (!agentId) {
+    return <EmptyState title="No agents yet" detail="Capabilities are decided per agent, so make an agent first." />;
+  }
+
+  const plugins = resource.data?.plugins ?? [];
+  const core = resource.data?.core ?? [];
+
+  /*
+    Every capability, each labelled with what holds it.
+
+    `Core` is not a Plugin and is not presented as one: it is the word for the
+    ones that belong to none, so that a complete list can stay complete
+    without inventing a seventh group to hide the mismatch in.
+  */
+  const rows: { capability: PluginCapability; ownerId: string; ownerName: string }[] = [
+    ...plugins.flatMap((plugin) =>
+      plugin.capabilities.map((capability) => ({ capability, ownerId: plugin.id, ownerName: plugin.name })),
+    ),
+    ...core.map((capability) => ({ capability, ownerId: 'core', ownerName: 'Core' })),
+  ];
+
+  const owners = [
+    ...plugins.map((plugin) => ({ id: plugin.id, name: plugin.name })),
+    ...(core.length > 0 ? [{ id: 'core', name: 'Core' }] : []),
+  ];
+
+  const needle = search.trim().toLowerCase();
+  const shown = rows.filter(({ capability, ownerId }) => {
+    if (needle && !`${capability.id} ${capability.name} ${capability.description}`.toLowerCase().includes(needle)) {
+      return false;
+    }
+    if (owner !== 'all' && ownerId !== owner) return false;
+    if (effect !== 'all' && capability.effect !== effect) return false;
+    // "On" is anything the agent may actually reach for, which includes the
+    // ones that ask first. Off is off.
+    if (state === 'on' && capability.permission === 'DISABLED') return false;
+    if (state === 'off' && capability.permission !== 'DISABLED') return false;
+    if (ready === 'ready' && capability.status !== 'AVAILABLE') return false;
+    if (ready === 'not' && capability.status === 'AVAILABLE') return false;
+    return true;
+  });
+
+  const select = 'rounded border border-ink-line bg-ink-deep px-2 py-1 text-xs text-bone';
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-ink-line bg-ink-panel p-4">
+        <p className="text-xs text-bone-faint">
+          Every capability this agent has, whichever Plugin holds it. {rows.length} in total, {core.length} of them in
+          no Plugin.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search name, id or description"
+            aria-label="Search capabilities"
+            className="min-w-0 flex-1 rounded border border-ink-line bg-ink-deep px-2 py-1 text-xs text-bone"
+          />
+          <select aria-label="Plugin" value={owner} onChange={(e) => setOwner(e.target.value)} className={select}>
+            <option value="all">Every Plugin</option>
+            {owners.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Reads or writes"
+            value={effect}
+            onChange={(e) => setEffect(e.target.value as 'all' | 'READ' | 'WRITE')}
+            className={select}
+          >
+            <option value="all">Reads and writes</option>
+            <option value="READ">Reads only</option>
+            <option value="WRITE">Writes only</option>
+          </select>
+          <select
+            aria-label="Whether it may"
+            value={state}
+            onChange={(e) => setState(e.target.value as 'all' | 'on' | 'off')}
+            className={select}
+          >
+            <option value="all">On and off</option>
+            <option value="on">On or asking</option>
+            <option value="off">Off</option>
+          </select>
+          <select
+            aria-label="Whether it can run"
+            value={ready}
+            onChange={(e) => setReady(e.target.value as 'all' | 'ready' | 'not')}
+            className={select}
+          >
+            <option value="all">Ready or not</option>
+            <option value="ready">Ready</option>
+            <option value="not">Cannot run yet</option>
+          </select>
+        </div>
+        <p className="mt-2 text-[11px] text-bone-faint">
+          Showing {shown.length} of {rows.length}.
+        </p>
+      </div>
+
+      {shown.length === 0 ? (
+        <EmptyState title="Nothing matched" detail="No capability matches those filters. Try widening one." />
+      ) : (
+        <div className="divide-y divide-ink-line rounded-lg border border-ink-line bg-ink-panel">
+          {shown.map(({ capability, ownerId, ownerName }) => (
+            <div key={capability.id} className="px-4">
+              <p className="pt-3 text-[11px] text-bone-faint">
+                {ownerName}
+                {ownerId === 'core' ? ' · in no Plugin' : ''} · <span className="font-mono">{capability.id}</span>
+                {history.some((run) => run.capabilityId === capability.id)
+                  ? ` · used ${history.filter((run) => run.capabilityId === capability.id).length} time(s) recently`
+                  : ''}
+              </p>
+              <CapabilityRow capability={capability} agentId={agentId} onChanged={onChanged} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

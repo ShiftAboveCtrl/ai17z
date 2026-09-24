@@ -12,7 +12,7 @@ import {
   installPlugin,
   pauseState,
   pluginPanels,
-  pluginViews,
+  pluginsAndCore,
   registryAddress,
   registryCatalog,
   registryDetail,
@@ -69,13 +69,22 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
       */
       const wantsUpdates = (request.query as { updates?: string } | undefined)?.updates === '1';
       const found = wantsUpdates ? await registryUpdates().catch(() => null) : null;
-      const plugins = await pluginViews({
+      /*
+        Plugins and the capabilities that belong to none of them.
+
+        Both, because the Plugins screen is the one place an owner manages
+        what an agent may reach for, and answering with only the grouped
+        seventy hid `time.now`, `memory.search` and `agent.diagnostics`
+        entirely. A screen that manages most of a system is one somebody has
+        to be told the rest of.
+      */
+      const { plugins, core } = await pluginsAndCore({
         agentId: agent.id,
         accountId: links[0]?.accountId ?? null,
         paused,
         ...(found?.ok ? { updates: found.updates } : {}),
       });
-      return { plugins, checkedForUpdates: Boolean(found?.ok) };
+      return { plugins, core, checkedForUpdates: Boolean(found?.ok) };
     }),
   );
 

@@ -71,7 +71,7 @@ export function StudioPage() {
   return (
     <main className="pb-24">
       {/* Clear of the fixed top bar, at the same offset every other page uses. */}
-      <header className="mx-auto max-w-page px-6 pt-24 sm:px-10 sm:pt-28">
+      <header className="mx-auto max-w-page px-6 pt-32 sm:px-10 sm:pt-28">
         <p className="eyebrow">X Studio</p>
         <div className="mt-2 flex flex-wrap items-baseline justify-between gap-4">
           <h1 className="text-3xl font-light tracking-tight text-bone sm:text-4xl">{data.agent.name}</h1>
