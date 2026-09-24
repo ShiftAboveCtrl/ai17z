@@ -99,6 +99,22 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     note: 'Where a reading came from. Nothing outside the database needs to name these yet.',
   },
   {
+    table: 'accounts',
+    column: 'health',
+    values: ['HEALTHY', 'DEGRADED', 'COOLDOWN', 'HUMAN_ACTION_REQUIRED'],
+    note:
+      'How the runtime is coping, which is not whether the session is signed in. ' +
+      '`accounts.status` answers the second and is registered separately, above.',
+  },
+  {
+    table: 'do_not_contact',
+    column: 'source',
+    values: ['THEY_ASKED', 'OWNER'],
+    note:
+      'Who put somebody on the list. Both bind equally and only the provenance differs, ' +
+      'which is why it is recorded rather than collapsed into one flag.',
+  },
+  {
     table: 'agent_capability_permissions',
     column: 'permission',
     values: CAPABILITY_PERMISSIONS,

@@ -13,6 +13,7 @@ import { BadRequestError, ForbiddenError, NotFoundError, slugify } from '@xbam/s
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
+  autonomy as autonomyRepo,
   browserTasks,
   ops,
   pipelines as pipelinesRepo,
@@ -27,6 +28,7 @@ import {
   duplicateAgent,
   applyCoreRecommended,
   ensureAgentPipeline,
+  growthGateFor,
   setAgentAvatar,
 } from '@xbam/runtime';
 import { getChannelAdapter } from '@xbam/channels';
@@ -326,6 +328,92 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       await ensureAgentPipeline(report.agentId);
       // The agent itself, as before, with what could not be carried alongside.
       return { ...copy, notes: report.notes };
+    }),
+  );
+
+  /**
+   * What the agent is allowed to do on its own initiative, and what it is
+   * doing about it right now.
+   *
+   * One read rather than four screens. An owner asking "why has it gone quiet"
+   * wants the growth state, the account's health and the list of people it has
+   * been asked to leave alone in the same answer, because any of the three
+   * could be the reason.
+   *
+   * Deliberately says nothing about prompts, memories or what the agent is
+   * thinking. This is about restraint, and restraint is the owner's business.
+   */
+  app.get(
+    '/api/agents/:id/autonomy',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const links = await accountsRepo.listAgentAccounts(agent.id);
+      const accountId = links[0]?.accountId ?? null;
+
+      const policyRow = agent.policyVersionId
+        ? await agentsRepo.getPolicyVersion(agent.policyVersionId)
+        : await agentsRepo.getActivePolicy(agent.id);
+      const policy = PolicyConfig.parse(policyRow?.config ?? {});
+
+      const [verdict, open, sessions, spent, health, dnc, signals] = await Promise.all([
+        growthGateFor(agent.id, accountId, policy),
+        autonomyRepo.openSession(agent.id),
+        autonomyRepo.sessionsToday(agent.id),
+        autonomyRepo.spentToday(agent.id),
+        accountId ? autonomyRepo.getAccountHealth(accountId) : Promise.resolve(null),
+        autonomyRepo.listDoNotContact(agent.id),
+        autonomyRepo.listOwnerSignals(agent.id, 20),
+      ]);
+
+      return {
+        growth: {
+          policy: policy.growth,
+          state: verdict.state,
+          allowed: verdict.allowed,
+          message: verdict.message,
+          retryAfterMs: verdict.retryAfterMs,
+          sessionOpenSince: open?.startedAt ?? null,
+          sessionsToday: sessions,
+          spentToday: spent,
+        },
+        accountHealth: health ?? { health: 'HEALTHY', healthReason: null, healthUntil: null, healthChangedAt: null },
+        /*
+          The handle, when they asked, and the sentence they wrote. Not the
+          whole message: an owner needs enough to check the decision, and a
+          durable record of somebody's words is not a thing to keep more of
+          than that.
+        */
+        doNotContact: dnc.map((row) => ({
+          id: row.id,
+          handle: row.handle,
+          source: row.source,
+          evidence: row.evidence,
+          createdAt: row.createdAt,
+        })),
+        /*
+          What the owner keeps deciding, so "why is it not asking me about
+          these any more" has an answer that is not a mystery. Counts only:
+          this ranks and suppresses, and it can do nothing else.
+        */
+        learned: signals.map((row) => ({
+          family: row.family,
+          accepted: row.accepted,
+          rejected: row.rejected,
+          lastDecisionAt: row.lastDecisionAt,
+        })),
+      };
+    }),
+  );
+
+  /** Lifts a do-not-contact entry, keeping the row so the history survives. */
+  app.post(
+    '/api/agents/:id/autonomy/contact-again/:entryId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      await ownedAgent(params(request).id!, user);
+      await autonomyRepo.revokeDoNotContact(params(request).entryId!, 'the owner lifted it');
+      return { ok: true };
     }),
   );
 }

@@ -1,5 +1,13 @@
 import { ConflictError, NotFoundError } from '@xbam/shared';
-import { actions as actionsRepo, agents as agentsRepo, jobs as jobsRepo, observability } from '@xbam/database';
+import {
+  actions as actionsRepo,
+  agents as agentsRepo,
+  autonomy as autonomyRepo,
+  events as eventsRepo,
+  jobs as jobsRepo,
+  observability,
+} from '@xbam/database';
+import { decisionFingerprint } from './ownerLearning';
 import { PolicyConfig } from '@xbam/shared/contracts';
 import { validateOutput } from './validator';
 
@@ -79,6 +87,10 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
     touch: ['approvedAt', 'validatedAt'],
   });
 
+  // Swallowed on purpose: an approval that has already happened must not be
+  // undone because a preference row failed to write.
+  await learnFromDecision(job.id, true, input.note).catch(() => undefined);
+
   await observability.emitTrace({
     jobId: job.id,
     agentId: job.agentId,
@@ -128,6 +140,16 @@ export async function rejectJob(input: ApprovalDecisionInput): Promise<void> {
     lastError: input.note ?? 'Rejected by the operator.',
     releaseLock: true,
   });
+
+  /*
+    The half that matters most.
+
+    A rejection is the owner saying "not this kind of thing", and the fault
+    this fixes is an agent that asks again an hour later. Swallowed for the
+    same reason as the approve path: the decision has already been taken and
+    recorded, and a preference row is not allowed to interfere with it.
+  */
+  await learnFromDecision(job.id, false, input.note).catch(() => undefined);
   await observability.emitTrace({
     jobId: job.id,
     agentId: job.agentId,
@@ -174,5 +196,37 @@ export async function cancelJob(jobId: string): Promise<void> {
     level: 'warn',
     message: 'Cancelled by the operator.',
     data: { from: job.status },
+  });
+}
+
+/**
+ * Remembers what the owner just decided, so the same question is asked better
+ * next time.
+ *
+ * Called from both decision paths and deliberately not part of either: an
+ * approval that succeeded must not be undone because a preference row failed
+ * to write, which is why every call site swallows what this throws. The
+ * decision itself is already recorded in `actions` and `jobs`; this is only
+ * about what to put in front of somebody first.
+ *
+ * It can move an ordering and nothing else. There is no path from here to a
+ * capability grant, an approval gate, or a Plugin's authority, and adding one
+ * would turn a preference into a permission.
+ */
+export async function learnFromDecision(jobId: string, accepted: boolean, reason?: string | null): Promise<void> {
+  const job = await jobsRepo.getJob(jobId);
+  if (!job) return;
+  const event = await eventsRepo.getEvent(job.eventId);
+  const { fingerprint, family } = decisionFingerprint({
+    kind: event?.type ?? 'UNKNOWN',
+    actionType: job.actionType,
+    handle: event?.remoteAuthorHandle ?? null,
+  });
+  await autonomyRepo.recordOwnerDecision({
+    agentId: job.agentId,
+    fingerprint,
+    family,
+    accepted,
+    reason: reason ?? null,
   });
 }

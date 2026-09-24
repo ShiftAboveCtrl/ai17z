@@ -352,7 +352,30 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
     was taken: a status page walked, every picture on it described by a vision
     model, a relationship assembled, a pipeline run. See `cannotPossiblyEngage`.
   */
-  const triage = new Map<string, { topics: string[]; relationship: RelationshipContext | null; recent: number }>();
+  const triage = new Map<
+    string,
+    {
+      topics: string[];
+      relationship: RelationshipContext | null;
+      recent: number;
+      /**
+       * Why this agent may not approach anybody right now, if it may not.
+       *
+       * Read out here with everything else rather than inside the transaction,
+       * and that is not a stylistic choice. `outreachHeadroom` uses the pooled
+       * query, `withTransaction` refuses a pooled query taken inside it, and
+       * the call site swallowed what it threw -- so the daily budget and the
+       * unanswered-proposal back pressure were both dead code that always
+       * returned "no reason to stop".
+       *
+       * Measured on a live installation twenty minutes after the release that
+       * was supposed to introduce it: 219 proposals already waiting against a
+       * limit of five, and jobs still being created. The guard was there, the
+       * comment was right, and nothing was running.
+       */
+      headroom: string | null;
+    }
+  >();
   // The account's own handle decides whether a keyword match is actually
   // addressed to the agent, which takes it out of unprompted territory
   // entirely. `policy.content.selfHandles` is an aliases list nobody fills in.
@@ -386,6 +409,12 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
             }
           : null,
         recent: await recentRepliesTo(link.agentId, event.remoteAuthorHandle).catch(() => 0),
+        headroom: await outreachHeadroom(
+          link.agentId,
+          PolicyConfig.parse(policiesById.get(link.agentId)?.config ?? {}).outreach,
+          event.remoteAuthorHandle,
+          event.channel,
+        ).catch(() => null),
       });
     }
   }
@@ -574,7 +603,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         const unprompted = !directlyAddressed && !spokenHere;
         const declined = !unprompted
           ? null
-          : (await outreachHeadroom(agent.id, policy.outreach, event.remoteAuthorHandle).catch(() => null)) ??
+          : bounds.headroom ??
             cannotPossiblyEngage({
               text: event.text,
               directlyAddressed,

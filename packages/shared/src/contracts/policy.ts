@@ -3,7 +3,7 @@ import { AutomationMode, DisclosureMode } from './enums';
 import { MediaPolicy } from './multimodal';
 import { RelationshipVoice } from './relationship';
 import { StancePolicy } from './stance';
-import { EngagementPolicy, OutreachPolicy, ToneMirroring } from './engagement';
+import { EngagementPolicy, GrowthPolicy, OutreachPolicy, ToneMirroring } from './engagement';
 import { VoicePolicy } from './voice';
 
 /**
@@ -420,6 +420,8 @@ export const PolicyConfig = z.object({
   engagement: EngagementPolicy.default({}),
   /** Speaking first, under a post nobody addressed to the agent. */
   outreach: OutreachPolicy.default({}),
+  /** What the agent may spend on going looking for people, and when. */
+  growth: GrowthPolicy.default({}),
   /** Helping people with the software this agent runs on. */
   support: SupportPolicy.default({}),
   tone: ToneMirroring.default({}),

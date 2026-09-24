@@ -21,6 +21,7 @@ import {
   type MemoryScope,
   type MemoryType,
 } from '@xbam/shared/contracts';
+import { growthGateFor, policyFor } from './growthGate';
 import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
@@ -862,6 +863,30 @@ export async function wakeAgent(
 
   const links = await accountsRepo.listAgentAccounts(agentId);
   const accountId = links[0]?.accountId ?? null;
+
+  /*
+    Whether the agent may be going looking at all right now.
+
+    Deliberation is the expensive half of optional growth: it reads
+    observations, calls a classifier, and produces candidates that become
+    proposals. That is exactly what quiet hours, session limits and the daily
+    budgets are for, and putting the check here rather than further down means
+    the cost is not paid before the decision is taken.
+
+    Nothing about answering somebody is gated by this. A mention arriving in
+    the middle of the quiet window is still ingested, still resolved and still
+    answered; the pipeline that does that does not come through here.
+
+    Recorded as a quiet wake rather than a failure, because resting is a result
+    and a screen listing only the productive runs would make a correctly quiet
+    agent look broken.
+  */
+  const growth = await growthGateFor(agentId, accountId, policyFor(agent), now).catch(() => null);
+  if (growth && !growth.allowed) {
+    await mind.noteWake(agentId, { reason: growth.message, quiet: true, looked: false });
+    return emptyOutcome(agentId, wake.autonomy, growth.message, 'resting');
+  }
+
   const since = wake.lastWakeAt ?? new Date(now.getTime() - FIRST_LOOK_HOURS * 3600_000).toISOString();
 
   const context = await contextFor(agentId, accountId);
