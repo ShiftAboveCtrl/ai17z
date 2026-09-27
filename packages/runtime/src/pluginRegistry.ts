@@ -3,6 +3,7 @@ import { openSecret, sealSecret } from '@xbam/shared';
 import { z } from 'zod';
 import { safeFetch } from '@xbam/upstream';
 import { REGISTRY_KEY_KEY, REGISTRY_URL_KEY, installPlugin, manifestDigest, readManifest } from './plugins';
+import { studioOrigin, studioRegistryHeaders } from './studioLink';
 
 /**
  * The client for an official AI17Z Plugin Registry.
@@ -145,7 +146,12 @@ export interface RegistryOptions {
 }
 
 async function get(path: string, options: RegistryOptions = {}): Promise<{ ok: true; body: unknown } | RegistryProblem> {
-  const base = options.base ?? (await registryAddress());
+  // A development Studio named by AI17Z_STUDIO_UNSAFE_DEV_ORIGIN is also the
+  // registry, and the only address this client will fetch over http or on a
+  // private network. The https rule is otherwise untouched.
+  const studio = options.transport ? null : await studioOrigin();
+  const devStudio = studio?.unsafeDev ? studio.origin : null;
+  const base = options.base ?? devStudio ?? (await registryAddress());
   if (!base) {
     return {
       ok: false,
@@ -157,7 +163,9 @@ async function get(path: string, options: RegistryOptions = {}): Promise<{ ok: t
   const headers = {
     accept: 'application/json',
     'x-ai17z-protocol': String(REGISTRY_PROTOCOL),
-    ...(await keyHeader()),
+    // A registry that is the linked Studio is asked as this installation,
+    // with its own key; anything else gets the stored key, if there is one.
+    ...((options.transport ? null : await studioRegistryHeaders(base, path)) ?? (await keyHeader())),
   };
   try {
     const response = options.transport
@@ -167,9 +175,14 @@ async function get(path: string, options: RegistryOptions = {}): Promise<{ ok: t
           method: 'GET',
           headers,
           maxBytes: 2 * 1024 * 1024,
+          ...(devStudio && base === devStudio ? { allowPrivate: true } : {}),
         });
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       return { ok: false, why: 'The registry refused this key.', needsKey: true };
+    }
+    if (response.status === 403) {
+      // Studio's answer for a Plugin this installation holds no seat of.
+      return { ok: false, why: 'The registry serves this only to an installation with an entitlement and a seat for it.', needsKey: true };
     }
     if (response.status < 200 || response.status >= 300) {
       return { ok: false, why: `The registry answered ${response.status}.` };
@@ -262,6 +275,7 @@ export async function installFromRegistry(
     // manifest by `installPlugin` as well as above. A registry that changed
     // its mind between the listing and the detail is a substitution.
     expectPublisher: detail.listing.publisher,
+    requiresEntitlement: detail.listing.entitled,
     ...(options.acknowledgeExpansion ? { acknowledgeExpansion: true } : {}),
   });
   if (!done.ok) return done;

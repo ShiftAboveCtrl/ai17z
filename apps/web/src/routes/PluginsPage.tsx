@@ -22,6 +22,7 @@ import { useResource } from '@app/lib/hooks';
 import { ChoiceGroup, ChoiceOption, EmptyState, Field, RetryablePanel, Working } from '@app/components/ui';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { Explain } from '@app/components/Explain';
+import { StudioPanel } from '@app/components/StudioPanel';
 
 /**
  * Plugins, as a place rather than a setting.
@@ -76,7 +77,7 @@ interface PanelView {
   runs: Invocation[];
 }
 
-type Tab = 'installed' | 'capabilities' | 'discover' | 'settings';
+type Tab = 'installed' | 'capabilities' | 'discover' | 'studio' | 'settings';
 
 const STATE_WORD: Record<PluginView['state'], string> = {
   ON: 'On',
@@ -693,7 +694,7 @@ export function PluginsPage() {
       </header>
 
       <div className="mb-5 flex flex-wrap items-center gap-2">
-        {(['installed', 'capabilities', 'discover', 'settings'] as Tab[]).map((name) => (
+        {(['installed', 'capabilities', 'discover', 'studio', 'settings'] as Tab[]).map((name) => (
           <button
             key={name}
             type="button"
@@ -761,6 +762,8 @@ export function PluginsPage() {
         />
       ) : tab === 'discover' ? (
         <DiscoverTab registry={registry.data ?? null} onInstalled={reload} />
+      ) : tab === 'studio' ? (
+        <StudioPanel />
       ) : (
         <SettingsTab resource={registry} />
       )}
