@@ -96,6 +96,16 @@ export function readTemperature(text: string): ConversationTemperature {
   return 'casual';
 }
 
+/**
+ * Where a post the agent came across sits relative to an account it follows:
+ * a REPLY to that account which it never answered, or a post by somebody in
+ * its CIRCLE, the people it replies to again and again.
+ */
+export interface EngagementCommunity {
+  watched: string;
+  kind: 'REPLY' | 'CIRCLE';
+}
+
 export interface ReplyValueInput {
   text: string;
   /** True when the agent's own handle is actually addressed. */
@@ -160,6 +170,17 @@ export interface ReplyValueInput {
    * somebody worth talking to again.
    */
   approachHistory?: { approaches: number; answered: boolean } | null;
+  /**
+   * The handle of the account this agent's voice follows, when this post is a
+   * reply to that account which it never answered. Only read when unprompted.
+   *
+   * Somebody talking to the person the agent is modelled on is already in the
+   * agent's conversation, whatever words they used: "find God" and a GTA
+   * memory are not about any topic the agent follows, and they are exactly
+   * where that person's own replies go. So the topic rule and the audience
+   * floor, both written for strangers found by searching, do not apply.
+   */
+  community?: EngagementCommunity | null;
   policy: EngagementPolicy;
   /** Only consulted when `unprompted`. */
   outreach?: OutreachPolicy;
@@ -240,7 +261,7 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
   // nobody addressed it: somebody who asks the agent a question deserves an
   // answer whatever the subject, but a post it merely came across is different.
   const gateOnTopic = !input.directlyAddressed && (input.topics?.length ?? 0) > 0;
-  const onTopic = gateOnTopic ? touchesTopics(text, input.topics!) : true;
+  const onTopic = gateOnTopic && !(input.unprompted && input.community) ? touchesTopics(text, input.topics!) : true;
 
   // "thoughts?" under an argument is a question. On its own it is a question
   // about nothing, and the bonus for asking one is what pushed the agent into
@@ -327,8 +348,12 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
       something real to say is still worth answering, and a count X did not
       report is left out rather than read as nobody.
     */
+    if (input.community) {
+      if (input.community.kind === 'REPLY') add(`replied to @${input.community.watched} and got no answer`, 30);
+      else add(`somebody @${input.community.watched} talks to regularly`, 25);
+    }
     const followers = input.authorFollowers;
-    if (typeof followers === 'number' && Number.isFinite(followers)) {
+    if (typeof followers === 'number' && Number.isFinite(followers) && !input.community) {
       if (followers >= 100_000) add('a large audience reads this author', 10);
       else if (followers >= 10_000) add('the author has a real audience', 8);
       else if (followers >= 1_000) add('the author has an audience', 4);
@@ -418,7 +443,22 @@ export function decideEngagement(input: ReplyValueInput): EngagementVerdict {
     // topics has not said what it follows, and refusing everything would be
     // reading that silence as "nothing".
     const topics = input.topics ?? [];
-    if (outreach.requireTopicMatch && topics.length > 0 && !touchesTopics(input.text, topics)) {
+    /*
+      A pitch is declined outright, whatever else it scores. A score was not
+      enough once somebody in a watched account's replies could earn more for
+      being there than a pitch loses for being one, and "I have the CA to the
+      next coin" is not a person to be kind to.
+    */
+    const pitch = readPromo(input.text);
+    if (pitch.level === 'strong') {
+      return {
+        decision: 'IGNORE',
+        value,
+        reason: `Nobody asked, and it reads as a token pitch (${pitch.signals.join(', ')}).`,
+        factors,
+      };
+    }
+    if (!input.community && outreach.requireTopicMatch && topics.length > 0 && !touchesTopics(input.text, topics)) {
       return {
         decision: 'IGNORE',
         value,
@@ -428,7 +468,7 @@ export function decideEngagement(input: ReplyValueInput): EngagementVerdict {
     }
 
     const floor = outreach.minAuthorFollowers ?? 0;
-    if (floor > 0 && typeof input.authorFollowers === 'number' && input.authorFollowers < floor) {
+    if (!input.community && floor > 0 && typeof input.authorFollowers === 'number' && input.authorFollowers < floor) {
       return {
         decision: 'IGNORE',
         value,
@@ -605,11 +645,13 @@ export function cannotPossiblyEngage(input: {
   authorFollowers?: number | null;
   postEngagement?: number | null;
   approachHistory?: { approaches: number; answered: boolean } | null;
+  community?: EngagementCommunity | null;
 }): string | null {
   const verdict = decideEngagement({
     authorFollowers: input.authorFollowers ?? null,
     postEngagement: input.postEngagement ?? null,
     approachHistory: input.approachHistory ?? null,
+    community: input.community ?? null,
     text: input.text,
     directlyAddressed: input.directlyAddressed,
     unprompted: true,
@@ -634,8 +676,17 @@ export function cannotPossiblyEngage(input: {
  * pipeline, so the two can never disagree about what X said. Anything missing
  * comes back null, which the scoring treats as not seen rather than as zero.
  */
-export function audienceOf(raw: unknown): { authorFollowers: number | null; postEngagement: number | null } {
-  const payload = (raw ?? {}) as { author?: { followers?: unknown }; metrics?: Record<string, unknown> };
+export function audienceOf(raw: unknown): {
+  authorFollowers: number | null;
+  postEngagement: number | null;
+  community: EngagementCommunity | null;
+} {
+  const payload = (raw ?? {}) as {
+    author?: { followers?: unknown };
+    metrics?: Record<string, unknown>;
+    community?: { watched?: unknown; kind?: unknown };
+  };
+  const watched = payload.community?.watched;
   const followers = payload.author?.followers;
   const metrics = payload.metrics ?? {};
   const counts = ['replies', 'reposts', 'likes', 'quotes']
@@ -644,5 +695,9 @@ export function audienceOf(raw: unknown): { authorFollowers: number | null; post
   return {
     authorFollowers: typeof followers === 'number' && Number.isFinite(followers) ? followers : null,
     postEngagement: counts.length > 0 ? counts.reduce((sum, value) => sum + value, 0) : null,
+    community:
+      typeof watched === 'string' && watched.trim()
+        ? { watched: watched.replace(/^@+/, ''), kind: payload.community?.kind === 'CIRCLE' ? 'CIRCLE' : 'REPLY' }
+        : null,
   };
 }

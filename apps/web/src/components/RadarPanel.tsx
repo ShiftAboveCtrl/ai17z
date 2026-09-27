@@ -3,6 +3,7 @@ import { Plus, Radar, RotateCw, Trash2 } from 'lucide-react';
 import { ApiError, del, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
+import { RADAR_SOURCE_KINDS, effectiveXInterval, type RadarSourceKind } from '@xbam/shared/contracts';
 import { ErrorPanel, Field, Modal, Spinner, StatusDot } from './ui';
 
 interface RadarSource {
@@ -184,6 +185,7 @@ export function RadarPanel({ accountId }: { accountId: string }) {
                     tries again is the difference between the two. */}
                 {source.consecutiveFailures > 0 && source.nextPollAt && ` · next try ${timeAgo(source.nextPollAt)}`}
               </p>
+              <PaceLine kind={source.kind} configured={source.config.intervalSeconds} />
               {source.config.mayTrigger === false && (
                 <p className="mt-1 text-[11px] text-bone-faint">Context only — this never creates a reply.</p>
               )}
@@ -353,5 +355,33 @@ function AddWatchModal({
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** A pace in the words an owner uses. */
+function paceWords(seconds: number): string {
+  if (seconds % 3600 === 0) return `${seconds / 3600} h`;
+  if (seconds >= 120 && seconds % 60 === 0) return `${seconds / 60} min`;
+  return `${seconds} s`;
+}
+
+/**
+ * How often this source really checks X.
+ *
+ * Shown because the platform may have raised it: every source has a fastest
+ * pace X tolerates, and a setting below it is quietly not what runs. An owner
+ * who set one minute and sees five deserves to be told why.
+ */
+function PaceLine({ kind, configured }: { kind: string; configured?: number }) {
+  if (!(RADAR_SOURCE_KINDS as readonly string[]).includes(kind) || kind === 'persona_discovery') return null;
+  const pace = effectiveXInterval(kind as RadarSourceKind, configured);
+  return (
+    <p className="mt-1 text-[11px] text-bone-faint">
+      Checks every {paceWords(pace.seconds)}
+      {pace.raised && configured !== undefined
+        ? ` (set to ${paceWords(configured)}, raised to the fastest pace X tolerates without refusing the account)`
+        : ''}
+      .
+    </p>
   );
 }

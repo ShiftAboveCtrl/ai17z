@@ -134,6 +134,12 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     note: 'What became of a post the agent came across on its own. Declined is recorded with its reason, never dropped.',
   },
   {
+    table: 'agent_learning_trials',
+    column: 'status',
+    values: ['RUNNING', 'KEPT', 'REVERTED'],
+    note: 'A change the agent made to how it behaves, while it is being tested against the old behaviour and after the verdict.',
+  },
+  {
     table: 'x_capacity_ledger',
     column: 'entry',
     values: ['READ', 'SIGNAL'],

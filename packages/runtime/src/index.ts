@@ -21,6 +21,7 @@ export * from './attentionQueue';
 export * from './accountHealth';
 export * from './capacity';
 export * from './discovery';
+export * from './learning';
 export * from './promo';
 export * from './ownerLearning';
 export * from './doNotContact';

@@ -328,8 +328,9 @@ describe('audience, for speaking first only', () => {
     expect(audienceOf({ author: { followers: 1234 }, metrics: { replies: 3, likes: 20 } })).toEqual({
       authorFollowers: 1234,
       postEngagement: 23,
+      community: null,
     });
-    expect(audienceOf({})).toEqual({ authorFollowers: null, postEngagement: null });
-    expect(audienceOf(null)).toEqual({ authorFollowers: null, postEngagement: null });
+    expect(audienceOf({})).toEqual({ authorFollowers: null, postEngagement: null, community: null });
+    expect(audienceOf(null)).toEqual({ authorFollowers: null, postEngagement: null, community: null });
   });
 });

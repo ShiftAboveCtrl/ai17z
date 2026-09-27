@@ -9,7 +9,7 @@ import {
   normalizeTargetId,
   postedAtFromStatusId,
 } from './targets';
-import { refuseIfXBroke } from './page';
+import { refuseIfXBroke, replyingToHandles } from './page';
 import { readCounts } from './counts';
 import { toPost, tweetsFrom } from './intelligence/pageGraphql';
 import { toCandidates } from './radarIntelligence';
@@ -54,6 +54,11 @@ export interface Seen {
    * different things about how somebody writes.
    */
   isReply?: boolean;
+  /**
+   * The handles X names on the "Replying to" line, when there is one. A reply's
+   * text never carries them: X renders them on that line instead.
+   */
+  replyingTo?: string[];
   /** Whether it carries a quoted post, which makes the text a remark about it. */
   isQuote?: boolean;
 }
@@ -121,6 +126,7 @@ const EMPTY_READ: {
   createdAt: string | null;
   isReply: boolean;
   isQuote: boolean;
+  replyingLine: string;
 }[] = [];
 
 export async function readAllArticles(page: Page, limit: number): Promise<Seen[]> {
@@ -144,12 +150,14 @@ export async function readAllArticles(page: Page, limit: number): Promise<Seen[]
           // one. Only the opening of the article is looked at: the line sits
           // above the text, and searching the whole body would match somebody
           // who simply wrote the words "Replying to".
-          const isReply = /^\s*Replying to\b/m.test((el.innerText ?? '').slice(0, 400));
+          const opening = (el.innerText ?? '').slice(0, 400);
+          const isReply = /^\s*Replying to\b/m.test(opening);
+          const replyingLine = opening.split('\n').find((line) => /^\s*replying to\b/i.test(line)) ?? '';
           // A quoted post is an article inside an article. The outer one is
           // this node, so anything nested belongs to the quote.
           const isQuote = el.querySelector('[data-testid="tweetText"] ~ div [role="link"] time') !== null
             || el.querySelectorAll('[data-testid="User-Name"]').length > 1;
-          return { href, nameBlock, text, createdAt, isReply, isQuote };
+          return { href, nameBlock, text, createdAt, isReply, isQuote, replyingLine };
         }),
       limit,
     )
@@ -162,6 +170,7 @@ export async function readAllArticles(page: Page, limit: number): Promise<Seen[]
           createdAt: string | null;
           isReply: boolean;
           isQuote: boolean;
+          replyingLine: string;
         }[],
     );
 
@@ -189,6 +198,7 @@ export async function readAllArticles(page: Page, limit: number): Promise<Seen[]
       createdAt: item.createdAt,
       isReply: item.isReply,
       isQuote: item.isQuote,
+      replyingTo: replyingToHandles(item.replyingLine ?? ''),
     };
   });
 }
@@ -296,7 +306,12 @@ async function harvest(ctx: MonitorContext, eventType: string, sourceLabel: stri
       */
       occurredAt: snapshot.createdAt ?? postedAtFromStatusId(snapshot.statusId) ?? new Date().toISOString(),
       eventType,
-      raw: { source: sourceLabel },
+      raw: {
+        source: sourceLabel,
+        // Whom this answers, as X rendered it: how a people-focused session
+        // tells who a watched account already replied to.
+        ...(snapshot.replyingTo && snapshot.replyingTo.length > 0 ? { replyingTo: snapshot.replyingTo } : {}),
+      },
     });
   }
   return candidates;

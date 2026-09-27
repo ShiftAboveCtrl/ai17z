@@ -111,6 +111,66 @@ export async function knownRemoteIds(accountId: string, remoteIds: string[]): Pr
   return new Set(rows.map((row) => row.remote_event_id));
 }
 
+/**
+ * A watched account's own recent posts, newest first: originals only, as the
+ * radar recorded them from its timeline. These are where people talk to it.
+ */
+export async function watchedOriginals(
+  accountId: string,
+  handles: string[],
+  withinHours = 24,
+  limit = 12,
+): Promise<{ statusId: string; handle: string; occurredAt: string | null }[]> {
+  if (handles.length === 0) return [];
+  const rows = await query<{ remote_event_id: string; handle: string; occurred_at: string | null }>(
+    `SELECT remote_event_id, remote_author_handle AS handle, occurred_at
+       FROM events
+      WHERE account_id = $1
+        AND type = 'TARGET_ACCOUNT_ACTIVITY'
+        AND lower(remote_author_handle) = ANY($2::text[])
+        AND parent_remote_message_id IS NULL
+        AND coalesce(text, '') !~ '^\\s*@'
+        AND coalesce(occurred_at, ingested_at) > now() - ($3::int * interval '1 hour')
+      ORDER BY coalesce(occurred_at, ingested_at) DESC
+      LIMIT $4`,
+    [accountId, handles.map((h) => h.replace(/^@+/, '').toLowerCase()), withinHours, limit],
+  );
+  return rows.map((row) => ({ statusId: row.remote_event_id, handle: row.handle, occurredAt: row.occurred_at }));
+}
+
+/**
+ * Who a watched account talks to, from its own replies.
+ *
+ * A reply on X opens with the handles it answers, so the people an account
+ * replies to again and again are its circle. Counted per reply, so a thread
+ * of ten with one person is one person, not ten votes.
+ */
+export async function watchedCircle(
+  accountId: string,
+  handles: string[],
+  withinDays = 30,
+): Promise<{ handle: string; replies: number }[]> {
+  if (handles.length === 0) return [];
+  const rows = await query<{ text: string }>(
+    `SELECT text FROM events
+      WHERE account_id = $1
+        AND type = 'TARGET_ACCOUNT_ACTIVITY'
+        AND lower(remote_author_handle) = ANY($2::text[])
+        AND coalesce(text, '') ~ '^\\s*@'
+        AND ingested_at > now() - ($3::int * interval '1 day')`,
+    [accountId, handles.map((h) => h.replace(/^@+/, '').toLowerCase()), withinDays],
+  );
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const leading = /^\s*((?:@[A-Za-z0-9_]{1,15}\s+)+)/.exec(`${row.text} `)?.[1] ?? '';
+    const named = new Set(leading.match(/@[A-Za-z0-9_]{1,15}/g)?.map((h) => h.slice(1).toLowerCase()) ?? []);
+    for (const handle of named) counts.set(handle, (counts.get(handle) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([handle, replies]) => ({ handle, replies }))
+    .sort((a, b) => b.replies - a.replies || a.handle.localeCompare(b.handle));
+}
+
 export async function getEvent(id: string): Promise<EventRecord | null> {
   return mapRow<EventRecord>(await queryOne(`SELECT ${COLUMNS} FROM events WHERE id = $1`, [id]));
 }

@@ -63,6 +63,14 @@ describe('the search it runs', () => {
     // An owner's own query is left as written.
     expect(discoveryQuery('(pons OR $PONS) from:someone', 0)).toBe('(pons OR $PONS) from:someone lang:en -filter:replies -filter:retweets');
   });
+
+  it('asks only for what can still be answered', () => {
+    // Measured: 8 to 10 of every 20 results were past the freshness window.
+    expect(discoveryQuery('$PONS', 8, 120)).toBe('$PONS min_faves:8 within_time:2h lang:en -filter:replies -filter:retweets');
+    expect(discoveryQuery('$PONS', 8, 90)).toBe('$PONS min_faves:8 within_time:90m lang:en -filter:replies -filter:retweets');
+    // A query that names its own time bound keeps it.
+    expect(discoveryQuery('$PONS since:2026-09-01', 8, 120)).toBe('$PONS since:2026-09-01 min_faves:8 lang:en -filter:replies -filter:retweets');
+  });
 });
 
 describe('what it keeps', () => {

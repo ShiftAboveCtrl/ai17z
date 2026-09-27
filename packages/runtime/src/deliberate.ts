@@ -26,6 +26,7 @@ import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
 import { requestDiscovery } from './discovery';
+import { learnFromOutcomes } from './learning';
 import { worthNoticing } from './repoWatcher';
 import { reticenceReason, unpromptedSubject } from './reticence';
 import { worthEngaging } from './engagementWorth';
@@ -906,6 +907,27 @@ export async function wakeAgent(
     previous version did, and it is why no session was ever recorded.
   */
   const policy = await policyFor(agent);
+
+  /*
+    Learning from what happened, before deciding whether to go looking.
+
+    Placed after the pause, because learning changes the agent's own state,
+    and before the growth gate, because it costs no model call and a resting
+    agent's published replies are still being seen. It has no timer of its
+    own: it runs when the agent wakes, and not otherwise.
+  */
+  if (policy.learning.enabled) {
+    const learned = await learnFromOutcomes(agentId, now);
+    if (learned.measured > 0 || learned.started.length > 0 || learned.decided.length > 0) {
+      log.info('learned from outcomes', {
+        agentId,
+        measured: learned.measured,
+        started: learned.started.map((t) => `${t.dimension}:${t.arm}`),
+        decided: learned.decided.map((t) => `${t.dimension}:${t.arm}:${t.kept ? 'kept' : 'reverted'}`),
+      });
+    }
+  }
+
   const growth = await beginGrowthSession(agentId, accountId, policy, now).catch(() => null);
   if (growth && !growth.allowed) {
     await mind.noteWake(agentId, { reason: growth.message, quiet: true, looked: false });

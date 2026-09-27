@@ -330,6 +330,20 @@ export type ToolPolicy = z.infer<typeof ToolPolicy>;
  * and twenty keeps most of them. An agent on THOROUGH looks up what a model
  * chose; one on BALANCED usually looks up what the deterministic rules chose.
  */
+/**
+ * Whether an agent learns from what happened to what it published.
+ *
+ * On by default: learning here moves only choices that are already inside every
+ * rule (how discovery divides its sessions, the length it aims for, whether it
+ * tends to ask, which audience it prefers among posts that passed), and each
+ * change is tested against the old behaviour before it is kept. See
+ * runtime/src/learning.ts.
+ */
+export const LearningPolicy = z.object({
+  enabled: z.boolean().default(true),
+});
+export type LearningPolicy = z.infer<typeof LearningPolicy>;
+
 export const RESPONSE_SPEEDS = ['FAST', 'BALANCED', 'THOROUGH'] as const;
 export const ResponseSpeed = z.enum(RESPONSE_SPEEDS);
 export type ResponseSpeed = (typeof RESPONSE_SPEEDS)[number];
@@ -434,6 +448,8 @@ export const PolicyConfig = z.object({
    * changes nothing about an existing installation until somebody moves it.
    */
   responseSpeed: ResponseSpeed.default('BALANCED'),
+  /** Whether the agent learns from outcomes. See LearningPolicy. */
+  learning: LearningPolicy.default({}),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 

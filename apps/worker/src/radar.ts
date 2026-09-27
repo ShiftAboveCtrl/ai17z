@@ -1,4 +1,5 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
+import { effectiveXInterval } from '@xbam/shared/contracts';
 import {
   accounts as accountsRepo,
   actions as actionsRepo,
@@ -16,7 +17,9 @@ import {
   noteXFailure,
   noteXRead,
   planPersonaDiscovery,
+  peopleCandidates,
   rankDiscovered,
+  rankPeople,
   reconcileCandidates,
   type DiscoveryPlan,
 } from '@xbam/runtime';
@@ -155,7 +158,11 @@ export class SocialRadar {
     // floor for every source that has none, which is every source created before
     // the interval was written into the config. It was 180 for all of them, so
     // nobody was noticed in under three minutes however the sources were set up.
-    const interval = (config.intervalSeconds ?? envInt('AI17Z_RADAR_DEFAULT_INTERVAL_S', 60)) * 1_000;
+    const configured = config.intervalSeconds ?? envInt('AI17Z_RADAR_DEFAULT_INTERVAL_S', 60);
+    // On X, never faster than the platform's floor for this kind of page. An
+    // owner may go slower; going faster is paid for by the account, in
+    // cooldowns. Other channels keep exactly what they were configured with.
+    const interval = (account.channel === 'x' ? effectiveXInterval(source.kind, configured).seconds : configured) * 1_000;
 
     /*
       The account's X budget, asked before anything is loaded.
@@ -249,19 +256,21 @@ export class SocialRadar {
     */
     let discovery: Extract<DiscoveryPlan, { go: true }> | null = null;
     if (source.kind === 'persona_discovery') {
-      const plan = await planPersonaDiscovery(source);
+      const plan = await planPersonaDiscovery(source, new Date(), freshnessWindowFor('KEYWORD_MATCH') / 60_000);
       if (!plan.go) {
         await radarRepo.deferPoll(source.id, new Date(Date.now() + Math.max(plan.retryAfterMs, 60_000)), plan.reason);
         return;
       }
       discovery = plan;
-      target = plan.query;
+      target = plan.mode === 'COMMUNITY' ? (plan.statusId ?? null) : plan.query;
     }
 
     try {
       const ctx = await buildChannelContext(account, null);
       const poll = await adapter.pollRadarSource(ctx, {
-        kind: source.kind,
+        // Replies under a watched post are read the way the agent's own
+        // threads are: open the post, read what is underneath.
+        kind: discovery?.mode === 'COMMUNITY' ? 'own_threads' : source.kind,
         target,
         limit: config.limit ?? 20,
         cursor: source.cursor,
@@ -290,10 +299,21 @@ export class SocialRadar {
       const memory = discovery
         ? await actionsRepo.discoveryMemory(discovery.agentId, source.accountId).catch(() => null)
         : null;
+      // A people-focused session keeps people, marked with whose conversation
+      // they are in; a topic search keeps posts.
+      const found =
+        discovery && discovery.mode !== 'TOPIC'
+          ? peopleCandidates(poll.candidates, {
+              mode: discovery.mode,
+              watched: discovery.watched ?? '',
+              self: account.handle ?? '',
+              postId: discovery.statusId ?? null,
+            })
+          : poll.candidates;
       const known = discovery
-        ? await eventsRepo.knownRemoteIds(source.accountId, poll.candidates.map((c) => c.remoteId)).catch(() => new Set<string>())
+        ? await eventsRepo.knownRemoteIds(source.accountId, found.map((c) => c.remoteId)).catch(() => new Set<string>())
         : new Set<string>();
-      const unseen = discovery ? poll.candidates.filter((candidate) => !known.has(candidate.remoteId)) : poll.candidates;
+      const unseen = discovery ? found.filter((candidate) => !known.has(candidate.remoteId)) : found;
       /*
         A post too old to answer is not a candidate, so it must not take one of
         the session's few places. Measured on a live agent: a Pons search kept
@@ -302,25 +322,46 @@ export class SocialRadar {
         Same window ingest applies, and a post whose age cannot be read is kept,
         as ingest keeps it.
       */
-      const window = freshnessWindowFor('KEYWORD_MATCH');
+
       const fresh = discovery
         ? unseen.filter((candidate) => {
             const at = candidate.occurredAt ? Date.parse(candidate.occurredAt) : Number.NaN;
-            return !Number.isFinite(at) || Date.now() - at <= window;
+            return !Number.isFinite(at) || Date.now() - at <= freshnessWindowFor('KEYWORD_MATCH', candidate.raw);
           })
         : unseen;
       const kept = discovery
-        ? rankDiscovered(fresh, discovery.keep, {
+        ? discovery.mode !== 'TOPIC'
+          ? rankPeople(fresh, discovery.keep, {
+              contactedRecently: memory?.contactedRecently ?? [],
+              engagedWithUs: memory?.engagedWithUs ?? [],
+            })
+          : rankDiscovered(fresh, discovery.keep, {
             topics: discovery.topics,
+            preferAudience: discovery.preferAudience,
             contactedRecently: memory?.contactedRecently ?? [],
             engagedWithUs: memory?.engagedWithUs ?? [],
           })
         : poll.candidates;
+      /*
+        Which learned preferences produced each kept post, so that when what
+        the agent says to it is measured, the outcome is credited to the right
+        side of the trial. See learning.ts.
+      */
+      const labelled =
+        discovery && Object.keys(discovery.variants).length > 0
+          ? kept.map((c) => ({
+              ...c,
+              raw: {
+                ...(c.raw && typeof c.raw === 'object' ? (c.raw as Record<string, unknown>) : {}),
+                learning: { variants: discovery.variants },
+              },
+            }))
+          : kept;
       const outcome = await reconcileCandidates({
         accountId: source.accountId,
         sourceId: source.id,
         sourceKind: source.kind,
-        candidates: kept,
+        candidates: labelled,
         mayTrigger: config.mayTrigger ?? true,
       });
 
@@ -332,7 +373,7 @@ export class SocialRadar {
         // a feed: every search is a different feed.
         cursor: discovery ? discovery.nextCursor : poll.cursor,
         idleReason: discovery
-          ? `Searched ${discovery.term}: ${poll.candidates.length} found, ${poll.candidates.length - unseen.length} already seen, kept the best ${kept.length}.${unseen.length > fresh.length ? ` ${unseen.length - fresh.length} ${unseen.length - fresh.length === 1 ? 'was' : 'were'} too old to answer.` : ''}`
+          ? `${discovery.mode === 'COMMUNITY' ? 'Read' : 'Searched'} ${discovery.term}: ${found.length} found, ${found.length - unseen.length} already seen, kept the best ${kept.length}.${unseen.length > fresh.length ? ` ${unseen.length - fresh.length} ${unseen.length - fresh.length === 1 ? 'was' : 'were'} too old to answer.` : ''}`
           : null,
       });
       if (ownPostId) await radarRepo.markOwnPostChecked(ownPostId, poll.candidates.length);

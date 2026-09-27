@@ -173,6 +173,7 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   // leaves it at BALANCED and reports it as something Advanced can express,
   // which is exactly what `readEasyView` is for.
   responseSpeed: { where: 'ADVANCED_ONLY' },
+  'learning.enabled': { where: 'ADVANCED_ONLY' },
   'relationships.mirrorHostility': { where: 'DEPRECATED', why: "Superseded by the DEFLECT rule, which is not optional." },
   'relationships.regularsGetBrevity': { where: 'DEPRECATED', why: "Relationship voice shaping. Applied from familiarity, not configured." },
   'relationships.strangerExplains': { where: 'DEPRECATED', why: "Relationship voice shaping." },

@@ -3,12 +3,15 @@ import { PolicyConfig } from '@xbam/shared/contracts';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
+  events as eventsRepo,
   query,
+  targets as targetsRepo,
   type RadarSourceRow,
 } from '@xbam/database';
 import { growthGateFor } from './growthGate';
 import { unpromptedSubject } from './reticence';
 import { readPromo } from './promo';
+import { activePreferences, variantFor } from './learning';
 
 /**
  * An agent going looking on its own.
@@ -86,13 +89,23 @@ export function discoveryTerms(input: { pinned?: string[] | undefined; topics: s
 }
 
 /** The X search for one term. A cashtag goes bare, a phrase goes quoted. */
-export function discoveryQuery(term: string, minFaves: number): string {
+export function discoveryQuery(term: string, minFaves: number, withinMinutes?: number): string {
   const trimmed = term.trim();
   const phrase = /^\$[A-Za-z0-9]+$/.test(trimmed) || /["()]|\bOR\b|:/.test(trimmed) ? trimmed : `"${trimmed}"`;
   // A query that names its own floor keeps it: an owner who wrote min_faves:40
   // for one term and relied on the default for another meant both.
   const floor = minFaves > 0 && !/min_faves:/i.test(trimmed) ? ` min_faves:${minFaves}` : '';
-  return `${phrase}${floor} lang:en -filter:replies -filter:retweets`;
+  /*
+    Only what can still be answered. Filtering afterwards spent the page on
+    old posts: measured on a live agent, 8 to 10 of every 20 results were past
+    the freshness window, so a session approached one post where it could have
+    approached three. A query that names its own time bound keeps it.
+  */
+  const fresh =
+    withinMinutes && withinMinutes > 0 && !/\b(within_time|since|since_time):/i.test(trimmed)
+      ? ` within_time:${withinMinutes >= 60 && withinMinutes % 60 === 0 ? `${withinMinutes / 60}h` : `${withinMinutes}m`}`
+      : '';
+  return `${phrase}${floor}${fresh} lang:en -filter:replies -filter:retweets`;
 }
 
 /** What the discovery ranker knows beyond the post itself. */
@@ -103,6 +116,12 @@ export interface RankContext {
   contactedRecently?: string[];
   /** Authors who have written to it lately, lowercased. */
   engagedWithUs?: string[];
+  /**
+   * The audience size this agent has learned does best, when it has one and
+   * this session applies it. A lean among posts that already passed every
+   * rule, never a way past one. See learning.ts.
+   */
+  preferAudience?: 'SMALL' | 'MID' | 'LARGE' | null;
 }
 
 export interface DiscoveryScore {
@@ -154,6 +173,10 @@ export function scoreDiscovered(candidate: RadarCandidate, context?: RankContext
 
   const followers = typeof raw.author?.followers === 'number' ? raw.author.followers : null;
   if (followers !== null) add(`${followers.toLocaleString('en-US')} followers`, Math.log10(followers + 1));
+  if (followers !== null && context?.preferAudience) {
+    const bucket = followers < 1_000 ? 'SMALL' : followers < 10_000 ? 'MID' : 'LARGE';
+    if (bucket === context.preferAudience) add('the audience size its own results favour', 1.5);
+  }
 
   const metrics = raw.metrics ?? {};
   const count = (name: string) => (typeof metrics[name] === 'number' ? (metrics[name] as number) : 0);
@@ -179,6 +202,93 @@ export function scoreDiscovered(candidate: RadarCandidate, context?: RankContext
  * reasons onto its payload, so the event, the job and the owner's screen can
  * all say why this post was chosen over the others.
  */
+/**
+ * What a people-focused session read, turned into posts the agent may answer.
+ *
+ * For COMMUNITY, the page is a watched account's post and everything under it.
+ * The account itself is not a candidate, the agent is not, and nor is anybody
+ * the account already answered on that page: it spoke to them, and the agent
+ * joining in would be talking over the person it follows. What remains are the
+ * people who replied and heard nothing back.
+ *
+ * Every kept post is marked with where it came from, so the engagement
+ * decision and the prompt both know it is somebody in that account's
+ * conversation rather than a stranger found by searching a word.
+ */
+export function peopleCandidates(
+  candidates: RadarCandidate[],
+  input: { mode: 'COMMUNITY' | 'CIRCLE'; watched: string; self: string; postId?: string | null },
+): RadarCandidate[] {
+  const watched = input.watched.replace(/^@+/, '').toLowerCase();
+  const self = input.self.replace(/^@+/, '').toLowerCase();
+  const author = (c: RadarCandidate) => (c.authorHandle ?? '').replace(/^@+/, '').toLowerCase();
+
+  const answered = new Set<string>();
+  if (input.mode === 'COMMUNITY') {
+    for (const candidate of candidates) {
+      if (author(candidate) !== watched) continue;
+      // X renders whom a reply answers on its own "Replying to" line, which the
+      // reader keeps; a reply's text only starts with handles when typed there.
+      const rendered = (candidate.raw as { replyingTo?: unknown } | null)?.replyingTo;
+      for (const handle of Array.isArray(rendered) ? rendered : []) {
+        if (typeof handle === 'string') answered.add(handle.replace(/^@+/, '').toLowerCase());
+      }
+      const leading = /^\s*((?:@[A-Za-z0-9_]{1,15}\s+)+)/.exec(`${candidate.text} `)?.[1] ?? '';
+      for (const handle of leading.match(/@[A-Za-z0-9_]{1,15}/g) ?? []) answered.add(handle.slice(1).toLowerCase());
+    }
+  }
+
+  return candidates
+    .filter((c) => author(c) && author(c) !== watched && author(c) !== self && !answered.has(author(c)))
+    .map((c) => ({
+      ...c,
+      eventType: 'KEYWORD_MATCH',
+      ...(input.mode === 'COMMUNITY' && input.postId
+        ? { parentRemoteId: input.postId, conversationRemoteId: input.postId }
+        : {}),
+      raw: {
+        ...(c.raw && typeof c.raw === 'object' ? (c.raw as Record<string, unknown>) : {}),
+        community: {
+          watched: input.watched.replace(/^@+/, ''),
+          kind: input.mode === 'COMMUNITY' ? 'REPLY' : 'CIRCLE',
+          ...(input.postId ? { postId: input.postId } : {}),
+        },
+      },
+    }));
+}
+
+/**
+ * Which of those people to approach this session.
+ *
+ * Not the topic ranker: these posts are not chosen for their subject. Never
+ * somebody selling a token, never somebody approached in the last week, and
+ * somebody who has written to the agent before goes first. Otherwise a reply
+ * with something in it beats a bare "gm", because kind words need something to
+ * be kind about, and one person is taken once.
+ */
+export function rankPeople(
+  candidates: RadarCandidate[],
+  keep: number,
+  context: { contactedRecently?: string[]; engagedWithUs?: string[] } = {},
+): RadarCandidate[] {
+  const contacted = new Set((context.contactedRecently ?? []).map((h) => h.toLowerCase()));
+  const engaged = new Set((context.engagedWithUs ?? []).map((h) => h.toLowerCase()));
+  const seen = new Set<string>();
+  return candidates
+    .filter((c) => readPromo(c.text).level !== 'strong')
+    .filter((c) => !contacted.has((c.authorHandle ?? '').toLowerCase()))
+    .map((c) => {
+      const handle = (c.authorHandle ?? '').toLowerCase();
+      const words = c.text.replace(/@[A-Za-z0-9_]{1,15}/g, ' ').replace(/https?:\/\/\S+/g, ' ').split(/\s+/).filter(Boolean).length;
+      const score = (engaged.has(handle) ? 20 : 0) + Math.min(words, 20);
+      return { c, handle, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .filter(({ handle }) => (seen.has(handle) ? false : (seen.add(handle), true)))
+    .slice(0, Math.max(0, keep))
+    .map(({ c }) => c);
+}
+
 export function rankDiscovered(candidates: RadarCandidate[], keep: number, context?: RankContext): RadarCandidate[] {
   return [...candidates]
     .map((candidate, index) => ({ candidate, index, scored: scoreDiscovered(candidate, context) }))
@@ -193,9 +303,53 @@ export function rankDiscovered(candidates: RadarCandidate[], keep: number, conte
     }));
 }
 
+/**
+ * Where a session looks.
+ *
+ * COMMUNITY is the replies under a watched account's own recent post that the
+ * account never answered. CIRCLE is fresh posts from the people that account
+ * replies to again and again. TOPIC is a search of the agent's subjects.
+ *
+ * Topics alone were not enough, and measured badly: every search for a ticker
+ * or a launchpad on a crypto subject returns mostly people selling coins, and a
+ * live agent spent its sessions correcting token pitches. The person its voice
+ * follows spends his replies on the people who talk to him and on the people
+ * he knows. So two sessions in three now go there, and topics take the third.
+ */
+export type DiscoveryMode = 'COMMUNITY' | 'CIRCLE' | 'TOPIC';
+
 export type DiscoveryPlan =
-  | { go: true; agentId: string; term: string; query: string; nextCursor: string; keep: number; topics: string[] }
+  | {
+      go: true;
+      agentId: string;
+      mode: DiscoveryMode;
+      /** What was looked at, in words, for the radar's idle reason. */
+      term: string;
+      /** The search to run, for CIRCLE and TOPIC. */
+      query: string;
+      /** The watched post whose replies are read, for COMMUNITY. */
+      statusId?: string;
+      /** The watched account, for COMMUNITY. */
+      watched?: string;
+      nextCursor: string;
+      keep: number;
+      topics: string[];
+      /** Learned preferences this session applies, and whether each ran as learned or as the control. */
+      variants: Record<string, 'learned' | 'control'>;
+      preferAudience: 'SMALL' | 'MID' | 'LARGE' | null;
+    }
   | { go: false; reason: string; retryAfterMs: number };
+
+/** How many people a CIRCLE search names at once; X's query length is finite. */
+const CIRCLE_SIZE = 8;
+
+/**
+ * How many a people-focused session may approach at once.
+ *
+ * Fewer than a topic search keeps, on purpose: replying to three people under
+ * the same post in one sitting is exactly what reads as a bot working a thread.
+ */
+const PEOPLE_KEEP = 2;
 
 const HOUR = 60 * 60_000;
 
@@ -208,7 +362,12 @@ const HOUR = 60 * 60_000;
  * sentence. Resting between sessions and a spent hour do not, because the wake
  * that ends a session is what asks for this search.
  */
-export async function planPersonaDiscovery(source: RadarSourceRow, now = new Date()): Promise<DiscoveryPlan> {
+export async function planPersonaDiscovery(
+  source: RadarSourceRow,
+  now = new Date(),
+  /** How old a post may be and still be answered; the search asks for nothing older. */
+  withinMinutes?: number,
+): Promise<DiscoveryPlan> {
   const links = await accountsRepo.listAccountAgents(source.accountId);
   for (const link of links) {
     const agent = await agentsRepo.getAgent(link.agentId);
@@ -232,27 +391,109 @@ export async function planPersonaDiscovery(source: RadarSourceRow, now = new Dat
     const persona = await agentsRepo.getActivePersona(agent.id).catch(() => null);
     const config = (source.config ?? {}) as { queries?: string[]; minFaves?: number; limit?: number };
     const terms = discoveryTerms({ pinned: config.queries, topics: persona?.topics ?? [] });
-    if (terms.length === 0) {
-      return {
-        go: false,
-        reason:
-          'Nothing to search for: this agent has no specific topics or interests yet. Add a topic to its persona, or pin a search term on this source.',
-        retryAfterMs: 6 * HOUR,
-      };
+    const keep = Math.max(1, Math.min(policy.growth.maxCandidatesPerSession || 1, 10));
+    // The ranker judges relevance against the persona's own topics even when
+    // the owner pinned the searches: a pinned query says where to look, the
+    // persona says what counts as on-subject once there.
+    const topics = discoveryTerms({ topics: persona?.topics ?? [] }).map((t) => t.replace(/^"|"$/g, ''));
+
+    // The accounts its owner asked it to follow, and what they are doing.
+    const account = await accountsRepo.getAccount(source.accountId).catch(() => null);
+    const self = (account?.handle ?? '').replace(/^@+/, '').toLowerCase();
+    const watched = (await targetsRepo.listAgentTargets(agent.id).catch(() => []))
+      .filter((target) => target.enabled)
+      .map((target) => target.handle.replace(/^@+/, ''));
+    const originals = await eventsRepo.watchedOriginals(source.accountId, watched).catch(() => []);
+    const circle = (await eventsRepo.watchedCircle(source.accountId, watched).catch(() => []))
+      .map((entry) => entry.handle)
+      .filter((handle) => handle !== self && !watched.some((w) => w.toLowerCase() === handle))
+      .slice(0, CIRCLE_SIZE);
+
+    const step = cursorIndex(source.cursor);
+    const round = Math.floor(step / 3);
+    const wanted: DiscoveryMode[] = (['COMMUNITY', 'CIRCLE', 'TOPIC'] as const).slice(step % 3);
+    const order: DiscoveryMode[] = [...wanted, ...(['COMMUNITY', 'CIRCLE', 'TOPIC'] as const)];
+    const nextCursor = `rotation:${step + 1}`;
+
+    /*
+      What this agent has learned about where to look and whom to favour, with
+      the old behaviour kept running as the control. See learning.ts.
+    */
+    const variants: Record<string, 'learned' | 'control'> = {};
+    let preferAudience: 'SMALL' | 'MID' | 'LARGE' | null = null;
+    if (policy.learning.enabled) {
+      const learned = await activePreferences(agent.id);
+      const mode = learned.mode;
+      if (mode && ['COMMUNITY', 'CIRCLE', 'TOPIC'].includes(mode.arm)) {
+        variants.mode = variantFor(`${source.id}:${step}:mode`, mode.status);
+        if (variants.mode === 'learned') order.unshift(mode.arm as DiscoveryMode);
+      }
+      const audience = learned.audience;
+      if (audience && ['SMALL', 'MID', 'LARGE'].includes(audience.arm)) {
+        variants.audience = variantFor(`${source.id}:${step}:audience`, audience.status);
+        if (variants.audience === 'learned') preferAudience = audience.arm as 'SMALL' | 'MID' | 'LARGE';
+      }
     }
-    const index = cursorIndex(source.cursor) % terms.length;
-    const term = terms[index]!;
+
+    for (const mode of order) {
+      if (mode === 'COMMUNITY' && originals.length > 0) {
+        const post = originals[round % originals.length]!;
+        return {
+          go: true,
+          agentId: agent.id,
+          mode,
+          term: `replies to @${post.handle}`,
+          query: '',
+          statusId: post.statusId,
+          watched: post.handle,
+          nextCursor,
+          keep: Math.min(keep, PEOPLE_KEEP),
+          topics,
+          variants,
+          preferAudience,
+        };
+      }
+      if (mode === 'CIRCLE' && circle.length > 0) {
+        return {
+          go: true,
+          agentId: agent.id,
+          mode,
+          term: `people @${watched[0]} talks to`,
+          // Whose circle this is, which is what exempts these posts from the
+          // rules for strangers. Left empty once, and every one was declined as
+          // off topic.
+          watched: watched[0],
+          query: discoveryQuery(`(${circle.map((handle) => `from:${handle}`).join(' OR ')})`, 0, withinMinutes),
+          nextCursor,
+          keep: Math.min(keep, PEOPLE_KEEP),
+          topics,
+          variants,
+          preferAudience,
+        };
+      }
+      if (mode === 'TOPIC' && terms.length > 0) {
+        // With nobody to look at, every session is a topic session and moves on.
+        const people = originals.length > 0 || circle.length > 0;
+        const term = terms[(people ? round : step) % terms.length]!;
+        return {
+          go: true,
+          agentId: agent.id,
+          mode,
+          term,
+          query: discoveryQuery(term, config.minFaves ?? 20, withinMinutes),
+          nextCursor,
+          keep,
+          topics,
+          variants,
+          preferAudience,
+        };
+      }
+    }
     return {
-      go: true,
-      agentId: agent.id,
-      term,
-      query: discoveryQuery(term, config.minFaves ?? 20),
-      nextCursor: `rotation:${(index + 1) % terms.length}`,
-      keep: Math.max(1, Math.min(policy.growth.maxCandidatesPerSession || 1, 10)),
-      // The ranker judges relevance against the persona's own topics even when
-      // the owner pinned the searches: a pinned query says where to look, the
-      // persona says what counts as on-subject once there.
-      topics: discoveryTerms({ topics: persona?.topics ?? [] }).map((t) => t.replace(/^"|"$/g, '')),
+      go: false,
+      reason:
+        'Nothing to look at: this agent follows no account and has no specific topics yet. Watch an account, add a topic to its persona, or pin a search term on this source.',
+      retryAfterMs: 6 * HOUR,
     };
   }
   return {

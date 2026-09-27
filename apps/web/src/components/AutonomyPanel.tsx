@@ -67,6 +67,27 @@ interface Autonomy {
   };
   responses: { answered: number; p50Seconds: number | null; p90Seconds: number | null; modelCallsPerAnswer: number | null };
   habits: { phrase: string; posts: number }[];
+  learning: {
+    enabled: boolean;
+    outcomes: number;
+    choices: {
+      dimension: string;
+      trust: number;
+      kept: number;
+      reverted: number;
+      options: { arm: string; label: string; placed: number; evidence: number }[];
+      current: { arm: string; label: string; status: 'RUNNING' | 'KEPT' } | null;
+    }[];
+    trials: {
+      dimension: string;
+      label: string;
+      status: string;
+      hypothesis: string;
+      verdict: string | null;
+      startedAt: string;
+      decidedAt: string | null;
+    }[];
+  };
   doNotContact: { id: string; handle: string; source: string; evidence: string | null; createdAt: string }[];
   learned: { family: string; accepted: number; rejected: number; lastDecisionAt: string }[];
   targets: {
@@ -121,12 +142,16 @@ export function AutonomyPanel({ agentId }: { agentId: string }) {
     await post(`/api/agents/${agentId}/autonomy/contact-again/${entryId}`, {});
     data.reload();
   };
+  const resetLearning = async () => {
+    await post(`/api/agents/${agentId}/learning/reset`, {});
+    data.reload();
+  };
 
   if (data.loading && !data.data) return <Spinner />;
   if (data.error) return <ErrorPanel title="Could not read what this agent is allowed to do." detail={data.error} />;
   if (!data.data) return null;
 
-  const { growth, accountHealth, doNotContact, learned, targets, xCapacity, broadGrowth, responses, habits } = data.data;
+  const { growth, accountHealth, doNotContact, learned, targets, xCapacity, broadGrowth, responses, habits, learning } = data.data;
 
   return (
     <section className="space-y-8">
@@ -220,6 +245,8 @@ export function AutonomyPanel({ agentId }: { agentId: string }) {
           </p>
         )}
       </div>
+
+      <LearningSection learning={learning} onReset={resetLearning} />
 
       <div className="space-y-2 border-t border-ink-line pt-6">
         <div className="flex flex-wrap items-center gap-3">
@@ -345,6 +372,88 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div className="flex flex-wrap items-baseline justify-between gap-x-4 border-b border-ink-line/50 pb-1.5">
       <dt className="text-bone-faint">{label}</dt>
       <dd className="break-words text-bone-dim">{children}</dd>
+    </div>
+  );
+}
+
+const CHOICE_TITLES: Record<string, string> = {
+  mode: 'Where it looks',
+  length: 'How long it writes',
+  question: 'Whether it asks',
+  audience: 'Whose posts it favours',
+};
+
+/**
+ * What it has learned from how its own replies and posts did.
+ *
+ * Every line is a measurement or a test with its verdict, never a claim the
+ * agent made about itself. "Placed" is where an option's results sit in the
+ * agent's own range, so fifty per cent is its ordinary.
+ */
+function LearningSection({ learning, onReset }: { learning: Autonomy['learning']; onReset: () => Promise<void> }) {
+  const shown = learning.choices.filter((c) => c.options.length > 0 || c.current);
+  return (
+    <div className="space-y-3 border-t border-ink-line pt-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-sm text-bone">What it has learned</span>
+        <span className="font-mono text-[10px] text-bone-faint">
+          {learning.enabled ? `${learning.outcomes} measured replies and posts` : 'learning is switched off in Policies'}
+        </span>
+        {learning.outcomes > 0 && (
+          <button
+            type="button"
+            className="btn-quiet ml-auto px-0 text-xs"
+            onClick={() => {
+              if (window.confirm('Forget everything this agent learned from its outcomes? Its rules and limits are not affected.')) void onReset();
+            }}
+          >
+            Forget what it learned
+          </button>
+        )}
+      </div>
+      {shown.length === 0 ? (
+        <p className="text-xs text-bone-faint">
+          Nothing yet. Each reply and post is measured about six hours after it goes out, and a change is only tried once
+          the evidence is clear.
+        </p>
+      ) : (
+        <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+          {shown.map((choice) => (
+            <div key={choice.dimension}>
+              <dt className="text-xs text-bone-faint">{CHOICE_TITLES[choice.dimension] ?? choice.dimension}</dt>
+              <dd className="mt-1 space-y-0.5">
+                {choice.current && (
+                  <p className="break-words text-bone">
+                    {choice.current.status === 'RUNNING' ? 'Testing' : 'Leaning into'} {choice.current.label}
+                  </p>
+                )}
+                {choice.options.slice(0, 3).map((option) => (
+                  <p key={option.arm} className="break-words text-[12px] text-bone-dim">
+                    {option.label}: placed {Math.round(option.placed * 100)}%, {option.evidence} measured
+                  </p>
+                ))}
+                {(choice.kept > 0 || choice.reverted > 0) && (
+                  <p className="text-[11px] text-bone-faint">
+                    {choice.kept} kept, {choice.reverted} undone, so it {choice.trust >= 1 ? 'trusts' : 'is wary of'} its own changes here
+                  </p>
+                )}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {learning.trials.length > 0 && (
+        <ul className="space-y-2">
+          {learning.trials.slice(0, 5).map((trial) => (
+            <li key={`${trial.dimension}-${trial.startedAt}`} className="break-words text-xs leading-relaxed text-bone-dim">
+              <span className="font-mono text-[10px] text-bone-faint">
+                {trial.status === 'RUNNING' ? 'testing' : trial.status === 'KEPT' ? 'kept' : 'undone'} · {timeAgo(trial.decidedAt ?? trial.startedAt)}
+              </span>{' '}
+              {trial.verdict ?? trial.hypothesis}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

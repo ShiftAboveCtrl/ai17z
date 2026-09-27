@@ -35,10 +35,16 @@ import {
 
 import { readPosition } from '../stance';
 import {
+  audienceOf,
   chooseIntent,
   readTemperature,
 } from '../engagement';
+import { readPromo } from '../promo';
 import { compileForJob, fingerprintFor } from '../voice';
+import { activePreferences, variantFor } from '../learning';
+
+/** The length each learned option aims for, in characters. */
+const LENGTH_TARGETS = { SHORT: 45, MEDIUM: 100, LONG: 170 } as const;
 import { asksAboutTheAgent, questionsIn } from '../research';
 import { removeEmDashes } from '../punctuation';
 
@@ -67,7 +73,10 @@ import {
  * a reply in a conversation it is part of is a conversation, whatever the
  * event that started it.
  */
-function approachOf(bundle: JobBundle, context: ResolvedContext): 'STRANGER' | 'TARGET' | null {
+function approachOf(
+  bundle: JobBundle,
+  context: ResolvedContext,
+): 'STRANGER' | 'TARGET' | 'COMMUNITY' | 'CIRCLE' | null {
   const type = bundle.event.type;
   if (type !== 'KEYWORD_MATCH' && type !== 'TARGET_ACCOUNT_ACTIVITY') return null;
   const selves = [bundle.account?.handle, ...bundle.policy.content.selfHandles]
@@ -76,7 +85,17 @@ function approachOf(bundle: JobBundle, context: ResolvedContext): 'STRANGER' | '
   const text = (context.incomingText ?? '').toLowerCase();
   if (selves.some((self) => text.includes(`@${self}`))) return null;
   if ((context.thread ?? []).some((m) => m.role === 'OUTBOUND')) return null;
-  return type === 'TARGET_ACCOUNT_ACTIVITY' ? 'TARGET' : 'STRANGER';
+  if (type === 'TARGET_ACCOUNT_ACTIVITY') return 'TARGET';
+  // Somebody in the conversation of an account it follows, found by a
+  // people-focused session: see peopleCandidates.
+  const community = audienceOf(bundle.event.payload).community;
+  if (community) return community.kind === 'REPLY' ? 'COMMUNITY' : 'CIRCLE';
+  return 'STRANGER';
+}
+
+/** The account the agent follows, for the COMMUNITY and CIRCLE framing. */
+function communityOf(bundle: JobBundle): string | null {
+  return audienceOf(bundle.event.payload).community?.watched ?? null;
 }
 
 export async function stepGenerate(bundle: JobBundle): Promise<void> {
@@ -205,10 +224,51 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
   ).map((habit) => habit.phrase);
 
   const fingerprint = await fingerprintFor(bundle.agent.id).catch(() => null);
-  const usualLength =
+  let usualLength =
     fingerprint && fingerprint.sampleCount > 0
       ? { median: fingerprint.medianChars, ceiling: lengthCeiling(fingerprint) }
       : null;
+
+  /*
+    What this agent has learned about how long to write and whether to ask,
+    applied with the old behaviour running as the control. The choice is keyed
+    on the job, so a job resumed after a restart makes the same one, and it is
+    written onto the job so the outcome is credited to the side that produced
+    it. See learning.ts.
+  */
+  let leaning: string | null = null;
+  const variants: Record<string, 'learned' | 'control'> = {};
+  if (bundle.policy.learning.enabled && bundle.job.actionType !== 'POST') {
+    const learned = await activePreferences(bundle.agent.id);
+    if (learned.length) {
+      variants.length = variantFor(`${bundle.job.id}:length`, learned.length.status);
+      if (variants.length === 'learned') {
+        const target = LENGTH_TARGETS[learned.length.arm as keyof typeof LENGTH_TARGETS];
+        if (target) {
+          // Never past what the policy allows, and never a ceiling the voice
+          // check would hold the draft to review for.
+          const limit = bundle.policy.output.maxCharacters;
+          usualLength = { median: Math.min(target, limit), ceiling: Math.min(Math.max(usualLength?.ceiling ?? 0, target + 40), limit) };
+        }
+      }
+    }
+    if (learned.question) {
+      variants.question = variantFor(`${bundle.job.id}:question`, learned.question.status);
+      if (variants.question === 'learned') {
+        leaning =
+          learned.question.arm === 'ASKS'
+            ? 'Replies that ask one real question have done well for you here; end with one if it fits.'
+            : 'Replies that say something have done better for you than ones that ask; do not end on a question.';
+      }
+    }
+    if (Object.keys(variants).length > 0 && context) {
+      const learnedMeta = { ...(context.meta ?? {}), learning: { variants } };
+      await jobsRepo.updateJob(bundle.job.id, { resolvedContext: { ...context, meta: learnedMeta } });
+      // The steps after this one write back from the bundle, so it has to
+      // carry the labels too or the voice step would drop them.
+      bundle.job.resolvedContext = { ...context, meta: learnedMeta };
+    }
+  }
 
   const prompt = assemblePrompt({
     layers: template.layers,
@@ -223,8 +283,11 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     memoryCharBudget: bundle.policy.memory.retrieval.totalCharBudget,
     actionType: bundle.job.actionType,
     approach: approachOf(bundle, context),
+    watched: communityOf(bundle),
+    promotional: readPromo(context.incomingText ?? '').level !== 'none',
     habits,
     usualLength,
+    ...(leaning ? { leaning } : {}),
     aboutSelf: questionsIn(context.incomingText ?? '').some((question) => asksAboutTheAgent(question)),
     evidence,
     support,
