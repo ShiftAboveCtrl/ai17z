@@ -35,6 +35,7 @@ export * as autonomy from './repositories/autonomy';
 export * as targets from './repositories/targets';
 export * as xCapacity from './repositories/xCapacity';
 export * as broadCandidates from './repositories/broadCandidates';
+export * as learning from './repositories/learning';
 export * as plugins from './repositories/plugins';
 export * as workers from './repositories/workers';
 export * as radar from './repositories/radar';
@@ -90,6 +91,7 @@ export type { GrowthSessionRow, DoNotContactRow, OwnerSignalRow, AccountHealth, 
 export type { TargetStateRow, TargetDisposition } from './repositories/targets';
 export type { CapacityStateRow, CapacityUsage, XSignal } from './repositories/xCapacity';
 export type { BroadSummary } from './repositories/broadCandidates';
+export type { ArmRow, DimensionRow, MeasurableAction, TrialRow } from './repositories/learning';
 export type { EventMediaRow, EventQuoteRow, EventLinkRow } from './repositories/media';
 export type { AttentionRow, GoalRow, ReflectionRow, WakeRow, RememberInput } from './repositories/deliberation';
 export type { RelationshipRow, CallbackRow } from './repositories/relationships';

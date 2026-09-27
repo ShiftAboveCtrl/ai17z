@@ -114,9 +114,12 @@ export async function settleAccountCapacity(accountId: string, now = new Date())
     {
       status: loaded.status,
       rateLimits: usage.rateLimits,
-      // X's own error page is how it most often says "not now" to a browser, so
-      // a broken page counts as pressure alongside a stalled one.
-      stalled: usage.stalled + usage.broken,
+      stalled: usage.stalled,
+      // X's own error page counts as pressure only when several arrive
+      // together; one is a page the source that asked backs off from itself.
+      // See BROKEN_AS_PRESSURE.
+      broken: usage.broken,
+      quietForMs: loaded.changedAt ? now.getTime() - loaded.changedAt.getTime() : null,
       failedWrites: 0,
       /*
         Deliberately not the failing-source count. A source can fail for

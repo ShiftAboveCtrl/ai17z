@@ -28,6 +28,7 @@ import { REPLY_TEMPLATE_KEY } from '@xbam/prompts';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import { audienceOf, cannotPossiblyEngage, recentRepliesTo } from './engagement';
 import { outreachHeadroom } from './steps/social';
+import { heldByOwner } from './ownerLearning';
 
 const log = createLogger('ingest');
 
@@ -182,9 +183,18 @@ const GENEROUS_WINDOW = new Set([...DIRECT_INBOUND, 'TARGET_ACCOUNT_ACTIVITY']);
  * browser: what is worth pinning is the decision, and the decision is this
  * function.
  */
-export function freshnessWindowFor(type: string): number {
-  return GENEROUS_WINDOW.has(type) ? MAX_DIRECT_POST_AGE_MS : MAX_POST_AGE_MS;
+export function freshnessWindowFor(type: string, raw?: unknown): number {
+  if (GENEROUS_WINDOW.has(type)) return MAX_DIRECT_POST_AGE_MS;
+  // Somebody who replied to an account the agent follows, and heard nothing,
+  // is still in that conversation hours later. Measured on a live agent: the
+  // followed account's newest post was eight hours old, every reply under it
+  // was past two hours, and the session answered nobody.
+  if (audienceOf(raw).community?.kind === 'REPLY') return COMMUNITY_REPLY_AGE_MS;
+  return MAX_POST_AGE_MS;
 }
+
+/** How old a reply to a followed account may be and still be answered. */
+const COMMUNITY_REPLY_AGE_MS = envInt('AI17Z_MAX_COMMUNITY_REPLY_AGE_MINUTES', 12 * 60) * 60_000;
 
 /**
  * How far apart a backlog of late answers is spaced.
@@ -434,12 +444,20 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         approachHistory: event.remoteAuthorHandle
           ? await actionsRepo.approachHistory(link.agentId, event.remoteAuthorHandle).catch(() => null)
           : null,
-        headroom: await outreachHeadroom(
-          link.agentId,
-          PolicyConfig.parse(policiesById.get(link.agentId)?.config ?? {}).outreach,
-          event.remoteAuthorHandle,
-          event.channel,
-        ).catch(() => null),
+        headroom:
+          (await outreachHeadroom(
+            link.agentId,
+            PolicyConfig.parse(policiesById.get(link.agentId)?.config ?? {}).outreach,
+            event.remoteAuthorHandle,
+            event.channel,
+          ).catch(() => null)) ??
+          // The owner turned down an approach to this person within the week.
+          (await heldByOwner({
+            agentId: link.agentId,
+            eventType: event.type,
+            actionType: link.actionType,
+            handle: event.remoteAuthorHandle,
+          }).catch(() => null)),
       });
     }
   }
@@ -516,7 +534,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
     // a person can act on it, but no work is queued: it is history, not a
     // conversation. A manual trigger is somebody deciding otherwise.
     const age = postAgeMs(event.occurredAt);
-    const window = freshnessWindowFor(event.type);
+    const window = freshnessWindowFor(event.type, event.raw);
     if (age !== null && age > window && !options.onlyAgentId) {
       const hours = Math.round(age / 3_600_000);
       for (const link of links) {

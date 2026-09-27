@@ -33,6 +33,8 @@ import {
   applyCoreRecommended,
   ensureAgentPipeline,
   describeCapacity,
+  describeLearning,
+  resetLearning,
   growthGateFor,
   setAgentAvatar,
 } from '@xbam/runtime';
@@ -349,6 +351,21 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
    * Deliberately says nothing about prompts, memories or what the agent is
    * thinking. This is about restraint, and restraint is the owner's business.
    */
+  /**
+   * Forget everything this agent learned from its outcomes. Its rules, limits
+   * and permissions were never part of that, so nothing else changes.
+   */
+  app.post(
+    '/api/agents/:id/learning/reset',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      await resetLearning(agent.id);
+      await ops.audit({ actorUserId: user.id, action: 'agent.learning.reset', entityType: 'agent', entityId: agent.id });
+      return { reset: true };
+    }),
+  );
+
   app.get(
     '/api/agents/:id/autonomy',
     handler(async (request) => {
@@ -362,7 +379,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         : await agentsRepo.getActivePolicy(agent.id);
       const policy = PolicyConfig.parse(policyRow?.config ?? {});
 
-      const [verdict, open, sessionsHour, sessions, spent, health, dnc, signals, targets, capacity, broad, lastEnded, responses, recent] = await Promise.all([
+      const [verdict, open, sessionsHour, sessions, spent, health, dnc, signals, targets, capacity, broad, lastEnded, responses, recent, learned] = await Promise.all([
         growthGateFor(agent.id, accountId, policy),
         autonomyRepo.openSession(agent.id),
         autonomyRepo.sessionsThisHour(agent.id),
@@ -377,6 +394,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         autonomyRepo.lastSessionEndedAt(agent.id),
         jobsRepo.responseSummary(agent.id, 24),
         voiceRepo.recentOutput(agent.id, 40, 21),
+        describeLearning(agent.id),
       ]);
 
       return {
@@ -414,6 +432,11 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         */
         responses,
         habits: habitualPhrases(recent.map((row) => row.text)),
+        /*
+          What it has learned from its own outcomes, the changes it is testing,
+          and what became of the ones it already tested. See learning.ts.
+        */
+        learning: { enabled: policy.learning.enabled, ...learned },
         /*
           The handle, when they asked, and the sentence they wrote. Not the
           whole message: an owner needs enough to check the decision, and a

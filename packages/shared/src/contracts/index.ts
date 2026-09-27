@@ -7,6 +7,7 @@ export * from './persona';
 export * from './policy';
 export * from './cadence';
 export * from './radar';
+export * from './xPacing';
 export * from './easy';
 export * from './multimodal';
 export * from './relationship';

@@ -97,7 +97,7 @@ describe('an agent going looking on its own', () => {
     await new Radar().poll(agent.source);
 
     expect(asked).toHaveLength(1);
-    expect(asked[0]!.target).toBe('"Robinhood Chain" min_faves:25 lang:en -filter:replies -filter:retweets');
+    expect(asked[0]!.target).toBe('"Robinhood Chain" min_faves:25 within_time:2h lang:en -filter:replies -filter:retweets');
 
     // Two kept, the biggest audiences, and each one a candidate the agent came across.
     const events = await query<{ remote_event_id: string; type: string }>(
@@ -115,7 +115,7 @@ describe('an agent going looking on its own', () => {
     await new Radar().poll(after);
     expect(asked[1]!.target).toMatch(/^\$PONS min_faves:25/);
     const again = (await radarRepo.getSource(agent.source.id))!;
-    expect(again.cursor).toBe('rotation:0');
+    expect(again.cursor).toBe('rotation:2');
   });
 
   it('spends its places on posts it has not seen before', async () => {
@@ -158,6 +158,106 @@ describe('an agent going looking on its own', () => {
     ).map((r) => r.remote_event_id);
     expect(ids).toEqual(['1900000000000000972', '1900000000000000973']);
     expect((await radarRepo.getSource(agent.source.id))!.idleReason).toMatch(/kept the best 2\. 1 was too old to answer\./);
+  });
+
+  describe('talking to people rather than searching words', () => {
+    /*
+      Measured on a live agent: topic searches on a crypto subject returned
+      mostly coin pitches, and the agent spent its sessions correcting them.
+      The person its voice follows spends his replies on the people who talk to
+      him and on the people he knows.
+    */
+    async function watching(agent: Awaited<ReturnType<typeof growingAgent>>) {
+      const source = await radarRepo.upsertSource({ accountId: agent.account.id, kind: 'tracked_account', target: 'Founder', config: {} });
+      await query(`INSERT INTO agent_target_state (agent_id, source_id, handle, mode) VALUES ($1, $2, 'Founder', 'PRIORITIZE')`, [
+        agent.agentId,
+        source.id,
+      ]);
+      const record = async (id: string, text: string, parent: string | null) =>
+        query(
+          `INSERT INTO events (channel, account_id, type, remote_event_id, remote_author_handle, text, parent_remote_message_id, occurred_at)
+           VALUES ('x', $1, 'TARGET_ACCOUNT_ACTIVITY', $2, 'Founder', $3, $4, now() - interval '20 minutes')`,
+          [agent.account.id, id, text, parent],
+        );
+      await record('1900000000000001001', 'building in public is the only way I know how to build', null);
+      await record('1900000000000001002', '@close_friend haha facts', '1900000000000000999');
+      await record('1900000000000001003', '@close_friend @another_pal we should run it back', '1900000000000000998');
+    }
+
+    const reply = (id: string, handle: string, text: string): RadarCandidate => ({
+      ...found(id, 50, 0),
+      authorHandle: handle,
+      text,
+      raw: {},
+    });
+
+    it('reads the replies under the watched account\'s own post and keeps the people it never answered', async () => {
+      const agent = await growingAgent();
+      await watching(agent);
+      const asked = scripted([
+        // As X renders it: the handle is on the Replying to line, not in the text.
+        { ...reply('1900000000000001101', 'Founder', 'thank you brother'), raw: { replyingTo: ['already_heard'] } },
+        reply('1900000000000001102', 'already_heard', 'this is exactly why I follow you, keep going'),
+        reply('1900000000000001103', 'unanswered_fan', 'been following since the first launch and this still hits, proud of you'),
+      ]);
+      await new Radar().poll(agent.source);
+
+      expect(asked[0]).toEqual({ kind: 'own_threads', target: '1900000000000001001' });
+      const events = await query<{ remote_author_handle: string; type: string; payload: { community?: { watched: string; kind: string } } }>(
+        `SELECT remote_author_handle, type, payload FROM events WHERE account_id = $1 AND type = 'KEYWORD_MATCH'`,
+        [agent.account.id],
+      );
+      expect(events.map((e) => e.remote_author_handle)).toEqual(['unanswered_fan']);
+      expect(events[0]!.payload.community).toMatchObject({ watched: 'Founder', kind: 'REPLY' });
+      expect((await radarRepo.getSource(agent.source.id))!.idleReason).toMatch(/^Read replies to @Founder/);
+    });
+
+    it('then looks at fresh posts from the people that account talks to', async () => {
+      const agent = await growingAgent();
+      await watching(agent);
+      const asked = scripted([]);
+      await new Radar().poll(agent.source);
+      await new Radar().poll((await radarRepo.getSource(agent.source.id))!);
+      expect(asked[1]!.target).toMatch(/^\(from:close_friend OR from:another_pal\) within_time:2h/);
+    });
+
+    it('marks what it finds there as that account\'s circle, so the rules for strangers do not refuse it', async () => {
+      /*
+        Measured on a live agent: every circle post was stored with an empty
+        watched account, so none of them counted as the circle, and a friend's
+        post about their morning was declined as off topic.
+      */
+      const agent = await growingAgent();
+      await watching(agent);
+      scripted([]);
+      await new Radar().poll(agent.source);
+      scripted([reply('1900000000000001201', 'close_friend', 'best part of the weekend is the long breakfast, no notes')]);
+      await new Radar().poll((await radarRepo.getSource(agent.source.id))!);
+      const [event] = await query<{ payload: { community?: { watched: string; kind: string } } }>(
+        `SELECT payload FROM events WHERE account_id = $1 AND remote_author_handle = 'close_friend'`,
+        [agent.account.id],
+      );
+      expect(event!.payload.community).toMatchObject({ watched: 'Founder', kind: 'CIRCLE' });
+      const [decision] = await query<{ decision: string; reason: string }>(
+        `SELECT d.decision, d.reason FROM broad_candidate_decisions d JOIN events e ON e.id = d.event_id WHERE e.remote_author_handle = 'close_friend'`,
+      );
+      expect(decision?.reason ?? '').not.toMatch(/not about anything this agent follows/);
+    });
+  });
+
+  it('never polls an X search faster than the platform floor, whatever the source says', async () => {
+    /*
+      Every X account used to be created searching its mentions every 60
+      seconds. Measured on a live account, that pace drew X's "something went
+      wrong" about every two hours and a day of cooldowns.
+    */
+    const agent = await growingAgent();
+    const created = await radarRepo.upsertSource({ accountId: agent.account.id, kind: 'mention_search', config: { intervalSeconds: 60 } });
+    scripted([]);
+    const before = Date.now();
+    await new Radar().poll((await radarRepo.getSource(created.id))!);
+    const after = (await radarRepo.getSource(created.id))!;
+    expect(new Date(after.nextPollAt!).getTime()).toBeGreaterThanOrEqual(before + 300_000 - 1_000);
   });
 
   it('waits out its quiet hours, and says so', async () => {

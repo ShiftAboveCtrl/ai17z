@@ -76,7 +76,13 @@ export interface AssembleInput {
    * owner asked it to follow. Absent means somebody spoke to it, which is the
    * only case the ordinary reply instruction was written for.
    */
-  approach?: 'STRANGER' | 'TARGET' | null;
+  approach?: 'STRANGER' | 'TARGET' | 'COMMUNITY' | 'CIRCLE' | null;
+  /** The account the agent follows, for COMMUNITY and CIRCLE. */
+  watched?: string | null;
+  /**
+   * The post being answered is selling a token. See `promoNote`.
+   */
+  promotional?: boolean;
   /**
    * Phrases this agent has recently used in several different outputs, to be
    * avoided in this one. Computed from what it published, never from drafts.
@@ -93,6 +99,8 @@ export interface AssembleInput {
    * hold a draft. Absent when nothing has been measured.
    */
   usualLength?: { median: number; ceiling: number } | null;
+  /** One sentence of what this agent has learned works, from its own outcomes. */
+  leaning?: string | null;
 }
 
 export interface AssembledPrompt {
@@ -114,6 +122,21 @@ export interface AssembledPrompt {
 function selfNote(aboutSelf: boolean | undefined): string {
   if (!aboutSelf) return '';
   return ' They are asking about you. Answer only from what is written above about your own state and what you have actually done on this account. You are an AI agent: never present the work, projects, plans or life of anybody your voice is modelled on as your own, and never invent something you are doing. If nothing above answers it, say so plainly.';
+}
+
+/**
+ * What an agent may do under somebody selling a coin.
+ *
+ * The owner's rule, in their words: if it is going to shill something under
+ * somebody's advertisement, let it be AI17Z. Strong pitches are never answered
+ * at all; this is for the milder ones, and for somebody who tags the agent in
+ * their own. Never the other token, never a price, and AI17Z at most in a few
+ * words, because a reply that is only an advertisement is the thing it is
+ * answering.
+ */
+function promoNote(promotional: boolean | undefined): string {
+  if (!promotional) return '';
+  return ' This post is promoting a token. Do not endorse it, repeat its ticker or contract, or talk about its price. If you point people at anything, it is AI17Z, the platform you run on, in a few words and only if it fits.';
 }
 
 /**
@@ -473,13 +496,18 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
             } post. ${
               input.approach === 'TARGET'
                 ? 'This is somebody you follow closely and know well; talk to them the way you would to them.'
-                : 'They did not write to you. You are joining their conversation because it is about something you know.'
-            } Say one thing worth reading: a reaction, one sharp question, a joke, or a concrete point only somebody who knows this space would make. One line, usually under ninety characters; a few words is often best. Do not explain their post back to them, do not summarise it or repeat its numbers, do not promote anything, and do not announce or promise anything on behalf of a project or team.`
+                : input.approach === 'COMMUNITY'
+                  ? `They replied to a post by @${(input.watched ?? '').replace(/^@/, '')}, whose voice yours follows, and nobody answered them. Answer them the way @${(input.watched ?? '').replace(/^@/, '')} answers their own replies: warm, short and real, kind words or a genuine reaction to what they said. You are not @${(input.watched ?? '').replace(/^@/, '')} and never speak for them.`
+                  : input.approach === 'CIRCLE'
+                    ? `This is somebody @${(input.watched ?? '').replace(/^@/, '')}, whose voice yours follows, talks to regularly. Talk to them like a friend of that circle would: casual, short, about what they actually posted. You are not @${(input.watched ?? '').replace(/^@/, '')} and never speak for them.`
+                    : 'They did not write to you. You are joining their conversation because it is about something you know.'
+            } Say one thing worth reading: a reaction, one sharp question, a joke, or a concrete point only somebody who knows this space would make. One line, usually under ninety characters; a few words is often best. Do not explain their post back to them, do not summarise it or repeat its numbers, do not promote anything${input.promotional ? ' but AI17Z, as below' : ''}, and do not announce or promise anything on behalf of a project or team.`
           : `Write one ${input.channelName} reply, as ${persona.displayName}, to ${
             context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'the person'
           }. They are speaking to you. Answer them — address them, not a third party, and never describe yourself from the outside.`) +
-      (input.actionType === 'POST' ? '' : selfNote(input.aboutSelf)) +
-      habitNote(input.habits),
+      (input.actionType === 'POST' ? '' : selfNote(input.aboutSelf) + promoNote(input.promotional)) +
+      habitNote(input.habits) +
+      (input.leaning ? ` ${input.leaning}` : ''),
   };
 
   const layers: PromptLayer[] = [];

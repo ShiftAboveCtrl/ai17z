@@ -1,5 +1,5 @@
 import type { EventType, NormalizedEvent, RadarCandidate, RadarSourceKind } from '@xbam/shared/contracts';
-import { EVENT_TYPES } from '@xbam/shared/contracts';
+import { EVENT_TYPES, X_READ_PACING } from '@xbam/shared/contracts';
 import { createLogger } from '@xbam/shared';
 import { accounts as accountsRepo, radar as radarRepo } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
@@ -206,10 +206,11 @@ export async function reconcileCandidates(input: ReconcileInput): Promise<Reconc
  * often, and the thread walk, which is the slowest and least urgent, runs least.
  */
 export const DEFAULT_X_RADAR: { kind: RadarSourceKind; label: string; intervalSeconds: number }[] = [
-  { kind: 'notifications', label: 'Notifications', intervalSeconds: 30 },
-  { kind: 'mention_search', label: 'Mention search', intervalSeconds: 60 },
-  { kind: 'reply_search', label: 'Reply search', intervalSeconds: 90 },
-  { kind: 'own_threads', label: 'Replies to own posts', intervalSeconds: 180 },
+  // The pace comes from the one table that decides it; see X_READ_PACING.
+  { kind: 'notifications', label: 'Notifications', intervalSeconds: X_READ_PACING.notifications.defaultSeconds },
+  { kind: 'mention_search', label: 'Mention search', intervalSeconds: X_READ_PACING.mention_search.defaultSeconds },
+  { kind: 'reply_search', label: 'Reply search', intervalSeconds: X_READ_PACING.reply_search.defaultSeconds },
+  { kind: 'own_threads', label: 'Replies to own posts', intervalSeconds: X_READ_PACING.own_threads.defaultSeconds },
 ];
 
 /**

@@ -1,3 +1,5 @@
+import { autonomy as autonomyRepo } from '@xbam/database';
+
 /**
  * What the owner keeps saying yes and no to.
  *
@@ -162,4 +164,31 @@ export function decisionFingerprint(input: {
   const family = `${input.kind}:${input.actionType}`.toLowerCase();
   const who = input.handle?.replace(/^@+/, '').toLowerCase() ?? '';
   return { fingerprint: who ? `${family}:${who}` : family, family };
+}
+
+/**
+ * Why the owner's own answers hold this approach back, or null.
+ *
+ * Every approval and rejection has been recorded since the queue existed, and
+ * nothing read them: measured on a live installation, 209 signals and not one
+ * caller of the two functions above. This is the reading. An unprompted
+ * approach to somebody the owner turned down an approach to within the week is
+ * not queued again; the moment they write to the agent themselves, it is a
+ * different event and nothing here applies.
+ */
+export async function heldByOwner(input: {
+  agentId: string;
+  eventType: string;
+  actionType: string;
+  handle: string | null;
+}): Promise<string | null> {
+  if (!input.handle) return null;
+  const { fingerprint } = decisionFingerprint({ kind: input.eventType, actionType: input.actionType, handle: input.handle });
+  const row = await autonomyRepo.getOwnerSignal(input.agentId, fingerprint).catch(() => null);
+  const held = suppressedByRejection({
+    signal: row
+      ? { accepted: row.accepted, rejected: row.rejected, lastDecisionAt: row.lastDecisionAt, lastRejectedAt: row.lastRejectedAt }
+      : null,
+  });
+  return held.suppressed ? held.reason : null;
 }

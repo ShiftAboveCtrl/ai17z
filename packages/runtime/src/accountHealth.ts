@@ -173,9 +173,33 @@ export interface CapacitySince {
   status: AccountStatus;
   rateLimits: number;
   stalled: number;
+  /** Pages X answered with its own error page. See BROKEN_AS_PRESSURE. */
+  broken?: number;
   failedWrites: number;
   failingSources: number;
+  /** How long the breaker has been where it is, for forgiving old strikes. */
+  quietForMs?: number | null;
 }
+
+/**
+ * How many of X's own error pages it takes before they are pressure on the account.
+ *
+ * One is a page X could not draw, and the source that asked backs off on its
+ * own. Measured on a live account: counting every one as account pushback
+ * meant a single "something went wrong" on a search, arriving about every two
+ * hours, re-tripped a cooldown during every recovery, so the account spent a
+ * day cooling down and its strikes only ever climbed. Several at once, across
+ * the account's pages, is X saying "not now" and is treated as such.
+ */
+export const BROKEN_AS_PRESSURE = 3;
+
+/**
+ * How long an account must go without trouble before old strikes are forgotten.
+ *
+ * Strikes make the next cooldown longer. Without a way to forget them, one bad
+ * evening decides how an account is treated for days after it recovered.
+ */
+export const STRIKES_FORGIVEN_AFTER_MS = 6 * 60 * 60_000;
 
 /** How long a cooldown lasts after this many trips in a row. Doubles, and stops doubling. */
 export function cooldownMsFor(strikes: number, config: CapacityCadence): number {
@@ -210,20 +234,22 @@ export function settleCapacity(
   config: CapacityCadence,
   now: Date,
 ): CapacityState {
+  const broken = since.broken ?? 0;
+  const stalled = since.stalled + (broken >= BROKEN_AS_PRESSURE ? broken : 0);
   const snapshot = judgeHealth({
     status: since.status,
     failedWrites: since.failedWrites,
     rateLimits: since.rateLimits,
     failingSources: since.failingSources,
     ambiguousWrites: 0,
-    stalledReads: since.stalled,
+    stalledReads: stalled,
   });
 
   if (snapshot.health === 'HUMAN_ACTION_REQUIRED') {
     return { health: 'HUMAN_ACTION_REQUIRED', reason: snapshot.reason, until: null, strikes: prev.strikes };
   }
 
-  const pushback = since.rateLimits + since.stalled;
+  const pushback = since.rateLimits + stalled;
   const trip = (why: string): CapacityState => {
     const strikes = prev.strikes + 1;
     return { health: 'COOLDOWN', reason: why, until: new Date(now.getTime() + cooldownMsFor(strikes, config)), strikes };
@@ -276,6 +302,10 @@ export function settleCapacity(
       until: new Date(now.getTime() + (snapshot.holdMs ?? minutes(15))),
       strikes: prev.strikes,
     };
+  }
+  // Healthy and quiet long enough: the strikes from a bad evening are over.
+  if (prev.strikes > 0 && pushback === 0 && (since.quietForMs ?? 0) >= STRIKES_FORGIVEN_AFTER_MS) {
+    return { health: 'HEALTHY', reason: null, until: null, strikes: 0 };
   }
   return prev.reason === null && prev.until === null ? prev : { ...prev, reason: null, until: null };
 }

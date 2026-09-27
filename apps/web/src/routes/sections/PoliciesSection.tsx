@@ -192,6 +192,12 @@ export function PoliciesSection({
             </ChoiceGroup>
           </Field>
           <Toggle
+            checked={draft.learning.enabled}
+            onChange={(v) => patch((n) => void (n.learning.enabled = v))}
+            label="Learn from what happens"
+            description="Measures how its replies and posts did, and tests changes to how it chooses (how it finds people, length, asking, audience) against its old behaviour before keeping them. Never changes a rule, a permission or a limit you set."
+          />
+          <Toggle
             checked={draft.safety.reviewOnValidationFailure}
             onChange={(v) => patch((n) => void (n.safety.reviewOnValidationFailure = v))}
             label="Send validation failures to review"
