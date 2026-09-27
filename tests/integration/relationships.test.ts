@@ -225,3 +225,43 @@ describe('the owner is in charge', () => {
     expect(after.topics.length).toBeLessThanOrEqual(12);
   });
 });
+
+describe('what a conversation was about', () => {
+  /*
+    The prompt has always said "You have discussed: ..." when a relationship
+    carries topics, and nothing wrote one: measured on a live installation,
+    eighty relationships and not one topic between them.
+  */
+  it('records the named subjects of an exchange that was published', async () => {
+    const { ingestNormalizedEvent } = await import('@xbam/runtime');
+    const { mockEvent } = await import('../support/harness');
+    const { drainJobs } = await import('../support/runner');
+    const fixture = await createFixture({ model: 'mock-fixed:Uniswap v4 hooks are where that fee lives.' });
+    await ingestNormalizedEvent({
+      accountId: null,
+      onlyAgentId: fixture.agentId,
+      event: mockEvent('what do you make of the Pons V2 launch on Robinhood Chain?', { remoteAuthorHandle: 'topicperson' }),
+    });
+    await drainJobs();
+
+    const row = await relationships.find({ agentId: fixture.agentId, channel: 'mock', handle: 'topicperson', remoteUserId: 'mock-user-alice' });
+    expect(row).not.toBeNull();
+    expect(row!.topics).toEqual(expect.arrayContaining(['pons', 'robinhood chain']));
+    expect(row!.topics.length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('choosing topics from an exchange', () => {
+  it('keeps names and tickers, never handles, the agent itself, or a reticent subject', async () => {
+    const { topicsOfExchange } = await import('@xbam/runtime');
+    const topics = topicsOfExchange({
+      incoming: '@meadgod what do you think about $PONS and the Hood Summit?',
+      reply: 'MEADGod would rather watch the Election than $PONS today.',
+      selfNames: ['meadgod', 'MEADGod'],
+    });
+    expect(topics).toContain('$PONS');
+    expect(topics.some((t) => /hood summit/i.test(t))).toBe(true);
+    expect(topics.some((t) => /meadgod/i.test(t))).toBe(false);
+    expect(topics.some((t) => /election/i.test(t))).toBe(false);
+  });
+});

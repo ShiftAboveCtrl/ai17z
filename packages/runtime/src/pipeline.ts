@@ -1,6 +1,12 @@
 import type { JobRecord, PipelineNode } from '@xbam/shared/contracts';
 import { PipelineError, createLogger, errorMessage } from '@xbam/shared';
-import { accountLease, jobs as jobsRepo, observability, pipelines as pipelinesRepo } from '@xbam/database';
+import {
+  accountLease,
+  jobs as jobsRepo,
+  observability,
+  pipelines as pipelinesRepo,
+  targets as targetsRepo,
+} from '@xbam/database';
 import { failPermanently, scheduleRetry, sendToReview, waitForInFlight, waitForLimit } from '@xbam/jobs';
 import { loadJobBundle, type JobBundle } from './loadJob';
 import { NODE_HANDLERS } from './nodes';
@@ -181,6 +187,16 @@ async function walk(job: JobRecord, workerId: string): Promise<void> {
       ? await jobsRepo.updateJob(current.id, { status })
       : ((await jobsRepo.getJob(current.id)) ?? current);
 
+    if (status === 'EXECUTED') {
+      await targetsRepo.setDispositionForJob(current.id, 'INTERACTED', 'The action completed and was verified.');
+    } else if (status === 'DRY_RUN_COMPLETED') {
+      await targetsRepo.setDispositionForJob(current.id, 'INTENTIONAL_NO_ACTION', 'Dry run completed without a public action.');
+    } else if (status === 'REVIEW_REQUIRED' || status === 'WAITING_FOR_APPROVAL') {
+      await targetsRepo.setDispositionForJob(current.id, 'AWAITING_APPROVAL', current.lastError ?? 'Waiting for the owner.');
+    } else if (status === 'CANCELLED') {
+      await targetsRepo.setDispositionForJob(current.id, 'INTENTIONAL_NO_ACTION', current.lastError ?? 'Deliberately left alone.');
+    }
+
     const following = nextNode(graph, node.key, outcome.branch);
 
     if (outcome.halt) {
@@ -218,10 +234,12 @@ async function handleFailure(job: JobRecord, node: PipelineNode, attempt: number
 
   if (pipelineError.errorClass === 'PERMANENT') {
     await failPermanently(job, pipelineError.reason, pipelineError.message);
+    await targetsRepo.setDispositionForJob(job.id, 'BLOCKED_EXTERNAL', pipelineError.message);
     return;
   }
   if (pipelineError.errorClass === 'REVIEW_REQUIRED') {
     await sendToReview(job, pipelineError.reason, pipelineError.message);
+    await targetsRepo.setDispositionForJob(job.id, 'AWAITING_APPROVAL', pipelineError.message);
     return;
   }
   // Refused because the work is still going, not because it failed. Charging an
@@ -247,6 +265,7 @@ async function handleFailure(job: JobRecord, node: PipelineNode, attempt: number
       pipelineError.reason,
       `${pipelineError.message} (gave up after ${attempt} attempts)`,
     );
+    await targetsRepo.setDispositionForJob(job.id, 'AWAITING_APPROVAL', `${pipelineError.message} (gave up after ${attempt} attempts)`);
     return;
   }
   // A retry resumes at the same node, which is why position is committed first.

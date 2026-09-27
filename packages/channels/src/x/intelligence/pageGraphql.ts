@@ -89,6 +89,49 @@ const OPERATIONS = {
  */
 const idCache = new WeakMap<object, Map<string, string>>();
 
+/** When a missing search operation was last reported, so the log is a signal and not a flood. */
+let lastProbeLoggedAt = 0;
+
+/** The public code around each matched id, per page, for the failure log below. */
+const nearCache = new WeakMap<object, Map<string, string>>();
+
+/**
+ * Until when the structured search is not worth asking.
+ *
+ * X answers it with an empty 404 unless the request carries a signature only
+ * its own app produces. Asking anyway spends a request on every search to be
+ * told the same thing, so after that refusal the search is left to the
+ * rendered page, which reads the app's own results, for half an hour.
+ */
+let searchRefusedUntil = 0;
+
+/** When each operation's refusal was last reported. */
+const refusalLoggedAt = new Map<string, number>();
+
+/**
+ * Says why a structured read was refused, at most every ten minutes per
+ * operation.
+ *
+ * Every refusal used to become "schema changed" and a quiet fall back to the
+ * rendered page, which carries no counts, so a live installation lost the
+ * audience of every author it found and nothing said why. The status, the
+ * operation, the id that was used and the public code it was found in are
+ * enough to tell a moved id from a moved endpoint from a refused feature set.
+ * Nothing here is a credential: the bearer and cookie never leave the page.
+ */
+function reportRefusal(page: Page, operation: string, queryId: string, status: number, error: string | null): void {
+  const last = refusalLoggedAt.get(operation) ?? 0;
+  if (Date.now() - last < 10 * 60_000) return;
+  refusalLoggedAt.set(operation, Date.now());
+  log.warn('X refused a structured read', {
+    operation,
+    status,
+    queryId,
+    error: error?.slice(0, 200) ?? null,
+    matchedIn: nearCache.get(page as unknown as object)?.get(operation)?.slice(0, 320) ?? null,
+  });
+}
+
 /**
  * Pull operation ids out of the scripts X has already loaded.
  *
@@ -119,7 +162,7 @@ const idCache = new WeakMap<object, Map<string, string>>();
  * is immune: it is sent verbatim, so what runs in the page is what is written
  * here.
  */
-const DISCOVERY_SOURCE = `(async () => {
+export const DISCOVERY_SOURCE = `(async () => {
   const wanted = ['UserByScreenName', 'UserTweets', 'UserTweetsAndReplies', 'SearchTimeline', 'TweetDetail'];
   const ids = {};
 
@@ -133,74 +176,116 @@ const DISCOVERY_SOURCE = `(async () => {
     if (body) texts.push(body);
   }
 
-  const sources = [];
+  // Every script the page has, however it arrived. X used to ship one main
+  // bundle under responsive-web; it now ships hundreds of hashed modules under
+  // x-web, most of them preloaded or fetched lazily, and a list built from
+  // script tags alone sees three files and none of the ones that matter.
+  const found = {};
+  const urls = [];
+  const consider = [];
   const tags = document.querySelectorAll('script[src]');
-  for (let i = 0; i < tags.length; i += 1) {
-    const src = tags[i].src;
-    if (!src) continue;
-    if (!/[/](responsive-web|shared)[/]/.test(src) && !/main[.]|api[.]/.test(src)) continue;
-    // Most likely first. X ships the operation map in one module inside its
-    // main or api bundle, and a tab accumulates on-demand chunks -- video,
-    // Grok, article readers -- as it is used. Without an order, a cap scans
-    // everything except the bundle that matters.
-    const file = src.slice(src.lastIndexOf('/') + 1);
-    const rank = file.indexOf('api.') === 0 ? 0 : file.indexOf('main.') === 0 ? 1 : file.indexOf('shared~') === 0 ? 2 : 3;
-    sources.push({ src: src, rank: rank });
+  for (let i = 0; i < tags.length; i += 1) consider.push(tags[i].src);
+  const preloads = document.querySelectorAll('link[rel=modulepreload], link[rel=preload][as=script]');
+  for (let i = 0; i < preloads.length; i += 1) consider.push(preloads[i].href);
+  const loaded = (performance && performance.getEntriesByType) ? performance.getEntriesByType('resource') : [];
+  for (let i = 0; i < loaded.length; i += 1) consider.push(loaded[i].name);
+  for (let i = 0; i < consider.length; i += 1) {
+    const src = consider[i];
+    if (!src || found[src]) continue;
+    if (src.indexOf('twimg.com') < 0) continue;
+    if (src.slice(-3) !== '.js' && src.indexOf('.js?') < 0) continue;
+    found[src] = true;
+    const file = src.slice(src.lastIndexOf('/') + 1).toLowerCase();
+    // Most likely first: the modules that talk to the API. A cap scans the
+    // likeliest files rather than whichever happened to load first.
+    const likely = ['api', 'graphql', 'gql', 'search', 'timeline', 'tweet', 'user', 'main', 'query'];
+    let rank = 9;
+    for (let r = 0; r < likely.length; r += 1) { if (file.indexOf(likely[r]) >= 0) { rank = r; break; } }
+    urls.push({ src: src, rank: rank });
   }
-  sources.sort((a, b) => a.rank - b.rank);
+  urls.sort((a, b) => a.rank - b.rank);
 
-  for (let i = 0; i < sources.length && i < 30; i += 1) {
+  let scanned = 0;
+  // The first round reads only what is already on the page; each later round
+  // fetches eight more modules. At least one round always runs.
+  for (let start = 0; start === 0 || (start < urls.length + 8 && start < 168); start += 8) {
     let done = true;
     for (let w = 0; w < wanted.length; w += 1) { if (!ids[wanted[w]]) { done = false; break; } }
     if (done) break;
-    try {
-      const response = await fetch(sources[i].src, { credentials: 'omit' });
-      if (!response.ok) continue;
-      texts.push(await response.text());
-    } catch (e) {
-      // A bundle that will not load is not worth failing over; the next one
-      // may carry the same map.
-    }
-  }
+    const batch = start === 0 ? [] : urls.slice(start - 8, start);
+    const bodies = await Promise.all(batch.map((entry) =>
+      fetch(entry.src, { credentials: 'omit' }).then((r) => (r.ok ? r.text() : '')).catch(() => '')));
+    for (let b = 0; b < bodies.length; b += 1) { if (bodies[b]) { texts.push(bodies[b]); scanned += 1; } }
 
-  for (let t = 0; t < texts.length; t += 1) {
-    for (let w = 0; w < wanted.length; w += 1) {
-      const name = wanted[w];
-      if (ids[name]) continue;
-      // The pair appears in either order depending on how the bundle was
-      // minified, so both are tried rather than assuming one shape.
-      const forward = new RegExp('queryId:"([a-zA-Z0-9_-]{8,})"[^}]{0,120}?operationName:"' + name + '"').exec(texts[t]);
-      const backward = new RegExp('operationName:"' + name + '"[^}]{0,120}?queryId:"([a-zA-Z0-9_-]{8,})"').exec(texts[t]);
-      const id = (forward && forward[1]) || (backward && backward[1]);
-      if (!id) continue;
-      // Each operation declares the feature switches X sends with it. Sending
-      // a different set is refused -- with an empty-bodied 404 rather than
-      // anything that says so -- which is why these are read rather than
-      // guessed.
-      //
-      // Found by hand rather than by regular expression on purpose: this
-      // source is a string, the pattern would need three levels of escaping,
-      // and an escaping mistake here is a silent SyntaxError inside a page.
-      const switches = [];
-      const opAt = texts[t].indexOf('operationName:"' + name + '"');
-      if (opAt >= 0) {
-        const listAt = texts[t].indexOf('featureSwitches:[', opAt);
-        if (listAt >= 0 && listAt - opAt < 200) {
-          const from = listAt + 'featureSwitches:['.length;
-          const to = texts[t].indexOf(']', from);
-          if (to > from) {
-            const parts = texts[t].slice(from, to).split(',');
-            for (let p = 0; p < parts.length; p += 1) {
-              const cleaned = parts[p].split('"').join('').trim();
-              if (cleaned) switches.push(cleaned);
+    for (let t = 0; t < texts.length; t += 1) {
+      for (let w = 0; w < wanted.length; w += 1) {
+        const name = wanted[w];
+        if (ids[name]) continue;
+        const text = texts[t];
+        if (text.indexOf(name) < 0) continue;
+        // The id and the name appear in either order, with or without quoted
+        // keys, and as queryId or as a plain id in newer builds. Each shape is
+        // tried rather than assuming one. No backslash anywhere: this is a
+        // string sent verbatim into the page, and an escape that is lost on
+        // the way is a pattern that silently matches nothing.
+        const idPart = '"?(?:queryId|id)"?:"([a-zA-Z0-9_-]{16,})"';
+        const namePart = '"?(?:operationName|name)"?:"' + name + '"';
+        // One object first. X declares each operation as its own object, one
+        // after another, so a pattern allowed to cross a closing brace takes
+        // the previous operation's id: measured, search was sent as
+        // RemoveFollower's id and refused with a 404. Only when no single
+        // object holds both is a nested shape tried, and even then the match
+        // may not run into the next declaration.
+        const strictForward = new RegExp(idPart + '[^}]{0,240}?' + namePart).exec(text);
+        const strictBackward = new RegExp(namePart + '[^}]{0,240}?' + idPart).exec(text);
+        let id = (strictForward && strictForward[1]) || (strictBackward && strictBackward[1]);
+        if (!id) {
+          const nested = new RegExp(idPart + '[^;]{0,240}?' + namePart).exec(text);
+          if (nested && nested[0].indexOf('exports') < 0 && nested[0].slice(1).indexOf('queryId') < 0) id = nested[1];
+        }
+        if (!id) continue;
+        // Each operation declares the feature switches X sends with it. Sending
+        // a different set is refused, with an empty-bodied 404 rather than
+        // anything that says so, which is why these are read rather than
+        // guessed. Found by hand rather than by regular expression on purpose.
+        const switches = [];
+        const opAt = text.indexOf('"' + name + '"');
+        if (opAt >= 0) {
+          const listAt = text.indexOf('featureSwitches', opAt);
+          if (listAt >= 0 && listAt - opAt < 400) {
+            const from = text.indexOf('[', listAt) + 1;
+            const to = text.indexOf(']', from);
+            if (from > 0 && to > from) {
+              const parts = text.slice(from, to).split(',');
+              for (let p = 0; p < parts.length; p += 1) {
+                const cleaned = parts[p].split('"').join('').trim();
+                if (cleaned) switches.push(cleaned);
+              }
             }
           }
         }
+        ids[name] = id;
+        ids['features:' + name] = switches.join(',');
+        const idAt = text.indexOf(id);
+        ids['__near:' + name] = text.slice(Math.max(0, idAt - 120), idAt + 200);
       }
-      ids[name] = id;
-      ids['features:' + name] = switches.join(',');
     }
   }
+
+  // What the code around a missing operation looks like, so the next change
+  // to X's bundles is diagnosed from a log line rather than from a guess.
+  // Public application code only, a couple of hundred characters of it.
+  const probe = {};
+  for (let w = 0; w < wanted.length; w += 1) {
+    const name = wanted[w];
+    if (ids[name]) continue;
+    for (let t = 0; t < texts.length; t += 1) {
+      const at = texts[t].indexOf('"' + name + '"');
+      if (at >= 0) { probe[name] = texts[t].slice(Math.max(0, at - 160), at + 160); break; }
+    }
+  }
+  ids['__scanned'] = String(scanned) + ' of ' + String(urls.length);
+  ids['__probe'] = JSON.stringify(probe);
   return ids;
 })()`;
 
@@ -233,9 +318,32 @@ async function discoverOperationIds(page: Page): Promise<Map<string, string>> {
     found = {};
   }
 
-  const map = new Map(Object.entries(found));
+  const probe = found.__probe;
+  const scanned = found.__scanned;
+  const near = new Map(
+    Object.entries(found)
+      .filter(([key]) => key.startsWith('__near:'))
+      .map(([key, value]) => [key.slice('__near:'.length), value]),
+  );
+  nearCache.set(page as unknown as object, near);
+  const map = new Map(Object.entries(found).filter(([key]) => !key.startsWith('__')));
   if (map.size > 0) idCache.set(page as unknown as object, map);
-  log.debug('discovered X operation ids', { found: [...map.keys()] });
+  log.debug('discovered X operation ids', { found: [...map.keys()], scanned });
+
+  /*
+    Said out loud when search cannot be found, at most every ten minutes.
+
+    X moved its web app from one bundle to hundreds of hashed modules, and this
+    reader went on finding nothing, reporting "schema changed" and falling back
+    to the rendered page, which carries no counts. Every search on a live
+    installation lost the author's audience that way, silently. The probe is a
+    few hundred characters of X's public application code around the name, so
+    the next change is read off a log line instead of guessed at.
+  */
+  if (!map.has('SearchTimeline') && Date.now() - lastProbeLoggedAt > 10 * 60_000) {
+    lastProbeLoggedAt = Date.now();
+    log.warn('X search operation not found in the page', { scanned, probe: probe?.slice(0, 1_500) ?? null });
+  }
   return map;
 }
 
@@ -515,8 +623,8 @@ export function toUser(result: Record<string, unknown>, backend: string): XUser 
     bannerUrl: (legacy.profile_banner_url as string | undefined) ?? null,
     location: ((legacy.location as string | undefined) || null) ?? null,
     website: urls?.[0]?.expanded_url ?? null,
-    followers: num(legacy.followers_count),
-    following: num(legacy.friends_count),
+    followers: followerCountOf(result),
+    following: followingCountOf(result),
     posts: num(legacy.statuses_count),
     createdAt: (legacy.created_at as string | undefined) ?? null,
     verified: typeof legacy.verified === 'boolean' ? legacy.verified : (result.is_blue_verified as boolean | undefined) ?? null,
@@ -531,6 +639,28 @@ export function toUser(result: Record<string, unknown>, backend: string): XUser 
     followsUs: bool(legacy.followed_by) ?? bool(perspectives(result).followed_by),
     provenance: provenanceFor(backend, { url: `https://x.com/${handle}` }),
   };
+}
+
+/**
+ * How many people follow somebody, wherever this week's payload put it.
+ *
+ * X used to send it as `legacy.followers_count`. It now drops the author's
+ * `legacy` block and sends `relationship_counts` instead, and every author read
+ * came back with no audience at all: measured on a live installation, the
+ * agent could not tell an account of two hundred thousand from an empty one.
+ * Both places are read, old first, and a missing number stays missing.
+ */
+export function followerCountOf(user: Record<string, unknown> | undefined): number | null {
+  if (!user) return null;
+  const legacy = (user.legacy ?? {}) as Record<string, unknown>;
+  const counts = (user.relationship_counts ?? {}) as Record<string, unknown>;
+  return num(legacy.followers_count) ?? num(counts.followers) ?? num(counts.followers_count) ?? null;
+}
+
+function followingCountOf(user: Record<string, unknown>): number | null {
+  const legacy = (user.legacy ?? {}) as Record<string, unknown>;
+  const counts = (user.relationship_counts ?? {}) as Record<string, unknown>;
+  return num(legacy.friends_count) ?? num(counts.following) ?? num(counts.friends_count) ?? null;
 }
 
 /** X's JSON for one post, as the contract's shape. */
@@ -575,6 +705,8 @@ export function toPost(tweet: Record<string, unknown>, backend: string): XPostRe
       views: num(Number((tweet.views as Record<string, unknown> | undefined)?.count)),
       bookmarks: num(legacy.bookmark_count),
     },
+    // The author object arrives with the post, so this costs no extra request.
+    authorFollowers: followerCountOf(userResult),
     media: media.map((item) => ({
       kind:
         item.type === 'photo' ? 'photo' : item.type === 'video' ? 'video' : item.type === 'animated_gif' ? 'gif' : 'unknown',
@@ -639,7 +771,7 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
         const can: XBackendReadiness['can'] = [];
         if (ids.has(OPERATIONS.userByScreenName)) can.push('resolveUser', 'getUser');
         if (ids.has(OPERATIONS.userTweets) || ids.has(OPERATIONS.userTweetsAndReplies)) can.push('getUserPosts');
-        if (ids.has(OPERATIONS.searchTimeline)) can.push('searchPosts');
+        if (ids.has(OPERATIONS.searchTimeline) && Date.now() >= searchRefusedUntil) can.push('searchPosts');
         if (ids.has(OPERATIONS.tweetDetail)) can.push('getPost', 'getThread');
         return {
           state: can.length > 0 ? ('READY' as const) : ('DEGRADED' as const),
@@ -875,6 +1007,8 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
         featuresFor(ids, OPERATIONS.searchTimeline),
       );
       if (!answer.ok) {
+        reportRefusal(session.page, OPERATIONS.searchTimeline, queryId, answer.status, answer.error);
+        if (answer.status === 404 && !answer.error?.trim()) searchRefusedUntil = Date.now() + 30 * 60_000;
         const { outcome, detail } = outcomeFromError(answer.status, answer.error);
         return emptyResult(NAME, outcome, detail, []);
       }

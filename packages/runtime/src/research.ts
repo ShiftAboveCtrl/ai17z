@@ -369,6 +369,23 @@ export function namesSomethingCheckable(question: string): boolean {
   return false;
 }
 
+/**
+ * A question addressed to the agent about itself, naming nothing outside it.
+ *
+ * "what are you working on right now?" has a time phrase in it and read as
+ * current, and "what are you curious about?" fell through to searching its own
+ * words. Measured on the response benchmark: every question in the self cohort
+ * went to the web and then to the planner, for an answer that lives only in the
+ * agent's own memory and persona. Asking about the agent together with
+ * something checkable ("what is your take on the ETH price?") still researches.
+ */
+export function asksAboutTheAgent(question: string): boolean {
+  if (!/\b(?:you|your|yours|yourself|u|ur)\b/i.test(question)) return false;
+  if (namesSomethingCheckable(question)) return false;
+  if (/\b0x[a-fA-F0-9]{6,}|https?:\/\//.test(question)) return false;
+  return true;
+}
+
 const ASKS_A_FACT = {
   // Either shape of asking counts. Requiring an interrogative word meant a
   // request had to be blunt to be researched, and people are not blunt: the
@@ -464,7 +481,10 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
   // Each question they actually asked, judged on its own.
   const questions = questionsIn(subject.incoming);
   let answeredSomething = false;
+  const aboutTheAgent = questions.filter((question) => asksAboutTheAgent(question));
   for (const question of questions) {
+    // The answer is in the agent's own memory and persona, not on the web.
+    if (aboutTheAgent.includes(question)) continue;
     // A question about something on the page is not a question for the web.
     // "What did he roundtrip on" is answered by looking at the screenshot; a
     // search engine can only return something else that sounds similar, and it
@@ -508,6 +528,11 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
     // Anything genuinely checkable in their message was already handled by the
     // questions loop, which does not depend on this branch.
     if (subject.parentIsOwn && subject.parent) return lookups;
+
+    // With no post above, the only subject is their own message, and when
+    // everything in it was a question about the agent there is nothing here
+    // for a search engine either.
+    if (!subject.parent && questions.length > 0 && aboutTheAgent.length === questions.length) return lookups;
 
     const subjectText = (subject.parent ?? subject.incoming)
       .replace(/@[A-Za-z0-9_]{1,15}/g, ' ')

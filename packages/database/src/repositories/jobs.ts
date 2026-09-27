@@ -465,6 +465,7 @@ export async function listAwaitingAPerson(agentId?: string, limit = 300): Promis
   {
     jobId: string;
     agentId: string;
+    agentName: string;
     eventType: string;
     actionType: string;
     authorHandle: string | null;
@@ -478,6 +479,7 @@ export async function listAwaitingAPerson(agentId?: string, limit = 300): Promis
     await query(
       `SELECT j.id AS job_id,
               j.agent_id,
+              ag.name AS agent_name,
               e.type AS event_type,
               j.action_type,
               e.remote_author_handle AS author_handle,
@@ -490,6 +492,7 @@ export async function listAwaitingAPerson(agentId?: string, limit = 300): Promis
               coalesce(j.last_error ILIKE '%no longer exists%', false) AS source_gone
          FROM jobs j
          JOIN events e ON e.id = j.event_id
+         JOIN agents ag ON ag.id = j.agent_id
         WHERE ${AWAITING_A_PERSON}
           AND ($1::uuid IS NULL OR j.agent_id = $1)
         ORDER BY j.created_at DESC
@@ -497,4 +500,41 @@ export async function listAwaitingAPerson(agentId?: string, limit = 300): Promis
       [agentId ?? null, limit],
     ),
   );
+}
+
+/**
+ * How fast this agent has been answering, from its own jobs.
+ *
+ * Arrival to a checked draft, because that is the part AI17Z controls: what
+ * happens after is approval, cadence or X. Only jobs that got that far count,
+ * so a declined post is not a fast answer. Null percentiles when nothing
+ * finished, which is not the same as zero seconds.
+ */
+export async function responseSummary(
+  agentId: string,
+  hours = 24,
+): Promise<{ answered: number; p50Seconds: number | null; p90Seconds: number | null; modelCallsPerAnswer: number | null }> {
+  const row = await queryOne<{ answered: string; p50: string | null; p90: string | null; calls: string | null }>(
+    `WITH done AS (
+       SELECT j.id, extract(epoch FROM j.validated_at - j.created_at) AS secs
+         FROM jobs j
+        WHERE j.agent_id = $1
+          AND j.validated_at IS NOT NULL
+          AND j.created_at > now() - ($2::int * interval '1 hour')
+     )
+     SELECT count(*) AS answered,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY secs) AS p50,
+            percentile_cont(0.9) WITHIN GROUP (ORDER BY secs) AS p90,
+            (SELECT count(*) FROM model_calls m WHERE m.job_id IN (SELECT id FROM done))::float
+              / nullif(count(*), 0) AS calls
+       FROM done`,
+    [agentId, hours],
+  );
+  const num = (value: string | null | undefined) => (value === null || value === undefined ? null : Math.round(Number(value) * 10) / 10);
+  return {
+    answered: Number(row?.answered ?? 0),
+    p50Seconds: num(row?.p50),
+    p90Seconds: num(row?.p90),
+    modelCallsPerAnswer: num(row?.calls),
+  };
 }

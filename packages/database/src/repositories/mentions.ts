@@ -56,6 +56,22 @@ export interface MentionRow {
   replyUrl: string | null;
   repliedAt: string | null;
   conversationId: string | null;
+  /**
+   * Which agent this belongs to, and what it is called.
+   *
+   * For an event with no job, derived from the canonical account link. If two
+   * agents share that account the read model returns one row for each agent;
+   * otherwise "not picked up" has no subject and cannot be scoped truthfully.
+   *
+   * Both are carried because a list spanning several agents cannot be read
+   * without them. On a real installation two agents legitimately hold their
+   * own event for the same X post: `events` is unique on (channel, account,
+   * remote id), so one post seen by two connected accounts is two rows by
+   * design. Without the agent on the row that reads as a duplicate glitch,
+   * which is exactly how it was reported.
+   */
+  agentId: string | null;
+  agentName: string | null;
   /** Messages in this thread, both directions, including this one. */
   threadMessages: number;
   /** Times the agent has spoken in this thread. */
@@ -74,7 +90,7 @@ export interface MentionRow {
  * radar found, and separable because otherwise it drowns everything else.
  */
 export const DIRECT_INBOUND_TYPES = ['MENTION', 'REPLY', 'DIRECT_MESSAGE'] as const;
-const ALL_INBOUND_TYPES = [...DIRECT_INBOUND_TYPES, 'KEYWORD_MATCH'] as const;
+const ALL_INBOUND_TYPES = [...DIRECT_INBOUND_TYPES, 'KEYWORD_MATCH', 'TARGET_ACCOUNT_ACTIVITY'] as const;
 
 export interface MentionFilter {
   agentId?: string | null;
@@ -121,11 +137,22 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
          FROM event_discoveries GROUP BY event_id
      ),
      latest_job AS (
-       SELECT DISTINCT ON (event_id) event_id, id, status, conversation_id, agent_id, dry_run,
+       SELECT DISTINCT ON (event_id, agent_id) event_id, id, status, conversation_id, agent_id, dry_run,
               resolved_context -> 'meta' -> 'engagement' AS engagement
          FROM jobs
         WHERE ($1::uuid IS NULL OR agent_id = $1)
-        ORDER BY event_id, created_at DESC
+        ORDER BY event_id, agent_id, created_at DESC
+     ),
+     subjects AS (
+       -- A job keeps its historical agent even if the account link is later
+       -- removed. Current account links supply the subject for agents that
+       -- saw the event but never created a job. UNION deliberately folds the
+       -- linked agent that also owns a job into one row.
+       SELECT event_id, agent_id FROM latest_job
+       UNION
+       SELECT e.id, aa.agent_id
+         FROM events e
+         JOIN agent_accounts aa ON aa.account_id = e.account_id
      )
      SELECT e.id                       AS event_id,
             e.type,
@@ -137,6 +164,8 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
             e.ingested_at,
             COALESCE(f.found_by, ARRAY[]::text[]) AS found_by,
             j.id                       AS job_id,
+            s.agent_id                 AS agent_id,
+            ag.name                    AS agent_name,
             j.status                   AS job_status,
             j.dry_run,
             j.engagement               AS decision,
@@ -149,7 +178,9 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
             COALESCE(p.seen, 0)        AS prior_from_person
        FROM events e
        LEFT JOIN found f ON f.event_id = e.id
-       LEFT JOIN latest_job j ON j.event_id = e.id
+       LEFT JOIN subjects s ON s.event_id = e.id
+       LEFT JOIN latest_job j ON j.event_id = e.id AND j.agent_id = s.agent_id
+       LEFT JOIN agents ag ON ag.id = s.agent_id
        LEFT JOIN LATERAL (
          SELECT id, payload, remote_action_url, executed_at
            FROM actions
@@ -171,7 +202,18 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
        ) p ON true
       WHERE e.type = ANY ($5::text[])
         AND ($2::uuid IS NULL OR e.account_id = $2)
-        AND ($1::uuid IS NULL OR j.agent_id = $1 OR j.id IS NULL)
+        /*
+          Scoped to one agent, an event that produced no job has to earn its
+          place some other way, and the account link is what says so.
+
+          This used to be a bare "job is null", which let every unactioned
+          event in the installation through whatever agent was asked for.
+          With one agent that is invisible. With two it is the reported
+          glitch: picking an agent left the other agent's radar findings on
+          the screen, labelled "Not picked up", as though this agent had
+          ignored them.
+        */
+        AND ($1::uuid IS NULL OR s.agent_id = $1)
         AND ($4::text IS NULL OR lower(e.remote_author_handle) = lower($4))
         -- An event whose account has been deleted and which never produced a
         -- job is residue, not a mention: there is no account it arrived on and
@@ -285,10 +327,17 @@ export async function countMentionStates(filter: MentionFilter): Promise<Record<
   const types = filter.directOnly ? [...DIRECT_INBOUND_TYPES] : [...ALL_INBOUND_TYPES];
   const rows = await query<{ state: string; n: string }>(
     `WITH latest_job AS (
-       SELECT DISTINCT ON (event_id) event_id, agent_id, status
+       SELECT DISTINCT ON (event_id, agent_id) event_id, agent_id, status
          FROM jobs
         WHERE ($1::uuid IS NULL OR agent_id = $1)
-        ORDER BY event_id, created_at DESC
+        ORDER BY event_id, agent_id, created_at DESC
+     ),
+     subjects AS (
+       SELECT event_id, agent_id FROM latest_job
+       UNION
+       SELECT e.id, aa.agent_id
+         FROM events e
+         JOIN agent_accounts aa ON aa.account_id = e.account_id
      )
      SELECT CASE
               WHEN j.status IS NULL THEN 'NOT_ACTIONED'
@@ -301,10 +350,13 @@ export async function countMentionStates(filter: MentionFilter): Promise<Record<
             END AS state,
             count(*)::text AS n
        FROM events e
-       LEFT JOIN latest_job j ON j.event_id = e.id
+       LEFT JOIN subjects s ON s.event_id = e.id
+       LEFT JOIN latest_job j ON j.event_id = e.id AND j.agent_id = s.agent_id
       WHERE e.type = ANY ($3::text[])
         AND ($2::uuid IS NULL OR e.account_id = $2)
-        AND ($1::uuid IS NULL OR j.agent_id = $1 OR j.event_id IS NULL)
+        -- The same scope the list uses, for the reason the comment there
+        -- gives. A count and the list beneath it have to ask one question.
+        AND ($1::uuid IS NULL OR s.agent_id = $1)
         AND ($4::text IS NULL OR lower(e.remote_author_handle) = lower($4))
         AND (e.account_id IS NOT NULL OR j.event_id IS NOT NULL)
         AND coalesce((e.payload ->> 'rehearsal')::boolean, false) = false

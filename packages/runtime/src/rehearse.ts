@@ -76,6 +76,17 @@ export interface RehearsalSubject {
   occurredAt?: string | null;
   /** Anything the reader could not establish, carried through to the answer. */
   gaps?: string[];
+  /**
+   * How the agent would have met this post. A mention by default: somebody
+   * wrote to it. KEYWORD_MATCH is a post it found on its own and would be
+   * joining unasked; TARGET_ACCOUNT_ACTIVITY is a post by an account its owner
+   * told it to follow. The three are held to different bars and written in
+   * different voices, so rehearsing one as another shows the wrong answer.
+   */
+  as?: 'MENTION' | 'KEYWORD_MATCH' | 'TARGET_ACCOUNT_ACTIVITY';
+  /** The audience X reported with the post, so a rehearsal scores it as a real sighting would. */
+  authorFollowers?: number | null;
+  metrics?: Record<string, number> | null;
 }
 
 export interface RehearsalRun {
@@ -95,8 +106,8 @@ export interface RehearsalRun {
  * engagement heuristic's decision, and it is one of the stages the lab exists
  * to show.
  */
-function eventTypeFor(): EventType {
-  return 'MENTION' as EventType;
+function eventTypeFor(as?: RehearsalSubject['as']): EventType {
+  return (as ?? 'MENTION') as EventType;
 }
 
 /**
@@ -140,7 +151,7 @@ export async function rehearse(input: {
     dryRun: true,
     event: {
       channel: subject.channel,
-      type: eventTypeFor(),
+      type: eventTypeFor(subject.as),
       remoteEventId,
       remoteMessageId: subject.remoteId ?? remoteEventId,
       remoteAuthorId: subject.authorId ?? null,
@@ -157,6 +168,8 @@ export async function rehearse(input: {
         requestedBy: input.requestedBy ?? null,
         parentText: subject.parentText ?? null,
         readerGaps: subject.gaps ?? [],
+        ...(typeof subject.authorFollowers === 'number' ? { author: { followers: subject.authorFollowers } } : {}),
+        ...(subject.metrics ? { metrics: subject.metrics } : {}),
       },
     },
   });

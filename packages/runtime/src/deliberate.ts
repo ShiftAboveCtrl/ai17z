@@ -21,10 +21,11 @@ import {
   type MemoryScope,
   type MemoryType,
 } from '@xbam/shared/contracts';
-import { growthGateFor, policyFor } from './growthGate';
+import { beginGrowthSession, chargeGrowthSession, closeSession, policyFor } from './growthGate';
 import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
+import { requestDiscovery } from './discovery';
 import { worthNoticing } from './repoWatcher';
 import { reticenceReason, unpromptedSubject } from './reticence';
 import { worthEngaging } from './engagementWorth';
@@ -89,7 +90,13 @@ const FIRST_LOOK_HOURS = 24;
  * a model call every half hour for ever, and an agent that has been quiet for
  * six hours should still notice within the hour when something happens.
  */
-const QUIET_BACKOFF_MAX = 8;
+const QUIET_BACKOFF_MAX = 4;
+const QUIET_BACKOFF_CEILING_SECONDS = 60 * 60;
+
+export function quietWakeDelaySeconds(intervalSeconds: number, quietWakes: number): number {
+  const backoff = Math.min(QUIET_BACKOFF_MAX, Math.pow(2, quietWakes));
+  return Math.min(intervalSeconds * backoff, QUIET_BACKOFF_CEILING_SECONDS);
+}
 
 /** A reflection call that takes longer than this has cost more than it is worth. */
 const REFLECT_TIMEOUT_MS = 20_000;
@@ -545,6 +552,10 @@ export async function reflect(input: {
     ...input.existing.slice(0, 10).map((item, index) => `[m${index}] (${item.kind}) ${item.summary}`),
   ].join('\n');
 
+  // Cancelled at the deadline, not merely abandoned: see the planner, which
+  // was measured billing for a plan nobody would read.
+  const abort = new AbortController();
+  let reflectTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
       generate({
@@ -554,11 +565,19 @@ export async function reflect(input: {
         role: 'classifier',
         maxCalls: 1,
         messages: [{ role: 'user', content: `${REFLECT_INSTRUCTION}\n\n${described}` }],
+        signal: abort.signal,
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`reflection took longer than ${REFLECT_TIMEOUT_MS}ms`)), REFLECT_TIMEOUT_MS),
-      ),
-    ]);
+      new Promise<never>((_, reject) => {
+        reflectTimer = setTimeout(() => {
+          // The deadline first, so the reason recorded is the deadline and
+          // not the cancellation it causes.
+          reject(new Error(`reflection took longer than ${REFLECT_TIMEOUT_MS}ms`));
+          abort.abort();
+        }, REFLECT_TIMEOUT_MS);
+      }),
+    ]).finally(() => {
+      if (reflectTimer) clearTimeout(reflectTimer);
+    });
 
     const parsed = parseReflection(result.text);
     if (!parsed) return { produced: 0, resolved: 0, kept: 0, model: result.model ?? null, why: 'the model did not answer in the agreed shape' };
@@ -869,22 +888,41 @@ export async function wakeAgent(
 
     Deliberation is the expensive half of optional growth: it reads
     observations, calls a classifier, and produces candidates that become
-    proposals. That is exactly what quiet hours, session limits and the daily
+    proposals. That is exactly what session limits, cooldown and the spending
     budgets are for, and putting the check here rather than further down means
     the cost is not paid before the decision is taken.
 
-    Nothing about answering somebody is gated by this. A mention arriving in
-    the middle of the quiet window is still ingested, still resolved and still
-    answered; the pipeline that does that does not come through here.
+    Nothing about answering somebody is gated by this. Mentions and posts from
+    watched accounts are still ingested, resolved and answered; the pipeline
+    that does that does not come through here.
 
     Recorded as a quiet wake rather than a failure, because resting is a result
     and a screen listing only the productive runs would make a correctly quiet
     agent look broken.
+
+    `beginGrowthSession` rather than a read of the gate, because this is the
+    thing about to spend the budget and so it is the thing that has to write
+    the ledger row. Reading the gate and doing the work anyway is what the
+    previous version did, and it is why no session was ever recorded.
   */
-  const growth = await growthGateFor(agentId, accountId, policyFor(agent), now).catch(() => null);
+  const policy = await policyFor(agent);
+  const growth = await beginGrowthSession(agentId, accountId, policy, now).catch(() => null);
   if (growth && !growth.allowed) {
     await mind.noteWake(agentId, { reason: growth.message, quiet: true, looked: false });
     return emptyOutcome(agentId, wake.autonomy, growth.message, 'resting');
+  }
+
+  /*
+    A session is also when the agent goes looking. Thinking about what it has
+    already seen is half of growth; the other half is finding something new,
+    and until this every candidate had to arrive by somebody mentioning it.
+    The search itself runs on the radar, which owns the browser and spends the
+    account's broad capacity; this only says now.
+  */
+  if (growth?.allowed && accountId) {
+    await requestDiscovery(accountId).catch((error) => {
+      log.warn('could not ask for a discovery search', { agentId, message: errorMessage(error) });
+    });
   }
 
   const since = wake.lastWakeAt ?? new Date(now.getTime() - FIRST_LOOK_HOURS * 3600_000).toISOString();
@@ -1006,8 +1044,10 @@ export async function wakeAgent(
     hour for ever; one that has been quiet all afternoon should still notice
     within the hour. Any activity at all resets it, which `noteWake` does.
   */
-  const backoff = somethingHappened ? 1 : Math.min(QUIET_BACKOFF_MAX, Math.pow(2, wake.quietWakes));
-  const nextWakeAt = new Date(now.getTime() + wake.intervalSeconds * backoff * 1000).toISOString();
+  const nextDelaySeconds = somethingHappened
+    ? wake.intervalSeconds
+    : quietWakeDelaySeconds(wake.intervalSeconds, wake.quietWakes);
+  const nextWakeAt = new Date(now.getTime() + nextDelaySeconds * 1000).toISOString();
 
   await mind.noteWake(agentId, {
     reason,
@@ -1046,6 +1086,24 @@ export async function wakeAgent(
 
   if (somethingHappened) {
     log.info('an agent thought about something', { agentId, attended, produced, candidates, retired });
+  }
+
+  /*
+    A wake is one bounded growth session.
+
+    Normal completion closes it even when it found nothing, which starts the
+    cooldown and prevents a quiet installation leaving an open row forever.
+    If the process dies before reaching here, the open row is intentional:
+    `beginGrowthSession` recovers it and closes it once `sessionMinutes` has
+    elapsed. That gives a restart a durable answer rather than a memory-only
+    flag that disappears on deploy.
+  */
+  if (growth?.allowed) {
+    const considered = Math.min(policy.growth.maxCandidatesPerSession, Math.max(attended, candidates + engagements));
+    await chargeGrowthSession(agentId, 'candidates', considered);
+    if (model) await chargeGrowthSession(agentId, 'model');
+    if (lookedInto) await chargeGrowthSession(agentId, 'research');
+    await closeSession(agentId, reason);
   }
 
   return {

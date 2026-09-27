@@ -47,10 +47,55 @@ export const ActingCadence = z.object({
 });
 export type ActingCadence = z.infer<typeof ActingCadence>;
 
+/**
+ * Who a read or a write on X is spent for.
+ *
+ * The order is the order capacity is protected in. Somebody who wrote to the
+ * agent is answered before an account the owner asked it to follow is checked,
+ * and both come before anything the agent goes looking for on its own.
+ */
+export const CAPACITY_CLASSES = ['DIRECT', 'TARGET', 'BROAD'] as const;
+export type CapacityClass = (typeof CAPACITY_CLASSES)[number];
+
+/**
+ * How hard this account may lean on X, all surfaces together.
+ *
+ * X publishes no number for how often a signed-in browser may load a page, so
+ * none is claimed here. These are a deliberately modest budget with the
+ * headroom left in, and what actually protects the account is the response to
+ * X pushing back: see `judgeCapacity` in the runtime.
+ */
+export const CapacityCadence = z.object({
+  /**
+   * X reads the account may make in any ten minutes while healthy, across every
+   * surface. Thirty-six is a little over three a minute: measured on a live
+   * account, six a minute was enough for X to start refusing searches.
+   */
+  readsPer10Minutes: z.number().int().min(6).max(600).default(36),
+  /**
+   * The most of that budget the agent's own looking may spend by itself.
+   */
+  broadShare: z.number().min(0).max(1).default(0.35),
+  /** The most an owner-watched account's checks may spend by themselves. */
+  targetShare: z.number().min(0).max(1).default(0.5),
+  /**
+   * The last part of the budget, kept for people who wrote in. Watched
+   * accounts and the agent's own looking stop once the account as a whole has
+   * reached the rest; direct reads may use it all.
+   */
+  directReserve: z.number().min(0).max(0.9).default(0.15),
+  /** The first cooldown after X pushes back. Each further trip in a row doubles it. */
+  cooldownMinutes: z.number().int().min(1).max(240).default(15),
+  /** The longest a cooldown may become however many times the account trips. */
+  maxCooldownMinutes: z.number().int().min(5).max(1_440).default(120),
+});
+export type CapacityCadence = z.infer<typeof CapacityCadence>;
+
 export const CadenceConfig = z.object({
   polling: PollingCadence.default({}),
   acting: ActingCadence.default({}),
   quietHours: QuietHours.default({}),
+  capacity: CapacityCadence.default({}),
 });
 export type CadenceConfig = z.infer<typeof CadenceConfig>;
 

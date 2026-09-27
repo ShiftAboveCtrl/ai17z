@@ -61,9 +61,23 @@ describe('an account coping with trouble', () => {
     expect(verdict.holdMs).toBeGreaterThan(0);
   });
 
-  it('degrades on a few rate limits before it gives up entirely', () => {
-    expect(judgeHealth(facts({ rateLimits: 3 })).health).toBe('DEGRADED');
-    expect(judgeHealth(facts({ rateLimits: 10 })).health).toBe('COOLDOWN');
+  it('slows down on the first rate limit and cools down on the third', () => {
+    /*
+      These were three and ten, and nothing evaluated them, so they were never
+      held against X. On a live account X began refusing searches at about six
+      page loads a minute; one explicit "slow down" is already worth heeding.
+    */
+    expect(judgeHealth(facts({ rateLimits: 1 })).health).toBe('DEGRADED');
+    expect(judgeHealth(facts({ rateLimits: 2 })).health).toBe('DEGRADED');
+    expect(judgeHealth(facts({ rateLimits: 3 })).health).toBe('COOLDOWN');
+  });
+
+  it('treats pages X never drew as pressure, not as quiet', () => {
+    expect(judgeHealth(facts({ stalledReads: 1 })).health).toBe('HEALTHY');
+    expect(judgeHealth(facts({ stalledReads: 2 })).health).toBe('DEGRADED');
+    const cooled = judgeHealth(facts({ stalledReads: 4 }));
+    expect(cooled.health).toBe('COOLDOWN');
+    expect(cooled.reason).toMatch(/failed to draw/);
   });
 
   it('degrades when discovery itself is failing', () => {

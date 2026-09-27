@@ -117,6 +117,49 @@ export const RETRYABLE_MARKERS = [
   'keep retrying',
 ];
 
+/**
+ * X saying, in its own words, that there is nothing here.
+ *
+ * The counterweight to the stall check below. A search with no results, a
+ * notifications page with nothing new and a profile that has never posted all
+ * render almost no text, and every one of them is a true answer. These are the
+ * sentences X uses for that, apostrophe-free for the reason given above.
+ */
+export const EMPTY_STATE_MARKERS = [
+  'nothing to see here',
+  'no results for',
+  't posted',
+  'these posts are protected',
+  'account doesn',
+  'this account doesn',
+  'try searching for something else',
+];
+
+export function looksLikeXSaidEmpty(pageText: string): boolean {
+  const haystack = pageText.toLowerCase();
+  return EMPTY_STATE_MARKERS.some((marker) => haystack.includes(marker));
+}
+
+/**
+ * A page X never finished drawing.
+ *
+ * The owner's description was a black screen with the X logo on it, and that
+ * is exactly what the renderer holds while X's own bundle has not produced a
+ * page: the logo, and no text at all. Under pressure it also shows the frame
+ * of the site with a spinner where the timeline should be, for as long as
+ * anybody waits.
+ *
+ * Neither is an answer. Both were recorded as one, because a page with no
+ * articles and no error text passed every check this package had, and the
+ * source went on reading HEALTHY with nothing found. Fewer than fifteen
+ * characters of text is not a page anybody could read, and a spinner still
+ * turning after the wait is a page that is not coming.
+ */
+export function looksLikeXStalled(pageText: string, spinnerVisible: boolean): boolean {
+  if (looksLikeXSaidEmpty(pageText)) return false;
+  return pageText.replace(/\s+/g, '').length < 15 || spinnerVisible;
+}
+
 export function looksLikeXBroke(pageText: string): boolean {
   const haystack = pageText.toLowerCase();
   return RETRYABLE_MARKERS.some((marker) => haystack.includes(marker));

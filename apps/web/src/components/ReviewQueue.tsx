@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { ApiError, post } from '@app/lib/api';
 import { ErrorPanel, Modal, Spinner } from '@app/components/ui';
+import { boundedSelection } from '@app/lib/selection';
 
 export interface ReviewItem {
   eventId: string;
   jobId: string | null;
+  agentId?: string | null;
   agentName: string | null;
   authorHandle: string | null;
   text: string;
@@ -51,6 +53,8 @@ export function ReviewQueue({ items, onDecided }: { items: ReviewItem[]; onDecid
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [failures, setFailures] = useState<{ jobId: string; error: string | null }[]>([]);
+  const [customAmount, setCustomAmount] = useState('');
+  const [summary, setSummary] = useState<string | null>(null);
   const rowRefs = useRef<(HTMLElement | null)[]>([]);
 
   // A selection that outlives the rows it referred to would approve whatever
@@ -61,19 +65,31 @@ export function ReviewQueue({ items, onDecided }: { items: ReviewItem[]; onDecid
     setCursor((c) => Math.min(c, Math.max(0, reviewable.length - 1)));
   }, [reviewable]);
 
-  const decide = async (jobIds: string[], decision: 'approve' | 'reject') => {
+  const decide = async (jobIds: string[], decision: 'approve' | 'reject' | 'dismiss') => {
     if (jobIds.length === 0) return;
     setBusy(true);
     setError(null);
     setFailures([]);
+    setSummary(null);
     try {
-      const result = await post<{ decided: number; failed: { jobId: string; error: string | null }[] }>(
+      const result = await post<{
+        selected: number;
+        decided: number;
+        superseded: number;
+        blocked: number;
+        failed: number;
+        results: { jobId: string; ok: boolean; error: string | null }[];
+      }>(
         '/api/jobs/decide-many',
         { decision, jobIds },
       );
       // Partial success is normal and is reported. "38 of 40" said as a plain
       // success would be a lie about the two.
-      if (result.failed.length > 0) setFailures(result.failed);
+      const problems = result.results.filter((item) => !item.ok);
+      if (problems.length > 0) setFailures(problems);
+      setSummary(
+        `${result.selected} selected · ${result.decided} decided · ${result.superseded} superseded · ${result.blocked} blocked · ${result.failed} failed`,
+      );
       setSelected(new Set());
       setConfirming(false);
       onDecided();
@@ -91,6 +107,10 @@ export function ReviewQueue({ items, onDecided }: { items: ReviewItem[]; onDecid
       else next.add(jobId);
       return next;
     });
+
+  const selectFirst = (amount: number) => {
+    setSelected(new Set(boundedSelection(reviewable.map((item) => item.jobId!), amount)));
+  };
 
   // The latest `decide`, held in a ref.
   //
@@ -144,18 +164,39 @@ export function ReviewQueue({ items, onDecided }: { items: ReviewItem[]; onDecid
   if (reviewable.length === 0) return null;
 
   const chosen = reviewable.filter((i) => selected.has(i.jobId!));
-  const allSelected = selected.size === reviewable.length;
 
   return (
     <div className="mb-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-ink-line bg-ink-raised/40 px-3 py-2">
-        <button
-          type="button"
-          className="btn-quiet"
-          onClick={() => setSelected(allSelected ? new Set() : new Set(reviewable.map((i) => i.jobId!)))}
-        >
-          {allSelected ? 'Clear selection' : `Select all ${reviewable.length}`}
+        {[10, 25, 50].map((amount) => (
+          <button key={amount} type="button" className="btn-quiet" onClick={() => selectFirst(amount)}>
+            Select {amount}
+          </button>
+        ))}
+        <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-bone-faint">
+          Select
+          <input
+            type="number"
+            min={1}
+            max={Math.min(500, reviewable.length)}
+            value={customAmount}
+            onChange={(event) => setCustomAmount(event.target.value)}
+            onBlur={() => {
+              const amount = Number.parseInt(customAmount, 10);
+              if (Number.isFinite(amount)) selectFirst(amount);
+            }}
+            className="w-16 rounded border border-ink-line bg-black/30 px-2 py-1 text-bone"
+            aria-label="Custom number to select"
+          />
+        </label>
+        <button type="button" className="btn-quiet" onClick={() => selectFirst(reviewable.length)}>
+          Select all {reviewable.length}
         </button>
+        {selected.size > 0 && (
+          <button type="button" className="btn-quiet" onClick={() => setSelected(new Set())}>
+            Clear selection
+          </button>
+        )}
 
         {selected.size > 0 && (
           <>
@@ -172,6 +213,14 @@ export function ReviewQueue({ items, onDecided }: { items: ReviewItem[]; onDecid
             >
               {busy ? <Spinner className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" aria-hidden />}
               Reject
+            </button>
+            <button
+              type="button"
+              className="btn-quiet"
+              disabled={busy}
+              onClick={() => void decide([...selected], 'dismiss')}
+            >
+              Dismiss
             </button>
           </>
         )}
@@ -192,12 +241,14 @@ export function ReviewQueue({ items, onDecided }: { items: ReviewItem[]; onDecid
         </div>
       )}
 
+      {summary && <p className="mt-3 font-mono text-[10px] text-bone-faint">{summary}</p>}
+
       {error && <ErrorPanel title="That did not work." detail={error} />}
 
       <ul className="mt-3 space-y-2">
         {reviewable.map((item, index) => (
           <li
-            key={item.eventId}
+            key={item.jobId ?? `${item.eventId}:${item.agentId ?? 'unassigned'}`}
             ref={(el) => {
               rowRefs.current[index] = el;
             }}
@@ -265,7 +316,7 @@ export function ReviewQueue({ items, onDecided }: { items: ReviewItem[]; onDecid
           </p>
           <ul className="max-h-[45vh] space-y-2 overflow-y-auto">
             {chosen.map((item) => (
-              <li key={item.eventId} className="rounded-lg border border-ink-line p-3">
+              <li key={item.jobId ?? `${item.eventId}:${item.agentId ?? 'unassigned'}`} className="rounded-lg border border-ink-line p-3">
                 <p className="font-mono text-[11px] text-bone-faint">
                   {item.agentName}
                   {item.authorHandle && ` · to @${item.authorHandle}`}

@@ -28,9 +28,10 @@ const MONITOR: Record<string, string> = {
   own_threads: 'own thread',
   tracked_account: 'watched account',
   tracked_keyword: 'keyword',
+  persona_discovery: 'its own search',
 };
 
-export function MentionCard({ mention }: { mention: MentionRow }) {
+export function MentionCard({ mention, showAgent = false }: { mention: MentionRow; showAgent?: boolean }) {
   const state = STATE[mention.state];
   // Somebody continuing a conversation and somebody arriving for the first time
   // need completely different reading, and the difference is not in the text.
@@ -43,6 +44,19 @@ export function MentionCard({ mention }: { mention: MentionRow }) {
         <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-bone">
           @{mention.authorHandle ?? 'unknown'}
         </span>
+        {/*
+          Which agent this is. Only when the list spans more than one, because
+          on a single-agent list it is noise.
+
+          Two agents can legitimately each hold their own event for the same X
+          post, since `events` is unique on (channel, account, remote id). Two
+          rows for one post is correct and reads as a glitch without this.
+        */}
+        {showAgent && mention.agentName && (
+          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-bone-dim">
+            {mention.agentName}
+          </span>
+        )}
         {ongoing ? (
           <span className="chip">
             in conversation · {mention.ourTurns} {mention.ourTurns === 1 ? 'reply' : 'replies'} from you

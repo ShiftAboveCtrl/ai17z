@@ -221,29 +221,42 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const body = parseBody(
         z.object({
-          decision: z.enum(['approve', 'reject']),
-          // Capped: a bulk action over hundreds is a sign somebody meant a
-          // filter, and forty is already more than anyone reads in one sitting.
-          jobIds: z.array(z.string().uuid()).min(1).max(50),
+          decision: z.enum(['approve', 'reject', 'dismiss']),
+          // The command may be large, but execution below is deliberately
+          // chunked and serial. This ceiling prevents an unbounded request.
+          jobIds: z.array(z.string().uuid()).min(1).max(500),
           note: z.string().max(1_000).optional(),
         }),
         request,
       );
 
-      const results: { jobId: string; ok: boolean; error: string | null }[] = [];
-      for (const jobId of body.jobIds) {
-        try {
-          const job = await jobsRepo.requireJob(jobId);
-          await ownedAgent(job.agentId, user);
-          if (body.decision === 'approve') {
-            await approveJob({ jobId: job.id, decidedBy: user.id, ...(body.note ? { note: body.note } : {}) });
-          } else {
-            await rejectJob({ jobId: job.id, decidedBy: user.id, ...(body.note ? { note: body.note } : {}) });
+      const results: { jobId: string; ok: boolean; outcome: 'DECIDED' | 'SUPERSEDED' | 'BLOCKED' | 'FAILED'; error: string | null }[] = [];
+      const uniqueIds = [...new Set(body.jobIds)];
+      const CHUNK_SIZE = 25;
+      for (let offset = 0; offset < uniqueIds.length; offset += CHUNK_SIZE) {
+        const chunk = uniqueIds.slice(offset, offset + CHUNK_SIZE);
+        for (const jobId of chunk) {
+          try {
+            const job = await jobsRepo.requireJob(jobId);
+            await ownedAgent(job.agentId, user);
+            if (body.decision === 'approve') {
+              await approveJob({ jobId: job.id, decidedBy: user.id, ...(body.note ? { note: body.note } : {}) });
+            } else if (body.decision === 'reject') {
+              await rejectJob({ jobId: job.id, decidedBy: user.id, ...(body.note ? { note: body.note } : {}) });
+            } else {
+              await cancelJob(job.id);
+            }
+            results.push({ jobId, ok: true, outcome: 'DECIDED', error: null });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'That job could not be decided.';
+            const outcome = /nothing to (approve|reject)|already|no longer waiting|cancelled|executed/i.test(message)
+              ? 'SUPERSEDED'
+              : /cannot be approved|not permitted|belongs to another|forbidden|policy/i.test(message)
+                ? 'BLOCKED'
+                : 'FAILED';
+            // One refusal must not abandon the rest, and must not be silent.
+            results.push({ jobId, ok: false, outcome, error: message });
           }
-          results.push({ jobId, ok: true, error: null });
-        } catch (error) {
-          // One refusal must not abandon the rest, and must not be silent.
-          results.push({ jobId, ok: false, error: error instanceof Error ? error.message : 'That job could not be decided.' });
         }
       }
 
@@ -252,10 +265,17 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
         action: `job.${body.decision}.bulk`,
         entityType: 'job',
         entityId: null,
-        data: { requested: body.jobIds.length, succeeded: results.filter((r) => r.ok).length },
+        data: { requested: uniqueIds.length, succeeded: results.filter((r) => r.ok).length },
       });
 
-      return { decided: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok), results };
+      return {
+        selected: uniqueIds.length,
+        decided: results.filter((r) => r.ok).length,
+        superseded: results.filter((r) => r.outcome === 'SUPERSEDED').length,
+        blocked: results.filter((r) => r.outcome === 'BLOCKED').length,
+        failed: results.filter((r) => r.outcome === 'FAILED').length,
+        results,
+      };
     }),
   );
 

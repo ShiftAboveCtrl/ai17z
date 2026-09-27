@@ -44,6 +44,15 @@ export function linksInText(text: string): string[] {
   return [...new Set(found.map((u) => u.replace(/[.,)\]]+$/, '')))].filter((u) => !u.includes('t.co/'));
 }
 
+/*
+  Everything here reads a page that has already drawn, so an element that is
+  not there now is not coming. Playwright's attribute reads wait for the
+  element to appear, up to the default thirty seconds, and most posts carry no
+  link card: measured on a live installation, every thread read spent exactly
+  thirty seconds waiting for one, and sixty when the parent post was read too.
+*/
+const ALREADY_DRAWN = { timeout: 1_000 };
+
 async function readPhotos(scope: ReturnType<Page['locator']>): Promise<MediaCandidate[]> {
   const images = scope.locator(MEDIA_SEL.photo);
   const count = await images.count().catch(() => 0);
@@ -51,11 +60,11 @@ async function readPhotos(scope: ReturnType<Page['locator']>): Promise<MediaCand
 
   for (let index = 0; index < Math.min(count, 4); index += 1) {
     const image = images.nth(index);
-    const src = await image.getAttribute('src').catch(() => null);
+    const src = await image.getAttribute('src', ALREADY_DRAWN).catch(() => null);
     if (!src) continue;
     // X uses the alt text for its own labels as well as real descriptions, so
     // the generic ones are dropped rather than passed off as a description.
-    const alt = await image.getAttribute('alt').catch(() => null);
+    const alt = await image.getAttribute('alt', ALREADY_DRAWN).catch(() => null);
     const meaningful = alt && !/^image$/i.test(alt.trim()) ? alt.trim() : null;
 
     media.push({
@@ -77,7 +86,7 @@ async function readVideo(scope: ReturnType<Page['locator']>, position: number): 
   const poster = await player
     .locator('video')
     .first()
-    .getAttribute('poster')
+    .getAttribute('poster', ALREADY_DRAWN)
     .catch(() => null);
 
   return {
@@ -98,14 +107,14 @@ async function readQuoted(scope: ReturnType<Page['locator']>): Promise<QuotedPos
   const href = await quote
     .locator('a[href*="/status/"]')
     .first()
-    .getAttribute('href')
+    .getAttribute('href', ALREADY_DRAWN)
     .catch(() => null);
   const url = href ? `https://x.com${href.startsWith('/') ? href : `/${href}`}` : null;
 
   const nameBlock = await quote
     .locator(MEDIA_SEL.userName)
     .first()
-    .innerText()
+    .innerText(ALREADY_DRAWN)
     .catch(() => '');
   const text = await quote
     .locator(MEDIA_SEL.tweetText)
@@ -148,7 +157,7 @@ export async function readMediaInventory(
   const cardHref = await article
     .locator(MEDIA_SEL.cardLink)
     .first()
-    .getAttribute('href')
+    .getAttribute('href', ALREADY_DRAWN)
     .catch(() => null);
 
   const links = linksInText(text);

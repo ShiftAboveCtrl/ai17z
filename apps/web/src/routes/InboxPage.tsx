@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { usePolling, useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
 import { EmptyState, ErrorPanel, Loading, StatusDot } from '@app/components/ui';
@@ -84,7 +84,11 @@ const LEDE: Record<Bucket, string> = {
  * empty "needs you" is information and a hidden one is not.
  */
 export function InboxPage() {
-  const view = useResource<InboxView>('/api/inbox');
+  const [params, setParams] = useSearchParams();
+  const agentId = params.get('agentId');
+  const agents = useResource<{ items: { id: string; name: string }[] }>('/api/agents');
+  const manyAgents = (agents.data?.items.length ?? 0) > 1;
+  const view = useResource<InboxView>(agentId ? `/api/inbox?agentId=${agentId}` : '/api/inbox');
   const [bucket, setBucket] = useState<Bucket>('NEEDS_REVIEW');
   usePolling(() => view.reload(), 20_000, true);
 
@@ -110,9 +114,39 @@ export function InboxPage() {
         <p>Everything else is a record. Nothing there is waiting on you.</p>
       </Explain>
       <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-bone-faint">
-        Across every agent you have. This is not the activity log: it lists the things you might act on, and the two
+        {agentId ? 'Scoped to the selected agent.' : 'Across every agent you have.'} This is not the activity log: it lists the things you might act on, and the two
         that need you come first even when they are empty.
       </p>
+
+      {manyAgents && (
+        <div className="mt-5 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={`rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] ${!agentId ? 'border-signal-calm/60 text-bone' : 'border-ink-line text-bone-faint'}`}
+            onClick={() => {
+              const next = new URLSearchParams(params);
+              next.delete('agentId');
+              setParams(next, { replace: true });
+            }}
+          >
+            All agents
+          </button>
+          {agents.data?.items.map((agent) => (
+            <button
+              key={agent.id}
+              type="button"
+              className={`rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] ${agentId === agent.id ? 'border-signal-calm/60 text-bone' : 'border-ink-line text-bone-faint'}`}
+              onClick={() => {
+                const next = new URLSearchParams(params);
+                next.set('agentId', agent.id);
+                setParams(next, { replace: true });
+              }}
+            >
+              {agent.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="mt-8 flex flex-wrap gap-2">
         {ORDER.map((key) => {
@@ -154,7 +188,7 @@ export function InboxPage() {
           />
         ) : (
           items.map((item) => (
-            <article key={item.eventId} className="rounded-lg border border-bone/10 bg-black/20 p-4">
+            <article key={`${item.eventId}:${item.agentId ?? 'unassigned'}`} className="rounded-lg border border-bone/10 bg-black/20 p-4">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <p className="text-[12px] text-bone-faint">
                   {/* Which agent, always. An owner with four cannot act on "somebody needs approval". */}

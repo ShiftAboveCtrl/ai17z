@@ -50,7 +50,9 @@ async function main(): Promise<void> {
   if (!agentId) throw new Error('No active agent to evaluate. Pass --agent <id>.');
 
   const agent = await agentsRepo.getAgent(agentId);
-  const cases = only ? CORPUS.filter((entry) => entry.id === only || entry.shape.includes(only)) : CORPUS;
+  // A comma list selects several cases by id or shape.
+  const wanted = only ? only.split(',').map((item) => item.trim()).filter(Boolean) : [];
+  const cases = wanted.length > 0 ? CORPUS.filter((entry) => wanted.some((item) => entry.id === item || entry.shape.includes(item))) : CORPUS;
   console.log(`Evaluating ${agent?.name ?? agentId} against ${cases.length} shapes. Nothing is published.\n`);
 
   const runs: { id: string; shape: string; jobId: string; looksLike: string }[] = [];
@@ -62,6 +64,7 @@ async function main(): Promise<void> {
         authorHandle: entry.from,
         text: entry.text,
         ...(entry.parent ? { parentText: entry.parent } : {}),
+        ...(entry.as ? { as: entry.as } : {}),
       },
     });
     runs.push({ id: entry.id, shape: entry.shape, jobId: run.jobId, looksLike: entry.looksLike });

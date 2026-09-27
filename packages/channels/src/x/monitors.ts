@@ -1,5 +1,5 @@
 import type { RadarCandidate, RadarPollResult, RadarSourceKind } from '@xbam/shared/contracts';
-import { errorMessage } from '@xbam/shared';
+import { createLogger, errorMessage } from '@xbam/shared';
 import type { Page } from '@xbam/browser';
 import { articleForStatus, SEL, X_URLS } from './selectors';
 import {
@@ -11,6 +11,10 @@ import {
 } from './targets';
 import { refuseIfXBroke } from './page';
 import { readCounts } from './counts';
+import { toPost, tweetsFrom } from './intelligence/pageGraphql';
+import { toCandidates } from './radarIntelligence';
+
+const log = createLogger('x-monitors');
 
 /**
  * The several ways X will tell you something happened.
@@ -321,6 +325,69 @@ export function harvestForTest(ctx: MonitorContext): Promise<RadarCandidate[]> {
   return harvest(ctx, 'MENTION', 'test');
 }
 
+/**
+ * Open a search and keep the results X's own app fetched to draw it.
+ *
+ * Asking X's search endpoint directly is refused: it answers an empty 404 to
+ * anything but its own app, which signs each search request in a way this code
+ * does not and will not imitate. The rendered page alone carries no counts, so
+ * reading only what is drawn lost the author's audience and every post's
+ * engagement, and discovery could not tell a large account from an empty one.
+ *
+ * The page's own request is a different matter. The browser made it, for the
+ * page it was asked to show, and the response is already there. Reading it
+ * costs no extra request and imitates nothing. When it cannot be read, the
+ * drawn page is still harvested exactly as before.
+ */
+async function openSearchKeepingResults(page: Page, url: string): Promise<Record<string, unknown>[] | null> {
+  const results = page
+    .waitForResponse((response) => response.url().includes('/SearchTimeline'), { timeout: 25_000 })
+    .then(async (response) => (response.ok() ? ((await response.json()) as unknown) : null))
+    .catch(() => null);
+  await goto(page, url);
+  const json = await results;
+  if (!json) return null;
+  const tweets = tweetsFrom(json);
+  return tweets.length > 0 ? tweets : null;
+}
+
+let authorShapeNotedAt = 0;
+
+/**
+ * Names the fields X sent for an author when none of them was a follower count.
+ *
+ * Key names only, never values: enough to see where X moved the number, and
+ * nothing about the person. At most once an hour.
+ */
+function noteAuthorShape(tweet: Record<string, unknown>): void {
+  if (Date.now() - authorShapeNotedAt < 60 * 60_000) return;
+  authorShapeNotedAt = Date.now();
+  const user = ((tweet.core as Record<string, unknown> | undefined)?.user_results as Record<string, unknown> | undefined)
+    ?.result as Record<string, unknown> | undefined;
+  const keysOf = (value: unknown) => (value && typeof value === 'object' ? Object.keys(value as object).slice(0, 60) : null);
+  log.warn('X sent authors without a follower count', {
+    user: keysOf(user),
+    legacy: keysOf(user?.legacy),
+    core: keysOf(user?.core),
+    counts: keysOf(user?.relationship_counts),
+  });
+}
+
+async function searchMonitor(ctx: MonitorContext, query: string, eventType: string, label: string): Promise<RadarPollResult> {
+  const tweets = await openSearchKeepingResults(ctx.page, latestSearchUrl(query));
+  if (tweets) {
+    const posts = tweets
+      .map((tweet) => toPost(tweet, 'x-page-response'))
+      .filter((post): post is NonNullable<typeof post> => post !== null);
+    const candidates = toCandidates(posts, ctx, eventType, label, 'x-page-response');
+    if (posts.length > 0 && posts.every((post) => post.authorFollowers === null || post.authorFollowers === undefined)) {
+      noteAuthorShape(tweets[0]!);
+    }
+    return { candidates, cursor: candidates[0]?.remoteId ?? null, error: null };
+  }
+  return withCursor(await harvest(ctx, eventType, label));
+}
+
 export function latestSearchUrl(query: string): string {
   return `https://x.com/search?q=${encodeURIComponent(query)}&f=live`;
 }
@@ -359,16 +426,14 @@ export const X_MONITORS: Record<RadarSourceKind, XMonitor> = {
   mention_search: guarded('mention_search', async (ctx) => {
     const handle = ctx.selfHandles[0];
     if (!handle) return { candidates: [], cursor: null, error: 'This account has no handle to search for.' };
-    await goto(ctx.page, latestSearchUrl(`@${handle} -from:${handle}`));
-    return withCursor(await harvest(ctx, 'MENTION', 'mention_search'));
+    return searchMonitor(ctx, `@${handle} -from:${handle}`, 'MENTION', 'mention_search');
   }),
 
   /** Replies addressed to the account, which search indexes separately. */
   reply_search: guarded('reply_search', async (ctx) => {
     const handle = ctx.selfHandles[0];
     if (!handle) return { candidates: [], cursor: null, error: 'This account has no handle to search for.' };
-    await goto(ctx.page, latestSearchUrl(`to:${handle} -from:${handle}`));
-    return withCursor(await harvest(ctx, 'REPLY', 'reply_search'));
+    return searchMonitor(ctx, `to:${handle} -from:${handle}`, 'REPLY', 'reply_search');
   }),
 
   /**
@@ -416,7 +481,15 @@ export const X_MONITORS: Record<RadarSourceKind, XMonitor> = {
   /** A keyword, phrase, ticker, or a custom query written by the owner. */
   tracked_keyword: guarded('tracked_keyword', async (ctx) => {
     if (!ctx.target) return { candidates: [], cursor: null, error: 'No keyword was given to watch.' };
-    await goto(ctx.page, latestSearchUrl(ctx.target));
-    return withCursor(await harvest(ctx, 'POST', 'tracked_keyword'));
+    return searchMonitor(ctx, ctx.target, 'POST', 'tracked_keyword');
+  }),
+
+  /**
+   * A search the agent chose for itself. The runtime builds the query from the
+   * persona; reading it is the same search a watched keyword is.
+   */
+  persona_discovery: guarded('persona_discovery', async (ctx) => {
+    if (!ctx.target) return { candidates: [], cursor: null, error: 'No search was chosen.' };
+    return searchMonitor(ctx, ctx.target, 'POST', 'persona_discovery');
   }),
 };

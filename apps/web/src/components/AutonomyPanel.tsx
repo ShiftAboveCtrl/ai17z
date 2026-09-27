@@ -20,19 +20,24 @@ interface Autonomy {
   growth: {
     policy: {
       enabled: boolean;
+      quietHoursEnabled: boolean;
       timezone: string;
       quietHoursStart: number;
       quietHoursEnd: number;
+      maxSessionsPerHour: number;
       maxSessionsPerDay: number;
       sessionMinutes: number;
       cooldownMinutes: number;
       maxModelCallsPerDay: number;
       maxResearchPerDay: number;
     };
-    state: 'OPEN' | 'RESTING' | 'QUIET_HOURS' | 'SPENT' | 'OFF' | 'HELD';
+    state: 'OPEN' | 'ELIGIBLE' | 'RESTING' | 'QUIET_HOURS' | 'SPENT' | 'OFF' | 'HELD';
     allowed: boolean;
     message: string;
+    nextEligibleAt: string | null;
     sessionOpenSince: string | null;
+    lastSessionEndedAt: string | null;
+    sessionsThisHour: number;
     sessionsToday: number;
     spentToday: { modelCalls: number; researchCalls: number; publicActions: number };
   };
@@ -42,13 +47,50 @@ interface Autonomy {
     healthUntil: string | null;
     healthChangedAt: string | null;
   };
+  xCapacity: {
+    health: 'HEALTHY' | 'DEGRADED' | 'COOLDOWN' | 'HUMAN_ACTION_REQUIRED';
+    reason: string | null;
+    until: string | null;
+    strikes: number;
+    readsLast10Minutes: number;
+    readsByClass: { DIRECT: number; TARGET: number; BROAD: number };
+    budgetPer10Minutes: number;
+    pushbackLastHour: { rateLimited: number; stalled: number; broken: number };
+  } | null;
+  broadGrowth: {
+    seen: number;
+    queued: number;
+    declined: number;
+    topDecline: { reason: string; count: number } | null;
+    medianQueuedFollowers: number | null;
+    published: number;
+  };
+  responses: { answered: number; p50Seconds: number | null; p90Seconds: number | null; modelCallsPerAnswer: number | null };
+  habits: { phrase: string; posts: number }[];
   doNotContact: { id: string; handle: string; source: string; evidence: string | null; createdAt: string }[];
   learned: { family: string; accepted: number; rejected: number; lastDecisionAt: string }[];
+  targets: {
+    id: string;
+    handle: string;
+    displayName: string | null;
+    mode: 'WATCH' | 'PRIORITIZE' | 'ENGAGE';
+    enabled: boolean;
+    priority: number;
+    lastSeenAt: string | null;
+    lastProcessedAt: string | null;
+    lastInteractionAt: string | null;
+    pacedUntil: string | null;
+    pacedReason: string | null;
+    latestDisposition: string | null;
+    latestReason: string | null;
+    latestDecidedAt: string | null;
+  }[];
 }
 
 /** Resting is not broken, and the colours have to say so. */
 const GROWTH_TONE: Record<Autonomy['growth']['state'], 'live' | 'wait' | 'fail' | 'idle'> = {
   OPEN: 'live',
+  ELIGIBLE: 'live',
   RESTING: 'idle',
   QUIET_HOURS: 'idle',
   SPENT: 'idle',
@@ -84,7 +126,7 @@ export function AutonomyPanel({ agentId }: { agentId: string }) {
   if (data.error) return <ErrorPanel title="Could not read what this agent is allowed to do." detail={data.error} />;
   if (!data.data) return null;
 
-  const { growth, accountHealth, doNotContact, learned } = data.data;
+  const { growth, accountHealth, doNotContact, learned, targets, xCapacity, broadGrowth, responses, habits } = data.data;
 
   return (
     <section className="space-y-8">
@@ -92,7 +134,7 @@ export function AutonomyPanel({ agentId }: { agentId: string }) {
         <h2 className="text-lg text-bone">Going looking for people</h2>
         <Explain label="this" className="mt-2">
           <p><strong>These are ceilings, not targets.</strong> An agent that has used none of its allowance is not behind on anything.</p>
-          <p>None of it applies to somebody who writes to your agent. A mention arriving in the middle of the quiet window is still answered.</p>
+          <p>None of it applies to somebody who writes to your agent. Direct mentions and watched-account posts still take priority.</p>
         </Explain>
       </header>
 
@@ -106,15 +148,25 @@ export function AutonomyPanel({ agentId }: { agentId: string }) {
         </div>
         {/* The sentence, always. "Growth is paused" tells nobody anything. */}
         <p className="break-words text-sm text-bone-dim">{growth.message}</p>
+        {growth.nextEligibleAt && (
+          <p className="font-mono text-[10px] text-bone-faint">
+            Next eligible {new Date(growth.nextEligibleAt).toLocaleString()}
+          </p>
+        )}
 
         <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
           <Row label="Quiet hours">
-            {growth.policy.quietHoursStart === growth.policy.quietHoursEnd
-              ? 'none'
-              : `${hh(growth.policy.quietHoursStart)} to ${hh(growth.policy.quietHoursEnd)} ${growth.policy.timezone}`}
+            {!growth.policy.quietHoursEnabled
+              ? 'off for this agent'
+              : growth.policy.quietHoursStart === growth.policy.quietHoursEnd
+                ? 'none'
+                : `${hh(growth.policy.quietHoursStart)} to ${hh(growth.policy.quietHoursEnd)} ${growth.policy.timezone}`}
           </Row>
-          <Row label="Sessions today">
-            {growth.sessionsToday} of {growth.policy.maxSessionsPerDay}
+          <Row label="Growth sessions this hour">
+            {growth.sessionsThisHour} of {growth.policy.maxSessionsPerHour}
+          </Row>
+          <Row label="Growth sessions today">
+            {growth.sessionsToday}{growth.policy.maxSessionsPerDay === 0 ? ' · no daily stop' : ` of ${growth.policy.maxSessionsPerDay}`}
           </Row>
           <Row label="Session length">{growth.policy.sessionMinutes} minutes, then {growth.policy.cooldownMinutes} resting</Row>
           <Row label="Optional model calls today">
@@ -124,7 +176,49 @@ export function AutonomyPanel({ agentId }: { agentId: string }) {
             {growth.spentToday.researchCalls} of {growth.policy.maxResearchPerDay}
           </Row>
           <Row label="Public actions today">{growth.spentToday.publicActions}</Row>
+          <Row label="Last session ended">
+            {growth.sessionOpenSince
+              ? `running since ${timeAgo(growth.sessionOpenSince)}`
+              : growth.lastSessionEndedAt
+                ? timeAgo(growth.lastSessionEndedAt)
+                : 'never'}
+          </Row>
         </dl>
+
+        {/* What its own looking came to. A quiet agent should say which of these was the reason. */}
+        <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
+          <Row label="Posts it came across today">{broadGrowth.seen}</Row>
+          <Row label="Taken for a closer look">{broadGrowth.queued}</Row>
+          <Row label="Replied to in public">{broadGrowth.published}</Row>
+          <Row label="Typical audience of those it took">
+            {broadGrowth.medianQueuedFollowers === null
+              ? 'not reported by X'
+              : `${broadGrowth.medianQueuedFollowers.toLocaleString()} followers`}
+          </Row>
+        </dl>
+        {broadGrowth.topDecline && (
+          <p className="break-words text-xs text-bone-faint">
+            Most often declined because: {broadGrowth.topDecline.reason} ({broadGrowth.topDecline.count}).
+          </p>
+        )}
+
+        {/* How it has been answering. Arrival to a checked draft, over the last day. */}
+        <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
+          <Row label="Answers drafted today">{responses.answered}</Row>
+          <Row label="Typical time to a draft">
+            {responses.p50Seconds === null
+              ? 'nothing drafted yet'
+              : `${Math.round(responses.p50Seconds)}s, slowest tenth ${Math.round(responses.p90Seconds ?? responses.p50Seconds)}s`}
+          </Row>
+          <Row label="Model calls per answer">
+            {responses.modelCallsPerAnswer === null ? 'none yet' : responses.modelCallsPerAnswer}
+          </Row>
+        </dl>
+        {habits.length > 0 && (
+          <p className="break-words text-xs text-bone-faint">
+            Keeps reaching for: {habits.map((h) => `"${h.phrase}" (${h.posts} times)`).join(', ')}. It is told to avoid these in its next replies.
+          </p>
+        )}
       </div>
 
       <div className="space-y-2 border-t border-ink-line pt-6">
@@ -138,6 +232,62 @@ export function AutonomyPanel({ agentId }: { agentId: string }) {
         {/* Naming what was seen, never just the state. "DEGRADED" is a colour. */}
         {accountHealth.healthReason && (
           <p className="break-words text-sm text-bone-dim">{accountHealth.healthReason}</p>
+        )}
+        {xCapacity && (
+          <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
+            <Row label="Reads of X, last ten minutes">
+              {xCapacity.readsLast10Minutes} of {xCapacity.budgetPer10Minutes}
+              {' '}({xCapacity.readsByClass.DIRECT} direct, {xCapacity.readsByClass.TARGET} watched, {xCapacity.readsByClass.BROAD} looking)
+            </Row>
+            <Row label="X pushed back, last hour">
+              {xCapacity.pushbackLastHour.rateLimited + xCapacity.pushbackLastHour.stalled + xCapacity.pushbackLastHour.broken === 0
+                ? 'not at all'
+                : `${xCapacity.pushbackLastHour.rateLimited} slow down, ${xCapacity.pushbackLastHour.stalled} never drew, ${xCapacity.pushbackLastHour.broken} error pages`}
+            </Row>
+            {xCapacity.until && (
+              <Row label={xCapacity.health === 'COOLDOWN' ? 'Cooling down until' : 'Reading less until'}>
+                {new Date(xCapacity.until).toLocaleString()}
+              </Row>
+            )}
+          </dl>
+        )}
+      </div>
+
+      <div className="space-y-3 border-t border-ink-line pt-6">
+        <h3 className="text-sm text-bone">Owner-designated targets</h3>
+        {targets.length === 0 ? (
+          <p className="text-sm text-bone-faint">No tracked account has produced a post yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {targets.map((target) => (
+              <li key={target.id} className="rounded-lg border border-ink-line bg-black/20 p-3">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="text-sm text-bone">@{target.handle}</span>
+                  {target.displayName && <span className="text-xs text-bone-dim">{target.displayName}</span>}
+                  <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">
+                    {target.enabled ? target.mode.toLowerCase() : 'disabled'} · priority {target.priority}
+                  </span>
+                </div>
+                <p className="mt-2 break-words text-sm text-bone-dim">
+                  {target.latestDisposition
+                    ? target.latestDisposition.toLowerCase().replace(/_/g, ' ')
+                    : 'No post considered yet'}
+                  {target.latestReason ? `: ${target.latestReason}` : ''}
+                </p>
+                <p className="mt-1 font-mono text-[10px] text-bone-faint">
+                  {target.lastSeenAt ? `seen ${timeAgo(target.lastSeenAt)}` : 'not seen yet'}
+                  {target.lastProcessedAt ? ` · processed ${timeAgo(target.lastProcessedAt)}` : ''}
+                  {target.lastInteractionAt ? ` · interacted ${timeAgo(target.lastInteractionAt)}` : ''}
+                </p>
+                {target.pacedUntil && (
+                  <p className="mt-1 text-xs text-signal-wait">
+                    Paced until {new Date(target.pacedUntil).toLocaleString()}
+                    {target.pacedReason ? `. ${target.pacedReason}` : ''}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 

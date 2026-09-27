@@ -143,6 +143,30 @@ export const EVENT_TYPES = [
   'DIRECT_MESSAGE',
   'NEW_MESSAGE',
   'KEYWORD_MATCH',
+  /**
+   * Something posted by an account the owner explicitly told this agent to
+   * follow.
+   *
+   * Not a kind of KEYWORD_MATCH, which is the whole point. A keyword match is
+   * a stranger the agent came across, and every guard on that path exists to
+   * stop an agent pestering strangers: a topic-match requirement, a days-long
+   * per-author cooldown, a high value floor. All of them are right for a
+   * stranger and wrong for the one account somebody named on purpose.
+   *
+   * Measured on a live installation. The owner added a watched account, the
+   * agent replied to it twice, and the four-day stranger cooldown then locked
+   * out the only account the owner had asked it to follow. Nine of that
+   * account's posts were discovered, recorded, and produced no job and no
+   * reason at all, because `tracked_account` emitted POST, POST was translated
+   * to KEYWORD_MATCH, and from that moment owner intent was gone.
+   *
+   * Carrying it as its own type is what keeps the intent alive through
+   * normalisation, persistence, attention, deliberation and the audit trail.
+   * It is deliberately not a flag on the payload: a flag is something every
+   * later reader has to remember to check, and the thing that went wrong here
+   * is precisely that nothing checked.
+   */
+  'TARGET_ACCOUNT_ACTIVITY',
   'WEBHOOK',
   'SCHEDULED_TRIGGER',
   'MANUAL_TRIGGER',

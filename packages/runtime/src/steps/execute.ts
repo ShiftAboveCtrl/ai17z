@@ -24,7 +24,7 @@ import { applyWritePolicy } from '@xbam/memory';
 
 import { getChannelAdapter } from '@xbam/channels';
 
-import { recordExchange } from '../relationship';
+import { recordExchange, topicsOfExchange } from '../relationship';
 import {
   detectClaims,
   learnStancesFromOwnPost,
@@ -48,6 +48,7 @@ import { recordPublished } from '../experimentRuns';
 import type { JobBundle } from '../loadJob';
 
 import { checkActionRate } from '../policyGate';
+import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
 
@@ -257,7 +258,12 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       }
     }
 
-    const rate = await checkActionRate(bundle.agent.id, policy, bundle.job.accountId);
+    const rate = await checkActionRate(
+      bundle.agent.id,
+      policy,
+      bundle.job.accountId,
+      capacityClassForEvent(bundle.event.type),
+    );
     if (!rate.allow) {
       throw PipelineError.retryable(rate.reason, rate.message, { retryAfterMs: rate.retryAfterMs });
     }
@@ -434,13 +440,24 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     // inbound message nobody answered is not a conversation, and counting it as
     // one is how somebody who repeatedly mentions an agent becomes a 'regular'.
     if (result.status !== 'DRY_RUN') {
-      await recordExchange({
+      const person = await recordExchange({
         agentId: bundle.agent.id,
         channel: job.channel,
         handle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
         remoteUserId: bundle.event.remoteAuthorId,
         displayName: bundle.event.remoteAuthorDisplay,
-      }).catch(() => undefined);
+      }).catch(() => null);
+
+      // What this exchange was about, so the next one can say so. A failure
+      // here costs a topic, never the reply that already went out.
+      if (person) {
+        const topics = topicsOfExchange({
+          incoming: context?.incomingText ?? bundle.event.text ?? '',
+          reply: output,
+          selfNames: [bundle.account?.handle ?? '', ...bundle.policy.content.selfHandles, bundle.persona.displayName].filter(Boolean),
+        });
+        await relationshipsRepo.addTopics(person.id, topics).catch(() => undefined);
+      }
 
       // A callback that was offered and used is marked, so it rests before it
       // can be offered again.

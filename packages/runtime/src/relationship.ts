@@ -1,5 +1,7 @@
 import type { RelationshipContext, RelationshipVoice } from '@xbam/shared/contracts';
 import { relationships as relationshipsRepo, type RelationshipRow } from '@xbam/database';
+import { namedSubjects } from './research';
+import { unpromptedSubject } from './reticence';
 
 /**
  * What the agent knows about the person it is replying to.
@@ -127,4 +129,39 @@ export async function recordExchange(input: {
 
   await relationshipsRepo.recordInteraction({ ...input, handle, direction: 'INBOUND' });
   return relationshipsRepo.recordInteraction({ ...input, handle, direction: 'OUTBOUND' });
+}
+
+/** At most this many subjects are taken from any one exchange. */
+const TOPICS_PER_EXCHANGE = 3;
+
+/**
+ * What an exchange that actually happened was about, for "You have discussed".
+ *
+ * The prompt has always rendered a relationship's topics and nothing had ever
+ * written one: on a live installation, eighty relationships, some with forty
+ * exchanges behind them, and not one topic between them. So an agent speaking
+ * to somebody for the twentieth time could not say what the other nineteen
+ * were about.
+ *
+ * Only the named subjects of the exchange itself: what they wrote to the agent
+ * and what the agent published back. Never their timeline, which is the rule
+ * that keeps a read of somebody from becoming a conversation that never
+ * happened. Handles are not subjects, the agent's own names are not subjects,
+ * and nothing a reticent origination would refuse is recorded against a
+ * person, so the list is never a note that somebody talked about their health
+ * or an election.
+ */
+export function topicsOfExchange(input: { incoming: string; reply: string; selfNames: readonly string[] }): string[] {
+  const selves = new Set(input.selfNames.map((name) => name.replace(/^[@$]+/, '').toLowerCase()));
+  const found: string[] = [];
+  for (const subject of [...namedSubjects(input.incoming), ...namedSubjects(input.reply)]) {
+    const bare = subject.replace(/^\$/, '').trim();
+    if (bare.length < 2 || bare.length > 40) continue;
+    if (/^@/.test(bare) || selves.has(bare.toLowerCase())) continue;
+    if (unpromptedSubject(bare)) continue;
+    if (found.some((f) => f.toLowerCase() === subject.toLowerCase())) continue;
+    found.push(subject);
+    if (found.length >= TOPICS_PER_EXCHANGE) break;
+  }
+  return found;
 }

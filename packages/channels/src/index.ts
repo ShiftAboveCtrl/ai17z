@@ -82,6 +82,8 @@ export {
   handleFromUrl,
   looksUnavailable,
   looksLikeXBroke,
+  looksLikeXSaidEmpty,
+  looksLikeXStalled,
   postedAtFromStatusId,
   UNAVAILABLE_MARKERS,
   RETRYABLE_MARKERS,

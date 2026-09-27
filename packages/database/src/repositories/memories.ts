@@ -316,28 +316,106 @@ export async function selectRelevantMemories(scope: MemoryScope, q: ScopedQuery)
     );
   }
   const cleaned = terms.map((t) => t.replace(/[^\p{L}\p{N}_]/gu, '')).filter(Boolean);
-  const tsquery = cleaned.join(' | ') || 'xbam_no_match';
-
+  const { useful, rare, said } = await informativeTerms(q.agentId, scope, cleaned);
+  if (useful.length === 0) {
+    // Nothing the message said identifies anything here. Pinned rows still
+    // come back, because pinning is the owner saying "always".
+    return mapRows<MemoryRecord>(
+      await query(
+        `SELECT ${COLUMNS} FROM memories
+          WHERE agent_id = $1 AND scope = $2 ${LIVE} AND pinned
+          ORDER BY importance DESC, created_at DESC LIMIT $3`,
+        [q.agentId, scope, q.limit],
+      ),
+    );
+  }
+  const tsquery = useful.join(' | ');
   // The rarest term the question used, which is nearly always the one that
   // identifies the answer. It decides the order before frequency gets a say,
   // so one mention of "ollama" beats five mentions of "use".
-  const weights = cleaned.length > 1 ? await termWeights(q.agentId, scope, cleaned) : [];
-  const rarest = weights.filter((w) => w.hits > 0).sort((a, b) => a.hits - b.hits)[0]?.term ?? null;
+  const rarest = rare[0] ?? null;
 
+  /*
+    One shared word is not relevance when the message said more than one
+    thing. A row qualifies by covering a share of what the message named (at
+    least two terms, more for a long post), or, in a short message, by one term
+    that is rare in this scope: "how do I install this?" has one subject and
+    must still find it, and "ollama?" must find the one paragraph about it.
+
+    Measured on a live agent with a thousand chunks of documentation attached:
+    a twelve-subject post about a game or a token pulled six chunks on two
+    shared generic words, on every reply, and one mention of a word the
+    documentation happened to use once pulled that chunk in wherever it came up.
+
+    A rare term counts twice towards the share, because it is the one that
+    identifies something: a post about Pons matching a Pons document on "pons"
+    and one other word is about that document, whatever else it mentions.
+  */
+  const needed = Math.min(said, Math.max(2, Math.ceil(said * COVERAGE_SHARE)));
+  const rareCounts = said <= SHORT_MESSAGE_TERMS;
   return mapRows<MemoryRecord>(
     await query(
-      `SELECT ${COLUMNS},
-              ts_rank(to_tsvector('simple', content), to_tsquery('simple', $3)) AS rank,
-              ($5::text IS NOT NULL
-                AND to_tsvector('simple', content) @@ to_tsquery('simple', $5)) AS names_it
-         FROM memories
-        WHERE agent_id = $1 AND scope = $2 ${LIVE}
-          AND (pinned OR to_tsvector('simple', content) @@ to_tsquery('simple', $3))
-        ORDER BY pinned DESC, names_it DESC, rank DESC, importance DESC, created_at DESC
-        LIMIT $4`,
-      [q.agentId, scope, tsquery, q.limit, rarest],
+      `SELECT * FROM (
+         SELECT ${COLUMNS},
+                ts_rank(to_tsvector('simple', content), to_tsquery('simple', $3)) AS rank,
+                ($5::text IS NOT NULL
+                  AND to_tsvector('simple', content) @@ to_tsquery('simple', $5)) AS names_it,
+                (SELECT count(*) FROM unnest($6::text[]) AS t(term)
+                  WHERE to_tsvector('simple', content) @@ to_tsquery('simple', t.term)) AS matched,
+                (SELECT count(*) FROM unnest($7::text[]) AS r(term)
+                  WHERE to_tsvector('simple', content) @@ to_tsquery('simple', r.term)) AS matched_rare
+           FROM memories
+          WHERE agent_id = $1 AND scope = $2 ${LIVE}
+            AND (pinned OR to_tsvector('simple', content) @@ to_tsquery('simple', $3))
+       ) candidates
+       WHERE pinned OR matched + matched_rare >= $8 OR ($9 AND matched_rare >= 1)
+       ORDER BY pinned DESC, names_it DESC, rank DESC, importance DESC, created_at DESC
+       LIMIT $4`,
+      [q.agentId, scope, tsquery, q.limit, rarest, useful, rare, needed, rareCounts],
     ),
   );
+}
+
+/** A scope this small cannot say which of its words are common. */
+const MEASURABLE_ROWS = 20;
+/** More than this share of the rows, and a term identifies nothing. */
+const COMMON_SHARE = 1 / 3;
+/** A match must cover at least this share of the subjects a message named. */
+const COVERAGE_SHARE = 0.4;
+/** Up to this many subjects, one rare term is enough on its own. */
+const SHORT_MESSAGE_TERMS = 4;
+/** At most this share, and one term is enough to identify something. */
+const RARE_SHARE = 0.05;
+
+/**
+ * The terms worth searching on, and which of those are rare.
+ *
+ * Implements the rule described above `TermWeight`. When the scope is too small
+ * to measure, every term is kept and every term counts as rare, which is the
+ * behaviour this replaced: a weak query beats no query.
+ */
+async function informativeTerms(
+  agentId: string,
+  scope: MemoryScope,
+  terms: string[],
+): Promise<{ useful: string[]; rare: string[]; said: number }> {
+  const [row] = await query<{ n: string }>(
+    `SELECT count(*) AS n FROM memories WHERE agent_id = $1 AND scope = $2 ${LIVE}`,
+    [agentId, scope],
+  );
+  const total = Number(row?.n ?? 0);
+  if (total < MEASURABLE_ROWS) return { useful: terms, rare: terms, said: terms.length };
+
+  const weights = await termWeights(agentId, scope, terms);
+  const present = weights.filter((w) => w.hits > 0);
+  const useful = present.filter((w) => w.hits <= total * COMMON_SHARE);
+  const rareCeiling = Math.max(3, Math.floor(total * RARE_SHARE));
+  const rare = [...useful].sort((a, b) => a.hits - b.hits).filter((w) => w.hits <= rareCeiling);
+  // Every subject the message named counts towards what a match must cover,
+  // including those this scope has never seen: a post naming three things, one
+  // of them here, has not asked about the one.
+  const said = weights.filter((w) => w.hits <= total * COMMON_SHARE).length;
+  return { useful: useful.map((w) => w.term), rare: rare.map((w) => w.term), said };
 }
 
 export async function touchAccessed(ids: string[]): Promise<void> {

@@ -6,6 +6,7 @@ import {
   events as eventsRepo,
   jobs as jobsRepo,
   observability,
+  targets as targetsRepo,
 } from '@xbam/database';
 import { decisionFingerprint } from './ownerLearning';
 import { PolicyConfig } from '@xbam/shared/contracts';
@@ -86,6 +87,7 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
     releaseLock: true,
     touch: ['approvedAt', 'validatedAt'],
   });
+  await targetsRepo.setDispositionForJob(job.id, 'CONSIDERING', 'Approved and queued for execution.');
 
   // Swallowed on purpose: an approval that has already happened must not be
   // undone because a preference row failed to write.
@@ -140,6 +142,7 @@ export async function rejectJob(input: ApprovalDecisionInput): Promise<void> {
     lastError: input.note ?? 'Rejected by the operator.',
     releaseLock: true,
   });
+  await targetsRepo.setDispositionForJob(job.id, 'INTENTIONAL_NO_ACTION', input.note ?? 'Rejected by the owner.');
 
   /*
     The half that matters most.
@@ -175,6 +178,7 @@ export async function retryJob(jobId: string): Promise<void> {
     runNow: true,
     releaseLock: true,
   });
+  await targetsRepo.setDispositionForJob(jobId, 'CONSIDERING', 'Requeued by the operator.');
   await observability.emitTrace({
     jobId,
     agentId: job.agentId,
@@ -189,6 +193,7 @@ export async function cancelJob(jobId: string): Promise<void> {
   const terminal = ['EXECUTED', 'DRY_RUN_COMPLETED', 'CANCELLED'];
   if (terminal.includes(job.status)) throw new ConflictError(`Job is already ${job.status}.`);
   await jobsRepo.updateJob(jobId, { status: 'CANCELLED', releaseLock: true, lastError: 'Cancelled by the operator.' });
+  await targetsRepo.setDispositionForJob(jobId, 'INTENTIONAL_NO_ACTION', 'Cancelled by the operator.');
   await observability.emitTrace({
     jobId,
     agentId: job.agentId,

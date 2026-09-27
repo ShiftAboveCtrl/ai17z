@@ -61,6 +61,23 @@ const STOPWORDS = new Set([
   'the','a','an','and','or','but','if','then','than','so','to','of','in','on','at','for','with','is','are','was','were',
   'be','been','it','this','that','these','those','i','you','he','she','we','they','my','your','his','her','our','their',
   'do','does','did','not','no','yes','what','which','who','whom','how','when','where','why','can','could','would','should',
+  /*
+    Words that say nothing about a subject. Measured on a live installation:
+    "There's only one. 0xfdE3..." retrieved six chunks of release notes on
+    "there", "only" and "one", and "Goated times" retrieved six more on
+    "times". Every reply carried documentation it had nothing to do with.
+  */
+  'there','here','only','one','two','just','like','get','got','even','because','had','has','have','having','about',
+  'into','out','up','down','all','any','some','more','most','very','really','also','now','still','much','many',
+  'its','me','him','them','us','am','will','shall','may','might','must','from','by','as','over','again','back',
+  'too','ever','never','always','well','way','thing','things','time','times','day','today','lol','ngl','gm',
+  'interesting','good','great','nice','cool','best','better','new','big','lot','lots','make','made','see','seen',
+  'know','think','say','said','going','go','come','want','need','let','take','yeah','yep','okay','ok','sure',
+  'other','same','own','such','each','every','first','last','off','through','after','before','while','though',
+  // And these, from the same live replay once the first list was in: "what are
+  // you working on right now" still pulled six chunks on "right".
+  'right','being','few','anything','something','nothing','everything','without','ones','yet','doing','done',
+  'around','else','since','until','via','per','whether','within','upon','onto','yours','ours','theirs',
 ]);
 
 /** Cheap keyword extraction used by deterministic memory retrieval. */
@@ -69,7 +86,9 @@ export function keywords(text: string, limit = 12): string[] {
     .toLowerCase()
     .replace(/https?:\/\/\S+/g, ' ')
     .split(/[^\p{L}\p{N}_]+/u)
-    .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
+    // Two letters is an abbreviation or a fragment: "ca" (contract address)
+    // matched documentation on a live agent, and "ok" and "gm" say nothing.
+    .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
   const counts = new Map<string, number>();
   for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
   return [...counts.entries()]

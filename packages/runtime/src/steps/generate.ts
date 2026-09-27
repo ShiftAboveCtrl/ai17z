@@ -3,6 +3,7 @@ import { positionsConflict, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contrac
 import type {
   QualityReport,
   RelationshipContext,
+  ResolvedContext,
   StanceContext,
 } from '@xbam/shared/contracts';
 import {
@@ -15,9 +16,11 @@ import {
   observability,
   ops,
   prompts as promptsRepo,
+  voice as voiceRepo,
 } from '@xbam/database';
 
 import { assemblePrompt } from '@xbam/prompts';
+import { habitualPhrases, lengthCeiling } from '@xbam/persona';
 import { runCapabilityLoop } from '../capabilityLoop';
 import { variantForPost } from '../experimentRuns';
 import { capabilitySettings } from '../capabilityPermissions';
@@ -35,12 +38,14 @@ import {
   chooseIntent,
   readTemperature,
 } from '../engagement';
-import { compileForJob } from '../voice';
+import { compileForJob, fingerprintFor } from '../voice';
+import { asksAboutTheAgent, questionsIn } from '../research';
 import { removeEmDashes } from '../punctuation';
 
 import { classifyEvidence } from '../evidenceClass';
 
 import type { JobBundle } from '../loadJob';
+import { ensureMediaResolved } from './context';
 import { validateOutput } from '../validator';
 import {
   checkAudience,
@@ -55,7 +60,27 @@ import {
  * came out. A draft leaves here either fit to send or held for a person.
  */
 
+/**
+ * Whether this reply joins a conversation nobody invited the agent into.
+ *
+ * Only when nobody addressed it and it has not already spoken in the thread:
+ * a reply in a conversation it is part of is a conversation, whatever the
+ * event that started it.
+ */
+function approachOf(bundle: JobBundle, context: ResolvedContext): 'STRANGER' | 'TARGET' | null {
+  const type = bundle.event.type;
+  if (type !== 'KEYWORD_MATCH' && type !== 'TARGET_ACCOUNT_ACTIVITY') return null;
+  const selves = [bundle.account?.handle, ...bundle.policy.content.selfHandles]
+    .filter((h): h is string => Boolean(h))
+    .map((h) => h.replace(/^@+/, '').toLowerCase());
+  const text = (context.incomingText ?? '').toLowerCase();
+  if (selves.some((self) => text.includes(`@${self}`))) return null;
+  if ((context.thread ?? []).some((m) => m.role === 'OUTBOUND')) return null;
+  return type === 'TARGET_ACCOUNT_ACTIVITY' ? 'TARGET' : 'STRANGER';
+}
+
 export async function stepGenerate(bundle: JobBundle): Promise<void> {
+  await ensureMediaResolved(bundle);
   const context = bundle.job.resolvedContext;
   if (!context) throw PipelineError.retryable('context_missing', 'Generation ran before context was resolved.');
 
@@ -168,6 +193,23 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     });
   }
 
+  /*
+    What this agent keeps saying, named before it says it again. Cheaper than
+    catching it afterwards, which costs a rewrite call: measured on a live
+    agent, the same runs of words recurred in five and six published replies
+    and nothing had flagged them. The rewrite check in the voice step remains
+    the backstop.
+  */
+  const habits = habitualPhrases(
+    (await voiceRepo.recentOutput(bundle.agent.id, 40, 21).catch(() => [])).map((row) => row.text),
+  ).map((habit) => habit.phrase);
+
+  const fingerprint = await fingerprintFor(bundle.agent.id).catch(() => null);
+  const usualLength =
+    fingerprint && fingerprint.sampleCount > 0
+      ? { median: fingerprint.medianChars, ceiling: lengthCeiling(fingerprint) }
+      : null;
+
   const prompt = assemblePrompt({
     layers: template.layers,
     templateKey: template.templateKey,
@@ -180,6 +222,10 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     toolDescriptions: toolFacts,
     memoryCharBudget: bundle.policy.memory.retrieval.totalCharBudget,
     actionType: bundle.job.actionType,
+    approach: approachOf(bundle, context),
+    habits,
+    usualLength,
+    aboutSelf: questionsIn(context.incomingText ?? '').some((question) => asksAboutTheAgent(question)),
     evidence,
     support,
     ...(variant ? { experiment: { label: variant.label, instruction: variant.instruction } } : {}),
@@ -353,6 +399,7 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
 
 /** Records a browser/adapter failure with a screenshot when one is available. */
 export async function stepIntent(bundle: JobBundle): Promise<void> {
+  await ensureMediaResolved(bundle);
   const { job } = bundle;
   const context = job.resolvedContext;
   const text = context?.incomingText ?? bundle.event.text;
@@ -550,6 +597,40 @@ export async function stepQualityGate(bundle: JobBundle): Promise<void> {
   }
 
   if (report.outcome !== 'accept') {
+    /*
+      A person who has already approved this has made the judgement.
+
+      Approving sets the job back to VALIDATED and requeues it, and the
+      pipeline then resumes at the node after that -- which is this one. The
+      quality report has not changed, so the same verdict fired again and the
+      job went straight back to REVIEW_REQUIRED. From the owner's side that is
+      indistinguishable from approval doing nothing at all.
+
+      Measured on a live installation: three jobs approved at 19:19, 19:22 and
+      19:23 were back in review one to four seconds later, two of them saying
+      "does not sound like this agent". The owner reported it as "I approve
+      things and nothing happens", and they were right.
+
+      The rule this restores is already written down for the approval path:
+      a person who edits and approves has made a judgement the platform should
+      respect, short of letting through something the policy forbids outright.
+      Hard policy is checked in `approveJob` by the validator and is unchanged;
+      what stops here is a soft opinion about register overruling a person.
+
+      Recorded rather than silently dropped, because "it went out despite
+      scoring badly on voice" is a thing worth being able to find later.
+    */
+    if (job.approvedAt) {
+      await observability.emitTrace({
+        jobId: job.id,
+        agentId: bundle.agent.id,
+        type: 'QUALITY_SCORED',
+        level: 'warn',
+        message: `Sent anyway: you approved it. ${report.reason}`,
+        data: { outcome: report.outcome, overriddenByOwner: true, approvedAt: job.approvedAt },
+      });
+      return;
+    }
     throw PipelineError.review('quality_gate', report.reason);
   }
 }

@@ -14,10 +14,14 @@ import {
   accounts as accountsRepo,
   agents as agentsRepo,
   autonomy as autonomyRepo,
+  targets as targetsRepo,
+  broadCandidates as broadCandidatesRepo,
   browserTasks,
+  jobs as jobsRepo,
   ops,
   pipelines as pipelinesRepo,
   providers as providersRepo,
+  voice as voiceRepo,
   workers as workersRepo,
 } from '@xbam/database';
 import {
@@ -28,10 +32,12 @@ import {
   duplicateAgent,
   applyCoreRecommended,
   ensureAgentPipeline,
+  describeCapacity,
   growthGateFor,
   setAgentAvatar,
 } from '@xbam/runtime';
 import { getChannelAdapter } from '@xbam/channels';
+import { habitualPhrases } from '@xbam/persona';
 import { handler, params, parseBody, requireUser } from '../http';
 import type { UserRow } from '@xbam/database';
 
@@ -356,14 +362,21 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         : await agentsRepo.getActivePolicy(agent.id);
       const policy = PolicyConfig.parse(policyRow?.config ?? {});
 
-      const [verdict, open, sessions, spent, health, dnc, signals] = await Promise.all([
+      const [verdict, open, sessionsHour, sessions, spent, health, dnc, signals, targets, capacity, broad, lastEnded, responses, recent] = await Promise.all([
         growthGateFor(agent.id, accountId, policy),
         autonomyRepo.openSession(agent.id),
+        autonomyRepo.sessionsThisHour(agent.id),
         autonomyRepo.sessionsToday(agent.id),
         autonomyRepo.spentToday(agent.id),
         accountId ? autonomyRepo.getAccountHealth(accountId) : Promise.resolve(null),
         autonomyRepo.listDoNotContact(agent.id),
         autonomyRepo.listOwnerSignals(agent.id, 20),
+        targetsRepo.listAgentTargets(agent.id),
+        accountId ? describeCapacity(accountId) : Promise.resolve(null),
+        broadCandidatesRepo.summary(agent.id, 24),
+        autonomyRepo.lastSessionEndedAt(agent.id),
+        jobsRepo.responseSummary(agent.id, 24),
+        voiceRepo.recentOutput(agent.id, 40, 21),
       ]);
 
       return {
@@ -373,11 +386,34 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
           allowed: verdict.allowed,
           message: verdict.message,
           retryAfterMs: verdict.retryAfterMs,
+          nextEligibleAt:
+            verdict.retryAfterMs === null ? null : new Date(Date.now() + verdict.retryAfterMs).toISOString(),
           sessionOpenSince: open?.startedAt ?? null,
+          lastSessionEndedAt: lastEnded,
+          sessionsThisHour: sessionsHour,
           sessionsToday: sessions,
           spentToday: spent,
         },
         accountHealth: health ?? { health: 'HEALTHY', healthReason: null, healthUntil: null, healthChangedAt: null },
+        /*
+          How hard the account is leaning on X, and whether X has pushed back.
+          The one place an owner can see that the agent is quiet because the
+          account is resting, rather than because it found nothing.
+        */
+        xCapacity: capacity,
+        /*
+          The agent's own looking over the last day: what it came across, what
+          it took a closer look at, what it declined and most often why, and
+          what came of it in public.
+        */
+        broadGrowth: broad,
+        /*
+          How it has been answering: speed over the last day, and any phrase it
+          keeps reaching for. Measurements and phrases only; no prompt and no
+          message text leaves this route.
+        */
+        responses,
+        habits: habitualPhrases(recent.map((row) => row.text)),
         /*
           The handle, when they asked, and the sentence they wrote. Not the
           whole message: an owner needs enough to check the decision, and a
@@ -401,6 +437,27 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
           accepted: row.accepted,
           rejected: row.rejected,
           lastDecisionAt: row.lastDecisionAt,
+        })),
+        targets: targets.map((row) => ({
+          id: row.id,
+          sourceId: row.sourceId,
+          handle: row.handle,
+          displayName: row.displayName,
+          remoteUserId: row.remoteUserId,
+          mode: row.mode,
+          enabled: row.enabled,
+          priority: row.priority,
+          lastSeenPostId: row.lastSeenPostId,
+          lastSeenAt: row.lastSeenAt,
+          lastProcessedPostId: row.lastProcessedPostId,
+          lastProcessedAt: row.lastProcessedAt,
+          lastInteractionPostId: row.lastInteractionPostId,
+          lastInteractionAt: row.lastInteractionAt,
+          pacedUntil: row.pacedUntil,
+          pacedReason: row.pacedReason,
+          latestDisposition: row.latestDisposition,
+          latestReason: row.latestReason,
+          latestDecidedAt: row.latestDecidedAt,
         })),
       };
     }),

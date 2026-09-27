@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GrowthPolicy } from '@xbam/shared/contracts';
-import { growthWindow, inQuietHours, maySpend, type GrowthFacts } from '@xbam/runtime';
+import { growthWindow, inQuietHours, maySpend, quietWakeDelaySeconds, type GrowthFacts } from '@xbam/runtime';
 
 /**
  * When an agent may go looking for people, and what it may spend doing it.
@@ -17,6 +17,7 @@ import { growthWindow, inQuietHours, maySpend, type GrowthFacts } from '@xbam/ru
 const policy = (over: Partial<GrowthPolicy> = {}): GrowthPolicy => GrowthPolicy.parse(over);
 
 const facts = (over: Partial<GrowthFacts> = {}): GrowthFacts => ({
+  sessionsThisHour: 0,
   sessionsToday: 0,
   openSessionStartedAt: null,
   lastSessionEndedAt: null,
@@ -36,6 +37,7 @@ const before = (now: Date, n: number) => new Date(now.getTime() - n * 60_000).to
 describe('the defaults are the ones that were asked for', () => {
   it('ships the agreed ceilings', () => {
     const p = policy();
+    expect(p.maxSessionsPerHour).toBe(2);
     expect(p.maxSessionsPerDay).toBe(8);
     expect(p.sessionMinutes).toBe(15);
     expect(p.cooldownMinutes).toBe(45);
@@ -99,9 +101,57 @@ describe('quiet hours', () => {
     expect(() => inQuietHours(p, at(14))).not.toThrow();
     expect(inQuietHours(p, at(14))).toBe(false);
   });
+
+  it('is on by default, so an upgrade silences nobody and wakes nobody', () => {
+    expect(policy().quietHoursEnabled).toBe(true);
+  });
+
+  it('can be switched off for one agent, and then rests only when it has to', () => {
+    /*
+      An owner asked for one agent to go looking around the clock. That is the
+      agent's own policy and nothing else: the default for every other agent
+      is unchanged, and switching the clock off leaves cooldown, the hourly
+      ceiling and account health exactly where they were.
+    */
+    const allDay = policy({ quietHoursEnabled: false });
+    for (let hour = 0; hour < 24; hour += 1) {
+      expect(inQuietHours(allDay, at(hour)), `hour ${hour}`).toBe(false);
+      expect(growthWindow(allDay, facts(), at(hour)).allowed, `hour ${hour}`).toBe(true);
+    }
+    // Still rests after a session, at three in the morning as at three in the afternoon.
+    const resting = growthWindow(allDay, facts({ lastSessionEndedAt: before(at(3), 10) }), at(3));
+    expect(resting.state).toBe('RESTING');
+    // And still yields to the account.
+    expect(growthWindow(allDay, facts({ accountHealth: 'COOLDOWN' }), at(3)).state).toBe('HELD');
+  });
+
+  it('puts health ahead of quiet hours, because they are different facts', () => {
+    // Saying "resting" about an account that needs a security code would be
+    // the same comfortable lie the radar told when it reported healthy
+    // sources it had never polled.
+    const verdict = growthWindow(policy(), facts({ accountHealth: 'HUMAN_ACTION_REQUIRED' }), at(2));
+    expect(verdict.state).toBe('HELD');
+  });
+
+  it('holds until the breaker says, not for a guessed ten minutes', () => {
+    const until = new Date(at(14).getTime() + 47 * 60_000).toISOString();
+    const verdict = growthWindow(
+      policy(),
+      facts({ accountHealth: 'COOLDOWN', accountHealthReason: 'X asked this account to slow down.', accountHealthUntil: until }),
+      at(14),
+    );
+    expect(verdict.state).toBe('HELD');
+    expect(verdict.retryAfterMs).toBe(47 * 60_000);
+  });
 });
 
 describe('sessions, cooldown and daily limits', () => {
+  it('slows an idle agent briefly without ever creating a long blackout', () => {
+    expect(quietWakeDelaySeconds(300, 0)).toBe(300);
+    expect(quietWakeDelaySeconds(300, 3)).toBe(1_200);
+    expect(quietWakeDelaySeconds(1_800, 99)).toBe(3_600);
+  });
+
   it('rests between sessions', () => {
     const verdict = growthWindow(policy(), facts({ lastSessionEndedAt: before(at(14), 10) }), at(14));
     expect(verdict.allowed).toBe(false);
@@ -114,9 +164,26 @@ describe('sessions, cooldown and daily limits', () => {
   });
 
   it('stops after the day’s sessions are used', () => {
-    const verdict = growthWindow(policy(), facts({ sessionsToday: 8 }), at(14));
+    const verdict = growthWindow(policy(), facts({ sessionsThisHour: 1, sessionsToday: 8 }), at(14));
     expect(verdict.allowed).toBe(false);
     expect(verdict.state).toBe('SPENT');
+  });
+
+  it('paces sessions by rolling hour', () => {
+    const verdict = growthWindow(policy(), facts({ sessionsThisHour: 2, sessionsToday: 2 }), at(14));
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.state).toBe('SPENT');
+    expect(verdict.message).toMatch(/rolling hour clears/i);
+  });
+
+  it('can disable the daily session stop without disabling growth', () => {
+    const verdict = growthWindow(
+      policy({ maxSessionsPerDay: 0 }),
+      facts({ sessionsThisHour: 1, sessionsToday: 47 }),
+      at(14),
+    );
+    expect(verdict.allowed).toBe(true);
+    expect(verdict.state).toBe('ELIGIBLE');
   });
 
   it('ends a session that has run its time', () => {
@@ -197,10 +264,7 @@ describe('optional growth is what yields', () => {
     }
   });
 
-  it('puts health ahead of quiet hours, because they are different facts', () => {
-    // Saying "resting" about an account that needs a security code would be
-    // the same comfortable lie the radar told when it reported healthy
-    // sources it had never polled.
+  it('names account health rather than treating it as ordinary pacing', () => {
     const verdict = growthWindow(policy(), facts({ accountHealth: 'HUMAN_ACTION_REQUIRED' }), at(2));
     expect(verdict.state).toBe('HELD');
   });

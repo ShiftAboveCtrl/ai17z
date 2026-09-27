@@ -79,6 +79,7 @@ export type Staleness = 'LIVE' | 'EXPIRED' | 'SUPERSEDED';
 export interface PendingRequest {
   jobId: string;
   agentId: string;
+  agentName?: string | null;
   /** What produced it: MENTION, REPLY, KEYWORD_MATCH, SCHEDULED_TRIGGER. */
   eventType: string;
   actionType: string;
@@ -234,6 +235,9 @@ export function attentionWindow(
 
   const visible: RankedRequest[] = [];
   const taken = new Map<RequestKind, number>();
+  const takenByAgent = new Map<string, number>();
+  const representedAgents = new Set(live.map((request) => request.agentId));
+  const fairShare = representedAgents.size > 1 ? Math.ceil(limit / representedAgents.size) : limit;
   /*
     The per-kind cap is absolute, and filling the window is not a goal.
 
@@ -247,12 +251,43 @@ export function attentionWindow(
     lost and they are not far away: answering these six brings the next six
     forward.
   */
+  const take = (request: RankedRequest): boolean => {
+    if (visible.length >= limit) return false;
+    const used = taken.get(request.kind) ?? 0;
+    if (used >= PER_CATEGORY_LIMIT) return false;
+    taken.set(request.kind, used + 1);
+    takenByAgent.set(request.agentId, (takenByAgent.get(request.agentId) ?? 0) + 1);
+    visible.push(request);
+    return true;
+  };
+
+  // Give each represented agent one place first, in the rank order of its
+  // strongest request. Without this seed, one agent can consume the six-place
+  // category ceiling before another agent's first request is reached.
+  const seeded = new Set<string>();
+  for (const request of live) {
+    if (visible.length >= limit || seeded.size >= representedAgents.size) break;
+    if (seeded.has(request.agentId)) continue;
+    if (take(request)) seeded.add(request.agentId);
+  }
+
+  // Then give every agent its fair part of the owner-attention window.
+  // Priority still orders candidates within the remaining capacity.
+  const alreadyFair = new Set(visible.map((request) => request.jobId));
   for (const request of live) {
     if (visible.length >= limit) break;
-    const used = taken.get(request.kind) ?? 0;
-    if (used >= PER_CATEGORY_LIMIT) continue;
-    taken.set(request.kind, used + 1);
-    visible.push(request);
+    if (alreadyFair.has(request.jobId)) continue;
+    if ((takenByAgent.get(request.agentId) ?? 0) >= fairShare) continue;
+    take(request);
+  }
+
+  // If another agent has nothing else to contribute, use the remaining room.
+  // The category ceiling still applies, so routine growth cannot refill it.
+  const already = new Set(visible.map((request) => request.jobId));
+  for (const request of live) {
+    if (visible.length >= limit) break;
+    if (already.has(request.jobId)) continue;
+    take(request);
   }
 
   const backlogByKind: Partial<Record<RequestKind, number>> = {};

@@ -9,7 +9,14 @@ import {
 import type { ChannelContext } from '../contract';
 import { SEL } from './selectors';
 import type { ArticleSnapshot } from './conversation';
-import { extractStatusId, handleFromUrl, looksLikeXBroke, normalizeHandle, normalizeTargetId } from './targets';
+import {
+  extractStatusId,
+  handleFromUrl,
+  looksLikeXBroke,
+  looksLikeXStalled,
+  normalizeHandle,
+  normalizeTargetId,
+} from './targets';
 
 /**
  * Driving a page on X, without knowing what it is being driven for.
@@ -58,11 +65,25 @@ export type { Page };
  */
 export async function refuseIfXBroke(page: Page, what: string): Promise<void> {
   const text = await readText(page).catch(() => '');
-  if (!looksLikeXBroke(text)) return;
-  throw PipelineError.retryable(
-    'x_page_error',
-    `X could not show ${what} -- its own page says something went wrong. Nothing was read, which is not the same as nothing being there.`,
-  );
+  if (looksLikeXBroke(text)) {
+    throw PipelineError.retryable(
+      'x_page_error',
+      `X could not show ${what}: its own page says something went wrong. Nothing was read, which is not the same as nothing being there.`,
+    );
+  }
+  // The same refusal for a page X never drew. Asked last, because an error
+  // page names its own cause and a stalled one does not.
+  const spinner = await page
+    .locator('[data-testid="primaryColumn"] [role="progressbar"]')
+    .first()
+    .isVisible()
+    .catch(() => false);
+  if (looksLikeXStalled(text, spinner)) {
+    throw PipelineError.retryable(
+      'x_page_stalled',
+      `X never finished drawing ${what}: it showed its loading screen and nothing else. Nothing was read, which is not the same as nothing being there.`,
+    );
+  }
 }
 
 /**
@@ -184,7 +205,86 @@ export function replyingToHandles(articleText: string): string[] {
 // same question when deciding whether an unread image is a gap worth admitting
 // to, and the two copies had drifted into being a bare word count.
 
+/** How long one read of a whole thread may take before the slow path is used. */
+const ARTICLES_READ_TIMEOUT_MS = 15_000;
+
+/**
+ * Reads the first `count` articles on the page in one evaluation.
+ *
+ * The same fields, from the same selectors, as `readArticle`, which asks the
+ * renderer for each field of each article separately: six or seven round trips
+ * an article, and a thread reads up to twenty of them. Measured on a live
+ * installation, reading the thread took 30 to 60 seconds of every reply, with
+ * the model itself taking under ten. The radar's monitors paid the same price
+ * once and were fixed the same way.
+ *
+ * Returns null when the evaluation fails or does not come back in time, and the
+ * caller reads the articles one at a time as before. A renderer that has
+ * stopped answering is exactly the case a single long evaluation must not wait
+ * on for ever.
+ */
+export async function readArticles(page: Page, count: number): Promise<ArticleSnapshot[] | null> {
+  const evaluation = page
+    .locator(SEL.tweetArticle)
+    .evaluateAll(
+      (nodes, args) =>
+        nodes.slice(0, args.max).map((node) => {
+          const el = node as HTMLElement;
+          const timed = el.querySelector('a:has(time)') as HTMLAnchorElement | null;
+          const anyStatus = el.querySelector('a[href*="/status/"]') as HTMLAnchorElement | null;
+          const href = timed?.getAttribute('href') ?? anyStatus?.getAttribute('href') ?? null;
+          const nameEl = el.querySelector(args.userName) as HTMLElement | null;
+          const nameBlock = nameEl ? nameEl.innerText : '';
+          const texts = Array.from(el.querySelectorAll(args.tweetText)).map((t) => (t as HTMLElement).innerText);
+          const createdAt = el.querySelector('time')?.getAttribute('datetime') ?? null;
+          const verified = el.querySelector(args.verifiedBadge) !== null;
+          const whole = el.innerText ?? '';
+          return { href, nameBlock, texts, createdAt, verified, whole };
+        }),
+      { max: count, userName: SEL.userName, tweetText: SEL.tweetText, verifiedBadge: SEL.verifiedBadge },
+    )
+    .catch(() => null);
+
+  let timer: NodeJS.Timeout | undefined;
+  const raw = await Promise.race([
+    evaluation,
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), ARTICLES_READ_TIMEOUT_MS);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+  if (!raw) return null;
+
+  return raw.map((item, index) => {
+    const url = item.href ? `https://x.com${item.href.startsWith('/') ? item.href : `/${item.href}`}` : null;
+    const handleFromName = item.nameBlock.match(/@([A-Za-z0-9_]{1,15})/)?.[1] ?? null;
+    const displayName = item.nameBlock.split('\n')[0]?.trim() || null;
+    return {
+      index,
+      statusId: extractStatusId(url),
+      authorHandle: normalizeHandle(handleFromName) ?? handleFromUrl(url),
+      authorDisplayName: displayName && !displayName.startsWith('@') ? displayName : null,
+      text: item.texts.join('\n').trim(),
+      url: normalizeTargetId(url),
+      createdAt: item.createdAt,
+      // Unknown, not unverified, when the name block itself could not be read.
+      authorVerified: item.nameBlock ? item.verified : null,
+      replyingTo: replyingToHandles(item.whole),
+    };
+  });
+}
+
 /** Reads one anchored article. All extraction is scoped to the article element. */
+/*
+  The article was already found on the page, so a part of it that is absent now
+  is absent. Playwright waits up to thirty seconds for an element to appear
+  before reading it, and an article with no timestamp link spent that full
+  wait before the fallback ran. Two seconds rather than media.ts's one, because
+  verification before a reply reads through here too. See media.ts.
+*/
+const ALREADY_DRAWN = { timeout: 2_000 };
+
 export async function readArticle(page: Page, articleSelector: string, index = 0): Promise<ArticleSnapshot> {
   const article = page.locator(articleSelector).first();
 
@@ -200,12 +300,12 @@ export async function readArticle(page: Page, articleSelector: string, index = 0
     (await article
       .locator('a:has(time)')
       .first()
-      .getAttribute('href')
+      .getAttribute('href', ALREADY_DRAWN)
       .catch(() => null)) ??
     (await article
       .locator('a[href*="/status/"]')
       .first()
-      .getAttribute('href')
+      .getAttribute('href', ALREADY_DRAWN)
       .catch(() => null));
   const url = href ? `https://x.com${href.startsWith('/') ? href : `/${href}`}` : null;
 
@@ -214,7 +314,7 @@ export async function readArticle(page: Page, articleSelector: string, index = 0
   const nameBlock = await article
     .locator(SEL.userName)
     .first()
-    .innerText()
+    .innerText(ALREADY_DRAWN)
     .catch(() => '');
   const handleFromName = nameBlock.match(/@([A-Za-z0-9_]{1,15})/)?.[1] ?? null;
   const displayName = nameBlock.split('\n')[0]?.trim() || null;
@@ -227,7 +327,7 @@ export async function readArticle(page: Page, articleSelector: string, index = 0
   const createdAt = await article
     .locator('time')
     .first()
-    .getAttribute('datetime')
+    .getAttribute('datetime', ALREADY_DRAWN)
     .catch(() => null);
 
   // X marks a verified account with a badge inside the name block. Its absence
@@ -241,7 +341,7 @@ export async function readArticle(page: Page, articleSelector: string, index = 0
         .catch(() => 0)) > 0
     : null;
 
-  const whole = await article.innerText().catch(() => '');
+  const whole = await article.innerText(ALREADY_DRAWN).catch(() => '');
 
   return {
     index,

@@ -1,7 +1,14 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, cadences as cadencesRepo } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
-import { buildChannelContext, ingestNormalizedEvent, nextPollDelayMs } from '@xbam/runtime';
+import {
+  buildChannelContext,
+  checkReadCapacity,
+  ingestNormalizedEvent,
+  nextPollDelayMs,
+  noteXFailure,
+  noteXRead,
+} from '@xbam/runtime';
 import { startLoop } from './loop';
 
 const log = createLogger('poller');
@@ -67,10 +74,29 @@ export class ChannelPoller {
       return;
     }
 
+    /*
+      What people sent is the last thing to stop reading, but it still counts.
+
+      The poller reads the same X the radar does through the same account, so
+      it spends from the same budget. It is DIRECT, which means it may use all
+      of it and keeps reading through a cooldown; what it cannot do is read
+      while the account needs a person, or pretend its reads are free.
+    */
+    const capacity = await checkReadCapacity(account.id, 'DIRECT').catch(() => null);
+    if (capacity && !capacity.allowed) {
+      await cadencesRepo.recordPoll(
+        claimed.id,
+        new Date(Date.now() + Math.max(capacity.retryAfterMs ?? 10 * 60_000, 30_000)),
+        false,
+      );
+      return;
+    }
+
     const adapter = getChannelAdapter(account.channel);
     try {
       const ctx = await buildChannelContext(account, null);
       const events = await adapter.ingestEvents(ctx, { limit: config.polling.batchLimit });
+      if (account.channel === 'x') await noteXRead(account.id, 'DIRECT');
       let created = 0;
       for (const event of events) {
         const outcome = await ingestNormalizedEvent({ accountId: account.id, event });
@@ -98,6 +124,7 @@ export class ChannelPoller {
     } catch (error) {
       const message = errorMessage(error);
       log.warn('channel poll failed', { channel: account.channel, handle: account.handle, message });
+      if (account.channel === 'x') await noteXFailure(account.id, 'DIRECT', message);
       // A failing account backs off like an idle one rather than being retried
       // every tick, but the streak is what grows, not a separate failure counter.
       const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak + 1, foundEvents: false });

@@ -191,6 +191,23 @@ describe('a monitor reading a page X could not render', () => {
     ).rejects.toThrow(/something went wrong/i);
   }, 60_000);
 
+  it('reports the dark logo screen as a stall rather than an empty answer', async () => {
+    /*
+      What an owner saw when the account was being pushed too hard: a black
+      page with the X logo and nothing else, for as long as anybody waited.
+      No articles and no error text passed every check this monitor had, so
+      the source read HEALTHY with nothing found.
+    */
+    const page = await freshPage(`<!doctype html>
+<html><body style="margin:0;background:#000">
+  <div aria-label="Loading" role="img"><svg viewBox="0 0 24 24" width="80"><path d="M0 0h24v24H0z"/></svg></div>
+</body></html>`);
+
+    await expect(
+      xMonitors.harvestForTest({ page, selfHandles: ['agent'], target: null, limit: 20, cursor: null }),
+    ).rejects.toThrow(/never finished drawing/i);
+  }, 60_000);
+
   it('still calls a genuinely quiet surface quiet', async () => {
     // The distinction is the whole point. A surface with nothing on it must
     // not start reporting errors, or the fix is worse than the fault.
@@ -204,6 +221,98 @@ describe('a monitor reading a page X could not render', () => {
       cursor: null,
     });
     expect(found).toEqual([]);
+  }, 60_000);
+});
+
+/**
+ * A search reads what the page itself fetched, counts and all.
+ *
+ * X refuses its search endpoint to anything but its own app, so the structured
+ * read fell back to the drawn page, which has no follower or like counts, and
+ * the agent could not tell a large account from an empty one. The page's own
+ * request already carries both. Here the search URL and the page's data
+ * request are both served locally, so nothing reaches X.
+ */
+describe('a search monitor', () => {
+  const searchResponse = {
+    data: {
+      search_by_raw_query: {
+        search_timeline: {
+          timeline: {
+            instructions: [
+              {
+                type: 'TimelineAddEntries',
+                entries: [
+                  {
+                    entryId: 'tweet-1900000000000000901',
+                    content: {
+                      itemContent: {
+                        tweet_results: {
+                          result: {
+                            __typename: 'Tweet',
+                            rest_id: '1900000000000000901',
+                            core: {
+                              user_results: {
+                                result: {
+                                  rest_id: '42',
+                                  core: { screen_name: 'bigbuilder' },
+                                  legacy: { screen_name: 'bigbuilder', followers_count: 184000 },
+                                },
+                              },
+                            },
+                            legacy: {
+                              full_text: 'Robinhood Chain throughput doubled this week and nobody is talking about it',
+                              favorite_count: 412,
+                              reply_count: 37,
+                              retweet_count: 60,
+                              created_at: 'Sat Sep 26 20:00:00 +0000 2026',
+                              conversation_id_str: '1900000000000000901',
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    },
+  };
+
+  it('keeps the author audience and engagement X sent for the page', async () => {
+    const page = await browser.newPage();
+    await page.route('https://x.com/search**', (route) =>
+      route.fulfill({
+        contentType: 'text/html',
+        body: `<!doctype html><html><body><div>Latest</div><script>
+          fetch('https://x.com/i/api/graphql/abc/SearchTimeline?variables=%7B%7D').then((r) => r.json());
+        </script></body></html>`,
+      }),
+    );
+    await page.route('https://x.com/i/api/graphql/**', (route) =>
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify(searchResponse) }),
+    );
+
+    const result = await xMonitors.X_MONITORS.persona_discovery({
+      page,
+      selfHandles: ['agent'],
+      target: '"Robinhood Chain" min_faves:40',
+      limit: 20,
+      cursor: null,
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]).toMatchObject({ remoteId: '1900000000000000901', authorHandle: 'bigbuilder', authorId: '42' });
+    expect(result.candidates[0]!.raw).toMatchObject({
+      backend: 'x-page-response',
+      author: { followers: 184000 },
+      metrics: { likes: 412, replies: 37 },
+    });
+    await page.close();
   }, 60_000);
 });
 
@@ -257,5 +366,71 @@ describe('a feed whose articles carry no timestamp', () => {
     for (const candidate of found) {
       expect(Date.now() - new Date(candidate.occurredAt!).getTime()).toBeGreaterThan(60_000);
     }
+  }, 60_000);
+});
+
+/**
+ * Reading a whole thread in one pass gives exactly what reading it article by
+ * article gives.
+ *
+ * The per-article reader asks the renderer for each field separately, six or
+ * seven round trips an article; on a live installation reading a thread took
+ * 30 to 60 seconds of every reply. The single pass is only worth having if it
+ * is the same answer, so this compares the two on the same page.
+ */
+describe('reading a thread in one pass', () => {
+  it('returns what the per-article reads return', async () => {
+    const { readArticle, readArticles } = await import('../../packages/channels/src/x/page');
+    const article = (id: string, handle: string, name: string, text: string, extra = '') => `
+      <article data-testid="tweet">
+        ${extra}
+        <div data-testid="User-Name">${name}<br>@${handle}</div>
+        <a href="/${handle}/status/${id}"><time datetime="2026-09-26T20:00:00.000Z">2h</time></a>
+        <div data-testid="tweetText">${text}</div>
+      </article>`;
+    const page = await freshPage(`<!doctype html><html><body>
+      ${article('1900000000000000001', 'rootuser', 'Root User', 'The original post about Robinhood Chain')}
+      ${article('1900000000000000002', 'middle', 'Middle', 'A reply in between', '<div>Replying to @rootuser</div>')}
+      ${article('1900000000000000003', 'asker', 'Asker', 'what do you make of it?', '<div>Replying to @middle @agent</div><div data-testid="User-Name"><span data-testid="icon-verified"></span></div>')}
+    </body></html>`);
+
+    const batch = await readArticles(page, 3);
+    const oneByOne = [];
+    for (let i = 0; i < 3; i += 1) oneByOne.push(await readArticle(page, `article[data-testid="tweet"] >> nth=${i}`, i));
+    expect(batch).toEqual(oneByOne);
+    expect(batch![2]!.replyingTo).toEqual(['middle', 'agent']);
+    expect(batch![0]!.statusId).toBe('1900000000000000001');
+  }, 60_000);
+});
+
+describe('reading a post that lacks the optional parts', () => {
+  /*
+    Measured on a live installation: every thread read spent exactly thirty
+    seconds in the media inventory, and sixty when the parent was read too,
+    because most posts carry no link card and each absent element was waited
+    for at Playwright's default timeout.
+  */
+  it('does not wait for a link card, a video poster or a timestamp that is not there', async () => {
+    const { readArticle } = await import('../../packages/channels/src/x/page');
+    const { readMediaInventory } = await import('../../packages/channels/src/x/media');
+    const page = await freshPage(`<!doctype html><html><body>
+      <article data-testid="tweet">
+        <div data-testid="User-Name">Plain<br>@plain</div>
+        <a href="/plain/status/1900000000000000011">link</a>
+        <div data-testid="tweetText">Robinhood Chain throughput is up this week</div>
+      </article>
+    </body></html>`);
+    const anchor = 'article[data-testid="tweet"]:has(a[href*="/status/1900000000000000011"])';
+
+    const started = Date.now();
+    const snapshot = await readArticle(page, anchor);
+    const inventory = await readMediaInventory(page, anchor, snapshot.text);
+    const took = Date.now() - started;
+
+    expect(snapshot.statusId).toBe('1900000000000000011');
+    expect(snapshot.createdAt).toBeNull();
+    expect(inventory).toEqual({ media: [], quoted: null, links: [] });
+    // Two absent timestamp reads and one absent card, each bounded.
+    expect(took).toBeLessThan(10_000);
   }, 60_000);
 });

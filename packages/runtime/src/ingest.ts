@@ -18,12 +18,15 @@ import {
   observability,
   prompts as promptsRepo,
   relationships as relationshipsRepo,
+  targets as targetsRepo,
+  broadCandidates as broadCandidatesRepo,
+  actions as actionsRepo,
   withTransaction,
   type Tx,
 } from '@xbam/database';
 import { REPLY_TEMPLATE_KEY } from '@xbam/prompts';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
-import { cannotPossiblyEngage, recentRepliesTo } from './engagement';
+import { audienceOf, cannotPossiblyEngage, recentRepliesTo } from './engagement';
 import { outreachHeadroom } from './steps/social';
 
 const log = createLogger('ingest');
@@ -55,6 +58,10 @@ export const IngestOptionsSchema = z
     dryRun: z.boolean().optional(),
     /** Record the event and stop. See `recordOnly` on IngestOptions. */
     recordOnly: z.boolean().optional(),
+    /** The canonical tracked-account watch that produced this event. */
+    ownerTargetSourceId: z.string().uuid().optional(),
+    /** Stable fallback when the surface omitted the author's current handle. */
+    ownerTargetHandle: z.string().max(300).optional(),
   })
   .strict();
 
@@ -77,6 +84,8 @@ export interface IngestOptions {
    * produced no context, no event, and no record that anything had been seen.
    */
   recordOnly?: boolean;
+  ownerTargetSourceId?: string;
+  ownerTargetHandle?: string;
 }
 
 /** Agent states that may receive work. PAUSED and ERROR agents stay idle. */
@@ -155,6 +164,18 @@ const MAX_DIRECT_POST_AGE_MS = envInt('AI17Z_MAX_DIRECT_POST_AGE_MINUTES', 24 * 
 const DIRECT_INBOUND = new Set(['MENTION', 'REPLY', 'DIRECT_MESSAGE']);
 
 /**
+ * Kinds the two-hour rule was never meant for.
+ *
+ * The short window is about walking uninvited into a stranger's old thread.
+ * Somebody who wrote to the agent is not that, and neither is an account the
+ * owner explicitly asked it to follow: a post from a followed account found
+ * three hours later is still the thing the owner wanted noticed, and refusing
+ * it for being three hours old is the same category error that treated the
+ * account as a stranger in the first place.
+ */
+const GENEROUS_WINDOW = new Set([...DIRECT_INBOUND, 'TARGET_ACCOUNT_ACTIVITY']);
+
+/**
  * How old this kind of event may be and still be worth answering.
  *
  * Exported so the rule can be held to without an account, a link and a
@@ -162,7 +183,7 @@ const DIRECT_INBOUND = new Set(['MENTION', 'REPLY', 'DIRECT_MESSAGE']);
  * function.
  */
 export function freshnessWindowFor(type: string): number {
-  return DIRECT_INBOUND.has(type) ? MAX_DIRECT_POST_AGE_MS : MAX_POST_AGE_MS;
+  return GENEROUS_WINDOW.has(type) ? MAX_DIRECT_POST_AGE_MS : MAX_POST_AGE_MS;
 }
 
 /**
@@ -202,7 +223,7 @@ async function catchUpDelayMs(
   type: string,
   age: number | null,
 ): Promise<Date | null> {
-  if (age === null || age <= MAX_POST_AGE_MS || !DIRECT_INBOUND.has(type)) return null;
+  if (age === null || age <= MAX_POST_AGE_MS || !GENEROUS_WINDOW.has(type)) return null;
   const rows = await tx
     .many<{ n: string }>(
       `SELECT count(*)::text AS n FROM jobs
@@ -295,9 +316,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
 
   // Watched for context, not to act on. The event is still recorded, because
   // it happened and the agent may need it later to know what a thread is about.
-  const links = options.recordOnly
-    ? []
-    : options.onlyAgentId
+  const accountLinks = options.onlyAgentId
     ? await manualTriggerLink(accountId, options.onlyAgentId, event.type)
     : accountId
       ? (await accountsRepo.listAccountAgents(accountId)).map((link) => ({
@@ -306,6 +325,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
           actionType: link.actionType,
         }))
       : [];
+  const links = options.recordOnly ? [] : accountLinks;
 
   // Capabilities are read once here and checked again at execution. Checking
   // twice is deliberate: this stops the work being queued at all, and the second
@@ -374,6 +394,8 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
        * comment was right, and nothing was running.
        */
       headroom: string | null;
+      /** How earlier unprompted approaches to this author went. */
+      approachHistory: { approaches: number; answered: boolean } | null;
     }
   >();
   // The account's own handle decides whether a keyword match is actually
@@ -409,6 +431,9 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
             }
           : null,
         recent: await recentRepliesTo(link.agentId, event.remoteAuthorHandle).catch(() => 0),
+        approachHistory: event.remoteAuthorHandle
+          ? await actionsRepo.approachHistory(link.agentId, event.remoteAuthorHandle).catch(() => null)
+          : null,
         headroom: await outreachHeadroom(
           link.agentId,
           PolicyConfig.parse(policiesById.get(link.agentId)?.config ?? {}).outreach,
@@ -423,7 +448,69 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
 
   const outcome = await withTransaction(async (tx) => {
     const { event: stored, created: eventCreated } = await eventsRepo.ingestEvent(tx, accountId, event);
+    if (event.type === 'TARGET_ACCOUNT_ACTIVITY' && stored.type === 'KEYWORD_MATCH') {
+      await eventsRepo.promoteToTargetActivity(tx, stored.id);
+    }
     const outcome: IngestOutcome = { eventId: stored.id, eventCreated, jobs: [], skipped: [] };
+
+    const dispositionForReason = (reason: string) => {
+      const lower = reason.toLowerCase();
+      if (lower.includes('freshness') || lower.includes('posted about') || lower.includes('retroactively')) {
+        return 'STALE' as const;
+      }
+      if (lower.includes('cooldown') || lower.includes('recently') || lower.includes('per author')) {
+        return 'COOLDOWN' as const;
+      }
+      if (lower.includes('not permitted') || lower.includes('do not contact')) return 'POLICY_REFUSAL' as const;
+      if (lower.includes('degraded') || lower.includes('human action')) return 'ACCOUNT_DEGRADED' as const;
+      if (lower.includes('already')) return 'ALREADY_HANDLED' as const;
+      return 'INTENTIONAL_NO_ACTION' as const;
+    };
+
+    const recordTarget = async () => {
+      if (!options.ownerTargetSourceId || event.type !== 'TARGET_ACCOUNT_ACTIVITY') return;
+      const byAgent = new Map<string, (typeof outcome.jobs)[number]>();
+      for (const entry of outcome.jobs) byAgent.set(entry.agentId, entry);
+      const skipped = new Map(outcome.skipped.map((entry) => [entry.agentId, entry.reason]));
+      await targetsRepo.recordIngest(tx, {
+        sourceId: options.ownerTargetSourceId,
+        eventId: stored.id,
+        remotePostId: event.remoteEventId,
+        remoteUserId: event.remoteAuthorId ?? null,
+        handle: event.remoteAuthorHandle ?? options.ownerTargetHandle ?? 'unknown',
+        displayName: event.remoteAuthorDisplayName ?? null,
+        mode: options.recordOnly ? 'WATCH' : 'ENGAGE',
+        outcomes: accountLinks.map((link) => {
+          const job = byAgent.get(link.agentId);
+          if (job) {
+            return {
+              agentId: link.agentId,
+              jobId: job.job.id,
+              created: job.created,
+              disposition: job.created ? ('CONSIDERING' as const) : ('ALREADY_HANDLED' as const),
+              reason: job.created ? 'Queued for deliberate consideration.' : 'This agent already has this post.',
+            };
+          }
+          const reason = skipped.get(link.agentId);
+          if (options.recordOnly) {
+            return {
+              agentId: link.agentId,
+              jobId: null,
+              created: false,
+              disposition: 'WATCH_ONLY' as const,
+              reason: 'The owner configured this watch as context only.',
+            };
+          }
+          return {
+            agentId: link.agentId,
+            jobId: null,
+            created: false,
+            disposition: reason ? dispositionForReason(reason) : ('BLOCKED_EXTERNAL' as const),
+            reason: reason ?? 'The target post was recorded, but no runnable agent/account path existed.',
+          };
+        }),
+      });
+    };
 
     // A post written long before we saw it. Recorded, so the inbox shows it and
     // a person can act on it, but no work is queued: it is history, not a
@@ -445,6 +532,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         remoteEventId: event.remoteEventId,
         ageHours: hours,
       });
+      await recordTarget();
       return outcome;
     }
 
@@ -459,6 +547,7 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
           reason: `first seen ${hours}h ago and nothing was queued for it then; not queuing it retroactively`,
         });
       }
+      await recordTarget();
       return outcome;
     }
 
@@ -483,8 +572,22 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
       //
       // So the policy is the single source of truth for this one type, and
       // nothing needs to be kept in sync with it.
+      /*
+        An account the owner named is triggered by having been named.
+
+        Adding TARGET_ACCOUNT_ACTIVITY to the link's trigger list as well would
+        be a second setting that has to agree with the first, in a different
+        screen, which is exactly how `reply_search` and `own_threads` came to
+        find replies for months and have every one dropped here with "not
+        triggered by REPLY". The watch existing *is* the instruction.
+
+        A watch the owner set to context-only still never reaches this: that is
+        `recordOnly` in the reconciler, upstream, and it means no agent is
+        considered at all.
+      */
       const triggered =
         link.triggerEventTypes.includes(event.type) ||
+        event.type === 'TARGET_ACCOUNT_ACTIVITY' ||
         (event.type === 'KEYWORD_MATCH' && policy.outreach.enabled);
 
       if (!triggered) {
@@ -605,6 +708,8 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
           ? null
           : bounds.headroom ??
             cannotPossiblyEngage({
+              ...audienceOf(event.raw),
+              approachHistory: bounds.approachHistory,
               text: event.text,
               directlyAddressed,
               topics: bounds.topics,
@@ -613,6 +718,15 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
               relationship: bounds.relationship,
               recentRepliesToPerson: bounds.recent,
             });
+        if (unprompted) {
+          await broadCandidatesRepo.record(tx, {
+            agentId: agent.id,
+            eventId: stored.id,
+            decision: declined ? 'DECLINED' : 'QUEUED',
+            reason: declined ?? 'Worth a closer look.',
+            authorFollowers: audienceOf(event.raw).authorFollowers,
+          });
+        }
         if (declined) {
           outcome.skipped.push({ agentId: agent.id, reason: declined });
           continue;
@@ -661,6 +775,8 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
         });
       }
     }
+
+    await recordTarget();
 
     log.info('event ingested', {
       channel: event.channel,

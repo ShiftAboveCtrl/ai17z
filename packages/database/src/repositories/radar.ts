@@ -132,6 +132,23 @@ export async function claimDueSources(limit: number, holdSeconds: number): Promi
 }
 
 /**
+ * Puts a poll off without it having happened.
+ *
+ * The account's X budget said not now. Nothing was read, so nothing about the
+ * source's health, cursor, or success may move: a held poll is neither a
+ * failure nor a quiet feed, and recording it as either would be a claim about
+ * X that nobody checked. Only when it is next due, and why, change.
+ */
+export async function deferPoll(sourceId: string, nextPollAt: Date, reason: string): Promise<void> {
+  await query(
+    `UPDATE radar_sources
+        SET next_poll_at = $2, idle_reason = $3, updated_at = now()
+      WHERE id = $1`,
+    [sourceId, nextPollAt, reason.slice(0, 500)],
+  );
+}
+
+/**
  * Records the outcome of a poll.
  *
  * Health is deliberately three-valued rather than a boolean. A source that
@@ -283,7 +300,7 @@ export async function markOwnPostChecked(id: string, replyCount: number): Promis
 }
 
 /**
- * Brings an account's failing sources forward after one of them works.
+ * Brings an account's matching failing sources forward after one of them recovers.
  *
  * Sources back off when they fail, and they nearly always fail together because
  * they nearly always fail for the same reason: the browser was not there. Once
@@ -292,9 +309,19 @@ export async function markOwnPostChecked(id: string, replyCount: number): Promis
  * but "eventually" was half an hour of an account looking broken while the
  * error on screen named a port that no longer existed.
  *
- * Only sources that were actually failing are moved, and only forward.
+ * The recovered error is part of the match. A notifications poll proving that
+ * the browser is back says nothing about a search surface that X is still rate
+ * limiting; treating those as the same failure defeats the backoff and turns a
+ * polite retry into a request every few seconds.
+ *
+ * Only sources that were actually failing for the same recorded reason are
+ * moved, and only forward.
  */
-export async function retryFailingSources(accountId: string, exceptSourceId: string): Promise<number> {
+export async function retryFailingSources(
+  accountId: string,
+  exceptSourceId: string,
+  recoveredError: string,
+): Promise<number> {
   const rows = await query(
     `UPDATE radar_sources
         SET next_poll_at = now(), updated_at = now()
@@ -302,9 +329,10 @@ export async function retryFailingSources(accountId: string, exceptSourceId: str
         AND id <> $2
         AND enabled
         AND consecutive_failures > 0
+        AND last_error = $3
         AND next_poll_at > now()
       RETURNING id`,
-    [accountId, exceptSourceId],
+    [accountId, exceptSourceId, recoveredError],
   );
   return rows.length;
 }

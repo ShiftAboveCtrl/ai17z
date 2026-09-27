@@ -78,7 +78,7 @@ describe('a post found by watching, not by being mentioned', () => {
       mayTrigger: true,
     });
 
-    expect(await eventTypeOf(remoteId)).toBe('KEYWORD_MATCH');
+    expect(await eventTypeOf(remoteId)).toBe('TARGET_ACCOUNT_ACTIVITY');
   });
 
   it('does not queue a reply merely because the account is being watched', async () => {
@@ -127,7 +127,7 @@ describe('watching a source for context rather than to act on', () => {
     });
 
     expect(result.contextOnly).toBe(1);
-    expect(await eventTypeOf(remoteId)).toBe('KEYWORD_MATCH');
+    expect(await eventTypeOf(remoteId)).toBe('TARGET_ACCOUNT_ACTIVITY');
   });
 
   it('queues nothing from it', async () => {

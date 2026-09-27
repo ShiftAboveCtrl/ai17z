@@ -36,6 +36,7 @@ import {
   goto,
   isAuthenticated,
   readArticle,
+  readArticles,
   readText,
   selfHandles,
   settle,
@@ -146,6 +147,7 @@ export const xAdapter: ChannelAdapter = {
     'own_threads',
     'tracked_account',
     'tracked_keyword',
+    'persona_discovery',
   ] as const,
 
   /**
@@ -301,8 +303,10 @@ export const xAdapter: ChannelAdapter = {
       const events: NormalizedEvent[] = [];
       const seen = new Set<string>();
 
+      // One evaluation for the whole feed, as the context read does.
+      const batch = await readArticles(page, count);
       for (let index = 0; index < count && events.length < options.limit; index += 1) {
-        const snapshot = await readArticle(page, `${SEL.tweetArticle} >> nth=${index}`);
+        const snapshot = batch?.[index] ?? (await readArticle(page, `${SEL.tweetArticle} >> nth=${index}`));
         if (!snapshot.statusId || seen.has(snapshot.statusId)) continue;
         seen.add(snapshot.statusId);
         // Never act on our own posts: this is what stops an agent replying to itself.
@@ -340,9 +344,25 @@ export const xAdapter: ChannelAdapter = {
       );
     }
 
+    /*
+      Where the time goes, stage by stage. A thread read measured at a median of
+      a minute on a live installation, and a total says nothing about whether
+      that was waiting for the action tab, X drawing the page, or reading it.
+    */
+    const asked = Date.now();
+    const timingsMs: Record<string, number> = {};
+    let mark = asked;
+    const lap = (stage: string) => {
+      const now = Date.now();
+      timingsMs[stage] = now - mark;
+      mark = now;
+    };
+
     return withSession(ctx, 'ACTION', async ({ page }) => {
+      lap('tab');
       const url = buildStatusUrl(targetRef)!;
       await goto(page, url);
+      lap('navigate');
 
       const bodyText = await readText(page);
       if (looksUnavailable(bodyText)) {
@@ -359,6 +379,7 @@ export const xAdapter: ChannelAdapter = {
       if (!found) {
         throw PipelineError.retryable('article_not_rendered', `Status ${statusId} did not render on ${url}.`, { url });
       }
+      lap('render');
 
       const target = await readArticle(page, anchor);
       const me = selfHandles(ctx);
@@ -370,6 +391,7 @@ export const xAdapter: ChannelAdapter = {
         ctx.logger.warn('media inventory failed', { message: errorMessage(error) });
         return { media: [], quoted: null, links: [] };
       });
+      lap('target');
 
       // Read every article on the page in order, then reason about them off the
       // page. Which of them is the mention, which are its ancestors, and which
@@ -393,10 +415,16 @@ export const xAdapter: ChannelAdapter = {
       // The cap still holds for the ordinary case; it stretches only as far as
       // it must to take in the post being replied to.
       const total = focalIndex >= 0 ? Math.min(count, Math.max(MAX_ARTICLES_READ, focalIndex + 1)) : Math.min(count, MAX_ARTICLES_READ);
-      const snapshots: ArticleSnapshot[] = [];
-      for (let index = 0; index < total; index += 1) {
-        snapshots.push(await readArticle(page, `${SEL.tweetArticle} >> nth=${index}`, index));
+      // One evaluation for the whole thread; the per-article reads remain as
+      // the fallback when that evaluation cannot be had.
+      let snapshots: ArticleSnapshot[] = (await readArticles(page, total)) ?? [];
+      if (snapshots.length < total) {
+        snapshots = [];
+        for (let index = 0; index < total; index += 1) {
+          snapshots.push(await readArticle(page, `${SEL.tweetArticle} >> nth=${index}`, index));
+        }
       }
+      lap('thread');
 
       const outcome = resolveBranch({
         articles: snapshots,
@@ -430,7 +458,10 @@ export const xAdapter: ChannelAdapter = {
           articleForStatus(conversation.parent!.remoteId!),
           conversation.parent!.text,
         ).catch(() => null);
+        lap('parentMedia');
       }
+      timingsMs.total = Date.now() - asked;
+      ctx.logger.info('x context read', { statusId, timingsMs });
 
       // The invariant the whole design rests on: the action target is the post
       // that addressed the agent, never an ancestor. Everything else here is
@@ -474,6 +505,7 @@ export const xAdapter: ChannelAdapter = {
           // Carried in meta so nothing downstream of the adapter has to know
           // what an X media container looks like.
           inventory,
+          timingsMs,
         },
       };
     });

@@ -49,6 +49,11 @@ const Typed = z.object({
 const RealPost = z.object({
   /** A link to a post, or its numeric id. */
   post: z.string().trim().min(1).max(500),
+  /**
+   * How the agent meets the post: somebody wrote to it (the default), it found
+   * the post on its own, or the post is from an account it was told to follow.
+   */
+  as: z.enum(['MENTION', 'KEYWORD_MATCH', 'TARGET_ACCOUNT_ACTIVITY']).default('MENTION'),
 });
 
 export async function labRoutes(app: FastifyInstance): Promise<void> {
@@ -123,7 +128,7 @@ export async function labRoutes(app: FastifyInstance): Promise<void> {
         accountId: reader.id,
         kind: 'REHEARSE_X_POST',
         requestedBy: user.id,
-        params: { postRef: body.post, agentId: agent.id, requestedBy: user.id },
+        params: { postRef: body.post, agentId: agent.id, requestedBy: user.id, as: body.as },
       });
 
       await ops.audit({
