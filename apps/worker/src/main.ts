@@ -31,6 +31,7 @@ import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
 import { pollDueFeeds, pollDueRepos, runDueEngagements, wakeDueAgents } from '@xbam/runtime';
+import { pollStudioLink, reportUnacknowledgedPurchases, studioSyncDue, syncStudio } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -175,6 +176,26 @@ async function main(): Promise<void> {
       if (handled > 0) log.info('answered the owner on Telegram', { handled });
     } catch (error) {
       log.warn('could not read Telegram messages', { message: errorMessage(error) });
+    }
+    try {
+      /*
+        AI17Z Studio, when linked. A pending link is finished here as well as
+        from the Plugins screen, so an owner who approved on their phone and
+        closed the laptop comes back to a linked installation. Entitlements are
+        synced every quarter of an hour: often enough that a revoked one stops
+        well inside a working day, rarely enough to cost Studio nothing. On
+        this sweep, like everything else here, rather than a timer of its own.
+      */
+      if (await studioSyncDue(15 * 60_000)) {
+        const linked = await pollStudioLink();
+        if (linked.state === 'LINKED') {
+          const synced = await syncStudio();
+          if (!synced.ok) log.warn('Studio entitlement sync did not complete', { why: synced.why });
+          await reportUnacknowledgedPurchases();
+        }
+      }
+    } catch (error) {
+      log.warn('Studio sync failed', { message: errorMessage(error) });
     }
     // A week of broad-discovery decisions is plenty to answer "why was it
     // quiet". Pruned here, on the tick that already exists, rather than on a

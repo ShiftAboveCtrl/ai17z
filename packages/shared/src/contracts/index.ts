@@ -8,6 +8,7 @@ export * from './policy';
 export * from './cadence';
 export * from './radar';
 export * from './xPacing';
+export * from './marketplacePurchase';
 export * from './easy';
 export * from './multimodal';
 export * from './relationship';

@@ -54,6 +54,7 @@ export * as arcs from './repositories/arcs';
 export * as content from './repositories/content';
 export * as posting from './repositories/posting';
 export * as evaluation from './repositories/evaluation';
+export * as studio from './repositories/studio';
 export * as notifications from './repositories/notifications';
 export * as upstreamQuota from './repositories/upstreamQuota';
 

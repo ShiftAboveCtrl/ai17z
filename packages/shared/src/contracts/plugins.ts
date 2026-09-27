@@ -465,6 +465,8 @@ export const InstalledPlugin = z
     publisher: z.string(),
     manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
     manifest: PluginManifest,
+    /** The registry said this one needs an entitlement; Studio's lease decides whether it runs. */
+    requiresEntitlement: z.boolean().default(false),
     installedAt: z.string(),
     updatedAt: z.string(),
   })

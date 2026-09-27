@@ -484,6 +484,8 @@ export function readManifest(raw: string): { ok: true; manifest: PluginManifest 
 export async function installPlugin(input: {
   raw: string;
   source: 'LOCAL' | 'AI17Z_REGISTRY';
+  /** The registry listed it as needing an entitlement. Only a registry install can say so. */
+  requiresEntitlement?: boolean;
   /** Set when replacing a Plugin already installed. */
   expectPublisher?: string;
   /**
@@ -590,6 +592,7 @@ export async function installPlugin(input: {
       publisher: manifest.publisher,
       manifestSha256: manifestDigest(input.raw),
       manifest,
+      requiresEntitlement: input.source === 'AI17Z_REGISTRY' && input.requiresEntitlement === true,
     });
   } catch (error) {
     for (const id of registered) unregisterCapability(id);

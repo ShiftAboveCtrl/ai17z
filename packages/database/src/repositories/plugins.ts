@@ -17,6 +17,7 @@ interface Row extends Record<string, unknown> {
   publisher: string;
   manifest_sha256: string;
   manifest: PluginManifest;
+  requires_entitlement: boolean;
   installed_at: string;
   updated_at: string;
 }
@@ -28,13 +29,14 @@ const toInstalled = (row: Row): InstalledPlugin => ({
   publisher: row.publisher,
   manifestSha256: row.manifest_sha256,
   manifest: row.manifest,
+  requiresEntitlement: row.requires_entitlement,
   installedAt: row.installed_at,
   updatedAt: row.updated_at,
 });
 
 export async function listInstalledPlugins(): Promise<InstalledPlugin[]> {
   const rows = await query<Row>(
-    `SELECT id, source, version, publisher, manifest_sha256, manifest,
+    `SELECT id, source, version, publisher, manifest_sha256, manifest, requires_entitlement,
             installed_at::text AS installed_at, updated_at::text AS updated_at
        FROM installed_plugins ORDER BY id`,
   );
@@ -43,7 +45,7 @@ export async function listInstalledPlugins(): Promise<InstalledPlugin[]> {
 
 export async function getInstalledPlugin(id: string): Promise<InstalledPlugin | null> {
   const [row] = await query<Row>(
-    `SELECT id, source, version, publisher, manifest_sha256, manifest,
+    `SELECT id, source, version, publisher, manifest_sha256, manifest, requires_entitlement,
             installed_at::text AS installed_at, updated_at::text AS updated_at
        FROM installed_plugins WHERE id = $1`,
     [id],
@@ -66,18 +68,20 @@ export async function putInstalledPlugin(input: {
   publisher: string;
   manifestSha256: string;
   manifest: PluginManifest;
+  requiresEntitlement?: boolean;
 }): Promise<void> {
   await query(
-    `INSERT INTO installed_plugins (id, source, version, publisher, manifest_sha256, manifest)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `INSERT INTO installed_plugins (id, source, version, publisher, manifest_sha256, manifest, requires_entitlement)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
      ON CONFLICT (id) DO UPDATE
         SET source = excluded.source,
             version = excluded.version,
             publisher = excluded.publisher,
             manifest_sha256 = excluded.manifest_sha256,
             manifest = excluded.manifest,
+            requires_entitlement = excluded.requires_entitlement,
             updated_at = now()`,
-    [input.id, input.source, input.version, input.publisher, input.manifestSha256, JSON.stringify(input.manifest)],
+    [input.id, input.source, input.version, input.publisher, input.manifestSha256, JSON.stringify(input.manifest), input.requiresEntitlement ?? false],
   );
 }
 

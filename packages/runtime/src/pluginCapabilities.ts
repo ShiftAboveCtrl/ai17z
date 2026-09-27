@@ -9,6 +9,7 @@ import type {
 } from '@xbam/shared/contracts';
 import { safeFetch } from '@xbam/upstream';
 import { defineCapability, type AnyCapability } from '@xbam/tools';
+import { marketplaceGate, studioGatewayHeaders, studioOrigin } from './studioLink';
 
 /**
  * Turning a Plugin's declaration into a real capability.
@@ -41,6 +42,21 @@ import { defineCapability, type AnyCapability } from '@xbam/tools';
  * declaration names which configuration field holds it, and the manifest
  * refuses to validate unless that field is marked secret.
  */
+
+/**
+ * Whether Studio says this capability may run here. Read from the installed
+ * record at the moment of asking, so an update or an uninstall is seen at
+ * once, and answered by the signed lease rather than by anything stored in
+ * the clear. A Plugin that is not from the marketplace passes untouched.
+ */
+async function studioSaysYes(pluginId: string, capabilityId: string, hosts: readonly string[]) {
+  const record = await pluginsRepo.getInstalledPlugin(pluginId);
+  if (!record) return { ok: false as const, why: `${pluginId} is not installed.` };
+  return marketplaceGate(
+    { id: record.id, version: record.version, manifestSha256: record.manifestSha256, requiresEntitlement: record.requiresEntitlement, hosts },
+    capabilityId,
+  );
+}
 
 /** A zod object built from a declared schema. Primitives and arrays only. */
 function schemaOf(schema: PluginSchema): z.ZodType<Record<string, unknown>> {
@@ -148,6 +164,8 @@ export function declaredCapability(
           why: `${manifest.name} still needs ${missing.join(' and ')} before it can run.`,
         };
       }
+      const studio = await studioSaysYes(installed.id, id, declaration.http.hosts);
+      if (!studio.ok) return { status: 'UNAVAILABLE', why: studio.why };
       const used = await pluginsRepo.pluginCallsThisHour(ctx.agentId, installed.id);
       if (used >= declaration.http.quotaPerHour) {
         return {
@@ -163,6 +181,11 @@ export function declaredCapability(
 
     async run(raw, ctx) {
       const given = raw as Record<string, unknown>;
+
+      // Again here, not only in readiness: an entitlement revoked while a job
+      // waited must stop that job rather than let it finish.
+      const studio = await studioSaysYes(installed.id, id, declaration.http.hosts);
+      if (!studio.ok) throw new Error(studio.why);
 
       // The quota, charged before the request rather than after it, because a
       // ceiling that only counts what succeeded is not a ceiling.
@@ -198,10 +221,24 @@ export function declaredCapability(
         }
       }
 
+      // Studio's hosted gateway authenticates the installation itself, with a
+      // tool token for this one capability and a proof for this one request.
+      let allowPrivate = false;
+      let viaGateway = false;
+      const where = await studioOrigin();
+      if (where && new URL(target).origin === where.origin) {
+        const gateway = await studioGatewayHeaders(installed.id, declaration.name, target, declaration.http.method);
+        if (!gateway.ok) throw new Error(`${manifest.name} could not be authorised by Studio: ${gateway.why}`);
+        Object.assign(headers, gateway.headers);
+        allowPrivate = gateway.allowPrivate;
+        viaGateway = true;
+      }
+
       const response = await safeFetch(target, {
         signal: ctx.signal,
         method: declaration.http.method,
         headers,
+        ...(allowPrivate ? { allowPrivate: true } : {}),
         // Small on purpose. A declared Plugin answers a question; anything
         // that needs megabytes is not this extension point.
         maxBytes: 512 * 1024,
@@ -226,9 +263,14 @@ export function declaredCapability(
 
       // Mapped by the declaration's own paths, so the Plugin decides what its
       // answer means and the schema decides whether that is well formed.
+      // Studio's gateway has already read each declared field at its `from`
+      // path, type-checked it and dropped the rest, and answers
+      // { result: { <name>: value }, provenance }. Reading `from` again here
+      // would look for the backend's shape in Studio's.
+      const source = viaGateway ? (body as { result?: unknown } | null)?.result : body;
       const mapped: Record<string, unknown> = {};
       for (const field of declaration.output.fields) {
-        const value = at(body, field.from ?? field.name);
+        const value = viaGateway ? at(source, field.name) : at(source, field.from ?? field.name);
         if (value !== undefined) mapped[field.name] = value;
       }
       return output.parse(mapped);

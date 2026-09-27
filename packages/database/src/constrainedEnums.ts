@@ -140,6 +140,12 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     note: 'A change the agent made to how it behaves, while it is being tested against the old behaviour and after the verdict.',
   },
   {
+    table: 'studio_purchase_ledger',
+    column: 'state',
+    values: ['PREPARED', 'SENT', 'ABANDONED', 'CONFIRMED', 'FAILED', 'EXPIRED'],
+    note: 'A Studio purchase the owner was asked to pay for from inside AI17Z: wallet asked, transaction known, nothing sent on the word of the owner, or how Studio settled it.',
+  },
+  {
     table: 'x_capacity_ledger',
     column: 'entry',
     values: ['READ', 'SIGNAL'],
