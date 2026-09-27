@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { inbox as inboxRepo, notifications as notificationsRepo, ops } from '@xbam/database';
+import { ForbiddenError, NotFoundError } from '@xbam/shared';
+import { agents as agentsRepo, inbox as inboxRepo, notifications as notificationsRepo, ops } from '@xbam/database';
 import {
   DEFAULT_MUTE_MS,
   CATEGORY_DESCRIPTIONS,
@@ -16,7 +17,7 @@ import {
   updateTelegramPreferences,
 } from '@xbam/runtime';
 import { z } from 'zod';
-import { parseBody } from '../http';
+import { parseBody, parseQuery } from '../http';
 import { handler, params, requireUser } from '../http';
 
 /**
@@ -32,7 +33,13 @@ export async function registerInboxRoutes(app: FastifyInstance): Promise<void> {
     '/api/inbox',
     handler(async (request) => {
       const user = await requireUser(request);
-      const items = await inboxRepo.ownerInbox(user.id);
+      const query = parseQuery(z.object({ agentId: z.string().uuid().optional() }), request);
+      if (query.agentId) {
+        const agent = await agentsRepo.getAgent(query.agentId);
+        if (!agent) throw new NotFoundError('Agent');
+        if (agent.ownerId !== user.id) throw new ForbiddenError('That agent belongs to another owner.');
+      }
+      const items = await inboxRepo.ownerInbox(user.id, 500, query.agentId ?? null);
 
       // Counted from the same rows the list returns, so the chips cannot
       // disagree with what is under them.

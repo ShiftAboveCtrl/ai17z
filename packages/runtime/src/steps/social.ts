@@ -18,6 +18,7 @@ import {
   loadStanceContext,
 } from '../stance';
 import {
+  audienceOf,
   decideEngagement,
   recentRepliesTo,
 } from '../engagement';
@@ -225,6 +226,11 @@ export async function stepStanceCheck(bundle: JobBundle): Promise<void> {
 
   switch (policy.stance.onConflict) {
     case 'REVIEW':
+      // The same rule as the quality gate: an owner who has already approved
+      // this has made the judgement, and a second opinion arriving after the
+      // decision is not a reason to hand it back to them unchanged. The
+      // conflict is on the record above either way.
+      if (job.approvedAt) return;
       throw PipelineError.review('stance_conflict', check.message ?? 'This contradicts an existing position.');
     case 'REWRITE':
       // Retryable so the generation stage runs again, now with the conflict in
@@ -249,6 +255,32 @@ export async function stepStanceCheck(bundle: JobBundle): Promise<void> {
  * outcome and not a failure. The reasons are recorded either way, so "why did
  * it ignore this?" has an answer.
  */
+/**
+ * Whether a watched account's post is a fragment that only means something
+ * inside the conversation it belongs to.
+ *
+ * A watch reads everything the account posts, including its replies to other
+ * people: "yes", "+", "worst ever", "Dogs and Cats". Measured on the live
+ * watch, about a third of what it recorded was that. Answering one under the
+ * owner's instruction to reply to the watched account is the agent turning up
+ * in somebody else's exchange with nothing to say about a word it cannot see
+ * the context of. A short question in their own post is still a post, and so
+ * is anything with a thought in it.
+ */
+export function watchedFragment(text: string, isReply: boolean): string | null {
+  const words = text
+    .replace(/@[A-Za-z0-9_]+/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  // A reply to somebody else leans on what it answers, so a little more of it
+  // is still a fragment; a post of their own has to stand alone.
+  if (words.length > (isReply ? 4 : 3)) return null;
+  const asks = /\?\s*$/.test(text.trim());
+  if (!isReply && asks) return null;
+  return `"${text.trim().slice(0, 40)}" is ${isReply ? 'a short reply to somebody else' : 'a fragment'} that only means something inside its own conversation. The watch stands; there is nothing here to add to.`;
+}
+
 export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ignore' | 'review'> {
   const { job, policy } = bundle;
   const context = job.resolvedContext;
@@ -268,13 +300,19 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
   const directlyAddressed = selfHandles.some((self) => text.toLowerCase().includes(`@${self}`));
 
   // Found by watching rather than sent to the agent. KEYWORD_MATCH is what the
-  // radar reconciler assigns to a post discovered through a watched account or
-  // keyword, and speaking under one of those is speaking first to a stranger --
-  // a different act from answering, held to its own bar.
+  // radar reconciler assigns to a post discovered through a watched keyword,
+  // and speaking under one of those is speaking first to a stranger -- a
+  // different act from answering, held to its own bar.
   //
   // A thread the agent is already in is not this: it is a conversation it is
   // part of, whatever the event type says, so an outbound message anywhere in
   // the thread settles it.
+  //
+  // TARGET_ACCOUNT_ACTIVITY is deliberately absent. An account the owner named
+  // is not a stranger, and the whole of this branch -- the higher value floor,
+  // the topic-match requirement, the days-long per-author cooldown -- exists to
+  // stop an agent pestering people it came across by accident. Applying it to a
+  // followed account is what silenced one for four days.
   const alreadyInThread = (context?.thread ?? []).some((m) => m.role === 'OUTBOUND');
   const unprompted = bundle.event.type === 'KEYWORD_MATCH' && !directlyAddressed && !alreadyInThread;
 
@@ -297,22 +335,101 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
     return 'ignore';
   }
 
-  const verdict = decideEngagement({
-    topics: bundle.persona.topics,
-    text,
-    directlyAddressed,
-    unprompted,
-    outreach: policy.outreach,
-    relationship,
-    threadDepth: context?.thread.length ?? 0,
-    recentRepliesToPerson: await recentRepliesTo(bundle.agent.id, handle),
-    alreadyRepliedInThread: (context?.thread ?? []).some((m) => m.role === 'OUTBOUND'),
-    // Not whether the agent has spoken here, but how often. One follow-up is a
-    // conversation; four is an agent that will not let a thread end.
-    ourRepliesInThread: (context?.thread ?? []).filter((m) => m.role === 'OUTBOUND').length,
-    hasParent: Boolean(context?.parentText?.trim()) || (context?.thread.length ?? 0) > 0,
-    policy: policy.engagement,
-  });
+  /*
+    A tracked account is an explicit instruction to respond, not a discovery
+    hint to feed back through the ordinary "is this worth answering?" score.
+
+    Before this branch, the watch reliably created a job but a plain update
+    such as "shipping today" could still score below the general reply floor
+    and disappear as IGNORE. That made the owner's most specific instruction
+    weaker than the generic heuristic. The watch now settles that judgement.
+
+    Do-not-contact remains supreme. A public watch is not authority to resume
+    approaching somebody who asked the agent to stop, and relationship blocks,
+    account health, action-rate, idempotency and platform failures continue to
+    be enforced by their existing hard gates.
+  */
+  const ownerTarget = bundle.event.type === 'TARGET_ACCOUNT_ACTIVITY';
+  const targetDoNotContact =
+    ownerTarget && handle
+      ? await autonomyRepo.findDoNotContact(bundle.agent.id, job.channel, handle).catch(() => null)
+      : null;
+  if (targetDoNotContact) {
+    const reason = `@${handle!.replace(/^@+/, '')} asked this agent to stop contacting them, so the tracked-account instruction cannot reply.`;
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'ENGAGEMENT_DECIDED',
+      level: 'warn',
+      message: `ignore: ${reason}`,
+      data: { decision: 'IGNORE', ownerTarget: true, doNotContact: true },
+    });
+    return 'ignore';
+  }
+
+  /*
+    Chosen by the owner is not the same as without limit.
+
+    The watch settles whether a post is worth answering, and nothing about
+    topic, value or the stranger cooldown can override it. What still applies
+    is fatigue, because it is about how the agent looks rather than about the
+    post: answering every post somebody makes within the hour reads as an
+    account shadowing them, and a fourth turn in one thread is an agent that
+    will not let it end. Either one leaves this post alone with a sentence
+    saying so, and the next post an hour later is answered as usual.
+  */
+  const targetFatigue = ownerTarget
+    ? await (async () => {
+        const fragment = watchedFragment(text, Boolean(context?.parentText?.trim()) || Boolean(bundle.event.parentRemoteMessageId));
+        if (fragment) return fragment;
+        const recent = await recentRepliesTo(bundle.agent.id, handle);
+        if (recent >= policy.engagement.maxRepliesPerPersonPerHour) {
+          return `Already answered @${(handle ?? '').replace(/^@+/, '')} ${recent} times in the last hour, which is this agent's limit for one person. The watch stands; this post is left alone so the account does not read as shadowing them.`;
+        }
+        const ourTurns = (context?.thread ?? []).filter((m) => m.role === 'OUTBOUND').length;
+        if (ourTurns >= 3) {
+          return `Already spoke ${ourTurns} times in this thread. The watch stands; this one is left alone rather than keep a thread going that the other side may be done with.`;
+        }
+        return null;
+      })()
+    : null;
+
+  const verdict = ownerTarget
+    ? targetFatigue
+      ? {
+          decision: 'IGNORE' as const,
+          value: 0,
+          reason: targetFatigue,
+          factors: [{ label: 'owner-designated tracked account, but fatigue applies', delta: 0 }],
+        }
+      : {
+          decision: 'ENGAGE' as const,
+          value: 100,
+          reason: 'The owner explicitly chose this account to watch and reply to.',
+          factors: [{ label: 'owner-designated tracked account', delta: 100 }],
+        }
+    : decideEngagement({
+        // Read only on the unprompted path. Somebody who wrote to the agent is
+        // answered whoever they are, however few people follow them.
+        ...(unprompted ? audienceOf(bundle.event.payload) : {}),
+        ...(unprompted && handle
+          ? { approachHistory: await actionsRepo.approachHistory(bundle.agent.id, handle).catch(() => null) }
+          : {}),
+        topics: bundle.persona.topics,
+        text,
+        directlyAddressed,
+        unprompted,
+        outreach: policy.outreach,
+        relationship,
+        threadDepth: context?.thread.length ?? 0,
+        recentRepliesToPerson: await recentRepliesTo(bundle.agent.id, handle),
+        alreadyRepliedInThread: (context?.thread ?? []).some((m) => m.role === 'OUTBOUND'),
+        // Not whether the agent has spoken here, but how often. One follow-up is a
+        // conversation; four is an agent that will not let a thread end.
+        ourRepliesInThread: (context?.thread ?? []).filter((m) => m.role === 'OUTBOUND').length,
+        hasParent: Boolean(context?.parentText?.trim()) || (context?.thread.length ?? 0) > 0,
+        policy: policy.engagement,
+      });
 
   await observability.emitTrace({
     jobId: job.id,
@@ -328,6 +445,7 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
       // Which set of rules decided, because the two have different thresholds
       // and a verdict is unreadable without knowing which one it came from.
       unprompted,
+      ownerTarget,
     },
   });
 
@@ -337,7 +455,13 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
     });
   }
 
-  if (verdict.decision === 'IGNORE') return 'ignore';
+  if (verdict.decision === 'IGNORE') {
+    // The reason goes on the job, so everything that reads a settled job,
+    // the watched-account disposition included, says why rather than only
+    // that it was left alone.
+    await jobsRepo.updateJob(job.id, { lastError: verdict.reason.slice(0, 500) });
+    return 'ignore';
+  }
   if (verdict.decision === 'REVIEW') return 'review';
   return 'engage';
 }
@@ -372,10 +496,15 @@ export async function outreachHeadroom(
     }
   }
 
-  if (outreach.maxPerDay === 0) return 'This agent is not set to approach anybody unprompted.';
-  const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-  const today = await actionsRepo.approachesSince(agentId, since);
-  if (today >= outreach.maxPerDay) {
+  const sinceHour = new Date(Date.now() - 60 * 60_000).toISOString();
+  const thisHour = await actionsRepo.approachesSince(agentId, sinceHour);
+  if (thisHour >= outreach.maxPerHour) {
+    return `Already approached ${thisHour} ${thisHour === 1 ? 'person' : 'people'} unprompted in the last hour, which is the limit. It will resume as the rolling hour clears.`;
+  }
+
+  const sinceDay = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const today = outreach.maxPerDay > 0 ? await actionsRepo.approachesSince(agentId, sinceDay) : 0;
+  if (outreach.maxPerDay > 0 && today >= outreach.maxPerDay) {
     return `Already approached ${today} ${today === 1 ? 'person' : 'people'} unprompted today, which is the limit.`;
   }
 
@@ -395,8 +524,9 @@ export async function outreachHeadroom(
     Answering any of them makes room immediately.
   */
   const waiting = await actionsRepo.pendingApproaches(agentId);
-  if (waiting >= outreach.maxPerDay) {
-    return `${waiting} unprompted approaches are already waiting for you to decide on, which is as many as this agent may make in a day. Answering some of those makes room for new ones.`;
+  const waitingLimit = outreach.maxPerDay > 0 ? outreach.maxPerDay : outreach.maxPerHour;
+  if (waiting >= waitingLimit) {
+    return `${waiting} unprompted approaches are already waiting for you to decide on, which is the configured allowance. Answering some of those makes room for new ones.`;
   }
 
   if (handle && outreach.cooldownDaysPerAuthor > 0) {

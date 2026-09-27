@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { actions as actionsRepo, query } from '@xbam/database';
+import { DEFAULT_POLICY } from '@xbam/shared/contracts';
+import { outreachHeadroom } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -88,6 +90,36 @@ describe('counting unprompted approaches', () => {
     const fixture = await createFixture();
     await published(fixture, { eventType: 'KEYWORD_MATCH', handle: 'stranger', dryRun: true });
     expect(await actionsRepo.lastApproachTo(fixture.agentId, 'stranger')).toBeNull();
+  });
+});
+
+describe('hourly outreach pacing', () => {
+  it('stops at the rolling-hour limit even when the daily stop is disabled', async () => {
+    const fixture = await createFixture();
+    await published(fixture, { eventType: 'KEYWORD_MATCH', handle: 'one' });
+    await published(fixture, { eventType: 'KEYWORD_MATCH', handle: 'two' });
+
+    const reason = await outreachHeadroom(fixture.agentId, {
+      ...DEFAULT_POLICY.outreach,
+      enabled: true,
+      maxPerHour: 2,
+      maxPerDay: 0,
+    }, null, 'mock');
+    expect(reason).toMatch(/last hour/i);
+    expect(reason).toMatch(/resume/i);
+  });
+
+  it('resumes after the rolling hour clears instead of stopping for the day', async () => {
+    const fixture = await createFixture();
+    await published(fixture, { eventType: 'KEYWORD_MATCH', handle: 'earlier', agoHours: 2 });
+
+    const reason = await outreachHeadroom(fixture.agentId, {
+      ...DEFAULT_POLICY.outreach,
+      enabled: true,
+      maxPerHour: 1,
+      maxPerDay: 0,
+    }, null, 'mock');
+    expect(reason).toBeNull();
   });
 });
 

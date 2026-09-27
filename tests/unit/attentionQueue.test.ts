@@ -74,6 +74,26 @@ describe('the owner is never shown more than fifteen', () => {
     ]);
     expect(window.visible).toHaveLength(VISIBLE_LIMIT);
   });
+
+  it('gives another agent room before a noisy agent can fill the window', () => {
+    const noisy = Array.from({ length: 20 }, () => request({ agentId: 'agent-noisy', value: 90 }));
+    const quiet = Array.from({ length: 2 }, () => request({ agentId: 'agent-quiet', value: 20 }));
+    const window = attentionWindow([...noisy, ...quiet], { limit: 6 });
+
+    expect(window.visible.filter((item) => item.agentId === 'agent-quiet')).toHaveLength(2);
+    expect(window.visible[0]!.agentId).toBe('agent-noisy');
+  });
+
+  it('shares a category ceiling across three agents instead of spending it on the first', () => {
+    const first = Array.from({ length: 8 }, () => request({ agentId: 'agent-a', value: 90 }));
+    const second = Array.from({ length: 8 }, () => request({ agentId: 'agent-b', value: 60 }));
+    const third = Array.from({ length: 8 }, () => request({ agentId: 'agent-c', value: 30 }));
+    const window = attentionWindow([...first, ...second, ...third], { limit: 6 });
+
+    expect(window.visible.filter((item) => item.agentId === 'agent-a')).toHaveLength(2);
+    expect(window.visible.filter((item) => item.agentId === 'agent-b')).toHaveLength(2);
+    expect(window.visible.filter((item) => item.agentId === 'agent-c')).toHaveLength(2);
+  });
 });
 
 describe('the order is about what the decision is, not what it scored', () => {

@@ -36,6 +36,11 @@ const post = (over: Partial<Parameters<typeof decideEngagement>[0]> = {}) =>
  * and it was reachable from a single checkbox.
  */
 describe('a post the agent went looking for', () => {
+  it('ships an hourly pace as well as the optional daily backstop', () => {
+    expect(DEFAULT_POLICY.outreach.maxPerHour).toBe(2);
+    expect(DEFAULT_POLICY.outreach.maxPerDay).toBe(5);
+  });
+
   it('is left alone when the agent does not approach people unprompted', () => {
     const verdict = post({ unprompted: true, outreach: outreach({ enabled: false }) });
     expect(verdict.decision).toBe('IGNORE');

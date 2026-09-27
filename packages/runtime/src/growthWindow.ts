@@ -13,7 +13,15 @@ import type { GrowthPolicy } from '@xbam/shared/contracts';
  * whether anything is wrong.
  */
 
-export type GrowthState = 'OPEN' | 'RESTING' | 'QUIET_HOURS' | 'SPENT' | 'OFF' | 'HELD';
+/**
+ * OPEN and ELIGIBLE are both permission and they are not the same fact.
+ *
+ * OPEN is a session running now. ELIGIBLE is nothing running and nothing
+ * stopping one. Both used to be OPEN, so an owner watching the panel could
+ * not tell an agent that was working from one that was merely allowed to,
+ * and neither could anything reading the state back.
+ */
+export type GrowthState = 'OPEN' | 'ELIGIBLE' | 'RESTING' | 'QUIET_HOURS' | 'SPENT' | 'OFF' | 'HELD';
 
 export interface GrowthVerdict {
   /** Whether a session may run, or continue running, right now. */
@@ -26,6 +34,8 @@ export interface GrowthVerdict {
 }
 
 export interface GrowthFacts {
+  /** Sessions started in the trailing hour. */
+  sessionsThisHour: number;
   /** Sessions started in the trailing twenty-four hours. */
   sessionsToday: number;
   /** When the open session started, if one is open. */
@@ -42,6 +52,8 @@ export interface GrowthFacts {
   /** The account's own health, which optional growth yields to first. */
   accountHealth: 'HEALTHY' | 'DEGRADED' | 'COOLDOWN' | 'HUMAN_ACTION_REQUIRED';
   accountHealthReason?: string | null;
+  /** When the account's X breaker expects to move on, if it said. */
+  accountHealthUntil?: string | null;
 }
 
 /** Local hour in the agent's own timezone, or UTC when it cannot be read. */
@@ -71,8 +83,13 @@ export function localHour(timezone: string, now: Date): number {
  * Half-open on purpose, `[start, end)`, so 23 to 7 is eight hours rather than
  * nine and the default really is the eight continuous hours it claims to be.
  * An overnight window is the ordinary case, not the exception.
+ *
+ * Off entirely when the owner switched quiet hours off for this agent. That is
+ * a per-agent choice: it changes nothing for any other agent, and nothing
+ * else about pacing.
  */
 export function inQuietHours(policy: GrowthPolicy, now: Date): boolean {
+  if (!policy.quietHoursEnabled) return false;
   const { quietHoursStart: start, quietHoursEnd: end } = policy;
   if (start === end) return false;
   const hour = localHour(policy.timezone, now);
@@ -127,7 +144,12 @@ export function growthWindow(policy: GrowthPolicy, facts: GrowthFacts, now = new
       message:
         facts.accountHealthReason ??
         'This account is having trouble, so it has stopped going looking for people until that settles.',
-      retryAfterMs: minutes(10),
+      // The breaker's own answer when it gave one, so the panel's "next
+      // eligible" is the moment the account actually recovers rather than a
+      // guess ten minutes out that is wrong in both directions.
+      retryAfterMs: facts.accountHealthUntil
+        ? Math.max(60_000, new Date(facts.accountHealthUntil).getTime() - now.getTime())
+        : minutes(10),
     };
   }
 
@@ -180,7 +202,15 @@ export function growthWindow(policy: GrowthPolicy, facts: GrowthFacts, now = new
       retryAfterMs: minutes(60),
     };
   }
-  if (facts.sessionsToday >= policy.maxSessionsPerDay) {
+  if (facts.sessionsThisHour >= policy.maxSessionsPerHour) {
+    return {
+      allowed: false,
+      state: 'SPENT',
+      message: `That is all ${policy.maxSessionsPerHour} of this hour's growth sessions. It can start again as the rolling hour clears.`,
+      retryAfterMs: minutes(15),
+    };
+  }
+  if (policy.maxSessionsPerDay > 0 && facts.sessionsToday >= policy.maxSessionsPerDay) {
     return {
       allowed: false,
       state: 'SPENT',
@@ -203,7 +233,7 @@ export function growthWindow(policy: GrowthPolicy, facts: GrowthFacts, now = new
     }
   }
 
-  return { allowed: true, state: 'OPEN', message: 'Clear to go looking.', retryAfterMs: null };
+  return { allowed: true, state: 'ELIGIBLE', message: 'Clear to go looking.', retryAfterMs: null };
 }
 
 /**

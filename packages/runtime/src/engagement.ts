@@ -9,6 +9,7 @@ import type {
   ValueFactor,
 } from '@xbam/shared/contracts';
 import { actions as actionsRepo } from '@xbam/database';
+import { readPromo } from './promo';
 
 /**
  * Whether to reply at all, and if so, what kind of reply.
@@ -144,6 +145,21 @@ export interface ReplyValueInput {
    * which is a different act with a different failure mode.
    */
   unprompted?: boolean;
+  /**
+   * How many people follow the author, when X said. Only read when unprompted.
+   *
+   * Null and absent both mean "not seen", and neither earns or costs anything.
+   */
+  authorFollowers?: number | null;
+  /** Replies, reposts and likes the post already has, when X said. */
+  postEngagement?: number | null;
+  /**
+   * What happened the last times this agent approached this author unasked.
+   * Only read when unprompted: approaching somebody who never answered is the
+   * thing that turns an agent into a pest, and somebody who answered is
+   * somebody worth talking to again.
+   */
+  approachHistory?: { approaches: number; answered: boolean } | null;
   policy: EngagementPolicy;
   /** Only consulted when `unprompted`. */
   outreach?: OutreachPolicy;
@@ -300,6 +316,50 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
 
   if (THANKS.test(spoken) && words <= 6) add('a thank-you that needs no answer', -15);
 
+  if (input.unprompted) {
+    /*
+      Who would see the reply, for speaking first only.
+
+      Measured on a live agent: the stretch its owner called its best was
+      replies under WatcherGuru, wallstreetbets, aixbt and the like, while the
+      stretch they called nonsense was replies under accounts whose posts had
+      no readers at all. A ranking, not a cutoff, because a small account with
+      something real to say is still worth answering, and a count X did not
+      report is left out rather than read as nobody.
+    */
+    const followers = input.authorFollowers;
+    if (typeof followers === 'number' && Number.isFinite(followers)) {
+      if (followers >= 100_000) add('a large audience reads this author', 10);
+      else if (followers >= 10_000) add('the author has a real audience', 8);
+      else if (followers >= 1_000) add('the author has an audience', 4);
+      else if (followers < 100) add('almost nobody follows the author, so few would see a reply', -12);
+    }
+    const engaged = input.postEngagement;
+    if (typeof engaged === 'number' && Number.isFinite(engaged) && engaged >= 10) {
+      add('people are already responding to this post', 4);
+    }
+
+    // Somebody selling a token. Answering a pitch reads as endorsing it or as
+    // picking a fight with it, and neither is anything an audience remembers.
+    const promo = readPromo(text);
+    if (promo.level === 'strong') add(`reads as a token pitch (${promo.signals.join(', ')})`, -35);
+    else if (promo.level === 'some') add(`reads partly as a pitch (${promo.signals.join(', ')})`, -15);
+
+    const history = input.approachHistory;
+    if (history && history.approaches > 0) {
+      if (history.answered) add('they answered the last time this agent spoke to them', 10);
+      else {
+        add(
+          history.approaches === 1
+            ? 'approached them once before and they never answered'
+            : `approached them ${history.approaches} times before and they never answered`,
+          -Math.min(36, 12 * history.approaches),
+        );
+      }
+    }
+
+  }
+
   // Only for something the agent came across rather than was asked. A crypto
   // agent offering condolences under a stranger's personal post is not being
   // kind, it is being a bot that replies to everything.
@@ -363,6 +423,16 @@ export function decideEngagement(input: ReplyValueInput): EngagementVerdict {
         decision: 'IGNORE',
         value,
         reason: 'Nobody asked, and this is not about anything this agent follows.',
+        factors,
+      };
+    }
+
+    const floor = outreach.minAuthorFollowers ?? 0;
+    if (floor > 0 && typeof input.authorFollowers === 'number' && input.authorFollowers < floor) {
+      return {
+        decision: 'IGNORE',
+        value,
+        reason: `Nobody asked, and the author has ${input.authorFollowers} followers, below this agent's floor of ${floor} for speaking up unasked.`,
         factors,
       };
     }
@@ -532,8 +602,14 @@ export function cannotPossiblyEngage(input: {
   policy: ReplyValueInput['policy'];
   relationship: RelationshipContext | null;
   recentRepliesToPerson: number;
+  authorFollowers?: number | null;
+  postEngagement?: number | null;
+  approachHistory?: { approaches: number; answered: boolean } | null;
 }): string | null {
   const verdict = decideEngagement({
+    authorFollowers: input.authorFollowers ?? null,
+    postEngagement: input.postEngagement ?? null,
+    approachHistory: input.approachHistory ?? null,
     text: input.text,
     directlyAddressed: input.directlyAddressed,
     unprompted: true,
@@ -549,4 +625,24 @@ export function cannotPossiblyEngage(input: {
     hasParent: true,
   });
   return verdict.decision === 'IGNORE' ? verdict.reason : null;
+}
+
+/**
+ * The audience signals a discovered post arrived with, read off its payload.
+ *
+ * One reader for the cheap triage in ingest and the full decision in the
+ * pipeline, so the two can never disagree about what X said. Anything missing
+ * comes back null, which the scoring treats as not seen rather than as zero.
+ */
+export function audienceOf(raw: unknown): { authorFollowers: number | null; postEngagement: number | null } {
+  const payload = (raw ?? {}) as { author?: { followers?: unknown }; metrics?: Record<string, unknown> };
+  const followers = payload.author?.followers;
+  const metrics = payload.metrics ?? {};
+  const counts = ['replies', 'reposts', 'likes', 'quotes']
+    .map((name) => metrics[name])
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return {
+    authorFollowers: typeof followers === 'number' && Number.isFinite(followers) ? followers : null,
+    postEngagement: counts.length > 0 ? counts.reduce((sum, value) => sum + value, 0) : null,
+  };
 }

@@ -7,7 +7,7 @@ import {
   engagements as engagementsRepo,
   jobs as jobsRepo,
 } from '@xbam/database';
-import { CLAIMABLE_JOB_STATUSES, DELIBERATION_LIMITS } from '@xbam/shared/contracts';
+import { CLAIMABLE_JOB_STATUSES, DEFAULT_POLICY, DELIBERATION_LIMITS } from '@xbam/shared/contracts';
 import { formEngagements, runDueEngagements, setPauseAll, type Observation } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -28,9 +28,22 @@ installHarness();
  */
 
 async function agentThatEngages(
-  over: { autonomy?: 'OBSERVE' | 'THINK' | 'SUGGEST' | 'ACT'; channel?: 'x' | 'mock' } = {},
+  over: {
+    autonomy?: 'OBSERVE' | 'THINK' | 'SUGGEST' | 'ACT';
+    channel?: 'x' | 'mock';
+    maxLikesPerDay?: number;
+  } = {},
 ) {
-  const fixture = await createFixture({ persona: { topics: ['autonomous agents', 'agent memory'] } });
+  const fixture = await createFixture({
+    persona: { topics: ['autonomous agents', 'agent memory'] },
+    ...(over.maxLikesPerDay === undefined
+      ? {}
+      : {
+          policy: {
+            growth: { ...DEFAULT_POLICY.growth, cooldownMinutes: 0, maxLikesPerDay: over.maxLikesPerDay },
+          },
+        }),
+  });
   const account = await accountsRepo.createAccount({
     ownerId: fixture.ownerId,
     channel: over.channel ?? 'x',
@@ -137,6 +150,20 @@ describe('proposing something worth acknowledging', () => {
 });
 
 describe('the autonomy ladder', () => {
+  it('honours a zero autonomous-like ceiling even when the capability is granted', async () => {
+    const agent = await agentThatEngages({ autonomy: 'ACT', channel: 'mock', maxLikesPerDay: 0 });
+    await capabilitiesRepo.grant(agent.agentId, agent.accountId, 'LIKE');
+    await formEngagements(agent.agentId, [seen()]);
+
+    const outcomes = await runDueEngagements(5);
+    expect(outcomes[0]).toMatchObject({ status: 'DECLINED' });
+    expect(outcomes[0]?.detail).toMatch(/likes are switched off by the growth policy/i);
+
+    const [row] = await engagementsRepo.listEngagements(agent.agentId);
+    expect(row?.status).toBe('DECLINED');
+    expect(row?.jobId).toBeNull();
+  });
+
   it('proposes nothing at all below SUGGEST', async () => {
     const agent = await agentThatEngages({ autonomy: 'THINK' });
     // formEngagements is only reached from the wake at SUGGEST; called
@@ -236,7 +263,7 @@ describe('the job it leaves behind', () => {
       being pinned is the row `act()` leaves behind, not whether the remote
       call worked.
     */
-    const agent = await agentThatEngages({ autonomy: 'ACT', channel: 'mock' });
+    const agent = await agentThatEngages({ autonomy: 'ACT', channel: 'mock', maxLikesPerDay: 1 });
     // The grant the default link does not include, without which `mayAct`
     // refuses before a job is ever made. No test reached `act()` before this
     // one, which is how the defect it pins got out.

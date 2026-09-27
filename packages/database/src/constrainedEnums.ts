@@ -99,6 +99,59 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     note: 'Where a reading came from. Nothing outside the database needs to name these yet.',
   },
   {
+    table: 'agent_target_state',
+    column: 'mode',
+    values: ['WATCH', 'PRIORITIZE', 'ENGAGE'],
+    note:
+      'How much attention the owner asked for on a followed account. ENGAGE means every new ' +
+      'eligible post is deliberately considered, which is not the same as every one being answered.',
+  },
+  {
+    table: 'target_post_dispositions',
+    column: 'disposition',
+    values: [
+      'CONSIDERING',
+      'AWAITING_APPROVAL',
+      'INTERACTED',
+      'INTENTIONAL_NO_ACTION',
+      'DUPLICATE',
+      'ALREADY_HANDLED',
+      'COOLDOWN',
+      'POLICY_REFUSAL',
+      'ACCOUNT_DEGRADED',
+      'STALE',
+      'BLOCKED_EXTERNAL',
+      'WATCH_ONLY',
+    ],
+    note:
+      'What became of one post from a followed account. The fault this closes is posts that produced ' +
+      'no job and no reason, so nobody could tell considered-and-refused from never-looked-at.',
+  },
+  {
+    table: 'broad_candidate_decisions',
+    column: 'decision',
+    values: ['QUEUED', 'DECLINED'],
+    note: 'What became of a post the agent came across on its own. Declined is recorded with its reason, never dropped.',
+  },
+  {
+    table: 'x_capacity_ledger',
+    column: 'entry',
+    values: ['READ', 'SIGNAL'],
+    note: 'One read of X, or X pushing back. The meter behind the X budget of an account.',
+  },
+  {
+    table: 'x_capacity_ledger',
+    column: 'class',
+    values: ['DIRECT', 'TARGET', 'BROAD'],
+    note: 'Who the capacity was spent for, in the order it is protected: people who wrote in, watched accounts, then what the agent looks for itself.',
+  },
+  {
+    table: 'x_capacity_ledger',
+    column: 'signal',
+    values: ['RATE_LIMITED', 'STALLED', 'BROKEN'],
+    note: 'What kind of pushback X gave. Not found, protected and signed out are deliberately absent: they say nothing about load.',
+  },
+  {
     table: 'accounts',
     column: 'health',
     values: ['HEALTHY', 'DEGRADED', 'COOLDOWN', 'HUMAN_ACTION_REQUIRED'],

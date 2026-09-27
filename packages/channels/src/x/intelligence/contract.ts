@@ -196,6 +196,14 @@ export interface XPostRecord {
   repost: boolean;
   lang: string | null;
   metrics: XPostMetrics | null;
+  /**
+   * How many people follow the author, as X reported it alongside the post.
+   *
+   * Optional and nullable, and both mean "not seen": a rendered article does
+   * not carry the number, and inventing a zero for it would rank every
+   * unmeasured author as somebody nobody reads.
+   */
+  authorFollowers?: number | null;
   media: XMediaRef[];
   links: string[];
   provenance: XProvenance;

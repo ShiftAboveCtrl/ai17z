@@ -113,6 +113,9 @@ export interface MentionRow {
   replyUrl: string | null;
   repliedAt: string | null;
   conversationId: string | null;
+  /** Which agent this belongs to. Null until something has been queued for it. */
+  agentId: string | null;
+  agentName: string | null;
   threadMessages: number;
   ourTurns: number;
   priorFromPerson: number;

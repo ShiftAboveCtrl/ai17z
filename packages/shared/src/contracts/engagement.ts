@@ -99,7 +99,19 @@ export const OutreachPolicy = z.object({
    * it writes.
    */
   requireTopicMatch: z.boolean().default(true),
-  /** How many people it may approach in a day. Nothing to do with replies. */
+  /**
+   * The smallest audience worth speaking under unasked, when X reported one.
+   *
+   * Zero, the default, sets no floor and leaves audience to the ranking, which
+   * already prefers an author people actually read. A floor is for an owner
+   * who has watched an agent spend its approaches on accounts nobody follows.
+   * An author whose count X did not report is never refused by it: absent is
+   * not zero. Nothing addressed to the agent is ever held to it either.
+   */
+  minAuthorFollowers: z.number().int().min(0).max(100_000_000).default(0),
+  /** How many people it may approach in a rolling hour. Nothing to do with replies. */
+  maxPerHour: z.number().int().min(1).max(50).default(2),
+  /** Optional rolling-day ceiling. Zero disables it; `enabled` is the off switch. */
   maxPerDay: z.number().int().min(0).max(200).default(5),
   /**
    * How long before approaching the same person again.
@@ -183,7 +195,7 @@ export type IntentDecision = z.infer<typeof IntentDecision>;
  * Separate from `OutreachPolicy`, which is about whether one particular post is
  * worth speaking under. This is about the shape of the activity as a whole: how
  * often the agent goes looking at all, for how long, how much it may spend
- * while it is looking, and the hours it leaves alone.
+ * while it is looking, and how quickly it may return for another pass.
  *
  * Every number here is a **ceiling, not a target**. An agent that has not used
  * its budget is not behind on anything, and nothing in the runtime tries to
@@ -206,15 +218,27 @@ export const GrowthPolicy = z.object({
    */
   enabled: z.boolean().default(true),
 
+  /**
+   * Whether optional growth rests for part of the day at all.
+   *
+   * On by default, because an account that goes looking for people at four in
+   * the morning reads as a machine to everybody who sees the timestamp. An
+   * owner may switch it off for one agent; nothing else about pacing moves
+   * with it. Cooldown, the hourly ceiling, the account's X budget and its
+   * health all still apply, so an agent without quiet hours is one that rests
+   * when it has to rather than by the clock.
+   *
+   * A separate switch rather than a start equal to the end, because "off" has
+   * to be something an owner can see they chose.
+   */
+  quietHoursEnabled: z.boolean().default(true),
   /** Where the agent's day is, for the quiet window below. */
   timezone: z.string().max(64).default('UTC'),
   /**
    * The hours optional growth is left alone, as local hours [start, end).
    *
-   * Eight continuous hours by default. An account that goes looking for people
-   * at four in the morning reads as a machine to everybody who sees the
-   * timestamp, and the agent has nothing to gain from the hours nobody is
-   * awake. Overnight windows are allowed and are the normal case.
+   * Eight continuous hours by default. Overnight windows are allowed and are
+   * the normal case.
    *
    * This pauses **optional** growth only. A mention arriving at three in the
    * morning is still answered, subject to the account's own quiet hours, which
@@ -223,7 +247,12 @@ export const GrowthPolicy = z.object({
   quietHoursStart: z.number().int().min(0).max(23).default(23),
   quietHoursEnd: z.number().int().min(0).max(23).default(7),
 
-  /** How many times a day the agent may go looking. */
+  /** How many times in a rolling hour the agent may go looking. */
+  maxSessionsPerHour: z.number().int().min(1).max(12).default(2),
+  /**
+   * Optional rolling-day ceiling. Zero disables it, leaving the hourly ceiling
+   * and cooldown in charge instead of silencing growth for the rest of a day.
+   */
   maxSessionsPerDay: z.number().int().min(0).max(48).default(8),
   /** How long one session may last before it ends itself. */
   sessionMinutes: z.number().int().min(1).max(240).default(15),

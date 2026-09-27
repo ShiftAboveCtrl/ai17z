@@ -88,6 +88,16 @@ export async function sessionsToday(agentId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
+/** How many sessions started in the trailing hour, open one included. */
+export async function sessionsThisHour(agentId: string): Promise<number> {
+  const row = await queryOne<{ n: number }>(
+    `SELECT count(*)::int AS n FROM agent_growth_sessions
+      WHERE agent_id = $1 AND started_at > now() - interval '1 hour'`,
+    [agentId],
+  );
+  return row?.n ?? 0;
+}
+
 /** When the last session ended, for the cooldown. Null if none ever has. */
 export async function lastSessionEndedAt(agentId: string): Promise<string | null> {
   const row = await queryOne<{ ended_at: string }>(

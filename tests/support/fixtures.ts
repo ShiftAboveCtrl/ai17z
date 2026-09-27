@@ -43,6 +43,10 @@ export async function createFixture(overrides: {
     ...DEFAULT_POLICY,
     automation: { mode: 'AUTONOMOUS', dryRunDefault: false },
     rate: { ...DEFAULT_POLICY.rate, minSecondsBetweenActions: 0, maxActionsPerHour: 0, maxActionsPerDay: 0 },
+    // Ordinary runtime tests need every requested wake to run no matter how
+    // quickly two wakes follow each other, or what hour it is in UTC when the
+    // suite happens to run. Tests about quiet hours switch them on themselves.
+    growth: { ...DEFAULT_POLICY.growth, cooldownMinutes: 0, quietHoursEnabled: false },
     // Tests about the queue, the graph and the policy gates use short fixture
     // text that the engagement heuristic would rightly decline to answer.
     // Those tests are not about whether a mention is worth a reply, so the

@@ -233,10 +233,12 @@ async function askDuckDuckGo(page: Page, query: string, limit: number): Promise<
   const found: WebResult[] = [];
 
   for (let index = 0; index < count && found.length < limit; index += 1) {
+    // The results have drawn, so a part one lacks (an ad has no snippet) is
+    // not coming; the default wait for it is thirty seconds per result.
     const result = results.nth(index);
-    const title = (await result.locator('.result__a').first().innerText().catch(() => '')).trim();
-    const snippet = (await result.locator('.result__snippet').first().innerText().catch(() => '')).trim();
-    const href = await result.locator('.result__a').first().getAttribute('href').catch(() => null);
+    const title = (await result.locator('.result__a').first().innerText({ timeout: 1_000 }).catch(() => '')).trim();
+    const snippet = (await result.locator('.result__snippet').first().innerText({ timeout: 1_000 }).catch(() => '')).trim();
+    const href = await result.locator('.result__a').first().getAttribute('href', { timeout: 1_000 }).catch(() => null);
     if (!title && !snippet) continue;
     found.push({ title, snippet: snippet.slice(0, 400), url: unwrap(href), engine: 'DuckDuckGo' });
   }

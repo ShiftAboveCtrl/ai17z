@@ -78,7 +78,7 @@ const ASKS = /\?|^(what|why|how|when|where|who|which|is|are|do|does|did|can|coul
 export function bucketOf(item: Pick<InboxItem, 'state' | 'type' | 'text'>): InboxBucket {
   if (item.state === 'NEEDS_REVIEW') return 'NEEDS_REVIEW';
   if (item.state === 'FAILED') return 'ERRORS';
-  if (item.type === 'KEYWORD_MATCH') return 'OUTREACH';
+  if (item.type === 'KEYWORD_MATCH' || item.type === 'TARGET_ACCOUNT_ACTIVITY') return 'OUTREACH';
   // An answered question is no longer a question anybody is waiting on.
   if (item.state !== 'REPLIED' && ASKS.test(item.text.trim())) return 'QUESTIONS';
   if (item.type === 'REPLY') return 'REPLIES';
@@ -92,16 +92,28 @@ export function bucketOf(item: Pick<InboxItem, 'state' | 'type' | 'text'>): Inbo
  * screen should not cost four round trips, and the counts have to be consistent
  * with the list or the chips lie.
  */
-export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxItem[]> {
+export async function ownerInbox(ownerId: string, limit = 200, agentId: string | null = null): Promise<InboxItem[]> {
   const rows = await query(
     `WITH latest_job AS (
-       SELECT DISTINCT ON (event_id) event_id, id, status, agent_id, error_class,
+       SELECT DISTINCT ON (event_id, agent_id) event_id, id, status, agent_id, error_class,
               validated_output, generated_output
          FROM jobs
-        ORDER BY event_id, created_at DESC
+        WHERE ($3::uuid IS NULL OR agent_id = $3)
+        ORDER BY event_id, agent_id, created_at DESC
+     ),
+     subjects AS (
+       -- Jobs preserve historical ownership; current account links make
+       -- unqueued events explicitly attributable. When an account is shared,
+       -- this produces one truthful row per agent rather than letting one
+       -- agent's job erase the other agent's unactioned sighting.
+       SELECT event_id, agent_id FROM latest_job
+       UNION
+       SELECT e.id, aa.agent_id
+         FROM events e
+         JOIN agent_accounts aa ON aa.account_id = e.account_id
      )
      SELECT e.id                    AS event_id,
-            j.agent_id,
+            s.agent_id              AS agent_id,
             ag.name                 AS agent_name,
             e.type,
             e.remote_author_handle  AS author_handle,
@@ -123,8 +135,9 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
             a.remote_action_url     AS reply_url,
             a.executed_at           AS replied_at
        FROM events e
-       LEFT JOIN latest_job j ON j.event_id = e.id
-       LEFT JOIN agents ag ON ag.id = j.agent_id
+       LEFT JOIN subjects s ON s.event_id = e.id
+       LEFT JOIN latest_job j ON j.event_id = e.id AND j.agent_id = s.agent_id
+       LEFT JOIN agents ag ON ag.id = s.agent_id
        LEFT JOIN accounts acc ON acc.id = e.account_id
        LEFT JOIN LATERAL (
          SELECT payload, remote_action_url, executed_at
@@ -152,7 +165,7 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
         decision must be reachable, or the decision cannot be made.
       */
       WHERE (
-        e.type IN ('MENTION', 'REPLY', 'DIRECT_MESSAGE', 'KEYWORD_MATCH')
+        e.type IN ('MENTION', 'REPLY', 'DIRECT_MESSAGE', 'KEYWORD_MATCH', 'TARGET_ACCOUNT_ACTIVITY')
         OR (e.type = 'SCHEDULED_TRIGGER' AND j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED'))
       )
         /*
@@ -168,6 +181,10 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
           rehearsal ran: the badge went from one to two.
         */
         AND ${NOT_A_REHEARSAL}
+        /* Agent scope is part of the query and therefore happens before the
+           ORDER/LIMIT below. An unclaimed event belongs to an agent only when
+           it arrived on an account linked to that agent. */
+        AND ($3::uuid IS NULL OR s.agent_id = $3)
         -- Owned through either side: an event belongs to this owner if its
         -- account does, or if the agent that worked it does. An account deleted
         -- since must not take its history out of the inbox.
@@ -204,7 +221,7 @@ export async function ownerInbox(ownerId: string, limit = 200): Promise<InboxIte
       ORDER BY coalesce(j.status IN ('WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED'), false) DESC,
                e.ingested_at DESC
       LIMIT $2`,
-    [ownerId, Math.min(limit, 500)],
+    [ownerId, Math.min(limit, 500), agentId],
   );
 
   return mapRows<Omit<InboxItem, 'state'>>(rows).map((row) => ({ ...row, state: stateOf(row.jobStatus) }));

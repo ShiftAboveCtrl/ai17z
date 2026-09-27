@@ -585,8 +585,16 @@ export function PoliciesSection({
                 />
               </Field>
 
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="People a day" hint="Nothing to do with how many replies it sends.">
+              <div className="grid grid-cols-3 gap-4">
+                <Field label="People an hour" hint="A rolling-hour pace. Nothing to do with replies.">
+                  <input
+                    type="number"
+                    className="field"
+                    value={draft.outreach.maxPerHour}
+                    onChange={(e) => patch((n) => void (n.outreach.maxPerHour = Number(e.target.value) || 1))}
+                  />
+                </Field>
+                <Field label="People a day" hint="Optional backstop. Set 0 for no daily stop.">
                   <input
                     type="number"
                     className="field"
@@ -600,6 +608,17 @@ export function PoliciesSection({
                     className="field"
                     value={draft.outreach.cooldownDaysPerAuthor}
                     onChange={(e) => patch((n) => void (n.outreach.cooldownDaysPerAuthor = Number(e.target.value) || 0))}
+                  />
+                </Field>
+                <Field
+                  label="Smallest audience worth approaching"
+                  hint="Followers, when X reports them. 0 leaves it to the ranking. Never applies to anyone who writes to your agent."
+                >
+                  <input
+                    type="number"
+                    className="field"
+                    value={draft.outreach.minAuthorFollowers}
+                    onChange={(e) => patch((n) => void (n.outreach.minAuthorFollowers = Math.max(0, Number(e.target.value) || 0)))}
                   />
                 </Field>
               </div>

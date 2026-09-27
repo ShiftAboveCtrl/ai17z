@@ -229,6 +229,16 @@ export async function planLookups(
     .filter(Boolean)
     .join('\n');
 
+  /*
+    The deadline cancels the call, not only the wait for it.
+
+    Racing a timer against the call stopped the reply waiting, and left the
+    provider generating a plan nobody would read: on a live installation a
+    plan abandoned at 3.5 seconds went on for 8.5, and was billed for all of
+    it. The gateway takes a signal, so the request itself is ended.
+  */
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
       generate({
@@ -240,10 +250,16 @@ export async function planLookups(
         // through three providers has cost more than the mistake it prevents.
         maxCalls: 1,
         messages: [{ role: 'user', content: `${INSTRUCTION}\n\n${described}` }],
+        signal: abort.signal,
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`planning took longer than ${bound}ms`)), bound),
-      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          // The deadline first, so the reason recorded is the deadline and
+          // not the cancellation it causes.
+          reject(new Error(`planning took longer than ${bound}ms`));
+          abort.abort();
+        }, bound);
+      }),
     ]);
 
     const parsed = parsePlan(result.text);
@@ -260,5 +276,7 @@ export async function planLookups(
     const why = errorMessage(error);
     log.debug('planning fell back to the rules', { jobId, message: why });
     return { ...rules, fellBackBecause: why };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

@@ -305,7 +305,10 @@ function buildBrief(
     extra.push(
       '',
       'DO NOT REPEAT',
-      `The agent recently posted: "${repetition.matched}"`,
+      // A habit has no one post to quote; it is a phrase across many.
+      repetition.matchedAt
+        ? `The agent recently posted: "${repetition.matched}"`
+        : `The agent keeps using the phrase "${repetition.matched}". Do not use it here.`,
       'Say this differently.',
     );
   }

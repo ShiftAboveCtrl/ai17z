@@ -109,9 +109,11 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
     fifteen would be a form rather than an answer.
   */
   'growth.enabled': { where: 'ADVANCED_ONLY' },
+  'growth.quietHoursEnabled': { where: 'ADVANCED_ONLY' },
   'growth.timezone': { where: 'ADVANCED_ONLY' },
   'growth.quietHoursStart': { where: 'ADVANCED_ONLY' },
   'growth.quietHoursEnd': { where: 'ADVANCED_ONLY' },
+  'growth.maxSessionsPerHour': { where: 'ADVANCED_ONLY' },
   'growth.maxSessionsPerDay': { where: 'ADVANCED_ONLY' },
   'growth.sessionMinutes': { where: 'ADVANCED_ONLY' },
   'growth.cooldownMinutes': { where: 'ADVANCED_ONLY' },
@@ -151,6 +153,8 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   },
   'outreach.cooldownDaysPerAuthor': { where: 'ADVANCED_ONLY' },
   'outreach.enabled': { where: 'EASY_AND_ADVANCED' },
+  'outreach.maxPerHour': { where: 'ADVANCED_ONLY' },
+  'outreach.minAuthorFollowers': { where: 'ADVANCED_ONLY' },
   'outreach.maxPerDay': { where: 'ADVANCED_ONLY' },
   'outreach.minimumValue': { where: 'ADVANCED_ONLY' },
   'outreach.mode': { where: 'EASY_AND_ADVANCED' },

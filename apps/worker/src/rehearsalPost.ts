@@ -80,6 +80,7 @@ export async function rehearseAgainstPost(input: {
   agentId: string;
   postRef: string;
   requestedBy: string | null;
+  as?: 'MENTION' | 'KEYWORD_MATCH' | 'TARGET_ACCOUNT_ACTIVITY';
 }): Promise<RehearsalReadResult> {
   const postId = postIdFrom(input.postRef);
   if (!postId) {
@@ -133,7 +134,16 @@ export async function rehearseAgainstPost(input: {
     }
   }
 
-  const subject = subjectFrom(post, parent, gaps);
+  const subject = {
+    ...subjectFrom(post, parent, gaps),
+    as: input.as ?? 'MENTION',
+    authorFollowers: post.authorFollowers ?? null,
+    metrics: post.metrics
+      ? Object.fromEntries(
+          Object.entries(post.metrics).filter((entry): entry is [string, number] => typeof entry[1] === 'number'),
+        )
+      : null,
+  };
   const run = await rehearse({
     agentId: input.agentId,
     accountId: account.id,

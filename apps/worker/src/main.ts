@@ -2,6 +2,7 @@ import { hostname } from 'node:os';
 import { createLogger, describeVersion, envInt, envString, errorMessage, loadEnv, thisWorkerId } from '@xbam/shared';
 import {
   accounts as accountsRepo,
+  broadCandidates as broadCandidatesRepo,
   browserTasks,
   closePool,
   content,
@@ -174,6 +175,14 @@ async function main(): Promise<void> {
       if (handled > 0) log.info('answered the owner on Telegram', { handled });
     } catch (error) {
       log.warn('could not read Telegram messages', { message: errorMessage(error) });
+    }
+    // A week of broad-discovery decisions is plenty to answer "why was it
+    // quiet". Pruned here, on the tick that already exists, rather than on a
+    // timer of its own; about once an hour is enough.
+    if (Math.random() < 1 / 60) {
+      await broadCandidatesRepo.prune().catch((error) => {
+        log.warn('could not prune broad candidate decisions', { message: errorMessage(error) });
+      });
     }
   };
   await sweep();

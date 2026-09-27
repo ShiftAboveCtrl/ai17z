@@ -1,5 +1,4 @@
-import type { CadenceConfig } from '@xbam/shared/contracts';
-import { defaultCadence } from '@xbam/shared/contracts';
+import { CadenceConfig, defaultCadence } from '@xbam/shared/contracts';
 import { XbamError } from '@xbam/shared';
 import { mapRow, mapRows } from '../mapper';
 import { query, queryOne, withTransaction } from '../pool';
@@ -34,7 +33,10 @@ export async function activeCadence(accountId: string): Promise<CadenceConfig> {
       WHERE a.id = $1`,
     [accountId],
   );
-  return row ? row.config : defaultCadence();
+  // Parsed rather than trusted, so a version saved before a section existed
+  // reads with that section's defaults instead of without it. `capacity` is
+  // the case that made this matter: every stored cadence predates it.
+  return row ? CadenceConfig.parse(row.config ?? {}) : defaultCadence();
 }
 
 export async function listVersions(accountId: string): Promise<CadenceVersionRow[]> {
@@ -120,7 +122,7 @@ export async function claimDueAccounts(limit: number, holdSeconds: number): Prom
   );
   return mapRows<{ config: CadenceConfig | null } & Omit<DueAccount, 'config'>>(rows).map((row) => ({
     ...row,
-    config: row.config ?? defaultCadence(),
+    config: row.config ? CadenceConfig.parse(row.config) : defaultCadence(),
   }));
 }
 

@@ -268,6 +268,72 @@ export async function approachesSince(agentId: string, sinceIso: string): Promis
 }
 
 /**
+ * How this agent's unprompted approaches to one author have gone.
+ *
+ * Counted from what was published under their posts, and answered means they
+ * wrote to the agent afterwards on the same account: a mention or a reply
+ * arriving after the first approach. Bounded to the trailing thirty days, so an
+ * old silence is forgiven and an old conversation stops counting for ever.
+ */
+export async function approachHistory(
+  agentId: string,
+  handle: string,
+): Promise<{ approaches: number; answered: boolean }> {
+  const row = await queryOne<{ approaches: number; first_at: string | null; account_id: string | null }>(
+    `SELECT count(*)::int AS approaches, min(a.executed_at) AS first_at, min(a.account_id::text) AS account_id
+       FROM actions a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN events e ON e.id = j.event_id
+      WHERE a.agent_id = $1
+        AND a.dry_run = false
+        AND a.status = 'EXECUTED'
+        AND e.type = 'KEYWORD_MATCH'
+        AND lower(e.remote_author_handle) = lower($2)
+        AND a.executed_at > now() - interval '30 days'`,
+    [agentId, handle.replace(/^@+/, '')],
+  );
+  const approaches = row?.approaches ?? 0;
+  if (approaches === 0 || !row?.first_at || !row.account_id) return { approaches, answered: false };
+  const answered = await queryOne<{ n: number }>(
+    `SELECT count(*)::int AS n FROM events
+      WHERE account_id = $1
+        AND type IN ('MENTION', 'REPLY')
+        AND lower(remote_author_handle) = lower($2)
+        AND ingested_at > $3`,
+    [row.account_id, handle.replace(/^@+/, ''), row.first_at],
+  );
+  return { approaches, answered: (answered?.n ?? 0) > 0 };
+}
+
+/**
+ * Authors this agent approached unasked recently, and authors who have written
+ * to it: the two sets the discovery ranker reads before choosing whom to look
+ * at more closely.
+ */
+export async function discoveryMemory(
+  agentId: string,
+  accountId: string,
+): Promise<{ contactedRecently: string[]; engagedWithUs: string[] }> {
+  const contacted = await query<{ handle: string }>(
+    `SELECT DISTINCT lower(e.remote_author_handle) AS handle
+       FROM actions a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN events e ON e.id = j.event_id
+      WHERE a.agent_id = $1 AND a.dry_run = false AND a.status = 'EXECUTED'
+        AND e.type = 'KEYWORD_MATCH' AND e.remote_author_handle IS NOT NULL
+        AND a.executed_at > now() - interval '7 days'`,
+    [agentId],
+  );
+  const engaged = await query<{ handle: string }>(
+    `SELECT DISTINCT lower(remote_author_handle) AS handle FROM events
+      WHERE account_id = $1 AND type IN ('MENTION', 'REPLY') AND remote_author_handle IS NOT NULL
+        AND ingested_at > now() - interval '30 days'`,
+    [accountId],
+  );
+  return { contactedRecently: contacted.map((r) => r.handle), engagedWithUs: engaged.map((r) => r.handle) };
+}
+
+/**
  * Unprompted approaches already written and waiting on the owner.
  *
  * `approachesSince` counts what was *published*, which is the right meaning of

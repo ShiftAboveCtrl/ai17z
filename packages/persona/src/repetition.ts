@@ -80,6 +80,86 @@ export function opener(text: string, count = 4): string {
   return words(text).slice(0, count).join(' ');
 }
 
+/** Words too common for a run of them to be anybody's habit. */
+const FUNCTION_WORDS = new Set([
+  'i','me','my','you','your','it','its','the','a','an','and','or','but','to','of','in','on','at','for','with','is','are',
+  'was','be','been','that','this','so','not','do','does','did','if','as','by','from','we','they','he','she','them','im',
+  'dont','s','t','m','re','ll','d','ve',
+  // What normalising leaves of a contraction: "don't" is "don t".
+  'don','won','can','isn','doesn','didn','wasn','aren','couldn','wouldn','shouldn','haven','hasn','ain',
+]);
+
+/** How many recent outputs a phrase must appear in before it is a habit. */
+export const HABIT_MIN_POSTS = 3;
+
+/**
+ * Phrases this agent keeps coming back to, across many things it said.
+ *
+ * The per-post comparison below cannot see this: "self hosted chrome runtime"
+ * in five different replies is a small overlap with each one and a tic across
+ * all of them. Measured on a live agent's published history, the same
+ * three-word runs recurred in five and six replies each, and nothing had ever
+ * flagged them.
+ *
+ * A run of three words counts only when at least one of them is not a function
+ * word, so "i don t" and "it is the" are never anybody's habit. Overlapping runs
+ * are reported once, as the more frequent of them.
+ */
+export function habitualPhrases(recent: readonly string[], minPosts = HABIT_MIN_POSTS, max = 5): { phrase: string; posts: number }[] {
+  const counts = new Map<string, number>();
+  for (const text of recent) {
+    for (const gram of trigrams(text)) {
+      if (gram.split(' ').every((w) => FUNCTION_WORDS.has(w))) continue;
+      counts.set(gram, (counts.get(gram) ?? 0) + 1);
+    }
+  }
+  const frequent = new Set([...counts.entries()].filter(([, n]) => n >= minPosts).map(([gram]) => gram));
+
+  // Chain overlapping runs into the phrase they are pieces of: "the self
+  // hosted", "self hosted chrome" and "hosted chrome runtime" are one habit.
+  const phrases = new Set<string>();
+  for (const gram of frequent) {
+    let wordsOf = gram.split(' ');
+    for (let grown = true; grown; ) {
+      grown = false;
+      const tail = wordsOf.slice(-2).join(' ');
+      const head = wordsOf.slice(0, 2).join(' ');
+      for (const other of frequent) {
+        const o = other.split(' ');
+        if (wordsOf.length < 8 && `${o[0]} ${o[1]}` === tail && !wordsOf.includes(o[2]!)) {
+          wordsOf = [...wordsOf, o[2]!];
+          grown = true;
+          break;
+        }
+        if (wordsOf.length < 8 && `${o[1]} ${o[2]}` === head && !wordsOf.includes(o[0]!)) {
+          wordsOf = [o[0]!, ...wordsOf];
+          grown = true;
+          break;
+        }
+      }
+    }
+    phrases.add(wordsOf.join(' '));
+  }
+
+  // A chained phrase is only a habit if it really recurs whole; otherwise the
+  // longest piece that does is reported.
+  const normalised = recent.map((text) => ` ${words(text).join(' ')} `);
+  const postsWith = (phrase: string) => normalised.filter((text) => text.includes(` ${phrase} `)).length;
+  const measured = [...phrases]
+    .map((phrase) => ({ phrase, posts: postsWith(phrase) }))
+    .map((entry) => (entry.posts >= minPosts ? entry : null))
+    .filter((entry): entry is { phrase: string; posts: number } => entry !== null);
+  for (const gram of frequent) {
+    if (![...measured].some((m) => ` ${m.phrase} `.includes(` ${gram} `))) measured.push({ phrase: gram, posts: counts.get(gram)! });
+  }
+
+  const ranked = measured
+    .filter((entry, _, all) => !all.some((other) => other !== entry && other.phrase.length > entry.phrase.length && ` ${other.phrase} `.includes(` ${entry.phrase} `)))
+    .sort((a, b) => b.posts - a.posts || b.phrase.length - a.phrase.length || a.phrase.localeCompare(b.phrase));
+  const unique = ranked.filter((entry, index) => ranked.findIndex((other) => other.phrase === entry.phrase) === index);
+  return unique.slice(0, max);
+}
+
 export interface RecentPost {
   text: string;
   at: string;
@@ -202,6 +282,31 @@ export function scoreRepetition(
         reason,
         matched: post.text.slice(0, 200),
         matchedAt: post.at,
+      };
+    }
+  }
+
+  /*
+    A phrase the agent keeps returning to, across posts rather than within one.
+    Three recent outputs asks nothing on its own; four is over the default
+    rewrite threshold of 80, because by then it is a tic somebody following
+    the account will have noticed. A signature phrase is exempt: recurring is
+    what it is for, and its own rest period above governs it.
+  */
+  const draftGrams = trigrams(draft);
+  for (const habit of habitualPhrases(recent.map((post) => post.text))) {
+    // Any three words of the habit in a row, since "the" or a trailing word
+    // may differ while the tic is the same.
+    const piece = [...trigrams(habit.phrase)].find((gram) => draftGrams.has(gram) && !gram.split(' ').every((w) => FUNCTION_WORDS.has(w)));
+    if (!piece) continue;
+    if (signatures.some((phrase) => phrase.includes(habit.phrase) || habit.phrase.includes(phrase))) continue;
+    const score = Math.min(95, 52 + 8 * habit.posts);
+    if (score > worst.score) {
+      worst = {
+        score,
+        reason: `leans on "${habit.phrase}", already in ${habit.posts} recent replies`,
+        matched: habit.phrase,
+        matchedAt: null,
       };
     }
   }

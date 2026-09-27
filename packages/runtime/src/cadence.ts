@@ -1,5 +1,6 @@
-import type { CadenceConfig, QuietHours } from '@xbam/shared/contracts';
+import type { CadenceConfig, CapacityClass, QuietHours } from '@xbam/shared/contracts';
 import { cadences as cadencesRepo, jobs as jobsRepo } from '@xbam/database';
+import { checkWriteCapacity } from './capacity';
 
 /**
  * The cadence engine.
@@ -90,7 +91,27 @@ export async function checkAccountCadence(
   accountId: string,
   config: CadenceConfig,
   now: Date = new Date(),
+  /**
+   * Who the action is for. When given, the account's X breaker is asked first:
+   * a cooldown holds every new action, and early pressure holds approaches to
+   * strangers while replies to people who wrote in continue.
+   */
+  klass?: CapacityClass,
 ): Promise<CadenceDecision> {
+  if (klass) {
+    const capacity = await checkWriteCapacity(accountId, klass, now);
+    if (!capacity.allowed) {
+      return {
+        allow: false,
+        reason: 'account_capacity',
+        message: capacity.message,
+        // A person-shaped hold has no time to wait for; ask again in a while
+        // rather than never, because the account is re-judged on every ask.
+        retryAfterMs: capacity.retryAfterMs ?? 15 * 60_000,
+        boundBy: 'account',
+      };
+    }
+  }
   if (withinQuietHours(config.quietHours, now)) {
     return {
       allow: false,
@@ -146,6 +167,6 @@ export async function checkAccountCadence(
 }
 
 /** Loads the cadence in force and evaluates it. */
-export async function checkAccountCadenceById(accountId: string): Promise<CadenceDecision> {
-  return checkAccountCadence(accountId, await cadencesRepo.activeCadence(accountId));
+export async function checkAccountCadenceById(accountId: string, klass?: CapacityClass): Promise<CadenceDecision> {
+  return checkAccountCadence(accountId, await cadencesRepo.activeCadence(accountId), new Date(), klass);
 }

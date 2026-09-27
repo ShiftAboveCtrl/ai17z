@@ -92,6 +92,7 @@ export async function pollViaIntelligence(
       return search(ctx, `to:${me} -from:${me}`, 'REPLY');
 
     case 'tracked_keyword':
+    case 'persona_discovery':
       if (!ctx.target) return null;
       return search(ctx, ctx.target, 'POST');
 
@@ -311,6 +312,14 @@ export function toCandidates(
           quietly meaning zero.
         */
         ...(post.metrics ? { metrics: compactMetrics(post.metrics) } : {}),
+        /*
+          The author's audience, when X said it. Proactive growth ranks on it
+          and may set a floor with it; nothing addressed to the agent ever
+          reads it, because somebody who wrote in is answered whoever they are.
+        */
+        ...(typeof post.authorFollowers === 'number' && Number.isFinite(post.authorFollowers)
+          ? { author: { followers: post.authorFollowers } }
+          : {}),
       },
     });
   }

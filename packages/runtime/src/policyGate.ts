@@ -1,4 +1,4 @@
-import type { PolicyConfig, ResolvedContext } from '@xbam/shared/contracts';
+import type { CapacityClass, PolicyConfig, ResolvedContext } from '@xbam/shared/contracts';
 import { jobs as jobsRepo, observability } from '@xbam/database';
 import { checkAccountCadenceById } from './cadence';
 
@@ -95,11 +95,13 @@ export async function checkActionRate(
   agentId: string,
   policy: PolicyConfig,
   accountId?: string | null,
+  /** Who this action is for, so the account's X breaker can hold it in order. */
+  klass?: CapacityClass,
 ): Promise<GateDecision> {
   const now = new Date();
 
   if (accountId) {
-    const account = await checkAccountCadenceById(accountId);
+    const account = await checkAccountCadenceById(accountId, klass);
     if (!account.allow) {
       return {
         allow: false,

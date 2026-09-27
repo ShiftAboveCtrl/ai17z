@@ -125,10 +125,33 @@ export async function reconcileCandidates(input: ReconcileInput): Promise<Reconc
     // counting it as "context only". Watching an account for context produced
     // no context, no event, and no record that anything had been seen.
     const recordOnly = !input.mayTrigger;
+    /*
+      The one place the owner's intent used to be thrown away.
+
+      `tracked_account` is a watch somebody added on purpose, and its monitor
+      emits POST like the keyword monitor does. Translating both to
+      KEYWORD_MATCH made a named account indistinguishable from a stranger
+      matched on a word, and the stranger guards then did exactly what they are
+      for: a topic-match requirement, a value floor, and a four-day per-author
+      cooldown that locked out the only account the owner had asked the agent
+      to follow.
+
+      The source kind is already known here and was already being recorded as a
+      discovery. It simply was not allowed to survive into the event, which is
+      the thing every later reader looks at.
+    */
+    const event = toEvent(candidate);
+    const owned =
+      input.sourceKind === 'tracked_account' && event.type === 'KEYWORD_MATCH'
+        ? { ...event, type: 'TARGET_ACCOUNT_ACTIVITY' as const }
+        : event;
     const outcome = await ingestNormalizedEvent({
       accountId: input.accountId,
-      event: toEvent(candidate),
+      event: owned,
       recordOnly,
+      ...(input.sourceKind === 'tracked_account' && input.sourceId
+        ? { ownerTargetSourceId: input.sourceId, ownerTargetHandle: candidate.authorHandle ?? undefined }
+        : {}),
     });
 
     // Recorded whether or not the event is new: knowing that a source keeps

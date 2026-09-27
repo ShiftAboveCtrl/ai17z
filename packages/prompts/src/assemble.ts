@@ -69,6 +69,30 @@ export interface AssembleInput {
    * experiment would be measuring the harness.
    */
   experiment?: { label: string; instruction: string };
+  /**
+   * Whether this reply is the agent joining somebody's conversation unasked.
+   *
+   * STRANGER is a post it came across; TARGET is a post by an account its
+   * owner asked it to follow. Absent means somebody spoke to it, which is the
+   * only case the ordinary reply instruction was written for.
+   */
+  approach?: 'STRANGER' | 'TARGET' | null;
+  /**
+   * Phrases this agent has recently used in several different outputs, to be
+   * avoided in this one. Computed from what it published, never from drafts.
+   */
+  habits?: readonly string[];
+  /**
+   * The message asks the agent about itself: what it is doing, thinking,
+   * working on. See `selfNote`.
+   */
+  aboutSelf?: boolean;
+  /**
+   * How long this agent's published replies usually run, from its voice
+   * fingerprint: the median, and the length past which the voice check will
+   * hold a draft. Absent when nothing has been measured.
+   */
+  usualLength?: { median: number; ceiling: number } | null;
 }
 
 export interface AssembledPrompt {
@@ -76,6 +100,31 @@ export interface AssembledPrompt {
   messages: ChatMessage[];
   /** Flattened text stored with the model call so a generation is reproducible. */
   promptText: string;
+}
+
+/**
+ * What an agent may say when asked about itself.
+ *
+ * Measured on a live agent whose voice is modelled on a real founder: asked
+ * "what are you working on right now?", it answered that it was heads down on
+ * that founder's product, which is the founder's life presented as its own.
+ * Its persona already forbade exactly that, and the model reached for the one
+ * true-sounding answer it had. So the question itself carries the rule.
+ */
+function selfNote(aboutSelf: boolean | undefined): string {
+  if (!aboutSelf) return '';
+  return ' They are asking about you. Answer only from what is written above about your own state and what you have actually done on this account. You are an AI agent: never present the work, projects, plans or life of anybody your voice is modelled on as your own, and never invent something you are doing. If nothing above answers it, say so plainly.';
+}
+
+/**
+ * Names the phrases this agent has been leaning on, so it does not reach for
+ * them again. Quoted exactly, because a model told to avoid "repetition" in
+ * general has nothing to act on.
+ */
+function habitNote(habits: readonly string[] | undefined): string {
+  if (!habits || habits.length === 0) return '';
+  const quoted = habits.map((habit) => `"${habit}"`).join(', ');
+  return ` You have used these phrases in several recent replies, so do not use them here: ${quoted}.`;
 }
 
 const LENGTH_HINTS: Record<PersonaVersion['responseLength'], string> = {
@@ -264,6 +313,7 @@ function renderOutputRules(
   policy: PolicyConfig,
   extra?: string,
   incoming?: string,
+  usualLength?: { median: number; ceiling: number } | null,
 ): string {
   const rules: string[] = [`Stay under ${policy.output.maxCharacters} characters.`];
   if (policy.output.minCharacters > 1) rules.push(`Write at least ${policy.output.minCharacters} characters.`);
@@ -279,6 +329,17 @@ function renderOutputRules(
   rules.push(
     envelope ? lengthInstruction(envelope, LENGTH_CEILING[persona.responseLength]) : LENGTH_HINTS[persona.responseLength],
   );
+  /*
+    The number the draft will be judged against, said before it is written.
+    Measured on a live agent at the Fast setting, which may not rewrite: four
+    drafts of 138 to 193 characters went to review for sounding unlike an
+    agent that rarely passes 72, and nothing had told the model 72.
+  */
+  if (usualLength && usualLength.median > 0) {
+    rules.push(
+      `Your replies usually run about ${Math.round(usualLength.median)} characters. Keep this one under ${Math.round(usualLength.ceiling)} unless the question genuinely needs more.`,
+    );
+  }
   if (policy.output.forbidHashtags) rules.push('Do not use hashtags.');
   if (policy.output.forbidLinks) rules.push('Do not include links.');
   if (policy.output.forbidMentionsOfOthers) rules.push('Do not mention other accounts.');
@@ -380,7 +441,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
     incomingText: context.incomingText,
     toolsBlock: bulletList(input.toolDescriptions),
-    outputRules: renderOutputRules(persona, policy, input.experiment?.instruction, context.incomingText),
+    outputRules: renderOutputRules(persona, policy, input.experiment?.instruction, context.incomingText, input.usualLength),
     // The TASK layer reads this. A post has no incoming message to answer, and
     // telling a model to "reply" to its own brief produces something that reads
     // like half a conversation.
@@ -389,12 +450,36 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     // because "reply to the incoming message" left that implicit and the model
     // drifted into the third person: paid a compliment, the agent answered
     // "they keep things sharp", reviewing itself as a bystander.
+    /*
+      Joining a conversation is not answering a question, and the instruction
+      has to say which one this is.
+
+      Every reply used to be told "They are speaking to you. Answer them." Under
+      a post the agent found on its own, nobody spoke to it, and a model told to
+      answer writes an answer: it explains the post back to its author, sums up
+      the numbers in it, and hedges. Measured on a live agent, that is the
+      difference between "Dry til it isnt, and when it sends it sends fast" to
+      somebody who wrote in and "28.9h to graduation with 464 holders looks like
+      real demand, even if I can't verify..." under a stranger's post. The voice
+      it was modelled on reacts in five words, asks one pointed question, or
+      jokes.
+    */
     taskInstruction:
-      input.actionType === 'POST'
+      (input.actionType === 'POST'
         ? `Write one ${input.channelName} post, as ${persona.displayName}. Nobody asked you anything; this is something you wanted to say.`
-        : `Write one ${input.channelName} reply, as ${persona.displayName}, to ${
+        : input.approach
+          ? `Write one ${input.channelName} reply, as ${persona.displayName}, under ${
+              context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}'s` : 'this'
+            } post. ${
+              input.approach === 'TARGET'
+                ? 'This is somebody you follow closely and know well; talk to them the way you would to them.'
+                : 'They did not write to you. You are joining their conversation because it is about something you know.'
+            } Say one thing worth reading: a reaction, one sharp question, a joke, or a concrete point only somebody who knows this space would make. One line, usually under ninety characters; a few words is often best. Do not explain their post back to them, do not summarise it or repeat its numbers, do not promote anything, and do not announce or promise anything on behalf of a project or team.`
+          : `Write one ${input.channelName} reply, as ${persona.displayName}, to ${
             context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'the person'
-          }. They are speaking to you. Answer them — address them, not a third party, and never describe yourself from the outside.`,
+          }. They are speaking to you. Answer them — address them, not a third party, and never describe yourself from the outside.`) +
+      (input.actionType === 'POST' ? '' : selfNote(input.aboutSelf)) +
+      habitNote(input.habits),
   };
 
   const layers: PromptLayer[] = [];

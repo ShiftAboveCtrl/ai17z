@@ -77,6 +77,40 @@ export async function ingestEvent(
   return { event: mapRow<EventRecord>(existing) as EventRecord, created: false };
 }
 
+/**
+ * Preserves stronger owner intent when a post was first seen by a generic
+ * monitor and later corroborated by an explicit tracked-account watch.
+ *
+ * The event identity does not change. Only its semantic kind is promoted;
+ * nothing may demote a target event back to a keyword match on a later poll.
+ */
+export async function promoteToTargetActivity(tx: Tx, eventId: string): Promise<void> {
+  await tx.many(
+    `UPDATE events
+        SET type = 'TARGET_ACCOUNT_ACTIVITY'
+      WHERE id = $1 AND type = 'KEYWORD_MATCH'`,
+    [eventId],
+  );
+}
+
+/**
+ * Which of these posts this account has already recorded.
+ *
+ * Discovery asks before ranking, so the few places it has go to conversations
+ * it has not seen. Measured on a live agent: popular posts stay popular for
+ * hours, the same ones came back search after search, and a ranker that could
+ * not tell took its three slots with posts already on record and found nothing
+ * new for most of an evening.
+ */
+export async function knownRemoteIds(accountId: string, remoteIds: string[]): Promise<Set<string>> {
+  if (remoteIds.length === 0) return new Set();
+  const rows = await query<{ remote_event_id: string }>(
+    `SELECT remote_event_id FROM events WHERE account_id = $1 AND remote_event_id = ANY($2::text[])`,
+    [accountId, remoteIds],
+  );
+  return new Set(rows.map((row) => row.remote_event_id));
+}
+
 export async function getEvent(id: string): Promise<EventRecord | null> {
   return mapRow<EventRecord>(await queryOne(`SELECT ${COLUMNS} FROM events WHERE id = $1`, [id]));
 }

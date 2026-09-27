@@ -35,6 +35,7 @@ const KIND_NAMES: Record<string, string> = {
   own_threads: 'Replies to own posts',
   tracked_account: 'Watched account',
   tracked_keyword: 'Watched topic',
+  persona_discovery: 'Goes looking on its own',
 };
 
 const KIND_HINTS: Record<string, string> = {
@@ -44,6 +45,8 @@ const KIND_HINTS: Record<string, string> = {
   own_threads: 'Reads replies underneath recent posts, which often produce no notification.',
   tracked_account: 'Watches an account for context. Watching is not permission to reply.',
   tracked_keyword: 'Watches a keyword, ticker, or custom search query.',
+  persona_discovery:
+    'Searches X for its own topics once per growth session, only posts people are already responding to, best few kept.',
 };
 
 const TONE: Record<string, 'live' | 'wait' | 'fail' | 'idle'> = {
@@ -258,7 +261,10 @@ function AddWatchModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const options = supported.filter((k) => k === 'tracked_account' || k === 'tracked_keyword');
+  const options = supported.filter(
+    (k) => k === 'tracked_account' || k === 'tracked_keyword' || k === 'persona_discovery',
+  );
+  const needsTarget = kind !== 'persona_discovery';
 
   const save = async () => {
     setBusy(true);
@@ -266,7 +272,7 @@ function AddWatchModal({
     try {
       await post(`/api/accounts/${accountId}/radar`, {
         kind,
-        target: target.trim(),
+        target: needsTarget ? target.trim() : null,
         label: '',
         config: { mayTrigger },
       });
@@ -302,6 +308,7 @@ function AddWatchModal({
           </div>
         </Field>
 
+        {needsTarget && (
         <Field
           label={kind === 'tracked_account' ? 'Handle' : 'Keyword or query'}
           htmlFor="rtarget"
@@ -315,6 +322,7 @@ function AddWatchModal({
             placeholder={kind === 'tracked_account' ? 'someone' : 'project name'}
           />
         </Field>
+        )}
 
         <label className="flex items-start gap-3 rounded-lg border border-ink-line px-3.5 py-3">
           <input

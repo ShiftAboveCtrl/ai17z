@@ -571,6 +571,9 @@ export class BrowserTaskRunner {
           agentId,
           postRef,
           requestedBy: typeof task.params.requestedBy === 'string' ? task.params.requestedBy : null,
+          ...(task.params.as === 'KEYWORD_MATCH' || task.params.as === 'TARGET_ACCOUNT_ACTIVITY'
+            ? { as: task.params.as }
+            : {}),
         });
 
         return {

@@ -220,6 +220,43 @@ describe('source health is per source, not per account', () => {
     expect(due.map((s) => s.kind)).toContain('mention_search');
     expect(due.map((s) => s.kind)).not.toContain('notifications');
   });
+
+  it('only advances siblings whose same failure was proved recovered', async () => {
+    const fixture = await createFixture();
+    const account = await linkedAccount(fixture.ownerId, fixture.agentId);
+    const recovered = await radar.upsertSource({ accountId: account.id, kind: 'notifications' });
+    const sameFailure = await radar.upsertSource({ accountId: account.id, kind: 'mention_search' });
+    const differentFailure = await radar.upsertSource({ accountId: account.id, kind: 'reply_search' });
+    const later = new Date(Date.now() + 20 * 60_000);
+
+    await radar.recordPoll({
+      sourceId: recovered.id,
+      nextPollAt: later,
+      found: 0,
+      error: 'Nothing was listening where the browser used to be.',
+    });
+    await radar.recordPoll({
+      sourceId: sameFailure.id,
+      nextPollAt: later,
+      found: 0,
+      error: 'Nothing was listening where the browser used to be.',
+    });
+    await radar.recordPoll({
+      sourceId: differentFailure.id,
+      nextPollAt: later,
+      found: 0,
+      error: 'X asked AI17Z to slow down. It stopped rather than pushing.',
+    });
+
+    const beforeRecovery = (await radar.getSource(recovered.id))!;
+    await radar.recordPoll({ sourceId: recovered.id, nextPollAt: later, found: 1 });
+    expect(await radar.retryFailingSources(account.id, recovered.id, beforeRecovery.lastError!)).toBe(1);
+
+    const matching = (await radar.getSource(sameFailure.id))!;
+    const unrelated = (await radar.getSource(differentFailure.id))!;
+    expect(new Date(matching.nextPollAt!).getTime()).toBeLessThanOrEqual(Date.now() + 5_000);
+    expect(new Date(unrelated.nextPollAt!).getTime()).toBeGreaterThan(Date.now() + 10 * 60_000);
+  });
 });
 
 describe('polling schedule', () => {

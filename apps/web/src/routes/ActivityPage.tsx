@@ -43,6 +43,8 @@ const KIND_LABELS: Record<string, string> = {
 
 interface AttentionItem {
   jobId: string;
+  agentId: string;
+  agentName: string | null;
   kind: string;
   eventType: string;
   authorHandle: string | null;
@@ -83,8 +85,23 @@ const CHIP = (active: boolean) =>
   }`;
 
 export function ActivityPage() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const agentId = params.get('agentId');
+  /*
+    Every agent this owner has, so the list can be scoped to one.
+
+    Kept in the URL rather than in component state: an owner who filters to
+    one agent and then opens a job expects to come back to the same list, and
+    a deep link that silently loses the scope shows somebody else's rows.
+  */
+  const agents = useResource<{ items: { id: string; name: string }[] }>('/api/agents');
+  const manyAgents = (agents.data?.items.length ?? 0) > 1;
+  const scopeTo = (id: string | null) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set('agentId', id);
+    else next.delete('agentId');
+    setParams(next, { replace: true });
+  };
   const [view, setView] = useState<(typeof VIEWS)[number]['key']>('inbox');
   const [filter, setFilter] = useState<(typeof FILTERS)[number]['key']>('all');
   const [mentionFilter, setMentionFilter] = useState<MentionState | 'all'>('all');
@@ -111,8 +128,9 @@ export function ActivityPage() {
     const query = new URLSearchParams({ limit: '40' });
     if (agentId) query.set('agentId', agentId);
     if (mentionFilter !== 'all') query.set('state', mentionFilter);
+    if (directOnly) query.set('directOnly', 'true');
     return `/api/mentions?${query.toString()}`;
-  }, [agentId, mentionFilter]);
+  }, [agentId, mentionFilter, directOnly]);
 
   const jobs = useResource<{ items: JobSummary[]; total: number }>(path);
   const waiting = useResource<AttentionWindowData>(
@@ -239,6 +257,29 @@ export function ActivityPage() {
 
       <div className="scroll-x mb-10 -mx-6 px-6 sm:mx-0 sm:px-0">
         <div className="flex gap-2">
+          {manyAgents && (
+            <>
+              <button
+                type="button"
+                onClick={() => scopeTo(null)}
+                aria-pressed={!agentId}
+                className={CHIP(!agentId)}
+              >
+                All agents
+              </button>
+              {agents.data?.items.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => scopeTo(a.id)}
+                  aria-pressed={agentId === a.id}
+                  className={CHIP(agentId === a.id)}
+                >
+                  {a.name}
+                </button>
+              ))}
+            </>
+          )}
           {/*
             Who wrote in, as opposed to what the agent came across.
 
@@ -306,6 +347,7 @@ export function ActivityPage() {
                       {KIND_LABELS[item.kind] ?? item.kind}
                     </p>
                     <p className="mt-3 break-words text-sm text-bone">
+                      {item.agentName ? `${item.agentName} · ` : ''}
                       {item.authorHandle ? `@${item.authorHandle}` : 'No author recorded'}
                     </p>
                     <p className="mt-1 break-words font-mono text-[10px] text-bone-faint">
@@ -364,8 +406,8 @@ export function ActivityPage() {
         ) : (
           <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-2">
             {mentions.data?.items.map((mention, index) => (
-              <FadeIn key={mention.eventId} delay={Math.min(index * 0.04, 0.3)}>
-                <MentionCard mention={mention} />
+              <FadeIn key={`${mention.eventId}:${mention.agentId ?? 'unassigned'}`} delay={Math.min(index * 0.04, 0.3)}>
+                <MentionCard mention={mention} showAgent={!agentId && manyAgents} />
               </FadeIn>
             ))}
           </div>

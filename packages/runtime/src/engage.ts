@@ -15,6 +15,7 @@ import { createLogger, errorMessage, sha256Hex } from '@xbam/shared';
 import { getChannelAdapter } from '@xbam/channels';
 import { performCapabilityAction } from './capabilityActions';
 import { pauseState } from './killSwitch';
+import { checkWriteCapacity } from './capacity';
 import { autonomyAtLeast } from '@xbam/shared/contracts';
 import { deliberation as mind } from '@xbam/database';
 
@@ -119,9 +120,27 @@ async function mayAct(row: EngagementRow): Promise<string | null> {
     return `This agent has not been given permission to ${row.kind.toLowerCase()}.`;
   }
 
+  /*
+    The capability permission answers whether this agent may ever perform the
+    action. The growth policy answers how much autonomous engagement the owner
+    wants now. They are separate controls, and the tighter one wins.
+
+    This used to apply only the hard-coded ceiling below. A live agent whose
+    policy explicitly said `maxLikesPerDay: 0` therefore liked posts anyway as
+    soon as x.like was enabled. Zero is a deliberate off switch, not an absent
+    value, and it must be checked before an action job is created.
+  */
+  const policyRow = await agentsRepo.getActivePolicy(row.agentId);
+  const growth = PolicyConfig.parse(policyRow?.config ?? {}).growth;
+  const configuredCeiling = row.kind === 'LIKE' ? growth.maxLikesPerDay : growth.maxRepostsPerDay;
+  if (configuredCeiling === 0) {
+    return `Automated ${row.kind === 'LIKE' ? 'likes are' : 'reposts are'} switched off by the growth policy.`;
+  }
+
   const since = new Date(Date.now() - 24 * 3600_000).toISOString();
   const done = await engagementsRepo.countSince(row.agentId, row.kind, since);
-  if (done >= DAILY_CEILING[row.kind]) {
+  const ceiling = Math.min(DAILY_CEILING[row.kind], configuredCeiling);
+  if (done >= ceiling) {
     return `Already ${row.kind === 'LIKE' ? 'liked' : 'reposted'} ${done} today, which is the daily ceiling.`;
   }
 
@@ -341,6 +360,23 @@ export async function runDueEngagements(limit = 3): Promise<EngagementOutcome[]>
           status: 'WAITING',
           detail: 'Waiting for you. This agent suggests but does not act.',
         });
+        continue;
+      }
+
+      /*
+        A like is the agent speaking unasked, in the smallest way it can, so it
+        spends the account's broad capacity and is the first thing to wait when
+        X pushes back. Waiting, not declining: the reason it was worth doing has
+        not changed, only whether now is the moment.
+      */
+      const capacity = await checkWriteCapacity(row.accountId, 'BROAD').catch(() => null);
+      if (capacity && !capacity.allowed) {
+        await engagementsRepo.deferAttempt(
+          row.id,
+          Math.ceil((capacity.retryAfterMs ?? 15 * 60_000) / 1_000),
+          capacity.message,
+        );
+        outcomes.push({ id: row.id, kind: row.kind, status: 'WAITING', detail: capacity.message });
         continue;
       }
 

@@ -27,6 +27,7 @@ import { pauseState } from '../killSwitch';
 import { pluginResearchSources } from '../pluginFeatures';
 
 import type { JobBundle } from '../loadJob';
+import { ensureMediaResolved } from './context';
 
 import { capResearch } from '../spending';
 import { adapterContext } from '../channelContext';
@@ -43,6 +44,7 @@ import { adapterContext } from '../channelContext';
 const log = createLogger('steps');
 
 export async function stepResearch(bundle: JobBundle): Promise<void> {
+  await ensureMediaResolved(bundle);
   const { job } = bundle;
   const context = job.resolvedContext;
   if (!context) return;

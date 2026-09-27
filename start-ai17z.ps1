@@ -534,6 +534,14 @@ function Get-SourceStamp {
   if (Test-Path $info) {
     try {
       $parsed = Get-Content -Raw $info | ConvertFrom-Json
+      # The build time goes in as well, as the Unix launchers already do. Two
+      # packages built from one uncommitted tree carry the same version and
+      # commit, so a stamp made of those two let an update install the new
+      # source and keep serving the old images: the worker ran one build and
+      # the API and interface another, with nothing saying so.
+      if ($parsed.version -and $parsed.commit -and $parsed.builtAt) {
+        return "$($parsed.version)-$($parsed.commit)-$($parsed.builtAt)"
+      }
       if ($parsed.version -and $parsed.commit) { return "$($parsed.version)-$($parsed.commit)" }
       if ($parsed.version) { return $parsed.version }
     } catch {

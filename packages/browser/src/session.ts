@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { BrowserContext } from 'playwright';
+import type { Browser, BrowserContext } from 'playwright';
 import { PipelineError, createLogger, currentBudget, envBool, errorMessage } from '@xbam/shared';
 import type { BrowserIdentity, LeasedSession, SessionConfig } from './types';
 import {
@@ -238,7 +238,7 @@ async function openContext(config: SessionConfig): Promise<Entry> {
 
   try {
     const seen = await waitForCdp(launched.cdpUrl, 30_000);
-    const browser = await chromium.connectOverCDP(launched.cdpUrl, { timeout: 20_000 });
+    const browser = await attachToFreshChrome(launched.cdpUrl);
     const context = browser.contexts()[0] ?? (await browser.newContext());
 
     const verified = config.engine === 'GOOGLE_CHROME' ? cdpIsGoogleChrome(seen) : true;
@@ -288,6 +288,30 @@ async function openContext(config: SessionConfig): Promise<Entry> {
     // window is a smaller problem than a lost sign-in.
     if (error instanceof PipelineError) throw error;
     throw explainCdpFailure(error, launched.cdpUrl);
+  }
+}
+
+/**
+ * Attach to a Chrome this process has just started, allowing it one slow start.
+ *
+ * A freshly launched Chrome answers its debug port before it has finished
+ * starting, and on a machine that is busy (Docker, WSL, another installation's
+ * browser) the handshake can outlast twenty seconds. Measured in this
+ * repository's own real-Chrome test: the websocket connected and the attach
+ * timed out, and the same test passed on its own moments later.
+ *
+ * One more attempt, with a longer deadline, and only for a browser started a
+ * moment ago. A Chrome that was already running and never completes a
+ * handshake is a different case and is still replaced rather than retried into.
+ */
+async function attachToFreshChrome(cdpUrl: string): Promise<Browser> {
+  const { chromium } = await loadPlaywright();
+  try {
+    return await chromium.connectOverCDP(cdpUrl, { timeout: 20_000 });
+  } catch (error) {
+    if (!/timeout/i.test(errorMessage(error))) throw error;
+    log.warn('a browser that had just started was slow to attach; trying once more', { cdpUrl });
+    return chromium.connectOverCDP(cdpUrl, { timeout: 40_000 });
   }
 }
 

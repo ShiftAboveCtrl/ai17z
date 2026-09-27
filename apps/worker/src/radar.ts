@@ -1,12 +1,25 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import {
   accounts as accountsRepo,
+  actions as actionsRepo,
+  events as eventsRepo,
   postAnalytics as postAnalyticsRepo,
   radar as radarRepo,
   type RadarSourceRow,
 } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, readProfile } from '@xbam/channels';
-import { buildChannelContext, reconcileCandidates } from '@xbam/runtime';
+import {
+  buildChannelContext,
+  capacityClassForSource,
+  checkReadCapacity,
+  freshnessWindowFor,
+  noteXFailure,
+  noteXRead,
+  planPersonaDiscovery,
+  rankDiscovered,
+  reconcileCandidates,
+  type DiscoveryPlan,
+} from '@xbam/runtime';
 import { describeBrowserError } from '@xbam/browser';
 import { startLoop } from './loop';
 
@@ -103,16 +116,20 @@ export class SocialRadar {
         target: source.target,
         afterSeconds: this.claimHoldSeconds,
       });
+      const overdueMessage =
+        `This source stopped answering part-way through and was given up on after ` +
+        `${this.claimHoldSeconds} seconds. Nothing was read, which is not the same as nothing being there.`;
       await radarRepo
         .recordPoll({
           sourceId: source.id,
           nextPollAt: new Date(Date.now() + this.backoff(source, deadlineMs)),
           found: 0,
-          error:
-            `This source stopped answering part-way through and was given up on after ` +
-            `${this.claimHoldSeconds} seconds. Nothing was read, which is not the same as nothing being there.`,
+          error: overdueMessage,
         })
         .catch(() => undefined);
+      // A page that never came back is pressure on the account, not only on
+      // this source: the next source on the same browser meets the same X.
+      await noteXFailure(source.accountId, capacityClassForSource(source.kind), overdueMessage);
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -140,6 +157,28 @@ export class SocialRadar {
     // nobody was noticed in under three minutes however the sources were set up.
     const interval = (config.intervalSeconds ?? envInt('AI17Z_RADAR_DEFAULT_INTERVAL_S', 60)) * 1_000;
 
+    /*
+      The account's X budget, asked before anything is loaded.
+
+      Every source used to keep its own schedule and nothing added them up, so
+      seven reasonable intervals on one account came to about six page loads a
+      minute and X began refusing searches. The budget is per account and is
+      shared by everything that reads X on its behalf. Broad discovery yields
+      first, an owner-watched account next, and what people sent is read last
+      of all to stop -- which is also what stops a restart flooding X with
+      every source that fell due while the worker was down.
+    */
+    const klass = capacityClassForSource(source.kind);
+    const capacity = await checkReadCapacity(source.accountId, klass).catch(() => null);
+    if (capacity && !capacity.allowed) {
+      await radarRepo.deferPoll(
+        source.id,
+        new Date(Date.now() + Math.max(capacity.retryAfterMs ?? 10 * 60_000, 30_000)),
+        capacity.message,
+      );
+      return;
+    }
+
     // own_threads has no fixed target: it walks whichever of the agent's recent
     // posts is least recently checked, so a busy account cycles through them
     // instead of one thread monopolising the source.
@@ -165,6 +204,8 @@ export class SocialRadar {
        */
       if (this.dueForAccountReading(source)) {
         const read = await this.observeOwnAccount(source.accountId).catch((error) => errorMessage(error));
+        await noteXRead(source.accountId, klass);
+        if (read) await noteXFailure(source.accountId, klass, read);
         await radarRepo.recordPoll({
           sourceId: source.id,
           nextPollAt: new Date(Date.now() + interval),
@@ -201,6 +242,22 @@ export class SocialRadar {
       ownPostAgentId = next.agentId;
     }
 
+    /*
+      The agent's own search. What to search for is decided here, from the
+      persona, and only while the agent's growth may run; reading it is the
+      same structured search a watched keyword is.
+    */
+    let discovery: Extract<DiscoveryPlan, { go: true }> | null = null;
+    if (source.kind === 'persona_discovery') {
+      const plan = await planPersonaDiscovery(source);
+      if (!plan.go) {
+        await radarRepo.deferPoll(source.id, new Date(Date.now() + Math.max(plan.retryAfterMs, 60_000)), plan.reason);
+        return;
+      }
+      discovery = plan;
+      target = plan.query;
+    }
+
     try {
       const ctx = await buildChannelContext(account, null);
       const poll = await adapter.pollRadarSource(ctx, {
@@ -209,8 +266,14 @@ export class SocialRadar {
         limit: config.limit ?? 20,
         cursor: source.cursor,
       });
+      // One poll is counted as one read, whatever it cost underneath. A
+      // structured read may be two queries and a rendered one a few scrolls;
+      // counting polls keeps the meter honest about what the budget governs,
+      // which is how often the account goes to X at all.
+      await noteXRead(source.accountId, klass);
 
       if (poll.error) {
+        await noteXFailure(source.accountId, klass, poll.error);
         await radarRepo.recordPoll({
           sourceId: source.id,
           nextPollAt: new Date(Date.now() + this.backoff(source, interval)),
@@ -221,11 +284,43 @@ export class SocialRadar {
         return;
       }
 
+      // Observe many, think about few: a search keeps only its best results,
+      // judged on the agent's topics, the author's audience, the post's
+      // traction, whether it is a pitch, and whom it has spoken to lately.
+      const memory = discovery
+        ? await actionsRepo.discoveryMemory(discovery.agentId, source.accountId).catch(() => null)
+        : null;
+      const known = discovery
+        ? await eventsRepo.knownRemoteIds(source.accountId, poll.candidates.map((c) => c.remoteId)).catch(() => new Set<string>())
+        : new Set<string>();
+      const unseen = discovery ? poll.candidates.filter((candidate) => !known.has(candidate.remoteId)) : poll.candidates;
+      /*
+        A post too old to answer is not a candidate, so it must not take one of
+        the session's few places. Measured on a live agent: a Pons search kept
+        three, ingest refused two of them as two and three hours old, and the
+        session approached one post where it could have approached three.
+        Same window ingest applies, and a post whose age cannot be read is kept,
+        as ingest keeps it.
+      */
+      const window = freshnessWindowFor('KEYWORD_MATCH');
+      const fresh = discovery
+        ? unseen.filter((candidate) => {
+            const at = candidate.occurredAt ? Date.parse(candidate.occurredAt) : Number.NaN;
+            return !Number.isFinite(at) || Date.now() - at <= window;
+          })
+        : unseen;
+      const kept = discovery
+        ? rankDiscovered(fresh, discovery.keep, {
+            topics: discovery.topics,
+            contactedRecently: memory?.contactedRecently ?? [],
+            engagedWithUs: memory?.engagedWithUs ?? [],
+          })
+        : poll.candidates;
       const outcome = await reconcileCandidates({
         accountId: source.accountId,
         sourceId: source.id,
         sourceKind: source.kind,
-        candidates: poll.candidates,
+        candidates: kept,
         mayTrigger: config.mayTrigger ?? true,
       });
 
@@ -233,7 +328,12 @@ export class SocialRadar {
         sourceId: source.id,
         nextPollAt: new Date(Date.now() + interval),
         found: poll.candidates.length,
-        cursor: poll.cursor,
+        // A discovery source keeps its place in the rotation of terms, not in
+        // a feed: every search is a different feed.
+        cursor: discovery ? discovery.nextCursor : poll.cursor,
+        idleReason: discovery
+          ? `Searched ${discovery.term}: ${poll.candidates.length} found, ${poll.candidates.length - unseen.length} already seen, kept the best ${kept.length}.${unseen.length > fresh.length ? ` ${unseen.length - fresh.length} ${unseen.length - fresh.length === 1 ? 'was' : 'were'} too old to answer.` : ''}`
+          : null,
       });
       if (ownPostId) await radarRepo.markOwnPostChecked(ownPostId, poll.candidates.length);
 
@@ -268,12 +368,15 @@ export class SocialRadar {
           .catch(() => undefined);
       }
 
-      // This source just proved the browser works. Anything else on the account
-      // sitting out a backoff earned by the browser being gone should try again
-      // now rather than in twenty minutes. The check is on the other sources,
-      // not this one: the source that recovers first is usually the one that
-      // was never failing.
-      const revived = await radarRepo.retryFailingSources(source.accountId, source.id);
+      // A source that was failing and now works has proved that *its recorded
+      // failure* is over. Bring siblings with that same failure forward rather
+      // than every failing source on the account: a healthy notifications poll
+      // does not prove X has lifted a rate limit on search, and treating it as
+      // though it did turns exponential backoff into a retry every few seconds.
+      const revived =
+        source.consecutiveFailures > 0 && source.lastError
+          ? await radarRepo.retryFailingSources(source.accountId, source.id, source.lastError)
+          : 0;
       if (revived > 0) {
         log.info('a working source brought the failing ones forward', { accountId: source.accountId, revived });
       }
@@ -289,6 +392,7 @@ export class SocialRadar {
       }
     } catch (error) {
       const message = errorMessage(error);
+      await noteXFailure(source.accountId, klass, message);
       await radarRepo
         .recordPoll({
           sourceId: source.id,

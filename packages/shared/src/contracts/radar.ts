@@ -20,6 +20,11 @@ export const RADAR_SOURCE_KINDS = [
   'tracked_account',
   /** Watching a keyword, phrase, ticker, or custom query. */
   'tracked_keyword',
+  /**
+   * The agent going looking on its own, from its persona's topics. One search
+   * per growth session, filtered by engagement and ranked by audience.
+   */
+  'persona_discovery',
 ] as const;
 export const RadarSourceKind = z.enum(RADAR_SOURCE_KINDS);
 export type RadarSourceKind = (typeof RADAR_SOURCE_KINDS)[number];
@@ -43,6 +48,16 @@ export const RadarSourceConfig = z.object({
   mayTrigger: z.boolean().default(true),
   /** Higher runs sooner when several sources are due at once. */
   priority: z.number().int().min(0).max(100).default(50),
+  /**
+   * For persona discovery: search terms the owner pinned. When present they
+   * are used alone, in turn; when absent the persona's topics are.
+   */
+  queries: z.array(z.string().min(1).max(200)).max(20).optional(),
+  /**
+   * For persona discovery: the fewest likes a post needs before X returns it.
+   * Applied by X itself, so a post nobody has responded to costs nothing.
+   */
+  minFaves: z.number().int().min(0).max(100_000).optional(),
 });
 export type RadarSourceConfig = z.infer<typeof RadarSourceConfig>;
 

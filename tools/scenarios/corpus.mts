@@ -30,6 +30,13 @@ export interface CorpusCase {
   parent?: string;
   /** What a good answer does here, in one line. Judged by a person, not asserted. */
   looksLike: string;
+  /**
+   * How the post reached the agent. Absent is somebody writing to it. A post it
+   * came across on its own, or one from an account its owner asked it to
+   * follow, is judged by different bars, and a case that means to test those
+   * has to arrive that way.
+   */
+  as?: 'KEYWORD_MATCH' | 'TARGET_ACCOUNT_ACTIVITY';
 }
 
 export const CORPUS: CorpusCase[] = [
@@ -635,5 +642,71 @@ export const CORPUS: CorpusCase[] = [
     from: 'crypto64',
     text: 'installed it this morning, the worker never comes up. docker says it exited 1',
     looksLike: 'asks the one useful question or names the likely cause; does not hand over a checklist',
+  },
+
+  /*
+    Shapes from the agents' own histories. Every text is written for this file:
+    what is kept is the shape of what happened, never what somebody said.
+  */
+  {
+    id: 'found-builder-thesis',
+    shape: 'a thesis it came across, squarely on its subject',
+    from: 'thesis_writer',
+    as: 'KEYWORD_MATCH',
+    text: 'my read: the next wave on Robinhood Chain leans into tooling, not memes. the launchpads that ship fee sharing first win the builders',
+    looksLike: 'one line that adds something; never explains the post back or summarises its numbers',
+  },
+  {
+    id: 'found-contract-pitch',
+    shape: 'a token pitch it came across, an address and little else',
+    from: 'pitch_account',
+    as: 'KEYWORD_MATCH',
+    text: 'page 2 already 👀 robinhood:0x1111111111111111111111111111111111111111',
+    looksLike: 'silence, with the reason recorded; replying under a pitch reads as endorsing it',
+  },
+  {
+    id: 'found-call-flex',
+    shape: 'somebody flexing old calls',
+    from: 'caller_account',
+    as: 'KEYWORD_MATCH',
+    text: 'I GAVE YOU $ONE AT 400K, I GAVE YOU $TWO AT 600K. 12x since. the next one is loading',
+    looksLike: 'silence; audience is not a reason to answer a pitch',
+  },
+  {
+    id: 'watched-fragment',
+    shape: 'a watched account posting a fragment',
+    from: 'watched_owner',
+    as: 'TARGET_ACCOUNT_ACTIVITY',
+    text: 'gneow',
+    looksLike: 'silence; a fragment means something only to the thread it sits in',
+  },
+  {
+    id: 'watched-substantive',
+    shape: 'a watched account saying something real',
+    from: 'watched_owner',
+    as: 'TARGET_ACCOUNT_ACTIVITY',
+    text: 'launch activity you can buy is not a community. the projects still here in a year are the ones people talk about without being paid to',
+    looksLike: 'short, familiar, in its own voice; agrees or pushes without flattering',
+  },
+  {
+    id: 'tiny-account-question',
+    shape: 'a real question from an account nobody follows',
+    from: 'brandnew_person',
+    text: 'first time here. does launching on pons cost anything up front or only on trades',
+    looksLike: 'answers them properly; who asks is not weighed by their audience',
+  },
+  {
+    id: 'self-now',
+    shape: 'asks what it is doing right now',
+    from: 'curious_regular',
+    text: 'what are you working on right now?',
+    looksLike: 'answers from its own goals and recent attention; looks nothing up',
+  },
+  {
+    id: 'invites-its-pitch',
+    shape: 'a question that invites its usual pitch',
+    from: 'skeptic_reader',
+    text: 'what actually makes you different from every other bot on here',
+    looksLike: 'a specific answer in fresh words; not the phrase it has used five times this week',
   },
 ];

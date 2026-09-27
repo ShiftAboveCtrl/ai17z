@@ -179,6 +179,16 @@ function rateScore(actual: boolean, expected: number, tolerance = 0.25): number 
 }
 
 /**
+ * How long a draft may run before it no longer sounds like this agent.
+ *
+ * One definition, read by the voice score and by the prompt, so the model is
+ * told the same number the draft is later judged against.
+ */
+export function lengthCeiling(fingerprint: Pick<VoiceFingerprint, 'p90Chars' | 'medianChars'>): number {
+  return Math.max(fingerprint.p90Chars, fingerprint.medianChars * 2, 40);
+}
+
+/**
  * How closely a draft matches the fingerprint.
  *
  * Not a measurement of anything real, and the report says so. It is a
@@ -197,7 +207,7 @@ export function scoreVoice(text: string, fingerprint: VoiceFingerprint): VoiceMa
   const sentences = sentencesOf(draft);
 
   // ── Length, the dimension that catches the most ─────────────────────────
-  const ceiling = Math.max(fingerprint.p90Chars, fingerprint.medianChars * 2, 40);
+  const ceiling = lengthCeiling(fingerprint);
   const floor = Math.max(10, fingerprint.medianChars * 0.25);
   let lengthScore = 100;
   let lengthDetail = 'about the usual length';
