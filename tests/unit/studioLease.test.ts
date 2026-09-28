@@ -116,6 +116,12 @@ describe('what a lease allows', () => {
     expect(entitlementDecision([entry()], plugin, cap)).toEqual({ ok: true });
   });
 
+  it('allows a subscription until its paid-through time and not after', () => {
+    const paid = [entry({ expires_at: '2027-03-31T12:00:00.000Z' })];
+    expect(entitlementDecision(paid, plugin, cap, new Date('2027-03-31T11:59:59Z'))).toEqual({ ok: true });
+    expect(entitlementDecision(paid, plugin, cap, new Date('2027-03-31T12:00:00Z')).ok).toBe(false);
+  });
+
   it.each([
     ['no entitlement', [], /no entitlement/],
     ['no seat here', [entry({ usable: false, reason: 'NO_SEAT_FOR_THIS_INSTALLATION', capability_ids: [] })], /not assigned to this installation/],
@@ -123,6 +129,8 @@ describe('what a lease allows', () => {
     ['another version', [entry({ version: '1.3.0' })], /not the version Studio publishes/],
     ['an edited manifest', [entry({ manifest_sha256: 'b'.repeat(64) })], /not the version Studio publishes/],
     ['a capability not covered', [entry({ capability_ids: ['plugin_weather_pro.other'] })], /not part of what your entitlement/],
+    ['a lapsed subscription, as Studio reports it', [entry({ usable: false, reason: 'SUBSCRIPTION_EXPIRED', capability_ids: [] })], /subscription has ended/],
+    ['a subscription whose paid-through time has passed on this clock', [entry({ expires_at: '2020-01-01T00:00:00.000Z' })], /subscription ended 2020-01-01/],
   ])('refuses %s', (_label, entitlements, why) => {
     const decision = entitlementDecision(entitlements as LeaseEntitlement[], plugin, cap);
     expect(decision.ok).toBe(false);

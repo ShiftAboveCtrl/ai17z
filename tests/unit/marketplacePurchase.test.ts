@@ -4,8 +4,10 @@ import {
   ERC20_TRANSFER_SELECTOR,
   decodeTransfer,
   formatBaseUnits,
+  NATIVE_ETH_ADDRESS,
   isExactPurchaseTransaction,
   prepareMarketplacePurchase,
+  type StudioPurchaseLeg,
   type StudioPurchaseTerms,
 } from '@xbam/shared/contracts';
 
@@ -106,5 +108,79 @@ describe('MARKETPLACE_PLUGIN_PURCHASE', () => {
   it('pins the chain facts verified on 2026-09-27', () => {
     expect(AI17Z_PAYMENT).toMatchObject({ chainId: 4663, token: '0x16cb7cbb26295b60df7f4b3b39a99a9a3c585e81', decimals: 18 });
     expect(AI17Z_PAYMENT.tokenChecksum.toLowerCase()).toBe(AI17Z_PAYMENT.token);
+  });
+});
+
+describe('a checkout of several payments', () => {
+  const TREASURY = '0x7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e';
+  const leg = (i: number, overrides: Partial<StudioPurchaseLeg> = {}): StudioPurchaseLeg => ({
+    leg_index: i,
+    role: i === 0 ? 'PUBLISHER' : 'TREASURY',
+    asset: 'ETH',
+    recipient_address: i === 0 ? RECIPIENT : TREASURY,
+    amount_base_units: i === 0 ? '46000000000000000' : '4000000000000000',
+    status: 'AWAITING_PAYMENT',
+    submitted_tx_hash: null,
+    failure_reason: null,
+    ...overrides,
+  });
+  const eth = (overrides: Partial<StudioPurchaseTerms> = {}) =>
+    terms({ token_address: NATIVE_ETH_ADDRESS, payment_asset: 'ETH', amount_base_units: '50000000000000000', legs: [leg(0), leg(1)], ...overrides });
+
+  it('pays ETH as a plain transfer: to the recipient, the exact value in wei, and no data', () => {
+    const result = prepareMarketplacePurchase(eth(), NOW, 1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.purchase).toMatchObject({ legIndex: 1, role: 'TREASURY', asset: 'ETH', recipient: TREASURY, amountBaseUnits: '4000000000000000' });
+    expect(result.purchase.transaction).toEqual({ from: PAYER, to: TREASURY, data: '0x', value: '0xe35fa931a0000' });
+    expect(isExactPurchaseTransaction(result.purchase)).toBe(true);
+  });
+
+  it('refuses any ETH transaction that is not exactly that', () => {
+    const result = prepareMarketplacePurchase(eth(), NOW, 0);
+    if (!result.ok) throw new Error(result.why);
+    const p = result.purchase;
+    const variants = [
+      { ...p, transaction: { ...p.transaction, data: `${ERC20_TRANSFER_SELECTOR}${'0'.repeat(128)}` } },
+      { ...p, transaction: { ...p.transaction, value: '0x1' } },
+      { ...p, transaction: { ...p.transaction, to: AI17Z_PAYMENT.token } },
+      { ...p, transaction: { ...p.transaction, gas: '0x5208' } as typeof p.transaction },
+      { ...p, token: AI17Z_PAYMENT.token },
+    ];
+    for (const variant of variants) expect(isExactPurchaseTransaction(variant)).toBe(false);
+  });
+
+  it('pays AI17Z legs as token transfers to each leg recipient', () => {
+    const legs = [leg(0, { asset: 'AI17Z', amount_base_units: '633193542000000000000000' }), leg(1, { asset: 'AI17Z', amount_base_units: '27530154000000000000000' })];
+    const result = prepareMarketplacePurchase(terms({ payment_asset: 'AI17Z', legs }), NOW, 1);
+    if (!result.ok) throw new Error(result.why);
+    expect(decodeTransfer(result.purchase.transaction.data)).toEqual({ recipient: TREASURY, amountBaseUnits: '27530154000000000000000' });
+    expect(result.purchase.transaction.to).toBe(AI17Z_PAYMENT.token);
+    expect(isExactPurchaseTransaction(result.purchase)).toBe(true);
+  });
+
+  it('never asks for a leg already paid, and lets a half-paid checkout be finished after its deadline', () => {
+    const half = eth({ status: 'PARTIALLY_PAID', expires_at: '2026-09-27T11:00:00Z', legs: [leg(0, { status: 'CONFIRMED', submitted_tx_hash: `0x${'a'.repeat(64)}` }), leg(1)] });
+    const paid = prepareMarketplacePurchase(half, NOW, 0);
+    expect(paid.ok).toBe(false);
+    if (!paid.ok) expect(paid.why).toMatch(/already been made/);
+    expect(prepareMarketplacePurchase(half, NOW, 1).ok).toBe(true);
+    expect(prepareMarketplacePurchase(eth({ expires_at: '2026-09-27T11:00:00Z' }), NOW, 0).ok).toBe(false);
+  });
+
+  it('lets a leg the chain refused be paid again', () => {
+    const refused = eth({ status: 'PARTIALLY_PAID', legs: [leg(0, { status: 'CONFIRMED', submitted_tx_hash: `0x${'a'.repeat(64)}` }), leg(1, { status: 'FAILED', submitted_tx_hash: `0x${'b'.repeat(64)}` })] });
+    expect(prepareMarketplacePurchase(refused, NOW, 1).ok).toBe(true);
+  });
+
+  it.each([
+    ['a token on an ETH payment', { token_address: AI17Z_PAYMENT.token }, /token attached/],
+    ['a leg in another currency', { legs: [leg(0, { asset: 'AI17Z' })] }, /currency/],
+    ['an unknown currency', { payment_asset: 'USDC' as 'ETH' }, /currency/],
+    ['a leg to the zero address', { legs: [leg(0, { recipient_address: NATIVE_ETH_ADDRESS })] }, /destroy/],
+  ])('refuses %s', (_label, overrides, why) => {
+    const result = prepareMarketplacePurchase(eth(overrides as Partial<StudioPurchaseTerms>), NOW, 0);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.why).toMatch(why);
   });
 });

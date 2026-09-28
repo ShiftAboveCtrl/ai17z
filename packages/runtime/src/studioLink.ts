@@ -1,4 +1,4 @@
-import { ops, studio as ledger } from '@xbam/database';
+import { ops, plugins as installedPlugins, studio as ledger } from '@xbam/database';
 import { buildVersion, openSecret, sealSecret } from '@xbam/shared';
 import {
   AI17Z_PAYMENT,
@@ -547,6 +547,8 @@ export interface LeaseEntitlement {
   version: string | null;
   manifest_sha256: string | null;
   capability_ids: string[];
+  /** Paid-through time of a subscription; null or absent for anything that does not lapse. */
+  expires_at?: string | null;
 }
 
 const LeasePayload = z.object({
@@ -569,6 +571,8 @@ const LeasePayload = z.object({
         version: z.string().nullable(),
         manifest_sha256: z.string().nullable(),
         capability_ids: z.array(z.string()),
+        // Absent from a lease signed before subscriptions existed.
+        expires_at: z.string().nullable().optional(),
       }),
     )
     .max(1000),
@@ -713,6 +717,7 @@ export function entitlementDecision(
   entitlements: readonly LeaseEntitlement[],
   plugin: Pick<GovernedPlugin, 'id' | 'version' | 'manifestSha256'>,
   capabilityId: string,
+  now: Date = new Date(),
 ): { ok: true } | { ok: false; why: string } {
   const entry = entitlements.find((e) => e.plugin_id === plugin.id);
   if (!entry) return { ok: false, why: `Your Studio account has no entitlement for ${plugin.id}.` };
@@ -723,9 +728,16 @@ export function entitlementDecision(
       ENTITLEMENT_EXPIRED: 'the entitlement expired',
       PUBLISHER_SUSPENDED: 'its publisher is suspended',
       NO_PUBLISHED_VERSION: 'no version of it is published right now',
+      SUBSCRIPTION_EXPIRED: 'its subscription has ended. Renew it from the Plugins screen and it works again',
     };
     const reason = entry.reason ?? 'UNKNOWN';
     return { ok: false, why: `${plugin.id} cannot run here: ${reasons[reason] ?? reason.toLowerCase().replace(/_/g, ' ')}.` };
+  }
+  // Studio already stops a lease at the earliest paid-through time and its
+  // gateway refuses a lapsed subscription whatever this says; this is the
+  // same answer given locally, so a lapse reads as a lapse and not a fault.
+  if (entry.expires_at && Date.parse(entry.expires_at) <= now.getTime()) {
+    return { ok: false, why: `${plugin.id} cannot run here: its subscription ended ${entry.expires_at.slice(0, 10)}. Renew it from the Plugins screen and it works again.` };
   }
   if (entry.version !== plugin.version || entry.manifest_sha256 !== plugin.manifestSha256) {
     return {
@@ -830,6 +842,31 @@ const PurchaseList = z.object({
         publisher: z.string().optional(),
         plugin_version: z.string().optional(),
         created_at: z.string().optional(),
+        // Absent from a Studio that predates plans and payment legs.
+        kind: z.enum(['PURCHASE', 'RENEWAL']).optional(),
+        billing_mode: z.string().nullable().optional(),
+        payment_asset: z.enum(['AI17Z', 'ETH']).optional(),
+        base_price_wei: z.string().nullable().optional(),
+        platform_fee_bps: z.number().nullable().optional(),
+        ai17z_discount_bps: z.number().nullable().optional(),
+        quote_ai17z_per_eth_x18: z.string().nullable().optional(),
+        quote_source: z.string().nullable().optional(),
+        quote_expires_at: z.string().nullable().optional(),
+        legs: z
+          .array(
+            z.object({
+              leg_index: z.number().int().min(0).max(7),
+              role: z.enum(['PUBLISHER', 'TREASURY']),
+              asset: z.enum(['AI17Z', 'ETH']),
+              recipient_address: z.string(),
+              amount_base_units: z.string(),
+              status: z.string(),
+              submitted_tx_hash: z.string().nullable(),
+              failure_reason: z.string().nullable(),
+            }),
+          )
+          .max(8)
+          .optional(),
       }),
     )
     .max(50),
@@ -851,22 +888,26 @@ async function refreshLedgerFromStudio(): Promise<void> {
   if (!listed.ok) return;
   for (const purchase of listed.purchases) {
     const known = await ledger.getPurchase(purchase.intent_id);
-    if (known) await ledger.noteStudioStatus(purchase.intent_id, purchase.status, purchase.failure_reason);
+    if (!known) continue;
+    await ledger.noteStudioStatus(purchase.intent_id, purchase.status, purchase.failure_reason);
+    for (const leg of purchase.legs ?? []) {
+      await ledger.noteLegStatus(purchase.intent_id, leg.leg_index, leg.submitted_tx_hash, leg.status, leg.failure_reason);
+    }
   }
 }
 
 /**
- * Builds the one transfer a purchase allows, from terms read from Studio at
- * this moment rather than from anything the page sent, and records that the
- * wallet is about to be asked. Owner control plane only: an API route an
- * owner's button calls, never a capability.
+ * Builds the one transfer a leg of a purchase allows, from terms read from
+ * Studio at this moment rather than from anything the page sent, and records
+ * that the wallet is about to be asked. Owner control plane only: an API
+ * route an owner's button calls, never a capability.
  */
-export async function prepareStudioPurchase(intentId: string): Promise<{ ok: true; purchase: PreparedMarketplacePurchase } | StudioProblem> {
+export async function prepareStudioPurchase(intentId: string, legIndex = 0): Promise<{ ok: true; purchase: PreparedMarketplacePurchase } | StudioProblem> {
   const listed = await studioPurchases();
   if (!listed.ok) return listed;
   const terms = listed.purchases.find((p) => p.intent_id === intentId);
   if (!terms) return { ok: false, why: 'Studio has no purchase with that id waiting for this installation.' };
-  const prepared = prepareMarketplacePurchase(terms as StudioPurchaseTerms);
+  const prepared = prepareMarketplacePurchase(terms as StudioPurchaseTerms, new Date(), legIndex);
   if (!prepared.ok) return prepared;
   // Again here, whatever the page already showed: the page is not what decides.
   const preflight = await preflightPurchase(prepared.purchase);
@@ -875,8 +916,12 @@ export async function prepareStudioPurchase(intentId: string): Promise<{ ok: tru
     return { ok: false, why: `The chain does not agree this transfer can go ahead (${failed.join('; ')}), so your wallet was not asked.` };
   }
   const p = prepared.purchase;
+  const leg = (terms.legs ?? []).find((l) => l.leg_index === legIndex);
   const claimed = await ledger.claimPrepare({
     intentId: p.intentId,
+    legIndex: p.legIndex,
+    role: p.role,
+    asset: p.asset,
     pluginId: p.pluginId,
     pluginName: p.pluginName,
     chainId: p.chainId,
@@ -884,25 +929,30 @@ export async function prepareStudioPurchase(intentId: string): Promise<{ ok: tru
     payerAddress: p.payer,
     recipientAddress: p.recipient,
     amountBaseUnits: p.amountBaseUnits,
+    billingMode: terms.billing_mode ?? null,
+    intentKind: terms.kind ?? null,
+    studioRefusedLast: leg?.status === 'FAILED',
   });
   if (!claimed.ok) return { ok: false, why: claimed.why };
   return prepared;
 }
 
 /**
- * The wallet returned a transaction hash: recorded here first, so it is
- * never lost and the purchase is never prepared again, then reported to
+ * The wallet returned a transaction hash for one leg: recorded here first, so
+ * it is never lost and that payment is never prepared again, then reported to
  * Studio, which grants nothing until it has read the chain itself.
  */
 export async function recordStudioPurchaseSent(
   intentId: string,
   txHash: string,
+  legIndex = 0,
 ): Promise<{ ok: true; studioStatus: string | null; studioProblem?: string } | StudioProblem> {
-  const marked = await ledger.markSent(intentId, txHash);
+  const marked = await ledger.markSent(intentId, txHash, legIndex);
   if (!marked.ok) return marked;
   const answer = await authed(`/api/v1/installation/purchases/${encodeURIComponent(intentId)}/transaction`, {
     method: 'POST',
-    json: { tx_hash: marked.row.txHash },
+    // leg_index is sent only for a later leg, so a Studio from before payment legs is spoken to exactly as before.
+    json: legIndex === 0 ? { tx_hash: marked.row.txHash } : { tx_hash: marked.row.txHash, leg_index: legIndex },
   }).catch((error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }));
   if ('ok' in answer) return { ok: true, studioStatus: null, studioProblem: `${answer.why} The transaction is recorded here and will be reported on the next sync.` };
   if (answer.status !== 200) return { ok: true, studioStatus: null, studioProblem: describe(answer) };
@@ -916,12 +966,12 @@ export async function reportUnacknowledgedPurchases(): Promise<void> {
   const rows = await ledger.listPurchases(50);
   for (const row of rows) {
     if (row.state !== 'SENT' || !row.txHash || row.studioStatus) continue;
-    await recordStudioPurchaseSent(row.intentId, row.txHash).catch(() => undefined);
+    await recordStudioPurchaseSent(row.intentId, row.txHash, row.legIndex).catch(() => undefined);
   }
 }
 
-export async function abandonStudioPurchase(intentId: string): Promise<{ ok: boolean; why?: string }> {
-  return ledger.markAbandoned(intentId);
+export async function abandonStudioPurchase(intentId: string, legIndex = 0): Promise<{ ok: boolean; why?: string }> {
+  return ledger.markAbandoned(intentId, legIndex);
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,7 +1089,9 @@ function decodeString(hex: string): string | null {
  * the one it looks like: the chain the node serves, the token at the pinned
  * address answering with the pinned decimals and symbol, enough $AI17Z in the
  * paying wallet, and a gas estimate for the exact call, which a transfer that
- * would revert does not get. Nothing here sends or signs anything.
+ * would revert does not get. For an ETH payment there is no token to ask
+ * about: the check is enough ETH for the amount, and a gas estimate for the
+ * exact plain transfer. Nothing here sends or signs anything.
  */
 export async function preflightPurchase(purchase: PreparedMarketplacePurchase): Promise<{ ok: boolean; checks: PreflightCheck[] }> {
   const rpc = rpcOverride ?? publicRpc;
@@ -1055,6 +1107,19 @@ export async function preflightPurchase(purchase: PreparedMarketplacePurchase): 
     const id = String(await rpc('eth_chainId', []));
     return { ok: id.toLowerCase() === purchase.chainIdHex, detail: `the node serves chain ${Number.parseInt(id, 16)}` };
   });
+  if (purchase.asset === 'ETH') {
+    await check('Balance', async () => {
+      const native = BigInt(String(await rpc('eth_getBalance', [purchase.payer, 'latest'])));
+      const enough = native > BigInt(purchase.amountBaseUnits);
+      return { ok: enough, detail: `${formatBaseUnits(native.toString())} ETH in the paying wallet, for ${purchase.amountDisplay} ETH and gas` };
+    });
+    await check('Would succeed', async () => {
+      const tx = purchase.transaction;
+      const gas = BigInt(String(await rpc('eth_estimateGas', [{ from: tx.from, to: tx.to, value: tx.value }])));
+      return { ok: gas > 0n, detail: `the node estimates ${gas} gas for exactly this transfer` };
+    });
+    return { ok: checks.every((c) => c.ok), checks };
+  }
   await check('Token decimals', async () => {
     const value = Number.parseInt(String(await rpc('eth_call', [{ to: purchase.token, data: SELECTOR.decimals }, 'latest'])), 16);
     return { ok: value === AI17Z_PAYMENT.decimals, detail: `the contract reports ${value}` };
@@ -1083,12 +1148,13 @@ export async function preflightPurchase(purchase: PreparedMarketplacePurchase): 
 /** Everything the owner is shown before they choose to ask their wallet, with nothing claimed or recorded. */
 export async function reviewStudioPurchase(
   intentId: string,
+  legIndex = 0,
 ): Promise<{ ok: true; purchase: PreparedMarketplacePurchase; terms: StudioPurchase; preflight: { ok: boolean; checks: PreflightCheck[] } } | StudioProblem> {
   const listed = await studioPurchases();
   if (!listed.ok) return listed;
   const terms = listed.purchases.find((p) => p.intent_id === intentId);
   if (!terms) return { ok: false, why: 'Studio has no purchase with that id waiting for this installation.' };
-  const prepared = prepareMarketplacePurchase(terms as StudioPurchaseTerms);
+  const prepared = prepareMarketplacePurchase(terms as StudioPurchaseTerms, new Date(), legIndex);
   if (!prepared.ok) return prepared;
   return { ok: true, purchase: prepared.purchase, terms, preflight: await preflightPurchase(prepared.purchase) };
 }
@@ -1108,6 +1174,8 @@ export interface StudioStatus {
   sync: SyncRecord | null;
   canRelink: boolean;
   payment: { chainId: number; chainName: string; token: string; decimals: number };
+  /** Installed Plugins by id and version, so an entitlement for one not yet installed can be offered. */
+  installed: Record<string, string>;
 }
 
 export async function studioStatus(): Promise<StudioStatus> {
@@ -1143,6 +1211,7 @@ export async function studioStatus(): Promise<StudioStatus> {
     sync,
     canRelink: Boolean((previous && where && previous.origin === where.origin) || link?.revokedAt),
     payment: { chainId: AI17Z_PAYMENT.chainId, chainName: AI17Z_PAYMENT.chainName, token: AI17Z_PAYMENT.tokenChecksum, decimals: AI17Z_PAYMENT.decimals },
+    installed: Object.fromEntries((await installedPlugins.listInstalledPlugins()).map((p) => [p.id, p.version])),
   };
 }
 
