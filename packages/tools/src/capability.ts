@@ -3,6 +3,7 @@ import type { Logger } from '@xbam/shared';
 import type {
   CapabilityCategory,
   CapabilityEffect,
+  CapabilityPermission,
   CapabilityRisk,
   CapabilityStatus,
 } from '@xbam/shared/contracts';
@@ -62,6 +63,12 @@ export interface Capability<TInput = unknown, TOutput = unknown> {
   readonly category: CapabilityCategory;
   readonly effect: CapabilityEffect;
   readonly risk: CapabilityRisk;
+  /**
+   * What applies to an agent whose owner decided nothing about this
+   * capability, when that is not the ordinary default for its effect and
+   * risk. See `permissionWhenUnset`.
+   */
+  readonly unsetPermission?: CapabilityPermission;
   readonly input: z.ZodType<TInput, z.ZodTypeDef, unknown>;
   readonly output: z.ZodType<TOutput, z.ZodTypeDef, unknown>;
   /**

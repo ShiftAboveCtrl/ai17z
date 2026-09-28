@@ -1,5 +1,5 @@
 import { createLogger } from '@xbam/shared';
-import { defaultPermission, type CapabilityPermission } from '@xbam/shared/contracts';
+import { permissionWhenUnset, type CapabilityPermission } from '@xbam/shared/contracts';
 import { listModelCallable, type AnyCapability } from '@xbam/tools';
 import { shortlistCapabilities } from './capabilityRelevance';
 import type { Lookup } from './research';
@@ -98,7 +98,7 @@ export interface CoverageInput {
 function availableTo(permissions: Map<string, CapabilityPermission>): AnyCapability[] {
   return listModelCallable().filter((capability) => {
     const stored = permissions.get(capability.id) ?? null;
-    return (stored ?? defaultPermission(capability.effect, capability.risk)) !== 'DISABLED';
+    return (stored ?? permissionWhenUnset(capability)) !== 'DISABLED';
   });
 }
 

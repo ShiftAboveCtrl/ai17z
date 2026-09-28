@@ -123,7 +123,7 @@ function hostAllowed(url: string, hosts: readonly string[]): boolean {
  * and so an audit row says where the capability came from without a join.
  */
 export function declaredCapability(
-  installed: Pick<InstalledPlugin, 'id' | 'manifest'>,
+  installed: Pick<InstalledPlugin, 'id' | 'manifest'> & { requiresEntitlement?: boolean },
   declaration: PluginCapabilityDeclaration,
 ): AnyCapability {
   const manifest: PluginManifest = installed.manifest;
@@ -139,6 +139,8 @@ export function declaredCapability(
     category: declaration.category,
     effect: declaration.effect,
     risk: declaration.risk,
+    // Bought on Studio: no agent may use it until its owner says which may.
+    ...(installed.requiresEntitlement || declaration.http.url.includes('/api/gateway/v1/') ? { unsetPermission: 'DISABLED' as const } : {}),
     input,
     output,
     modelCallable: true,
@@ -281,6 +283,6 @@ export function declaredCapability(
 }
 
 /** Every capability an installed Plugin contributes. */
-export function capabilitiesOf(installed: Pick<InstalledPlugin, 'id' | 'manifest'>): AnyCapability[] {
+export function capabilitiesOf(installed: Pick<InstalledPlugin, 'id' | 'manifest'> & { requiresEntitlement?: boolean }): AnyCapability[] {
   return installed.manifest.capabilities.map((declaration) => declaredCapability(installed, declaration));
 }

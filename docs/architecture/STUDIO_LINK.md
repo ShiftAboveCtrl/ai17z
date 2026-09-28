@@ -127,24 +127,35 @@ installation lists the exact terms over DPoP, and the owner pays from the
 Studio tab with their own wallet, found through EIP-6963.
 
 `MARKETPLACE_PLUGIN_PURCHASE` (`packages/shared/src/contracts/marketplacePurchase.ts`)
-is the whole of what can be signed: an ERC-20 `transfer(recipient, amount)` of
-$AI17Z on Robinhood Chain, to the pinned token, for a whole number of base
-units. It refuses another chain, token or decimals whatever Studio says, and
-there is no approve, transferFrom, arbitrary calldata or native value. The
-page checks the prepared transaction again with `isExactPurchaseTransaction`
-before the wallet sees it.
+is the whole of what can be signed. A checkout is one or more payments (legs):
+the publisher's share and, on a paid plan, the marketplace fee. Each leg is
+exactly one of two shapes on Robinhood Chain: an ERC-20
+`transfer(recipient, amount)` of $AI17Z to the pinned token with no native
+value, or a plain ETH transfer to the recipient with the exact value and no
+data. It refuses another chain, token, decimals or currency whatever Studio
+says, and there is no approve, transferFrom or arbitrary calldata. A leg
+already paid is never prepared again. The page checks the prepared
+transaction again with `isExactPurchaseTransaction` before the wallet sees it.
 
 It is owner control plane only. It is not a capability, no model can reach
 it, and `tests/unit/noWalletCapabilities.test.ts` fails if a payment-shaped
 capability is registered or the builder is imported by the capability layer.
 No private key of any wallet is ever held.
 
-`studio_purchase_ledger` (migration 0093) records what the wallet was asked to
-sign. A purchase is prepared once, under a row lock; a second press is told
+`studio_purchase_ledger` (migrations 0093 and 0094) records what the wallet was
+asked to sign, one row per leg and attempt. A leg is prepared once, under a row lock; a second press is told
 the wallet was already asked. Only a transaction hash or the owner saying
 nothing was sent moves it on, and a purchase with a known transaction is never
-prepared again. The wallet declining (EIP-1193 code 4001) is the owner saying
-so. The terms are frozen by a trigger.
+prepared again. The one exception is a leg Studio read off the chain and refused
+(it reverted, say): that leg is still owed, and paying it again is a new
+attempt row, leaving the refused one as it was. The wallet declining (EIP-1193
+code 4001) is the owner saying so. The terms are frozen by a trigger.
+
+A subscription's paid-through time travels in the lease, and the gate refuses
+it past that time; Studio also ends the lease no later than the earliest
+paid-through time, and its gateway checks every call against its own clock. A
+Plugin bought on Studio starts DISABLED for every agent (`unsetPermission`):
+buying and installing it are not a decision about which agents may use it.
 
 Reporting a hash grants nothing. Studio reads the chain itself and confirms
 only a transfer matching every term, at finality.

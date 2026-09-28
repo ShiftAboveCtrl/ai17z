@@ -10,6 +10,9 @@ import {
   installFromRegistry,
   pollStudioLink,
   prepareStudioPurchase,
+  capabilitySettings,
+  runCapabilityLoop,
+  setPluginEnabled,
   recordStudioPurchaseSent,
   registryCatalog,
   reviewStudioPurchase,
@@ -364,7 +367,7 @@ run('AI17Z core against a running AI17Z Studio', () => {
 
       // Proprietary: the implementation runs on the publisher's server, reached only through the gateway.
       backend = spawn(process.execPath, [join(DIR!, 'examples', 'hosted-plugin', 'server.mjs')], {
-        env: { ...process.env, PLUGIN_SIGNING_SECRET: setup.proprietarySecret, PORT: '8795', HOST: '127.0.0.1' },
+        env: { ...process.env, PLUGIN_SIGNING_SECRET: setup.proprietarySecret, PLUGIN_ID: 'contract-proprietary', PORT: '8795', HOST: '127.0.0.1' },
         stdio: 'ignore',
       });
       for (let i = 0; i < 50; i++) {
@@ -380,6 +383,58 @@ run('AI17Z core against a running AI17Z Studio', () => {
       const answered = await invoke(agentId, secretCap, { query: 'through-the-gateway' });
       expect(answered.outcome, answered.detail).toBe('SUCCEEDED');
       expect(JSON.stringify(answered.output)).toContain('Result for through-the-gateway');
+      // Bought, installed and entitled is still not allowed: no agent is offered it until the owner chooses.
+      const before = await capabilitySettings(agentId);
+      expect(before.permissions.get(secretCap)).toBe('DISABLED');
+      const asked = 'look up through-the-model and tell me its score';
+      const unoffered = await runCapabilityLoop({
+        agentId,
+        jobId: null,
+        accountId: null,
+        messages: [{ role: 'user', content: asked }],
+        task: asked,
+        permissions: before.permissions,
+        configs: before.configs,
+        paused: false,
+        maxSteps: 1,
+        generate: async () => 'I cannot look that up.',
+      });
+      expect(unoffered.shortlist.offered.map((c) => c.id)).not.toContain(secretCap);
+      // The owner enables it for this one agent.
+      await setPluginEnabled({ agentId, pluginId: 'contract-proprietary', enabled: true });
+      const after = await capabilitySettings(agentId);
+      expect(after.permissions.get(secretCap)).toBe('ALLOWED');
+      // Offered, chosen by the model from the menu it was shown, executed through the gateway, used in the answer.
+      let menuHadIt = false;
+      const loop = await runCapabilityLoop({
+        agentId,
+        jobId: null,
+        accountId: null,
+        messages: [{ role: 'user', content: asked }],
+        task: asked,
+        permissions: after.permissions,
+        configs: after.configs,
+        paused: false,
+        maxSteps: 2,
+        generate: async (messages) => {
+          const text = messages.map((m) => String(m.content)).join('\n');
+          menuHadIt ||= text.includes(secretCap);
+          const found = /Result for through-the-model[^"]*"[^}]*?"score":\s*([0-9.]+)/.exec(text);
+          if (text.includes('Result for through-the-model')) {
+            return `It is "Result for through-the-model" with a score of ${found?.[1] ?? 'unknown'}.`;
+          }
+          return `<use-capability>{"id":"${secretCap}","input":{"query":"through-the-model"}}</use-capability>`;
+        },
+      });
+      expect(menuHadIt).toBe(true);
+      expect(loop.shortlist.offered.map((c) => c.id)).toContain(secretCap);
+      const chosen = loop.steps.find((step) => step.capabilityId === secretCap);
+      expect(chosen?.outcome, chosen?.detail).toBe('SUCCEEDED');
+      expect(loop.answer).toContain('Result for through-the-model');
+      expect(loop.answer).toMatch(/score of [0-9]/);
+      // Input the manifest does not declare never reaches the gateway.
+      const bad = await invoke(agentId, secretCap, { query: 42 });
+      expect(bad.outcome).not.toBe('SUCCEEDED');
       // What the installation holds names Studio's gateway and nothing of the backend or its secret.
       const installed = (await installedPlugins.listInstalledPlugins()).find((p) => p.id === 'contract-proprietary')!;
       const held = JSON.stringify(installed);
@@ -387,7 +442,7 @@ run('AI17Z core against a running AI17Z Studio', () => {
       expect(held).not.toContain(setup.proprietarySecret);
       expect(held).toContain('/api/gateway/v1/contract-proprietary/lookup_thing');
       // The backend itself refuses anything Studio did not sign, anything stale, and any replay.
-      const body = JSON.stringify({ request_id: 'direct-1', capability: 'lookup_thing', input: { query: 'x' } });
+      const body = JSON.stringify({ request_id: 'direct-1', plugin: 'contract-proprietary', capability: 'lookup_thing', input: { query: 'x' } });
       const signed = (secret: string, at: number, raw = body) => ({
         'content-type': 'application/json',
         'x-ai17z-request-id': 'direct-1',
@@ -395,7 +450,14 @@ run('AI17Z core against a running AI17Z Studio', () => {
         'x-ai17z-signature': `v1=${createHmac('sha256', secret).update(`${at}.${raw}`).digest('hex')}`,
       });
       const now = Math.floor(Date.now() / 1000);
-      const direct = (headers: Record<string, string>) => fetch('http://127.0.0.1:8795/', { method: 'POST', headers, body }).then((r) => r.status);
+      const direct = (headers: Record<string, string>, raw = body) => fetch('http://127.0.0.1:8795/', { method: 'POST', headers, body: raw }).then((r) => r.status);
+      // Signed correctly, but for another Plugin or a capability it does not implement.
+      for (const other of [
+        JSON.stringify({ request_id: 'direct-1', plugin: 'contract-hosted', capability: 'lookup_thing', input: { query: 'x' } }),
+        JSON.stringify({ request_id: 'direct-1', plugin: 'contract-proprietary', capability: 'drop_tables', input: { query: 'x' } }),
+      ]) {
+        expect(await direct(signed(setup.proprietarySecret, Math.floor(Date.now() / 1000), other), other)).toBe(401);
+      }
       expect(await direct({ 'content-type': 'application/json' })).toBe(401);
       expect(await direct(signed('not-the-secret', now))).toBe(401);
       expect(await direct(signed(setup.proprietarySecret, now - 600))).toBe(401);
