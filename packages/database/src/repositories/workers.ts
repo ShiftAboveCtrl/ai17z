@@ -86,6 +86,16 @@ export async function goodbye(id: string): Promise<void> {
   await query('DELETE FROM workers WHERE id = $1', [id]);
 }
 
+/**
+ * Forgets every browser-capable worker of this installation. Only for the
+ * launcher, after it has killed the one native worker: a killed worker never
+ * says goodbye, and its fresh heartbeat would otherwise answer for it.
+ */
+export async function forgetBrowserWorkers(): Promise<number> {
+  const rows = await query<{ id: string }>('DELETE FROM workers WHERE browser_capable RETURNING id');
+  return rows.length;
+}
+
 export async function present(): Promise<WorkerRow[]> {
   return mapRows<WorkerRow>(
     await query(

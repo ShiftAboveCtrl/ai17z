@@ -50,6 +50,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "worker:present": "tsx scripts/browser-worker-present.mts",
+    "worker:forget": "tsx scripts/browser-worker-forget.mts",
     "package:unix": "tsx tools/package-unix.mts",
     "latency": "tsx tools/latency.mts"
   },
