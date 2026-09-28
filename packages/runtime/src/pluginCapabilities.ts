@@ -239,6 +239,8 @@ export function declaredCapability(
         method: declaration.http.method,
         headers,
         ...(allowPrivate ? { allowPrivate: true } : {}),
+        // A tool token and proof for Studio's gateway go to the gateway and nowhere else.
+        ...(viaGateway ? { noRedirects: true } : {}),
         // Small on purpose. A declared Plugin answers a question; anything
         // that needs megabytes is not this extension point.
         maxBytes: 512 * 1024,

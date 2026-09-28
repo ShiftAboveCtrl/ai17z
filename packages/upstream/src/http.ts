@@ -78,6 +78,14 @@ export interface SafeFetchOptions {
    * a stranger supplied.
    */
   allowPrivate?: boolean;
+  /**
+   * Refuse any redirect rather than follow it.
+   *
+   * A redirect is followed with the same headers, so a request carrying a
+   * credential meant for one host would carry it to the next. Used for every
+   * request authenticated to AI17Z Studio, which has no reason to redirect one.
+   */
+  noRedirects?: boolean;
 }
 
 export class UnsafeUrlError extends Error {
@@ -164,6 +172,7 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions): Prom
 
       const location = response.headers.get('location');
       if (response.status >= 300 && response.status < 400 && location) {
+        if (options.noRedirects) throw new UnsafeUrlError(`${rawUrl} redirected, and this request does not follow redirects.`);
         if (hop === MAX_HOPS) throw new UnsafeUrlError(`${rawUrl} redirected more than ${MAX_HOPS} times.`);
         // Resolved against the current URL, so a relative Location works and an
         // absolute one elsewhere is judged on its own merits.
