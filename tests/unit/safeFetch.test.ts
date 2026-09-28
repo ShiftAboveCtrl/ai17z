@@ -189,6 +189,24 @@ describe('a redirect is a second request and is judged like one', () => {
     );
   });
 
+  it('with noRedirects, carries a credential to nobody but the host it was meant for', async () => {
+    const { resolver } = resolverFor({ 'studio.example': PUBLIC, 'elsewhere.example': PUBLIC });
+    const { transport, asked } = transportFor([
+      { status: 302, location: 'https://elsewhere.example/steal' },
+      { status: 200, body: 'should never be asked' },
+    ]);
+    await expect(
+      safeFetch('https://studio.example/api/v1/token', {
+        signal: signal(),
+        resolver,
+        transport,
+        headers: { authorization: 'DPoP token' },
+        noRedirects: true,
+      }),
+    ).rejects.toThrow(/does not follow redirects/);
+    expect(asked).toEqual(['https://studio.example/api/v1/token']);
+  });
+
   it('follows an ordinary redirect and reports where it ended up', async () => {
     const { resolver } = resolverFor({ 'moved.example': PUBLIC, 'api.example.com': PUBLIC });
     const { transport, asked } = transportFor([

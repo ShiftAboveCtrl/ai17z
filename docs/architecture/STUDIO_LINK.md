@@ -33,6 +33,10 @@ thumbprint. Every request carries a DPoP proof (RFC 9449) from that key, and
 every token Studio issues is bound to it, so a token copied off the machine is
 useless and there is no bearer secret to steal.
 
+No request that carries a token or proof follows a redirect (`noRedirects` on
+`safeFetch`): a redirect is sent with the same headers, and these belong to
+Studio and nobody else.
+
 A fresh key is made for every link. Studio refuses a key it has seen, so a key
 never outlives the link it was made for.
 

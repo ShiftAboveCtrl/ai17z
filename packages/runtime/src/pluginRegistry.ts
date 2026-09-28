@@ -160,12 +160,13 @@ async function get(path: string, options: RegistryOptions = {}): Promise<{ ok: t
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15_000);
+  const studioAuth = options.transport ? null : await studioRegistryHeaders(base, path);
   const headers = {
     accept: 'application/json',
     'x-ai17z-protocol': String(REGISTRY_PROTOCOL),
     // A registry that is the linked Studio is asked as this installation,
     // with its own key; anything else gets the stored key, if there is one.
-    ...((options.transport ? null : await studioRegistryHeaders(base, path)) ?? (await keyHeader())),
+    ...(studioAuth ?? (await keyHeader())),
   };
   try {
     const response = options.transport
@@ -176,6 +177,7 @@ async function get(path: string, options: RegistryOptions = {}): Promise<{ ok: t
           headers,
           maxBytes: 2 * 1024 * 1024,
           ...(devStudio && base === devStudio ? { allowPrivate: true } : {}),
+          ...(studioAuth ? { noRedirects: true } : {}),
         });
     if (response.status === 401) {
       return { ok: false, why: 'The registry refused this key.', needsKey: true };

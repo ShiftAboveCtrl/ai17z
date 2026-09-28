@@ -210,6 +210,8 @@ async function send(
           headers,
           ...(body === undefined ? {} : { body }),
           maxBytes: 1024 * 1024,
+          // Every request here may carry this installation's token and proof.
+          noRedirects: true,
           ...(where.unsafeDev ? { allowPrivate: true } : {}),
         });
     let parsed: Record<string, unknown> | null = null;
