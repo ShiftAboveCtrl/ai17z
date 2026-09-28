@@ -42,7 +42,10 @@ export const AI17Z_PAYMENT = {
   token: '0x16cb7cbb26295b60df7f4b3b39a99a9a3c585e81',
   tokenChecksum: '0x16CB7cBb26295b60DF7f4B3B39a99a9A3c585E81',
   decimals: 18,
-  symbol: 'AI17Z',
+  // What the contract's own symbol() returns; displayed as AI17Z.
+  symbol: 'ai17z',
+  /** Read only: chain id, decimals, balances and gas estimates, never a send. */
+  rpcUrl: 'https://rpc.mainnet.chain.robinhood.com',
 } as const;
 
 /** keccak256("transfer(address,uint256)") truncated to four bytes. */

@@ -2,6 +2,7 @@ import { ops, studio as ledger } from '@xbam/database';
 import { buildVersion, openSecret, sealSecret } from '@xbam/shared';
 import {
   AI17Z_PAYMENT,
+  formatBaseUnits,
   prepareMarketplacePurchase,
   type PreparedMarketplacePurchase,
   type StudioPurchaseTerms,
@@ -826,6 +827,9 @@ const PurchaseList = z.object({
         expires_at: z.string(),
         submitted_tx_hash: z.string().nullable(),
         failure_reason: z.string().nullable(),
+        publisher: z.string().optional(),
+        plugin_version: z.string().optional(),
+        created_at: z.string().optional(),
       }),
     )
     .max(50),
@@ -864,6 +868,12 @@ export async function prepareStudioPurchase(intentId: string): Promise<{ ok: tru
   if (!terms) return { ok: false, why: 'Studio has no purchase with that id waiting for this installation.' };
   const prepared = prepareMarketplacePurchase(terms as StudioPurchaseTerms);
   if (!prepared.ok) return prepared;
+  // Again here, whatever the page already showed: the page is not what decides.
+  const preflight = await preflightPurchase(prepared.purchase);
+  if (!preflight.ok) {
+    const failed = preflight.checks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.detail}`);
+    return { ok: false, why: `The chain does not agree this transfer can go ahead (${failed.join('; ')}), so your wallet was not asked.` };
+  }
   const p = prepared.purchase;
   const claimed = await ledger.claimPrepare({
     intentId: p.intentId,
@@ -912,6 +922,175 @@ export async function reportUnacknowledgedPurchases(): Promise<void> {
 
 export async function abandonStudioPurchase(intentId: string): Promise<{ ok: boolean; why?: string }> {
   return ledger.markAbandoned(intentId);
+}
+
+// ---------------------------------------------------------------------------
+// Linking a wallet from here
+// ---------------------------------------------------------------------------
+
+/**
+ * What a Studio wallet challenge must say before it is put in front of the
+ * owner's wallet. Studio writes the message; this checks it is the kind of
+ * message it claims to be, for the wallet it names, so a Studio that sent
+ * something else to be signed is refused here rather than signed.
+ */
+export function isWalletLinkChallenge(message: string, address: string): boolean {
+  if (typeof message !== 'string' || message.length > 2000) return false;
+  const lines = message.split('\n');
+  const wallet = lines.find((line) => line.startsWith('Wallet: '))?.slice('Wallet: '.length).trim().toLowerCase();
+  return (
+    wallet === address.toLowerCase() &&
+    message.includes('Link this wallet to my AI17Z Studio account') &&
+    message.includes(`Chain: ${AI17Z_PAYMENT.chainName} (${AI17Z_PAYMENT.chainId})`) &&
+    message.includes('Signing this message does not send a transaction, grant any allowance, or cost gas.') &&
+    /^Nonce: \S+$/m.test(message) &&
+    /^Expires: \S+$/m.test(message)
+  );
+}
+
+export async function studioWallets(): Promise<{ ok: true; wallets: Array<{ address: string; chain_id: number; verified_at: string }> } | StudioProblem> {
+  const answer = await authed('/api/v1/installation/wallets', { method: 'GET' }).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  const wallets = answer.body?.wallets;
+  if (answer.status !== 200 || !Array.isArray(wallets)) return { ok: false, why: describe(answer) };
+  return { ok: true, wallets: wallets as Array<{ address: string; chain_id: number; verified_at: string }> };
+}
+
+/** A one-time message for the owner's wallet to sign, checked before it is shown. */
+export async function studioWalletChallenge(address: string): Promise<{ ok: true; challengeId: string; message: string } | StudioProblem> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return { ok: false, why: 'That is not a wallet address.' };
+  const answer = await authed('/api/v1/installation/wallets/challenges', { method: 'POST', json: { address } }).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  const message = answer.body?.message;
+  const challengeId = answer.body?.challenge_id;
+  if (answer.status !== 200 || typeof message !== 'string' || typeof challengeId !== 'string') return { ok: false, why: describe(answer) };
+  if (!isWalletLinkChallenge(message, address)) {
+    return { ok: false, why: 'Studio asked for a signature that is not a wallet-link message for this wallet, so it was not shown to your wallet.' };
+  }
+  return { ok: true, challengeId, message };
+}
+
+export async function studioLinkWallet(challengeId: string, signature: string): Promise<{ ok: true } | StudioProblem> {
+  if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) return { ok: false, why: 'That is not a wallet signature.' };
+  const answer = await authed('/api/v1/installation/wallets', { method: 'POST', json: { challenge_id: challengeId, signature } }).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  return answer.status === 200 ? { ok: true } : { ok: false, why: describe(answer) };
+}
+
+// ---------------------------------------------------------------------------
+// Reading the chain before a wallet is asked
+// ---------------------------------------------------------------------------
+
+export interface PreflightCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface JsonRpc {
+  (method: string, params: unknown[]): Promise<unknown>;
+}
+
+async function publicRpc(method: string, params: unknown[]): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await safeFetch(AI17Z_PAYMENT.rpcUrl, {
+      signal: controller.signal,
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      maxBytes: 256 * 1024,
+      noRedirects: true,
+    });
+    const body = JSON.parse(response.text) as { result?: unknown; error?: { message?: string } };
+    if (body.error) throw new Error(body.error.message ?? 'the node refused the call');
+    return body.result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+let rpcOverride: JsonRpc | null = null;
+export function setPaymentRpcForTests(rpc: JsonRpc | null): void {
+  rpcOverride = rpc;
+}
+
+const SELECTOR = { decimals: '0x313ce567', symbol: '0x95d89b41', balanceOf: '0x70a08231' } as const;
+
+function decodeString(hex: string): string | null {
+  try {
+    const data = hex.replace(/^0x/, '');
+    const length = Number.parseInt(data.slice(64, 128), 16);
+    return Buffer.from(data.slice(128, 128 + length * 2), 'hex').toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Asks the chain itself, read only, whether the transfer about to be signed is
+ * the one it looks like: the chain the node serves, the token at the pinned
+ * address answering with the pinned decimals and symbol, enough $AI17Z in the
+ * paying wallet, and a gas estimate for the exact call, which a transfer that
+ * would revert does not get. Nothing here sends or signs anything.
+ */
+export async function preflightPurchase(purchase: PreparedMarketplacePurchase): Promise<{ ok: boolean; checks: PreflightCheck[] }> {
+  const rpc = rpcOverride ?? publicRpc;
+  const checks: PreflightCheck[] = [];
+  const check = async (name: string, run: () => Promise<{ ok: boolean; detail: string }>) => {
+    try {
+      checks.push({ name, ...(await run()) });
+    } catch (error) {
+      checks.push({ name, ok: false, detail: `could not be read: ${(error as Error).message}` });
+    }
+  };
+  await check('Chain', async () => {
+    const id = String(await rpc('eth_chainId', []));
+    return { ok: id.toLowerCase() === purchase.chainIdHex, detail: `the node serves chain ${Number.parseInt(id, 16)}` };
+  });
+  await check('Token decimals', async () => {
+    const value = Number.parseInt(String(await rpc('eth_call', [{ to: purchase.token, data: SELECTOR.decimals }, 'latest'])), 16);
+    return { ok: value === AI17Z_PAYMENT.decimals, detail: `the contract reports ${value}` };
+  });
+  await check('Token symbol', async () => {
+    const symbol = decodeString(String(await rpc('eth_call', [{ to: purchase.token, data: SELECTOR.symbol }, 'latest'])));
+    return { ok: symbol?.toLowerCase() === AI17Z_PAYMENT.symbol.toLowerCase(), detail: `the contract reports "${symbol ?? '?'}"` };
+  });
+  await check('Balance', async () => {
+    const raw = String(await rpc('eth_call', [{ to: purchase.token, data: `${SELECTOR.balanceOf}${purchase.payer.slice(2).padStart(64, '0')}` }, 'latest']));
+    const balance = BigInt(raw === '0x' ? '0x0' : raw);
+    const enough = balance >= BigInt(purchase.amountBaseUnits);
+    return { ok: enough, detail: `${formatBaseUnits(balance.toString())} AI17Z in the paying wallet` };
+  });
+  await check('Would succeed', async () => {
+    const gas = BigInt(String(await rpc('eth_estimateGas', [{ from: purchase.payer, to: purchase.token, data: purchase.transaction.data, value: '0x0' }])));
+    return { ok: gas > 0n, detail: `the node estimates ${gas} gas for exactly this transfer` };
+  });
+  await check('Gas money', async () => {
+    const native = BigInt(String(await rpc('eth_getBalance', [purchase.payer, 'latest'])));
+    return { ok: native > 0n, detail: native > 0n ? 'the paying wallet holds ETH for gas' : 'the paying wallet holds no ETH to pay gas with' };
+  });
+  return { ok: checks.every((c) => c.ok), checks };
+}
+
+/** Everything the owner is shown before they choose to ask their wallet, with nothing claimed or recorded. */
+export async function reviewStudioPurchase(
+  intentId: string,
+): Promise<{ ok: true; purchase: PreparedMarketplacePurchase; terms: StudioPurchase; preflight: { ok: boolean; checks: PreflightCheck[] } } | StudioProblem> {
+  const listed = await studioPurchases();
+  if (!listed.ok) return listed;
+  const terms = listed.purchases.find((p) => p.intent_id === intentId);
+  if (!terms) return { ok: false, why: 'Studio has no purchase with that id waiting for this installation.' };
+  const prepared = prepareMarketplacePurchase(terms as StudioPurchaseTerms);
+  if (!prepared.ok) return prepared;
+  return { ok: true, purchase: prepared.purchase, terms, preflight: await preflightPurchase(prepared.purchase) };
 }
 
 // ---------------------------------------------------------------------------

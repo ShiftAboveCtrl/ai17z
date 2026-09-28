@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, Link2, RefreshCw, ShieldAlert, Unlink, Wallet } from 'lucide-react';
-import { formatBaseUnits, isExactPurchaseTransaction, type PreparedMarketplacePurchase } from '@xbam/shared/contracts';
+import { AI17Z_PAYMENT, formatBaseUnits, isExactPurchaseTransaction, type PreparedMarketplacePurchase } from '@xbam/shared/contracts';
 import { post } from '@app/lib/api';
 import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
 import { RetryablePanel, Working } from '@app/components/ui';
@@ -41,6 +41,10 @@ interface StudioPurchase {
   intent_id: string;
   plugin_id: string;
   plugin_name: string;
+  publisher?: string;
+  plugin_version?: string;
+  created_at?: string;
+  chain_id: number;
   status: string;
   payer_address: string;
   recipient_address: string;
@@ -117,7 +121,7 @@ export function StudioPanel() {
           <ShieldAlert size={16} className="shrink-0 text-signal-warn" aria-hidden="true" />
           <p className="break-words">
             This installation is pointed at a development Studio at <code>{data.origin}</code> by AI17Z_STUDIO_UNSAFE_DEV_ORIGIN.
-            It is not the real AI17Z Studio, and nothing bought there is real.
+            It is not the public AI17Z Studio. A payment made through it is still a real transfer on the chain.
           </p>
         </div>
       ) : null}
@@ -316,57 +320,209 @@ function EntitlementsSection({ status, onChanged }: { status: StudioStatus; onCh
   );
 }
 
+interface LinkedWallet {
+  address: string;
+  chain_id: number;
+  verified_at: string;
+}
+
+const utf8Hex = (text: string) =>
+  `0x${Array.from(new TextEncoder().encode(text))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')}`;
+
+/**
+ * Linking a wallet to the Studio account, from here. Studio writes the
+ * message and checks the signature; the local API checks the message is a
+ * wallet-link message for this wallet before this page may show it; the
+ * wallet shows it to the owner. It signs a message and nothing else: no
+ * transaction, no allowance, no gas.
+ */
+function WalletSection({ wallets, onChanged }: { wallets: AnnouncedWallet[]; onChanged: () => void }) {
+  const linked = useResource<{ ok: true; wallets: LinkedWallet[] } | { ok: false; why: string }>('/api/studio/wallets');
+  const [walletId, setWalletId] = useState('');
+  const [step, setStep] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const elapsed = useElapsed(step !== null);
+  const chosen = wallets.find((w) => w.uuid === walletId) ?? wallets[0] ?? null;
+
+  const connect = async () => {
+    if (!chosen) return;
+    setProblem(null);
+    try {
+      setStep(`Asking ${chosen.name} which account to link`);
+      const accounts = (await chosen.provider.request({ method: 'eth_requestAccounts' })) as string[];
+      const address = accounts[0];
+      if (!address) {
+        setProblem(`${chosen.name} did not share an account.`);
+        return;
+      }
+      setStep('Asking Studio for a one-time message');
+      const challenge = await post<{ ok: true; challengeId: string; message: string } | { ok: false; why: string }>('/api/studio/wallets/challenge', { address });
+      if (!challenge.ok) {
+        setProblem(challenge.why);
+        return;
+      }
+      setStep(`Waiting for you to sign the message in ${chosen.name}`);
+      const signature = String(await chosen.provider.request({ method: 'personal_sign', params: [utf8Hex(challenge.message), address] }));
+      setStep('Studio is checking the signature');
+      const done = await post<{ ok: boolean; why?: string }>('/api/studio/wallets', { challengeId: challenge.challengeId, signature });
+      if (!done.ok) setProblem(done.why ?? 'Studio did not accept the signature.');
+      linked.reload();
+      onChanged();
+    } catch (error) {
+      const code = (error as { code?: number }).code;
+      setProblem(code === 4001 ? 'You declined it in the wallet. Nothing was linked.' : error instanceof Error ? error.message : String(error));
+    } finally {
+      setStep(null);
+    }
+  };
+
+  const list = linked.data && linked.data.ok ? linked.data.wallets : [];
+  return (
+    <section className="rounded-lg border border-ink-line bg-ink-panel p-4">
+      <h2 className="text-sm font-medium text-bone">Your wallet</h2>
+      <p className="mt-1 text-[11px] text-bone-faint">
+        A purchase is paid from a wallet linked to your Studio account. Linking asks your wallet to sign a message proving
+        you control it. It sends nothing and costs nothing, and AI17Z never sees a key.
+      </p>
+      {linked.data && !linked.data.ok ? <p className="mt-2 break-words text-xs text-signal-wait">{linked.data.why}</p> : null}
+      {list.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-xs">
+          {list.map((w) => (
+            <li key={w.address} className="break-all text-bone">
+              {w.address} <span className="text-bone-faint">linked {when(w.verified_at)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {wallets.length === 0 ? (
+        <p className="mt-2 text-xs text-signal-wait">No wallet announced itself in this browser. Open AI17Z in a browser with your wallet extension installed.</p>
+      ) : (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+          {wallets.length > 1 ? (
+            <select value={chosen?.uuid ?? ''} onChange={(event) => setWalletId(event.target.value)} className="rounded border border-ink-line bg-ink-deep px-2 py-1 text-bone">
+              {wallets.map((w) => (
+                <option key={w.uuid} value={w.uuid}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <button type="button" disabled={step !== null} onClick={() => void connect()} className="inline-flex items-center gap-1.5 rounded border border-ink-line px-3 py-1 text-bone hover:bg-ink-deep disabled:opacity-50">
+            <Wallet size={13} aria-hidden="true" /> {list.length > 0 ? 'Link another wallet' : 'Connect wallet'}
+          </button>
+        </div>
+      )}
+      {step ? <Working label={step} seconds={elapsed} slowAfter={60} /> : null}
+      {problem ? <p className="mt-2 break-words text-[11px] text-signal-fail">{problem}</p> : null}
+    </section>
+  );
+}
+
 function PurchasesSection({ status }: { status: StudioStatus }) {
   const purchases = useResource<Purchases>('/api/studio/purchases');
   const wallets = useWallets();
+  usePolling(() => purchases.reload(), 30_000, true);
   if (purchases.loading && !purchases.data) return <Working label="Reading purchases" seconds={0} />;
   if (purchases.error || !purchases.data) {
     return <RetryablePanel title="Purchases did not load" detail={purchases.error ?? 'No answer.'} onRetry={purchases.reload} />;
   }
   const { studio, ledger } = purchases.data;
   const open = studio.ok ? studio.purchases.filter((p) => ['AWAITING_PAYMENT', 'SUBMITTED', 'CONFIRMING'].includes(p.status)) : [];
+  const settled = studio.ok ? studio.purchases.filter((p) => !['AWAITING_PAYMENT', 'SUBMITTED', 'CONFIRMING'].includes(p.status)) : [];
   return (
-    <section className="rounded-lg border border-ink-line bg-ink-panel p-4">
-      <h2 className="text-sm font-medium text-bone">Purchases waiting here</h2>
-      <p className="mt-1 text-[11px] text-bone-faint">
-        A purchase you start on Studio for this installation is finished here, where your own wallet signs it. Only one
-        kind of transaction is ever prepared: an exact transfer of $AI17Z on{' '}
-        {status.payment.chainName} to the publisher, for the price on the checkout.
-      </p>
-      {!studio.ok ? <p className="mt-2 break-words text-xs text-signal-wait">{studio.why}</p> : null}
-      {open.length === 0 && studio.ok ? <p className="mt-2 text-xs text-bone-faint">Nothing is waiting.</p> : null}
-      <ul className="mt-2 space-y-3">
-        {open.map((purchase) => (
-          <PurchaseRow
-            key={purchase.intent_id}
-            purchase={purchase}
-            recorded={ledger.find((row) => row.intentId === purchase.intent_id) ?? null}
-            wallets={wallets}
-            onChanged={purchases.reload}
-          />
-        ))}
-      </ul>
-      {ledger.length > 0 ? (
-        <details className="mt-4 text-xs">
-          <summary className="cursor-pointer text-bone-faint">Recorded on this installation ({ledger.length})</summary>
-          <ul className="mt-2 divide-y divide-ink-line">
-            {ledger.map((row) => (
-              <li key={row.intentId} className="space-y-0.5 py-1.5">
-                <p className="text-bone">
-                  {row.pluginName}: {formatBaseUnits(row.amountBaseUnits)} AI17Z to {shortAddress(row.recipientAddress)}
-                </p>
-                <p className="break-all text-bone-faint">
-                  {row.state.toLowerCase()}
-                  {row.studioStatus ? `, Studio says ${row.studioStatus.toLowerCase().replace(/_/g, ' ')}` : ''}
-                  {row.txHash ? `, ${row.txHash}` : ''}
-                  {row.note ? `, ${row.note}` : ''}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-    </section>
+    <>
+      <WalletSection wallets={wallets} onChanged={purchases.reload} />
+      <section className="rounded-lg border border-ink-line bg-ink-panel p-4">
+        <h2 className="text-sm font-medium text-bone">Pending purchases</h2>
+        <p className="mt-1 text-[11px] text-bone-faint">
+          A purchase you start on Studio for this installation is finished here, where your own wallet signs it. Only one
+          kind of transaction is ever prepared: a transfer of the exact $AI17Z price on {status.payment.chainName} to the
+          publisher. Never an approval, a swap or any other call.
+        </p>
+        {!studio.ok ? <p className="mt-2 break-words text-xs text-signal-wait">{studio.why}</p> : null}
+        {open.length === 0 && studio.ok ? <p className="mt-2 text-xs text-bone-faint">Nothing is waiting.</p> : null}
+        <ul className="mt-2 space-y-3">
+          {open.map((purchase) => (
+            <PurchaseRow
+              key={purchase.intent_id}
+              purchase={purchase}
+              recorded={ledger.find((row) => row.intentId === purchase.intent_id) ?? null}
+              wallets={wallets}
+              onChanged={purchases.reload}
+            />
+          ))}
+        </ul>
+        {settled.length > 0 ? (
+          <details className="mt-4 text-xs">
+            <summary className="cursor-pointer text-bone-faint">Settled on Studio ({settled.length})</summary>
+            <ul className="mt-2 space-y-2">
+              {settled.map((p) => (
+                <li key={p.intent_id} className="break-all text-bone-faint">
+                  {p.plugin_name}: {formatBaseUnits(p.amount_base_units)} AI17Z, {p.status.toLowerCase()}
+                  {p.submitted_tx_hash ? `, ${p.submitted_tx_hash}` : ''}
+                  {p.failure_reason ? `, ${p.failure_reason}` : ''}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+        {ledger.length > 0 ? (
+          <details className="mt-4 text-xs">
+            <summary className="cursor-pointer text-bone-faint">Recorded on this installation ({ledger.length})</summary>
+            <ul className="mt-2 divide-y divide-ink-line">
+              {ledger.map((row) => (
+                <li key={row.intentId} className="space-y-0.5 py-1.5">
+                  <p className="text-bone">
+                    {row.pluginName}: {formatBaseUnits(row.amountBaseUnits)} AI17Z to {shortAddress(row.recipientAddress)}
+                  </p>
+                  <p className="break-all text-bone-faint">
+                    {row.state === 'SENT' ? 'submitted' : row.state.toLowerCase()}
+                    {row.studioStatus ? `, Studio says ${row.studioStatus.toLowerCase().replace(/_/g, ' ')}` : ''}
+                    {row.txHash ? `, ${row.txHash}` : ''}
+                    {row.note ? `, ${row.note}` : ''}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+      </section>
+    </>
+  );
+}
+
+interface Review {
+  ok: true;
+  purchase: PreparedMarketplacePurchase;
+  terms: StudioPurchase;
+  preflight: { ok: boolean; checks: Array<{ name: string; ok: boolean; detail: string }> };
+}
+
+function Terms({ purchase, token, chainName }: { purchase: StudioPurchase; token: string; chainName: string }) {
+  const rows: Array<[string, string]> = [
+    ['Plugin', `${purchase.plugin_name}${purchase.plugin_version ? ` ${purchase.plugin_version}` : ''}`],
+    ['Publisher', purchase.publisher ?? 'not stated'],
+    ['Price', `${formatBaseUnits(purchase.amount_base_units)} AI17Z (${purchase.amount_base_units} base units)`],
+    ['Token', token],
+    ['Chain', `${chainName} (${purchase.chain_id})`],
+    ['Recipient', purchase.recipient_address],
+    ['Paying wallet', purchase.payer_address],
+    ['Purchase', purchase.intent_id],
+    ['Started', when(purchase.created_at)],
+    ['Pay before', when(purchase.expires_at)],
+    ['State', purchase.status.toLowerCase().replace(/_/g, ' ')],
+  ];
+  return (
+    <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5">
+      {rows.map(([label, value]) => (
+        <div key={label} className="contents">
+          <dt className="text-bone-faint">{label}</dt>
+          <dd className="break-all text-bone">{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -382,6 +538,7 @@ function PurchaseRow({
   onChanged: () => void;
 }) {
   const [walletId, setWalletId] = useState<string>('');
+  const [review, setReview] = useState<Review | null>(null);
   const [step, setStep] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [manualHash, setManualHash] = useState('');
@@ -398,24 +555,45 @@ function PurchaseRow({
     else if (answer.studioProblem) setProblem(answer.studioProblem);
   };
 
+  const check = async () => {
+    setProblem(null);
+    setReview(null);
+    setStep('Checking the terms and reading the chain');
+    try {
+      const answer = await post<Review | { ok: false; why: string }>(`/api/studio/purchases/${purchase.intent_id}/review`, {});
+      if (!answer.ok) setProblem(answer.why);
+      else if (!isExactPurchaseTransaction(answer.purchase) || answer.purchase.amountBaseUnits !== purchase.amount_base_units) {
+        setProblem('What was prepared is not exactly this purchase, so it will not be offered to your wallet.');
+      } else setReview(answer);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : String(error));
+    } finally {
+      setStep(null);
+    }
+  };
+
   const pay = async () => {
-    if (inFlight.current || !chosen) return;
+    if (inFlight.current || !chosen || !review?.preflight.ok) return;
     inFlight.current = true;
     setProblem(null);
     try {
       setStep('Preparing the one transfer this purchase allows');
-      const prepared = await post<{ ok: true; purchase: PreparedMarketplacePurchase } | { ok: false; why: string }>(
-        `/api/studio/purchases/${purchase.intent_id}/prepare`,
-        {},
-      );
+      const prepared = await post<{ ok: true; purchase: PreparedMarketplacePurchase } | { ok: false; why: string }>(`/api/studio/purchases/${purchase.intent_id}/prepare`, {});
       if (!prepared.ok) {
         setProblem(prepared.why);
         return;
       }
       const tx = prepared.purchase;
-      // The last look before a signature is asked for.
-      if (!isExactPurchaseTransaction(tx) || tx.amountBaseUnits !== purchase.amount_base_units) {
-        setProblem('What was prepared is not exactly this purchase, so your wallet was not asked.');
+      // The last look before a signature is asked for: identical to what the owner just confirmed.
+      if (
+        !isExactPurchaseTransaction(tx) ||
+        tx.amountBaseUnits !== review.purchase.amountBaseUnits ||
+        tx.recipient !== review.purchase.recipient ||
+        tx.payer !== review.purchase.payer ||
+        tx.transaction.data !== review.purchase.transaction.data
+      ) {
+        setProblem('What was prepared differs from what you confirmed, so your wallet was not asked.');
+        await post(`/api/studio/purchases/${purchase.intent_id}/not-sent`, {});
         return;
       }
       setStep(`Asking ${chosen.name} which account to use`);
@@ -427,7 +605,7 @@ function PurchaseRow({
       }
       const chain = String(await chosen.provider.request({ method: 'eth_chainId' })).toLowerCase();
       if (chain !== tx.chainIdHex) {
-        setStep(`Asking ${chosen.name} to switch to ${tx.chainId === 4663 ? 'Robinhood Chain' : tx.chainId}`);
+        setStep(`Asking ${chosen.name} to switch to ${review.purchase.chainId === 4663 ? 'Robinhood Chain' : review.purchase.chainId}`);
         try {
           await chosen.provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: tx.chainIdHex }] });
         } catch {
@@ -443,18 +621,16 @@ function PurchaseRow({
       } catch (error) {
         const code = (error as { code?: number }).code;
         if (code === 4001) {
-          // The wallet's own answer that the owner declined: nothing was sent.
           await post(`/api/studio/purchases/${purchase.intent_id}/not-sent`, {});
           setProblem('You declined it in the wallet. Nothing was sent.');
         } else {
-          setProblem(
-            `${chosen.name} did not return a transaction (${(error as Error).message ?? 'no reason given'}). Check its activity before trying again.`,
-          );
+          setProblem(`${chosen.name} did not return a transaction (${(error as Error).message ?? 'no reason given'}). Check its activity before doing anything else.`);
         }
         return;
       }
       setStep('Recording the transaction');
       await report(hash);
+      setReview(null);
     } catch (error) {
       setProblem(error instanceof Error ? error.message : String(error));
     } finally {
@@ -466,52 +642,59 @@ function PurchaseRow({
 
   return (
     <li className="space-y-2 rounded border border-ink-line p-3 text-xs">
-      <p className="text-bone">{purchase.plugin_name}</p>
-      <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-0.5">
-        <dt className="text-bone-faint">Amount</dt>
-        <dd className="break-all text-bone">
-          {formatBaseUnits(purchase.amount_base_units)} AI17Z <span className="text-bone-faint">({purchase.amount_base_units} base units)</span>
-        </dd>
-        <dt className="text-bone-faint">To</dt>
-        <dd className="break-all text-bone">{purchase.recipient_address}</dd>
-        <dt className="text-bone-faint">From</dt>
-        <dd className="break-all text-bone">{purchase.payer_address}</dd>
-        <dt className="text-bone-faint">Pay before</dt>
-        <dd className="text-bone">{when(purchase.expires_at)}</dd>
-        <dt className="text-bone-faint">Status</dt>
-        <dd className="text-bone">{purchase.status.toLowerCase().replace(/_/g, ' ')}</dd>
-      </dl>
-      {awaiting && !alreadySent && !waitingOnWallet ? (
-        wallets.length === 0 ? (
-          <p className="text-signal-wait">
-            No wallet announced itself in this browser. Open AI17Z in a browser with your wallet extension installed.
+      <Terms purchase={purchase} token={AI17Z_PAYMENT.tokenChecksum} chainName={AI17Z_PAYMENT.chainName} />
+      {awaiting && !alreadySent && !waitingOnWallet && !review ? (
+        <button type="button" disabled={step !== null} onClick={() => void check()} className="rounded border border-ink-line px-3 py-1 text-bone hover:bg-ink-deep disabled:opacity-50">
+          Review payment
+        </button>
+      ) : null}
+      {review && awaiting && !alreadySent && !waitingOnWallet ? (
+        <div className="space-y-2 rounded border border-signal-warn/50 bg-signal-warn/[0.05] p-3">
+          <p className="font-medium text-bone">Confirm before your wallet is asked</p>
+          <p className="text-bone">
+            Send <strong>{review.purchase.amountDisplay} AI17Z</strong> to <span className="break-all">{review.purchase.recipient}</span> on{' '}
+            {AI17Z_PAYMENT.chainName}, from <span className="break-all">{review.purchase.payer}</span>, for {purchase.plugin_name}.
           </p>
-        ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            {wallets.length > 1 ? (
-              <select
-                value={chosen?.uuid ?? ''}
-                onChange={(event) => setWalletId(event.target.value)}
-                className="rounded border border-ink-line bg-ink-deep px-2 py-1 text-xs text-bone"
+          <p className="break-all text-bone-faint">
+            One ERC-20 transfer to the $AI17Z contract {AI17Z_PAYMENT.tokenChecksum}. No approval, no swap, no other call.
+            Calldata {review.purchase.transaction.data}
+          </p>
+          <ul className="space-y-0.5">
+            {review.preflight.checks.map((c) => (
+              <li key={c.name} className={c.ok ? 'text-signal-live' : 'text-signal-fail'}>
+                {c.ok ? 'OK' : 'NO'} {c.name}: {c.detail}
+              </li>
+            ))}
+          </ul>
+          {!review.preflight.ok ? <p className="text-signal-fail">The chain does not agree this transfer can go ahead, so it cannot be sent.</p> : null}
+          {wallets.length === 0 ? (
+            <p className="text-signal-wait">No wallet announced itself in this browser.</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              {wallets.length > 1 ? (
+                <select value={chosen?.uuid ?? ''} onChange={(event) => setWalletId(event.target.value)} className="rounded border border-ink-line bg-ink-deep px-2 py-1 text-bone">
+                  {wallets.map((w) => (
+                    <option key={w.uuid} value={w.uuid}>
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <button
+                type="button"
+                disabled={step !== null || !review.preflight.ok}
+                onClick={() => void pay()}
+                className="inline-flex items-center gap-1.5 rounded border border-ink-line px-3 py-1 text-bone hover:bg-ink-deep disabled:opacity-50"
               >
-                {wallets.map((w) => (
-                  <option key={w.uuid} value={w.uuid}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            <button
-              type="button"
-              disabled={step !== null}
-              onClick={() => void pay()}
-              className="inline-flex items-center gap-1.5 rounded border border-ink-line px-3 py-1 text-bone hover:bg-ink-deep disabled:opacity-50"
-            >
-              {chosen && safeIcon(chosen.icon) ? <img src={safeIcon(chosen.icon)!} alt="" className="h-3.5 w-3.5" /> : <Wallet size={13} aria-hidden="true" />}
-              Pay with {chosen?.name ?? 'wallet'}
-            </button>
-          </div>
-        )
+                {chosen && safeIcon(chosen.icon) ? <img src={safeIcon(chosen.icon)!} alt="" className="h-3.5 w-3.5" /> : <Wallet size={13} aria-hidden="true" />}
+                Ask {chosen?.name ?? 'my wallet'} to sign this transfer
+              </button>
+              <button type="button" disabled={step !== null} onClick={() => setReview(null)} className="rounded border border-ink-line px-3 py-1 text-bone-faint hover:bg-ink-deep">
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
       ) : null}
       {waitingOnWallet && !alreadySent ? (
         <div className="space-y-2 rounded border border-signal-wait/40 p-2">
@@ -527,19 +710,10 @@ function PurchaseRow({
               spellCheck={false}
               className="min-w-0 flex-1 rounded border border-ink-line bg-ink-deep px-2 py-1 font-mono text-xs text-bone"
             />
-            <button
-              type="button"
-              disabled={!/^0x[0-9a-fA-F]{64}$/.test(manualHash.trim())}
-              onClick={() => void report(manualHash.trim()).then(onChanged)}
-              className="rounded border border-ink-line px-3 py-1 text-bone hover:bg-ink-deep disabled:opacity-50"
-            >
+            <button type="button" disabled={!/^0x[0-9a-fA-F]{64}$/.test(manualHash.trim())} onClick={() => void report(manualHash.trim()).then(onChanged)} className="rounded border border-ink-line px-3 py-1 text-bone hover:bg-ink-deep disabled:opacity-50">
               It was sent
             </button>
-            <button
-              type="button"
-              onClick={() => void post(`/api/studio/purchases/${purchase.intent_id}/not-sent`, {}).then(onChanged)}
-              className="rounded border border-ink-line px-3 py-1 text-bone-faint hover:bg-ink-deep"
-            >
+            <button type="button" onClick={() => void post(`/api/studio/purchases/${purchase.intent_id}/not-sent`, {}).then(onChanged)} className="rounded border border-ink-line px-3 py-1 text-bone-faint hover:bg-ink-deep">
               Nothing was sent
             </button>
           </div>
@@ -547,8 +721,9 @@ function PurchaseRow({
       ) : null}
       {alreadySent ? (
         <p className="break-all text-bone-faint">
-          Sent{recorded?.txHash ? ` as ${recorded.txHash}` : ''}. Studio grants it once the network has finalised the
-          block, which can take around twenty minutes.
+          Submitted{recorded?.txHash ? ` as ${recorded.txHash}` : purchase.submitted_tx_hash ? ` as ${purchase.submitted_tx_hash}` : ''}. Studio grants it
+          only after reading the transfer on the chain itself, once the block is finalised, which can take around twenty
+          minutes. Sync on this tab afterwards.
         </p>
       ) : null}
       {step ? <Working label={step} seconds={elapsed} slowAfter={60} /> : null}
