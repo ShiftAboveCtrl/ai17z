@@ -2,11 +2,19 @@
  * MARKETPLACE_PLUGIN_PURCHASE: the one payment AI17Z will ever prepare.
  *
  * An owner who bought a Plugin on AI17Z Studio finishes the purchase in their
- * own AI17Z, where their wallet signs it. This file is the whole of what that
- * signature can be: an ERC-20 `transfer(recipient, amount)` of $AI17Z on
- * Robinhood Chain, for the exact amount a checkout recorded, from the wallet
- * the checkout named, to the publisher the checkout named. Nothing else is
- * expressible here.
+ * own AI17Z, where their wallet signs it. A checkout is one or more payments
+ * (legs): the publisher's share and, on a paid plan, the marketplace fee. This
+ * file is the whole of what each signature can be, and there are exactly two
+ * shapes:
+ *
+ *  - an ERC-20 `transfer(recipient, amount)` of $AI17Z on Robinhood Chain,
+ *    sent to the pinned token contract with no native value, or
+ *  - a plain ETH transfer on Robinhood Chain: `to` the recipient, `value` the
+ *    exact amount in wei, and empty data, so no contract is ever called.
+ *
+ * Each for the exact amount the checkout recorded for that leg, from the
+ * wallet the checkout named, to the recipient the checkout named. Nothing
+ * else is expressible here.
  *
  * It is not a capability and never will be. No model chooses it, no prompt
  * reaches it, and there is no "send", "approve", "swap" or "sign" anywhere in
@@ -26,8 +34,10 @@
  *  - A payer that is the recipient.
  *  - A checkout that is not awaiting payment or has expired.
  *
- * There is no `approve`, no `transferFrom`, no caller-supplied calldata, no
- * native value. The transaction's `to` is always the pinned token.
+ * There is no `approve`, no `transferFrom`, no caller-supplied calldata. An
+ * AI17Z payment's `to` is always the pinned token and carries no value; an
+ * ETH payment carries no data. Nothing here renews, repeats or schedules a
+ * payment: every one is a person pressing a button and their wallet asking.
  */
 
 /**
@@ -55,6 +65,23 @@ const UINT256_MAX = (1n << 256n) - 1n;
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
+/** The zero address Studio records as the "token" of a checkout paid in ETH. */
+export const NATIVE_ETH_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+export type PaymentAsset = 'AI17Z' | 'ETH';
+
+/** One payment of a checkout, as Studio lists it. */
+export interface StudioPurchaseLeg {
+  leg_index: number;
+  role: 'PUBLISHER' | 'TREASURY';
+  asset: PaymentAsset;
+  recipient_address: string;
+  amount_base_units: string;
+  status: string;
+  submitted_tx_hash: string | null;
+  failure_reason: string | null;
+}
+
 /** A checkout as Studio lists it to the installation it names. */
 export interface StudioPurchaseTerms {
   intent_id: string;
@@ -68,11 +95,17 @@ export interface StudioPurchaseTerms {
   recipient_address: string;
   amount_base_units: string;
   expires_at: string;
+  /** Absent from a Studio that predates payment legs: then the checkout is one AI17Z payment. */
+  payment_asset?: PaymentAsset;
+  legs?: StudioPurchaseLeg[];
 }
 
 export interface PreparedMarketplacePurchase {
   kind: 'MARKETPLACE_PLUGIN_PURCHASE';
   intentId: string;
+  legIndex: number;
+  role: 'PUBLISHER' | 'TREASURY';
+  asset: PaymentAsset;
   pluginId: string;
   pluginName: string;
   chainId: number;
@@ -85,7 +118,7 @@ export interface PreparedMarketplacePurchase {
   amountDisplay: string;
   expiresAt: string;
   /** Exactly what is handed to the wallet's `eth_sendTransaction`. */
-  transaction: { from: string; to: string; data: string; value: '0x0' };
+  transaction: { from: string; to: string; data: string; value: string };
 }
 
 export type PrepareResult = { ok: true; purchase: PreparedMarketplacePurchase } | { ok: false; why: string };
@@ -116,30 +149,74 @@ export function decodeTransfer(data: string): { recipient: string; amountBaseUni
   return { recipient: `0x${recipientWord.slice(24)}`, amountBaseUnits: BigInt(`0x${amountWord}`).toString() };
 }
 
-export function prepareMarketplacePurchase(terms: StudioPurchaseTerms, now: Date = new Date()): PrepareResult {
-  if (terms.status !== 'AWAITING_PAYMENT') {
+/** Statuses of a checkout that may still take a payment. */
+const OPEN = new Set(['AWAITING_PAYMENT', 'SUBMITTED', 'CONFIRMING', 'PARTIALLY_PAID']);
+/** Statuses of a leg that may be paid: never asked for, or refused by the chain and so still owed. */
+const PAYABLE_LEG = new Set(['AWAITING_PAYMENT', 'FAILED']);
+
+/**
+ * The legs of a checkout. A Studio from before payment legs lists one AI17Z
+ * payment at the top level, which is exactly a single publisher leg.
+ */
+export function legsOf(terms: StudioPurchaseTerms): StudioPurchaseLeg[] {
+  if (Array.isArray(terms.legs) && terms.legs.length > 0) return terms.legs;
+  return [
+    {
+      leg_index: 0,
+      role: 'PUBLISHER',
+      asset: 'AI17Z',
+      recipient_address: terms.recipient_address,
+      amount_base_units: terms.amount_base_units,
+      status: terms.status,
+      submitted_tx_hash: null,
+      failure_reason: null,
+    },
+  ];
+}
+
+export function prepareMarketplacePurchase(terms: StudioPurchaseTerms, now: Date = new Date(), legIndex = 0): PrepareResult {
+  const legacy = !Array.isArray(terms.legs) || terms.legs.length === 0;
+  if (!OPEN.has(terms.status) || (legacy && terms.status !== 'AWAITING_PAYMENT')) {
     return { ok: false, why: `This purchase is ${terms.status.toLowerCase().replace(/_/g, ' ')}, so there is nothing to pay.` };
   }
+  const legs = legsOf(terms);
+  const leg = legs.find((l) => l.leg_index === legIndex);
+  if (!leg) return { ok: false, why: 'This checkout has no such payment.' };
+  if (!PAYABLE_LEG.has(leg.status)) {
+    return { ok: false, why: 'This payment has already been made, so it will not be asked for again.' };
+  }
+  // A checkout with a payment already made stays payable past its deadline,
+  // so a half-paid purchase can always be finished. Studio applies the same rule.
+  const somethingPaid = legs.some((l) => l.leg_index !== legIndex && l.submitted_tx_hash);
   const expires = Date.parse(terms.expires_at);
-  if (!Number.isFinite(expires) || expires <= now.getTime()) {
+  if (!Number.isFinite(expires) || (!somethingPaid && expires <= now.getTime())) {
     return { ok: false, why: 'This checkout has expired. Start a new one on AI17Z Studio.' };
   }
   if (terms.chain_id !== AI17Z_PAYMENT.chainId) {
     return { ok: false, why: `Studio asked for a payment on chain ${terms.chain_id}. AI17Z pays only on ${AI17Z_PAYMENT.chainName} (${AI17Z_PAYMENT.chainId}).` };
   }
-  if (typeof terms.token_address !== 'string' || terms.token_address.toLowerCase() !== AI17Z_PAYMENT.token) {
-    return { ok: false, why: 'Studio asked for a payment in a token that is not $AI17Z, so it was refused.' };
+  const asset = terms.payment_asset ?? 'AI17Z';
+  if ((asset !== 'AI17Z' && asset !== 'ETH') || leg.asset !== asset) {
+    return { ok: false, why: 'Studio described this payment in a currency AI17Z does not pay in, so it was refused.' };
+  }
+  const expectedToken = asset === 'ETH' ? NATIVE_ETH_ADDRESS : AI17Z_PAYMENT.token;
+  if (typeof terms.token_address !== 'string' || terms.token_address.toLowerCase() !== expectedToken) {
+    return {
+      ok: false,
+      why: asset === 'ETH' ? 'Studio described an ETH payment with a token attached, so it was refused.' : 'Studio asked for a payment in a token that is not $AI17Z, so it was refused.',
+    };
   }
   if (terms.token_decimals !== AI17Z_PAYMENT.decimals) {
-    return { ok: false, why: `Studio described $AI17Z with ${terms.token_decimals} decimals; it has ${AI17Z_PAYMENT.decimals}.` };
+    return { ok: false, why: `Studio described the payment with ${terms.token_decimals} decimals; it has ${AI17Z_PAYMENT.decimals}.` };
   }
-  if (typeof terms.amount_base_units !== 'string' || !/^[1-9][0-9]{0,77}$/.test(terms.amount_base_units) || BigInt(terms.amount_base_units) > UINT256_MAX) {
+  const amount = leg.amount_base_units;
+  if (typeof amount !== 'string' || !/^[1-9][0-9]{0,77}$/.test(amount) || BigInt(amount) > UINT256_MAX) {
     return { ok: false, why: 'The amount is not a whole, positive number of base units.' };
   }
-  if (!ADDRESS.test(terms.recipient_address) || !ADDRESS.test(terms.payer_address)) {
+  if (!ADDRESS.test(leg.recipient_address) || !ADDRESS.test(terms.payer_address)) {
     return { ok: false, why: 'A wallet address in this checkout is not an address.' };
   }
-  const recipient = terms.recipient_address.toLowerCase();
+  const recipient = leg.recipient_address.toLowerCase();
   const payer = terms.payer_address.toLowerCase();
   if (recipient === ZERO_ADDRESS || recipient === AI17Z_PAYMENT.token) {
     return { ok: false, why: 'The recipient would destroy the payment, so it was refused.' };
@@ -147,23 +224,29 @@ export function prepareMarketplacePurchase(terms: StudioPurchaseTerms, now: Date
   if (payer === recipient) return { ok: false, why: 'The paying wallet and the recipient are the same wallet.' };
   if (!/^[0-9a-f-]{36}$/i.test(terms.intent_id)) return { ok: false, why: 'This checkout has no usable id.' };
 
-  const data = encodeTransfer(recipient, terms.amount_base_units);
+  const transaction =
+    asset === 'ETH'
+      ? { from: payer, to: recipient, data: '0x', value: `0x${BigInt(amount).toString(16)}` }
+      : { from: payer, to: AI17Z_PAYMENT.token, data: encodeTransfer(recipient, amount), value: '0x0' };
   return {
     ok: true,
     purchase: {
       kind: 'MARKETPLACE_PLUGIN_PURCHASE',
       intentId: terms.intent_id,
+      legIndex: leg.leg_index,
+      role: leg.role === 'TREASURY' ? 'TREASURY' : 'PUBLISHER',
+      asset,
       pluginId: terms.plugin_id,
       pluginName: terms.plugin_name,
       chainId: AI17Z_PAYMENT.chainId,
       chainIdHex: `0x${AI17Z_PAYMENT.chainId.toString(16)}`,
-      token: AI17Z_PAYMENT.token,
+      token: expectedToken,
       payer,
       recipient,
-      amountBaseUnits: terms.amount_base_units,
-      amountDisplay: formatBaseUnits(terms.amount_base_units),
+      amountBaseUnits: amount,
+      amountDisplay: formatBaseUnits(amount),
       expiresAt: terms.expires_at,
-      transaction: { from: payer, to: AI17Z_PAYMENT.token, data, value: '0x0' },
+      transaction,
     },
   };
 }
@@ -172,19 +255,29 @@ export function prepareMarketplacePurchase(terms: StudioPurchaseTerms, now: Date
  * Checks, in the browser, that the transaction about to reach the wallet is
  * still exactly the one prepared. The page receives it from the local API and
  * hands it on, and this is the last look before a signature is asked for.
+ * Exactly one of the two shapes, with nothing added.
  */
 export function isExactPurchaseTransaction(purchase: PreparedMarketplacePurchase): boolean {
   const tx = purchase.transaction;
+  if (purchase.kind !== 'MARKETPLACE_PLUGIN_PURCHASE' || purchase.chainId !== AI17Z_PAYMENT.chainId) return false;
+  if (Object.keys(tx).sort().join(',') !== 'data,from,to,value' || tx.from !== purchase.payer) return false;
+  if (purchase.recipient === ZERO_ADDRESS || purchase.recipient === AI17Z_PAYMENT.token) return false;
+  if (purchase.asset === 'ETH') {
+    return (
+      purchase.token === NATIVE_ETH_ADDRESS &&
+      tx.to === purchase.recipient &&
+      tx.data === '0x' &&
+      /^0x[0-9a-f]{1,64}$/.test(tx.value) &&
+      BigInt(tx.value).toString() === purchase.amountBaseUnits
+    );
+  }
   const decoded = decodeTransfer(tx.data);
   return (
-    purchase.kind === 'MARKETPLACE_PLUGIN_PURCHASE' &&
-    purchase.chainId === AI17Z_PAYMENT.chainId &&
+    purchase.asset === 'AI17Z' &&
     tx.to === AI17Z_PAYMENT.token &&
     tx.value === '0x0' &&
-    tx.from === purchase.payer &&
     decoded !== null &&
     decoded.recipient === purchase.recipient &&
-    decoded.amountBaseUnits === purchase.amountBaseUnits &&
-    Object.keys(tx).sort().join(',') === 'data,from,to,value'
+    decoded.amountBaseUnits === purchase.amountBaseUnits
   );
 }

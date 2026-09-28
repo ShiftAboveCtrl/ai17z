@@ -276,6 +276,31 @@ describe('the local purchase ledger', () => {
     await expect(query(`DELETE FROM studio_purchase_ledger WHERE intent_id = $1`, [terms.intentId])).rejects.toThrow(/cannot be deleted/);
   });
 
+  it('records each payment of a checkout on its own, and pays a leg the chain refused again as a new attempt', async () => {
+    const eth = { ...terms, asset: 'ETH' as const, tokenAddress: '0x0000000000000000000000000000000000000000' };
+    const treasury = { ...eth, legIndex: 1, role: 'TREASURY' as const, recipientAddress: '0x7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e', amountBaseUnits: '4000000000000000' };
+    expect((await ledger.claimPrepare(eth)).ok).toBe(true);
+    expect((await ledger.claimPrepare(treasury)).ok).toBe(true);
+    expect((await ledger.markSent(terms.intentId, hash, 0)).ok).toBe(true);
+    const refusedHash = `0x${'ef'.repeat(32)}`;
+    expect((await ledger.markSent(terms.intentId, refusedHash, 1)).ok).toBe(true);
+    // Without Studio saying the chain refused it, a sent leg is never paid again.
+    expect((await ledger.claimPrepare(treasury)).ok).toBe(false);
+    await ledger.noteLegStatus(terms.intentId, 1, refusedHash, 'FAILED', 'The transaction reverted.');
+    const retry = await ledger.claimPrepare({ ...treasury, studioRefusedLast: true });
+    expect(retry.ok && retry.row).toMatchObject({ legIndex: 1, attempt: 2, state: 'PREPARED', txHash: null });
+    const rows = await ledger.listPurchases();
+    expect(rows.map((r) => [r.legIndex, r.attempt, r.state, r.txHash])).toEqual(
+      expect.arrayContaining([
+        [0, 1, 'SENT', hash],
+        [1, 1, 'FAILED', refusedHash],
+        [1, 2, 'PREPARED', null],
+      ]),
+    );
+    // An ETH row must carry no token, and an AI17Z row the token.
+    await expect(ledger.claimPrepare({ ...terms, intentId: '7b1f2a0e-1c1d-4c2e-9f00-0123456789ab', asset: 'ETH' })).rejects.toThrow(/asset_token/);
+  });
+
   it('settles from what Studio says', async () => {
     await ledger.claimPrepare(terms);
     await ledger.markSent(terms.intentId, hash);

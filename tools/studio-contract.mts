@@ -9,8 +9,9 @@
  * development-origin escape pointed there, then stops the server and drops
  * the database. Every secret it generates lives only for the run.
  *
- * Nothing is published and no money moves. The purchase is prepared and
- * reported with a hash no chain has seen.
+ * Nothing is published and no money moves. Purchases are prepared exactly as
+ * for a wallet, and the transactions they describe are put on a stand-in
+ * chain the test runs, which Studio reads to confirm them.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
@@ -62,6 +63,13 @@ const studioEnv: Record<string, string> = {
   STUDIO_LEASE_SIGNING_JWK: leaseKey,
   AI17Z_MARKETPLACE_PAID_ENABLED: 'true',
   NEXT_TELEMETRY_DISABLED: '1',
+  // The test hosts a stand-in chain and DexScreener on this port (tests/support/fakeChain.ts),
+  // so a reported transaction is confirmed by reading it, exactly as on the real chain.
+  ROBINHOOD_CHAIN_RPC_URL: 'http://127.0.0.1:8547',
+  DEXSCREENER_API_BASE: 'http://127.0.0.1:8547/dex',
+  // The reference hosted backend the test starts, reachable only because Studio is served over http here.
+  STUDIO_UNSAFE_DEV_PRIVATE_UPSTREAMS: 'http://127.0.0.1:8795',
+  CONTRACT_PROPRIETARY_UPSTREAM: 'http://127.0.0.1:8795/',
 };
 
 function step(label: string, command: string, commandArgs: string[], cwd: string, env: NodeJS.ProcessEnv): void {

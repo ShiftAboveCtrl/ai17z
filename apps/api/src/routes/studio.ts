@@ -23,6 +23,13 @@ const intentId = (request: Parameters<typeof params>[0]) => {
   return /^[0-9a-f-]{36}$/i.test(id) ? id : null;
 };
 
+/** Which payment of a checkout, from `?leg=`; absent is the first, which is all a single-payment checkout has. */
+const legOf = (request: Parameters<typeof params>[0]): number | null => {
+  const raw = (request.query as Record<string, unknown> | undefined)?.leg;
+  if (raw === undefined) return 0;
+  return typeof raw === 'string' && /^[0-7]$/.test(raw) ? Number(raw) : null;
+};
+
 /**
  * AI17Z Studio, as the owner reaches it from the Plugins screen.
  *
@@ -131,8 +138,9 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
     handler(async (request) => {
       await requireUser(request);
       const id = intentId(request);
-      if (!id) return { ok: false, why: 'That is not a purchase id.' };
-      return reviewStudioPurchase(id);
+      const leg = legOf(request);
+      if (!id || leg === null) return { ok: false, why: 'That is not a purchase id.' };
+      return reviewStudioPurchase(id, leg);
     }),
   );
 
@@ -141,14 +149,17 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
     handler(async (request) => {
       const user = await requireUser(request);
       const id = intentId(request);
-      if (!id) return { ok: false, why: 'That is not a purchase id.' };
-      const prepared = await prepareStudioPurchase(id);
+      const leg = legOf(request);
+      if (!id || leg === null) return { ok: false, why: 'That is not a purchase id.' };
+      const prepared = await prepareStudioPurchase(id, leg);
       await ops.audit({
         actorUserId: user.id,
         action: 'studio.purchase.prepared',
         entityType: 'studio_purchase',
         entityId: id,
-        data: prepared.ok ? { amountBaseUnits: prepared.purchase.amountBaseUnits, recipient: prepared.purchase.recipient } : { refused: prepared.why },
+        data: prepared.ok
+          ? { leg, role: prepared.purchase.role, asset: prepared.purchase.asset, amountBaseUnits: prepared.purchase.amountBaseUnits, recipient: prepared.purchase.recipient }
+          : { leg, refused: prepared.why },
       });
       return prepared;
     }),
@@ -159,10 +170,11 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
     handler(async (request) => {
       const user = await requireUser(request);
       const id = intentId(request);
-      if (!id) return { ok: false, why: 'That is not a purchase id.' };
+      const leg = legOf(request);
+      if (!id || leg === null) return { ok: false, why: 'That is not a purchase id.' };
       const body = parseBody(z.object({ txHash: z.string().trim().max(80) }).strict(), request);
-      const recorded = await recordStudioPurchaseSent(id, body.txHash);
-      await ops.audit({ actorUserId: user.id, action: 'studio.purchase.sent', entityType: 'studio_purchase', entityId: id, data: { ok: recorded.ok } });
+      const recorded = await recordStudioPurchaseSent(id, body.txHash, leg);
+      await ops.audit({ actorUserId: user.id, action: 'studio.purchase.sent', entityType: 'studio_purchase', entityId: id, data: { leg, ok: recorded.ok } });
       return recorded;
     }),
   );
@@ -173,9 +185,10 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
     handler(async (request) => {
       const user = await requireUser(request);
       const id = intentId(request);
-      if (!id) return { ok: false, why: 'That is not a purchase id.' };
-      const done = await abandonStudioPurchase(id);
-      await ops.audit({ actorUserId: user.id, action: 'studio.purchase.not_sent', entityType: 'studio_purchase', entityId: id, data: { ok: done.ok } });
+      const leg = legOf(request);
+      if (!id || leg === null) return { ok: false, why: 'That is not a purchase id.' };
+      const done = await abandonStudioPurchase(id, leg);
+      await ops.audit({ actorUserId: user.id, action: 'studio.purchase.not_sent', entityType: 'studio_purchase', entityId: id, data: { leg, ok: done.ok } });
       return done;
     }),
   );

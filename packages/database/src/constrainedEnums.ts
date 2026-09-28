@@ -146,6 +146,18 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     note: 'A Studio purchase the owner was asked to pay for from inside AI17Z: wallet asked, transaction known, nothing sent on the word of the owner, or how Studio settled it.',
   },
   {
+    table: 'studio_purchase_ledger',
+    column: 'role',
+    values: ['PUBLISHER', 'TREASURY'],
+    note: 'Which payment of a checkout a row is: the publisher share, or the marketplace fee.',
+  },
+  {
+    table: 'studio_purchase_ledger',
+    column: 'asset',
+    values: ['AI17Z', 'ETH'],
+    note: 'What a payment is made in: an ERC-20 transfer of $AI17Z, or a plain ETH transfer with no data.',
+  },
+  {
     table: 'x_capacity_ledger',
     column: 'entry',
     values: ['READ', 'SIGNAL'],
