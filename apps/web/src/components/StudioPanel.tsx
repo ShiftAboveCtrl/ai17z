@@ -89,9 +89,28 @@ function useWallets(): AnnouncedWallet[] {
       const detail = (event as CustomEvent<{ info?: Partial<AnnouncedWallet>; provider?: Eip1193 }>).detail;
       const info = detail?.info;
       if (!info?.uuid || !info.name || !detail.provider || typeof detail.provider.request !== 'function') return;
+      for (const id of ['phantom', 'backpack', 'metamask']) if (info.name.toLowerCase().includes(id)) seen.delete(id);
       seen.set(info.uuid, { uuid: info.uuid, name: info.name, icon: info.icon ?? '', rdns: info.rdns ?? '', provider: detail.provider });
       setWallets([...seen.values()]);
     };
+    // Named wallets straight from their own injected objects, so choosing one
+    // opens that extension even when it did not announce itself.
+    const w = window as unknown as {
+      phantom?: { ethereum?: Eip1193 };
+      backpack?: { ethereum?: Eip1193 };
+      ethereum?: Eip1193 & { isMetaMask?: boolean; isPhantom?: boolean; providers?: Array<Eip1193 & { isMetaMask?: boolean; isPhantom?: boolean }> };
+    };
+    const direct: Array<[string, string, Eip1193 | undefined]> = [
+      ['phantom', 'Phantom', w.phantom?.ethereum],
+      ['backpack', 'Backpack', w.backpack?.ethereum],
+      ['metamask', 'MetaMask', w.ethereum?.providers?.find((p) => p.isMetaMask && !p.isPhantom) ?? (w.ethereum?.isMetaMask && !w.ethereum?.isPhantom ? w.ethereum : undefined)],
+    ];
+    for (const [id, name, provider] of direct) {
+      if (provider && typeof provider.request === 'function' && ![...seen.values()].some((x) => x.name.toLowerCase().includes(id))) {
+        seen.set(id, { uuid: id, name, icon: '', rdns: id, provider });
+      }
+    }
+    setWallets([...seen.values()]);
     window.addEventListener('eip6963:announceProvider', onAnnounce);
     window.dispatchEvent(new Event('eip6963:requestProvider'));
     // Some wallets announce late; ask again for a few seconds.
