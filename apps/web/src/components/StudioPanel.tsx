@@ -94,6 +94,12 @@ function useWallets(): AnnouncedWallet[] {
     };
     window.addEventListener('eip6963:announceProvider', onAnnounce);
     window.dispatchEvent(new Event('eip6963:requestProvider'));
+    // Some wallets announce late; ask again for a few seconds.
+    const again = [500, 1500, 3000].map((ms) => setTimeout(() => window.dispatchEvent(new Event('eip6963:requestProvider')), ms));
+    return () => {
+      again.forEach(clearTimeout);
+      window.removeEventListener('eip6963:announceProvider', onAnnounce);
+    };
     return () => window.removeEventListener('eip6963:announceProvider', onAnnounce);
   }, []);
   return wallets;
@@ -400,7 +406,7 @@ function WalletSection({ wallets, onChanged }: { wallets: AnnouncedWallet[]; onC
         <p className="mt-2 text-xs text-signal-wait">No wallet announced itself in this browser. Open AI17Z in a browser with your wallet extension installed.</p>
       ) : (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          {wallets.length > 1 ? (
+          {wallets.length > 0 ? (
             <select value={chosen?.uuid ?? ''} onChange={(event) => setWalletId(event.target.value)} className="rounded border border-ink-line bg-ink-deep px-2 py-1 text-bone">
               {wallets.map((w) => (
                 <option key={w.uuid} value={w.uuid}>
@@ -671,7 +677,7 @@ function PurchaseRow({
             <p className="text-signal-wait">No wallet announced itself in this browser.</p>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              {wallets.length > 1 ? (
+              {wallets.length > 0 ? (
                 <select value={chosen?.uuid ?? ''} onChange={(event) => setWalletId(event.target.value)} className="rounded border border-ink-line bg-ink-deep px-2 py-1 text-bone">
                   {wallets.map((w) => (
                     <option key={w.uuid} value={w.uuid}>
