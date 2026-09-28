@@ -31,7 +31,7 @@ import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
 import { pollDueFeeds, pollDueRepos, runDueEngagements, wakeDueAgents } from '@xbam/runtime';
-import { pollStudioLink, reportUnacknowledgedPurchases, studioSyncDue, syncStudio } from '@xbam/runtime';
+import { pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, studioSyncDue, syncStudio } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -176,6 +176,15 @@ async function main(): Promise<void> {
       if (handled > 0) log.info('answered the owner on Telegram', { handled });
     } catch (error) {
       log.warn('could not read Telegram messages', { message: errorMessage(error) });
+    }
+    try {
+      // A Plugin installed or removed from the Plugins screen changes the API's
+      // registry, not this process's. Without this the model here was never
+      // offered a Plugin installed after the worker started.
+      const plugins = await reconcileInstalledPlugins();
+      if (plugins.added.length + plugins.removed.length + plugins.updated.length > 0) log.info('brought installed Plugins up to date', plugins);
+    } catch (error) {
+      log.warn('could not reconcile installed Plugins', { message: errorMessage(error) });
     }
     try {
       /*

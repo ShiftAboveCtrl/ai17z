@@ -667,8 +667,63 @@ export async function registerInstalledPlugins(): Promise<{ registered: number; 
       registerCapability(capability);
       registered += 1;
     }
+    registeredDigests.set(record.id, record.manifestSha256);
   }
   return { registered, skipped };
+}
+
+/**
+ * What this process has registered for each installed Plugin, by manifest hash.
+ * Kept here rather than read back from the registry, which knows capabilities
+ * and not which version of a Plugin they came from.
+ */
+const registeredDigests = new Map<string, string>();
+
+/**
+ * Brings this process's registry into line with what is installed.
+ *
+ * Installing registers a Plugin in the process that did it, which is the API.
+ * The worker, where the model actually chooses capabilities, registered what
+ * was installed when it started and never looked again, so a Plugin installed
+ * while AI17Z was running could be called from the Plugins screen and was
+ * never once offered to an agent until somebody restarted it. The worker runs
+ * this on the sweep it already has: new and updated Plugins are registered,
+ * removed ones are taken out, and nothing else is touched.
+ */
+export async function reconcileInstalledPlugins(): Promise<{ added: string[]; removed: string[]; updated: string[] }> {
+  const installed = await pluginsRepo.listInstalledPlugins();
+  const present = new Set(installed.map((record) => record.id));
+  const added: string[] = [];
+  const removed: string[] = [];
+  const updated: string[] = [];
+
+  const registeredPlugins = new Set(
+    listCapabilities()
+      .map((capability) => pluginOfCapability(capability.id))
+      .filter((id): id is string => id !== null),
+  );
+  for (const id of registeredPlugins) {
+    if (present.has(id)) continue;
+    for (const capability of listCapabilities()) {
+      if (pluginOfCapability(capability.id) === id) unregisterCapability(capability.id);
+    }
+    registeredDigests.delete(id);
+    removed.push(id);
+  }
+
+  for (const record of installed) {
+    if (!pluginRuns(record.manifest.compatibility, buildVersion().version).ok) continue;
+    const known = registeredDigests.get(record.id);
+    if (known === record.manifestSha256) continue;
+    const isThere = registeredPlugins.has(record.id);
+    for (const capability of listCapabilities()) {
+      if (pluginOfCapability(capability.id) === record.id) unregisterCapability(capability.id);
+    }
+    for (const capability of capabilitiesOf(record)) registerCapability(capability);
+    registeredDigests.set(record.id, record.manifestSha256);
+    (isThere ? updated : added).push(record.id);
+  }
+  return { added, removed, updated };
 }
 
 /** The registry address an owner configured, or null. */
