@@ -598,3 +598,38 @@ describe('the footprint comparison itself', () => {
     expect(footprintExpansion(pluginFootprint(before), pluginFootprint(after)).join(' ')).toContain('read_more');
   });
 });
+
+describe('a running process sees what another installed', () => {
+  it('registers a Plugin another process installed, updates it, and removes it once it is gone', async () => {
+    const { reconcileInstalledPlugins, manifestDigest } = await import('@xbam/runtime');
+    const raw = json(base());
+    // What the API does in its own process, seen from the worker's: a row appears.
+    await pluginsRepo.putInstalledPlugin({
+      id: 'sec-probe',
+      source: 'LOCAL',
+      version: '1.0.0',
+      publisher: 'AI17Z Test',
+      manifestSha256: manifestDigest(raw),
+      manifest: PluginManifest.parse(JSON.parse(raw)),
+    });
+    expect(getCapability(CAPABILITY)).toBeNull();
+    expect((await reconcileInstalledPlugins()).added).toEqual(['sec-probe']);
+    expect(getCapability(CAPABILITY)).not.toBeNull();
+    expect(await reconcileInstalledPlugins()).toEqual({ added: [], removed: [], updated: [] });
+
+    const newer = json(base({ version: '1.1.0' }));
+    await pluginsRepo.putInstalledPlugin({
+      id: 'sec-probe',
+      source: 'LOCAL',
+      version: '1.1.0',
+      publisher: 'AI17Z Test',
+      manifestSha256: manifestDigest(newer),
+      manifest: PluginManifest.parse(JSON.parse(newer)),
+    });
+    expect((await reconcileInstalledPlugins()).updated).toEqual(['sec-probe']);
+
+    await pluginsRepo.removeInstalledPlugin('sec-probe');
+    expect((await reconcileInstalledPlugins()).removed).toEqual(['sec-probe']);
+    expect(getCapability(CAPABILITY)).toBeNull();
+  });
+});
