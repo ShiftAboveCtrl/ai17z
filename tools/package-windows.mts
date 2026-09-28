@@ -108,6 +108,7 @@ export const INCLUDE = [
   // cannot tell, treats that as "do not start one", and browser-backed accounts
   // wait for a worker nothing will ever start.
   'scripts/browser-worker-present.mts',
+  'scripts/browser-worker-forget.mts',
   // The Windows pieces an installation needs after it is installed, named one
   // by one rather than shipping `packaging/` -- the rest of that folder is
   // wizard artwork and the two Python scripts that draw it.
@@ -289,6 +290,7 @@ const SHIPPED_SCRIPTS = [
   'start:worker',
   'worker:supervised',
   'worker:present',
+  'worker:forget',
 ];
 
 /** Never shipped, even when it sits inside something that is. */

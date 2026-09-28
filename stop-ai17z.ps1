@@ -243,6 +243,13 @@ if ($stray) {
   Write-Done 'Leftovers stopped.'
 }
 
+# A killed worker never says goodbye, so its heartbeat stays fresh for a minute
+# and a start straight after this one would take it for a live worker and start
+# none. Forgotten here, after the kill and while the database is still up.
+# Best effort: a database that is already down has nothing to misread.
+Invoke-Native npm @('run', '--silent', 'worker:forget') | Out-Null
+$global:LASTEXITCODE = 0
+
 # -- The stack ---------------------------------------------------------------
 if ($KeepStack) {
   Write-Warn 'Leaving the containers running.'
