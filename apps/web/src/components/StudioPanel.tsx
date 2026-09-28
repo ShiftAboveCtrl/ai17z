@@ -4,6 +4,7 @@ import { AI17Z_PAYMENT, formatBaseUnits, isExactPurchaseTransaction, type Prepar
 import { post } from '@app/lib/api';
 import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
 import { RetryablePanel, Working } from '@app/components/ui';
+import { ROBINHOOD_CHAIN_PARAMS, discoverWallets, ensureChain, type DiscoveredWallet, type Eip1193, type WalletWindow } from '@app/lib/walletDiscovery';
 
 /**
  * AI17Z Studio, from inside AI17Z.
@@ -71,57 +72,129 @@ interface Purchases {
   ledger: LedgerRow[];
 }
 
-type Eip1193 = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
 interface AnnouncedWallet {
   uuid: string;
   name: string;
   icon: string;
   rdns: string;
   provider: Eip1193;
+  source: DiscoveredWallet['source'];
 }
 
-/** EIP-6963: ask every installed wallet to announce itself, and listen. */
+/** Every wallet in this browser, each with its own provider, for the life of the page. */
 function useWallets(): AnnouncedWallet[] {
   const [wallets, setWallets] = useState<AnnouncedWallet[]>([]);
-  useEffect(() => {
-    const seen = new Map<string, AnnouncedWallet>();
-    const onAnnounce = (event: Event) => {
-      const detail = (event as CustomEvent<{ info?: Partial<AnnouncedWallet>; provider?: Eip1193 }>).detail;
-      const info = detail?.info;
-      if (!info?.uuid || !info.name || !detail.provider || typeof detail.provider.request !== 'function') return;
-      for (const id of ['phantom', 'backpack', 'metamask']) if (info.name.toLowerCase().includes(id)) seen.delete(id);
-      seen.set(info.uuid, { uuid: info.uuid, name: info.name, icon: info.icon ?? '', rdns: info.rdns ?? '', provider: detail.provider });
-      setWallets([...seen.values()]);
-    };
-    // Named wallets straight from their own injected objects, so choosing one
-    // opens that extension even when it did not announce itself.
-    const w = window as unknown as {
-      phantom?: { ethereum?: Eip1193 };
-      backpack?: { ethereum?: Eip1193 };
-      ethereum?: Eip1193 & { isMetaMask?: boolean; isPhantom?: boolean; providers?: Array<Eip1193 & { isMetaMask?: boolean; isPhantom?: boolean }> };
-    };
-    const direct: Array<[string, string, Eip1193 | undefined]> = [
-      ['phantom', 'Phantom', w.phantom?.ethereum],
-      ['backpack', 'Backpack', w.backpack?.ethereum],
-      ['metamask', 'MetaMask', w.ethereum?.providers?.find((p) => p.isMetaMask && !p.isPhantom) ?? (w.ethereum?.isMetaMask && !w.ethereum?.isPhantom ? w.ethereum : undefined)],
-    ];
-    for (const [id, name, provider] of direct) {
-      if (provider && typeof provider.request === 'function' && ![...seen.values()].some((x) => x.name.toLowerCase().includes(id))) {
-        seen.set(id, { uuid: id, name, icon: '', rdns: id, provider });
-      }
-    }
-    setWallets([...seen.values()]);
-    window.addEventListener('eip6963:announceProvider', onAnnounce);
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    // Some wallets announce late; ask again for a few seconds.
-    const again = [500, 1500, 3000].map((ms) => setTimeout(() => window.dispatchEvent(new Event('eip6963:requestProvider')), ms));
-    return () => {
-      again.forEach(clearTimeout);
-      window.removeEventListener('eip6963:announceProvider', onAnnounce);
-    };
-    return () => window.removeEventListener('eip6963:announceProvider', onAnnounce);
-  }, []);
+  useEffect(
+    () =>
+      discoverWallets(window as unknown as WalletWindow, (found) =>
+        setWallets(found.map((w) => ({ uuid: w.key, name: w.name, icon: w.icon, rdns: w.rdns, provider: w.provider, source: w.source }))),
+      ),
+    [],
+  );
   return wallets;
+}
+
+/** What the chosen wallet itself says: its account (without asking to connect) and chain, kept current by its events. */
+function useWalletState(wallet: AnnouncedWallet | null) {
+  const [state, setState] = useState<{ account: string | null; chainId: string | null }>({ account: null, chainId: null });
+  useEffect(() => {
+    if (!wallet) return;
+    const provider = wallet.provider;
+    let live = true;
+    const read = async () => {
+      const accounts = (await provider.request({ method: 'eth_accounts' }).catch(() => [])) as string[];
+      const chainId = (await provider.request({ method: 'eth_chainId' }).catch(() => null)) as string | null;
+      if (live) setState({ account: accounts[0]?.toLowerCase() ?? null, chainId: chainId ? String(chainId).toLowerCase() : null });
+    };
+    void read();
+    const onChange = () => void read();
+    for (const event of ['accountsChanged', 'chainChanged', 'connect', 'disconnect']) provider.on?.(event, onChange);
+    return () => {
+      live = false;
+      for (const event of ['accountsChanged', 'chainChanged', 'connect', 'disconnect']) provider.removeListener?.(event, onChange);
+    };
+  }, [wallet]);
+  return state;
+}
+
+function WalletPicker({ wallets, chosen, onChoose }: { wallets: AnnouncedWallet[]; chosen: AnnouncedWallet | null; onChoose: (uuid: string) => void }) {
+  const state = useWalletState(chosen);
+  const missing = ['Phantom', 'Backpack'].filter((name) => !wallets.some((w) => w.name.toLowerCase().includes(name.toLowerCase())));
+  const network =
+    state.chainId === null ? 'network unknown' : state.chainId === ROBINHOOD_CHAIN_PARAMS.chainId ? 'on Robinhood Chain' : `on chain ${Number.parseInt(state.chainId, 16)}, will ask to switch`;
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap gap-2">
+        {wallets.map((w) => (
+          <button
+            key={w.uuid}
+            type="button"
+            onClick={() => onChoose(w.uuid)}
+            className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs ${chosen?.uuid === w.uuid ? 'border-bone text-bone' : 'border-ink-line text-bone-faint'}`}
+          >
+            {safeIcon(w.icon) ? <img src={safeIcon(w.icon)!} alt="" className="h-3.5 w-3.5" /> : <Wallet size={13} aria-hidden="true" />}
+            {w.name}
+          </button>
+        ))}
+      </div>
+      {chosen ? (
+        <p className="break-all text-[11px] text-bone-faint">
+          {chosen.name}: {state.account ?? 'not connected yet'}, {network}
+        </p>
+      ) : null}
+      {missing.length > 0 ? (
+        <p className="text-[11px] text-bone-faint">
+          Not found on this page: {missing.join(', ')}.{' '}
+          {!window.isSecureContext ? 'This page is not https or localhost, and Phantom only runs on those. ' : ''}
+          {missing.includes('Phantom') ? (
+            <a className="underline" href="https://phantom.com/download" target="_blank" rel="noopener noreferrer">
+              Install Phantom
+            </a>
+          ) : null}{' '}
+          {missing.includes('Backpack') ? (
+            <a className="underline" href="https://backpack.app/download" target="_blank" rel="noopener noreferrer">
+              Install Backpack
+            </a>
+          ) : null}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Safe facts about wallet discovery on this page, for the owner. No secrets. */
+function WalletDiagnostics({ wallets }: { wallets: AnnouncedWallet[] }) {
+  const w = window as unknown as { phantom?: { ethereum?: { isPhantom?: boolean } }; ethereum?: { providers?: unknown[] } };
+  const facts: Array<[string, string]> = [
+    ['Origin', window.location.origin],
+    ['Top-level', window.top === window ? 'yes' : 'no'],
+    ['Secure or localhost', window.isSecureContext ? 'yes' : 'no, Phantom will not inject here'],
+    ['Phantom EVM provider', w.phantom?.ethereum?.isPhantom ? 'present' : 'absent'],
+    ['Legacy window.ethereum', w.ethereum ? 'present' : 'absent'],
+    ['window.ethereum.providers', String(Array.isArray(w.ethereum?.providers) ? w.ethereum!.providers!.length : 0)],
+  ];
+  return (
+    <details className="rounded-lg border border-ink-line bg-ink-panel p-3 text-[11px] text-bone-faint">
+      <summary className="cursor-pointer">Wallet diagnostics</summary>
+      <dl className="mt-1 grid grid-cols-[auto,1fr] gap-x-3">
+        {facts.map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt>{k}</dt>
+            <dd className="break-all">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <ul className="mt-1">
+        {wallets.map((x) => (
+          <li key={x.uuid} className="break-all">
+            {x.name} via {x.source}
+            {x.rdns ? `, ${x.rdns}` : ''}, flags{' '}
+            {['isPhantom', 'isMetaMask', 'isBackpack'].filter((flag) => (x.provider as unknown as Record<string, unknown>)[flag] === true).join(' ') || 'none'}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
 }
 
 /** An announced icon is shown only as a data: image, never fetched from somewhere the wallet names. */
@@ -425,15 +498,7 @@ function WalletSection({ wallets, onChanged }: { wallets: AnnouncedWallet[]; onC
         <p className="mt-2 text-xs text-signal-wait">No wallet announced itself in this browser. Open AI17Z in a browser with your wallet extension installed.</p>
       ) : (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          {wallets.length > 0 ? (
-            <select value={chosen?.uuid ?? ''} onChange={(event) => setWalletId(event.target.value)} className="rounded border border-ink-line bg-ink-deep px-2 py-1 text-bone">
-              {wallets.map((w) => (
-                <option key={w.uuid} value={w.uuid}>
-                  {w.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
+          <WalletPicker wallets={wallets} chosen={chosen} onChoose={setWalletId} />
           <button type="button" disabled={step !== null} onClick={() => void connect()} className="inline-flex items-center gap-1.5 rounded border border-ink-line px-3 py-1 text-bone hover:bg-ink-deep disabled:opacity-50">
             <Wallet size={13} aria-hidden="true" /> {list.length > 0 ? 'Link another wallet' : 'Connect wallet'}
           </button>
@@ -459,6 +524,7 @@ function PurchasesSection({ status }: { status: StudioStatus }) {
   return (
     <>
       <WalletSection wallets={wallets} onChanged={purchases.reload} />
+      <WalletDiagnostics wallets={wallets} />
       <section className="rounded-lg border border-ink-line bg-ink-panel p-4">
         <h2 className="text-sm font-medium text-bone">Pending purchases</h2>
         <p className="mt-1 text-[11px] text-bone-faint">
@@ -573,6 +639,11 @@ function PurchaseRow({
   const awaiting = purchase.status === 'AWAITING_PAYMENT';
   const waitingOnWallet = recorded?.state === 'PREPARED';
   const alreadySent = recorded?.state === 'SENT' || Boolean(purchase.submitted_tx_hash);
+  const chosenState = useWalletState(chosen);
+  useEffect(() => {
+    // Another account in the chosen wallet means the confirmation no longer describes what would be signed.
+    if (review && chosenState.account && chosenState.account !== review.purchase.payer) setReview(null);
+  }, [chosenState.account, chosenState.chainId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const report = async (hash: string) => {
     const answer = await post<{ ok: boolean; why?: string; studioProblem?: string }>(`/api/studio/purchases/${purchase.intent_id}/sent`, { txHash: hash });
@@ -628,16 +699,12 @@ function PurchaseRow({
         await post(`/api/studio/purchases/${purchase.intent_id}/not-sent`, {});
         return;
       }
-      const chain = String(await chosen.provider.request({ method: 'eth_chainId' })).toLowerCase();
-      if (chain !== tx.chainIdHex) {
-        setStep(`Asking ${chosen.name} to switch to ${review.purchase.chainId === 4663 ? 'Robinhood Chain' : review.purchase.chainId}`);
-        try {
-          await chosen.provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: tx.chainIdHex }] });
-        } catch {
-          setProblem(`Add Robinhood Chain (chain ${tx.chainId}) to ${chosen.name}, then try again.`);
-          await post(`/api/studio/purchases/${purchase.intent_id}/not-sent`, {});
-          return;
-        }
+      setStep(`Checking ${chosen.name} is on Robinhood Chain`);
+      const onChain = await ensureChain(chosen.provider);
+      if (!onChain.ok) {
+        setProblem(`${chosen.name}: ${onChain.why}`);
+        await post(`/api/studio/purchases/${purchase.intent_id}/not-sent`, {});
+        return;
       }
       setStep(`Waiting for you to confirm in ${chosen.name}`);
       let hash: string;
@@ -696,15 +763,7 @@ function PurchaseRow({
             <p className="text-signal-wait">No wallet announced itself in this browser.</p>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              {wallets.length > 0 ? (
-                <select value={chosen?.uuid ?? ''} onChange={(event) => setWalletId(event.target.value)} className="rounded border border-ink-line bg-ink-deep px-2 py-1 text-bone">
-                  {wallets.map((w) => (
-                    <option key={w.uuid} value={w.uuid}>
-                      {w.name}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
+              <WalletPicker wallets={wallets} chosen={chosen} onChoose={setWalletId} />
               <button
                 type="button"
                 disabled={step !== null || !review.preflight.ok}
