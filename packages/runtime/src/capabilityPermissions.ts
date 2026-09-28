@@ -1,4 +1,4 @@
-import { defaultPermission, type CapabilityPermission } from '@xbam/shared/contracts';
+import { permissionWhenUnset, type CapabilityPermission } from '@xbam/shared/contracts';
 import { capabilityPermissions as permissionsRepo } from '@xbam/database';
 import { listCapabilities } from '@xbam/tools';
 
@@ -69,7 +69,7 @@ export async function capabilitySettings(agentId: string): Promise<CapabilitySet
 
   for (const capability of listCapabilities()) {
     const row = byId.get(capability.id);
-    permissions.set(capability.id, row?.permission ?? defaultPermission(capability.effect, capability.risk));
+    permissions.set(capability.id, row?.permission ?? permissionWhenUnset(capability));
     // `config` is `NOT NULL DEFAULT '{}'` and checked to be an object, so the
     // only question is whether there is anything in it worth carrying.
     if (row?.config && Object.keys(row.config).length > 0) configs.set(capability.id, row.config);

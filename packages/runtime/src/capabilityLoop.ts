@@ -1,7 +1,7 @@
 import { capabilityInvocations } from '@xbam/database';
 import { createLogger, type Logger } from '@xbam/shared';
 import type { ChatMessage } from '@xbam/shared/contracts';
-import { defaultPermission, type CapabilityPermission } from '@xbam/shared/contracts';
+import { permissionWhenUnset, type CapabilityPermission } from '@xbam/shared/contracts';
 import {
   invokeCapability,
   listModelCallable,
@@ -159,7 +159,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
    */
   const available = listModelCallable().filter((capability) => {
     const stored = options.permissions.get(capability.id) ?? null;
-    return (stored ?? defaultPermission(capability.effect, capability.risk)) !== 'DISABLED';
+    return (stored ?? permissionWhenUnset(capability)) !== 'DISABLED';
   });
 
   /*

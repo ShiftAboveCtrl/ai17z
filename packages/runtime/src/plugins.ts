@@ -11,6 +11,7 @@ import {
   buildVersion,
   comparePluginVersions,
   defaultPermission,
+  permissionWhenUnset,
   footprintExpansion,
   pluginFootprint,
   pluginOfCapability,
@@ -187,7 +188,7 @@ export async function pluginsAndCore(input: {
     for (const { capability } of mine) {
       const view = truth.get(capability.id);
       const fallback = defaultPermission(capability.effect, capability.risk);
-      const permission = view?.permission ?? byId.get(capability.id) ?? fallback;
+      const permission = view?.permission ?? byId.get(capability.id) ?? permissionWhenUnset(capability);
       settings.push({ permission, fallback });
       const last = lastByCapability.get(capability.id) ?? null;
       capabilities.push({

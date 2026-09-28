@@ -1,5 +1,5 @@
 import {
-  defaultPermission,
+  permissionWhenUnset,
   type CapabilityPermission,
   type CapabilityStatus,
 } from '@xbam/shared/contracts';
@@ -51,7 +51,7 @@ export interface PermissionInputs {
 
 export function resolvePermission(inputs: PermissionInputs): PermissionDecision {
   const { capability, stored, readiness, paused, approved } = inputs;
-  const permission = stored ?? defaultPermission(capability.effect, capability.risk);
+  const permission = stored ?? permissionWhenUnset(capability);
 
   // Everything stops, and it says so rather than blaming the capability.
   if (paused) {

@@ -117,3 +117,14 @@ export function defaultPermission(effect: CapabilityEffect, risk: CapabilityRisk
   if (effect === 'READ') return risk === 'HIGH' ? 'OWNER_APPROVAL' : 'ALLOWED';
   return risk === 'LOW' ? 'OWNER_APPROVAL' : 'DISABLED';
 }
+
+/**
+ * What applies to one agent when its owner has decided nothing about a
+ * capability. Usually the default above; a capability may say otherwise. A
+ * Plugin bought on AI17Z Studio says DISABLED: paying for it and installing it
+ * are not a decision about which agents may use it, so none may until the
+ * owner chooses. Enabling it still grants the ordinary default.
+ */
+export function permissionWhenUnset(capability: { effect: CapabilityEffect; risk: CapabilityRisk; unsetPermission?: CapabilityPermission }): CapabilityPermission {
+  return capability.unsetPermission ?? defaultPermission(capability.effect, capability.risk);
+}

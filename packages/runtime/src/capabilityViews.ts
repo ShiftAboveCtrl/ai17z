@@ -1,5 +1,5 @@
 import type { CapabilityPermission, CapabilityView } from '@xbam/shared/contracts';
-import { defaultPermission } from '@xbam/shared/contracts';
+import { permissionWhenUnset } from '@xbam/shared/contracts';
 import { NotFoundError } from '@xbam/shared';
 import { capabilityPermissions as permissionsRepo } from '@xbam/database';
 import { listCapabilities, resolvePermission } from '@xbam/tools';
@@ -108,5 +108,5 @@ export async function setCapabilityPermission(input: {
 /** What a capability would default to if nobody ever chose. For the screen. */
 export function defaultFor(capabilityId: string): CapabilityPermission | null {
   const capability = listCapabilities().find((c) => c.id === capabilityId);
-  return capability ? defaultPermission(capability.effect, capability.risk) : null;
+  return capability ? permissionWhenUnset(capability) : null;
 }
