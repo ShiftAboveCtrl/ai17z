@@ -105,6 +105,11 @@ services:
       # asks for. Empty means the filings family sends nothing at all, which is
       # the shipped state -- see .env.example.
       AI17Z_SEC_CONTACT: ${AI17Z_SEC_CONTACT:-}
+      # A Studio on this machine or a private network, for developing Studio and
+      # for testing a purchase end to end before it is deployed. Empty is the
+      # shipped state. Both services, because the API links and syncs and the
+      # worker runs the hosted Plugins a model chooses.
+      AI17Z_STUDIO_UNSAFE_DEV_ORIGIN: ${AI17Z_STUDIO_UNSAFE_DEV_ORIGIN:-}
       XBAM_API_PORT: "8787"
       XBAM_API_HOST: 0.0.0.0
       AI17Z_CORS_ORIGINS: ${AI17Z_CORS_ORIGINS:-${XBAM_CORS_ORIGINS:-http://localhost:8080}}
@@ -168,6 +173,11 @@ services:
       # asks for. Empty means the filings family sends nothing at all, which is
       # the shipped state -- see .env.example.
       AI17Z_SEC_CONTACT: ${AI17Z_SEC_CONTACT:-}
+      # A Studio on this machine or a private network, for developing Studio and
+      # for testing a purchase end to end before it is deployed. Empty is the
+      # shipped state. Both services, because the API links and syncs and the
+      # worker runs the hosted Plugins a model chooses.
+      AI17Z_STUDIO_UNSAFE_DEV_ORIGIN: ${AI17Z_STUDIO_UNSAFE_DEV_ORIGIN:-}
       # The container has no browser and no display. Browser-backed channels are
       # served by a worker running natively; see docs/operations/BROWSER_SESSIONS.md.
       AI17Z_WORKER_ROLE: ${AI17Z_WORKER_ROLE:-jobs}

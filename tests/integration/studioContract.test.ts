@@ -11,6 +11,11 @@ import {
   prepareStudioPurchase,
   recordStudioPurchaseSent,
   registryCatalog,
+  reviewStudioPurchase,
+  setPaymentRpcForTests,
+  studioLinkWallet,
+  studioWalletChallenge,
+  studioWallets,
   studioPurchases,
   studioStatus,
   syncStudio,
@@ -161,11 +166,40 @@ run('AI17Z core against a running AI17Z Studio', () => {
     });
     expect(wrongUrl.status).toBe(400);
 
+    // Linking a wallet from inside AI17Z, through the same Studio challenge.
+    // The key lives in the Studio fixture, which has a wallet library; core has none and needs none.
+    const localWallet = fixture('wallet-new') as { address: string; privateKey: string };
+    const challenge = await studioWalletChallenge(localWallet.address);
+    if (!challenge.ok) throw new Error(challenge.why);
+    const { signature } = fixture('sign', localWallet.privateKey, Buffer.from(challenge.message).toString('base64'));
+    expect((await studioLinkWallet(challenge.challengeId, signature)).ok).toBe(true);
+    const wallets = await studioWallets();
+    expect(wallets.ok && wallets.wallets.map((w) => w.address)).toContain(localWallet.address.toLowerCase());
+
     // A purchase started on Studio for this installation, completed here up to the wallet.
     const intent = fixture('intent', 'contract-paid', first);
     const listed = await studioPurchases();
     expect(listed.ok && listed.purchases.map((p) => p.intent_id)).toContain(intent.intentId);
+    // Against the real chain: the fixture's wallet holds nothing, so the
+    // preflight refuses and the wallet is never asked.
+    const refusedByChain = await prepareStudioPurchase(intent.intentId);
+    expect(refusedByChain.ok).toBe(false);
+    if (!refusedByChain.ok) expect(refusedByChain.why).toMatch(/Balance/);
+    const reviewed = await reviewStudioPurchase(intent.intentId);
+    expect(reviewed.ok && reviewed.preflight.checks.find((c) => c.name === 'Chain')?.ok).toBe(true);
+    expect(reviewed.ok && reviewed.preflight.checks.find((c) => c.name === 'Token decimals')?.ok).toBe(true);
+    // From here a stand-in chain that agrees, so the rest of the path runs.
+    setPaymentRpcForTests(async (method, params) => {
+      if (method === 'eth_chainId') return '0x1237';
+      if (method === 'eth_estimateGas') return '0xc350';
+      if (method === 'eth_getBalance') return '0x1';
+      const data = (params[0] as { data: string }).data;
+      if (data === '0x313ce567') return `0x${'12'.padStart(64, '0')}`;
+      if (data === '0x95d89b41') return `0x${'20'.padStart(64, '0')}${'5'.padStart(64, '0')}${Buffer.from('ai17z').toString('hex').padEnd(64, '0')}`;
+      return `0x${(10n ** 21n).toString(16).padStart(64, '0')}`;
+    });
     const prepared = await prepareStudioPurchase(intent.intentId);
+    setPaymentRpcForTests(null);
     if (!prepared.ok) throw new Error(prepared.why);
     expect(prepared.purchase.transaction).toMatchObject({ to: AI17Z_PAYMENT.token, from: setup.payer, value: '0x0' });
     expect(decodeTransfer(prepared.purchase.transaction.data)).toEqual({ recipient: setup.payout, amountBaseUnits: '1000000000000000000' });

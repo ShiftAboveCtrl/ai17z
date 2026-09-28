@@ -7,6 +7,10 @@ import {
   pollStudioLink,
   prepareStudioPurchase,
   recordStudioPurchaseSent,
+  reviewStudioPurchase,
+  studioLinkWallet,
+  studioWalletChallenge,
+  studioWallets,
   studioPurchases,
   studioStatus,
   syncStudio,
@@ -88,6 +92,47 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
       await requireUser(request);
       const [remote, local] = await Promise.all([studioPurchases(), ledger.listPurchases(100)]);
       return { studio: remote, ledger: local };
+    }),
+  );
+
+  /** The wallets linked to the Studio account this installation acts for. Addresses only. */
+  app.get(
+    '/api/studio/wallets',
+    handler(async (request) => {
+      await requireUser(request);
+      return studioWallets();
+    }),
+  );
+
+  /** A one-time message for the owner's wallet, checked here before the page may show it. */
+  app.post(
+    '/api/studio/wallets/challenge',
+    handler(async (request) => {
+      await requireUser(request);
+      const body = parseBody(z.object({ address: z.string().trim().max(64) }).strict(), request);
+      return studioWalletChallenge(body.address);
+    }),
+  );
+
+  app.post(
+    '/api/studio/wallets',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(z.object({ challengeId: z.string().uuid(), signature: z.string().trim().max(200) }).strict(), request);
+      const linked = await studioLinkWallet(body.challengeId, body.signature);
+      await ops.audit({ actorUserId: user.id, action: 'studio.wallet.linked', entityType: 'settings', entityId: 'studio', data: { ok: linked.ok } });
+      return linked;
+    }),
+  );
+
+  /** Terms, the transfer they allow and what the chain says about it. Records nothing and asks no wallet. */
+  app.post(
+    '/api/studio/purchases/:intentId/review',
+    handler(async (request) => {
+      await requireUser(request);
+      const id = intentId(request);
+      if (!id) return { ok: false, why: 'That is not a purchase id.' };
+      return reviewStudioPurchase(id);
     }),
   );
 
