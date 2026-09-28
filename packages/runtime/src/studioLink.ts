@@ -608,10 +608,13 @@ export function verifyLease(
 
 /** The current lease, verified. */
 export async function currentLease(now: Date = new Date()): Promise<LeaseVerdict> {
+  // The link first: a revoked installation has no lease either, and "none yet"
+  // would send its owner to wait for something that is not coming.
+  const link = await linkRecord();
+  if (!link) return { ok: false, why: 'This installation is not linked to AI17Z Studio.' };
+  if (link.revokedAt) return { ok: false, why: 'Studio says this installation is no longer linked. Link it again from the Plugins screen.' };
   const record = await ops.getSetting<LeaseRecord>(LEASE_SETTING);
   if (!record?.lease) return { ok: false, why: 'This installation has no entitlements from Studio yet.' };
-  const link = await linkRecord();
-  if (!link || link.revokedAt) return { ok: false, why: 'This installation is not linked to Studio.' };
   const key = await installationKey();
   const pinned = await readSealed<PinnedKeys>(JWKS_SETTING);
   if (!key || !pinned || pinned.origin !== link.origin) return { ok: false, why: "Studio's lease keys are not pinned on this installation. Sync again." };
