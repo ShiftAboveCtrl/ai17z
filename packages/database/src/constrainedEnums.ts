@@ -14,6 +14,8 @@ import {
   BROWSER_MODES,
   CHANNELS,
   DISPOSITIONS,
+  EVIDENCE_COMPLETENESS,
+  EVIDENCE_KINDS,
   ERROR_CLASSES,
   EVENT_TYPES,
   FAMILIARITY_LEVELS,
@@ -29,6 +31,11 @@ import {
   PROVIDER_KINDS,
   RADAR_STATUSES,
   REFLECTION_KINDS,
+  RESEARCH_RUN_KINDS,
+  RESEARCH_RUN_STATUSES,
+  SOURCE_AVAILABILITY,
+  SOURCE_FAMILIES,
+  SOURCE_TRUST_TIERS,
   STANCE_POSITIONS,
   STANCE_STATUSES,
   TRACE_EVENT_TYPES,
@@ -395,6 +402,17 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     values: ['OWNER', 'MEMBER'],
     note: 'There is one owner per installation; MEMBER is unused so far.',
   },
+  // The Research Fabric (migration 0096). Tiers, families and kinds come from
+  // the shared contract, so a new source family is one edit and one migration.
+  { table: 'research_runs', column: 'kind', values: RESEARCH_RUN_KINDS },
+  { table: 'research_runs', column: 'status', values: RESEARCH_RUN_STATUSES },
+  { table: 'research_objects', column: 'kind', values: EVIDENCE_KINDS },
+  { table: 'research_objects', column: 'completeness', values: EVIDENCE_COMPLETENESS },
+  { table: 'research_objects', column: 'best_tier', values: SOURCE_TRUST_TIERS },
+  { table: 'research_sightings', column: 'family', values: SOURCE_FAMILIES },
+  { table: 'research_sightings', column: 'tier', values: SOURCE_TRUST_TIERS },
+  { table: 'research_sightings', column: 'completeness', values: EVIDENCE_COMPLETENESS },
+  { table: 'research_source_health', column: 'state', values: SOURCE_AVAILABILITY },
 ];
 
 /** Reads the vocabulary a CHECK constraint actually enforces, from the catalogue. */
