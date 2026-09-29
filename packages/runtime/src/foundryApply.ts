@@ -68,7 +68,7 @@ export async function currentAgent(agentId: string): Promise<CurrentAgent> {
     })),
     personaSources: sources.map((s) => ({ kind: s.kind, handle: s.handle })),
     radar: radar.map((r) => ({ kind: r.kind, target: r.target, enabled: r.enabled })),
-    toolpacks: packs.packs.map((p) => ({ id: p.id, on: p.state === 'ON' })),
+    toolpacks: packs.packs.map((p) => ({ id: p.id, name: p.name, on: p.state === 'ON' })),
   };
 }
 
@@ -257,7 +257,7 @@ export async function applyFoundry(input: { runId: string; userId: string }): Pr
   const accountId = await primaryAccountOf(agentId);
   for (const item of chosen.filter((i) => i.section === 'RADAR')) {
     if (!accountId) {
-      skip(item, 'This agent has no X account connected yet. Connect one, then run Improve to add it.');
+      skip(item, 'This agent has no X account connected yet. Connect one, then press Apply again: this stays accepted.');
       continue;
     }
     const v = record(valueOf(item));

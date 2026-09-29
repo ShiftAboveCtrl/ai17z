@@ -42,7 +42,10 @@ export async function foundryRunView(runId: string): Promise<FoundryRunView | nu
       return {
         stage,
         label: FOUNDRY_STAGE_LABELS[stage],
-        state: entry ? 'DONE' : stage === firstUndone && (run.status === 'RUNNING' || run.status === 'QUEUED') ? 'RUNNING' : 'WAITING',
+        // Only a claimed run is doing a stage. A queued one is waiting for a
+        // worker, and saying "Understanding the request" would claim work that
+        // has not started.
+        state: entry ? 'DONE' : stage === firstUndone && run.status === 'RUNNING' ? 'RUNNING' : 'WAITING',
         detail: entry?.detail ?? null,
         at: entry?.at ?? null,
       };

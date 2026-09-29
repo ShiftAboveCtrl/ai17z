@@ -377,6 +377,21 @@ export function EasySetup() {
               An agent is a character with an account, a model, and rules about who it answers. This takes about two
               minutes.
             </p>
+            {/*
+              The other way in, offered before anything is typed: an owner who
+              wants the agent modelled on a real account and taught a real
+              project should not have to discover that research exists.
+            */}
+            <Link
+              to="/agents/new/research"
+              className="block rounded-lg border border-ink-line px-4 py-3.5 transition-colors hover:border-bone-faint"
+            >
+              <span className="block text-sm text-bone">Start from research instead</span>
+              <span className="mt-1 block text-[12px] leading-relaxed text-bone-faint">
+                Model it on an X account and teach it a project from its own documentation. You see every setting, with the
+                evidence behind it, before anything is applied.
+              </span>
+            </Link>
             <Field label="What is it called?" htmlFor="name">
               <input
                 id="name"

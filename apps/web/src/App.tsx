@@ -12,6 +12,8 @@ const Home = lazy(() => import('@app/routes/Home').then((m) => ({ default: m.Hom
 const EasySetup = lazy(() => import('@app/routes/EasySetup').then((m) => ({ default: m.EasySetup })));
 // The original eight-screen flow, kept in full for people who want every field.
 const CreateAgent = lazy(() => import('@app/routes/CreateAgent').then((m) => ({ default: m.CreateAgent })));
+const FoundryStart = lazy(() => import('@app/routes/FoundryStart').then((m) => ({ default: m.FoundryStart })));
+const FoundryPage = lazy(() => import('@app/routes/FoundryPage').then((m) => ({ default: m.FoundryPage })));
 const AgentPage = lazy(() => import('@app/routes/AgentPage').then((m) => ({ default: m.AgentPage })));
 const StudioPage = lazy(() => import('@app/routes/StudioPage').then((m) => ({ default: m.StudioPage })));
 const ActivityPage = lazy(() => import('@app/routes/ActivityPage').then((m) => ({ default: m.ActivityPage })));
@@ -67,6 +69,9 @@ export function App() {
             <Route path="/" element={<Home />} />
             <Route path="/agents/new" element={<EasySetup />} />
             <Route path="/agents/new/advanced" element={<CreateAgent />} />
+            <Route path="/agents/new/research" element={<FoundryStart />} />
+            <Route path="/agents/:agentId/foundry" element={<FoundryPage />} />
+            <Route path="/agents/:agentId/foundry/:runId" element={<FoundryPage />} />
             <Route path="/agents/:agentId" element={<AgentPage />} />
             <Route path="/agents/:agentId/studio" element={<StudioPage />} />
             <Route path="/inbox" element={<InboxPage />} />

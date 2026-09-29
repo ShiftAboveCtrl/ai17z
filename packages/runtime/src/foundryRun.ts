@@ -125,7 +125,11 @@ export function classifyDiscovered(input: {
   };
 
   for (const url of input.ownerUrls) add(url, url, true, 'You gave this address.');
-  if (input.profileWebsite) add(input.profileWebsite, input.profileWebsite, true, 'The persona links to it from their own profile.');
+  // The persona's own site is official for the project it names, and only that
+  // one: linking to pons.example says nothing about any other project.
+  if (input.profileWebsite && slug.length >= 3 && input.profileWebsite.toLowerCase().replace(/[^a-z0-9.]/g, '').includes(slug)) {
+    add(input.profileWebsite, input.profileWebsite, true, 'The persona links to it from their own profile.');
+  }
   for (const result of input.results) {
     if (!result.url) continue;
     const lower = result.url.toLowerCase();
