@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useResource } from '@app/lib/hooks';
 import { ErrorPanel, Loading } from '@app/components/ui';
 import { Crash } from '@app/components/Crash';
@@ -55,7 +55,9 @@ interface AgentDetail {
 export function StudioPage() {
   const { agentId = '' } = useParams();
   const { data, error, loading } = useResource<AgentDetail>(agentId ? `/api/agents/${agentId}` : null);
-  const [view, setView] = useState<ViewId>('command');
+  // `?view=lab` opens the Response Lab directly, for links from search and health.
+  const [params] = useSearchParams();
+  const [view, setView] = useState<ViewId>(() => (VIEWS.some((v) => v.id === params.get('view')) ? (params.get('view') as ViewId) : 'command'));
 
   if (loading) return <Loading label="Opening Studio" />;
   if (error || !data) {

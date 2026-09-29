@@ -136,3 +136,4 @@ export * from './foundryRun';
 export * from './foundryReport';
 export * from './testSuite';
 export * from './ownerChat';
+export * from './setupCheck';

@@ -42,8 +42,23 @@ const ACTIONS = [
  * Session control. Cookies and tokens are never displayed: the panel shows what
  * AI17Z knows about the session, not the session itself.
  */
-export function SessionPanel({ accountId, onChanged }: { accountId: string; onChanged: () => void }) {
+export function SessionPanel({
+  accountId,
+  onChanged,
+  focus = null,
+}: {
+  accountId: string;
+  onChanged: () => void;
+  /** A part to scroll to once loaded, for a link that names it: Social Radar or the browser. */
+  focus?: 'radar' | 'browser' | null;
+}) {
   const { data, error, loading, reload } = useResource<SessionData>(`/api/accounts/${accountId}/session`);
+  const loaded = Boolean(data);
+  useEffect(() => {
+    if (!focus || !loaded) return;
+    const timer = window.setTimeout(() => document.getElementById(`session-${focus}`)?.scrollIntoView({ block: 'start' }), 80);
+    return () => window.clearTimeout(timer);
+  }, [focus, loaded]);
   const workers = useResource<{ browserWorkerPresent: boolean }>('/api/browser-workers');
   const [pending, setPending] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -195,11 +210,20 @@ export function SessionPanel({ accountId, onChanged }: { accountId: string; onCh
         <StoredSignIn accountId={accountId} busy={Boolean(pending)} onSignIn={() => void run('CREDENTIAL_SIGN_IN')} />
       )}
 
-      {browserBacked && <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />}
+      {browserBacked && (
+        <div id="session-browser" className="scroll-mt-4">
+          <BrowserConfig accountId={accountId} session={data.session} onSaved={reload} />
+        </div>
+      )}
 
       {browserBacked && <BrowserIdentityPanel session={data.session} />}
 
-      {browserBacked && <RadarPanel accountId={accountId} />}
+      {/* Social Radar lives with the account it reads through; `?focus=radar` lands here. */}
+      {browserBacked && (
+        <div id="session-radar" className="scroll-mt-4">
+          <RadarPanel accountId={accountId} />
+        </div>
+      )}
 
       {browserBacked && <CadencePanel accountId={accountId} />}
 

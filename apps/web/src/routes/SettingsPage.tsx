@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { Plug, Plus, Trash2 } from 'lucide-react';
 import { ApiError, del, get, post } from '@app/lib/api';
 import { useElapsed, useResource } from '@app/lib/hooks';
@@ -56,7 +57,33 @@ export function SettingsPage() {
   const [results, setResults] = useState<
     Record<string, { ok: boolean; detail: string; latencyMs: number; models: number; verdict?: ProviderVerdict }>
   >({});
-  const [openAccount, setOpenAccount] = useState<string | null>(null);
+  /*
+    `?account=<id>` opens that account's session, and `&focus=radar` or
+    `&focus=browser` scrolls to the part named. Social Radar lives inside an
+    account's session, and somebody told "one Radar source is throttled" should
+    land on it rather than be told to go looking.
+  */
+  const [search, setSearch] = useSearchParams();
+  const [openAccount, setOpenAccountState] = useState<string | null>(() => search.get('account'));
+  const focusParam = search.get('focus');
+  const focus = focusParam === 'radar' || focusParam === 'browser' ? focusParam : null;
+  const setOpenAccount = (id: string | null) => {
+    setOpenAccountState(id);
+    if (!id && (search.has('account') || search.has('focus'))) setSearch({}, { replace: true });
+  };
+  const { hash } = useLocation();
+  /*
+    An in-app link to `#providers` does not scroll by itself; a pushState never
+    does. Scrolled twice, because the sections above it load their lists after
+    the first paint and move it: once to get there, once to stay there.
+  */
+  useEffect(() => {
+    const id = hash.replace('#', '');
+    if (!id) return;
+    const go = () => document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    const timers = [window.setTimeout(go, 120), window.setTimeout(go, 900)];
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [hash]);
   const [accountBusy, setAccountBusy] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<AccountRow | null>(null);
@@ -447,7 +474,7 @@ export function SettingsPage() {
       </Modal>
 
       <Modal open={Boolean(openAccount)} onClose={() => setOpenAccount(null)} title="Session" wide>
-        {openAccount && <SessionPanel accountId={openAccount} onChanged={() => accounts.reload()} />}
+        {openAccount && <SessionPanel accountId={openAccount} focus={focus} onChanged={() => accounts.reload()} />}
       </Modal>
     </main>
   );

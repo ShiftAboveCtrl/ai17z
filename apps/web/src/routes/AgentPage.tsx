@@ -31,6 +31,7 @@ import { ToolsSection } from './sections/ToolsSection';
 import { CapabilitiesSection } from './sections/CapabilitiesSection';
 import { PoliciesSection } from './sections/PoliciesSection';
 import { ActivitySection } from './sections/ActivitySection';
+import { SetupCheckPanel } from '@app/components/SetupCheckPanel';
 import { useViewMode } from '@app/lib/viewMode';
 import { EasyAgentView } from './EasyAgentView';
 
@@ -475,6 +476,9 @@ export function AgentPage() {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
             />
+            <div className="mt-8">
+              <SetupCheckPanel agentId={agent.id} />
+            </div>
             <ActivitySection index={1} agentId={agent.id} />
           </>
         )}
