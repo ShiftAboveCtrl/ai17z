@@ -177,6 +177,20 @@ const LENGTH_CEILING: Record<PersonaVersion['responseLength'], number> = {
 
 function renderMemories(memories: RetrievedMemory[], budget: number): string {
   if (memories.length === 0) return '';
+  // Documents from more than one generation of something: say so before any of
+  // them, so the model keeps them apart instead of blending two products.
+  const generations = [
+    ...new Set(
+      memories
+        .filter((m) => m.scope === 'KNOWLEDGE')
+        .map((m) => (m.origin?.generation ?? m.origin?.version ?? '').trim())
+        .filter(Boolean),
+    ),
+  ];
+  const warning =
+    generations.length > 1
+      ? [`[NOTE] These documents describe different versions (${generations.join(', ')}). Say which version an answer is about, and never mix them.`]
+      : [];
   const lines = memories.map((m) => {
     // A document is rendered whole, and attributed.
     //
@@ -186,7 +200,8 @@ function renderMemories(memories: RetrievedMemory[], budget: number): string {
     // prompt with none of the instructions under it -- the document was
     // retrieved, cited, and empty.
     if (m.scope === 'KNOWLEDGE') {
-      const where = [m.origin?.sourceName, m.origin?.path].filter(Boolean).join(', ');
+      const label = m.origin?.generation ?? m.origin?.version ?? null;
+      const where = [m.origin?.sourceName, label, m.origin?.authority?.toLowerCase(), m.origin?.path].filter(Boolean).join(', ');
       const version = m.origin?.revision ? ` at ${m.origin.revision}` : '';
       const attribution = where ? ` (${where}${version})` : '';
       return `[DOCUMENT${attribution}] ${m.content.trim()}`;
@@ -194,7 +209,11 @@ function renderMemories(memories: RetrievedMemory[], budget: number): string {
     return `[${m.scope}] ${m.summary?.trim() || m.content.trim()}`;
   });
   // Keep the tail when trimming: recent, highest-ranked memory matters most.
-  return truncateTail(lines.join('\n'), budget);
+  // The note is kept whatever the trimming: it is short, and a model that loses
+  // it is the one that blends two versions.
+  const note = warning.join('\n');
+  const body = truncateTail(lines.join('\n'), Math.max(0, budget - note.length - 1));
+  return note ? `${note}\n${body}` : body;
 }
 
 function renderTranscript(thread: ContextMessage[], agentName: string): string {

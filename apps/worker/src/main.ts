@@ -38,6 +38,10 @@ import { superviseSession } from '@xbam/browser';
 loadEnv();
 const log = createLogger('worker');
 
+/** Knowledge collections being read beside the sweep, and how many may be at once. */
+const collectionReads = new Set<string>();
+const MAX_COLLECTION_READS = 2;
+
 async function main(): Promise<void> {
   const ping = await pingDatabase();
   if (!ping.ok) throw new Error(`Database is not reachable: ${ping.detail}`);
@@ -130,13 +134,31 @@ async function main(): Promise<void> {
       // stamp forward in the same statement, so two workers cannot re-read one
       // source and a restart does not refresh everything at once.
       for (const source of await knowledge.claimDueForRefresh()) {
-        const result = await indexSource(source);
-        log.info('re-read a knowledge source', {
-          source: source.name,
-          unchanged: result.unchanged ?? false,
-          chunks: result.chunks,
-          error: result.error,
-        });
+        const collection = source.kind === 'DOCUMENTATION_SITE' || source.kind === 'GITHUB_REPOSITORY';
+        if (collection && collectionReads.size >= MAX_COLLECTION_READS) {
+          // Two already running: this one waits a minute rather than queueing
+          // a third crawl behind them.
+          await knowledge.updateSource(source.id, { nextRefreshAt: new Date(Date.now() + 60_000).toISOString() });
+          continue;
+        }
+        const read = indexSource(source).then((result) =>
+          log.info('re-read a knowledge source', {
+            source: source.name,
+            unchanged: result.unchanged ?? false,
+            chunks: result.chunks,
+            error: result.error,
+          }),
+        );
+        if (collection) {
+          // A collection can take minutes, and this sweep also delivers
+          // notifications, so it runs beside the sweep rather than inside it.
+          collectionReads.add(source.id);
+          void read
+            .catch((error) => log.warn('knowledge collection read failed', { message: errorMessage(error) }))
+            .finally(() => collectionReads.delete(source.id));
+        } else {
+          await read;
+        }
       }
     } catch (error) {
       log.warn('knowledge refresh failed', { message: errorMessage(error) });

@@ -8,7 +8,27 @@
 import { query, queryOne, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
-export type KnowledgeSourceKind = 'UPLOAD' | 'PATH' | 'TEXT' | 'URL';
+export const KNOWLEDGE_SOURCE_KINDS = ['UPLOAD', 'PATH', 'TEXT', 'URL', 'DOCUMENTATION_SITE', 'GITHUB_REPOSITORY'] as const;
+export type KnowledgeSourceKind = (typeof KNOWLEDGE_SOURCE_KINDS)[number];
+
+export const KNOWLEDGE_DOC_KINDS = ['DOC', 'SOURCE', 'README', 'PAGE'] as const;
+export type KnowledgeDocKind = (typeof KNOWLEDGE_DOC_KINDS)[number];
+
+/** What a collection is, so answers never mix two generations of one product. */
+export interface KnowledgeLabels {
+  version?: string | null;
+  generation?: string | null;
+  effectiveDate?: string | null;
+  authority?: 'OFFICIAL' | 'COMMUNITY' | 'OWNER' | null;
+}
+
+export interface KnowledgeChange {
+  added: number;
+  changed: number;
+  removed: number;
+  unchanged: number;
+  at: string;
+}
 
 export interface KnowledgeSourceRecord {
   id: string;
@@ -27,6 +47,13 @@ export interface KnowledgeSourceRecord {
   /** Null means this source is only re-read when somebody asks. */
   refreshIntervalMinutes: number | null;
   nextRefreshAt: string | null;
+  config: Record<string, unknown>;
+  labels: KnowledgeLabels;
+  refreshingSince: string | null;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  errorKind: 'FAILED' | 'UNAVAILABLE' | null;
+  lastChange: KnowledgeChange | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,7 +61,8 @@ export interface KnowledgeSourceRecord {
 const COLUMNS = `
   id, agent_id, name, kind, location, include, revision, enabled,
   indexed_at, document_count, chunk_count, last_error,
-  refresh_interval_minutes, next_refresh_at, created_at, updated_at`;
+  refresh_interval_minutes, next_refresh_at, config, labels, refreshing_since,
+  last_attempt_at, last_success_at, error_kind, last_change, created_at, updated_at`;
 
 export interface CreateKnowledgeSourceInput {
   agentId: string;
@@ -43,12 +71,14 @@ export interface CreateKnowledgeSourceInput {
   location?: string | null;
   include?: string[];
   refreshIntervalMinutes?: number | null;
+  config?: Record<string, unknown>;
+  labels?: KnowledgeLabels;
 }
 
 export async function createSource(input: CreateKnowledgeSourceInput): Promise<KnowledgeSourceRecord> {
   const row = await queryOne(
-    `INSERT INTO knowledge_sources (agent_id, name, kind, location, include, refresh_interval_minutes, next_refresh_at)
-     VALUES ($1,$2,$3,$4,$5,$6, CASE WHEN $6::int IS NULL THEN NULL ELSE now() END)
+    `INSERT INTO knowledge_sources (agent_id, name, kind, location, include, refresh_interval_minutes, next_refresh_at, config, labels)
+     VALUES ($1,$2,$3,$4,$5,$6, CASE WHEN $6::int IS NULL THEN NULL ELSE now() END, $7::jsonb, $8::jsonb)
      RETURNING ${COLUMNS}`,
     [
       input.agentId,
@@ -57,6 +87,8 @@ export async function createSource(input: CreateKnowledgeSourceInput): Promise<K
       input.location ?? null,
       input.include ?? [],
       input.refreshIntervalMinutes ?? null,
+      JSON.stringify(input.config ?? {}),
+      JSON.stringify(input.labels ?? {}),
     ],
   );
   return mapRow<KnowledgeSourceRecord>(row)!;
@@ -94,6 +126,13 @@ export interface UpdateKnowledgeSourceInput {
   lastError?: string | null;
   refreshIntervalMinutes?: number | null;
   nextRefreshAt?: string | null;
+  config?: Record<string, unknown>;
+  labels?: KnowledgeLabels;
+  refreshingSince?: string | null;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  errorKind?: 'FAILED' | 'UNAVAILABLE' | null;
+  lastChange?: KnowledgeChange | null;
 }
 
 export async function updateSource(id: string, input: UpdateKnowledgeSourceInput): Promise<KnowledgeSourceRecord> {
@@ -115,6 +154,13 @@ export async function updateSource(id: string, input: UpdateKnowledgeSourceInput
   if (input.lastError !== undefined) set('last_error', input.lastError);
   if (input.refreshIntervalMinutes !== undefined) set('refresh_interval_minutes', input.refreshIntervalMinutes);
   if (input.nextRefreshAt !== undefined) set('next_refresh_at', input.nextRefreshAt);
+  if (input.config !== undefined) set('config', JSON.stringify(input.config));
+  if (input.labels !== undefined) set('labels', JSON.stringify(input.labels));
+  if (input.refreshingSince !== undefined) set('refreshing_since', input.refreshingSince);
+  if (input.lastAttemptAt !== undefined) set('last_attempt_at', input.lastAttemptAt);
+  if (input.lastSuccessAt !== undefined) set('last_success_at', input.lastSuccessAt);
+  if (input.errorKind !== undefined) set('error_kind', input.errorKind);
+  if (input.lastChange !== undefined) set('last_change', input.lastChange === null ? null : JSON.stringify(input.lastChange));
 
   if (sets.length === 0) return (await getSource(id))!;
 
@@ -137,11 +183,14 @@ export async function claimDueForRefresh(limit = 5): Promise<KnowledgeSourceReco
   return mapRows<KnowledgeSourceRecord>(
     await query(
       `UPDATE knowledge_sources
-          SET next_refresh_at = now() + (refresh_interval_minutes * interval '1 minute')
+          -- A source with no schedule was queued to be read once (a collection
+          -- just created, or an owner pressing refresh): claiming it clears the
+          -- stamp rather than setting another.
+          SET next_refresh_at = CASE WHEN refresh_interval_minutes IS NULL THEN NULL
+                                     ELSE now() + (refresh_interval_minutes * interval '1 minute') END
         WHERE id IN (
           SELECT id FROM knowledge_sources
            WHERE enabled
-             AND refresh_interval_minutes IS NOT NULL
              AND next_refresh_at IS NOT NULL
              AND next_refresh_at <= now()
            ORDER BY next_refresh_at
@@ -196,4 +245,81 @@ export async function listChunks(
 export async function countChunks(sourceId: string): Promise<number> {
   const row = await queryOne('SELECT count(*)::int AS n FROM memories WHERE knowledge_source_id = $1', [sourceId]);
   return (row as { n?: number } | null)?.n ?? 0;
+}
+
+
+// -- Documents a collection holds ----------------------------------------------
+
+export interface KnowledgeDocumentRow {
+  id: string;
+  sourceId: string;
+  docKey: string;
+  title: string | null;
+  docKind: KnowledgeDocKind;
+  revision: string;
+  contentHash: string;
+  chunkCount: number;
+  fetchedAt: string;
+}
+
+export async function listDocuments(sourceId: string): Promise<KnowledgeDocumentRow[]> {
+  return mapRows<KnowledgeDocumentRow>(
+    await query('SELECT * FROM knowledge_documents WHERE source_id = $1 ORDER BY doc_key', [sourceId]),
+  );
+}
+
+export async function upsertDocument(input: {
+  sourceId: string;
+  docKey: string;
+  title: string | null;
+  docKind: KnowledgeDocKind;
+  revision: string;
+  contentHash: string;
+  chunkCount: number;
+}): Promise<void> {
+  await query(
+    `INSERT INTO knowledge_documents (source_id, doc_key, title, doc_kind, revision, content_hash, chunk_count, fetched_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7, now())
+     ON CONFLICT (source_id, doc_key) DO UPDATE
+       SET title = excluded.title, doc_kind = excluded.doc_kind, revision = excluded.revision,
+           content_hash = excluded.content_hash, chunk_count = excluded.chunk_count, fetched_at = now()`,
+    [input.sourceId, input.docKey, input.title, input.docKind, input.revision, input.contentHash, input.chunkCount],
+  );
+}
+
+/** Marks unchanged documents as checked, without rewriting anything. */
+export async function touchDocuments(sourceId: string, docKeys: string[]): Promise<void> {
+  if (docKeys.length === 0) return;
+  await query('UPDATE knowledge_documents SET fetched_at = now() WHERE source_id = $1 AND doc_key = ANY($2::text[])', [
+    sourceId,
+    docKeys,
+  ]);
+}
+
+/**
+ * Removes one document's chunks that a re-read did not produce again.
+ *
+ * Per document, so a refresh that re-read three changed pages of a two-hundred
+ * page site leaves the other hundred and ninety-seven exactly as they were.
+ */
+export async function pruneDocumentChunks(sourceId: string, docKey: string, keepHashes: string[]): Promise<number> {
+  const rows = await query(
+    `DELETE FROM memories
+      WHERE knowledge_source_id = $1 AND origin->>'path' = $2
+        AND ($3::text[] = '{}' OR NOT (content_hash = ANY($3::text[])))
+      RETURNING id`,
+    [sourceId, docKey, keepHashes],
+  );
+  return rows.length;
+}
+
+/** Removes documents that are gone from the source, and everything they taught. */
+export async function removeDocuments(sourceId: string, docKeys: string[]): Promise<number> {
+  if (docKeys.length === 0) return 0;
+  const chunks = await query(
+    `DELETE FROM memories WHERE knowledge_source_id = $1 AND origin->>'path' = ANY($2::text[]) RETURNING id`,
+    [sourceId, docKeys],
+  );
+  await query('DELETE FROM knowledge_documents WHERE source_id = $1 AND doc_key = ANY($2::text[])', [sourceId, docKeys]);
+  return chunks.length;
 }

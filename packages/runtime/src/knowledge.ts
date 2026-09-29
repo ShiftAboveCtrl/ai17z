@@ -28,6 +28,8 @@ import {
   type RefusedFile,
 } from '@xbam/memory';
 
+import { indexCollection } from './knowledgeCollections';
+
 const run = promisify(execFile);
 const log = createLogger('knowledge');
 
@@ -164,6 +166,22 @@ export async function indexSource(source: KnowledgeSourceRecord, options: IndexO
     error: null,
   };
 
+  if (source.kind === 'DOCUMENTATION_SITE' || source.kind === 'GITHUB_REPOSITORY') {
+    // A collection holds many documents and refreshes them one at a time; see
+    // knowledgeCollections.ts. Reported in the same shape as every other source.
+    const collection = await indexCollection(source);
+    return {
+      ...report,
+      documents: collection.documents,
+      chunks: collection.chunks,
+      removed: collection.change.removed,
+      revision: collection.revision,
+      refused: collection.refused,
+      withheld: collection.withheld,
+      unchanged: collection.change.added + collection.change.changed + collection.change.removed === 0,
+      error: collection.error,
+    };
+  }
   if (source.kind === 'TEXT') {
     return indexText(source, report, options);
   }

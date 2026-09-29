@@ -31,3 +31,4 @@ export * from './modelRoleStatus';
 export * from './capabilities';
 export * from './xDomain';
 export * from './research';
+export * from './knowledgeCollections';

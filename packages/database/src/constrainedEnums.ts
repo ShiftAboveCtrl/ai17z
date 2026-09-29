@@ -43,6 +43,7 @@ import {
 import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
 import { ENGAGEMENT_KINDS, ENGAGEMENT_STATUSES } from './repositories/engagements';
 import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
+import { KNOWLEDGE_DOC_KINDS, KNOWLEDGE_SOURCE_KINDS } from './repositories/knowledge';
 
 /**
  * Every column whose values are constrained to a fixed vocabulary by a database
@@ -307,9 +308,16 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   {
     table: 'knowledge_sources',
     column: 'kind',
-    values: ['UPLOAD', 'PATH', 'TEXT', 'URL'],
-    note: 'Mirrors KnowledgeSourceKind in the knowledge repository.',
+    values: KNOWLEDGE_SOURCE_KINDS,
+    note: 'KnowledgeSourceKind in the knowledge repository. Collections (0097) added the last two.',
   },
+  {
+    table: 'knowledge_sources',
+    column: 'error_kind',
+    values: ['FAILED', 'UNAVAILABLE'],
+    note: 'Why the last refresh did not succeed: this attempt, or the source itself.',
+  },
+  { table: 'knowledge_documents', column: 'doc_kind', values: KNOWLEDGE_DOC_KINDS },
   {
     table: 'messages',
     column: 'direction',
