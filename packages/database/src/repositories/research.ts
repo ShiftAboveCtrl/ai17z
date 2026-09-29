@@ -143,6 +143,8 @@ export async function commitStage(
     status?: ResearchRunStatus;
     /** Hand the lease back so the next stage can be claimed, by this worker or another. */
     release?: boolean;
+    /** Keep holding it this much longer, for a run that goes straight on to its next stage. */
+    extendMs?: number;
     lastError?: string | null;
   },
 ): Promise<boolean> {
@@ -155,7 +157,9 @@ export async function commitStage(
             spent = COALESCE($6::jsonb, spent),
             status = COALESCE($7, status),
             claimed_by = CASE WHEN $8 THEN NULL ELSE claimed_by END,
-            lease_expires_at = CASE WHEN $8 THEN NULL ELSE lease_expires_at END,
+            lease_expires_at = CASE WHEN $8 THEN NULL
+                                    WHEN $11::int > 0 THEN now() + ($11::int * interval '1 millisecond')
+                                    ELSE lease_expires_at END,
             last_error = $9,
             finished_at = CASE WHEN $10 THEN now() ELSE finished_at END,
             updated_at = now()
@@ -172,6 +176,7 @@ export async function commitStage(
       input.release === true || finishing,
       input.lastError ?? null,
       finishing,
+      Math.max(0, Math.round(input.extendMs ?? 0)),
     ],
   );
   return row !== null;

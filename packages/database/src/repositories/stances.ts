@@ -419,3 +419,22 @@ export async function countEvidence(stanceId: string): Promise<number> {
   ]);
   return row?.n ?? 0;
 }
+
+/**
+ * More evidence for a position already held, without reinforcing it.
+ *
+ * `assert` raises confidence each time it is called, which is right for the
+ * agent saying something again and wrong for attaching the several posts a
+ * researched belief rests on: six citations are not six restatements.
+ */
+export async function addEvidence(
+  stanceId: string,
+  evidence: { kind?: string; excerpt: string; remoteUrl?: string | null },
+): Promise<void> {
+  await query(`INSERT INTO stance_evidence (stance_id, kind, excerpt, remote_url) VALUES ($1,$2,$3,$4)`, [
+    stanceId,
+    evidence.kind ?? 'imported',
+    evidence.excerpt.slice(0, 2_000),
+    evidence.remoteUrl ?? null,
+  ]);
+}
