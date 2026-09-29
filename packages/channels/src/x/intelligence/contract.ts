@@ -183,6 +183,14 @@ export interface XPostRecord {
   conversationId: XId | null;
   replyToPostId: XId | null;
   replyToUserId: XId | null;
+  /**
+   * Whether this is a reply, when that is known without the parent's id.
+   *
+   * A drawn article says "Replying to @someone" and nothing about which post,
+   * so the rendered-page reader can know a post is a reply while
+   * `replyToPostId` stays null. Absent means only `replyToPostId` says.
+   */
+  isReply?: boolean;
   /** The post this quotes, when it quotes one. */
   quotedPostId: XId | null;
   /**

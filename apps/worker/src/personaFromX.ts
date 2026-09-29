@@ -191,7 +191,7 @@ function toCorpusItem(post: XPostRecord) {
     remoteId: post.postId,
     text: post.text,
     url: post.url,
-    itemKind: post.replyToPostId ? ('reply' as const) : post.quotedPostId ? ('quote' as const) : ('post' as const),
+    itemKind: post.replyToPostId || post.isReply ? ('reply' as const) : post.quotedPostId ? ('quote' as const) : ('post' as const),
     createdAt: post.createdAt,
     raw: {
       postId: post.postId,

@@ -114,6 +114,10 @@ describe('one post, whichever copy it was found through', () => {
     const o = observationFromXPost({ ...base, repost: false, replyToPostId: '1' } as never, 'now')!;
     expect(o.kind).toBe('REPLY');
     expect(o.tier).toBe('PRIMARY_PLATFORM');
+    // The rendered-page reader knows a reply without knowing its parent.
+    const drawn = observationFromXPost({ ...base, repost: false, isReply: true } as never, 'now')!;
+    expect(drawn.kind).toBe('REPLY');
+    expect(observationFromXPost({ ...base, repost: false } as never, 'now')!.kind).toBe('POST');
   });
 });
 
