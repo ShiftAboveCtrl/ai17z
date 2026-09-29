@@ -46,6 +46,9 @@ export function TopBar() {
           <NavLink to="/" end className={link}>
             Agents
           </NavLink>
+          <NavLink to="/chat" className={link}>
+            Chat
+          </NavLink>
           <NavLink to="/inbox" className={link}>
             Inbox
           </NavLink>
@@ -105,6 +108,9 @@ export function TopBar() {
       <div className="scroll-x flex items-center gap-5 border-t border-ink-line/60 px-5 py-2.5 sm:hidden">
         <NavLink to="/" end className={link}>
           Agents
+        </NavLink>
+        <NavLink to="/chat" className={link}>
+          Chat
         </NavLink>
         <NavLink to="/inbox" className={link}>
           Inbox
