@@ -35,6 +35,7 @@ export function Welcome() {
       <div className="grid gap-16 lg:grid-cols-[1.15fr_1fr] lg:items-center lg:gap-24">
         <div>
           <FadeIn>
+            <img src="/ai17z-wordmark.png" alt="AI17Z" className="mb-10 h-14 w-auto sm:h-16" width={480} height={194} />
             <p className="eyebrow mb-8">{needsOwner ? 'First run' : 'Welcome back'}</p>
           </FadeIn>
           <AnimatedText

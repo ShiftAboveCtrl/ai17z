@@ -38,8 +38,9 @@ export function TopBar() {
       }`}
     >
       <nav className="mx-auto flex max-w-page items-center gap-4 px-5 py-4 sm:gap-8 sm:px-8">
-        <Link to="/" className="font-semibold tracking-monument text-bone" aria-label="AI17Z home">
-          AI17Z
+        <Link to="/" className="shrink-0" aria-label="AI17Z home">
+          {/* The owner's logo, from packaging/brand, never redrawn. */}
+          <img src="/ai17z-wordmark.png" alt="AI17Z" className="h-6 w-auto sm:h-7" width={480} height={194} />
         </Link>
 
         <PauseAll />

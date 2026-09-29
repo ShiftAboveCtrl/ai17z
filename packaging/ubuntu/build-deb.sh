@@ -214,6 +214,15 @@ if [ -f "$STAGE/packaging/windows/ai17z-256.png" ]; then
   install -m 0644 "$STAGE/packaging/windows/ai17z-256.png" \
     "$PKG/usr/share/icons/hicolor/256x256/apps/ai17z.png"
 fi
+# The same icon at the other sizes a desktop asks for, all generated from the
+# owner's logo by packaging/windows/make-icon.py.
+for size in 48 128 512; do
+  if [ -f "$STAGE/packaging/brand/icons/ai17z-$size.png" ]; then
+    install -d "$PKG/usr/share/icons/hicolor/${size}x${size}/apps"
+    install -m 0644 "$STAGE/packaging/brand/icons/ai17z-$size.png" \
+      "$PKG/usr/share/icons/hicolor/${size}x${size}/apps/ai17z.png"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # Documentation, copyright and changelog
