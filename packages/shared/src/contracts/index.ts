@@ -32,3 +32,4 @@ export * from './capabilities';
 export * from './xDomain';
 export * from './research';
 export * from './knowledgeCollections';
+export * from './foundry';

@@ -58,6 +58,9 @@ export * as studio from './repositories/studio';
 export * as notifications from './repositories/notifications';
 export * as upstreamQuota from './repositories/upstreamQuota';
 export * as research from './repositories/research';
+export * as foundry from './repositories/foundry';
+export type { FoundryItemRow, FoundryApplicationRow } from './repositories/foundry';
+export type { ResearchRunRow, ResearchObjectRow, RunEvidence, SourceHealthRow } from './repositories/research';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.

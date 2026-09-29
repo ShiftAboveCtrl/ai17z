@@ -19,6 +19,9 @@ import {
   ERROR_CLASSES,
   EVENT_TYPES,
   FAMILIARITY_LEVELS,
+  FOUNDRY_ASSESSMENTS,
+  FOUNDRY_ITEM_STATUSES,
+  FOUNDRY_SECTIONS,
   GOAL_ORIGINS,
   GOAL_STATUSES,
   IDENTITY_KINDS,
@@ -421,6 +424,10 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'research_sightings', column: 'tier', values: SOURCE_TRUST_TIERS },
   { table: 'research_sightings', column: 'completeness', values: EVIDENCE_COMPLETENESS },
   { table: 'research_source_health', column: 'state', values: SOURCE_AVAILABILITY },
+  // Agent Foundry (migration 0098).
+  { table: 'foundry_items', column: 'section', values: FOUNDRY_SECTIONS },
+  { table: 'foundry_items', column: 'status', values: FOUNDRY_ITEM_STATUSES },
+  { table: 'foundry_items', column: 'assessment', values: FOUNDRY_ASSESSMENTS },
 ];
 
 /** Reads the vocabulary a CHECK constraint actually enforces, from the catalogue. */
