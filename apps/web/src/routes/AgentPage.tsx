@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { Copy, ExternalLink, LineChart, Package, Pencil, Play, Square, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, LineChart, Package, Pencil, Play, Search, Square, Trash2 } from 'lucide-react';
 import type { Blocker } from '@xbam/shared/contracts';
 import { ApiError, del, patch, post } from '@app/lib/api';
 import { startAgent } from '@app/lib/setup';
@@ -304,6 +304,14 @@ export function AgentPage() {
             <Link className="btn-quiet" to={`/agents/${agent.id}/studio`}>
               <LineChart className="h-3.5 w-3.5" aria-hidden />
               Studio
+            </Link>
+            {/*
+              Improving an agent from research is not an advanced operation:
+              it proposes and the owner decides, so it is offered in both views.
+            */}
+            <Link className="btn-quiet" to={`/agents/${agent.id}/foundry`}>
+              <Search className="h-3.5 w-3.5" aria-hidden />
+              Research
             </Link>
             {/*
               Renaming is a display change and stays one: the agent id is the

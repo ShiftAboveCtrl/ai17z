@@ -25,6 +25,14 @@ interface KnowledgeDocument {
   fetchedAt: string;
 }
 
+/** A refresh interval as a person says it: "every week", not "every 10080 minutes". */
+function howOften(minutes: number): string {
+  if (minutes % 10_080 === 0) return minutes === 10_080 ? 'every week' : `every ${minutes / 10_080} weeks`;
+  if (minutes % 1_440 === 0) return minutes === 1_440 ? 'every day' : `every ${minutes / 1_440} days`;
+  if (minutes % 60 === 0) return minutes === 60 ? 'every hour' : `every ${minutes / 60} hours`;
+  return `every ${minutes} minutes`;
+}
+
 /** A collection is many documents behind one name, read by the worker. */
 const COLLECTION_KINDS: SourceKind[] = ['DOCUMENTATION_SITE', 'GITHUB_REPOSITORY'];
 
@@ -229,7 +237,7 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                   {source.kind === 'URL' && (
                     <p className="mt-1 text-[11px] text-bone-faint">
                       {source.refreshIntervalMinutes
-                        ? `Re-read every ${source.refreshIntervalMinutes} minutes. This page only, no links followed.`
+                        ? `Re-read ${howOften(source.refreshIntervalMinutes)}. This page only, no links followed.`
                         : 'Only re-read when you ask. This page only, no links followed.'}
                     </p>
                   )}
@@ -238,7 +246,7 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                       {source.kind === 'DOCUMENTATION_SITE'
                         ? 'Every page under this address, within its limits, honouring robots.txt.'
                         : 'The README and documentation at one commit, and source only where you chose.'}{' '}
-                      {source.refreshIntervalMinutes ? `Re-read every ${Math.round(source.refreshIntervalMinutes / 60)} hours.` : 'Re-read when you ask.'}
+                      {source.refreshIntervalMinutes ? `Re-read ${howOften(source.refreshIntervalMinutes)}.` : 'Re-read when you ask.'}
                     </p>
                   )}
                   {source.freshness === 'REFRESHING' && source.refreshingSince && (

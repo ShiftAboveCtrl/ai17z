@@ -71,7 +71,7 @@ export interface CurrentAgent {
   knowledge: { name: string; kind: string; location: string | null; generation: string | null; lastError: string | null; indexedAt: string | null }[];
   personaSources: { kind: string; handle: string | null }[];
   radar: { kind: string; target: string | null; enabled: boolean }[];
-  toolpacks: { id: string; on: boolean }[];
+  toolpacks: { id: string; name?: string; on: boolean }[];
 }
 
 export interface FoundryInputs {
@@ -370,7 +370,7 @@ export function compileFoundry(inputs: FoundryInputs, analysis: FoundryAnalysis 
   const personalTopics = analysis.contextual.filter((t) => PERSONAL_SUBJECTS.test(t.label));
   if (personalTopics.length > 0) {
     instructions.push(
-      `${personalTopics.map((t) => t.label).join(' and ')} ${personalTopics.length === 1 ? 'is' : 'are'} part of this voice's world. Mention ${personalTopics.length === 1 ? 'it' : 'them'} only when the conversation is already about ${personalTopics.length === 1 ? 'it' : 'them'}; never bring ${personalTopics.length === 1 ? 'it' : 'them'} up unprompted.`,
+      `${capitalise(personalTopics.map((t) => t.label).join(' and '))} ${personalTopics.length === 1 ? 'is' : 'are'} part of this voice's world. Mention ${personalTopics.length === 1 ? 'it' : 'them'} only when the conversation is already about ${personalTopics.length === 1 ? 'it' : 'them'}; never bring ${personalTopics.length === 1 ? 'it' : 'them'} up unprompted.`,
     );
   }
   const generations = [...new Set(inputs.discovered.map((d) => d.generation).filter((g): g is string => Boolean(g)))];
@@ -631,10 +631,11 @@ export function compileFoundry(inputs: FoundryInputs, analysis: FoundryAnalysis 
   ];
   for (const pack of packs) {
     const have = current.toolpacks.find((t) => t.id === pack.id);
+    const name = current.toolpacks.find((t) => t.id === pack.id)?.name ?? PACK_NAMES[pack.id] ?? pack.id;
     push({
       section: 'CAPABILITIES',
       key: `toolpack:${pack.id}`,
-      title: `Turn on the ${pack.id} toolpack`,
+      title: `Turn on ${name}`,
       current: have ? { on: have.on } : null,
       proposed: { id: pack.id, on: true },
       rationale: `${pack.why} Read-only; nothing here can post, spend or sign.`,
@@ -743,12 +744,17 @@ export function compileFoundry(inputs: FoundryInputs, analysis: FoundryAnalysis 
   return items;
 }
 
+/** What a toolpack is called when the installation did not say. */
+const PACK_NAMES: Record<string, string> = { web: 'Web research', x: 'Reading X', crypto: 'Crypto and markets', projects: 'Projects and repositories' };
+
 const RADAR_TITLES: Record<string, string> = {
   notifications: 'Read X notifications',
   mention_search: 'Search for mentions',
   reply_search: 'Search for replies',
   own_threads: 'Read under its own posts',
 };
+
+const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /** Whether any significant word of a subject appears in some item. */
 function topicSeen(subject: string, items: { text: string }[]): boolean {
