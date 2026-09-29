@@ -47,6 +47,7 @@ import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
 import { ENGAGEMENT_KINDS, ENGAGEMENT_STATUSES } from './repositories/engagements';
 import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
 import { KNOWLEDGE_DOC_KINDS, KNOWLEDGE_SOURCE_KINDS } from './repositories/knowledge';
+import { CHAT_AUTHOR_KINDS, CHAT_KINDS, CHAT_MESSAGE_STATUSES, CHAT_SAVE_TARGETS } from './repositories/chat';
 
 /**
  * Every column whose values are constrained to a fixed vocabulary by a database
@@ -428,6 +429,11 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'foundry_items', column: 'section', values: FOUNDRY_SECTIONS },
   { table: 'foundry_items', column: 'status', values: FOUNDRY_ITEM_STATUSES },
   { table: 'foundry_items', column: 'assessment', values: FOUNDRY_ASSESSMENTS },
+  // Owner chat (migration 0100).
+  { table: 'chat_conversations', column: 'kind', values: CHAT_KINDS },
+  { table: 'chat_messages', column: 'author_kind', values: CHAT_AUTHOR_KINDS },
+  { table: 'chat_messages', column: 'status', values: CHAT_MESSAGE_STATUSES },
+  { table: 'chat_saves', column: 'target', values: CHAT_SAVE_TARGETS },
 ];
 
 /** Reads the vocabulary a CHECK constraint actually enforces, from the catalogue. */

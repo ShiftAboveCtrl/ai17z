@@ -122,3 +122,6 @@ export type { IdeaRow } from './repositories/content';
 export type { PostingRow } from './repositories/posting';
 export type { SocialMetrics } from './repositories/evaluation';
 export { memoryContentHash } from './repositories/memories';
+export * as introspection from './repositories/introspection';
+export * as chat from './repositories/chat';
+export type { ChatConversation, ChatMessage, ChatParticipant, ChatSave } from './repositories/chat';

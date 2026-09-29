@@ -486,6 +486,9 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
     };
 
     const recordTarget = async () => {
+      // Every way out of ingest passes through here, so this is where the
+      // reasons an agent was given no work are kept rather than only logged.
+      await eventsRepo.recordSkips(tx, stored.id, outcome.skipped);
       if (!options.ownerTargetSourceId || event.type !== 'TARGET_ACCOUNT_ACTIVITY') return;
       const byAgent = new Map<string, (typeof outcome.jobs)[number]>();
       for (const entry of outcome.jobs) byAgent.set(entry.agentId, entry);

@@ -44,6 +44,7 @@ import { registerMarketCapabilities } from './marketCapabilities';
 import { defaultPipelineDraft } from './defaultPipeline';
 import { registerXCapabilities } from './xCapabilities';
 import { registerGithubCapabilities } from './githubCapabilities';
+import { registerIntrospectionCapabilities } from './introspectionCapabilities';
 
 const log = createLogger('bootstrap');
 
@@ -73,6 +74,9 @@ export async function bootstrapRuntime(): Promise<void> {
   // by calling GitHub. An agent cannot add a watch and cannot reach a project
   // its owner has not pointed it at.
   registerGithubCapabilities();
+  // What an agent can find out about itself, for its owner only. Never offered
+  // in a public conversation; see the audience on each one.
+  registerIntrospectionCapabilities();
 
   // Plugins an owner installed, registered the same way and into the same
   // registry as everything above. There is no second invocation engine and no

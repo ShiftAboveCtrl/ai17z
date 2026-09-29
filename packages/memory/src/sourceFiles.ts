@@ -265,7 +265,9 @@ async function resolveReal(path: string): Promise<string> {
 const SECRET_SHAPES: Array<[RegExp, string]> = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'a private key'],
   [/\b(?:AI17Z|XBAM)_MASTER_KEY\s*[=:]\s*\S{16,}/i, 'a master key'],
-  [/\bsk-[A-Za-z0-9]{20,}/, 'an API key'],
+  // Hyphens included: Anthropic's keys are sk-ant-api03-..., which the
+  // alphanumeric run alone never matched.
+  [/\bsk-[A-Za-z0-9_-]{20,}/, 'an API key'],
   [/\bghp_[A-Za-z0-9]{30,}/, 'a GitHub token'],
   [/\bxox[baprs]-[A-Za-z0-9-]{10,}/, 'a Slack token'],
   [/\b(?:password|passwd|secret|api[_-]?key|access[_-]?token)\s*[=:]\s*["']?[A-Za-z0-9/+_-]{16,}/i, 'a credential'],

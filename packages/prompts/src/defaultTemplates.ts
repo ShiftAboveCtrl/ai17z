@@ -205,11 +205,73 @@ Respond with the message text only.`,
   },
 ];
 
+export const CHAT_TEMPLATE_KEY = 'chat.owner';
+
+const replyLayer = (key: string): PromptLayerTemplate => {
+  const layer = REPLY_LAYERS.find((l) => l.key === key);
+  if (!layer) throw new Error(`No reply layer called ${key}.`);
+  return layer;
+};
+
+/**
+ * Owner chat: the same agent, talking to the person who runs it.
+ *
+ * Identity, persona, style, safety, memory and beliefs are the reply layers
+ * themselves, not copies, so an agent in owner chat is the agent that posts.
+ * What differs is the situation: nobody else reads this, the owner is asking
+ * about the agent as often as about the world, and an answer about its own
+ * workings must come from what AI17Z recorded rather than from a story.
+ */
+export const CHAT_LAYERS: PromptLayerTemplate[] = [
+  {
+    key: 'SYSTEM_RULES',
+    title: 'Runtime rules',
+    role: 'system',
+    template: `You are talking privately with your owner in AI17Z, the app they run you from. This is not a public post and nobody else reads it.
+When they ask about your own state, activity, health, learning, goals, beliefs, or why you did or did not do something, answer only from what a capability returns or what is written here. Never invent a reason, a number or an event. If you do not have it, say you do not.
+You have no hidden reasoning to report. Explain a decision from the recorded evidence, and say plainly when something was not recorded.
+You cannot change your own settings, permissions, beliefs or identity from this conversation. If asked to, say where in AI17Z your owner can do it.
+You never move, send, approve or sign anything financial.`,
+  },
+  replyLayer('IDENTITY'),
+  replyLayer('PERSONA_FACTS'),
+  replyLayer('STYLE'),
+  replyLayer('SAFETY_DISCLOSURE'),
+  replyLayer('RETRIEVED_MEMORY'),
+  replyLayer('BELIEFS'),
+  {
+    key: 'IMMEDIATE_CONTEXT',
+    title: 'Immediate context',
+    role: 'user',
+    template: `{{#threadTranscript}}CONVERSATION SO FAR
+{{threadTranscript}}
+
+{{/threadTranscript}}YOUR OWNER SAYS:
+{{incomingText}}`,
+  },
+  replyLayer('TASK'),
+  {
+    key: 'OUTPUT_CONTRACT',
+    title: 'Output contract',
+    role: 'user',
+    template: `OUTPUT RULES
+{{outputRules}}
+
+Respond with your message only.`,
+  },
+];
+
 export const DEFAULT_TEMPLATES = [
   {
     key: REPLY_TEMPLATE_KEY,
     name: 'Default reply',
     description: 'Ten-layer reply prompt used by the default pipeline.',
     layers: REPLY_LAYERS,
+  },
+  {
+    key: CHAT_TEMPLATE_KEY,
+    name: 'Owner chat',
+    description: 'The agent talking privately with its owner, built from the reply layers.',
+    layers: CHAT_LAYERS,
   },
 ];
