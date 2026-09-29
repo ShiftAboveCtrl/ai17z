@@ -78,6 +78,12 @@ export interface SourceAnswer {
   requests: number;
   /** A bot check was served: hold this source closed, do not retry around it. */
   challenged?: boolean;
+  /**
+   * The source is resting, not failing: the account's read budget is spent or
+   * X asked for less. The run should wait this long and ask again rather than
+   * carry on without it.
+   */
+  retryAfterMs?: number | null;
 }
 
 export interface FabricSource {
@@ -101,6 +107,7 @@ export interface FamilyReport {
   becameBest: number;
   disagreements: number;
   requests: number;
+  retryAfterMs: number | null;
 }
 
 export interface GatherReport {
@@ -167,6 +174,7 @@ export async function gather(input: {
       becameBest: 0,
       disagreements: 0,
       requests: 0,
+      retryAfterMs: null,
     };
 
     const health = await researchRepo.sourceHealth(source.family).catch(() => null);
@@ -190,6 +198,7 @@ export async function gather(input: {
         row.state = answer.state;
         row.detail = answer.detail;
         row.requests = answer.requests;
+        row.retryAfterMs = answer.retryAfterMs ?? null;
 
         for (const observation of answer.observations.slice(0, remainingObjects)) {
           const outcome = await researchRepo.recordObservation(input.ownerId, input.runId, observation);
@@ -199,7 +208,9 @@ export async function gather(input: {
           if (outcome.disagrees) row.disagreements += 1;
         }
 
-        if (answer.challenged) {
+        if (answer.retryAfterMs) {
+          // Resting is not failing: nothing is counted against the source.
+        } else if (answer.challenged) {
           await researchRepo.noteSource(source.family, 'UNAVAILABLE', answer.detail, CHALLENGE_HOLD_MS);
         } else if (answer.state === 'AVAILABLE' || answer.state === 'DEGRADED') {
           await researchRepo.noteSource(source.family, answer.state, answer.detail);

@@ -237,6 +237,13 @@ export async function advanceFoundryRun(run: ResearchRunRow, deps: FoundryDeps):
             sources,
           });
         }
+        // The platform resting is a reason to wait, never a reason to build a
+        // persona without it: the run comes back when the account may read again.
+        const resting = report.families.find((f) => f.family === 'X' && f.retryAfterMs);
+        if (stage === 'READING_X' && resting) {
+          await researchRepo.deferRun(current.id, deps.workerId, Math.max(60_000, resting.retryAfterMs!), `Waiting for X: ${resting.detail}`);
+          return 'DEFERRED';
+        }
         const coverage = [...plan.coverage, ...report.families.map((f) => ({ family: f.family, state: f.state, detail: f.detail, observed: f.observed }))];
         const gaps = [...plan.gaps, ...report.gaps];
         if (stage === 'READING_X' && !deps.platform && plan.handle) gaps.push('No X account is connected to read through, so the persona rests on secondary sources only.');
