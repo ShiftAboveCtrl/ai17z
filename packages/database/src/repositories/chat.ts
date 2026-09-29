@@ -256,7 +256,7 @@ export async function cancelPending(ownerId: string, conversationId: string): Pr
  * room the second agent reads what the first said. An answer whose lease ran
  * out (a worker died writing it) is taken again.
  */
-export async function claimNextAnswer(workerId: string, leaseMs: number): Promise<ChatMessage | null> {
+export async function claimNextAnswer(workerId: string, leaseMs: number, browserCapable = true): Promise<ChatMessage | null> {
   return mapRow<ChatMessage>(
     await queryOne(
       `UPDATE chat_messages SET status = 'ANSWERING', locked_by = $1,
@@ -264,6 +264,8 @@ export async function claimNextAnswer(workerId: string, leaseMs: number): Promis
         WHERE id = (
           SELECT m.id FROM chat_messages m
            WHERE (m.status = 'PENDING' OR (m.status = 'ANSWERING' AND m.lock_expires_at < now()))
+             -- An answer that needs a web lookup waits for a worker with a browser.
+             AND ($3::boolean OR m.locked_by IS DISTINCT FROM '${NEEDS_BROWSER}')
              AND NOT EXISTS (
                SELECT 1 FROM chat_messages e
                 WHERE e.conversation_id = m.conversation_id AND e.seq < m.seq
@@ -272,9 +274,26 @@ export async function claimNextAnswer(workerId: string, leaseMs: number): Promis
            FOR UPDATE SKIP LOCKED
            LIMIT 1)
         RETURNING ${MESSAGE_COLUMNS}`,
-      [workerId, leaseMs],
+      [workerId, leaseMs, browserCapable],
     ),
   );
+}
+
+/** Marks an answer held back for a worker that owns a browser. */
+export const NEEDS_BROWSER = 'needs-browser';
+
+/**
+ * Puts a claimed answer back for a browser-capable worker to take.
+ *
+ * For a turn that needs a web lookup, claimed by a worker that has no browser.
+ */
+export async function handOffToBrowser(id: string, workerId: string): Promise<boolean> {
+  const rows = await query(
+    `UPDATE chat_messages SET status = 'PENDING', locked_by = '${NEEDS_BROWSER}', lock_expires_at = NULL
+      WHERE id = $1 AND locked_by = $2 AND status = 'ANSWERING' RETURNING id`,
+    [id, workerId],
+  );
+  return rows.length > 0;
 }
 
 /** Settles an answer, only if this worker still holds it. */

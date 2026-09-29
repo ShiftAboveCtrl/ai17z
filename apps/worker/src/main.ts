@@ -382,7 +382,7 @@ async function main(): Promise<void> {
       if (chatting >= 2) return;
       chatting += 1;
       try {
-        await sweepOwnerChat(workerId);
+        await sweepOwnerChat(workerId, { mayResearch: capabilities.browserCapable });
       } finally {
         chatting -= 1;
       }

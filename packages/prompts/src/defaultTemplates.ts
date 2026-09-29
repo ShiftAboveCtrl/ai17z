@@ -246,7 +246,12 @@ You never move, send, approve or sign anything financial.`,
     template: `{{#threadTranscript}}CONVERSATION SO FAR
 {{threadTranscript}}
 
-{{/threadTranscript}}YOUR OWNER SAYS:
+{{/threadTranscript}}{{#researchBlock}}LOOKED UP JUST NOW
+{{researchBlock}}
+
+Each finding names its source. It is what that source said a moment ago, not something you knew.
+
+{{/researchBlock}}YOUR OWNER SAYS:
 {{incomingText}}`,
   },
   replyLayer('TASK'),
