@@ -1,8 +1,9 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { accounts as accountsRepo, chat as chatRepo, memories as memoriesRepo, providers, query } from '@xbam/database';
+import { accounts as accountsRepo, chat as chatRepo, memories as memoriesRepo, providers, query, workers as workersRepo } from '@xbam/database';
 import {
   answerNextChatTurn,
   addressedAgents,
+  chatLookups,
   ingestNormalizedEvent,
   registerIntrospectionCapabilities,
   runCapabilityLoop,
@@ -199,5 +200,45 @@ describe('owner chat', () => {
     // Creating a conversation with somebody else's agent quietly adds nobody.
     const stolen = await chatRepo.createConversation({ ownerId: b.ownerId, kind: 'AGENT', title: 'theirs', agentIds: [a.agentId] });
     expect(await chatRepo.participants(stolen.id)).toEqual([]);
+  });
+});
+
+describe('owner chat looking things up', () => {
+  const question = 'what happened with the Robinhood Chain mainnet launch today?';
+
+  it('decides what to look up exactly as a reply would', async () => {
+    const fixture = await createFixture();
+    const policy = (await import('@xbam/database')).agents.getActivePolicy(fixture.agentId);
+    const lookups = chatLookups(question, (await policy)!.config as never);
+    expect(lookups.some((l) => l.kind === 'search')).toBe(true);
+    expect(chatLookups('what is your setup right now?', (await policy)!.config as never)).toEqual([]);
+  });
+
+  it('hands a turn that needs the web to a worker with a browser, and no other worker takes it', async () => {
+    const fixture = await createFixture();
+    await workersRepo.heartbeat({ id: `browser-${uniqueSuffix()}`, role: 'browser', browserCapable: true, jobsCapable: false });
+    const conversation = await chatRepo.createConversation({ ownerId: fixture.ownerId, kind: 'AGENT', title: 'q', agentIds: [fixture.agentId] });
+    await chatRepo.postOwnerMessage({ conversationId: conversation.id, content: question, answerers: [fixture.agentId] });
+
+    expect(await answerNextChatTurn('jobs-worker', { mayResearch: false })).toBe(false);
+    const [, held] = await chatRepo.listMessages(conversation.id);
+    expect(held!.status).toBe('PENDING');
+    // Not claimable again by a worker without a browser.
+    expect(await chatRepo.claimNextAnswer('jobs-worker', 60_000, false)).toBeNull();
+    // A browser worker takes it.
+    const claimed = await chatRepo.claimNextAnswer('browser-worker', 60_000, true);
+    expect(claimed?.id).toBe(held!.id);
+  });
+
+  it('answers without the web when no browser worker runs, and says what it could not check', async () => {
+    const fixture = await createFixture();
+    await query('DELETE FROM workers');
+    const conversation = await chatRepo.createConversation({ ownerId: fixture.ownerId, kind: 'AGENT', title: 'q', agentIds: [fixture.agentId] });
+    await chatRepo.postOwnerMessage({ conversationId: conversation.id, content: question, answerers: [fixture.agentId] });
+    expect(await answerNextChatTurn('jobs-worker', { mayResearch: false })).toBe(true);
+    const [, answer] = await chatRepo.listMessages(conversation.id);
+    expect(answer!.status).toBe('DONE');
+    const research = (answer!.evidence as { research: { failed: { reason: string }[] } | null }).research;
+    expect(research?.failed.map((f) => f.reason).join(' ')).toMatch(/X account|browser/);
   });
 });

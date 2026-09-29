@@ -28,8 +28,10 @@
  * and a worker that dies mid-answer leaves it to be taken again.
  */
 import {
+  accounts as accountsRepo,
   agents as agentsRepo,
   chat as chatRepo,
+  workers as workersRepo,
   knowledge as knowledgeRepo,
   memories as memoriesRepo,
   ops,
@@ -39,7 +41,7 @@ import {
   type ChatParticipant,
 } from '@xbam/database';
 import { NotFoundError, ValidationError, createLogger, errorMessage } from '@xbam/shared';
-import type { PolicyConfig } from '@xbam/shared/contracts';
+import type { CapabilityPermission, PolicyConfig } from '@xbam/shared/contracts';
 import { StanceContext } from '@xbam/shared/contracts';
 import { assemblePrompt, CHAT_TEMPLATE_KEY } from '@xbam/prompts';
 import { generate, type GenerateResult } from '@xbam/models';
@@ -50,6 +52,11 @@ import { pauseState } from './killSwitch';
 import { checkBudget } from './policyGate';
 import { validateOutput } from './validator';
 import { indexSource } from './knowledge';
+import { research, renderResearch, whatToResearch, type Finding, type Lookup, type ResearchResult } from './research';
+import { capResearch } from './spending';
+import { pluginResearchSources } from './pluginFeatures';
+import { buildChannelContext } from './channelContext';
+import { getChannelAdapter } from '@xbam/channels';
 
 const log = createLogger('owner-chat');
 
@@ -138,14 +145,88 @@ function trimForEvidence(value: unknown): unknown {
 }
 
 export interface ChatTurnOutcome {
-  status: 'DONE' | 'FAILED';
+  /** HANDOFF: this turn needs a web lookup and this worker has no browser. */
+  status: 'DONE' | 'FAILED' | 'HANDOFF';
   content: string;
   evidence: Record<string, unknown>;
   error: string | null;
 }
 
+export interface ChatWorkerOptions {
+  /** Whether this worker owns a browser, so can search the web through the agent's X account. */
+  mayResearch: boolean;
+}
+
+/**
+ * What an owner's question needs looked up, decided exactly as a reply's is.
+ *
+ * `whatToResearch` reads the shape of the question: something that changes by
+ * the day goes to the web, a ticker or address to market data, a question
+ * about the agent itself to nothing at all (its own records answer that).
+ */
+export function chatLookups(question: string, policy: PolicyConfig): Lookup[] {
+  const links = [...question.matchAll(/https?:\/\/\S+/g)].map((m) => m[0]);
+  return capResearch(whatToResearch({ incoming: question, links }), policy.budget.maxResearchCallsPerEvent);
+}
+
+/** Runs the lookups with whatever this worker can reach, and says what it could not. */
+async function lookUp(
+  agentId: string,
+  lookups: Lookup[],
+  policy: PolicyConfig,
+  options: ChatWorkerOptions,
+  permissions: Map<string, CapabilityPermission>,
+  paused: boolean,
+): Promise<ResearchResult> {
+  const links = await accountsRepo.listAgentAccounts(agentId);
+  const browserLink = links.find((l) => getChannelAdapter(l.channel).lookUp && getChannelAdapter(l.channel).requiresBrowser);
+  const account = browserLink && options.mayResearch ? await accountsRepo.getAccount(browserLink.accountId) : null;
+  const search =
+    account && getChannelAdapter(account.channel).lookUp
+      ? async (query: string): Promise<Finding[]> => {
+          const adapter = getChannelAdapter(account.channel);
+          const ctx = await buildChannelContext(account, null);
+          const kind = lookups.find((l) => l.query === query)?.kind === 'link' ? 'link' : 'search';
+          const found = await adapter.lookUp!(ctx, { query, kind });
+          return found.map((item) => ({
+            kind: kind as 'search' | 'link',
+            query,
+            source: kind === 'link' ? 'The page linked' : 'Web search',
+            title: item.title,
+            summary: item.snippet,
+            url: item.url,
+            retrievedAt: new Date().toISOString(),
+          }));
+        }
+      : undefined;
+  const extraSources = await pluginResearchSources({
+    agentId,
+    jobId: null,
+    accountId: account?.id ?? null,
+    permissions,
+    paused,
+    logger: log,
+  }).catch(() => []);
+  const result = await research(lookups, {
+    search,
+    tokenContext: lookups.map((l) => l.query).join('\n'),
+    knownAddresses: policy.output.verifiedAddresses,
+    sources: policy.tools.research,
+    extraSources,
+  });
+  if (!search && lookups.some((l) => l.kind !== 'token')) {
+    result.failed.push({
+      query: lookups.find((l) => l.kind !== 'token')!.query,
+      reason: browserLink
+        ? 'No worker with a browser is running, so the web could not be searched.'
+        : 'This agent has no connected X account, whose browser is what searches the web.',
+    });
+  }
+  return result;
+}
+
 /** Writes one agent's answer. Never throws: a failure is an answer that says so. */
-export async function writeAnswer(answer: ChatMessage): Promise<ChatTurnOutcome> {
+export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOptions = { mayResearch: false }): Promise<ChatTurnOutcome> {
   const failed = (error: string, evidence: Record<string, unknown> = {}): ChatTurnOutcome => ({
     status: 'FAILED',
     content: '',
@@ -176,6 +257,21 @@ export async function writeAnswer(answer: ChatMessage): Promise<ChatTurnOutcome>
 
     const budget = await checkBudget(agent.id, policy);
     if (!budget.allow) return failed(budget.message ?? 'This agent is over its model budget for now.');
+
+    const settings = await capabilitySettings(agent.id);
+    const paused = (await pauseState().catch(() => ({ paused: false }))).paused;
+
+    /*
+      Looking things up, exactly as a reply does. A question that needs the web
+      goes to a worker that owns a browser when one is running; when none is,
+      it is answered without, and the gap is said rather than papered over.
+    */
+    const lookups = chatLookups(question, policy);
+    const needsWeb = lookups.some((l) => l.kind !== 'token');
+    if (needsWeb && !options.mayResearch && (await workersRepo.browserWorkerPresent().catch(() => false))) {
+      return { status: 'HANDOFF', content: '', evidence: {}, error: null };
+    }
+    const researched = lookups.length > 0 ? await lookUp(agent.id, lookups, policy, options, settings.permissions, paused) : null;
 
     // Only this agent's own memories and beliefs, whoever else is in the room.
     const [retrieved, stanceRows] = await Promise.all([
@@ -215,7 +311,7 @@ export async function writeAnswer(answer: ChatMessage): Promise<ChatTurnOutcome>
         parentText: null,
         thread,
         conversation: null,
-        meta: { stance },
+        meta: { stance, ...(researched ? { research: { rendered: renderResearch(researched) } } : {}) },
       } as never,
       memories: retrieved.memories,
       channelName: 'AI17Z',
@@ -226,7 +322,6 @@ export async function writeAnswer(answer: ChatMessage): Promise<ChatTurnOutcome>
     });
 
     let last: GenerateResult | null = null;
-    const settings = await capabilitySettings(agent.id);
     /*
       The loop runs whether or not the owner turned it on for public replies.
       That switch is about what an agent may reach for while answering
@@ -253,7 +348,7 @@ export async function writeAnswer(answer: ChatMessage): Promise<ChatTurnOutcome>
       },
       permissions: settings.permissions,
       configs: settings.configs,
-      paused: (await pauseState().catch(() => ({ paused: false }))).paused,
+      paused,
       audience: 'OWNER',
     });
 
@@ -276,7 +371,13 @@ export async function writeAnswer(answer: ChatMessage): Promise<ChatTurnOutcome>
         source: m.origin?.path ?? null,
       })),
       beliefs: stance.relevant.map((s) => s.subject),
-      usedLiveState: loop.steps.some((s) => s.outcome === 'SUCCEEDED'),
+      research: researched
+        ? {
+            findings: researched.findings.slice(0, 10).map((f) => ({ source: f.source, title: f.title, url: f.url, query: f.query })),
+            failed: researched.failed.slice(0, 5),
+          }
+        : null,
+      usedLiveState: loop.steps.some((s) => s.outcome === 'SUCCEEDED') || Boolean(researched?.findings.length),
       exhausted: loop.exhausted,
       corrections: validated.violations.map((v) => v.message),
     };
@@ -297,19 +398,23 @@ export async function writeAnswer(answer: ChatMessage): Promise<ChatTurnOutcome>
  * One claimed answer, written and settled. Returns whether there was one, so
  * the worker loop can keep going while there is more to answer.
  */
-export async function answerNextChatTurn(workerId: string): Promise<boolean> {
-  const answer = await chatRepo.claimNextAnswer(workerId, CHAT_LEASE_MS);
+export async function answerNextChatTurn(workerId: string, options: ChatWorkerOptions = { mayResearch: false }): Promise<boolean> {
+  const answer = await chatRepo.claimNextAnswer(workerId, CHAT_LEASE_MS, options.mayResearch);
   if (!answer) return false;
-  const outcome = await writeAnswer(answer);
-  const settled = await chatRepo.settleAnswer(answer.id, workerId, outcome);
+  const outcome = await writeAnswer(answer, options);
+  if (outcome.status === 'HANDOFF') {
+    await chatRepo.handOffToBrowser(answer.id, workerId);
+    return false;
+  }
+  const settled = await chatRepo.settleAnswer(answer.id, workerId, { ...outcome, status: outcome.status });
   if (!settled) log.warn('chat answer was taken over before it settled', { answerId: answer.id });
   return true;
 }
 
 /** Answers what is waiting, a few at a time, for the worker's loop. */
-export async function sweepOwnerChat(workerId: string, max = 4): Promise<number> {
+export async function sweepOwnerChat(workerId: string, options: ChatWorkerOptions = { mayResearch: false }, max = 4): Promise<number> {
   let answered = 0;
-  while (answered < max && (await answerNextChatTurn(workerId))) answered += 1;
+  while (answered < max && (await answerNextChatTurn(workerId, options))) answered += 1;
   return answered;
 }
 

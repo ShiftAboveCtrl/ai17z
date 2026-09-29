@@ -54,6 +54,7 @@ interface Evidence {
   capabilities?: { id: string; outcome: string; detail: string; output: unknown }[];
   memories?: { id: string; scope: string; text: string; source: string | null }[];
   beliefs?: string[];
+  research?: { findings: { source: string; title: string; url: string | null; query: string }[]; failed: { query: string; reason: string }[] } | null;
   usedLiveState?: boolean;
   corrections?: string[];
 }
@@ -535,7 +536,11 @@ function MessageItem({
   const owner = message.authorKind === 'OWNER';
   const evidence = message.evidence ?? {};
   const used = evidence.capabilities ?? [];
-  const hasEvidence = used.length > 0 || (evidence.memories ?? []).length > 0 || (evidence.beliefs ?? []).length > 0;
+  const hasEvidence =
+    used.length > 0 ||
+    (evidence.memories ?? []).length > 0 ||
+    (evidence.beliefs ?? []).length > 0 ||
+    Boolean(evidence.research && (evidence.research.findings.length > 0 || evidence.research.failed.length > 0));
 
   return (
     <li className={owner ? 'ml-auto max-w-[85%]' : 'max-w-[95%]'}>
@@ -605,6 +610,30 @@ function EvidenceDrawer({ evidence }: { evidence: Evidence }) {
                     </pre>
                   )}
                 </details>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {evidence.research && (evidence.research.findings.length > 0 || evidence.research.failed.length > 0) && (
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-bone-faint">What it looked up</p>
+          <ul className="mt-1 space-y-1">
+            {evidence.research.findings.map((f, i) => (
+              <li key={`${f.url ?? f.title}-${i}`} className="break-words">
+                <span className="text-bone-faint">{f.source}: </span>
+                {f.url ? (
+                  <a href={f.url} target="_blank" rel="noopener noreferrer" className="text-bone underline decoration-bone-faint">
+                    {f.title || f.url}
+                  </a>
+                ) : (
+                  f.title
+                )}
+              </li>
+            ))}
+            {evidence.research.failed.map((f, i) => (
+              <li key={`failed-${i}`} className="break-words text-signal-wait">
+                Could not check "{f.query}": {f.reason}
               </li>
             ))}
           </ul>
