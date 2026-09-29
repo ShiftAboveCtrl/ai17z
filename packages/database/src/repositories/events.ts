@@ -94,6 +94,25 @@ export async function promoteToTargetActivity(tx: Tx, eventId: string): Promise<
 }
 
 /**
+ * Why an event gave these agents no work.
+ *
+ * The first reason is kept: a later sighting of the same post says only that
+ * it was not queued retroactively, which is true and explains nothing. An
+ * agent deleted mid-ingest is skipped rather than failing the whole event.
+ */
+export async function recordSkips(tx: Tx, eventId: string, skipped: { agentId: string; reason: string }[]): Promise<void> {
+  if (skipped.length === 0) return;
+  await tx.many(
+    `INSERT INTO event_agent_skips (event_id, agent_id, reason)
+     SELECT $1, s.agent_id, s.reason
+       FROM unnest($2::uuid[], $3::text[]) AS s (agent_id, reason)
+      WHERE EXISTS (SELECT 1 FROM agents a WHERE a.id = s.agent_id)
+     ON CONFLICT (event_id, agent_id) DO NOTHING`,
+    [eventId, skipped.map((s) => s.agentId), skipped.map((s) => s.reason.slice(0, 500))],
+  );
+}
+
+/**
  * Which of these posts this account has already recorded.
  *
  * Discovery asks before ranking, so the few places it has go to conversations

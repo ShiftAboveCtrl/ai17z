@@ -55,7 +55,19 @@ import type { AnyCapability } from '@xbam/tools';
 const FAMILY_HINTS: Record<string, string[]> = {
   time: ['time', 'clock', 'date', 'today', 'tomorrow', 'timezone', 'utc', 'hour'],
   memory: ['remember', 'memory', 'recall', 'forgot', 'told you', 'we discussed'],
-  agent: ['you working', 'your status', 'diagnostics', 'health', 'are you ok', 'browser working', 'blind'],
+  /*
+    The owner-chat phrases below reach only `agent.diagnostics` in a public
+    conversation, because every other `agent.` capability is owner only and is
+    never on a public menu at all.
+  */
+  agent: [
+    'you working', 'your status', 'diagnostics', 'health', 'are you ok', 'browser working', 'blind',
+    // Phrases, never single words: "what changed this week" is as often a
+    // question about a repository, and a family lifted by it crowds the
+    // repository reads off an eight-item menu.
+    "what's broken", 'what is broken', 'what is wrong', "what's wrong", 'why did you', "why didn't you", 'why did not you',
+    'stayed silent', 'you learning', 'you learned', 'you grown', 'your goals', 'you believe', 'your setup',
+  ],
   x: ['tweet', 'post', 'thread', 'timeline', 'profile', 'mention', 'follower', 'reply', 'quote'],
   github: ['github', 'repo', 'repository', 'commit', 'release', 'pull request', 'issue', 'shipped', 'changelog'],
   chain: ['ethereum', 'evm', 'base', 'arbitrum', 'optimism', 'polygon', 'gas', 'block', 'receipt', 'onchain'],

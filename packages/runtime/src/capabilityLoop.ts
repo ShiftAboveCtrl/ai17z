@@ -65,6 +65,11 @@ export interface LoopOptions {
   /** What the owner configured, by capability id. Absent means the default. */
   permissions: Map<string, CapabilityPermission>;
   paused: boolean;
+  /**
+   * OWNER only in owner chat. Everything else is a conversation somebody else
+   * can read, and is never shown what an OWNER capability returns.
+   */
+  audience?: 'PUBLIC' | 'OWNER';
   /** Per-agent capability configuration, by capability id. */
   configs?: Map<string, Record<string, unknown>>;
   maxSteps?: number;
@@ -80,6 +85,8 @@ export interface LoopResult {
     outcome: string;
     detail: string;
     durationMs: number;
+    /** What it returned, validated, or null on anything but success. */
+    output: unknown;
   }[];
   /** True when the loop stopped because it ran out of steps or time. */
   exhausted: boolean;
@@ -157,7 +164,9 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
    * the model is allowed to ask, and the owner's approval is the point of that
    * setting rather than a reason to hide it.
    */
+  const audience = options.audience ?? 'PUBLIC';
   const available = listModelCallable().filter((capability) => {
+    if (capability.audience === 'OWNER' && audience !== 'OWNER') return false;
     const stored = options.permissions.get(capability.id) ?? null;
     return (stored ?? permissionWhenUnset(capability)) !== 'DISABLED';
   });
@@ -226,6 +235,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
         jobId: options.jobId,
         accountId: options.accountId,
         config: options.configs?.get(turn.call.id) ?? {},
+        audience,
         logger,
       },
       permission: {
@@ -239,6 +249,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
       outcome: result.outcome,
       detail: result.detail,
       durationMs: result.durationMs,
+      output: result.output,
     });
 
     // Recorded before the model is told, so a crash between the two leaves

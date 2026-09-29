@@ -65,6 +65,9 @@ export async function invokeCapability(options: InvokeOptions): Promise<Invocati
   if (!capability.modelCallable) {
     return done('REFUSED', `${capability.name} is not something you can choose.`);
   }
+  if (capability.audience === 'OWNER' && context.audience !== 'OWNER') {
+    return done('REFUSED', `${capability.name} is only for a conversation with this agent's owner.`);
+  }
 
   const parsedInput = capability.input.safeParse(call.input);
   if (!parsedInput.success) {

@@ -101,6 +101,11 @@ export interface AssembleInput {
   usualLength?: { median: number; ceiling: number } | null;
   /** One sentence of what this agent has learned works, from its own outcomes. */
   leaning?: string | null;
+  /**
+   * Owner chat in a room: the other agents present. Absent for a one to one
+   * conversation.
+   */
+  room?: { others: string[] } | null;
 }
 
 export interface AssembledPrompt {
@@ -424,6 +429,29 @@ function sourceFor(key: string, input: AssembleInput): string {
  * dropped rather than shipped as empty headings, and every surviving layer is
  * returned so the trace UI can show exactly what the model was told.
  */
+/**
+ * How an owner chat answer is written.
+ *
+ * Not the reply rules: those fit a public post to a character limit, and an
+ * owner asking what is broken needs the whole answer. The one rule carried
+ * across is the dash, because it is about what the agent sounds like rather
+ * than where it is speaking.
+ */
+function chatOutputRules(room: { others: string[] } | null): string {
+  const rules = [
+    'Write as long as the answer needs and no longer. Plain text; short paragraphs or a short list are fine.',
+    'Never use a dash as punctuation between clauses. Use a comma, a colon or a full stop.',
+    'When you used a capability, say what it showed in plain words rather than repeating its fields.',
+  ];
+  if (room && room.others.length > 0) {
+    rules.push(
+      `This is a room. ${room.others.join(', ')} ${room.others.length === 1 ? 'is another agent' : 'are other agents'} with their own memories and setup. ` +
+        'You may respond to what they said in the conversation, but never claim to know what they remember, and never speak for them.',
+    );
+  }
+  return rules.map((r) => `- ${r}`).join('\n');
+}
+
 export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const { persona, policy, context } = input;
   // Attached by the media stage. Absent for a text-only post, or for an agent
@@ -483,7 +511,10 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     authorHandle: context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'someone',
     incomingText: context.incomingText,
     toolsBlock: bulletList(input.toolDescriptions),
-    outputRules: renderOutputRules(persona, policy, input.experiment?.instruction, context.incomingText, input.usualLength),
+    outputRules:
+      input.actionType === 'CHAT'
+        ? chatOutputRules(input.room ?? null)
+        : renderOutputRules(persona, policy, input.experiment?.instruction, context.incomingText, input.usualLength),
     // The TASK layer reads this. A post has no incoming message to answer, and
     // telling a model to "reply" to its own brief produces something that reads
     // like half a conversation.
@@ -506,8 +537,9 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
       it was modelled on reacts in five words, asks one pointed question, or
       jokes.
     */
-    taskInstruction:
-      (input.actionType === 'POST'
+    taskInstruction: input.actionType === 'CHAT'
+      ? `Answer your owner as ${persona.displayName}, in your own voice. Be direct and useful: this is the person who runs you asking something they need to know.`
+      : (input.actionType === 'POST'
         ? `Write one ${input.channelName} post, as ${persona.displayName}. Nobody asked you anything; this is something you wanted to say.`
         : input.approach
           ? `Write one ${input.channelName} reply, as ${persona.displayName}, under ${

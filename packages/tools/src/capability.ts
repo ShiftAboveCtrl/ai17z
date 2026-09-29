@@ -31,10 +31,26 @@ export interface CapabilityContext {
    * pass configs at all, so this arrived empty however it was filled in.
    */
   config: Record<string, unknown>;
+  /**
+   * Who the answer is for. OWNER is the agent's owner in owner chat; anything
+   * else, including absent, is a conversation somebody else can read.
+   */
+  audience?: CapabilityAudience;
   logger: Logger;
   /** Cancelled when the invocation's own timeout expires. */
   signal: AbortSignal;
 }
+
+/**
+ * Who may be told what a capability returns.
+ *
+ * OWNER capabilities read the agent's own workings: why it stayed silent, what
+ * its owner turned down, what is failing. That is its owner's business, and an
+ * agent that would explain its reply policy to whoever asked on X has handed
+ * strangers the way around it. So they are never offered in a public
+ * conversation and refused if one names them anyway.
+ */
+export type CapabilityAudience = 'PUBLIC' | 'OWNER';
 
 /**
  * One thing an agent can do, declared once.
@@ -69,6 +85,8 @@ export interface Capability<TInput = unknown, TOutput = unknown> {
    * risk. See `permissionWhenUnset`.
    */
   readonly unsetPermission?: CapabilityPermission;
+  /** OWNER when only the agent's owner may see what it returns. Absent is PUBLIC. */
+  readonly audience?: CapabilityAudience;
   readonly input: z.ZodType<TInput, z.ZodTypeDef, unknown>;
   readonly output: z.ZodType<TOutput, z.ZodTypeDef, unknown>;
   /**

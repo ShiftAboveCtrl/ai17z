@@ -37,6 +37,7 @@ import { superviseSession } from '@xbam/browser';
 
 loadEnv();
 import { sweepFoundry } from './foundryWorker';
+import { sweepOwnerChat } from '@xbam/runtime';
 
 const log = createLogger('worker');
 
@@ -367,6 +368,28 @@ async function main(): Promise<void> {
   */
   const foundry = capabilities.browserCapable ? startLoop('foundry', 30_000, () => sweepFoundry(workerId), 'STANDARD') : null;
 
+  /*
+    Owner chat. Every worker answers, because an answer needs a model and not
+    always a browser; one that does use a lookup gets whatever this worker can
+    reach. Short interval because somebody is watching the screen, and at most
+    two answers at once so a busy room cannot crowd out the pipeline.
+  */
+  let chatting = 0;
+  const chat = startLoop(
+    'owner-chat',
+    1_500,
+    async () => {
+      if (chatting >= 2) return;
+      chatting += 1;
+      try {
+        await sweepOwnerChat(workerId);
+      } finally {
+        chatting -= 1;
+      }
+    },
+    'STANDARD',
+  );
+
   /**
    * Publishes what each account's three tabs are doing.
    *
@@ -451,6 +474,7 @@ async function main(): Promise<void> {
     clearInterval(repoWatcher);
     if (engagement) clearInterval(engagement);
     if (foundry) clearInterval(foundry);
+    clearInterval(chat);
     if (tabReporter) clearInterval(tabReporter);
     // Withdraw immediately rather than waiting for the heartbeat to lapse: a
     // clean shutdown knows it is leaving.

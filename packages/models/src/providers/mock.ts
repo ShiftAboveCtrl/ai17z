@@ -17,6 +17,7 @@ const LABEL = 'Mock';
  *   mock-chatty        same substance in a breezy assistant register
  *   mock-formal        same substance in a stiff corporate register
  *   mock-condense      obeys a voice rewrite brief by saying less, never by cutting
+ *   mock-uses:ID       asks for capability ID once, then answers with what it returned
  */
 export const mockAdapter: ProviderAdapter = {
   kind: 'mock',
@@ -35,7 +36,17 @@ export const mockAdapter: ProviderAdapter = {
     }
 
     let text: string;
-    if (model.startsWith('mock-fixed:')) {
+    if (model.startsWith('mock-uses:')) {
+      // The capability loop's own protocol, so a test can prove a turn used
+      // live state rather than asserting that a prompt mentioned it.
+      const id = model.slice('mock-uses:'.length);
+      const result = request.messages.find(
+        (m) => m.role === 'system' && (m.content.startsWith(`${id} returned:`) || m.content.startsWith(`${id} did not run:`)),
+      );
+      text = result
+        ? `Checked ${id}: ${result.content.slice(result.content.indexOf(':') + 1, 400).trim()}`
+        : `<use-capability>{"id":"${id}","input":{}}</use-capability>`;
+    } else if (model.startsWith('mock-fixed:')) {
       text = model.slice('mock-fixed:'.length);
     } else if (model === 'mock-empty') {
       text = '   ';
@@ -91,7 +102,7 @@ export const mockAdapter: ProviderAdapter = {
 function extractIncoming(userMessage: string): string {
   // Stops at the next all-caps section heading, which is how the rendered
   // prompt layers are separated from one another.
-  const match = userMessage.match(/INCOMING MESSAGE:\s*\n([\s\S]*?)(?:\n\s*\n[A-Z][A-Z ]{2,}\s*\n|\s*$)/);
+  const match = userMessage.match(/(?:INCOMING MESSAGE|YOUR OWNER SAYS):\s*\n([\s\S]*?)(?:\n\s*\n[A-Z][A-Z ]{2,}\s*\n|\s*$)/);
   const raw = (match?.[1] ?? userMessage).trim();
   return raw.replace(/\s+/g, ' ').slice(0, 400);
 }
