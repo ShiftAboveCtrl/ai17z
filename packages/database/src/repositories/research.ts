@@ -102,7 +102,11 @@ export async function listRuns(filter: { ownerId: string; agentId?: string | nul
  * once. A lease that expires makes the run claimable again at the stage it had
  * committed, which is why a stage must be safe to repeat.
  */
-export async function claimDueRun(workerId: string, leaseMs: number): Promise<ResearchRunRow | null> {
+export async function claimDueRun(
+  workerId: string,
+  leaseMs: number,
+  kinds: ResearchRunKind[] = ['FOUNDRY_SETUP', 'FOUNDRY_IMPROVE', 'PERSONA_REFRESH', 'OWNER_REQUEST', 'KNOWLEDGE_DISCOVERY'],
+): Promise<ResearchRunRow | null> {
   return mapRow<ResearchRunRow>(
     await queryOne(
       `UPDATE research_runs r
@@ -114,13 +118,14 @@ export async function claimDueRun(workerId: string, leaseMs: number): Promise<Re
         WHERE r.id = (
           SELECT id FROM research_runs
            WHERE status IN ('QUEUED', 'RUNNING')
+             AND kind = ANY($3::text[])
              AND next_attempt_at <= now()
              AND (lease_expires_at IS NULL OR lease_expires_at < now())
            ORDER BY next_attempt_at
            LIMIT 1
            FOR UPDATE SKIP LOCKED)
         RETURNING r.*`,
-      [workerId, leaseMs],
+      [workerId, leaseMs, kinds],
     ),
   );
 }

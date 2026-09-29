@@ -132,3 +132,4 @@ export * from './knowledgeCollections';
 export * from './foundry';
 export * from './foundryApply';
 export * from './foundryRun';
+export * from './foundryReport';

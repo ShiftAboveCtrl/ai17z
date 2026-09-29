@@ -19,6 +19,7 @@ import { labRoutes } from './routes/lab';
 import { mockRoutes } from './routes/mock';
 import { memoryRoutes } from './routes/memories';
 import { knowledgeRoutes } from './routes/knowledge';
+import { foundryRoutes } from './routes/foundry';
 import { personaRoutes } from './routes/persona';
 import { artifactRoutes } from './routes/artifacts';
 import { settingsRoutes } from './routes/settings';
@@ -77,6 +78,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(pluginRoutes);
   await app.register(studioRoutes);
   await app.register(easyRoutes);
+  await app.register(foundryRoutes);
   await app.register(easyStartRoutes);
   await app.register(characterRoutes);
   await app.register(providerRoutes);

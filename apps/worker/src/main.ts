@@ -36,6 +36,8 @@ import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
 loadEnv();
+import { sweepFoundry } from './foundryWorker';
+
 const log = createLogger('worker');
 
 /** Knowledge collections being read beside the sweep, and how many may be at once. */
@@ -357,6 +359,14 @@ async function main(): Promise<void> {
     ? startLoop('engagement', 90_000, engageAhead, 'STANDARD')
     : null;
 
+  /*
+    Agent Foundry research runs. Browser-capable workers only, for the same
+    reason as engagement: a run reads X through the agent's own browser, and a
+    worker without one would claim a run and defer it again and again.
+    STANDARD rather than OPTIONAL because an owner is waiting on it.
+  */
+  const foundry = capabilities.browserCapable ? startLoop('foundry', 30_000, () => sweepFoundry(workerId), 'STANDARD') : null;
+
   /**
    * Publishes what each account's three tabs are doing.
    *
@@ -440,6 +450,7 @@ async function main(): Promise<void> {
     clearInterval(deliberation);
     clearInterval(repoWatcher);
     if (engagement) clearInterval(engagement);
+    if (foundry) clearInterval(foundry);
     if (tabReporter) clearInterval(tabReporter);
     // Withdraw immediately rather than waiting for the heartbeat to lapse: a
     // clean shutdown knows it is leaving.

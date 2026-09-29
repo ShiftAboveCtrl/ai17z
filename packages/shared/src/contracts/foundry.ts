@@ -178,7 +178,9 @@ export function readBrief(text: string): Partial<FoundryBrief> {
   // "understand Pons and Robinhood Chain", "know everything about Pons".
   const projects = new Set<string>();
   for (const m of text.matchAll(/\b(?:understand|know(?: everything)? about|expert (?:on|in)|about|teach it)\s+((?:[A-Z][\w.-]*(?:\s+(?:and\s+)?)?){1,6})/g)) {
-    for (const name of m[1]!.split(/\s+and\s+|,/)) {
+    // A name ends where its sentence does: "Robinhood Chain. Keep it selective".
+    const clause = m[1]!.split(/[.!?;:]/)[0]!;
+    for (const name of clause.split(/\s+and\s+|,/)) {
       const clean = name.trim().replace(/[.,;:]+$/, '');
       if (/^[A-Z]/.test(clean) && clean.length >= 2 && !/^(It|The|My|This|That|X)$/.test(clean)) projects.add(clean);
     }
