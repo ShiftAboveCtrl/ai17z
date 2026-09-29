@@ -7,3 +7,5 @@ export * from './voice';
 export * from './generic';
 export * from './repetition';
 export * from './compiler';
+export * from './topics';
+export * from './voiceProfile';

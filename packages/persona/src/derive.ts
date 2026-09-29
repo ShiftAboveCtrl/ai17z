@@ -1,5 +1,5 @@
-import { keywords } from '@xbam/shared';
 import { analyse, stripLeadingMentions } from './normalize';
+import { semanticTopics } from './topics';
 
 export interface CorpusItem {
   id: string;
@@ -120,26 +120,20 @@ export function deriveProfile(items: CorpusItem[]): DerivedProfile {
   }
 
   // ── Topics ───────────────────────────────────────────────────────────────
-  const counts = new Map<string, { n: number; ids: string[] }>();
-  for (const { item } of analysed) {
-    for (const term of keywords(stripLeadingMentions(item.text), 8)) {
-      const entry = counts.get(term) ?? { n: 0, ids: [] };
-      entry.n += 1;
-      if (entry.ids.length < 5) entry.ids.push(item.id);
-      counts.set(term, entry);
-    }
-  }
-  const topics = [...counts.entries()]
-    .filter(([term, e]) => term.length >= 3 && e.n >= Math.max(2, Math.ceil(analysed.length * 0.03)))
-    .sort((a, b) => b[1].n - a[1].n)
-    .slice(0, 12);
+  // Subjects, not word counts: see topics.ts. The word-count version made "will",
+  // "have" and "just" a real account's interests.
+  const topicList = semanticTopics(
+    analysed.map(({ item }) => ({ id: item.id, text: item.text })),
+    { max: 12 },
+  );
+  const topics = topicList.map((t) => [t.label, { n: t.items, ids: t.evidence }] as const);
 
-  for (const [term, entry] of topics.slice(0, 6)) {
+  for (const topic of topicList.slice(0, 6)) {
     traits.push({
       kind: 'topic',
-      content: term,
-      confidence: Math.min(0.95, 0.4 + entry.n / analysed.length),
-      evidence: entry.ids,
+      content: topic.label,
+      confidence: topic.confidence,
+      evidence: topic.evidence.slice(0, 5),
     });
   }
 
