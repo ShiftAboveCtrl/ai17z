@@ -8,9 +8,10 @@ import {
   foundry as foundryRepo,
   ops,
   research as researchRepo,
+  testSuites,
   type UserRow,
 } from '@xbam/database';
-import { applyFoundry, foundryReport, foundryRunView } from '@xbam/runtime';
+import { applyFoundry, foundryReport, foundryRunView, startTestSuite, testSuiteView } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAgent(agentId: string, user: UserRow) {
@@ -167,6 +168,40 @@ export async function foundryRoutes(app: FastifyInstance): Promise<void> {
       const run = await ownedRun(params(request).runId!, user);
       const body = parseBody(z.object({ section: z.enum(FOUNDRY_SECTIONS).optional() }), request);
       return { accepted: await foundryRepo.acceptAll(run.id, body.section) };
+    }),
+  );
+
+  // "Test this agent": the Foundry's behavioural tests, as rehearsals.
+  app.post(
+    '/api/agents/:id/tests',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const body = parseBody(z.object({ foundryRunId: z.string().uuid().nullable().optional() }), request);
+      if (body.foundryRunId) await ownedRun(body.foundryRunId, user);
+      const suite = await startTestSuite({ agentId: agent.id, requestedBy: user.id, foundryRunId: body.foundryRunId ?? null });
+      return { suite: await testSuiteView(suite.id) };
+    }),
+  );
+
+  app.get(
+    '/api/agents/:id/tests',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const latest = (await testSuites.listSuites(agent.id, 1))[0];
+      return { suite: latest ? await testSuiteView(latest.id) : null };
+    }),
+  );
+
+  app.get(
+    '/api/agents/:id/tests/:suiteId',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      const suite = await testSuites.getSuite(params(request).suiteId!);
+      if (!suite || suite.agentId !== agent.id) throw new NotFoundError('Test suite');
+      return { suite: await testSuiteView(suite.id) };
     }),
   );
 

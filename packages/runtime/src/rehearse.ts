@@ -165,6 +165,8 @@ export async function rehearse(input: {
       raw: {
         origin: 'rehearsal',
         rehearsal: true,
+        // Typed into the lab, so written to the agent; a real post says so by naming it.
+        ...(subject.channel === 'mock' && eventTypeFor(subject.as) === 'MENTION' ? { addressedToAgent: true } : {}),
         requestedBy: input.requestedBy ?? null,
         parentText: subject.parentText ?? null,
         readerGaps: subject.gaps ?? [],

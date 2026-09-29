@@ -59,6 +59,8 @@ export * as notifications from './repositories/notifications';
 export * as upstreamQuota from './repositories/upstreamQuota';
 export * as research from './repositories/research';
 export * as foundry from './repositories/foundry';
+export * as testSuites from './repositories/testSuites';
+export type { TestCaseRecord, TestSuiteRow } from './repositories/testSuites';
 export type { FoundryItemRow, FoundryApplicationRow } from './repositories/foundry';
 export type { ResearchRunRow, ResearchObjectRow, RunEvidence, SourceHealthRow } from './repositories/research';
 
