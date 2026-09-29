@@ -61,7 +61,7 @@ function linkFor(agentId: string, area: string): string {
     knowledge: `${base}#knowledge`,
     beliefs: `${base}#beliefs`,
     capabilities: '/plugins',
-    learning: `${base}#learned`,
+    learning: `${base}#learning`,
     policy: `${base}#policies`,
     jobs: '/activity',
   };
@@ -355,7 +355,19 @@ const learningStatus = defineCapability({
     choices: z.array(
       z.object({ dimension: z.string(), current: z.string().nullable(), status: z.string().nullable(), evidence: z.number(), kept: z.number(), reverted: z.number() }),
     ),
-    trials: z.array(z.object({ dimension: z.string(), option: z.string(), hypothesis: z.string(), status: z.string(), verdict: z.string().nullable(), startedAt: z.string() })),
+    trials: z.array(
+      z.object({
+        dimension: z.string(),
+        option: z.string(),
+        hypothesis: z.string(),
+        status: z.string(),
+        verdict: z.string().nullable(),
+        startedAt: z.string(),
+        samples: z
+          .object({ withChange: z.number(), control: z.number(), neededWithChange: z.number(), neededControl: z.number(), decidesBy: z.string() })
+          .nullable(),
+      }),
+    ),
     controlShare: z.string(),
     detail: z.string(),
   }),
@@ -383,10 +395,11 @@ const learningStatus = defineCapability({
         status: t.status,
         verdict: t.verdict,
         startedAt: t.startedAt,
+        samples: t.samples,
       })),
-      controlShare: 'While a trial runs, one decision in five keeps the old behaviour as the control.',
+      controlShare: `${view.rules.controlWhileTesting} ${view.rules.controlAfterKeeping}`,
       detail: enough
-        ? 'Only choices inside every rule are learned: never identity, safety, permissions, do-not-contact or owner limits.'
+        ? `Only choices inside every rule are learned. It can never change its ${view.rules.neverTouches.join(', ')}.`
         : `Only ${view.outcomes} outcomes measured so far, which is not enough evidence to start a trial. Say so plainly.`,
     };
   },

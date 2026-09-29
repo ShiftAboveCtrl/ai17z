@@ -20,7 +20,7 @@ describe('settings search finds where things live', () => {
     ['knowledge', 'Knowledge', '/agents/a1#knowledge'],
     ['responses', 'Response Lab', '/agents/a1/studio?view=lab'],
     ['plugins', 'Plugins', '/plugins'],
-    ['learning', 'Learning', '/agents/a1#learned'],
+    ['learning', 'Learning', '/agents/a1#learning'],
     ['browser', 'Browser', '/settings#browser'],
     ['policies', 'Policies', '/agents/a1#policies'],
     ['persona source', 'Identity and persona sources', '/agents/a1#identity'],

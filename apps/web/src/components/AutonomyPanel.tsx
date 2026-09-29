@@ -86,7 +86,10 @@ interface Autonomy {
       verdict: string | null;
       startedAt: string;
       decidedAt: string | null;
+      samples: { withChange: number; control: number; neededWithChange: number; neededControl: number; decidesBy: string } | null;
     }[];
+    rules?: { controlWhileTesting: string; controlAfterKeeping: string; measuredAfterHours: number; neverTouches: string[] };
+    ownerFeedback?: { rejectedThisWeek: number; acceptedThisWeek: number };
   };
   doNotContact: { id: string; handle: string; source: string; evidence: string | null; createdAt: string }[];
   learned: { family: string; accepted: number; rejected: number; lastDecisionAt: string }[];
@@ -393,7 +396,7 @@ const CHOICE_TITLES: Record<string, string> = {
 function LearningSection({ learning, onReset }: { learning: Autonomy['learning']; onReset: () => Promise<void> }) {
   const shown = learning.choices.filter((c) => c.options.length > 0 || c.current);
   return (
-    <div className="space-y-3 border-t border-ink-line pt-6">
+    <div id="learning" className="scroll-mt-24 space-y-3 border-t border-ink-line pt-6">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm text-bone">What it has learned</span>
         <span className="font-mono text-[10px] text-bone-faint">
@@ -413,8 +416,7 @@ function LearningSection({ learning, onReset }: { learning: Autonomy['learning']
       </div>
       {shown.length === 0 ? (
         <p className="text-xs text-bone-faint">
-          Nothing yet. Each reply and post is measured about six hours after it goes out, and a change is only tried once
-          the evidence is clear.
+          Nothing yet. A change is only tried once the evidence is clear.
         </p>
       ) : (
         <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
@@ -447,12 +449,35 @@ function LearningSection({ learning, onReset }: { learning: Autonomy['learning']
           {learning.trials.slice(0, 5).map((trial) => (
             <li key={`${trial.dimension}-${trial.startedAt}`} className="break-words text-xs leading-relaxed text-bone-dim">
               <span className="font-mono text-[10px] text-bone-faint">
-                {trial.status === 'RUNNING' ? 'testing' : trial.status === 'KEPT' ? 'kept' : 'undone'} · {timeAgo(trial.decidedAt ?? trial.startedAt)}
+                {trial.status === 'RUNNING' ? 'testing' : trial.status === 'KEPT' ? 'kept' : 'undone'} · started {timeAgo(trial.startedAt)}
+                {trial.decidedAt && ` · decided ${timeAgo(trial.decidedAt)}`}
               </span>{' '}
-              {trial.verdict ?? trial.hypothesis}
+              {trial.status === 'RUNNING' ? trial.hypothesis : (trial.verdict ?? trial.hypothesis)}
+              {trial.samples && (
+                <span className="block text-[11px] text-bone-faint">
+                  Measured so far: {trial.samples.withChange} of {trial.samples.neededWithChange} with the change,{' '}
+                  {trial.samples.control} of {trial.samples.neededControl} without it. Decided once both are reached, or{' '}
+                  {new Date(trial.samples.decidesBy).toLocaleDateString()} at the latest.
+                </span>
+              )}
             </li>
           ))}
         </ul>
+      )}
+      {learning.enabled && learning.rules && (
+        <div className="space-y-1 text-[11px] leading-relaxed text-bone-faint">
+          <p>
+            Each reply and post is measured about {learning.rules.measuredAfterHours} hours after it goes out. {learning.rules.controlWhileTesting}{' '}
+            {learning.rules.controlAfterKeeping}
+          </p>
+          <p>It can never change its {learning.rules.neverTouches.join(', ')}.</p>
+          {learning.ownerFeedback && (learning.ownerFeedback.rejectedThisWeek > 0 || learning.ownerFeedback.acceptedThisWeek > 0) && (
+            <p>
+              Your decisions this week: {learning.ownerFeedback.acceptedThisWeek} approved, {learning.ownerFeedback.rejectedThisWeek} rejected. An
+              approach you rejected holds further approaches to that person for a week.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

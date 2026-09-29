@@ -59,7 +59,7 @@ const AREAS = [
   { id: 'character', label: 'Character', blurb: 'Who it is, and how it writes.', sections: ['identity', 'voice', 'beliefs'] },
   { id: 'reach', label: 'Reach', blurb: 'Where it speaks, what it thinks with, what it can use.', sections: ['accounts', 'intelligence', 'capabilities', 'tools'] },
   { id: 'memory', label: 'Memory', blurb: 'What it knows, and who it knows.', sections: ['memory', 'knowledge', 'relationships', 'learned'] },
-  { id: 'behaviour', label: 'Behaviour', blurb: 'What it does on its own, and what it is allowed to do.', sections: ['content', 'behaviour', 'autonomy', 'policies', 'pipeline'] },
+  { id: 'behaviour', label: 'Behaviour', blurb: 'What it does on its own, and what it is allowed to do.', sections: ['content', 'behaviour', 'autonomy', 'learning', 'policies', 'pipeline'] },
 ] as const;
 
 type AreaId = (typeof AREAS)[number]['id'];
@@ -122,8 +122,18 @@ export function AgentPage() {
     if (!next) return;
     setArea(next);
     if (!data) return;
-    const timer = window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 60);
-    return () => window.clearTimeout(timer);
+    /*
+      Some anchors sit inside a panel that fetches its own data, so they do not
+      exist yet when the page does. Look for a few seconds rather than once.
+    */
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      const target = document.getElementById(id);
+      tries += 1;
+      if (target) target.scrollIntoView({ block: 'start' });
+      if (target || tries >= 30) window.clearInterval(timer);
+    }, 100);
+    return () => window.clearInterval(timer);
   }, [hash, data]);
 
   if (loading && !data) return <Loading label="Loading agent" />;
