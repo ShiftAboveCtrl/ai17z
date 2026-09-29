@@ -75,7 +75,16 @@ export type { ConversationRecord } from './repositories/conversations';
 export type { CreateJobInput, CreateJobResult, JobPatch, JobSummary, JobListFilters, JobAttemptRow } from './repositories/jobs';
 export type { ClaimActionInput, ClaimActionResult } from './repositories/actions';
 export type { WriteMemoryInput, WriteMemoryResult, MemorySearchFilters, ScopedQuery } from './repositories/memories';
-export type { KnowledgeSourceRecord, KnowledgeSourceKind, CreateKnowledgeSourceInput } from './repositories/knowledge';
+export type {
+  KnowledgeSourceRecord,
+  KnowledgeSourceKind,
+  CreateKnowledgeSourceInput,
+  KnowledgeChange,
+  KnowledgeDocKind,
+  KnowledgeDocumentRow,
+  KnowledgeLabels,
+} from './repositories/knowledge';
+export { KNOWLEDGE_SOURCE_KINDS, KNOWLEDGE_DOC_KINDS } from './repositories/knowledge';
 export type { ArtifactRow, DiagnosticRow, ToolRow, AgentToolRow, ImportRunRow } from './repositories/ops';
 export type { PromptLayerTemplate, PromptTemplateVersionRow } from './repositories/prompts';
 export type { BrowserTaskRow, BrowserTaskKind } from './repositories/browserTasks';

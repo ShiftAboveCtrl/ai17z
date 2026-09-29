@@ -1,15 +1,53 @@
 import { useState } from 'react';
-import { BookOpen, FolderOpen, Globe, RefreshCw, Trash2, FileText, ShieldAlert } from 'lucide-react';
-import { ApiError, del, patch, post } from '@app/lib/api';
-import { useResource } from '@app/lib/hooks';
+import { BookOpen, FolderOpen, Globe, RefreshCw, Trash2, FileText, ShieldAlert, Library, GitBranch } from 'lucide-react';
+import { ApiError, del, get, patch, post } from '@app/lib/api';
+import { usePolling, useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
-import { EmptyState, Field, Modal, Spinner, Toggle } from '@app/components/ui';
+import { EmptyState, Field, Modal, Spinner, StatusDot, Toggle } from '@app/components/ui';
 import { Section } from './Section';
+
+type SourceKind = 'UPLOAD' | 'PATH' | 'TEXT' | 'URL' | 'DOCUMENTATION_SITE' | 'GITHUB_REPOSITORY';
+type NewKind = Exclude<SourceKind, 'UPLOAD'>;
+type Freshness = 'HEALTHY' | 'REFRESH_DUE' | 'REFRESHING' | 'CHANGED' | 'FAILED' | 'UNAVAILABLE' | 'NEVER_READ';
+
+interface Labels {
+  version?: string | null;
+  generation?: string | null;
+  authority?: 'OFFICIAL' | 'COMMUNITY' | 'OWNER' | null;
+}
+
+interface KnowledgeDocument {
+  docKey: string;
+  title: string | null;
+  docKind: 'DOC' | 'SOURCE' | 'README' | 'PAGE';
+  revision: string;
+  chunkCount: number;
+  fetchedAt: string;
+}
+
+/** A collection is many documents behind one name, read by the worker. */
+const COLLECTION_KINDS: SourceKind[] = ['DOCUMENTATION_SITE', 'GITHUB_REPOSITORY'];
+
+/** What each freshness verdict is called, and how it is shown. */
+const FRESHNESS: Record<Freshness, { label: string; dot: 'live' | 'wait' | 'fail' | 'idle' }> = {
+  HEALTHY: { label: 'Up to date', dot: 'idle' },
+  REFRESH_DUE: { label: 'Refresh due', dot: 'wait' },
+  REFRESHING: { label: 'Reading now', dot: 'live' },
+  CHANGED: { label: 'Changed', dot: 'live' },
+  FAILED: { label: 'Last read failed', dot: 'fail' },
+  UNAVAILABLE: { label: 'Unavailable', dot: 'fail' },
+  NEVER_READ: { label: 'Waiting to be read', dot: 'wait' },
+};
 
 interface KnowledgeSource {
   id: string;
   name: string;
-  kind: 'UPLOAD' | 'PATH' | 'TEXT' | 'URL';
+  kind: SourceKind;
+  freshness: Freshness;
+  labels: Labels;
+  lastChange: { added: number; changed: number; removed: number; unchanged: number; at: string } | null;
+  lastSuccessAt: string | null;
+  refreshingSince: string | null;
   refreshIntervalMinutes: number | null;
   location: string | null;
   revision: string | null;
@@ -54,7 +92,12 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
   const view = useResource<KnowledgeView>(`/api/agents/${agentId}/knowledge`);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
-  const [kind, setKind] = useState<'PATH' | 'TEXT' | 'URL'>('PATH');
+  const [kind, setKind] = useState<NewKind>('PATH');
+  const [generation, setGeneration] = useState('');
+  const [authority, setAuthority] = useState<'' | 'OFFICIAL' | 'COMMUNITY' | 'OWNER'>('');
+  const [maxPages, setMaxPages] = useState('150');
+  const [sourcePaths, setSourcePaths] = useState('');
+  const [openDocs, setOpenDocs] = useState<Record<string, KnowledgeDocument[] | 'loading'>>({});
   // Null means only when asked. Never automatic by default: a source that
   // re-reads on its own is one nobody remembers agreeing to.
   const [refreshMinutes, setRefreshMinutes] = useState<string>('');
@@ -64,6 +107,22 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
   const [report, setReport] = useState<{ name: string; report: IndexReport } | null>(null);
 
   const sources = view.data?.sources ?? [];
+  // A collection is read by the worker, so watch it while it is being read.
+  usePolling(() => view.reload(), 5_000, sources.some((s) => s.freshness === 'REFRESHING' || s.freshness === 'NEVER_READ'));
+
+  const toggleDocs = async (source: KnowledgeSource) => {
+    if (openDocs[source.id]) {
+      setOpenDocs(({ [source.id]: _closed, ...rest }) => rest);
+      return;
+    }
+    setOpenDocs((o) => ({ ...o, [source.id]: 'loading' }));
+    try {
+      const response = (await get(`/api/knowledge/${source.id}/documents`)) as { documents: KnowledgeDocument[] };
+      setOpenDocs((o) => ({ ...o, [source.id]: response.documents }));
+    } catch {
+      setOpenDocs(({ [source.id]: _failed, ...rest }) => rest);
+    }
+  };
 
   const run = async (label: string, action: () => Promise<void>) => {
     setBusy(label);
@@ -78,13 +137,22 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
     }
   };
 
-  const create = (payload: { name: string; kind: 'PATH' | 'TEXT' | 'URL'; location: string; refreshIntervalMinutes?: number | null }) =>
+  const create = (payload: {
+    name: string;
+    kind: NewKind;
+    location: string;
+    refreshIntervalMinutes?: number | null;
+    labels?: Labels;
+    config?: Record<string, unknown>;
+  }) =>
     run('create', async () => {
       const response = (await post(`/api/agents/${agentId}/knowledge`, payload)) as {
         source: KnowledgeSource;
-        report: IndexReport;
+        report: IndexReport | null;
+        queued?: boolean;
       };
-      setReport({ name: payload.name, report: response.report });
+      // A collection is queued for the worker; its card shows it being read.
+      if (response.report) setReport({ name: payload.name, report: response.report });
       setAdding(false);
       setName('');
       setLocation('');
@@ -132,14 +200,30 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                     */}
                     {source.kind === 'PATH' ? (
                       <FolderOpen className="h-4 w-4 shrink-0" role="img" aria-label="Folder" />
+                    ) : source.kind === 'DOCUMENTATION_SITE' ? (
+                      <Library className="h-4 w-4 shrink-0" role="img" aria-label="Documentation site" />
+                    ) : source.kind === 'GITHUB_REPOSITORY' ? (
+                      <GitBranch className="h-4 w-4 shrink-0" role="img" aria-label="GitHub repository" />
                     ) : source.kind === 'URL' ? (
                       <Globe className="h-4 w-4 shrink-0" role="img" aria-label="Web page" />
                     ) : (
                       <FileText className="h-4 w-4 shrink-0" role="img" aria-label="File" />
                     )}
                     <span className="font-medium">{source.name}</span>
+                    <StatusDot state={FRESHNESS[source.freshness].dot} label={FRESHNESS[source.freshness].label} />
                   </div>
-                  {(source.kind === 'PATH' || source.kind === 'URL') && (
+                  {(source.labels?.generation || source.labels?.version || source.labels?.authority) && (
+                    <p className="mt-1 flex flex-wrap gap-1.5">
+                      {[source.labels.generation, source.labels.version, source.labels.authority?.toLowerCase()]
+                        .filter(Boolean)
+                        .map((label) => (
+                          <span key={label} className="rounded border border-ink-line px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-bone-dim">
+                            {label}
+                          </span>
+                        ))}
+                    </p>
+                  )}
+                  {(source.kind === 'PATH' || source.kind === 'URL' || COLLECTION_KINDS.includes(source.kind)) && (
                     <p className="mt-1 break-words font-mono text-[11px] text-bone-faint">{source.location}</p>
                   )}
                   {source.kind === 'URL' && (
@@ -147,6 +231,31 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                       {source.refreshIntervalMinutes
                         ? `Re-read every ${source.refreshIntervalMinutes} minutes. This page only, no links followed.`
                         : 'Only re-read when you ask. This page only, no links followed.'}
+                    </p>
+                  )}
+                  {COLLECTION_KINDS.includes(source.kind) && (
+                    <p className="mt-1 text-[11px] text-bone-faint">
+                      {source.kind === 'DOCUMENTATION_SITE'
+                        ? 'Every page under this address, within its limits, honouring robots.txt.'
+                        : 'The README and documentation at one commit, and source only where you chose.'}{' '}
+                      {source.refreshIntervalMinutes ? `Re-read every ${Math.round(source.refreshIntervalMinutes / 60)} hours.` : 'Re-read when you ask.'}
+                    </p>
+                  )}
+                  {source.freshness === 'REFRESHING' && source.refreshingSince && (
+                    <p className="mt-2 text-sm text-bone-dim">Reading since {timeAgo(source.refreshingSince)}. The rest of the agent is unaffected.</p>
+                  )}
+                  {source.lastChange && COLLECTION_KINDS.includes(source.kind) && (
+                    <p className="mt-2 text-sm text-bone-dim">
+                      Last read {timeAgo(source.lastChange.at)}:{' '}
+                      {source.lastChange.added + source.lastChange.changed + source.lastChange.removed === 0
+                        ? 'nothing had changed.'
+                        : [
+                            source.lastChange.added ? `${source.lastChange.added} new` : null,
+                            source.lastChange.changed ? `${source.lastChange.changed} changed` : null,
+                            source.lastChange.removed ? `${source.lastChange.removed} removed` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(', ') + '.'}
                     </p>
                   )}
                   <p className="mt-2 text-sm text-bone-dim">
@@ -179,9 +288,9 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                     onClick={() =>
                       run(`refresh-${source.id}`, async () => {
                         const response = (await post(`/api/knowledge/${source.id}/refresh`, {})) as {
-                          report: IndexReport;
+                          report: IndexReport | null;
                         };
-                        setReport({ name: source.name, report: response.report });
+                        if (response.report) setReport({ name: source.name, report: response.report });
                       })
                     }
                   >
@@ -214,6 +323,27 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                   <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
                   <span className="break-words">{source.lastError}</span>
                 </p>
+              )}
+              {COLLECTION_KINDS.includes(source.kind) && source.documentCount > 0 && (
+                <div className="mt-3">
+                  <button type="button" className="btn-quiet px-0 text-xs" aria-expanded={Boolean(openDocs[source.id])} onClick={() => void toggleDocs(source)}>
+                    {openDocs[source.id] ? 'Hide' : 'Show'} the {source.documentCount} {source.kind === 'GITHUB_REPOSITORY' ? 'files' : 'pages'} it read
+                  </button>
+                  {openDocs[source.id] === 'loading' && <Spinner />}
+                  {Array.isArray(openDocs[source.id]) && (
+                    <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto">
+                      {(openDocs[source.id] as KnowledgeDocument[]).map((d) => (
+                        <li key={d.docKey} className="flex items-baseline justify-between gap-3 text-[11px]">
+                          <span className="min-w-0 break-words font-mono text-bone-dim">{d.docKey}</span>
+                          <span className="shrink-0 text-bone-faint">
+                            {d.docKind === 'SOURCE' ? 'code, ' : ''}
+                            {d.chunkCount} passage{d.chunkCount === 1 ? '' : 's'}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
             </div>
           ))}
@@ -254,10 +384,12 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
               id="k-kind"
               className="field"
               value={kind}
-              onChange={(e) => setKind(e.target.value as 'PATH' | 'TEXT' | 'URL')}
+              onChange={(e) => setKind(e.target.value as NewKind)}
             >
               <option value="PATH">A folder on this machine</option>
               <option value="URL">A page on the web</option>
+              <option value="DOCUMENTATION_SITE">A documentation site (every page under an address)</option>
+              <option value="GITHUB_REPOSITORY">A public GitHub repository</option>
               <option value="TEXT">I will paste it in</option>
             </select>
           </Field>
@@ -280,6 +412,42 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                 placeholder={view.data?.roots?.[0] ?? '/path/to/docs'}
               />
             </Field>
+          ) : kind === 'DOCUMENTATION_SITE' ? (
+            <>
+              <Field
+                label="First page"
+                htmlFor="k-site"
+                hint="Every page under this address is read, and nothing outside it: https://docs.example.com/v2/ stays in /v2/."
+              >
+                <input id="k-site" className="field font-mono text-[13px]" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="https://docs.example.com/" />
+              </Field>
+              <Field label="How many pages at most" htmlFor="k-pages" hint="A limit, not a target. Most documentation sites are well under it.">
+                <select id="k-pages" className="field" value={maxPages} onChange={(e) => setMaxPages(e.target.value)}>
+                  <option value="50">50 pages</option>
+                  <option value="150">150 pages</option>
+                  <option value="300">300 pages</option>
+                  <option value="500">500 pages</option>
+                </select>
+              </Field>
+              <p className="text-[12px] leading-relaxed text-bone-faint">
+                Read by the worker, a page at a time with a pause between each, honouring robots.txt and any page that asks not
+                to be indexed. The first read can take a few minutes; this screen shows it happening. Later reads rewrite only
+                the pages that changed.
+              </p>
+            </>
+          ) : kind === 'GITHUB_REPOSITORY' ? (
+            <>
+              <Field label="Repository" htmlFor="k-repo" hint="Public repositories only. Give it as owner/name or its GitHub address.">
+                <input id="k-repo" className="field font-mono text-[13px]" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="owner/name" />
+              </Field>
+              <Field
+                label="Source folders to read as well (optional)"
+                htmlFor="k-src"
+                hint="Comma separated, such as contracts, src/router. Left empty, only the README and documentation are read."
+              >
+                <input id="k-src" className="field font-mono text-[13px]" value={sourcePaths} onChange={(e) => setSourcePaths(e.target.value)} />
+              </Field>
+            </>
           ) : kind === 'URL' ? (
             <>
               <Field
@@ -324,6 +492,36 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
             </Field>
           )}
 
+          <details className="rounded border border-ink-line p-3" open={COLLECTION_KINDS.includes(kind)}>
+            <summary className="cursor-pointer text-sm text-bone-dim">Which version is this, and who publishes it?</summary>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Version or generation"
+                htmlFor="k-gen"
+                hint="Such as V1 or V2. Two versions of one product should be two sources, so answers never mix them."
+              >
+                <input id="k-gen" className="field" value={generation} onChange={(e) => setGeneration(e.target.value)} placeholder="V2" />
+              </Field>
+              <Field label="Published by" htmlFor="k-auth">
+                <select id="k-auth" className="field" value={authority} onChange={(e) => setAuthority(e.target.value as typeof authority)}>
+                  <option value="">Not said</option>
+                  <option value="OFFICIAL">The project itself</option>
+                  <option value="COMMUNITY">The community</option>
+                  <option value="OWNER">Me</option>
+                </select>
+              </Field>
+            </div>
+            {COLLECTION_KINDS.includes(kind) && (
+              <Field label="Read it again" htmlFor="k-coll-refresh" hint="Only what changed is rewritten.">
+                <select id="k-coll-refresh" className="field" value={refreshMinutes} onChange={(e) => setRefreshMinutes(e.target.value)}>
+                  <option value="">Only when I ask</option>
+                  <option value="1440">Every day</option>
+                  <option value="10080">Every week</option>
+                </select>
+              </Field>
+            )}
+          </details>
+
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -334,12 +532,22 @@ export function KnowledgeSection({ index, agentId }: { index: number; agentId: s
                   name: name.trim(),
                   kind,
                   location: location.trim(),
-                  refreshIntervalMinutes: kind === 'URL' && refreshMinutes ? Number(refreshMinutes) : null,
+                  refreshIntervalMinutes: (kind === 'URL' || COLLECTION_KINDS.includes(kind)) && refreshMinutes ? Number(refreshMinutes) : null,
+                  labels: {
+                    ...(generation.trim() ? { generation: generation.trim() } : {}),
+                    ...(authority ? { authority } : {}),
+                  },
+                  config:
+                    kind === 'DOCUMENTATION_SITE'
+                      ? { maxPages: Number(maxPages) }
+                      : kind === 'GITHUB_REPOSITORY'
+                        ? { sourcePaths: sourcePaths.split(',').map((p) => p.trim()).filter(Boolean) }
+                        : {},
                 })
               }
             >
               {busy === 'create' && <Spinner />}
-              Read it now
+              {COLLECTION_KINDS.includes(kind) ? 'Start reading' : 'Read it now'}
             </button>
             <button type="button" className="btn-ghost" onClick={() => setAdding(false)}>
               Cancel

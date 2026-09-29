@@ -163,6 +163,10 @@ export const RetrievedMemory = z.object({
       heading: z.string().nullable().default(null),
       revision: z.string().nullable().default(null),
       sourceName: z.string().nullable().default(null),
+      /** A collection's labels, so two generations of one product stay apart. */
+      generation: z.string().nullable().optional(),
+      version: z.string().nullable().optional(),
+      authority: z.string().nullable().optional(),
     })
     .nullable()
     .default(null),

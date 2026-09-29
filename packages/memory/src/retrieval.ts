@@ -30,7 +30,34 @@ function originOf(memory: MemoryRecord): RetrievedMemory['origin'] {
     heading: text(o.heading),
     revision: text(o.revision),
     sourceName: text(o.sourceName),
+    generation: text(o.generation),
+    version: text(o.version),
+    authority: text(o.authority),
   };
+}
+
+/**
+ * Keeps documents about the version a message names, when it names one.
+ *
+ * Pons V1 and Pons V2 are two collections labelled "V1" and "V2". Asked about
+ * V2, an answer built partly from V1's documentation is wrong in the way that
+ * is hardest to notice, because every sentence in it is true of something. So
+ * when the message names a label that a retrieved document carries, documents
+ * labelled with a different one are dropped. Unlabelled documents stay, and a
+ * message naming no label keeps everything, labelled, for the model to keep apart.
+ */
+export function preferMentionedVersion<T extends { scope: string; origin?: RetrievedMemory['origin'] }>(
+  rows: T[],
+  text: string,
+): T[] {
+  const labelOf = (row: T) => (row.origin?.generation ?? row.origin?.version ?? null)?.trim() || null;
+  const labels = [...new Set(rows.filter((r) => r.scope === 'KNOWLEDGE').map(labelOf).filter((l): l is string => Boolean(l)))];
+  if (labels.length < 2) return rows;
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const named = labels.filter((label) => new RegExp(`(^|[^\\p{L}\\p{N}])${escape(label)}($|[^\\p{L}\\p{N}])`, 'iu').test(text));
+  if (named.length !== 1) return rows;
+  const wanted = named[0]!.toLowerCase();
+  return rows.filter((row) => row.scope !== 'KNOWLEDGE' || !labelOf(row) || labelOf(row)!.toLowerCase() === wanted);
 }
 
 function score(memory: MemoryRecord): number {
@@ -120,7 +147,12 @@ export async function retrieveMemories(request: RetrievalRequest): Promise<Retri
     return score(b.memory) - score(a.memory);
   });
 
-  const memories: RetrievedMemory[] = ordered.map((entry, index) => ({
+  const versioned = preferMentionedVersion(
+    ordered.map((entry) => ({ ...entry, scope: entry.memory.scope, origin: originOf(entry.memory) })),
+    request.incomingText,
+  );
+
+  const memories: RetrievedMemory[] = versioned.map((entry, index) => ({
     memoryId: entry.memory.id,
     scope: entry.memory.scope,
     memoryType: entry.memory.memoryType,
@@ -131,7 +163,7 @@ export async function retrieveMemories(request: RetrievalRequest): Promise<Retri
     score: score(entry.memory),
     rank: index + 1,
     createdAt: entry.memory.createdAt,
-    origin: originOf(entry.memory),
+    origin: entry.origin,
   }));
 
   await memoriesRepo.touchAccessed(memories.map((m) => m.memoryId));
