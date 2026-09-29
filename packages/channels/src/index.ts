@@ -52,6 +52,25 @@ export {
 } from './x/personaCorpus';
 export { linksInText, upgradeImageUrl, readMediaInventory } from './x/media';
 export { webSearch, readPage, extractBraveAnswer, type WebResult } from './x/websearch';
+// The Research Fabric's X half: what a post URL is, which hosts are one mirror,
+// and what a bot check looks like. See x/researchSources.ts.
+export {
+  canonicalWebUrl,
+  canonicalXStatusUrl,
+  isChallengePage,
+  MIRROR_PROFILE_URLS,
+  observationFromSearchResult,
+  observationFromXPost,
+  observationsFromMirrorArticles,
+  readMirrorPage,
+  sourceFamilyOfUrl,
+  xPostKey,
+  xProfileKey,
+  xStatusRefOf,
+  type MirrorArticle,
+  type MirrorPageRead,
+  type XStatusRef,
+} from './x/researchSources';
 // How a canonical read becomes the shapes that cross this package's boundary,
 // and the decision about when the rendered page may be tried instead. Exported
 // because both are pure and both are where evidence is either kept or lost.

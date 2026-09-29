@@ -57,6 +57,7 @@ export * as evaluation from './repositories/evaluation';
 export * as studio from './repositories/studio';
 export * as notifications from './repositories/notifications';
 export * as upstreamQuota from './repositories/upstreamQuota';
+export * as research from './repositories/research';
 
 // Types that cross package boundaries are re-exported at the top level; the
 // namespace exports above are for the query functions themselves.

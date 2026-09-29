@@ -127,3 +127,4 @@ export * from './governanceCapabilities';
 export * from './storageCapabilities';
 export * from './referenceCapabilities';
 export * from './marketCapabilities';
+export * from './researchFabric';
