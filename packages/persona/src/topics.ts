@@ -50,7 +50,15 @@ const COMMON = new Set(
     'start started starting stop stopped build building built run running ran move moving moved win winning won lose losing lost ' +
     'call called come comes coming came went tell telling seeing looks looked feel feeling feels help helping helped ' +
     'gonna wanna gotta check checked checking try tries tried works worked fair close closer ship ships shipped shipping cook cooking ' +
-    'early late ready done next soon sure fun free open cant wont isnt arent wasnt werent hasnt havent'
+    'early late ready done next soon sure fun free open cant wont isnt arent wasnt werent hasnt havent ' +
+    // Interjections and address: how somebody talks, never what about.
+    'lmfao lmaoo lmaooo hahaha hahah hahahaha hehe bruh dawg dude sir saar gents folks frens fren anon ong ser bros ' +
+    'yall yeah yea yes nah nope okay alright wow damn omg bless congrats congratulations thanks thank ' +
+    // Swearing is register, not subject.
+    'shit shitty fuck fucking fucked bullshit crap hell ass damn goddamn ' +
+    // Verbs of thinking and waiting: what somebody does in a sentence, not a subject.
+    'believe believes hope hopes wait waits guess mean means happen happens hear heard read reads ' +
+    'pray prays praying'
   ).split(/\s+/),
 );
 
@@ -129,10 +137,8 @@ function candidatesOf(text: string): Map<string, { label: string; shape: TopicSh
   }
 
   // Phrases: two adjacent content words.
-  const tokens = body
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}'’]+/u)
-    .filter(Boolean);
+  const original = body.split(/[^\p{L}\p{N}'’]+/u).filter(Boolean);
+  const tokens = original.map((t) => t.toLowerCase());
   for (let i = 0; i < tokens.length - 1; i += 1) {
     const a = tokens[i]!;
     const b = tokens[i + 1]!;
@@ -140,7 +146,11 @@ function candidatesOf(text: string): Map<string, { label: string; shape: TopicSh
   }
   // A lone word that is a verb form ("tried", "shipping") is an activity, not a
   // subject. It can still be part of a phrase or a name.
-  for (const t of tokens) if (isContentWord(t) && t.length >= 4 && !/(?:ed|ing)$/.test(t)) add(t, 'TERM');
+  original.forEach((word, i) => {
+    const t = tokens[i]!;
+    // Spelled as written, so a sentence-opening "Pons" still counts towards "Pons".
+    if (isContentWord(t) && t.length >= 4 && !/(?:ed|ing)$/.test(t)) add(word, 'TERM');
+  });
   return found;
 }
 
@@ -153,7 +163,9 @@ function candidatesOf(text: string): Map<string, { label: string; shape: TopicSh
 export function semanticTopics(items: TopicCandidateItem[], options: { max?: number; minItems?: number } = {}): Topic[] {
   const total = items.length;
   if (total === 0) return [];
-  const minItems = options.minItems ?? Math.max(2, Math.ceil(total * 0.02));
+  // Two percent of a small corpus, and never more than five posts: on a large
+  // corpus a subject somebody wrote about five times is a subject.
+  const minItems = options.minItems ?? Math.max(2, Math.min(5, Math.ceil(total * 0.02)));
   const tally = new Map<string, { labels: Map<string, number>; shape: TopicShape; ids: string[] }>();
 
   for (const item of items) {
@@ -177,7 +189,15 @@ export function semanticTopics(items: TopicCandidateItem[], options: { max?: num
       // "Pons" is counted as a plain word, so the lowercase spelling can win a
       // count it should not win a label.
       const spellings = [...e.labels.entries()].sort((a, b) => b[1] - a[1]);
-      const label = (spellings.find(([l]) => /\p{Lu}/u.test(l)) ?? spellings[0]!)[0];
+      // "Pons" before "PONS" before "pons": a name as it is usually written,
+      // not as somebody wrote it when they were shouting.
+      // A plain word is shown as a word ("markets", even when it opened a
+      // sentence); only something written as a name mid-sentence is a name.
+      const titled = spellings.find(([l]) => /^\p{Lu}/u.test(l) && /\p{Ll}/u.test(l));
+      const label =
+        e.shape === 'TERM' || e.shape === 'PHRASE'
+          ? key
+          : (titled ?? spellings.find(([l]) => /\p{Lu}/u.test(l)) ?? spellings[0]!)[0];
       const share = e.ids.length / total;
       return {
         key,

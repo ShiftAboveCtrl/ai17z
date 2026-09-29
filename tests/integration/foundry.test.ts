@@ -246,8 +246,10 @@ describe('improving an existing agent', () => {
     const items = await foundryRepo.listItems(run.id);
 
     expect(items.find((i) => i.itemKey === 'topics')!.assessment).toBe('WEAK');
-    const unsupported = items.find((i) => i.itemKey === 'unsupported:underwater basket weaving');
+    // Topics research found nothing behind are one grouped item, never one per topic.
+    const unsupported = items.find((i) => i.itemKey === 'unsupported-topics');
     expect(unsupported?.assessment).toBe('UNSUPPORTED');
+    expect(unsupported?.currentValue).toEqual(['underwater basket weaving']);
     // The owner's own rule is kept in the proposal; rules are only ever added.
     expect(items.find((i) => i.section === 'MUST_NEVER')!.proposedValue).toEqual(expect.arrayContaining(['Never swear.']));
 

@@ -57,7 +57,7 @@ export async function currentAgent(agentId: string): Promise<CurrentAgent> {
     name: agent.name,
     persona: persona ? PersonaDraft.parse(persona) : null,
     policy: policy ? PolicyConfig.parse(policy.config) : null,
-    stances: stances.map((s) => ({ subject: s.subject, position: s.position as StancePosition, summary: s.summary, pinned: Boolean(s.pinned) })),
+    stances: stances.map((s) => ({ id: s.id, subject: s.subject, position: s.position as StancePosition, summary: s.summary, pinned: Boolean(s.pinned) })),
     knowledge: knowledge.map((k) => ({
       name: k.name,
       kind: k.kind,
@@ -121,7 +121,7 @@ export async function applyFoundry(input: { runId: string; userId: string }): Pr
     const agent = await agentsRepo.requireAgent(agentId);
     const draft: Record<string, unknown> = active ? { ...PersonaDraft.parse(active) } : { displayName: agent.name };
     for (const item of personaFields) {
-      if (item.itemKey.startsWith('unsupported:')) {
+      if (item.itemKey === 'unsupported-topics' || item.itemKey.startsWith('unsupported:')) {
         // Accepting "no evidence for this topic" means keep it; there is nothing to write.
         ok(item, 'Kept as it was.');
         continue;
@@ -160,6 +160,16 @@ export async function applyFoundry(input: { runId: string; userId: string }): Pr
   // ── Beliefs ──
   for (const item of chosen.filter((i) => i.section === 'BELIEFS')) {
     const v = record(valueOf(item));
+    if (Array.isArray(v.retire)) {
+      // Retired, not deleted: "what did it used to think" is a fair question.
+      const ids = (v.retire as { id?: string }[]).map((r) => r.id).filter((id): id is string => typeof id === 'string');
+      for (const id of ids) {
+        const stance = await stancesRepo.get(id);
+        if (stance && stance.agentId === agentId && !stance.pinned) await stancesRepo.update(id, { status: 'RETIRED' });
+      }
+      ok(item, `Retired ${ids.length}.`);
+      continue;
+    }
     if (typeof v.subject !== 'string' || typeof v.position !== 'string') {
       skip(item, 'It no longer says what the belief is.');
       continue;
