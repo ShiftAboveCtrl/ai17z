@@ -67,7 +67,7 @@ export interface CurrentAgent {
   name: string;
   persona: PersonaDraft | null;
   policy: PolicyConfig | null;
-  stances: { subject: string; position: StancePosition; summary: string; pinned: boolean }[];
+  stances: { id?: string; subject: string; position: StancePosition; summary: string; pinned: boolean }[];
   knowledge: { name: string; kind: string; location: string | null; generation: string | null; lastError: string | null; indexedAt: string | null }[];
   personaSources: { kind: string; handle: string | null }[];
   radar: { kind: string; target: string | null; enabled: boolean }[];
@@ -129,13 +129,13 @@ function assessText(current: string | null | undefined, proposed: string): Found
 }
 
 /** Subjects a persona mentions occasionally that are personal, not professional. */
-const PERSONAL_WORDS = ['faith', 'god', 'jesus', 'church', 'prayer', 'family', 'kids', 'wife', 'husband', 'health', 'gym', 'fitness', 'sobriety', 'grief'] as const;
+const PERSONAL_WORDS = ['faith', 'god', 'jesus', 'church', 'prayer', 'pray', 'family', 'kids', 'wife', 'husband', 'health', 'gym', 'fitness', 'sobriety', 'grief'] as const;
 const PERSONAL_SUBJECTS = new RegExp(`^(${PERSONAL_WORDS.join('|')}|mental health)$`, 'i');
 
 // ── Beliefs ─────────────────────────────────────────────────────────────────
 
-const POSITIVE = /\b(love|loving|great|best|bullish|excited|proud|amazing|incredible|underrated|goated|fire|huge|strong|winning|early|believe in|all in|solid|legit|real one|based)\b|🔥|🚀|💪|❤️/iu;
-const NEGATIVE = /\b(hate|worst|bearish|scam|rug|dead|overrated|trash|broken|fake|avoid|terrible|bad|weak|mid|cope|exit liquidity|red flag|suspicious|never again)\b|💀|🤡/iu;
+const POSITIVE = /\b(love|loving|great|best|bullish|excited|proud|amazing|incredible|underrated|goated|goat|fire|huge|massive|strong|winning|early|believe in|all in|solid|legit|real one|based|so back|we'?re back|lfg|let'?s go|lets go|cooking|locked in|locking in|grateful|blessed|happy|wagmi|playground|comes first|never stopped|keep building|shipping|shipped|organic|fair|principles|plenty|still high|built on)\b|🔥|🚀|💪|❤️|🙏/iu;
+const NEGATIVE = /\b(hate|worst|bearish|scam|scammers|rug|rugged|dead|overrated|trash|broken|fake|spoof|spoofing|avoid|terrible|bad|weak|mid|cope|exit liquidity|red flag|suspicious|never again|wrong|bullshit|manufactured|fraud|beware)\b|💀|🤡/iu;
 
 export interface BeliefCandidate {
   subject: string;
@@ -211,8 +211,10 @@ export function analyseCorpus(corpus: FoundryCorpusItem[]): FoundryAnalysis {
       personal.push({ label: word, key: word, shape: 'TERM', items: hits.length, share: hits.length / Math.max(1, ordered.length), evidence: hits.slice(0, 8).map((h) => h.id), confidence: 0.6 });
     }
   }
-  const core = topics.filter((t) => !PERSONAL_SUBJECTS.test(t.label) && t.share >= 0.025).slice(0, 10);
-  const contextual = [...personal, ...topics.filter((t) => !PERSONAL_SUBJECTS.test(t.label) && t.share < 0.025)].slice(0, 8);
+  // Five posts is a subject on a large corpus; a share is the floor on a small one.
+  const isCore = (t: Topic) => t.share >= 0.025 || t.items >= 5;
+  const core = topics.filter((t) => !PERSONAL_SUBJECTS.test(t.label) && isCore(t)).slice(0, 12);
+  const contextual = [...personal, ...topics.filter((t) => !PERSONAL_SUBJECTS.test(t.label) && !isCore(t))].slice(0, 8);
   return { voice, topics, core, contextual, beliefs: proposeBeliefs(ordered, core) };
 }
 
@@ -410,38 +412,101 @@ export function compileFoundry(inputs: FoundryInputs, analysis: FoundryAnalysis 
       evidence: cite(analysis.core.flatMap((t) => t.evidence.slice(0, 1)), 8),
       assessment: persona ? assessList(persona.topics, topicLabels) : 'NEW',
     });
-    // An existing topic research found nothing behind is flagged, never removed.
-    for (const topic of persona?.topics ?? []) {
-      const known = analysis.topics.some((t) => t.label.toLowerCase() === topic.toLowerCase()) || corpus.some((c) => c.text.toLowerCase().includes(topic.toLowerCase()));
-      if (!known && n >= 40) {
-        push({
-          section: 'TOPICS',
-          key: `unsupported:${topic.toLowerCase()}`,
-          title: `"${topic}" does not appear in ${at}'s writing`,
-          current: topic,
-          proposed: topic,
-          rationale: `${at} did not write about "${topic}" in the ${n} items read. It is kept unless you remove it; research only says it found no evidence for it.`,
-          confidence: 0.5,
-          assessment: 'UNSUPPORTED',
-        });
-      }
+    // Existing topics research found nothing behind are flagged together, never
+    // removed. A topic counts as seen when any of its significant words is in
+    // what they wrote: "God and faith" is supported by posts that say "God".
+    const unsupported = n >= 40 ? (persona?.topics ?? []).filter((topic) => !topicSeen(topic, corpus)) : [];
+    if (unsupported.length > 0) {
+      push({
+        section: 'TOPICS',
+        key: 'unsupported-topics',
+        title: `${unsupported.length} of the current topics do not appear in ${at}'s writing`,
+        current: unsupported,
+        proposed: { keep: unsupported },
+        rationale: `None of ${unsupported.map((t) => `"${t}"`).join(', ')} came up in the ${n} items read. They stay unless you remove them on the Identity screen; this only says research found no evidence for them, which is normal for a subject the agent should know but ${at} rarely posts about.`,
+        confidence: 0.5,
+        assessment: 'UNSUPPORTED',
+      });
     }
   }
 
   // ── BELIEFS ──
   for (const belief of analysis.beliefs) {
     const existing = current.stances.find((s) => s.subject.toLowerCase() === belief.subject.toLowerCase());
+    // Agreeing with a belief the agent already holds changes nothing: the owner's
+    // own words and pin stay exactly as they are. Only a different position is
+    // a proposal to change it, and that keeps the pin too.
+    const agrees = existing && existing.position === belief.position;
     push({
       section: 'BELIEFS',
       key: `stance:${belief.subject.toLowerCase()}`,
       title: `${belief.position === 'MIXED' ? 'Mixed on' : belief.position === 'POSITIVE' ? 'Positive about' : 'Critical of'} ${belief.subject}`,
       current: existing ? { position: existing.position, summary: existing.summary, pinned: existing.pinned } : null,
-      proposed: { subject: belief.subject, position: belief.position, summary: belief.summary, pinned: false },
+      proposed: agrees
+        ? { subject: existing.subject, position: existing.position, summary: existing.summary, pinned: existing.pinned }
+        : { subject: belief.subject, position: belief.position, summary: belief.summary, pinned: existing?.pinned ?? false },
       rationale: `${belief.summary} ${belief.counter.length > 0 ? `${belief.counter.length} post${belief.counter.length === 1 ? '' : 's'} took the other view.` : 'No post took the other view.'} Not pinned unless you pin it.`,
       confidence: belief.confidence,
       evidence: belief.support.slice(0, 6).map((s) => evidenceOf(s)),
       counterEvidence: belief.counter.slice(0, 4).map((s) => evidenceOf(s)),
       assessment: existing ? (existing.position === belief.position ? 'ALREADY_CORRECT' : 'CONTRADICTORY') : current.stances.length > 0 ? 'MISSING' : 'NEW',
+    });
+  }
+
+  // Beliefs the agent already holds: confirmed where the writing supports them,
+  // and the ones it learned on its own with nothing behind them flagged together.
+  for (const stance of current.stances) {
+    if (analysis.beliefs.some((b) => b.subject.toLowerCase() === stance.subject.toLowerCase())) continue;
+    const mentions = corpus.filter((c) => topicSeen(stance.subject, [c]));
+    const agreeing = mentions.filter((m) => (stance.position === 'NEGATIVE' ? NEGATIVE.test(m.text) : POSITIVE.test(m.text)));
+    if (agreeing.length < 2 && stance.pinned && mentions.length >= 2) {
+      /*
+        A position the owner pinned, on a subject the writing keeps returning to.
+
+        Research can see that the subject is real; it cannot reliably read the
+        position from word lists, because somebody defending their own project
+        against scammers writes "beware" and "spoofing" in the same posts. So it
+        confirms the subject, cites the posts, and leaves the position to the
+        person who pinned it.
+      */
+      push({
+        section: 'BELIEFS',
+        key: `stance:${stance.subject.toLowerCase()}`,
+        title: `Pinned: ${stance.position.toLowerCase()} on ${stance.subject}`,
+        current: { position: stance.position, summary: stance.summary, pinned: true },
+        proposed: { subject: stance.subject, position: stance.position, summary: stance.summary, pinned: true },
+        rationale: `${at} writes about ${stance.subject} in ${mentions.length} posts, so the subject is real. The position is yours: research does not overrule a pinned belief with word counts.`,
+        confidence: 0.7,
+        evidence: mentions.slice(0, 5).map((c) => evidenceOf(c)),
+        assessment: 'ALREADY_CORRECT',
+      });
+      continue;
+    }
+    if (agreeing.length >= 2) {
+      push({
+        section: 'BELIEFS',
+        key: `stance:${stance.subject.toLowerCase()}`,
+        title: `${stance.pinned ? 'Pinned: ' : ''}${stance.position === 'NEGATIVE' ? 'critical of' : 'positive about'} ${stance.subject}`,
+        current: { position: stance.position, summary: stance.summary, pinned: stance.pinned },
+        proposed: { subject: stance.subject, position: stance.position, summary: stance.summary, pinned: stance.pinned },
+        rationale: `${at}'s writing supports this: ${agreeing.length} of ${mentions.length} posts that mention ${stance.subject} take the same view.`,
+        confidence: Math.min(0.85, 0.4 + 0.08 * agreeing.length),
+        evidence: agreeing.slice(0, 5).map((c) => evidenceOf(c)),
+        assessment: 'ALREADY_CORRECT',
+      });
+    }
+  }
+  const unbacked = n >= 40 ? current.stances.filter((s) => !s.pinned && s.id && !corpus.some((c) => topicSeen(s.subject, [c]))) : [];
+  if (unbacked.length > 0) {
+    push({
+      section: 'BELIEFS',
+      key: 'unsupported-stances',
+      title: `${unbacked.length} belief${unbacked.length === 1 ? '' : 's'} the agent learned that ${at} never wrote about`,
+      current: unbacked.map((s) => ({ subject: s.subject, position: s.position })),
+      proposed: { retire: unbacked.map((s) => ({ id: s.id, subject: s.subject })) },
+      rationale: `The agent learned ${unbacked.map((s) => `"${s.subject}"`).join(', ')} from its own conversations, and none comes up in ${at}'s writing. Keep them if they are what you want it to think; accepting retires them, so they stop steering replies while the record that it once held them stays. Pinned beliefs are never included.`,
+      confidence: 0.6,
+      assessment: 'UNSUPPORTED',
     });
   }
 
@@ -468,6 +533,23 @@ export function compileFoundry(inputs: FoundryInputs, analysis: FoundryAnalysis 
   }
   for (const project of brief.projects) {
     if (inputs.discovered.some((d) => d.project.toLowerCase() === project.toLowerCase())) continue;
+    const attached = current.knowledge.filter((k) => topicSeen(project, [{ text: `${k.name} ${k.location ?? ''}` }]));
+    if (attached.length > 0) {
+      const pasted = attached.every((k) => k.kind === 'TEXT' || k.kind === 'UPLOAD');
+      push({
+        section: 'KNOWLEDGE',
+        key: `knowledge-gap:${project.toLowerCase()}`,
+        title: pasted ? `${project} is taught from pasted text` : `${project} already has a knowledge source`,
+        current: attached.map((k) => ({ name: k.name, kind: k.kind })),
+        proposed: { gap: project, keep: attached.map((k) => k.name) },
+        rationale: pasted
+          ? `${attached.map((k) => `"${k.name}"`).join(', ')} teaches ${project}, but pasted text never refreshes. No official documentation site or repository was found to replace it; if you know one, add it on the Knowledge screen as a collection so it stays current.`
+          : `${attached.map((k) => `"${k.name}"`).join(', ')} already covers ${project}.`,
+        confidence: 0.7,
+        assessment: pasted ? 'STALE' : 'ALREADY_CORRECT',
+      });
+      continue;
+    }
     push({
       section: 'KNOWLEDGE',
       key: `knowledge-gap:${project.toLowerCase()}`,
@@ -668,6 +750,23 @@ const RADAR_TITLES: Record<string, string> = {
   own_threads: 'Read under its own posts',
 };
 
+/** Whether any significant word of a subject appears in some item. */
+function topicSeen(subject: string, items: { text: string }[]): boolean {
+  const words = subject
+    .toLowerCase()
+    .replace(/^[$#]/, '')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length >= 3 && !['and', 'the', 'for', 'with', 'life'].includes(w));
+  if (words.length === 0) return false;
+  return items.some((item) => {
+    const hay = item.text.toLowerCase();
+    return words.some((w) => new RegExp(`(^|[^\\p{L}\\p{N}])${w}($|[^\\p{L}\\p{N}])`, 'u').test(hay));
+  });
+}
+
+/** Text that should never be offered as an example of how somebody writes. */
+const NOT_AN_EXAMPLE = /\b(penis|dick|pussy|cock|sex|nude|nsfw|porn|fuck(?:ing)?\s+(?:you|him|her))\b/i;
+
 function sameLocation(a: string, b: string): boolean {
   const norm = (s: string) => s.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/+$/, '').replace(/\.git$/, '');
   return norm(a) === norm(b);
@@ -675,13 +774,17 @@ function sameLocation(a: string, b: string): boolean {
 
 /** Varied, confirmed, clean examples of the voice. */
 export function pickExamples(corpus: FoundryCorpusItem[], max = 12): FoundryCorpusItem[] {
+  const words = (t: string) => t.replace(/@\w+/g, '').split(/\s+/).filter((w) => /\p{L}/u.test(w));
   const clean = corpus.filter(
     (c) =>
       c.confirmed &&
       !/https?:\/\//.test(c.text) &&
       !/0x[0-9a-f]{8,}/i.test(c.text) &&
+      // Codes, keys and lists of tokens are not writing.
+      !/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/.test(c.text) &&
       (c.text.match(/@\w+/g) ?? []).length <= 1 &&
-      c.text.replace(/@\w+/g, '').trim().length >= 3 &&
+      words(c.text).length >= 4 &&
+      !NOT_AN_EXAMPLE.test(c.text) &&
       !PERSONAL_SUBJECTS.test(c.text.trim().split(/\s+/)[0] ?? ''),
   );
   const sorted = [...clean].sort((a, b) => a.text.length - b.text.length);
