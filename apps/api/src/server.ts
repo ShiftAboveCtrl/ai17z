@@ -21,6 +21,7 @@ import { memoryRoutes } from './routes/memories';
 import { knowledgeRoutes } from './routes/knowledge';
 import { foundryRoutes } from './routes/foundry';
 import { chatRoutes } from './routes/chat';
+import { setupCheckRoutes } from './routes/setupCheck';
 import { personaRoutes } from './routes/persona';
 import { artifactRoutes } from './routes/artifacts';
 import { settingsRoutes } from './routes/settings';
@@ -81,6 +82,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(easyRoutes);
   await app.register(foundryRoutes);
   await app.register(chatRoutes);
+  await app.register(setupCheckRoutes);
   await app.register(easyStartRoutes);
   await app.register(characterRoutes);
   await app.register(providerRoutes);
