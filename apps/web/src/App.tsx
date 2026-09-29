@@ -18,6 +18,7 @@ const AgentPage = lazy(() => import('@app/routes/AgentPage').then((m) => ({ defa
 const StudioPage = lazy(() => import('@app/routes/StudioPage').then((m) => ({ default: m.StudioPage })));
 const ActivityPage = lazy(() => import('@app/routes/ActivityPage').then((m) => ({ default: m.ActivityPage })));
 const InboxPage = lazy(() => import('@app/routes/InboxPage').then((m) => ({ default: m.InboxPage })));
+const ChatPage = lazy(() => import('@app/routes/ChatPage').then((m) => ({ default: m.ChatPage })));
 const JobPage = lazy(() => import('@app/routes/JobPage').then((m) => ({ default: m.JobPage })));
 const SettingsPage = lazy(() => import('@app/routes/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const HealthPage = lazy(() => import('@app/routes/HealthPage').then((m) => ({ default: m.HealthPage })));
@@ -74,6 +75,8 @@ export function App() {
             <Route path="/agents/:agentId/foundry/:runId" element={<FoundryPage />} />
             <Route path="/agents/:agentId" element={<AgentPage />} />
             <Route path="/agents/:agentId/studio" element={<StudioPage />} />
+            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/chat/:conversationId" element={<ChatPage />} />
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/plugins" element={<PluginsPage />} />

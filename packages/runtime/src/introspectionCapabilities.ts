@@ -55,6 +55,7 @@ function linkFor(agentId: string, area: string): string {
   const paths: Record<string, string> = {
     radar: '/settings#radar',
     browser: '/settings#browser',
+    accounts: '/settings#accounts',
     providers: '/settings#providers',
     models: `${base}#intelligence`,
     knowledge: `${base}#knowledge`,
@@ -187,7 +188,7 @@ const healthReport = defineCapability({
     ]);
     const groups: { area: string; key: string; parts: ComponentHealth[] }[] = [
       { area: 'BROWSER', key: 'browser', parts: d.browser },
-      { area: 'X', key: 'browser', parts: [{ name: 'X account', state: d.account.connected ? 'HEALTHY' : d.account.status ? 'FAILING' : 'OFF', detail: d.account.connected ? `@${d.account.handle} is connected.` : `Account ${d.account.status?.toLowerCase() ?? 'not connected'}.`, lastSucceededAt: d.account.lastPolledAt, failingForMinutes: null }] },
+      { area: 'X', key: 'accounts', parts: [{ name: 'X account', state: d.account.connected ? 'HEALTHY' : d.account.status ? 'FAILING' : 'OFF', detail: d.account.connected ? `@${d.account.handle} is connected.` : `Account ${d.account.status?.toLowerCase() ?? 'not connected'}.`, lastSucceededAt: d.account.lastPolledAt, failingForMinutes: null }] },
       { area: 'RADAR', key: 'radar', parts: d.radar },
       { area: 'KNOWLEDGE', key: 'knowledge', parts: d.knowledge },
       { area: 'CAPABILITIES', key: 'capabilities', parts: d.tools },
@@ -221,7 +222,12 @@ const healthReport = defineCapability({
         lastAt: new Date(f.lastAt).toISOString(),
         jobId: f.lastJobId,
       })),
-      missingModelRoles: d.models.filter((m) => !m.configured).map((m) => m.role),
+      // Diagnostics list only roles that have a row, so no primary row at all
+      // is the missing role that matters most and would otherwise go unsaid.
+      missingModelRoles: [
+        ...(d.models.some((m) => m.role === 'primary') ? [] : ['primary']),
+        ...d.models.filter((m) => !m.configured).map((m) => m.role),
+      ],
     };
   },
 });

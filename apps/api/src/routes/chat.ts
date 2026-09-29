@@ -29,7 +29,8 @@ async function readiness(agentId: string) {
   const d = await collectDiagnostics(agentId).catch(() => null);
   if (!d) return { state: 'UNKNOWN' as const, detail: 'Its state could not be read.' };
   const primary = d.models.find((m) => m.role === 'primary');
-  if (primary && !primary.configured) {
+  // A role with no row at all is as unset as one with an empty model.
+  if (!primary?.configured) {
     return { state: 'NOT_CONFIGURED' as const, detail: 'No model is set up, so it cannot answer yet.', fixAt: `/agents/${agentId}#intelligence` };
   }
   if (!d.agent.canWork) return { state: 'DEGRADED' as const, detail: `It can talk here, but is not working on its own: ${d.agent.reason ?? d.agent.state}.` };
