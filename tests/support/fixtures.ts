@@ -50,8 +50,17 @@ export async function createFixture(overrides: {
     // Tests about the queue, the graph and the policy gates use short fixture
     // text that the engagement heuristic would rightly decline to answer.
     // Those tests are not about whether a mention is worth a reply, so the
-    // fixture agent answers everything and engagement has its own tests.
-    engagement: { ...DEFAULT_POLICY.engagement, strategy: 'ALWAYS_REPLY' as const },
+    // fixture agent answers everything and engagement has its own tests. The
+    // limits on how much it says to one person are stops even under
+    // ALWAYS_REPLY, and most tests write as the same mock author, so they are
+    // opened as far as the contract allows for the same reason.
+    engagement: {
+      ...DEFAULT_POLICY.engagement,
+      strategy: 'ALWAYS_REPLY' as const,
+      maxRepliesPerPersonPerHour: 50,
+      maxRepliesPerThread: 20,
+      maxThreadDepth: 50,
+    },
     ...overrides.policy,
   });
 

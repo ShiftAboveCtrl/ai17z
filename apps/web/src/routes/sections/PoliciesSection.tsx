@@ -295,6 +295,12 @@ export function PoliciesSection({
           <Field label="Replies to one person per hour" hint="Answering the same account repeatedly reads as a bot.">
             <input type="number" className="field" value={draft.engagement.maxRepliesPerPersonPerHour} onChange={(e) => patch((n) => void (n.engagement.maxRepliesPerPersonPerHour = Number(e.target.value) || 0))} />
           </Field>
+          <Field label="Replies in one thread" hint="The most it says in one back-and-forth before it lets the other side have the last word.">
+            <input type="number" className="field" value={draft.engagement.maxRepliesPerThread} onChange={(e) => patch((n) => void (n.engagement.maxRepliesPerThread = Number(e.target.value) || 0))} />
+          </Field>
+          <Field label="Automated accounts" hint="Comma separated. Bots it answers once and then stops, so two of them never talk to each other for ever. Grok and the other agents here are already included.">
+            <input className="field" value={draft.engagement.automatedHandles.join(', ')} onChange={(e) => patch((n) => void (n.engagement.automatedHandles = list(e.target.value)))} />
+          </Field>
           <Toggle checked={draft.engagement.ignoreMassTags} onChange={(v) => patch((n) => void (n.engagement.ignoreMassTags = v))} label="Ignore mass tags" description="A post tagging a dozen accounts is rarely addressed to any of them." />
           <Toggle checked={draft.engagement.allowThreadFollowUps} onChange={(v) => patch((n) => void (n.engagement.allowThreadFollowUps = v))} label="Follow up in threads" description="Answer replies to its own replies, not only the first mention." />
           <Toggle checked={draft.content.requireVerifiedAuthor} onChange={(v) => patch((n) => void (n.content.requireVerifiedAuthor = v))} label="Verified accounts only" description="Everyone else is read and never answered." />

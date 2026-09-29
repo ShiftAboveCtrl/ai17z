@@ -96,10 +96,13 @@ describe('what makes a mention worth answering', () => {
     expect(v.reason).toMatch(/already answered them/i);
   });
 
-  it('backs off in a thread that has gone on a long way', () => {
-    const shallow = score('what about the second point though', { threadDepth: 1 });
-    const deep = score('what about the second point though', { threadDepth: 20 });
-    expect(deep.value).toBeLessThan(shallow.value);
+  it('stops in a thread that has gone past its depth limit', () => {
+    // A stop, not a weight: this used to cost twenty-five points, which a
+    // friendly enough message could earn back.
+    expect(verdict('what about the second point though?', { threadDepth: 1, directlyAddressed: true }).decision).toBe('ENGAGE');
+    const deep = verdict('what about the second point though?', { threadDepth: 20, directlyAddressed: true });
+    expect(deep.decision).toBe('IGNORE');
+    expect(deep.reason).toMatch(/20 messages deep/);
   });
 });
 

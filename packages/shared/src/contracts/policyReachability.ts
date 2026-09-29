@@ -49,6 +49,8 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'engagement.ignoreMassTags': { where: 'ADVANCED_ONLY' },
   'engagement.massTagThreshold': { where: 'INTERNAL', why: "How many tags make a post a mass tag. The switch is exposed; the number is not." },
   'engagement.maxRepliesPerPersonPerHour': { where: 'ADVANCED_ONLY' },
+  'engagement.automatedHandles': { where: 'ADVANCED_ONLY' },
+  'engagement.maxRepliesPerThread': { where: 'ADVANCED_ONLY' },
   'engagement.maxThreadDepth': { where: 'INTERNAL', why: "How deep a thread is followed before it stops being a conversation." },
   'engagement.minimumReplyValue': { where: 'EASY_AND_ADVANCED' },
   'engagement.strategy': { where: 'ADVANCED_ONLY' },

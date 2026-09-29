@@ -57,13 +57,38 @@ export const EngagementPolicy = z.object({
   /** A post that tags many accounts at once is rarely addressed to any of them. */
   ignoreMassTags: z.boolean().default(true),
   massTagThreshold: z.number().int().min(2).max(50).default(5),
-  /** Do not answer the same person more than this many times in an hour. */
+  /** Do not answer the same person more than this many times in an hour. A stop, not a weight. */
   maxRepliesPerPersonPerHour: z.number().int().min(1).max(50).default(3),
   /** Answer somebody the agent has already replied to in this thread. */
   allowThreadFollowUps: z.boolean().default(true),
+  /** Past this many messages a thread has stopped being a conversation. A stop, not a weight. */
   maxThreadDepth: z.number().int().min(1).max(50).default(6),
+  /**
+   * The most times the agent speaks in one back-and-forth, counted from what
+   * it published rather than from what X happened to render. A stop.
+   */
+  maxRepliesPerThread: z.number().int().min(1).max(20).default(3),
+  /**
+   * Accounts that are themselves automated, beyond the ones AI17Z already
+   * knows (KNOWN_AUTOMATED_HANDLES) and the other agents on this installation.
+   * The agent answers one of these once in an exchange and then stops.
+   */
+  automatedHandles: z.array(z.string().max(64)).max(200).default([]),
 });
 export type EngagementPolicy = z.infer<typeof EngagementPolicy>;
+
+/**
+ * Accounts known to be automated reply bots, by channel.
+ *
+ * Two bots that answer whatever is said to them will answer each other for
+ * ever. Measured on a live agent: eight replies to @grok in eighteen minutes,
+ * each scored as a fresh, friendly message, ending in the two of them trading
+ * one-liners. Kept short on purpose: an entry is a claim about somebody else's
+ * account, and an owner extends it with `engagement.automatedHandles`.
+ */
+export const KNOWN_AUTOMATED_HANDLES: Readonly<Record<string, readonly string[]>> = {
+  x: ['grok', 'askperplexity'],
+};
 
 /**
  * Approaching somebody who did not ask.
