@@ -96,6 +96,10 @@ const PLATFORM_FILES: Record<'ubuntu' | 'macos', string[]> = {
     'packaging/ubuntu/postinst',
     'packaging/ubuntu/postrm',
     'packaging/windows/ai17z-256.png',
+    // The desktop icon at the other sizes the icon theme looks in.
+    'packaging/brand/icons/ai17z-48.png',
+    'packaging/brand/icons/ai17z-128.png',
+    'packaging/brand/icons/ai17z-512.png',
   ],
   macos: [
     'install-ai17z-macos.sh',

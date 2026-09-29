@@ -63,3 +63,6 @@ build/windows/
 # so anything under it is something an agent can be taught and can then repeat
 # out loud. Internal notes must not be one keystroke away from being quoted.
 internal/
+
+# Python bytecode from the packaging scripts.
+__pycache__/
