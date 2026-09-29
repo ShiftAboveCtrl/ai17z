@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createLogger } from '@xbam/shared';
-import { learning as learningRepo, type ArmRow, type MeasurableAction } from '@xbam/database';
+import { introspection as introspectionRepo, learning as learningRepo, type ArmRow, type MeasurableAction } from '@xbam/database';
 import { audienceOf } from './engagement';
 
 const log = createLogger('learning');
@@ -422,7 +422,31 @@ export interface LearningView {
     options: { arm: string; label: string; placed: number; evidence: number }[];
     current: { arm: string; label: string; status: 'RUNNING' | 'KEPT' } | null;
   }[];
-  trials: { dimension: string; arm: string; label: string; status: string; hypothesis: string; verdict: string | null; startedAt: string; decidedAt: string | null }[];
+  trials: {
+    dimension: string;
+    arm: string;
+    label: string;
+    status: string;
+    hypothesis: string;
+    verdict: string | null;
+    startedAt: string;
+    decidedAt: string | null;
+    /**
+     * For a running trial, how many measured actions it has on each side and
+     * how many it needs before it is decided. Null once decided: the verdict
+     * already carries the numbers it was decided on.
+     */
+    samples: { withChange: number; control: number; neededWithChange: number; neededControl: number; decidesBy: string } | null;
+  }[];
+  /** The rules the learner works under, stated so an owner can read them rather than infer them. */
+  rules: {
+    controlWhileTesting: string;
+    controlAfterKeeping: string;
+    measuredAfterHours: number;
+    neverTouches: string[];
+  };
+  /** Owner decisions the learner and outreach take into account. */
+  ownerFeedback: { rejectedThisWeek: number; acceptedThisWeek: number };
 }
 
 /**
@@ -430,13 +454,26 @@ export interface LearningView {
  * and nothing is aged on the way out except for display.
  */
 export async function describeLearning(agentId: string, now = new Date()): Promise<LearningView> {
-  const [outcomes, armRows, dims, trialRows, current] = await Promise.all([
+  const weekAgo = new Date(now.getTime() - 7 * DAY_MS).toISOString();
+  const [outcomes, armRows, dims, trialRows, current, signals] = await Promise.all([
     learningRepo.outcomeCount(agentId),
     learningRepo.arms(agentId),
     learningRepo.dimensions(agentId),
     learningRepo.trials(agentId, 20),
     activePreferences(agentId),
+    introspectionRepo.ownerDecisions(agentId, weekAgo, 200).catch(() => []),
   ]);
+  const samples = new Map<string, LearningView['trials'][number]['samples']>();
+  for (const t of trialRows.filter((row) => row.status === 'RUNNING')) {
+    const evidence = await learningRepo.trialEvidence(agentId, t.dimension, t.startedAt).catch(() => ({ applied: [], held: [] }));
+    samples.set(`${t.dimension}:${t.startedAt}`, {
+      withChange: evidence.applied.length,
+      control: evidence.held.length,
+      neededWithChange: TRIAL_APPLIED,
+      neededControl: TRIAL_CONTROL,
+      decidesBy: new Date(new Date(t.startedAt).getTime() + TRIAL_MAX_DAYS * DAY_MS).toISOString(),
+    });
+  }
   const label = (dimension: string, arm: string) =>
     dimension in DIMENSION_WORDS ? DIMENSION_WORDS[dimension as LearningDimension](arm) : arm.toLowerCase();
   return {
@@ -467,7 +504,18 @@ export async function describeLearning(agentId: string, now = new Date()): Promi
       verdict: t.verdict,
       startedAt: t.startedAt,
       decidedAt: t.decidedAt,
+      samples: samples.get(`${t.dimension}:${t.startedAt}`) ?? null,
     })),
+    rules: {
+      controlWhileTesting: `While a change is being tried, one decision in ${CONTROL_EVERY_WHILE_TESTING} keeps the old behaviour, so the two can be compared.`,
+      controlAfterKeeping: `After a change is kept, one decision in ${CONTROL_EVERY_AFTER_KEEPING} still keeps the old behaviour, so a change that stops working is noticed.`,
+      measuredAfterHours: SETTLE_HOURS,
+      neverTouches: ['identity', 'safety rules', 'permissions', 'do not contact', 'financial policy', 'your limits', 'quality gates'],
+    },
+    ownerFeedback: {
+      rejectedThisWeek: signals.filter((s) => s.decision === 'REJECTED').length,
+      acceptedThisWeek: signals.filter((s) => s.decision === 'APPROVED' || s.decision === 'ACCEPTED').length,
+    },
   };
 }
 

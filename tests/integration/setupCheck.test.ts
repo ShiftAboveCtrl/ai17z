@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { knowledge as knowledgeRepo, query } from '@xbam/database';
-import { agentSetupCheck, settingHref } from '@xbam/runtime';
+import { knowledge as knowledgeRepo, learning as learningRepo, query } from '@xbam/database';
+import { agentSetupCheck, describeLearning, settingHref } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -41,5 +41,17 @@ describe('agent setup check', () => {
     expect(settingHref('a', 'radar', 'acc')).toBe('/settings?account=acc&focus=radar');
     expect(settingHref('a', 'radar', null)).toBe('/settings#accounts');
     expect(settingHref('a', 'beliefs')).toBe('/agents/a#beliefs');
+  });
+});
+
+describe('learning, as an owner reads it', () => {
+  it('says how far a running trial has got and what the learner can never change', async () => {
+    const fixture = await createFixture();
+    await learningRepo.startTrial({ agentId: fixture.agentId, dimension: 'asking', arm: 'ASK', hypothesis: 'Asking a question gets more replies.' });
+    const view = await describeLearning(fixture.agentId);
+    const trial = view.trials.find((t) => t.status === 'RUNNING')!;
+    expect(trial.samples).toMatchObject({ withChange: 0, control: 0, neededWithChange: 8, neededControl: 3 });
+    expect(view.rules.neverTouches).toEqual(expect.arrayContaining(['identity', 'permissions', 'do not contact', 'financial policy']));
+    expect(view.rules.controlWhileTesting).toMatch(/one decision in 5/);
   });
 });

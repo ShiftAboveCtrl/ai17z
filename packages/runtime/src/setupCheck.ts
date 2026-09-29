@@ -323,7 +323,7 @@ export async function agentSetupCheck(agentId: string, now = Date.now()): Promis
       const running = learning.trials.filter((t) => t.status === 'RUNNING').length;
       checks.push(
         running > 0
-          ? { key: 'trial', state: 'OK', sentence: `Trying ${running} change${running === 1 ? '' : 's'} against a control, from ${learning.outcomes} measured outcomes.`, fix: fix('See what', href('learned')) }
+          ? { key: 'trial', state: 'OK', sentence: `Trying ${running} change${running === 1 ? '' : 's'} against a control, from ${learning.outcomes} measured outcomes.`, fix: fix('See what', href('learning')) }
           : {
               key: 'trial',
               state: 'OK',
@@ -331,7 +331,7 @@ export async function agentSetupCheck(agentId: string, now = Date.now()): Promis
                 learning.outcomes === 0
                   ? 'Learning is on, but nothing it published has been measured yet.'
                   : `Learning is active but has insufficient evidence for a trial (${learning.outcomes} measured outcomes).`,
-              fix: fix('See what it measured', href('learned')),
+              fix: fix('See what it measured', href('learning')),
             },
       );
     }
