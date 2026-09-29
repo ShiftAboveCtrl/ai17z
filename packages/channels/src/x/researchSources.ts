@@ -259,7 +259,7 @@ export function observationsFromMirrorArticles(
  */
 export function observationFromXPost(post: XPostRecord, fetchedAt: string): ResearchObservation | null {
   if (post.repost) return null;
-  const kind: EvidenceKind = post.replyToPostId ? 'REPLY' : post.quotedPostId ? 'QUOTE' : 'POST';
+  const kind: EvidenceKind = post.replyToPostId || post.isReply ? 'REPLY' : post.quotedPostId ? 'QUOTE' : 'POST';
   const canonical = canonicalXStatusUrl({ handle: post.authorHandle || null, statusId: post.postId });
   return {
     objectKey: xPostKey(post.postId),
@@ -272,7 +272,7 @@ export function observationFromXPost(post: XPostRecord, fetchedAt: string): Rese
     platform: 'x',
     externalId: post.postId,
     author: post.authorHandle || null,
-    inReplyTo: post.replyToPostId ? (post.replyToUserId ?? 'unknown') : null,
+    inReplyTo: post.replyToPostId || post.isReply ? (post.replyToUserId ?? 'unknown') : null,
     publishedAt: post.createdAt,
     fetchedAt,
     content: post.text.slice(0, 40_000),

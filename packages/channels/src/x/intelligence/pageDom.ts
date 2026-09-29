@@ -162,6 +162,9 @@ export const pageDomBackend: XIntelligenceBackend = {
       conversationId: null,
       replyToPostId: null,
       replyToUserId: null,
+      // The collector read "Replying to" off the article; the parent's id is
+      // not on the page, so it is said here instead of guessed there.
+      isReply: post.kind === 'reply',
       quotedPostId: null,
       repost: false,
       lang: null,
