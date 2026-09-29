@@ -127,6 +127,12 @@ export interface ReplyValueInput {
    */
   ourRepliesInThread?: number;
   /**
+   * The other side is itself automated: a known reply bot, one the owner
+   * listed, or another agent on this installation. Answered once in an
+   * exchange and then left, because two bots will answer each other for ever.
+   */
+  counterpartAutomated?: boolean;
+  /**
    * What this agent cares about, from its persona.
    *
    * Only consulted when nobody addressed it. Somebody who asks a question
@@ -315,7 +321,7 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
   // messages, minus twenty-five at seven. That is not how a conversation runs
   // out. Each turn is a little less worth taking than the one before, so the
   // cost grows with the number of times the agent has already spoken here, and
-  // the ceiling stays as the point where it stops regardless.
+  // the ceiling (maxRepliesPerThread, in exchangeLimit) is where it stops.
   const ourTurns = input.ourRepliesInThread ?? (input.alreadyRepliedInThread ? 1 : 0);
   if (input.policy.allowThreadFollowUps && ourTurns > 0) {
     // -6, -18, -36 ... deliberately steeper than linear. Two exchanges is a
@@ -325,7 +331,6 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
       -6 * ourTurns * ourTurns,
     );
   }
-  if (input.threadDepth > input.policy.maxThreadDepth) add('thread has gone on a long way', -25);
 
   // Somebody saying "makes sense" is not asking for anything. Only counted once
   // the agent is actually in the thread: the same words opening a conversation
@@ -413,9 +418,50 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
   return { value: Math.max(0, Math.min(100, Math.round(value))), factors };
 }
 
+/**
+ * The limits on how much the agent says to one person, as stops.
+ *
+ * These used to be weights. Answering somebody a fourth time in an hour cost
+ * forty points, a long thread twenty-five, and a message that was friendly and
+ * substantial could earn all of it back: measured on a live agent, eight
+ * replies to @grok in eighteen minutes, the last four scoring 13, 31, 13 and 31
+ * against a floor of 10. A limit that a good enough message can buy its way
+ * past is not a limit, and "how much has it already said to them" is not a
+ * question about how good the message is.
+ *
+ * So they are checked before any strategy, including ALWAYS_REPLY, and a
+ * reached limit declines with a sentence saying which one. Returns null when
+ * none is reached.
+ */
+export function exchangeLimit(input: {
+  recentRepliesToPerson: number;
+  ourRepliesInThread?: number;
+  threadDepth: number;
+  counterpartAutomated?: boolean;
+  policy: EngagementPolicy;
+}): string | null {
+  const ours = input.ourRepliesInThread ?? 0;
+  if (input.recentRepliesToPerson >= input.policy.maxRepliesPerPersonPerHour) {
+    return `Already answered them ${input.recentRepliesToPerson} times in the last hour, which is this agent's limit for one person.`;
+  }
+  if (input.counterpartAutomated && ours >= 1) {
+    return 'They are an automated account and this agent has already answered them in this exchange. Two bots will answer each other for ever, so it stops here.';
+  }
+  if (ours >= input.policy.maxRepliesPerThread) {
+    return `Already spoke ${ours} times in this back-and-forth, which is this agent's limit for one thread. The other side can have the last word.`;
+  }
+  if (input.threadDepth > input.policy.maxThreadDepth) {
+    return `The thread is ${input.threadDepth} messages deep, past this agent's limit of ${input.policy.maxThreadDepth}.`;
+  }
+  return null;
+}
+
 /** Turns a score into a decision, under the configured strategy. */
 export function decideEngagement(input: ReplyValueInput): EngagementVerdict {
   const { value, factors } = replyValue(input);
+
+  const limit = exchangeLimit(input);
+  if (limit) return { decision: 'IGNORE', value, reason: limit, factors };
   const worst = [...factors].sort((a, b) => a.delta - b.delta)[0];
   const best = [...factors].sort((a, b) => b.delta - a.delta)[0];
 

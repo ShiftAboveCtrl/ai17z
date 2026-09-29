@@ -97,7 +97,8 @@ describe('owner-target activity is a first-class durable event', () => {
   });
 
   it('answers a watched account without shadowing it: fatigue still applies, with a sentence', async () => {
-    const fixture = await watched();
+    // The limit this is about, stated rather than inherited from the fixture.
+    const fixture = await watched(true, { policy: { engagement: EngagementPolicy.parse({ maxRepliesPerPersonPerHour: 3 }) } });
     const resolve = async () => {
       const result = await reconcileCandidates({
         accountId: fixture.account.id,

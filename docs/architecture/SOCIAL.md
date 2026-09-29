@@ -172,6 +172,25 @@ Four strategies, because one policy does not suit every agent.
 `NEVER_AUTO_IGNORE` exists for owners who want silence to always be a person's
 decision.
 
+**How much it says to one person is a limit, not a weight.** `exchangeLimit`
+in `engagement.ts` runs before any strategy, `ALWAYS_REPLY` included, and each
+of these declines with a sentence naming it:
+
+- `maxRepliesPerPersonPerHour` replies to one person in the last hour
+- `maxRepliesPerThread` turns in one back-and-forth
+- a thread deeper than `maxThreadDepth`
+- a second turn with an automated account: `KNOWN_AUTOMATED_HANDLES`, the
+  owner's `automatedHandles`, or another agent on this installation
+
+They were weights, and a friendly enough message bought its way past all of
+them: a live agent answered @grok eight times in eighteen minutes, the last four
+scoring 13, 31, 13 and 31 against a floor of 10. Turns in an exchange are counted
+from the agent's own published replies (`publishedReplyChain`), walking each one
+back through the post it answered, because the rendered thread cannot be
+trusted: X collapses a long chain, and eight replies deep the agent read its own
+turns as one, then two, then one again. Nor can the conversation id, which is
+bound to whatever X rendered at the top.
+
 Hostility is met with `DEFLECT`, never `CHALLENGE`, and the tone-mirroring
 default for hostility is `0.05`. Escalating is how an agent ends up in a fight on
 its owner's behalf.

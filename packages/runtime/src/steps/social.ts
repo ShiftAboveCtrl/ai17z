@@ -1,10 +1,11 @@
 
 
-import type { PolicyConfig, RelationshipContext } from '@xbam/shared/contracts';
+import { KNOWN_AUTOMATED_HANDLES, type PolicyConfig, type RelationshipContext } from '@xbam/shared/contracts';
 import {
   PipelineError,
 } from '@xbam/shared';
 import {
+  accounts as accountsRepo,
   actions as actionsRepo,
   autonomy as autonomyRepo,
   jobs as jobsRepo,
@@ -20,6 +21,7 @@ import {
 import {
   audienceOf,
   decideEngagement,
+  exchangeLimit,
   recentRepliesTo,
 } from '../engagement';
 import { asksToBeLeftAlone } from '../doNotContact';
@@ -313,7 +315,23 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
   // the topic-match requirement, the days-long per-author cooldown -- exists to
   // stop an agent pestering people it came across by accident. Applying it to a
   // followed account is what silenced one for four days.
-  const alreadyInThread = (context?.thread ?? []).some((m) => m.role === 'OUTBOUND');
+  /*
+    How far into this exchange the agent is, counted two ways and the larger
+    believed: the agent's own turns among the posts X rendered above this one,
+    and the unbroken chain of its published replies that leads here. The
+    rendered count alone was the whole of it once, and X collapses a long
+    chain, so eight replies deep with @grok it read as one, then two, then one.
+  */
+  const renderedTurns = (context?.thread ?? []).filter((m) => m.role === 'OUTBOUND').length;
+  const parentRemoteId = context?.conversation?.parent?.remoteId ?? bundle.event.parentRemoteMessageId ?? null;
+  const chainTurns = await actionsRepo.publishedReplyChain(bundle.agent.id, parentRemoteId).catch(() => 0);
+  const ourTurns = Math.max(renderedTurns, chainTurns);
+  // A back-and-forth of n turns is at least 2n messages, whatever was rendered.
+  const threadDepth = Math.max(context?.thread.length ?? 0, 2 * ourTurns);
+  const counterpartAutomated = await isAutomatedCounterpart(job.channel, handle, policy, bundle.account?.handle);
+  const recentToPerson = await recentRepliesTo(bundle.agent.id, handle);
+
+  const alreadyInThread = ourTurns > 0;
   const unprompted = bundle.event.type === 'KEYWORD_MATCH' && !directlyAddressed && !alreadyInThread;
 
   // The two limits that are about rate rather than about worth, checked here
@@ -382,15 +400,15 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
     ? await (async () => {
         const fragment = watchedFragment(text, Boolean(context?.parentText?.trim()) || Boolean(bundle.event.parentRemoteMessageId));
         if (fragment) return fragment;
-        const recent = await recentRepliesTo(bundle.agent.id, handle);
-        if (recent >= policy.engagement.maxRepliesPerPersonPerHour) {
-          return `Already answered @${(handle ?? '').replace(/^@+/, '')} ${recent} times in the last hour, which is this agent's limit for one person. The watch stands; this post is left alone so the account does not read as shadowing them.`;
-        }
-        const ourTurns = (context?.thread ?? []).filter((m) => m.role === 'OUTBOUND').length;
-        if (ourTurns >= 3) {
-          return `Already spoke ${ourTurns} times in this thread. The watch stands; this one is left alone rather than keep a thread going that the other side may be done with.`;
-        }
-        return null;
+        // The same limits every other reply is held to, as stops.
+        const limit = exchangeLimit({
+          recentRepliesToPerson: recentToPerson,
+          ourRepliesInThread: ourTurns,
+          threadDepth,
+          counterpartAutomated,
+          policy: policy.engagement,
+        });
+        return limit ? `${limit} The watch stands; this post is left alone.` : null;
       })()
     : null;
 
@@ -421,12 +439,13 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
         unprompted,
         outreach: policy.outreach,
         relationship,
-        threadDepth: context?.thread.length ?? 0,
-        recentRepliesToPerson: await recentRepliesTo(bundle.agent.id, handle),
-        alreadyRepliedInThread: (context?.thread ?? []).some((m) => m.role === 'OUTBOUND'),
+        threadDepth,
+        recentRepliesToPerson: recentToPerson,
+        alreadyRepliedInThread: alreadyInThread,
         // Not whether the agent has spoken here, but how often. One follow-up is a
         // conversation; four is an agent that will not let a thread end.
-        ourRepliesInThread: (context?.thread ?? []).filter((m) => m.role === 'OUTBOUND').length,
+        ourRepliesInThread: ourTurns,
+        counterpartAutomated,
         hasParent: Boolean(context?.parentText?.trim()) || (context?.thread.length ?? 0) > 0,
         policy: policy.engagement,
       });
@@ -464,6 +483,28 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
   }
   if (verdict.decision === 'REVIEW') return 'review';
   return 'engage';
+}
+
+/**
+ * Whether the account being answered is itself automated: one AI17Z knows is a
+ * reply bot, one the owner listed, or another agent on this installation. Two
+ * of those answer each other for ever unless one of them stops.
+ */
+async function isAutomatedCounterpart(
+  channel: string,
+  handle: string | null | undefined,
+  policy: PolicyConfig,
+  ownHandle: string | null | undefined,
+): Promise<boolean> {
+  const norm = (h: string | null | undefined) => (h ?? '').replace(/^@+/, '').trim().toLowerCase();
+  const who = norm(handle);
+  if (!who || who === norm(ownHandle)) return false;
+  const listed = [...(KNOWN_AUTOMATED_HANDLES[channel] ?? []), ...policy.engagement.automatedHandles].map(norm);
+  if (listed.includes(who)) return true;
+  // Read only when the lists did not settle it, and a failed read is not a
+  // reason to treat a person as a bot.
+  const siblings = await accountsRepo.allAccounts().catch(() => []);
+  return siblings.some((account) => account.channel === channel && norm(account.handle) === who);
 }
 
 /**

@@ -240,6 +240,46 @@ export async function countRecentRepliesToHandle(
 }
 
 /**
+ * How many turns the agent has taken in the back-and-forth that ends at
+ * `parentRemoteId`, the post being answered's parent.
+ *
+ * Walks the agent's own published replies backwards: the parent is one of its
+ * replies, that reply answered a message, that message's parent is an earlier
+ * reply, and so on until a parent is somebody else's or nothing. Counted from
+ * what was published because the rendered thread cannot be trusted for this:
+ * X collapses a long chain, and a live agent eight replies deep with @grok read
+ * its own turns as one, then two, then one again. Nor can the conversation id,
+ * which is bound to the topmost post X happened to render.
+ *
+ * A message's parent comes from the status page walk when there was one, and
+ * from the event itself otherwise. Bounded by `limit`, which also ends a cycle.
+ */
+export async function publishedReplyChain(agentId: string, parentRemoteId: string | null, limit = 20): Promise<number> {
+  if (!parentRemoteId) return 0;
+  const row = await queryOne<{ turns: number }>(
+    `WITH RECURSIVE chain(turns, parent_id) AS (
+       SELECT 1, parent_of.id
+         FROM actions a
+         JOIN jobs j ON j.id = a.job_id
+         JOIN events e ON e.id = j.event_id
+         CROSS JOIN LATERAL (SELECT coalesce(j.resolved_context->'conversation'->'parent'->>'remoteId', e.parent_remote_message_id) AS id) parent_of
+        WHERE a.agent_id = $1 AND a.remote_action_id = $2 AND a.dry_run = false AND a.status = 'EXECUTED'
+       UNION ALL
+       SELECT c.turns + 1, parent_of.id
+         FROM chain c
+         JOIN actions a ON a.agent_id = $1 AND a.remote_action_id = c.parent_id AND a.dry_run = false AND a.status = 'EXECUTED'
+         JOIN jobs j ON j.id = a.job_id
+         JOIN events e ON e.id = j.event_id
+         CROSS JOIN LATERAL (SELECT coalesce(j.resolved_context->'conversation'->'parent'->>'remoteId', e.parent_remote_message_id) AS id) parent_of
+        WHERE c.turns < $3
+     )
+     SELECT coalesce(max(turns), 0)::int AS turns FROM chain`,
+    [agentId, parentRemoteId, limit],
+  );
+  return row?.turns ?? 0;
+}
+
+/**
  * Unprompted approaches this agent has actually made.
  *
  * Counted from what was published, not from what was decided or drafted: a
