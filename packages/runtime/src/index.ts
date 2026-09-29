@@ -133,3 +133,4 @@ export * from './foundry';
 export * from './foundryApply';
 export * from './foundryRun';
 export * from './foundryReport';
+export * from './testSuite';

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronDown, CircleDot, Pencil, RotateCcw, Search, X } from 'lucide-react';
-import { ApiError, patch, post } from '@app/lib/api';
+import { ArrowLeft, Check, ChevronDown, CircleDot, FlaskConical, Pencil, RotateCcw, Search, X } from 'lucide-react';
+import { ApiError, get, patch, post } from '@app/lib/api';
 import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
 import { FadeIn } from '@app/components/motion';
@@ -400,6 +400,116 @@ function ItemCard({ item, improving, onDecide, busy }: { item: Item; improving: 
   );
 }
 
+// ── Test this agent ────────────────────────────────────────────────────────
+
+interface JudgedCase {
+  id: string;
+  category: string;
+  title: string;
+  message: string;
+  expect: string;
+  verdict: 'PASS' | 'REVIEW' | 'SILENT' | 'FAILED' | 'RUNNING';
+  reason: string;
+  answer: string | null;
+  silence: string | null;
+  jobId: string | null;
+}
+interface Suite {
+  id: string;
+  createdAt: string;
+  finished: boolean;
+  counts: Record<JudgedCase['verdict'], number>;
+  cases: JudgedCase[];
+}
+
+const VERDICT: Record<JudgedCase['verdict'], { label: string; dot: 'live' | 'wait' | 'fail' | 'idle' }> = {
+  PASS: { label: 'Pass', dot: 'idle' },
+  SILENT: { label: 'Stayed silent', dot: 'idle' },
+  REVIEW: { label: 'Read it', dot: 'wait' },
+  FAILED: { label: 'Failed', dot: 'fail' },
+  RUNNING: { label: 'Answering', dot: 'live' },
+};
+
+/**
+ * The agent put through the situations that go wrong, before it is turned on.
+ *
+ * Every case is a rehearsal through the real pipeline, so what is shown is what
+ * it would really have said. Nothing is sent.
+ */
+function TestPanel({ agentId, foundryRunId }: { agentId: string; foundryRunId: string | null }) {
+  const latest = useResource<{ suite: Suite | null }>(`/api/agents/${agentId}/tests`);
+  const [suite, setSuite] = useState<Suite | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const shown = suite ?? latest.data?.suite ?? null;
+  usePolling(
+    () =>
+      void get<{ suite: Suite }>(`/api/agents/${agentId}/tests/${shown!.id}`)
+        .then((r) => setSuite(r.suite))
+        .catch(() => undefined),
+    3_000,
+    Boolean(shown && !shown.finished),
+  );
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const started = await post<{ suite: Suite }>(`/api/agents/${agentId}/tests`, { foundryRunId });
+      setSuite(started.suite);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'The tests could not be started.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="tests-title" className="rounded-lg border border-ink-line bg-ink-panel p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 id="tests-title" className="text-bone">Test this agent</h3>
+          <p className="mt-1 text-sm text-bone-dim">
+            The situations that go wrong, rehearsed through the real pipeline. Nothing is sent; you see what it would have said.
+          </p>
+        </div>
+        <button type="button" className="btn-primary" disabled={busy || Boolean(shown && !shown.finished)} onClick={() => void run()}>
+          {busy ? <Spinner /> : <FlaskConical className="h-4 w-4" aria-hidden />}
+          {shown ? 'Run the tests again' : 'Run the tests'}
+        </button>
+      </div>
+      {error && <p className="mt-3 text-sm text-signal-fail">{error}</p>}
+      {shown && (
+        <>
+          <p className="mt-4 text-sm text-bone-dim" aria-live="polite">
+            {(['PASS', 'SILENT', 'REVIEW', 'FAILED', 'RUNNING'] as const)
+              .filter((v) => shown.counts[v] > 0)
+              .map((v) => `${shown.counts[v]} ${VERDICT[v].label.toLowerCase()}`)
+              .join(', ')}
+            {' · '}run {timeAgo(shown.createdAt)}
+          </p>
+          <ul className="mt-3 space-y-2">
+            {shown.cases.map((c) => (
+              <li key={c.id} className="rounded border border-ink-line p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="block text-sm text-bone">{c.title}</span>
+                    <span className="block text-[11px] text-bone-faint">{c.category}</span>
+                  </span>
+                  <StatusDot state={VERDICT[c.verdict].dot} label={VERDICT[c.verdict].label} />
+                </div>
+                <p className="mt-2 break-words font-mono text-[12px] text-bone-dim">{c.message}</p>
+                {c.answer && <p className="mt-2 break-words border-l-2 border-ink-line pl-3 text-sm text-bone">{c.answer}</p>}
+                <p className="mt-2 text-[12px] text-bone-faint">{c.reason}</p>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
 // ── The run ────────────────────────────────────────────────────────────────
 
 function RunProgress({ run, onCancel }: { run: RunView; onCancel: () => void }) {
@@ -560,6 +670,8 @@ function RunDetail({ agentId, runId }: { agentId: string; runId: string }) {
         </section>
       )}
 
+      {(applied || items.some((i) => i.status === 'APPLIED')) && <TestPanel agentId={agentId} foundryRunId={run.id} />}
+
       {sections.length > 0 && (
         <>
           <nav aria-label="Sections" className="sticky top-0 z-10 -mx-5 flex gap-2 overflow-x-auto border-b border-ink-line bg-ink/95 px-5 py-2 backdrop-blur">
@@ -671,6 +783,8 @@ function FoundryHub({ agentId }: { agentId: string }) {
         </div>
         {error && <p className="text-sm text-signal-fail">{error}</p>}
       </div>
+
+      <TestPanel agentId={agentId} foundryRunId={null} />
 
       <section aria-labelledby="runs-title">
         <h2 id="runs-title" className="text-lg text-bone">Earlier research</h2>

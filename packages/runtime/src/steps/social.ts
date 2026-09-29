@@ -299,7 +299,16 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
   const selfHandles = [bundle.account?.handle, ...policy.content.selfHandles]
     .filter((h): h is string => Boolean(h))
     .map((h) => h.replace(/^@+/, '').toLowerCase());
-  const directlyAddressed = selfHandles.some((self) => text.toLowerCase().includes(`@${self}`));
+  /*
+    A message somebody typed into the Response Lab was written to the agent by
+    definition. It carries no account handle to find in the text, because a
+    typed rehearsal runs on the mock channel with no account, so without this
+    every typed "are you a bot?" read as a stranger's post about something the
+    agent does not follow, and a test suite judged silence nobody would get.
+  */
+  const typedToAgent =
+    bundle.event.type === 'MENTION' && (bundle.event.payload as { rehearsal?: boolean; addressedToAgent?: boolean } | null)?.addressedToAgent === true;
+  const directlyAddressed = typedToAgent || selfHandles.some((self) => text.toLowerCase().includes(`@${self}`));
 
   // Found by watching rather than sent to the agent. KEYWORD_MATCH is what the
   // radar reconciler assigns to a post discovered through a watched keyword,
