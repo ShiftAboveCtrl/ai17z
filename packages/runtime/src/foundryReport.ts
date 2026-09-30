@@ -11,7 +11,7 @@ import {
   type FoundrySection,
   type FoundryStage,
 } from '@xbam/shared/contracts';
-import { foundry as foundryRepo, research as researchRepo } from '@xbam/database';
+import { foundry as foundryRepo, research as researchRepo, workers as workersRepo, STANDARD_WORK } from '@xbam/database';
 
 export interface FoundryRunView {
   id: string;
@@ -19,6 +19,8 @@ export interface FoundryRunView {
   kind: string;
   status: string;
   brief: Record<string, unknown>;
+  /** Why a queued run has not started, when something is holding it. */
+  waitingFor: string | null;
   stages: { stage: FoundryStage; label: string; state: 'DONE' | 'RUNNING' | 'WAITING'; detail: string | null; at: string | null }[];
   lastError: string | null;
   createdAt: string;
@@ -26,6 +28,21 @@ export interface FoundryRunView {
 }
 
 /** The run as a list of stages, each done, running or waiting, with what it said. */
+/**
+ * Why a queued run has not started, in a sentence, or null when nothing is
+ * holding it. A run waiting for memory to clear or for a browser worker to
+ * exist is not broken, and an owner told only "queued" cannot tell which.
+ */
+async function waitingFor(): Promise<string | null> {
+  if (!(await workersRepo.browserWorkerPresent().catch(() => true))) {
+    return 'No worker with a browser is running, and research reads X through one. Start AI17Z on the machine with Chrome and it begins.';
+  }
+  const tools = await workersRepo.toolAvailability().catch(() => ({}) as Record<string, { available: boolean; detail: string }>);
+  const standard = tools[STANDARD_WORK];
+  if (standard && !standard.available) return `${standard.detail} Research starts then; nothing is lost by waiting.`;
+  return null;
+}
+
 export async function foundryRunView(runId: string): Promise<FoundryRunView | null> {
   const run = await researchRepo.getRun(runId);
   if (!run) return null;
@@ -51,6 +68,7 @@ export async function foundryRunView(runId: string): Promise<FoundryRunView | nu
       };
     }),
     lastError: run.lastError,
+    waitingFor: run.status === 'QUEUED' ? await waitingFor() : null,
     createdAt: run.createdAt,
     finishedAt: run.finishedAt,
   };

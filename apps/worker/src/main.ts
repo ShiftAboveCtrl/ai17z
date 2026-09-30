@@ -1,5 +1,5 @@
 import { hostname } from 'node:os';
-import { createLogger, describeVersion, envInt, envString, errorMessage, loadEnv, thisWorkerId } from '@xbam/shared';
+import { createLogger, describeVersion, envInt, envString, errorMessage, loadEnv, thisWorkerId, loopAllowed, settledPressure, throttleFor } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   broadCandidates as broadCandidatesRepo,
@@ -38,6 +38,7 @@ import { superviseSession } from '@xbam/browser';
 loadEnv();
 import { sweepFoundry } from './foundryWorker';
 import { sweepOwnerChat } from '@xbam/runtime';
+import { STANDARD_WORK } from '@xbam/database';
 
 const log = createLogger('worker');
 
@@ -89,6 +90,12 @@ async function main(): Promise<void> {
       const state = await adapter.availability().catch(() => null);
       if (state) tools[`persona:${adapter.kind}`] = { available: state.available, detail: state.detail };
     }
+    // Whether this worker is taking on work nobody is waiting on this minute.
+    // The API reads the machine it runs on, which is not this one, so a run
+    // held back for memory could otherwise only ever say it was queued.
+    tools[STANDARD_WORK] = loopAllowed('STANDARD', throttleFor(settledPressure()).runLoopsDownTo)
+      ? { available: true, detail: 'Running background work.' }
+      : { available: false, detail: 'The machine this worker runs on is very short of memory, so background work waits until it clears.' };
 
     await workersRepo
       .heartbeat({ id: workerId, role, ...capabilities, hostname: hostname(), version: describeVersion(), tools })
@@ -373,6 +380,12 @@ async function main(): Promise<void> {
     always a browser; one that does use a lookup gets whatever this worker can
     reach. Short interval because somebody is watching the screen, and at most
     two answers at once so a busy room cannot crowd out the pipeline.
+
+    ESSENTIAL, like the owner's Telegram commands and for the same reason:
+    somebody is waiting on it. Measured on a live installation at 3.4% free
+    memory, a STANDARD chat loop skipped every tick and three answers sat
+    pending for ten minutes, including "what's broken right now?", which is
+    the question an owner asks exactly when a machine is struggling.
   */
   let chatting = 0;
   const chat = startLoop(
@@ -387,7 +400,7 @@ async function main(): Promise<void> {
         chatting -= 1;
       }
     },
-    'STANDARD',
+    'ESSENTIAL',
   );
 
   /**

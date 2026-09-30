@@ -125,3 +125,4 @@ export { memoryContentHash } from './repositories/memories';
 export * as introspection from './repositories/introspection';
 export * as chat from './repositories/chat';
 export type { ChatConversation, ChatMessage, ChatParticipant, ChatSave } from './repositories/chat';
+export { STANDARD_WORK } from './repositories/workers';

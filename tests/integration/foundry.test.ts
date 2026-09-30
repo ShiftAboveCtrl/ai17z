@@ -259,3 +259,23 @@ describe('improving an existing agent', () => {
     expect(after.topics).toEqual(owned.topics);
   });
 });
+
+describe('a queued run says why it is waiting', () => {
+  it('names a missing browser worker, then a worker short of memory, then nothing', async () => {
+    const { query, workers, STANDARD_WORK } = await import('@xbam/database');
+    const { foundryRunView } = await import('@xbam/runtime');
+    const fixture = await createFixture();
+    const run = await researchRepo.createRun({ ownerId: fixture.ownerId, agentId: fixture.agentId, kind: 'FOUNDRY_SETUP', brief: { text: 'x' } as never });
+    await query('DELETE FROM workers');
+
+    expect((await foundryRunView(run.id))!.waitingFor).toMatch(/No worker with a browser/);
+
+    const report = (available: boolean) =>
+      workers.heartbeat({ id: 'native-proof', role: 'browser', browserCapable: true, jobsCapable: false, tools: { [STANDARD_WORK]: { available, detail: available ? 'Running background work.' : 'The machine this worker runs on is very short of memory.' } } });
+    await report(false);
+    expect((await foundryRunView(run.id))!.waitingFor).toMatch(/short of memory.*nothing is lost/);
+
+    await report(true);
+    expect((await foundryRunView(run.id))!.waitingFor).toBeNull();
+  });
+});

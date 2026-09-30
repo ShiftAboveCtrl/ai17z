@@ -37,6 +37,17 @@ describe('agent setup check', () => {
     expect(uncovered.sentence).not.toMatch(/Pons/);
   });
 
+  it('treats an account the owner disconnected as not in use, never as broken', async () => {
+    const fixture = await createFixture();
+    const { accounts } = await import('@xbam/database');
+    const account = await accounts.createAccount({ ownerId: fixture.ownerId, channel: 'mock', handle: 'parked' });
+    await accounts.updateAccount(account.id, { status: 'DISCONNECTED', enabled: false });
+    await accounts.linkAgentAccount({ agentId: fixture.agentId, accountId: account.id, triggerEventTypes: ['MENTION'], actionType: 'REPLY' });
+    const report = await agentSetupCheck(fixture.agentId);
+    const check = report.sections.find((s) => s.key === 'account')!.checks.find((c) => c.key === account.id)!;
+    expect(check.state).toBe('NOT_SET_UP');
+  });
+
   it('sends Social Radar to the account it reads through', () => {
     expect(settingHref('a', 'radar', 'acc')).toBe('/settings?account=acc&focus=radar');
     expect(settingHref('a', 'radar', null)).toBe('/settings#accounts');

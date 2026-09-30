@@ -292,6 +292,9 @@ export async function agentSetupCheck(agentId: string, now = Date.now()): Promis
         x.push(
           link.status === 'CONNECTED'
             ? { key: link.accountId, state: 'OK', sentence: `${name} is connected.`, fix: null }
+            : link.status === 'DISCONNECTED'
+              ? // Disconnected is a choice, so it is not in use rather than broken.
+                { key: link.accountId, state: 'NOT_SET_UP', sentence: `${name} is disconnected, so this agent does not use it.`, fix: fix('Reconnect it', settingHref(agentId, 'accounts', link.accountId)) }
             : { key: link.accountId, state: 'PROBLEM', sentence: `${name} is ${link.status.toLowerCase().replace(/_/g, ' ')}.`, fix: fix('Open the session', settingHref(agentId, 'accounts', link.accountId)) },
         );
       }

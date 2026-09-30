@@ -47,6 +47,8 @@ import { assemblePrompt, CHAT_TEMPLATE_KEY } from '@xbam/prompts';
 import { generate, type GenerateResult } from '@xbam/models';
 import { retrieveMemories, looksLikeSecret } from '@xbam/memory';
 import { runCapabilityLoop } from './capabilityLoop';
+import { shortlistCapabilities } from './capabilityRelevance';
+import { listModelCallable } from '@xbam/tools';
 import { capabilitySettings } from './capabilityPermissions';
 import { pauseState } from './killSwitch';
 import { checkBudget } from './policyGate';
@@ -165,6 +167,15 @@ export interface ChatWorkerOptions {
  * about the agent itself to nothing at all (its own records answer that).
  */
 export function chatLookups(question: string, policy: PolicyConfig): Lookup[] {
+  /*
+    A question the agent's own records answer is never researched. "What's
+    broken right now?" names no "you", so the reply rules read its time phrase
+    as current events and sent it to the web, where it waited for a browser to
+    search for the answer to a question about this installation. Here, a
+    question that reaches an owner-only capability is about the agent.
+  */
+  const owner = listModelCallable().filter((c) => c.audience === 'OWNER');
+  if (owner.length > 0 && shortlistCapabilities(owner, question).offered.length > 0) return [];
   const links = [...question.matchAll(/https?:\/\/\S+/g)].map((m) => m[0]);
   return capResearch(whatToResearch({ incoming: question, links }), policy.budget.maxResearchCallsPerEvent);
 }
