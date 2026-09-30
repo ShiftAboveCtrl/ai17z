@@ -143,3 +143,17 @@ describe('a post that is only tags', () => {
     expect(spamFeatures('@a_handle_longer_than_fifteen #ai17zoss @grok https://t.co/x').words).toBe(0);
   });
 });
+
+describe('a post that is only a link', () => {
+  it('is not the same text as somebody else\'s link', () => {
+    const photoA = spamFeatures('@ai17zOS https://t.co/Iv9yhlJHB7');
+    const photoB = spamFeatures('@ai17zOS https://t.co/GgQzsqeDJl');
+    expect(photoA.fingerprint).not.toBe(photoB.fingerprint);
+  });
+
+  it('still groups a campaign that shares a hashtag', () => {
+    const one = spamFeatures('#ai17zoss @grok https://t.co/a1 https://t.co/a2');
+    const two = spamFeatures('#ai17zoss @grok https://t.co/b1 https://t.co/b2');
+    expect(one.fingerprint).toBe(two.fingerprint);
+  });
+});
