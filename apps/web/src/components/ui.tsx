@@ -299,7 +299,9 @@ export function Modal({
     const returnTo = document.activeElement as HTMLElement | null;
     // Once, when it opens. The dialog takes focus so Escape works and a screen
     // reader announces it; anything the person then focuses is theirs to keep.
-    ref.current?.focus();
+    // A dialog that exists to be typed into marks its field `data-autofocus`,
+    // and that field takes focus instead, so focus still moves in one place.
+    (ref.current?.querySelector<HTMLElement>('[data-autofocus]') ?? ref.current)?.focus();
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = previous;

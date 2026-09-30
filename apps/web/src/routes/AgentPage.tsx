@@ -59,15 +59,17 @@ const AREAS = [
   { id: 'character', label: 'Character', blurb: 'Who it is, and how it writes.', sections: ['identity', 'voice', 'beliefs'] },
   { id: 'reach', label: 'Reach', blurb: 'Where it speaks, what it thinks with, what it can use.', sections: ['accounts', 'intelligence', 'capabilities', 'tools'] },
   { id: 'memory', label: 'Memory', blurb: 'What it knows, and who it knows.', sections: ['memory', 'knowledge', 'relationships', 'learned'] },
-  { id: 'behaviour', label: 'Behaviour', blurb: 'What it does on its own, and what it is allowed to do.', sections: ['content', 'behaviour', 'autonomy', 'learning', 'policies', 'pipeline'] },
+  { id: 'behaviour', label: 'Behaviour', blurb: 'What it does on its own, and what it is allowed to do.', sections: ['content', 'behaviour', 'autonomy', 'policies', 'pipeline'] },
 ] as const;
 
 type AreaId = (typeof AREAS)[number]['id'];
 
 /** Which area holds a section, so an old `#anchor` still lands somewhere. */
-const AREA_OF_SECTION: Record<string, AreaId> = Object.fromEntries(
-  AREAS.flatMap((area) => area.sections.map((section) => [section, area.id])),
-) as Record<string, AreaId>;
+const AREA_OF_SECTION: Record<string, AreaId> = {
+  ...(Object.fromEntries(AREAS.flatMap((area) => area.sections.map((section) => [section, area.id]))) as Record<string, AreaId>),
+  // Anchors inside a section rather than sections of their own.
+  learning: 'behaviour',
+};
 
 export function AgentPage() {
   const { agentId = '' } = useParams();

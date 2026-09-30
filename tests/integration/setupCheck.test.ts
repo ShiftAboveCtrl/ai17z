@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { knowledge as knowledgeRepo, learning as learningRepo, query } from '@xbam/database';
-import { agentSetupCheck, describeLearning, settingHref } from '@xbam/runtime';
+import { agentSetupCheck, describeLearning, settingHref, sortFailures, topicCovered } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -53,5 +53,27 @@ describe('learning, as an owner reads it', () => {
     expect(trial.samples).toMatchObject({ withChange: 0, control: 0, neededWithChange: 8, neededControl: 3 });
     expect(view.rules.neverTouches).toEqual(expect.arrayContaining(['identity', 'permissions', 'do not contact', 'financial policy']));
     expect(view.rules.controlWhileTesting).toMatch(/one decision in 5/);
+  });
+});
+
+describe('reading a real installation fairly', () => {
+  it('counts a topic as covered by any distinctive word, and never flags generic ones', () => {
+    const sources = [{ name: 'PONS', location: null }, { name: 'AI17Z README', location: null }];
+    expect(topicCovered('Pons launchpad', sources)).toBe(true);
+    expect(topicCovered('open source', sources)).toBe(true);
+    expect(topicCovered('bonding curves', sources)).toBe(false);
+  });
+
+  it('tells a failure from a reply waiting for review and from work stopped on purpose', () => {
+    const at = new Date().toISOString();
+    const { real, held, onPurpose } = sortFailures([
+      { status: 'PERMANENT_FAILURE', lastError: '@grok is blocked for this agent.', lastAt: at },
+      { status: 'PERMANENT_FAILURE', lastError: 'The source post no longer exists on X.', lastAt: at },
+      { status: 'REVIEW_REQUIRED', lastError: 'Does not sound like this agent', lastAt: at },
+      { status: 'PERMANENT_FAILURE', lastError: 'Google Chrome could not be found.', lastAt: at },
+    ]);
+    expect(real.map((f) => f.lastError)).toEqual(['Google Chrome could not be found.']);
+    expect(held).toHaveLength(1);
+    expect(onPurpose).toHaveLength(2);
   });
 });
