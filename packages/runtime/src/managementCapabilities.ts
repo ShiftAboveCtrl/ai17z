@@ -53,7 +53,8 @@ const changeSetting = defineCapability({
     'Changes one of your own settings when the owner asks you to: tone, topics, reply length, a standing instruction, ' +
     'emoji, subjects to avoid, how automated you are, or your own posting. Pick exactly one kind and give its value. ' +
     `Kinds: ${kindList} Small changes apply at once and can be undone; bigger ones wait for the owner to confirm. ` +
-    'Say what happened in one sentence, using the detail returned.',
+    'Say what happened in one sentence, using the detail returned. When the owner asks you to fix yourself, read your health ' +
+    'first; change a setting only if it is the cause, and for a browser, account, provider or model problem say which screen fixes it.',
   category: 'ACCOUNT',
   effect: 'WRITE',
   risk: 'LOW',
