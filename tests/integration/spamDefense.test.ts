@@ -137,3 +137,9 @@ describe('what makes two posts the same', () => {
     expect(verdict.verdict).toBe('CLEAN');
   });
 });
+
+describe('a post that is only tags', () => {
+  it('has no words however long the handles are', () => {
+    expect(spamFeatures('@a_handle_longer_than_fifteen #ai17zoss @grok https://t.co/x').words).toBe(0);
+  });
+});

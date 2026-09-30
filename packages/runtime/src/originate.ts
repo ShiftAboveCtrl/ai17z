@@ -106,7 +106,7 @@ export async function originatePost(input: {
       // The brief is what generation reads in place of an incoming message.
       text: brief.brief,
       occurredAt: new Date().toISOString(),
-      raw: { origin: 'self', ideaId: brief.idea.id, ideaSummary: brief.idea.summary },
+      raw: { origin: 'self', ideaId: brief.idea.id, ideaSummary: brief.idea.summary, ideaSource: brief.idea.source },
     });
 
     return jobsRepo.createJob(tx, {

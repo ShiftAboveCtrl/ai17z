@@ -616,9 +616,16 @@ export async function stepQualityGate(bundle: JobBundle): Promise<'next' | 'sile
   */
   if (job.actionType === 'POST' && !job.approvedAt) {
     const draft = (job.validatedOutput ?? job.generatedOutput ?? '').trim();
+    /*
+      An idea the agent concluded, or one its owner gave it, is the point of
+      the post, and stating it is not an echo. Echo is measured only against
+      material that was never the agent's own view: a question somebody asked.
+    */
+    const payload = (bundle.event.payload ?? {}) as { ideaSource?: string; ideaSummary?: string };
+    const echoSource = payload.ideaSource === 'conversation' ? (payload.ideaSummary ?? '') : '';
     const verdict = judgePost({
       draft,
-      source: bundle.event.text ?? '',
+      source: echoSource,
       recentPosts: await contentRepo.recentPosts(bundle.agent.id, 12).catch(() => []),
       selfNames: [bundle.persona.displayName, bundle.agent.name, bundle.account?.handle ?? '', 'AI17Z'].filter(Boolean),
     });

@@ -69,7 +69,10 @@ const SCAM_TERMS = [
 ];
 
 const URL = /https?:\/\/\S+|\bt\.co\/\S+/gi;
-const MENTION = /@[A-Za-z0-9_]{1,15}/g;
+// The whole handle, whatever its length: stopping at X's fifteen left the tail
+// of a longer one behind as a "word", and a post of nothing but tags read as
+// having something to say.
+const MENTION = /@[A-Za-z0-9_]+/g;
 const HASHTAG = /#([\p{L}\p{N}_]+)/gu;
 
 /** Same text however it was dressed: case, accents, width, invisible characters, numbers. */
