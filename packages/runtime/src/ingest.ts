@@ -5,6 +5,7 @@ import type {
   NormalizedEvent as NormalizedEventType,
   RelationshipContext,
 } from '@xbam/shared/contracts';
+import { SCREENED_EVENT_TYPES, authorContext, screenInbound } from './spam';
 import { z } from 'zod';
 import { NormalizedEvent, PolicyConfig } from '@xbam/shared/contracts';
 import { PipelineError, actionIdempotencyKey, createLogger, envInt, sanitizeText } from '@xbam/shared';
@@ -23,6 +24,7 @@ import {
   actions as actionsRepo,
   withTransaction,
   type Tx,
+  spam as spamRepo,
 } from '@xbam/database';
 import { REPLY_TEMPLATE_KEY } from '@xbam/prompts';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
@@ -464,6 +466,20 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
 
   const pendingTraces: Array<{ jobId: string; agentId: string; data: Record<string, unknown> }> = [];
 
+  // Read before the transaction, for the spam screen below.
+  const screened = Boolean(
+    accountId && SCREENED_EVENT_TYPES.has(event.type) && !options.onlyAgentId && !(event.raw as { rehearsal?: boolean } | null)?.rehearsal,
+  );
+  const spamAuthor =
+    screened && accountId
+      ? await authorContext({
+          accountId,
+          channel: event.channel,
+          authorHandle: event.remoteAuthorHandle ?? null,
+          agentIds: (options.recordOnly ? [] : accountLinks).map((l) => l.agentId),
+        })
+      : null;
+
   const outcome = await withTransaction(async (tx) => {
     const { event: stored, created: eventCreated } = await eventsRepo.ingestEvent(tx, accountId, event);
     if (event.type === 'TARGET_ACCOUNT_ACTIVITY' && stored.type === 'KEYWORD_MATCH') {
@@ -570,6 +586,26 @@ export async function ingestNormalizedEvent(input: IngestOptions): Promise<Inges
       }
       await recordTarget();
       return outcome;
+    }
+
+    /*
+      Spam, judged here: after the event is kept and before any agent is given
+      work for it. A post judged SPAM costs no thread read, no model call and
+      no reply slot, and stays on record for the owner to see and correct.
+      Only posts from other people are screened; a manual trigger is the owner
+      deciding otherwise, and a rehearsal is not a real post.
+    */
+    if (accountId && spamAuthor && links.length > 0) {
+      const judged = eventCreated
+        ? await screenInbound(tx, { eventId: stored.id, accountId, text: event.text ?? '', authorHandle: event.remoteAuthorHandle ?? null }, spamAuthor)
+        : await spamRepo.verdictFor(stored.id, tx).then((v) => (v ? { verdict: v.verdict, reasons: v.reasons } : null));
+      if (judged?.verdict === 'SPAM') {
+        for (const link of links) {
+          outcome.skipped.push({ agentId: link.agentId, reason: `filtered as spam: ${judged.reasons[0] ?? 'it looked like spam'}` });
+        }
+        await recordTarget();
+        return outcome;
+      }
     }
 
     for (const link of links) {

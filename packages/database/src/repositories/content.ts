@@ -246,6 +246,21 @@ export async function reconcileDrafting(staleMs = 10 * 60_000, maxAttempts = 3):
       RETURNING i.id`,
   );
 
+  /*
+    Judged not worth posting. The idea is set aside at once: drafting it again
+    spends another model call on something the quality gate already said has
+    no point, and the highest score would keep winning the claim until its
+    attempts ran out. The owner's own ideas take the ordinary path, since a
+    different draft of something they asked for may well be worth posting.
+  */
+  await query(
+    `UPDATE content_ideas i
+        SET status = 'discarded', last_error = j.last_error, job_id = NULL, updated_at = now()
+       FROM jobs j
+      WHERE i.status = 'drafting' AND i.job_id = j.id AND i.source <> 'you'
+        AND j.status = 'CANCELLED' AND j.last_error LIKE 'Not worth posting:%'`,
+  );
+
   // Ended without publishing. Charge one attempt and say why.
   const failed = await query<{ id: string; attempts: number }>(
     `UPDATE content_ideas i

@@ -491,6 +491,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
         incoming: context?.incomingText ?? bundle.event.text,
         outgoing: output,
         handle: context?.targetAuthorHandle ?? bundle.event.remoteAuthorHandle,
+        topics: bundle.persona.topics,
       }).catch(() => undefined);
     }
 
@@ -530,6 +531,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
         policy: policy.stance,
         jobId: job.id,
         remoteUrl: result.remoteActionUrl,
+        selfNames: [bundle.persona.displayName, bundle.agent.name, bundle.account?.handle ?? '', 'AI17Z'].filter(Boolean),
       }).catch(() => undefined);
 
       const claims = detectClaims(output);

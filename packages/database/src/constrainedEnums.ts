@@ -47,6 +47,7 @@ import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
 import { ENGAGEMENT_KINDS, ENGAGEMENT_STATUSES } from './repositories/engagements';
 import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
 import { KNOWLEDGE_DOC_KINDS, KNOWLEDGE_SOURCE_KINDS } from './repositories/knowledge';
+import { SPAM_DECIDERS, SPAM_VERDICT_VALUES } from './repositories/spam';
 import { CHAT_AUTHOR_KINDS, CHAT_KINDS, CHAT_MESSAGE_STATUSES, CHAT_SAVE_TARGETS } from './repositories/chat';
 
 /**
@@ -434,6 +435,10 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'chat_messages', column: 'author_kind', values: CHAT_AUTHOR_KINDS },
   { table: 'chat_messages', column: 'status', values: CHAT_MESSAGE_STATUSES },
   { table: 'chat_saves', column: 'target', values: CHAT_SAVE_TARGETS },
+  // Spam defense (migration 0101).
+  { table: 'inbound_spam', column: 'verdict', values: SPAM_VERDICT_VALUES },
+  { table: 'inbound_spam', column: 'classifier_verdict', values: SPAM_VERDICT_VALUES },
+  { table: 'inbound_spam', column: 'decided_by', values: SPAM_DECIDERS },
 ];
 
 /** Reads the vocabulary a CHECK constraint actually enforces, from the catalogue. */

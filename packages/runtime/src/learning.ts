@@ -92,14 +92,30 @@ const DAY_MS = 24 * 60 * 60_000;
  *
  * Null when nothing was read at all, which is not the same as nobody seeing it.
  */
-export function reachOf(readings: Pick<MeasurableAction, 'views' | 'likes' | 'reposts' | 'replies' | 'quotes' | 'bookmarks'>): number | null {
+export function reachOf(
+  readings: Pick<MeasurableAction, 'views' | 'likes' | 'reposts' | 'replies' | 'quotes' | 'bookmarks'> &
+    Partial<Pick<MeasurableAction, 'humanRepliers' | 'spamReplies'>>,
+): number | null {
+  /*
+    Conversation over applause, and never spam.
+
+    X's reply count includes every spam reply, so a campaign under a post made
+    it look like the best thing the agent ever wrote. Replies judged spam are
+    taken off, and distinct people who actually answered count on their own,
+    above a like: one real conversation is worth more than a hundred
+    low-effort reactions. Only replies AI17Z observed can be counted by
+    person, so an unobserved reply is never counted as none.
+  */
+  const replies =
+    typeof readings.replies === 'number' ? Math.max(0, readings.replies - (readings.spamReplies ?? 0)) : readings.replies;
   const parts: [number | null, number][] = [
     [readings.views, 1],
     [readings.likes, 3],
     [readings.reposts, 5],
-    [readings.replies, 4],
+    [replies, 4],
     [readings.quotes, 4],
     [readings.bookmarks, 2],
+    [readings.humanRepliers && readings.humanRepliers > 0 ? readings.humanRepliers : null, 6],
   ];
   const seen = parts.filter(([value]) => typeof value === 'number' && Number.isFinite(value));
   if (seen.length === 0) return null;

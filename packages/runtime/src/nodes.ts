@@ -203,8 +203,10 @@ export const NODE_HANDLERS: Record<string, NodeHandler> = {
     return { branch: 'next' };
   },
   QUALITY_GATE: async (bundle) => {
-    await stepQualityGate(bundle);
-    return { branch: 'next' };
+    // Silence is a settled outcome for an original post with nothing to say.
+    return (await stepQualityGate(bundle)) === 'silent'
+      ? { branch: 'next', halt: true, status: 'CANCELLED' }
+      : { branch: 'next' };
   },
   STANCE_CHECK: async (bundle) => {
     await stepStanceCheck(bundle);

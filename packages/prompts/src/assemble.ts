@@ -93,6 +93,8 @@ export interface AssembleInput {
    * working on. See `selfNote`.
    */
   aboutSelf?: boolean;
+  /** True, public-safe facts about the agent, when the message is about it. */
+  selfFacts?: readonly string[];
   /**
    * How long this agent's published replies usually run, from its voice
    * fingerprint: the median, and the length past which the voice check will
@@ -127,6 +129,12 @@ export interface AssembledPrompt {
 function selfNote(aboutSelf: boolean | undefined): string {
   if (!aboutSelf) return '';
   return ' They are asking about you. Answer only from what is written above about your own state and what you have actually done on this account. You are an AI agent: never present the work, projects, plans or life of anybody your voice is modelled on as your own, and never invent something you are doing. If nothing above answers it, say so plainly.';
+}
+
+/** What is true about the agent right now, for a message that asks about it. Never more than this. */
+function selfFactsNote(aboutSelf: boolean | undefined, facts: readonly string[] | undefined): string {
+  if (!aboutSelf || !facts || facts.length === 0) return '';
+  return ` What is true about you right now: ${facts.join(' ')} Use these only if they answer what was asked, in your own words.`;
 }
 
 /**
@@ -556,7 +564,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
           : `Write one ${input.channelName} reply, as ${persona.displayName}, to ${
             context.targetAuthorHandle ? `@${context.targetAuthorHandle.replace(/^@/, '')}` : 'the person'
           }. They are speaking to you. Answer them — address them, not a third party, and never describe yourself from the outside.`) +
-      (input.actionType === 'POST' ? '' : selfNote(input.aboutSelf) + promoNote(input.promotional)) +
+      (input.actionType === 'POST' ? '' : selfNote(input.aboutSelf) + selfFactsNote(input.aboutSelf, input.selfFacts) + promoNote(input.promotional)) +
       habitNote(input.habits) +
       (input.leaning ? ` ${input.leaning}` : ''),
   };

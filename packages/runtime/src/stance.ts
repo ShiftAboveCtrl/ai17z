@@ -190,14 +190,32 @@ export async function learnStancesFromOwnPost(input: {
   policy: StancePolicy;
   jobId?: string | null;
   remoteUrl?: string | null;
+  /** The agent's own names. It holds no position on itself. */
+  selfNames?: readonly string[];
 }): Promise<StanceRow[]> {
   if (!input.policy.enabled || !input.policy.learnFromOwnPosts) return [];
 
   const read = readPosition(input.text);
   if (read.position === 'NEUTRAL' || read.strength < 0.3) return [];
 
+  /*
+    Not a person and not itself.
+
+    A reply names the person it answers, and "KoreanApeSKHNX" became a
+    position held at 0.85 because it was capitalised. A position is about a
+    subject; who the agent was talking to is a relationship, which has its own
+    table. And an agent holding opinions about "AI17Z" learned from its own
+    replies is how it came to post about its own features on repeat.
+  */
+  const handles = new Set([...input.text.matchAll(/@([A-Za-z0-9_]{1,15})/g)].map((m) => m[1]!.toLowerCase()));
+  const selves = new Set((input.selfNames ?? []).map((n) => n.toLowerCase().replace(/^@/, '')).filter(Boolean));
+  const subjects = candidateSubjects(input.text).filter((subject) => {
+    const key = subject.toLowerCase();
+    return !handles.has(key) && !selves.has(key) && ![...selves].some((self) => self.length >= 4 && key.includes(self));
+  });
+
   const recorded: StanceRow[] = [];
-  for (const subject of candidateSubjects(input.text)) {
+  for (const subject of subjects) {
     const existing = await stancesRepo.active(input.agentId, subject);
     // A position the owner wrote is not revised by something the agent said.
     if (existing?.pinned) continue;
@@ -207,13 +225,23 @@ export async function learnStancesFromOwnPost(input: {
         agentId: input.agentId,
         subject,
         position: read.position,
-        summary: input.text.slice(0, 300),
+        // The sentence that names the subject, not the whole reply: a stance
+        // whose summary is somebody's entire answer cannot be told apart from
+        // the answer, and was posted back as one.
+        summary: sentenceNaming(input.text, subject).slice(0, 300),
         confidence: read.strength,
         evidence: { kind: 'said', excerpt: input.text.slice(0, 500), jobId: input.jobId, remoteUrl: input.remoteUrl },
       }),
     );
   }
   return recorded;
+}
+
+/** The sentence of `text` that mentions `subject`, or the text when none does. */
+export function sentenceNaming(text: string, subject: string): string {
+  const needle = subject.toLowerCase();
+  const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  return sentences.find((s) => s.toLowerCase().includes(needle)) ?? text.trim();
 }
 
 /** "X will happen by Y" — a claim about the future, worth revisiting. */

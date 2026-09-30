@@ -22,6 +22,10 @@ export interface MeasurableAction {
   replies: number | null;
   quotes: number | null;
   bookmarks: number | null;
+  /** Distinct people whose replies to it AI17Z observed and did not judge spam. */
+  humanRepliers: number;
+  /** Observed replies to it that were judged spam. */
+  spamReplies: number;
 }
 
 /**
@@ -49,11 +53,14 @@ export async function measurableActions(
     replies: number | null;
     quotes: number | null;
     bookmarks: number | null;
+    human_repliers: number;
+    spam_replies: number;
   }>(
     `SELECT x.id AS action_id, x.job_id, x.type, x.payload ->> 'text' AS text, x.executed_at,
             e.type AS event_type, e.payload AS event_payload,
             j.resolved_context -> 'meta' -> 'learning' AS learning_meta,
-            r.views, r.likes, r.reposts, r.replies, r.quotes, r.bookmarks
+            r.views, r.likes, r.reposts, r.replies, r.quotes, r.bookmarks,
+            coalesce(h.human_repliers, 0)::int AS human_repliers, coalesce(h.spam_replies, 0)::int AS spam_replies
        FROM actions x
        JOIN jobs j ON j.id = x.job_id
        LEFT JOIN events e ON e.id = j.event_id
@@ -65,6 +72,16 @@ export async function measurableActions(
           ORDER BY p.observed_at DESC
           LIMIT 1
        ) r ON true
+       LEFT JOIN LATERAL (
+         SELECT count(DISTINCT lower(reply.remote_author_handle)) FILTER (WHERE s.verdict IS DISTINCT FROM 'SPAM') AS human_repliers,
+                count(*) FILTER (WHERE s.verdict = 'SPAM') AS spam_replies
+           FROM events reply
+           LEFT JOIN inbound_spam s ON s.event_id = reply.id
+           LEFT JOIN accounts own ON own.id = x.account_id
+          WHERE reply.account_id = x.account_id
+            AND reply.parent_remote_message_id = x.remote_action_id
+            AND lower(coalesce(reply.remote_author_handle, '')) <> lower(coalesce(own.handle, ''))
+       ) h ON true
       WHERE x.agent_id = $1
         AND x.status = 'EXECUTED'
         AND x.type IN ('REPLY', 'POST')
@@ -89,6 +106,8 @@ export async function measurableActions(
     likes: row.likes,
     reposts: row.reposts,
     replies: row.replies,
+    humanRepliers: Number(row.human_repliers ?? 0),
+    spamReplies: Number(row.spam_replies ?? 0),
     quotes: row.quotes,
     bookmarks: row.bookmarks,
   }));

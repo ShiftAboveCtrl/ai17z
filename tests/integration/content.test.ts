@@ -42,6 +42,7 @@ describe('where ideas come from', () => {
       outgoing:
         'Finality is what people actually feel. Throughput is a number that only matters once finality is boring.',
       handle: 'alice',
+      topics: ['finality and settlement'],
     });
 
     expect(captured.length).toBeGreaterThan(0);
@@ -52,7 +53,24 @@ describe('where ideas come from', () => {
     expect(captured[0]!.sourceHandle).toBe('alice');
   });
 
-  it('captures a position the agent keeps coming back to', async () => {
+  it('does not turn a question outside its subjects into a post', async () => {
+    const fixture = await createFixture();
+    const captured = await harvestIdeas({
+      agentId: fixture.agentId,
+      jobId: null,
+      incoming: 'How many coins does it take to get into the family?',
+      outgoing: 'The entry fee is whatever problem you bring with you, honestly. Nothing else is required to hang around.',
+      handle: 'dana',
+      topics: ['finality and settlement'],
+    });
+    expect(captured).toEqual([]);
+  });
+
+  /*
+    A position stated in replies is no longer echoed back as a post. It was
+    most of what ai17z-main posted: its own replies, restated to everybody.
+  */
+  it('never turns a position it keeps stating in replies into a post', async () => {
     const fixture = await createFixture();
     const position = {
       agentId: fixture.agentId,
@@ -74,7 +92,7 @@ describe('where ideas come from', () => {
         'Project Q has the same problem it had in March. The distribution schedule is still the weak point and nothing announced changes that.',
       handle: 'bob',
     });
-    expect(captured.some((idea) => idea.kind === 'opinion')).toBe(true);
+    expect(captured.some((idea) => idea.kind === 'opinion')).toBe(false);
   });
 
   it('does not broadcast a position it has taken once, in passing', async () => {
@@ -156,13 +174,13 @@ describe('not saying the same thing to everybody twice', () => {
     });
   };
 
-  it('offers a subject the account has not just posted about', async () => {
+  it('does not echo a reply as a post even about a subject it has not posted on', async () => {
     const fixture = await createFixture();
     const captured = await holdAndHarvest(
       fixture,
       'Memory updating silently is how an agent quietly gets worse. The Telegram alert is the part I like, because better evidence changes the record.',
     );
-    expect(captured.some((idea) => idea.kind === 'opinion')).toBe(true);
+    expect(captured.some((idea) => idea.kind === 'opinion')).toBe(false);
   });
 
   it('declines a subject the account posted about an hour ago', async () => {

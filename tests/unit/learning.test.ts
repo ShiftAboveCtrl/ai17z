@@ -138,3 +138,19 @@ describe('the control', () => {
     expect(variantFor('job-7', 'RUNNING')).toBe(variantFor('job-7', 'RUNNING'));
   });
 });
+
+describe('what the learner counts as a good outcome', () => {
+  const base = { views: 500, likes: 4, reposts: 0, replies: 20, quotes: 0, bookmarks: 0 };
+
+  it('does not reward spam replies', () => {
+    const flooded = reachOf({ ...base, spamReplies: 20, humanRepliers: 0 })!;
+    const clean = reachOf({ ...base, replies: 0, spamReplies: 0, humanRepliers: 0 })!;
+    expect(flooded).toBeCloseTo(clean, 5);
+  });
+
+  it('values one real conversation above a pile of reactions', () => {
+    const conversation = reachOf({ ...base, likes: 2, replies: 3, humanRepliers: 3 })!;
+    const reactions = reachOf({ ...base, likes: 12, replies: 3, humanRepliers: 0 })!;
+    expect(conversation).toBeGreaterThan(reactions);
+  });
+});
