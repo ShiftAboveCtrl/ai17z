@@ -373,6 +373,7 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
       configs: settings.configs,
       paused,
       audience: 'OWNER',
+      origin: { conversationId: conversation.id, messageId: answer.answers ?? answer.id, text: question, ownerId: conversation.ownerId },
     });
 
     const validated = validateOutput(loop.answer, chatPolicy(policy), null, [persona.biography, persona.customInstructions].join('\n'));

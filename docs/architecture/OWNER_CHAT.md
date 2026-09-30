@@ -82,3 +82,42 @@ a link to the exact setting for each, on the agent's Overview. Not set up is
 its own quiet state and never a fault. Settings can also be found by typing
 what they are called (Ctrl+K), including Social Radar, which lives inside an
 account's session and is addressable as `/settings?account=<id>&focus=radar`.
+
+## Changing an agent from chat
+
+`packages/runtime/src/agentManagement.ts` and `managementCapabilities.ts`;
+migration 0102.
+
+An owner can say "be less formal", "stop posting for today" or "add Solana to
+your topics" and have it happen. The agent never writes its own settings: it
+names one change from the closed list in `CHANGES` through
+`agent.change_setting`, and the engine applies it through the same versioned
+persona, policy and posting repositories the settings screens use.
+
+**Tiers are decided per move.** LOW applies at once and can be undone (tone,
+topics, reply length, a standing instruction, emoji, avoiding a subject,
+pausing, posting less, less automation). CONFIRM waits for the owner's
+Confirm (a new name, allowing an avoided subject, more automation, resuming
+posts, posting more often). NEVER is refused and recorded with where it is
+done instead: money, tokens, wallets and keys, credentials, whether the agent
+may deny being an AI, capability permissions, another agent, deleting itself,
+safety rules. No change kind can reach any of those.
+
+**One agent.** A capability acts on `ctx.agentId`, which the model cannot
+choose, and only in owner chat with the owner message as its origin. In a
+room, `changeTargets` decides before any model runs: a named agent only,
+"both of you" or "everyone" for all, and a change that names nobody gets one
+notice asking which agent, rather than changing everybody. A name before the
+verb ("MEADGod stop posting") is an address, not a question.
+
+**Checked and reversible.** Every write is read back, and one that disagrees
+puts the old value back and records a failure. Undo restores the old value only
+while the setting still holds what the change wrote; Confirm applies only while
+the setting still holds what it held when asked. Both refuse with a sentence
+otherwise, so neither overwrites a later decision.
+
+**History.** `agent_changes` keeps who asked, their words, the conversation,
+the part of the agent, before and after, the read-back, and whether it was
+confirmed, declined, undone or refused. Chat shows each change under the
+answer with Undo or Confirm; the agent page's Changes section lists thirty
+days; `agent.my_changes` answers "what did you change today".

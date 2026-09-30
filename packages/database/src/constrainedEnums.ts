@@ -48,6 +48,7 @@ import { ENGAGEMENT_KINDS, ENGAGEMENT_STATUSES } from './repositories/engagement
 import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
 import { KNOWLEDGE_DOC_KINDS, KNOWLEDGE_SOURCE_KINDS } from './repositories/knowledge';
 import { SPAM_DECIDERS, SPAM_VERDICT_VALUES } from './repositories/spam';
+import { AGENT_CHANGE_RISKS, AGENT_CHANGE_STATUSES, AGENT_CHANGE_SUBSYSTEMS } from './repositories/agentChanges';
 import { CHAT_AUTHOR_KINDS, CHAT_KINDS, CHAT_MESSAGE_STATUSES, CHAT_SAVE_TARGETS } from './repositories/chat';
 
 /**
@@ -439,6 +440,10 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'inbound_spam', column: 'verdict', values: SPAM_VERDICT_VALUES },
   { table: 'inbound_spam', column: 'classifier_verdict', values: SPAM_VERDICT_VALUES },
   { table: 'inbound_spam', column: 'decided_by', values: SPAM_DECIDERS },
+  // Changes asked for in owner chat (migration 0102).
+  { table: 'agent_changes', column: 'subsystem', values: AGENT_CHANGE_SUBSYSTEMS },
+  { table: 'agent_changes', column: 'risk', values: AGENT_CHANGE_RISKS },
+  { table: 'agent_changes', column: 'status', values: AGENT_CHANGE_STATUSES },
 ];
 
 /** Reads the vocabulary a CHECK constraint actually enforces, from the catalogue. */

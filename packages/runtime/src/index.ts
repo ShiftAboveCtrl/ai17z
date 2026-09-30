@@ -141,5 +141,7 @@ export * from './postQuality';
 export * from './learnedStateReview';
 export * from './spam';
 export * from './spamControls';
+export * from './agentManagement';
+export * from './managementCapabilities';
 export * from './socialTests';
 export * from './publicSelf';

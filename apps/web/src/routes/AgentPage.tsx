@@ -31,6 +31,7 @@ import { ToolsSection } from './sections/ToolsSection';
 import { CapabilitiesSection } from './sections/CapabilitiesSection';
 import { PoliciesSection } from './sections/PoliciesSection';
 import { ActivitySection } from './sections/ActivitySection';
+import { ChangesSection } from './sections/ChangesSection';
 import { SetupCheckPanel } from '@app/components/SetupCheckPanel';
 import { useViewMode } from '@app/lib/viewMode';
 import { EasyAgentView } from './EasyAgentView';
@@ -55,7 +56,7 @@ const AgentPortrait = lazy(() => import('@app/components/AgentPortrait').then((m
  * scrolls to it, so nothing anybody bookmarked or linked breaks.
  */
 const AREAS = [
-  { id: 'overview', label: 'Overview', blurb: 'How it is doing, and anything that needs you.', sections: ['activity'] },
+  { id: 'overview', label: 'Overview', blurb: 'How it is doing, and anything that needs you.', sections: ['activity', 'changes'] },
   { id: 'character', label: 'Character', blurb: 'Who it is, and how it writes.', sections: ['identity', 'voice', 'beliefs'] },
   { id: 'reach', label: 'Reach', blurb: 'Where it speaks, what it thinks with, what it can use.', sections: ['accounts', 'intelligence', 'capabilities', 'tools'] },
   { id: 'memory', label: 'Memory', blurb: 'What it knows, and who it knows.', sections: ['memory', 'knowledge', 'relationships', 'learned'] },
@@ -492,6 +493,7 @@ export function AgentPage() {
               <SetupCheckPanel agentId={agent.id} />
             </div>
             <ActivitySection index={1} agentId={agent.id} />
+            <ChangesSection index={2} agentId={agent.id} />
           </>
         )}
 
