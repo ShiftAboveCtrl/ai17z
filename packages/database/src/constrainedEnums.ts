@@ -49,6 +49,7 @@ import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
 import { KNOWLEDGE_DOC_KINDS, KNOWLEDGE_SOURCE_KINDS } from './repositories/knowledge';
 import { SPAM_DECIDERS, SPAM_VERDICT_VALUES } from './repositories/spam';
 import { AGENT_CHANGE_RISKS, AGENT_CHANGE_STATUSES, AGENT_CHANGE_SUBSYSTEMS } from './repositories/agentChanges';
+import { WALLET_FAMILY_VALUES, WALLET_INTENT_KIND_VALUES, WALLET_INTENT_STATUS_VALUES } from './repositories/wallets';
 import { CHAT_AUTHOR_KINDS, CHAT_KINDS, CHAT_MESSAGE_STATUSES, CHAT_SAVE_TARGETS } from './repositories/chat';
 
 /**
@@ -444,6 +445,10 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'agent_changes', column: 'subsystem', values: AGENT_CHANGE_SUBSYSTEMS },
   { table: 'agent_changes', column: 'risk', values: AGENT_CHANGE_RISKS },
   { table: 'agent_changes', column: 'status', values: AGENT_CHANGE_STATUSES },
+  // Agent wallets (migration 0103).
+  { table: 'agent_wallets', column: 'family', values: WALLET_FAMILY_VALUES },
+  { table: 'wallet_intents', column: 'kind', values: WALLET_INTENT_KIND_VALUES },
+  { table: 'wallet_intents', column: 'status', values: WALLET_INTENT_STATUS_VALUES },
 ];
 
 /** Reads the vocabulary a CHECK constraint actually enforces, from the catalogue. */

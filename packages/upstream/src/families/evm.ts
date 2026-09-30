@@ -87,6 +87,8 @@ export const EVM_CHAINS = {
   polygon: 137,
   bnb: 56,
   avalanche: 43114,
+  // Robinhood's own support article, and eth_chainId read back as 0x1237 on 2026-09-30.
+  robinhood: 4663,
 } as const;
 export type EvmChain = keyof typeof EVM_CHAINS;
 
@@ -260,6 +262,12 @@ const NODES: NodeOptions[] = [
   // has not been checked would be worse than having one that has.
   { chain: 'polygon', name: 'publicnode', url: 'https://polygon-bor-rpc.publicnode.com', rank: 1, perSecondOurs: 5 },
   { chain: 'bnb', name: 'publicnode', url: 'https://bsc-rpc.publicnode.com', rank: 1, perSecondOurs: 5 },
+  // BNB Chain's own documentation lists this node; it answered 0x38 on 2026-09-30.
+  { chain: 'bnb', name: 'official', url: 'https://bsc-dataseed.bnbchain.org', rank: 2, perSecondOurs: 3 },
+  // Robinhood's documented public endpoint, the only one it publishes. Its docs
+  // call it rate limited and meant for wallets and getting started, so AI17Z
+  // asks it gently and has no second source rather than an unchecked one.
+  { chain: 'robinhood', name: 'official', url: 'https://rpc.mainnet.chain.robinhood.com', rank: 1, perSecondOurs: 2 },
   {
     chain: 'avalanche',
     name: 'publicnode',

@@ -228,7 +228,28 @@ const NEVER_TRACKED: { pattern: RegExp; problem: string }[] = [
     problem: 'A local assistant guidance file. The public engineering guidance is docs/ENGINEERING.md.',
   },
   { pattern: /(^|\/)\.claude\//, problem: "One developer's assistant tooling, not part of the product." },
+  {
+    pattern: /(^|\/)(?:AI17Z Plugin Development|ai17z-wallet-adapter)(\/|$)/i,
+    problem: 'Private first-party Plugin source, which is never published.',
+  },
 ];
+
+/**
+ * The marker every file of a private first-party Plugin carries.
+ *
+ * Built from parts so this file, and the tests that exercise it, never carry
+ * the marker themselves: a scanner that matched its own source would have to
+ * be excluded, and an exclusion is where a real leak hides.
+ */
+export const PRIVATE_SOURCE_MARKER = ['AI17Z', 'PRIVATE', 'PLUGIN'].join('-');
+
+/** A private Plugin's source, recognised by its marker wherever it was copied to. */
+export function findPrivateSource(file: FileToCheck): Finding[] {
+  const index = file.content.indexOf(PRIVATE_SOURCE_MARKER);
+  if (index < 0) return [];
+  const line = file.content.slice(0, index).split('\n').length;
+  return [{ file: file.path, line, problem: 'Private first-party Plugin source, which is never published.', evidence: PRIVATE_SOURCE_MARKER }];
+}
 
 export function findFilesThatShouldNotBeTracked(paths: string[]): Finding[] {
   const findings: Finding[] = [];
@@ -251,5 +272,6 @@ export function checkRelease(files: FileToCheck[], paths: string[]): Finding[] {
     ...files.flatMap(findSecrets),
     ...files.flatMap(findPersonalDetails),
     ...files.flatMap(findEncodingProblems),
+    ...files.flatMap(findPrivateSource),
   ];
 }

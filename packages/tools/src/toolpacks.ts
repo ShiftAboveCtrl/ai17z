@@ -99,6 +99,13 @@ export const TOOLPACKS: Toolpack[] = [
     ],
   },
   {
+    id: 'wallet',
+    name: 'Wallet',
+    summary:
+      "Let the agent read its own wallet: its address, what it holds, recent activity. It can never send, sign or approve anything; you do that yourself, one transaction at a time.",
+    prefixes: ['wallet.'],
+  },
+  {
     id: 'reference',
     name: 'Reference & Knowledge',
     summary:

@@ -140,6 +140,7 @@ describe('which chain a node is actually serving', () => {
     expect(EVM_CHAINS.polygon).toBe(137);
     expect(EVM_CHAINS.bnb).toBe(56);
     expect(EVM_CHAINS.avalanche).toBe(43114);
+    expect(EVM_CHAINS.robinhood).toBe(4663);
   });
 
   it('gives each chain its own family, so one cannot answer for another', () => {
