@@ -45,6 +45,7 @@ import { defaultPipelineDraft } from './defaultPipeline';
 import { registerXCapabilities } from './xCapabilities';
 import { registerGithubCapabilities } from './githubCapabilities';
 import { registerIntrospectionCapabilities } from './introspectionCapabilities';
+import { registerManagementCapabilities } from './managementCapabilities';
 
 const log = createLogger('bootstrap');
 
@@ -77,6 +78,7 @@ export async function bootstrapRuntime(): Promise<void> {
   // What an agent can find out about itself, for its owner only. Never offered
   // in a public conversation; see the audience on each one.
   registerIntrospectionCapabilities();
+  registerManagementCapabilities();
 
   // Plugins an owner installed, registered the same way and into the same
   // registry as everything above. There is no second invocation engine and no

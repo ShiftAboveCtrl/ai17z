@@ -222,6 +222,17 @@ export async function postOwnerMessage(input: {
   });
 }
 
+/** AI17Z saying something about the conversation itself, with no agent behind it. */
+export async function postNotice(conversationId: string, content: string): Promise<ChatMessage> {
+  return mapRow<ChatMessage>(
+    await queryOne(
+      `INSERT INTO chat_messages (conversation_id, author_kind, content, status)
+       VALUES ($1, 'NOTICE', $2, 'DONE') RETURNING ${MESSAGE_COLUMNS}`,
+      [conversationId, content],
+    ),
+  )!;
+}
+
 /** Asks one agent to answer an owner message again, after a failure. */
 export async function requeueAnswer(ownerId: string, answerId: string): Promise<ChatMessage | null> {
   return mapRow<ChatMessage>(

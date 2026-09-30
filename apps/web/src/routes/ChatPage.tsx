@@ -101,7 +101,86 @@ const CAPABILITY_WORDS: Record<string, string> = {
   'agent.explain_silence': 'Read why it stayed silent',
   'agent.owner_decisions': 'Read your decisions',
   'agent.recent_changes': 'Read recent setup changes',
+  'agent.change_setting': 'Changed one of its own settings',
+  'agent.undo_change': 'Undid one of its own changes',
+  'agent.cannot_change': 'Declined something chat cannot change',
+  'agent.my_changes': 'Read what it changed from chat',
 };
+
+interface ChangeOutput {
+  changeId: string;
+  status: string;
+  risk: string;
+  summary: string;
+  detail: string;
+}
+
+const CHANGE_IDS = new Set(['agent.change_setting', 'agent.undo_change', 'agent.cannot_change']);
+
+/** The changes an answer made or asked about, from the capabilities it used. */
+function changesIn(used: NonNullable<Evidence['capabilities']>): ChangeOutput[] {
+  return used
+    .filter((c) => CHANGE_IDS.has(c.id) && c.outcome === 'SUCCEEDED' && c.output && typeof (c.output as ChangeOutput).changeId === 'string')
+    .map((c) => c.output as ChangeOutput);
+}
+
+const CHANGE_LABEL: Record<string, string> = {
+  APPLIED: 'Changed',
+  AWAITING_CONFIRMATION: 'Waiting for you',
+  DECLINED: 'Left as it was',
+  UNDONE: 'Undone',
+  REFUSED: 'Not changed from chat',
+  FAILED: 'Not changed',
+};
+
+/**
+ * One change an agent made to itself, with the one thing an owner may want to
+ * do about it: undo it, or confirm or decline one that is waiting.
+ */
+function ChangeCard({ change }: { change: ChangeOutput }) {
+  const [status, setStatus] = useState(change.status);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const act = async (verb: 'undo' | 'confirm' | 'decline') => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const out = await post<{ change: { status: string }; message: string }>(`/api/agent-changes/${change.changeId}/${verb}`, {});
+      setStatus(out.change.status);
+      setNote(out.message);
+    } catch (error) {
+      setNote(error instanceof ApiError ? error.message : 'That did not go through. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-2 rounded-lg border border-ink-line bg-ink-panel/40 px-3.5 py-2.5 text-sm">
+      <p className="text-[11px] uppercase tracking-wide text-bone-faint">{CHANGE_LABEL[status] ?? status}</p>
+      <p className="mt-0.5 break-words text-bone">{change.summary}</p>
+      {note && <p className="mt-1 break-words text-xs text-bone-dim">{note}</p>}
+      <div className="mt-2 flex flex-wrap gap-3">
+        {status === 'APPLIED' && (
+          <button type="button" className="btn-quiet px-0 text-xs" disabled={busy} onClick={() => void act('undo')}>
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+            Undo
+          </button>
+        )}
+        {status === 'AWAITING_CONFIRMATION' && (
+          <>
+            <button type="button" className="btn-primary px-3 py-1 text-xs" disabled={busy} onClick={() => void act('confirm')}>
+              Confirm
+            </button>
+            <button type="button" className="btn-quiet px-0 text-xs" disabled={busy} onClick={() => void act('decline')}>
+              Leave it as it is
+            </button>
+          </>
+        )}
+        {busy && <Spinner />}
+      </div>
+    </div>
+  );
+}
 
 const READY_LABEL: Record<Readiness['state'], string> = {
   HEALTHY: 'Working',
@@ -570,6 +649,7 @@ function MessageItem({
           <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{message.content}</p>
         </div>
       )}
+      {!busy && !owner && message.status === 'DONE' && changesIn(used).map((c) => <ChangeCard key={c.changeId} change={c} />)}
       {!busy && message.status === 'DONE' && (
         <div className={`mt-1 flex flex-wrap gap-3 ${owner ? 'justify-end' : ''}`}>
           {!owner && hasEvidence && (

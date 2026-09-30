@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ForbiddenError, NotFoundError, ValidationError } from '@xbam/shared';
 import { agents as agentsRepo, chat as chatRepo, type UserRow } from '@xbam/database';
 import { collectDiagnostics } from '@xbam/tools';
-import { addressedAgents, saveFromChat } from '@xbam/runtime';
+import { addressedAgents, changeTargets, changesSince, confirmChange, declineChange, saveFromChat, undoChange } from '@xbam/runtime';
 import { handler, params, parseBody, parseQuery, requireUser } from '../http';
 
 /**
@@ -159,9 +159,16 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       const body = parseBody(Post, request);
       const participants = await chatRepo.participants(conversation.id);
       if (participants.length === 0) throw new ValidationError('Nobody is left in this conversation to answer.');
-      const answerers = addressedAgents(body.content, participants, body.to ?? null);
-      if (answerers.length === 0) throw new ValidationError('None of the agents named are in this conversation.');
-      return chatRepo.postOwnerMessage({ conversationId: conversation.id, content: body.content, answerers });
+      const ordinary = addressedAgents(body.content, participants, body.to ?? null);
+      // A change nobody was named for is asked about once, never applied to everybody.
+      const targeting = changeTargets(body.content, participants, body.to ?? null, ordinary);
+      if (targeting.clarification) {
+        const posted = await chatRepo.postOwnerMessage({ conversationId: conversation.id, content: body.content, answerers: [] });
+        const notice = await chatRepo.postNotice(conversation.id, targeting.clarification);
+        return { ...posted, notice };
+      }
+      if (targeting.answerers.length === 0) throw new ValidationError('None of the agents named are in this conversation.');
+      return chatRepo.postOwnerMessage({ conversationId: conversation.id, content: body.content, answerers: targeting.answerers });
     }),
   );
 
@@ -183,6 +190,31 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       return { message };
     }),
   );
+
+  // Changes an agent made to itself because its owner asked in chat.
+  app.get(
+    '/api/agents/:id/changes',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const query = parseQuery(z.object({ days: z.coerce.number().int().min(1).max(90).default(7) }), request);
+      const changes = await changesSince(params(request).id!, user.id, new Date(Date.now() - query.days * 86_400_000).toISOString());
+      return { changes };
+    }),
+  );
+
+  for (const [verb, act] of [
+    ['confirm', confirmChange],
+    ['decline', declineChange],
+    ['undo', undoChange],
+  ] as const) {
+    app.post(
+      `/api/agent-changes/:id/${verb}`,
+      handler(async (request) => {
+        const user = await requireUser(request);
+        return act(params(request).id!, user.id);
+      }),
+    );
+  }
 
   app.post(
     '/api/chat/conversations/:id/saves',

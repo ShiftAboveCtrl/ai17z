@@ -70,6 +70,8 @@ export interface LoopOptions {
    * can read, and is never shown what an OWNER capability returns.
    */
   audience?: 'PUBLIC' | 'OWNER';
+  /** The owner message being answered, in owner chat. Never set anywhere else. */
+  origin?: { conversationId: string; messageId: string; text: string; ownerId: string | null } | null;
   /** Per-agent capability configuration, by capability id. */
   configs?: Map<string, Record<string, unknown>>;
   maxSteps?: number;
@@ -236,6 +238,7 @@ export async function runCapabilityLoop(options: LoopOptions): Promise<LoopResul
         accountId: options.accountId,
         config: options.configs?.get(turn.call.id) ?? {},
         audience,
+        origin: audience === 'OWNER' ? (options.origin ?? null) : null,
         logger,
       },
       permission: {

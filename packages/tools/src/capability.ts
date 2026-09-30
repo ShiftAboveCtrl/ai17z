@@ -36,6 +36,11 @@ export interface CapabilityContext {
    * else, including absent, is a conversation somebody else can read.
    */
   audience?: CapabilityAudience;
+  /**
+   * The owner message this invocation answers, in owner chat only. A change to
+   * the agent records it, so the history says who asked and in what words.
+   */
+  origin?: { conversationId: string; messageId: string; text: string; ownerId: string | null } | null;
   logger: Logger;
   /** Cancelled when the invocation's own timeout expires. */
   signal: AbortSignal;
