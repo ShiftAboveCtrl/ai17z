@@ -101,8 +101,17 @@ export function spamFeatures(text: string): SpamFeatures {
     A post with no words is identified by what it carried instead: its
     hashtags and how many links. "#ai17zoss @grok <two links>" from six
     accounts is one campaign; the handles they tagged are not part of it.
+    With no hashtag either, nothing is shared but the shape, and a shape is
+    not a text: on a live installation three unrelated link-only posts were
+    grouped as a campaign, and so would three people each sending a picture.
+    Such a post is identified by its own links, which X makes unique per post.
   */
-  const basis = words > 0 ? residue : `no-words|${[...new Set(hashtags)].sort().join(',')}|links:${Math.min(links, 3)}`;
+  const basis =
+    words > 0
+      ? residue
+      : hashtags.length > 0
+        ? `no-words|${[...new Set(hashtags)].sort().join(',')}|links:${Math.min(links, 3)}`
+        : `links-only|${(text.match(URL) ?? []).sort().join(' ')}`;
   const fingerprint = createHash('sha256').update(basis).digest('hex').slice(0, 32);
   return { residue, fingerprint, mentions, links, hashtags, words, scamTerms };
 }
