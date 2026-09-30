@@ -1,5 +1,7 @@
+import { useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import type { MentionRow, MentionState } from '@app/lib/types';
+import { ApiError, post } from '@app/lib/api';
 import { timeAgo } from '@app/lib/format';
 import { StatusDot } from './ui';
 
@@ -18,6 +20,7 @@ const STATE: Record<MentionState, { label: string; tone: 'live' | 'wait' | 'fail
   FAILED: { label: 'Failed', tone: 'fail' },
   DRY_RUN: { label: 'Rehearsed', tone: 'idle' },
   NOT_ACTIONED: { label: 'Not picked up', tone: 'idle' },
+  FILTERED: { label: 'Filtered as spam', tone: 'idle' },
 };
 
 /** Which monitor saw it, in words rather than column names. */
@@ -31,7 +34,70 @@ const MONITOR: Record<string, string> = {
   persona_discovery: 'its own search',
 };
 
-export function MentionCard({ mention, showAgent = false }: { mention: MentionRow; showAgent?: boolean }) {
+/**
+ * Spam or not, for this one post, and whether to keep its author out of the
+ * agent's attention. Marking spam applies to this post only; it never blocks
+ * anybody the post mentioned.
+ */
+function SpamControls({ mention, onChanged }: { mention: MentionRow; onChanged?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const act = (run: () => Promise<unknown>, done: string) => async (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setBusy(true);
+    setNote(null);
+    try {
+      await run();
+      setNote(done);
+      onChanged?.();
+    } catch (e) {
+      setNote(e instanceof ApiError ? e.message : 'That did not work.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const isSpam = mention.state === 'FILTERED' || mention.spamVerdict === 'SPAM';
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
+      {isSpam ? (
+        <button
+          type="button"
+          className="btn-quiet px-0"
+          disabled={busy}
+          onClick={act(() => post(`/api/events/${mention.eventId}/spam`, { label: 'NOT_SPAM' }), 'Marked not spam, and offered to the agent.')}
+        >
+          Not spam
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn-quiet px-0"
+          disabled={busy}
+          onClick={act(() => post(`/api/events/${mention.eventId}/spam`, { label: 'SPAM' }), 'Marked as spam. Only this post.')}
+        >
+          Mark as spam
+        </button>
+      )}
+      {mention.accountId && mention.authorHandle && (
+        <button
+          type="button"
+          className="btn-quiet px-0"
+          disabled={busy}
+          onClick={act(
+            () => post(`/api/accounts/${mention.accountId}/spam-actors`, { handle: mention.authorHandle, muted: true }),
+            `@${mention.authorHandle} is muted from the agent's attention.`,
+          )}
+        >
+          Mute @{mention.authorHandle}
+        </button>
+      )}
+      {note && <span className="text-bone-faint">{note}</span>}
+    </div>
+  );
+}
+
+export function MentionCard({ mention, showAgent = false, onChanged }: { mention: MentionRow; showAgent?: boolean; onChanged?: () => void }) {
   const state = STATE[mention.state];
   // Somebody continuing a conversation and somebody arriving for the first time
   // need completely different reading, and the difference is not in the text.
@@ -93,6 +159,13 @@ export function MentionCard({ mention, showAgent = false }: { mention: MentionRo
         <p className="mt-4 break-words text-sm text-bone-faint">{mention.decision.reason}</p>
       )}
 
+      {mention.state === 'FILTERED' && (
+        <p className="mt-4 break-words text-sm text-bone-faint">
+          Kept out of the agent's attention: {(mention.spamReasons ?? []).join(' ') || 'it looked like spam.'} No thread was read and
+          no model was asked.
+        </p>
+      )}
+
       {mention.state === 'NOT_ACTIONED' && (
         <p className="mt-4 break-words text-sm text-bone-faint">
           Recorded, but nothing was queued for it. Usually the agent is monitor-only, or the account link is not
@@ -105,6 +178,7 @@ export function MentionCard({ mention, showAgent = false }: { mention: MentionRo
           ? `found by ${mention.foundBy.map((k) => MONITOR[k] ?? k).join(', ')}`
           : 'no monitor recorded'}
       </p>
+      <SpamControls mention={mention} onChanged={onChanged} />
     </>
   );
 

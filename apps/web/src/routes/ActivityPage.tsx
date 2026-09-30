@@ -9,6 +9,7 @@ import { Explain } from '@app/components/Explain';
 import { timeAgo } from '@app/lib/format';
 import { JobCard } from '@app/components/JobCard';
 import { MentionCard } from '@app/components/MentionCard';
+import { SpamPanel } from '@app/components/SpamPanel';
 
 /**
  * Two questions, not one.
@@ -67,6 +68,7 @@ const MENTION_FILTERS: { key: MentionState | 'all'; label: string }[] = [
   { key: 'NEEDS_REVIEW', label: 'Waiting for you' },
   { key: 'DECLINED', label: 'Left alone' },
   { key: 'NOT_ACTIONED', label: 'Not picked up' },
+  { key: 'FILTERED', label: 'Filtered as spam' },
   { key: 'FAILED', label: 'Failed' },
 ];
 
@@ -404,12 +406,15 @@ export function ActivityPage() {
             }
           />
         ) : (
+          <div>
+          <SpamPanel />
           <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-2">
             {mentions.data?.items.map((mention, index) => (
               <FadeIn key={`${mention.eventId}:${mention.agentId ?? 'unassigned'}`} delay={Math.min(index * 0.04, 0.3)}>
-                <MentionCard mention={mention} showAgent={!agentId && manyAgents} />
+                <MentionCard mention={mention} showAgent={!agentId && manyAgents} onChanged={() => mentions.reload()} />
               </FadeIn>
             ))}
+          </div>
           </div>
         )
       ) : jobs.loading && !jobs.data ? (

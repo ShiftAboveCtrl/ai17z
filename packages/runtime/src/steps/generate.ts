@@ -11,6 +11,7 @@ import {
   describeVersion,
 } from '@xbam/shared';
 import {
+  content as contentRepo,
   jobs as jobsRepo,
   memories as memoriesRepo,
   observability,
@@ -47,6 +48,8 @@ import { activePreferences, variantFor } from '../learning';
 const LENGTH_TARGETS = { SHORT: 45, MEDIUM: 100, LONG: 170 } as const;
 import { asksAboutTheAgent, questionsIn } from '../research';
 import { removeEmDashes } from '../punctuation';
+import { judgePost } from '../postQuality';
+import { publicSelfFacts } from '../publicSelf';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -270,6 +273,7 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     }
   }
 
+  const aboutSelf = questionsIn(context.incomingText ?? '').some((question) => asksAboutTheAgent(question));
   const prompt = assemblePrompt({
     layers: template.layers,
     templateKey: template.templateKey,
@@ -288,7 +292,8 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     habits,
     usualLength,
     ...(leaning ? { leaning } : {}),
-    aboutSelf: questionsIn(context.incomingText ?? '').some((question) => asksAboutTheAgent(question)),
+    aboutSelf,
+    ...(aboutSelf ? { selfFacts: await publicSelfFacts(bundle.agent.id).catch(() => []) } : {}),
     evidence,
     support,
     ...(variant ? { experiment: { label: variant.label, instruction: variant.instruction } } : {}),
@@ -600,12 +605,40 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
  * better than silently discarding it, so REVIEW is the default outcome for
  * anything that fails.
  */
-export async function stepQualityGate(bundle: JobBundle): Promise<void> {
+export async function stepQualityGate(bundle: JobBundle): Promise<'next' | 'silent'> {
   const { job, policy } = bundle;
-  if (!policy.voice.enabled) return;
+  /*
+    An original post has to be worth interrupting everybody for, which is a
+    different question from whether it sounds right. Asked first, and answered
+    with silence rather than review: an owner asked to approve a post the
+    agent had nothing to say in is being asked to do its job for it. A person
+    who already approved it has made the judgement.
+  */
+  if (job.actionType === 'POST' && !job.approvedAt) {
+    const draft = (job.validatedOutput ?? job.generatedOutput ?? '').trim();
+    const verdict = judgePost({
+      draft,
+      source: bundle.event.text ?? '',
+      recentPosts: await contentRepo.recentPosts(bundle.agent.id, 12).catch(() => []),
+      selfNames: [bundle.persona.displayName, bundle.agent.name, bundle.account?.handle ?? '', 'AI17Z'].filter(Boolean),
+    });
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'QUALITY_SCORED',
+      level: verdict.post ? 'info' : 'warn',
+      message: verdict.post ? 'Worth posting.' : `Not worth posting: ${verdict.reasons.join(' ')}`,
+      data: { post: verdict.post, reasons: verdict.reasons, factors: verdict.factors },
+    });
+    if (!verdict.post) {
+      await jobsRepo.updateJob(job.id, { lastError: `Not worth posting: ${verdict.reasons.join(' ')}` });
+      return 'silent';
+    }
+  }
+  if (!policy.voice.enabled) return 'next';
 
   const report = (job.resolvedContext?.meta as { quality?: QualityReport } | undefined)?.quality;
-  if (!report) return;
+  if (!report) return 'next';
 
   await observability.emitTrace({
     jobId: job.id,
@@ -692,10 +725,11 @@ export async function stepQualityGate(bundle: JobBundle): Promise<void> {
         message: `Sent anyway: you approved it. ${report.reason}`,
         data: { outcome: report.outcome, overriddenByOwner: true, approvedAt: job.approvedAt },
       });
-      return;
+      return 'next';
     }
     throw PipelineError.review('quality_gate', report.reason);
   }
+  return 'next';
 }
 
 /**

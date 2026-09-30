@@ -34,7 +34,7 @@ const MentionFilters = Pagination.extend({
   agentId: z.string().uuid().optional(),
   accountId: z.string().uuid().optional(),
   state: z
-    .enum(['REPLIED', 'WORKING', 'NEEDS_REVIEW', 'DECLINED', 'FAILED', 'DRY_RUN', 'NOT_ACTIONED'])
+    .enum(['REPLIED', 'WORKING', 'NEEDS_REVIEW', 'DECLINED', 'FAILED', 'DRY_RUN', 'NOT_ACTIONED', 'FILTERED'])
     .optional(),
   /**
    * Only what somebody addressed to the agent.

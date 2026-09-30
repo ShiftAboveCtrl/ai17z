@@ -93,10 +93,12 @@ export type MentionState =
   | 'DECLINED'
   | 'FAILED'
   | 'DRY_RUN'
-  | 'NOT_ACTIONED';
+  | 'NOT_ACTIONED'
+  | 'FILTERED';
 
 export interface MentionRow {
   eventId: string;
+  accountId: string | null;
   type: string;
   authorHandle: string | null;
   authorDisplay: string | null;
@@ -119,6 +121,9 @@ export interface MentionRow {
   threadMessages: number;
   ourTurns: number;
   priorFromPerson: number;
+  spamVerdict: string | null;
+  spamReasons: string[] | null;
+  spamDecidedBy: string | null;
 }
 
 export interface DiagnosticRow {

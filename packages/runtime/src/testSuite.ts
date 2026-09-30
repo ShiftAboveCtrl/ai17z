@@ -17,11 +17,12 @@ import { NotFoundError } from '@xbam/shared';
 import { agents as agentsRepo, foundry as foundryRepo, jobs as jobsRepo, research as researchRepo, testSuites, type TestCaseRecord } from '@xbam/database';
 import { behaviouralTests, type BehaviouralTest } from './foundry';
 import { explainRehearsal, rehearse } from './rehearse';
+import { socialVoiceTests } from './socialTests';
 
 export type TestVerdict = 'PASS' | 'REVIEW' | 'SILENT' | 'FAILED' | 'RUNNING';
 
 /** Categories whose answers need a person to judge the facts. */
-const NEEDS_READING = new Set(['Technical misinformation', 'Live market fact', 'Long technical question', 'Version confusion']);
+const NEEDS_READING = new Set(['Technical misinformation', 'Live market fact', 'Long technical question', 'Version confusion', 'AI news', 'Relevant headline', 'What it learned']);
 
 export interface JudgedCase {
   id: string;
@@ -93,7 +94,11 @@ async function casesFor(agentId: string, foundryRunId: string | null): Promise<{
 
 /** Starts a suite: one rehearsal per case, each from an author of its own so no case trips another's limits. */
 export async function startTestSuite(input: { agentId: string; requestedBy: string | null; foundryRunId?: string | null }) {
-  const { runId, tests } = await casesFor(input.agentId, input.foundryRunId ?? null);
+  const found = await casesFor(input.agentId, input.foundryRunId ?? null);
+  const runId = found.runId;
+  // The setup's own situations, then the everyday ones every social agent meets.
+  const ids = new Set(found.tests.map((t) => t.id));
+  const tests = [...found.tests, ...socialVoiceTests().filter((t) => !ids.has(t.id))];
   if (tests.length === 0) throw new NotFoundError('Anything to test');
   const cases: TestCaseRecord[] = [];
   for (const test of tests) {

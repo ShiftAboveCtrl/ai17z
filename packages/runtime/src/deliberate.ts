@@ -664,6 +664,17 @@ export async function formIntentions(agentId: string, now: Date = new Date()): P
     if (!['IDEA', 'LESSON', 'INTEREST', 'HYPOTHESIS'].includes(item.kind)) continue;
     // Anything still being investigated is not ready to be said out loud.
     if (item.confidence < 0.5) continue;
+    /*
+      Only what the agent concluded, never what it saw.
+
+      An item observed on X carries the other person's words as its summary.
+      Queued as an idea, somebody else's post became this agent's post: on
+      ai17z-main a user's promotional post ("Keep your X account active with
+      your own agent for free using @ai17zOS") was posted back as the agent's
+      own opinion. What reflection concluded from observations is the agent's
+      to say; the observations themselves are not.
+    */
+    if (!item.origin.startsWith('REFLECT')) continue;
 
     const summary = item.summary.trim();
     if (summary.length < 30) continue;

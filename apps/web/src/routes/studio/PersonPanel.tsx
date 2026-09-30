@@ -91,6 +91,7 @@ const STATES: Record<string, string> = {
   WORKING: 'Being worked on',
   FAILED: 'Failed',
   NOT_ACTIONED: 'Not answered',
+  FILTERED: 'Filtered as spam',
 };
 
 function when(iso: string | null): string {

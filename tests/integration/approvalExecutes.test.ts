@@ -103,7 +103,7 @@ describe('an approved job does not bounce straight back to review', () => {
 
     const approved = await loadJobBundle(await jobsRepo.requireJob(jobId));
     expect(approved.job.approvedAt).not.toBeNull();
-    await expect(stepQualityGate(approved), 'an approved job must not be handed back').resolves.toBeUndefined();
+    await expect(stepQualityGate(approved), 'an approved job must not be handed back').resolves.toBe('next');
     expect(agentId).toBeTruthy();
   }, 60_000);
 

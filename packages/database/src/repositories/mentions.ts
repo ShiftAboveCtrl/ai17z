@@ -34,10 +34,13 @@ export type MentionState =
    * Recorded, but no work was ever created for it: the agent is monitor-only,
    * the link is not triggered by this event type, or nothing is linked at all.
    */
-  | 'NOT_ACTIONED';
+  | 'NOT_ACTIONED'
+  /** Judged spam at ingest and given no work. Kept, visible and correctable. */
+  | 'FILTERED';
 
 export interface MentionRow {
   eventId: string;
+  accountId: string | null;
   type: string;
   authorHandle: string | null;
   authorDisplay: string | null;
@@ -78,6 +81,10 @@ export interface MentionRow {
   ourTurns: number;
   /** Posts from this person the agent has seen before this one. */
   priorFromPerson: number;
+  /** The spam verdict at ingest, when the post was screened. */
+  spamVerdict: string | null;
+  spamReasons: string[] | null;
+  spamDecidedBy: string | null;
 }
 
 /**
@@ -155,6 +162,7 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
          JOIN agent_accounts aa ON aa.account_id = e.account_id
      )
      SELECT e.id                       AS event_id,
+            e.account_id               AS account_id,
             e.type,
             e.remote_author_handle     AS author_handle,
             e.remote_author_display    AS author_display,
@@ -175,8 +183,12 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
             j.conversation_id,
             COALESCE(m.total, 0)       AS thread_messages,
             COALESCE(m.ours, 0)        AS our_turns,
-            COALESCE(p.seen, 0)        AS prior_from_person
+            COALESCE(p.seen, 0)        AS prior_from_person,
+            sp.verdict                 AS spam_verdict,
+            sp.reasons                 AS spam_reasons,
+            sp.decided_by              AS spam_decided_by
        FROM events e
+       LEFT JOIN inbound_spam sp ON sp.event_id = e.id
        LEFT JOIN found f ON f.event_id = e.id
        LEFT JOIN subjects s ON s.event_id = e.id
        LEFT JOIN latest_job j ON j.event_id = e.id AND j.agent_id = s.agent_id
@@ -248,6 +260,7 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
           rows.
         */
         AND ($6::text IS NULL OR $6 = CASE
+          WHEN j.status IS NULL AND sp.verdict = 'SPAM' THEN 'FILTERED'
           WHEN j.status IS NULL THEN 'NOT_ACTIONED'
           WHEN j.status = 'EXECUTED' THEN 'REPLIED'
           WHEN j.status = 'DRY_RUN_COMPLETED' THEN 'DRY_RUN'
@@ -276,7 +289,7 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
   */
   return mapRows<Omit<MentionRow, 'state'>>(rows).map((row) => ({
     ...row,
-    state: stateOf(row.jobStatus),
+    state: stateOf(row.jobStatus, row.spamVerdict),
   }));
 }
 
@@ -288,8 +301,8 @@ export async function listMentions(filter: MentionFilter): Promise<MentionRow[]>
  * know whether they answered this person, and the mapping is here rather than
  * in the query so it can be read.
  */
-export function stateOf(jobStatus: string | null): MentionState {
-  if (!jobStatus) return 'NOT_ACTIONED';
+export function stateOf(jobStatus: string | null, spamVerdict: string | null = null): MentionState {
+  if (!jobStatus) return spamVerdict === 'SPAM' ? 'FILTERED' : 'NOT_ACTIONED';
   switch (jobStatus) {
     case 'EXECUTED':
       return 'REPLIED';
@@ -340,6 +353,7 @@ export async function countMentionStates(filter: MentionFilter): Promise<Record<
          JOIN agent_accounts aa ON aa.account_id = e.account_id
      )
      SELECT CASE
+              WHEN j.status IS NULL AND sp.verdict = 'SPAM' THEN 'FILTERED'
               WHEN j.status IS NULL THEN 'NOT_ACTIONED'
               WHEN j.status = 'EXECUTED' THEN 'REPLIED'
               WHEN j.status = 'DRY_RUN_COMPLETED' THEN 'DRY_RUN'
@@ -350,6 +364,7 @@ export async function countMentionStates(filter: MentionFilter): Promise<Record<
             END AS state,
             count(*)::text AS n
        FROM events e
+       LEFT JOIN inbound_spam sp ON sp.event_id = e.id
        LEFT JOIN subjects s ON s.event_id = e.id
        LEFT JOIN latest_job j ON j.event_id = e.id AND j.agent_id = s.agent_id
       WHERE e.type = ANY ($3::text[])
@@ -377,6 +392,7 @@ export async function countMentionStates(filter: MentionFilter): Promise<Record<
     FAILED: 0,
     DRY_RUN: 0,
     NOT_ACTIONED: 0,
+    FILTERED: 0,
   } as Record<MentionState, number>;
   for (const row of rows) {
     if (row.state in counts) counts[row.state as MentionState] = Number(row.n);

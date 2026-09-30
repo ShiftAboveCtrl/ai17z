@@ -1,5 +1,5 @@
 import { asksAboutTheAgent, createLogger, spokenQuestion, textStandsAlone } from '@xbam/shared';
-import { content as contentRepo, stances as stancesRepo, type IdeaRow } from '@xbam/database';
+import { content as contentRepo, type IdeaRow } from '@xbam/database';
 
 const log = createLogger('content');
 
@@ -19,17 +19,6 @@ const log = createLogger('content');
 /** A question somebody asked that the agent could not answer at the time. */
 const UNANSWERED = /\?\s*$/;
 
-/**
- * How many times a position has to have been taken before it is worth stating
- * on its own.
- *
- * Once, in passing, in a reply, is not a position -- it is an answer. Reading a
- * real backlog, the worst idea in it was "Say more about No DMs", produced from
- * a single operational sentence about not having DMs open. Two pieces of
- * evidence is the difference between something the agent keeps coming back to
- * and something it said once.
- */
-const STANCE_EVIDENCE_FOR_A_POST = 2;
 
 /**
  * Whether a question somebody asked could be the subject of a post.
@@ -46,9 +35,23 @@ const STANCE_EVIDENCE_FOR_A_POST = 2;
  *   listing?" are conversation and support, not topics anybody else was
  *   wondering about
  */
-function couldBeAPost(question: string): boolean {
+function couldBeAPost(question: string, topics: readonly string[]): boolean {
   if (!textStandsAlone(question)) return false;
-  return !asksAboutTheAgent(question);
+  if (asksAboutTheAgent(question)) return false;
+  /*
+    And it has to be about something this agent talks about. "How many SOL to
+    get this mf into the family?" stood alone and was not about the agent, and
+    became a post about the entry fee. A question worth answering for everybody
+    names a subject the agent has something to say on.
+  */
+  const lower = question.toLowerCase();
+  return topics.some((topic) =>
+    topic
+      .toLowerCase()
+      .split(/[^a-z0-9$]+/)
+      .filter((w) => w.length >= 4)
+      .some((w) => lower.includes(w)),
+  );
 }
 
 export interface HarvestInput {
@@ -59,23 +62,10 @@ export interface HarvestInput {
   /** What the agent replied. */
   outgoing: string;
   handle: string | null;
+  /** What this agent talks about, from its persona. A question outside these is not a post. */
+  topics?: readonly string[];
 }
 
-/**
- * How many recent posts count as "lately" for repetition.
- *
- * Twelve is roughly a week for an account that posts once or twice a day, and
- * a subject that has not come up in a week is a subject worth raising again.
- */
-const POSTS_THAT_COUNT_AS_RECENT = 12;
-
-/** Whether the account has already said something about this subject lately. */
-async function postedAboutRecently(agentId: string, subject: string): Promise<boolean> {
-  const needle = subject.trim().toLowerCase();
-  if (needle.length < 3) return false;
-  const posts = await contentRepo.recentPosts(agentId, POSTS_THAT_COUNT_AS_RECENT);
-  return posts.some((post) => post.toLowerCase().includes(needle));
-}
 
 /**
  * Notices whether an exchange left something worth saying later.
@@ -113,7 +103,7 @@ export async function harvestIdeas(input: HarvestInput): Promise<IdeaRow[]> {
   // somebody's tweet. It also made the duplicate check useless: the same
   // question asked twice never compared equal.
   const question = spokenQuestion(input.incoming);
-  if (UNANSWERED.test(question) && input.outgoing.length > 60 && couldBeAPost(question)) {
+  if (UNANSWERED.test(question) && input.outgoing.length > 60 && couldBeAPost(question, input.topics ?? [])) {
     await add(
       'educational',
       `Somebody asked: ${question.slice(0, 200)}`,
@@ -122,33 +112,18 @@ export async function harvestIdeas(input: HarvestInput): Promise<IdeaRow[]> {
     );
   }
 
-  // A position stated in a reply is worth stating on its own, where more than
-  // one person will see it -- once it is actually a position. Said once, in
-  // passing, it is an answer.
-  const stance = await stancesRepo.relevantTo(input.agentId, input.outgoing, 1);
-  const held = stance[0];
-  if (held && Number(held.confidence) >= 0.6 && input.outgoing.length > 80) {
-    const evidence = await stancesRepo.countEvidence(held.id);
-    /*
-      Not a subject the account has just posted about.
+  /*
+    A position the agent stated in a reply is no longer turned into a post.
 
-      The evidence count says the agent keeps coming back to something. It does
-      not say anybody else wants to hear it again. On a live account a
-      conversation about one feature produced four pieces of evidence inside a
-      day, cleared this gate every time, and became three posts in sixteen
-      hours that all said the same thing -- each one derived from a reply the
-      agent had written minutes earlier.
-
-      A reply is to one person and repeating yourself to different people is
-      just answering. A post is to everybody at once, so the same subject twice
-      running is the account being boring in public. Revisiting is allowed once
-      the subject has left the recent window, which is what "new angle" looks
-      like from here.
-    */
-    if (evidence >= STANCE_EVIDENCE_FOR_A_POST && !(await postedAboutRecently(input.agentId, held.subject))) {
-      await add('opinion', `Say more about ${held.subject}: ${held.summary}`, 70);
-    }
-  }
+    It used to be: the stance a reply matched became "Say more about <subject>:
+    <the reply>", scored a flat 70, and the posting engine wrote it up. On
+    ai17z-main that was most of what the account posted. The subjects were
+    sentence openers ("Good", "Better", "The Telegram"), the summary was the
+    reply itself, so each post restated something the agent had just told one
+    person, and a conversation about one feature became three near-identical
+    posts in two days. A post is something new to say to everybody; an echo
+    of a reply is neither.
+  */
 
   if (captured.length > 0) {
     log.info('captured content ideas', { agentId: input.agentId, count: captured.length });
