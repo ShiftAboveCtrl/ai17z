@@ -328,7 +328,9 @@ function renderResearchBlock(research: unknown, mayStillLookUp = false): string 
   lines.push('');
   lines.push(
     'This was looked up a moment ago and is not something you already knew. Use it where it answers the question, ' +
-      'attribute a number if the number matters, and never present any of it as your own knowledge.',
+      'attribute a number if the number matters, and never present any of it as your own knowledge. ' +
+      'Talk about what it says, not about how you looked: do not narrate the lookup or name the tool, and if ' +
+      'something could not be checked, say you are not sure rather than explaining why.',
   );
   return lines.join('\n');
 }

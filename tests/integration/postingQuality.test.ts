@@ -67,6 +67,23 @@ describe('an original post has to be worth posting', () => {
   });
 });
 
+describe('stating its own conclusion', () => {
+  /*
+    Found on ai17z-test: a post that said what reflection had concluded was
+    silenced as an echo of its idea. A conclusion the agent reached is the
+    point of the post.
+  */
+  it('is not an echo', async () => {
+    const thought = 'Most agents on X go quiet the moment their operator logs off, which says more about the setup than the agent.';
+    const { fixture, accountId } = await poster(`mock-fixed:${thought}`);
+    await content.addIdea({ agentId: fixture.agentId, summary: thought, score: 95, source: 'deliberation' });
+    const started = await originatePost({ agentId: fixture.agentId, accountId });
+    await drainJobs();
+    const verdicts = await query<{ message: string }>(`SELECT message FROM trace_events WHERE job_id = $1 AND type = 'QUALITY_SCORED'`, [started.jobId]);
+    expect(verdicts.map((v) => v.message)).toContain('Worth posting.');
+  });
+});
+
 describe('where post ideas come from', () => {
   it('never queues something it only observed, only what it concluded', async () => {
     const fixture = await createFixture();
