@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { useResource } from '@app/lib/hooks';
@@ -47,7 +47,6 @@ function Palette({ onClose }: { onClose: () => void }) {
   const agents = useResource<{ items: AgentListItem[] }>('/api/agents');
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const input = useRef<HTMLInputElement>(null);
 
   const all = useMemo(
     () =>
@@ -63,10 +62,6 @@ function Palette({ onClose }: { onClose: () => void }) {
   const results = useMemo(() => searchDestinations(query, all), [query, all]);
 
   useEffect(() => setActive(0), [query]);
-  useEffect(() => {
-    const timer = window.setTimeout(() => input.current?.focus(), 30);
-    return () => window.clearTimeout(timer);
-  }, []);
 
   const go = (index: number) => {
     const target = results[index];
@@ -95,7 +90,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       </label>
       <input
         id="palette-input"
-        ref={input}
+        data-autofocus
         className="field w-full"
         placeholder="social radar, beliefs, knowledge, browser..."
         value={query}

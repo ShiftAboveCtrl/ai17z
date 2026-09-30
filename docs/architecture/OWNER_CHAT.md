@@ -33,6 +33,23 @@ Response Lab gives. "Why didn't you?" reads the reason ingest recorded in
 **Routed, not dumped.** The shortlist offers these only when the question is
 about the agent, so an ordinary turn pays for no diagnostics.
 
+## Looking things up
+
+A question that depends on something current is looked up exactly as a reply's
+would be: `whatToResearch` decides from the shape of the question, the web is
+searched through the agent's own X account's browser, market data answers a
+ticker or address, and Plugin research sources apply. A question about the
+agent itself is never researched. Only a worker with a browser can search, so
+a turn that needs the web waits for one; with none running, the turn is
+answered without and the answer's evidence says what could not be checked.
+
+## Changing things from chat
+
+Chat does not change settings. Asked to change a belief, switch a Plugin off
+or stop watching something, the agent says where in AI17Z that is done. A
+write from casual conversation is exactly the kind of change an owner cannot
+see happening, and financial actions are never reachable from here at all.
+
 ## Conversation is not memory
 
 Nothing the owner types reaches durable memory unless they press "Remember

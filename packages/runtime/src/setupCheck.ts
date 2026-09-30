@@ -86,13 +86,44 @@ export function settingHref(agentId: string, where: string, accountId?: string |
 
 const fix = (label: string, href: string) => ({ label, href });
 
-/** Whether a topic the agent talks about is named anywhere in what it can read. */
-function covered(topic: string, sources: { name: string; location: string | null; labels?: unknown }[]): boolean {
-  const needle = topic.toLowerCase().replace(/^[$#]/, '');
-  if (needle.length < 3) return true;
-  return sources.some((s) =>
-    [s.name, s.location ?? '', JSON.stringify(s.labels ?? {})].some((text) => text.toLowerCase().includes(needle)),
-  );
+/** Words that name no particular subject, so cannot say whether one is covered. */
+const GENERIC_TOPIC_WORDS = new Set([
+  'agent', 'agents', 'open', 'source', 'community', 'crypto', 'market', 'markets', 'people', 'news', 'things',
+  'building', 'build', 'tech', 'technology', 'life', 'work', 'launch', 'launches', 'token', 'tokens', 'chain',
+]);
+
+/**
+ * Whether a topic the agent talks about is named anywhere in what it can read.
+ *
+ * By its distinctive words: "Pons launchpad" is covered by a source called
+ * PONS. A topic made only of generic words ("open source") names nothing to
+ * look for, so it is never reported as missing a source.
+ */
+export function topicCovered(topic: string, sources: { name: string; location: string | null; labels?: unknown }[]): boolean {
+  const words = topic
+    .toLowerCase()
+    .replace(/^[$#]/, '')
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !GENERIC_TOPIC_WORDS.has(w));
+  if (words.length === 0) return true;
+  const haystack = sources.map((s) => [s.name, s.location ?? '', JSON.stringify(s.labels ?? {})].join(' ').toLowerCase()).join(' ');
+  return words.some((w) => haystack.includes(w));
+}
+
+/**
+ * Work that stopped because it should have: a block the owner set, the
+ * agent's own post, a post that was deleted. Reported, never as a fault.
+ */
+const STOPPED_ON_PURPOSE = /blocked for this agent|belongs to this agent|no longer exists|deleted or is not visible|do not contact/i;
+
+/** Recent failed work, sorted into what is broken, what waits for the owner, and what stopped as it should. */
+export function sortFailures<T extends { status: string; lastError: string | null; lastAt: string }>(failures: T[]): { real: T[]; held: T[]; onPurpose: T[] } {
+  const held = failures.filter((f) => f.status === 'REVIEW_REQUIRED');
+  const onPurpose = failures.filter((f) => f.status !== 'REVIEW_REQUIRED' && STOPPED_ON_PURPOSE.test(f.lastError ?? ''));
+  const real = failures
+    .filter((f) => !held.includes(f) && !onPurpose.includes(f))
+    .sort((a, b) => String(b.lastAt).localeCompare(String(a.lastAt)));
+  return { real, held, onPurpose };
 }
 
 export async function agentSetupCheck(agentId: string, now = Date.now()): Promise<SetupReport> {
@@ -202,7 +233,7 @@ export async function agentSetupCheck(agentId: string, now = Date.now()): Promis
       );
     }
     // What it keeps talking about, with nothing official to read on it.
-    const uncovered = (persona?.topics ?? []).slice(0, 5).filter((topic) => !covered(topic, knowledge));
+    const uncovered = (persona?.topics ?? []).slice(0, 5).filter((topic) => !topicCovered(topic, knowledge));
     if (persona && uncovered.length > 0) {
       checks.push({
         key: 'uncovered',
@@ -356,21 +387,36 @@ export async function agentSetupCheck(agentId: string, now = Date.now()): Promis
 
   // ── Recent errors and response quality ──
   {
-    const total = failures.reduce((a, f) => a + f.count, 0);
-    sections.push({
-      key: 'errors',
-      label: 'Recent errors',
-      checks: [
-        total === 0
-          ? { key: 'failures', state: 'OK', sentence: 'No failed work in the last seven days.', fix: null }
-          : {
-              key: 'failures',
-              state: 'PROBLEM',
-              sentence: `${total} piece${total === 1 ? '' : 's'} of work failed or were held in the last seven days. The most recent: ${(failures[0]?.lastError ?? failures[0]?.status ?? '').slice(0, 160)}`,
-              fix: fix('See the jobs', href('activity')),
-            },
-      ],
-    });
+    const count = (rows: typeof failures) => rows.reduce((a, f) => a + f.count, 0);
+    const { real, held, onPurpose } = sortFailures(failures);
+    const checks: SetupCheck[] = [];
+    checks.push(
+      real.length === 0
+        ? { key: 'failures', state: 'OK', sentence: 'No failed work in the last seven days.', fix: null }
+        : {
+            key: 'failures',
+            state: 'PROBLEM',
+            sentence: `${count(real)} piece${count(real) === 1 ? '' : 's'} of work failed in the last seven days. The most recent: ${(real[0]?.lastError ?? real[0]?.status ?? '').slice(0, 160)}`,
+            fix: fix('See the jobs', href('activity')),
+          },
+    );
+    if (held.length > 0) {
+      checks.push({
+        key: 'held',
+        state: 'ATTENTION',
+        sentence: `${count(held)} ${count(held) === 1 ? 'reply is' : 'replies are'} waiting for you to review.`,
+        fix: fix('Review them', href('activity')),
+      });
+    }
+    if (onPurpose.length > 0) {
+      checks.push({
+        key: 'stopped',
+        state: 'OK',
+        sentence: `${count(onPurpose)} stopped as they should: a block you set, the agent's own post, or a post that was deleted.`,
+        fix: null,
+      });
+    }
+    sections.push({ key: 'errors', label: 'Recent errors', checks });
 
     const quality: SetupCheck[] = [];
     const habits = habitualPhrases(recent.map((r) => r.text));

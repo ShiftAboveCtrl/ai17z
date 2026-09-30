@@ -173,7 +173,8 @@ describe('owner chat', () => {
     const { message } = await chatRepo.postOwnerMessage({ conversationId: conversation.id, content: 'Our launch moved to Friday.', answerers: [] });
 
     await expect(
-      saveFromChat({ ownerId: fixture.ownerId, conversationId: conversation.id, messageId: null, content: 'key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789', agentIds: [fixture.agentId], target: 'MEMORY' }),
+      saveFromChat({ ownerId: fixture.ownerId, conversationId: conversation.id, messageId: null, // Assembled here so no secret scanner reads a fixture as a leaked key.
+        content: `key ${['sk', 'ant', 'api03', 'x'.repeat(40)].join('-')}`, agentIds: [fixture.agentId], target: 'MEMORY' }),
     ).rejects.toThrow(/secret/);
 
     const [save] = await saveFromChat({
