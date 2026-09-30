@@ -1,3 +1,9 @@
+/**
+ * @release-check-fixtures
+ *
+ * The addresses below are invented tricks a hostile search result could carry,
+ * including a user name before the host, which reads like an email address.
+ */
 import { describe, expect, it } from 'vitest';
 import { collectIndexedMirror, indexedMirrorStatus, mirrorStatusLinks, type MirrorPageRead } from '@xbam/channels';
 import { gradeEvidence, gradeTeachesVoice, mayEstablishFact, mayTriggerAction, type GradeInput } from '@xbam/shared/contracts';
