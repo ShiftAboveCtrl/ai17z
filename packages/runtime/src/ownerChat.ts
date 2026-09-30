@@ -54,7 +54,7 @@ import { pauseState } from './killSwitch';
 import { checkBudget } from './policyGate';
 import { validateOutput } from './validator';
 import { indexSource } from './knowledge';
-import { research, renderResearch, whatToResearch, type Finding, type Lookup, type ResearchResult } from './research';
+import { research, whatToResearch, type Finding, type Lookup, type ResearchResult } from './research';
 import { capResearch } from './spending';
 import { pluginResearchSources } from './pluginFeatures';
 import { buildChannelContext } from './channelContext';
@@ -178,6 +178,18 @@ export function chatLookups(question: string, policy: PolicyConfig): Lookup[] {
   if (owner.length > 0 && shortlistCapabilities(owner, question).offered.length > 0) return [];
   const links = [...question.matchAll(/https?:\/\/\S+/g)].map((m) => m[0]);
   return capResearch(whatToResearch({ incoming: question, links }), policy.budget.maxResearchCallsPerEvent);
+}
+
+/**
+ * What the chat prompt is handed beside the question.
+ *
+ * The research result goes in as the result, which is the shape the prompt
+ * engine renders. Handing it a pre-rendered string once meant a live lookup
+ * found Brave's answer and the model was shown nothing, so it told its owner
+ * it had no way to check.
+ */
+export function chatContextMeta(stance: unknown, researched: ResearchResult | null): Record<string, unknown> {
+  return { stance, ...(researched ? { research: researched } : {}) };
 }
 
 /** Runs the lookups with whatever this worker can reach, and says what it could not. */
@@ -322,7 +334,7 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
         parentText: null,
         thread,
         conversation: null,
-        meta: { stance, ...(researched ? { research: { rendered: renderResearch(researched) } } : {}) },
+        meta: chatContextMeta(stance, researched),
       } as never,
       memories: retrieved.memories,
       channelName: 'AI17Z',
