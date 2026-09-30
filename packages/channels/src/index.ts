@@ -57,6 +57,9 @@ export { webSearch, readPage, extractBraveAnswer, type WebResult } from './x/web
 export {
   canonicalWebUrl,
   canonicalXStatusUrl,
+  collectIndexedMirror,
+  indexedMirrorStatus,
+  mirrorStatusLinks,
   isChallengePage,
   MIRROR_PROFILE_URLS,
   observationFromSearchResult,
@@ -67,7 +70,10 @@ export {
   xPostKey,
   xProfileKey,
   xStatusRefOf,
+  type IndexedMirrorAnswer,
+  type IndexedMirrorStatus,
   type MirrorArticle,
+  type MirrorFamily,
   type MirrorPageRead,
   type XStatusRef,
 } from './x/researchSources';

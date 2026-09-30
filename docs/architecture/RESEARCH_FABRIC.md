@@ -59,3 +59,35 @@ says can change what the agent is allowed to do.
 
 X reads go through `checkReadCapacity` and `noteXRead` as `BROAD` reads. An
 account that is resting defers the run (`retryAfterMs`) rather than failing it.
+
+## Finding a mirror's copy through a search engine
+
+`collectIndexedMirror` in `researchSources.ts` asks a search engine for the
+mirror's pages about a person, keeps only results that are a status page on
+the mirror's own host (`indexedMirrorStatus`: the domain or a subdomain of it
+exactly, https or http, no user name, no unusual port, a status id and a
+handle in the path), and only those whose handle is the person being
+researched. Each becomes a `SEARCH_ENGINE` sighting of the X post it copies.
+Then at most eight of those exact pages are opened; the first bot check ends
+it, and a page counts only if it holds that post by that author. Every
+subdomain is the one `TWSTALKER` family.
+
+Measured on 2026-09-30: the index held no TwStalker status pages even for very
+large accounts, and twstalker.com answered a plain request with 403 and a
+managed challenge. The chain is built to add what it can when that changes and
+to cost one search and one refused page when it has not.
+
+## Evidence grades
+
+`gradeEvidence` gives each post a letter:
+
+| Grade | Meaning | Teaches a voice |
+| --- | --- | --- |
+| A | Read on X by the expected author | yes |
+| B | A whole mirror copy by the expected author, seen by a second family, contradicted by nothing | yes |
+| C | One family's word, or only a fragment | no, shown as evidence |
+| D | Somebody else's post, or copies disagreeing with nothing to settle them | never |
+
+The Foundry learns a voice from A and B only, and still asks X to confirm
+everything else, because reading X is what turns a C into an A. No grade lets
+a mirror establish a fact or trigger an action.

@@ -348,3 +348,133 @@ export async function readMirrorPage(ctx: ChannelContext, url: string, maxArticl
     }
   });
 }
+
+// ── Finding a mirror's copy of a post through a search engine ─────────────
+
+export type MirrorFamily = Extract<SourceFamily, 'TWSTALKER' | 'SOTWE'>;
+
+export interface IndexedMirrorStatus {
+  family: MirrorFamily;
+  /** The address to read: https, the mirror's own host, no query, no fragment. */
+  url: string;
+  statusId: string;
+  handle: string;
+}
+
+/**
+ * A search result that is a mirror's page for one post, or null.
+ *
+ * Strict on purpose, because this address is about to be opened. The host
+ * must be the mirror or one of its subdomains exactly: `twstalker.com.evil.io`,
+ * `eviltwstalker.com`, a trailing dot, a look-alike that became punycode, a
+ * user name before the host and an unusual port are all refused. The path has
+ * to name a status id and the handle it belongs to, because a copy that cannot
+ * be tied to its author cannot be checked against who it was expected from.
+ */
+export function indexedMirrorStatus(url: string | null | undefined): IndexedMirrorStatus | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+  if (parsed.username || parsed.password) return null;
+  if (parsed.port && parsed.port !== '443' && parsed.port !== '80') return null;
+  const family = sourceFamilyOfUrl(url);
+  if (family !== 'TWSTALKER' && family !== 'SOTWE') return null;
+  const ref = xStatusRefOf(url);
+  if (!ref?.handle) return null;
+  return { family, url: `https://${parsed.hostname.toLowerCase()}${parsed.pathname}`, statusId: ref.statusId, handle: ref.handle };
+}
+
+/** The mirror pages among search results that are posts by `handle`, once each. */
+export function mirrorStatusLinks(
+  results: ReadonlyArray<{ url: string | null }>,
+  handle: string,
+  family: MirrorFamily,
+): IndexedMirrorStatus[] {
+  const want = handle.replace(/^@+/, '').toLowerCase();
+  const seen = new Set<string>();
+  const out: IndexedMirrorStatus[] = [];
+  for (const result of results) {
+    const link = indexedMirrorStatus(result.url);
+    if (!link || link.family !== family || link.handle.toLowerCase() !== want || seen.has(link.statusId)) continue;
+    seen.add(link.statusId);
+    out.push(link);
+  }
+  return out;
+}
+
+export interface IndexedMirrorAnswer {
+  observations: ResearchObservation[];
+  requests: number;
+  /** A bot check was served: nothing more was asked of this mirror. */
+  challenged: boolean;
+  /** Mirror pages the index pointed at. */
+  indexed: number;
+  /** Of those, how many were read and held a copy by the right author. */
+  read: number;
+  detail: string;
+}
+
+/**
+ * Search engine, then the mirror's indexed page for each post, read only if
+ * the mirror lets anybody read it.
+ *
+ * Every indexed page is first a SEARCH_ENGINE sighting of the X post it copies,
+ * so the index and the mirror are two families and one object. Then a bounded
+ * number of those exact pages are opened; the first bot check stops the whole
+ * thing, and nothing waits it out, retries around it or solves it. What a page
+ * holds counts only if it is the post the link named and its author is the
+ * person being researched.
+ */
+export async function collectIndexedMirror(input: {
+  family: MirrorFamily;
+  label: string;
+  handle: string;
+  search: (query: string) => Promise<ReadonlyArray<{ title: string; snippet: string; url: string | null }>>;
+  read: (url: string) => Promise<MirrorPageRead>;
+  maxFetches: number;
+  fetchedAt?: string;
+}): Promise<IndexedMirrorAnswer> {
+  const at = input.fetchedAt ?? new Date().toISOString();
+  const domain = input.family === 'TWSTALKER' ? 'twstalker.com' : 'sotwe.com';
+  const queries = [`site:${domain} ${input.handle}`, `${input.label} "${input.handle}" status`];
+  const results: { title: string; snippet: string; url: string | null }[] = [];
+  let requests = 0;
+  for (const query of queries) {
+    results.push(...(await input.search(query).catch(() => [])));
+    requests += 1;
+  }
+  const links = mirrorStatusLinks(results, input.handle, input.family);
+  const observations: ResearchObservation[] = [];
+  for (const link of links) {
+    const result = results.find((r) => indexedMirrorStatus(r.url)?.statusId === link.statusId);
+    if (result) observations.push(observationFromSearchResult(result, at, `Web search (${input.label} index)`));
+  }
+  let read = 0;
+  let challenged = false;
+  for (const link of links.slice(0, Math.max(0, input.maxFetches))) {
+    const page = await input.read(link.url);
+    requests += 1;
+    if (page.challenge) {
+      challenged = true;
+      break;
+    }
+    const copy = observationsFromMirrorArticles(page.articles, input.family, at).find(
+      (o) => o.externalId === link.statusId && (o.author ?? '').toLowerCase() === link.handle.toLowerCase(),
+    );
+    if (copy) {
+      observations.push(copy);
+      read += 1;
+    }
+  }
+  const detail = challenged
+    ? `${input.label} answered with a bot check, so it was left alone after ${read} page${read === 1 ? '' : 's'}.`
+    : links.length === 0
+      ? `No ${input.label} pages for @${input.handle} were in the search index.`
+      : `${links.length} ${input.label} page${links.length === 1 ? '' : 's'} found through search; ${read} read.`;
+  return { observations, requests, challenged, indexed: links.length, read, detail };
+}
