@@ -12,7 +12,7 @@
  * the reason and what the stance said. Anything the owner pinned or wrote is
  * never touched. Dry by default: `apply` has to be asked for.
  */
-import { content as contentRepo, ops, stances as stancesRepo } from '@xbam/database';
+import { content as contentRepo, ops, query, stances as stancesRepo } from '@xbam/database';
 import { candidateSubjects } from './stance';
 
 export interface ReviewedStance {
@@ -69,9 +69,18 @@ export async function reviewLearnedState(input: {
     else kept += 1;
   }
 
-  const discard = (await contentRepo.listIdeas(input.agentId, 'unused'))
-    .filter((idea) => ECHO_IDEA.test(idea.summary))
-    .map((idea) => ({ id: idea.id, summary: idea.summary, reason: 'An echo of one of its own replies, not something new to say.' }));
+  const discard: LearnedStateReview['ideas']['discard'] = [];
+  for (const idea of await contentRepo.listIdeas(input.agentId, 'unused')) {
+    if (ECHO_IDEA.test(idea.summary)) {
+      discard.push({ id: idea.id, summary: idea.summary, reason: 'An echo of one of its own replies, not something new to say.' });
+      continue;
+    }
+    // Queued before only reflection could produce ideas: somebody else's post.
+    if (idea.source === 'deliberation') {
+      const seen = await query(`SELECT 1 FROM events WHERE left(text, 120) = left($1, 120) LIMIT 1`, [idea.summary]);
+      if (seen.length > 0) discard.push({ id: idea.id, summary: idea.summary, reason: 'Another person’s post, not something the agent concluded.' });
+    }
+  }
 
   if (input.apply) {
     for (const stance of retire) {
