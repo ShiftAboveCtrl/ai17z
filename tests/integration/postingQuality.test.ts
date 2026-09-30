@@ -131,6 +131,18 @@ describe('what it learns from its own replies', () => {
     const audit = await query(`SELECT 1 FROM audit_events WHERE action = 'agent.stance.retired'`);
     expect(audit).toHaveLength(1);
   });
+
+  it('sets aside a queued idea that is somebody else’s post', async () => {
+    const fixture = await createFixture();
+    const text = 'To every developer: crypto does not sleep, you do, so keep your account active with an agent.';
+    await query(`INSERT INTO events (channel, type, remote_event_id, text) VALUES ('mock', 'KEYWORD_MATCH', $1, $2)`, [`seen-${uniqueSuffix()}`, text]);
+    const idea = await content.addIdea({ agentId: fixture.agentId, summary: text, score: 60, source: 'deliberation' });
+    const mine = await content.addIdea({ agentId: fixture.agentId, summary: 'A conclusion of its own about agents that go quiet overnight.', score: 60, source: 'deliberation' });
+    const review = await reviewLearnedState({ agentId: fixture.agentId, selfNames: ['ai17z'], apply: true });
+    expect(review.ideas.discard.map((d) => d.id)).toEqual([idea.id]);
+    const [kept] = await query<{ status: string }>(`SELECT status FROM content_ideas WHERE id = $1`, [mine.id]);
+    expect(kept!.status).toBe('unused');
+  });
 });
 
 describe('what it may say about itself', () => {
