@@ -213,6 +213,8 @@ describe('owner chat looking things up', () => {
     const lookups = chatLookups(question, (await policy)!.config as never);
     expect(lookups.some((l) => l.kind === 'search')).toBe(true);
     expect(chatLookups('what is your setup right now?', (await policy)!.config as never)).toEqual([]);
+    // Names no "you", has a time phrase, and is still about the agent.
+    expect(chatLookups("What's broken right now?", (await policy)!.config as never)).toEqual([]);
   });
 
   it('hands a turn that needs the web to a worker with a browser, and no other worker takes it', async () => {

@@ -129,6 +129,9 @@ export async function browserWorkerPresent(): Promise<boolean> {
  * has twscrape, a sync can run. Which one is the queue's problem, not the
  * caller's.
  */
+/** The key a worker reports under when memory is holding back its background work. */
+export const STANDARD_WORK = 'worker:standard-work';
+
 export async function toolAvailability(): Promise<Record<string, { available: boolean; detail: string; worker: string }>> {
   const rows = await present();
   const merged: Record<string, { available: boolean; detail: string; worker: string }> = {};

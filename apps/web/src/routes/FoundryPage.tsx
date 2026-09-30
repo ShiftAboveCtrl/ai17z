@@ -24,6 +24,7 @@ interface RunView {
   brief: { handle?: string | null; projects?: string[] };
   stages: Stage[];
   lastError: string | null;
+  waitingFor?: string | null;
   createdAt: string;
   finishedAt: string | null;
 }
@@ -520,9 +521,11 @@ function RunProgress({ run, onCancel }: { run: RunView; onCancel: () => void }) 
       <Working
         label={current ? current.label : run.status === 'QUEUED' ? 'Waiting for the worker to pick this up' : 'Working'}
         seconds={elapsed}
-        slowAfter={run.status === 'QUEUED' ? 45 : 90}
+        slowAfter={run.waitingFor ? 0 : run.status === 'QUEUED' ? 45 : 90}
         slowHint={
-          run.status === 'QUEUED'
+          run.waitingFor
+            ? run.waitingFor
+            : run.status === 'QUEUED'
             ? 'Research runs on the worker that owns the browser. If it has not started within a minute, the Health page says whether one is running. If X is resting the account, it waits for that too.'
             : 'Reading a few hundred posts takes a few minutes. It carries on if you close this page, and waits rather than hurry if X asks it to.'
         }

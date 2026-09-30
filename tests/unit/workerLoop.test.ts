@@ -188,3 +188,19 @@ describe('the engagement loop', () => {
     expect(main).toMatch(/if \(engagement\) clearInterval\(engagement\)/);
   });
 });
+
+/*
+  Somebody is waiting on an owner chat answer, as on a Telegram command. At
+  3.4% free memory a STANDARD chat loop skipped every tick on a live
+  installation and "what's broken right now?" sat unanswered for ten minutes.
+*/
+describe('the owner chat loop', () => {
+  const main = readFileSync(resolve(__dirname, '../../apps/worker/src/main.ts'), 'utf8');
+
+  it('runs at any memory pressure', () => {
+    const start = main.indexOf("'owner-chat'");
+    expect(start, 'the owner chat loop should exist').toBeGreaterThan(0);
+    const call = main.slice(start, main.indexOf(');', main.indexOf("'ESSENTIAL'", start)) + 2);
+    expect(call).toMatch(/'ESSENTIAL',\s*\)/);
+  });
+});
