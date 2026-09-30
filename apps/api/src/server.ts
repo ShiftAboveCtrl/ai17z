@@ -23,6 +23,7 @@ import { foundryRoutes } from './routes/foundry';
 import { chatRoutes } from './routes/chat';
 import { setupCheckRoutes } from './routes/setupCheck';
 import { spamRoutes } from './routes/spam';
+import { walletRoutes } from './routes/wallets';
 import { personaRoutes } from './routes/persona';
 import { artifactRoutes } from './routes/artifacts';
 import { settingsRoutes } from './routes/settings';
@@ -85,6 +86,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(chatRoutes);
   await app.register(setupCheckRoutes);
   await app.register(spamRoutes);
+  await app.register(walletRoutes);
   await app.register(easyStartRoutes);
   await app.register(characterRoutes);
   await app.register(providerRoutes);

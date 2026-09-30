@@ -151,6 +151,17 @@ for pattern in 'sk-[A-Za-z0-9]\{20,\}' 'xoxb-[A-Za-z0-9-]\{20,\}' 'ghp_[A-Za-z0-
 done
 ok "nothing credential-shaped in the application"
 
+# Private first-party Plugin source. The marker is assembled here rather than
+# written out, so this script is not itself a match.
+PRIVATE_MARK="AI17Z-PRIVATE-""PLUGIN"
+hits="$(grep -rIl -e "$PRIVATE_MARK" "$ROOM" 2>/dev/null | head -3 || true)"
+if [ -n "$hits" ]; then
+  bad "private Plugin source is in the package"
+  printf '%s\n' "$hits" | sed "s#$ROOM#    #"
+else
+  ok "no private Plugin source"
+fi
+
 # A master key that is not the empty template line.
 if [ -f "$SEARCH_ROOT/.env.example" ]; then
   if grep -qE '^[A-Z0-9_]*MASTER_KEY[ \t]*=[ \t]*[^ \t]' "$SEARCH_ROOT/.env.example"; then

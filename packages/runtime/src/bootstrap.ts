@@ -46,6 +46,8 @@ import { registerXCapabilities } from './xCapabilities';
 import { registerGithubCapabilities } from './githubCapabilities';
 import { registerIntrospectionCapabilities } from './introspectionCapabilities';
 import { registerManagementCapabilities } from './managementCapabilities';
+import { registerWalletCapabilities } from './walletCapabilities';
+import { loadWalletAdapter } from './walletCore';
 
 const log = createLogger('bootstrap');
 
@@ -78,7 +80,13 @@ export async function bootstrapRuntime(): Promise<void> {
   // What an agent can find out about itself, for its owner only. Never offered
   // in a public conversation; see the audience on each one.
   registerIntrospectionCapabilities();
+  // Changing the agent's own settings, owner chat only and within tiers.
   registerManagementCapabilities();
+  // Reading its own wallet. Off until the owner enables the Wallet pack, and
+  // useless until the owner installs a wallet adapter, which is loaded here by
+  // its pinned hash or not at all. Nothing here can send.
+  registerWalletCapabilities();
+  await loadWalletAdapter();
 
   // Plugins an owner installed, registered the same way and into the same
   // registry as everything above. There is no second invocation engine and no

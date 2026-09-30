@@ -13,7 +13,9 @@ import {
   findEncodingProblems,
   findFilesThatShouldNotBeTracked,
   findPersonalDetails,
+  findPrivateSource,
   findSecrets,
+  PRIVATE_SOURCE_MARKER,
 } from '../../tools/releaseCheck';
 
 const root = resolve(__dirname, '../..');
@@ -265,5 +267,27 @@ describe('a local assistant file cannot be published by accident', () => {
 
   it('still ignores the assistant tooling directory', () => {
     expect(ignore).toContain('.claude/');
+  });
+});
+
+describe('private first-party Plugin source', () => {
+  it('is refused by its marker wherever it was copied, and by its folder', () => {
+    const copied = file('packages/runtime/src/somewhere.ts', `// ${PRIVATE_SOURCE_MARKER}\nexport const x = 1;\n`);
+    expect(findPrivateSource(copied)).toHaveLength(1);
+    expect(findPrivateSource(file('a.ts', 'export const x = 1;'))).toEqual([]);
+    expect(findFilesThatShouldNotBeTracked(['AI17Z Plugin Development/wallet/src/index.mts', 'vendor/ai17z-wallet-adapter/index.mjs'])).toHaveLength(2);
+  });
+
+  it('the marker is not written out in any tracked file of this repository', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
+    const hits = tracked.filter((path) => {
+      try {
+        return readFileSync(resolve(root, path), 'utf8').includes(PRIVATE_SOURCE_MARKER);
+      } catch {
+        return false;
+      }
+    });
+    expect(hits).toEqual([]);
   });
 });
