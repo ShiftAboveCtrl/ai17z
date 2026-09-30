@@ -40,7 +40,7 @@ function asObservation(item: { id: string; text: string; kind: string; lang?: st
   };
 }
 
-function deps(options: { leaseMs?: number; workerId?: string } = {}): FoundryDeps & { mirrorAsks: number } {
+function deps(options: { leaseMs?: number; workerId?: string; indexed?: boolean } = {}): FoundryDeps & { mirrorAsks: number } {
   const corpus = builderPersona();
   // X shows the first 80; a mirror has 12 older ones X did not surface, plus 5 duplicates.
   const onX = corpus.slice(0, 80).map((item, i) => asObservation(item, i));
@@ -74,11 +74,26 @@ function deps(options: { leaseMs?: number; workerId?: string } = {}): FoundryDep
     optional: true,
     collect: async () => ({ state: 'UNAVAILABLE', detail: 'The mirror answered with a bot check, so it was left alone.', observations: [], requests: 1, challenged: true }),
   };
+  // The search index points at the mirror's pages for the older posts: a
+  // second family, so a whole mirror copy by the right author is grade B.
+  const searchIndex: FabricSource = {
+    family: 'SEARCH_ENGINE',
+    tier: 'SEARCH_INDEX',
+    label: 'Search engines',
+    roles: ['PERSONA_RESEARCH'],
+    optional: true,
+    collect: async () => ({
+      state: 'AVAILABLE',
+      detail: 'Found 12.',
+      requests: 2,
+      observations: olderOnMirror.map((o) => ({ ...o, family: 'SEARCH_ENGINE', kind: 'SEARCH_RESULT', tier: 'SEARCH_INDEX', completeness: 'SNIPPET', content: o.content.slice(0, 60) })),
+    }),
+  };
   return {
     workerId: options.workerId ?? 'test-worker',
     leaseMs: options.leaseMs ?? 60_000,
     platform,
-    searchIndex: null,
+    searchIndex: options.indexed === false ? null : searchIndex,
     mirrors: [twstalker, sotwe],
     get mirrorAsks() {
       return state.mirrorAsks;
@@ -170,6 +185,20 @@ describe('a research-backed setup, from brief to proposal', () => {
     // Every item explains itself; evidence-backed ones cite something.
     for (const item of items) expect(item.rationale.length).toBeGreaterThan(20);
     expect(by('TOPICS', 'topics')[0]!.evidence.length).toBeGreaterThan(0);
+  });
+
+  it('learns nothing about a voice from one mirror nobody else saw', async () => {
+    const { run } = await startRun();
+    const d = deps({ indexed: false });
+    const claimed = (await researchRepo.claimDueRun(d.workerId, d.leaseMs))!;
+    expect(await advanceFoundryRun(claimed, d)).toBe('READY');
+    // The mirror-only posts are still evidence an owner can see...
+    const evidence = await researchRepo.runEvidence(run.id, { author: HANDLE });
+    expect(evidence).toHaveLength(builderPersona().length);
+    // ...but the technical register lives only there, so it is not proposed.
+    const items = await foundryRepo.listItems(run.id);
+    const style = items.find((i) => i.section === 'STYLE' && i.itemKey === 'styleGuidelines');
+    expect(String(style?.proposedValue ?? '')).not.toMatch(/Default to short, casual replies/);
   });
 
   it('resumes after a lost lease at the stage after the last one committed', async () => {

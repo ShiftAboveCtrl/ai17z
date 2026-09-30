@@ -280,3 +280,69 @@ function fragmentOf(fragment: string, whole: string): boolean {
   const shared = mine.filter((w) => theirs.has(w)).length;
   return shared / mine.length >= 0.5;
 }
+
+/**
+ * How far one post found through research may be leaned on, as a letter.
+ *
+ * - **A**: read on the platform itself, by the author it was expected from.
+ * - **B**: a whole copy on a mirror, by the expected author, that a second,
+ *   independent family also saw and nothing contradicts.
+ * - **C**: one family's word for it, or only a fragment: a pointer, not a
+ *   post anybody checked.
+ * - **D**: the author is somebody else, or whole copies disagree with no
+ *   platform reading to settle it. Never used.
+ *
+ * A grade is about writing, never about the world: no letter makes a mirror a
+ * witness to a fact or a reason to act. `mayEstablishFact` and
+ * `mayTriggerAction` answer those, and a mirror answers no to both.
+ */
+export const EVIDENCE_GRADES = ['A', 'B', 'C', 'D'] as const;
+export type EvidenceGrade = (typeof EVIDENCE_GRADES)[number];
+
+export interface GradeInput {
+  /** Every family that saw the object. */
+  families: readonly SourceFamily[];
+  /** Families whose copy disagreed with the best reading. */
+  disagreeing: readonly SourceFamily[];
+  bestTier: SourceTrustTier;
+  bestCompleteness: EvidenceCompleteness;
+  confirmedOnPlatform: boolean;
+  /** Who the object says wrote it, when anything said. */
+  author: string | null;
+  /** Who it was expected from: the person being researched. */
+  expectedAuthor: string | null;
+}
+
+export function gradeEvidence(input: GradeInput): { grade: EvidenceGrade; reason: string } {
+  const norm = (h: string | null) => (h ? h.replace(/^@+/, '').toLowerCase() : null);
+  const author = norm(input.author);
+  const expected = norm(input.expectedAuthor);
+  if (expected && author && author !== expected) {
+    return { grade: 'D', reason: `It is by @${author}, not @${expected}.` };
+  }
+  if (input.confirmedOnPlatform && (!expected || author === expected)) {
+    return { grade: 'A', reason: 'Read on the platform itself.' };
+  }
+  const others = new Set(input.families);
+  if (input.disagreeing.length > 0) {
+    return { grade: 'D', reason: 'Copies of it disagree and the platform did not settle which is right.' };
+  }
+  if (
+    input.bestTier === 'PUBLIC_MIRROR' &&
+    input.bestCompleteness === 'FULL' &&
+    expected !== null &&
+    author === expected &&
+    others.size >= 2
+  ) {
+    return { grade: 'B', reason: 'A whole copy on a mirror, by the right author, seen by a second source too.' };
+  }
+  return {
+    grade: 'C',
+    reason: input.bestCompleteness === 'FULL' ? 'Only one source has it, and nobody checked it on the platform.' : 'Only a fragment of it was seen.',
+  };
+}
+
+/** Whether a grade may be learned from as somebody's writing. C and D may not. */
+export function gradeTeachesVoice(grade: EvidenceGrade): boolean {
+  return grade === 'A' || grade === 'B';
+}

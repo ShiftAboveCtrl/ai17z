@@ -1,6 +1,7 @@
 import { createLogger, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, agents as agentsRepo, research as researchRepo } from '@xbam/database';
 import {
+  collectIndexedMirror,
   MIRROR_PROFILE_URLS,
   observationFromSearchResult,
   observationFromXPost,
@@ -42,6 +43,8 @@ const log = createLogger('foundry-worker');
  */
 
 const LEASE_MS = 10 * 60_000;
+/** Mirror pages opened per run: enough to corroborate a voice, few enough to be a reader rather than a crawler. */
+const MIRROR_PAGES_PER_RUN = 8;
 let running: string | null = null;
 
 /** The account whose browser reads for this agent: its own, or any of the owner's that is signed in. */
@@ -125,14 +128,29 @@ function depsFor(channel: ChannelContext | null, workerId: string): FoundryDeps 
     label,
     roles: ['SOCIAL_HISTORY'],
     optional: true,
-    async collect(request) {
+    async collect(request, remaining) {
       if (!channel || !request.handle) return { state: 'NOT_CONFIGURED', detail: 'Nothing to read it with.', observations: [], requests: 0 };
+      // The search index first: it names exact posts, each checked against its author.
+      const indexed = await collectIndexedMirror({
+        family,
+        label,
+        handle: request.handle,
+        search,
+        read: (url) => readMirrorPage(channel, url, 20),
+        maxFetches: Math.min(MIRROR_PAGES_PER_RUN, Math.max(0, remaining.requests - 2)),
+      });
+      if (indexed.challenged) {
+        return { state: 'UNAVAILABLE', detail: indexed.detail, observations: indexed.observations, requests: indexed.requests, challenged: true };
+      }
+      if (indexed.indexed > 0) {
+        return { state: indexed.read > 0 ? 'AVAILABLE' : 'DEGRADED', detail: indexed.detail, observations: indexed.observations, requests: indexed.requests };
+      }
       const read = await readMirrorPage(channel, MIRROR_PROFILE_URLS[family](request.handle));
       if (read.challenge) return { state: 'UNAVAILABLE', detail: `${label} answered with a bot check, so it was left alone.`, observations: [], requests: 1, challenged: true };
       const observations = observationsFromMirrorArticles(read.articles, family, new Date().toISOString()).filter(
         (o) => !o.author || o.author.toLowerCase() === request.handle!.toLowerCase(),
       );
-      return { state: observations.length > 0 ? 'AVAILABLE' : 'DEGRADED', detail: read.detail, observations, requests: 1 };
+      return { state: observations.length > 0 ? 'AVAILABLE' : 'DEGRADED', detail: read.detail, observations, requests: indexed.requests + 1 };
     },
   });
 

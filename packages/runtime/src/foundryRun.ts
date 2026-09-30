@@ -17,6 +17,8 @@ import {
   FOUNDRY_STAGE_LABELS,
   FOUNDRY_STAGES,
   FoundryBrief,
+  gradeEvidence,
+  gradeTeachesVoice,
   type FoundrySection,
   type FoundryStage,
   type ResearchObservation,
@@ -155,10 +157,34 @@ export function classifyDiscovered(input: {
 }
 
 /** What the run read by the persona, as the compiler wants it. */
-async function corpusOf(run: ResearchRunRow, handle: string | null): Promise<FoundryCorpusItem[]> {
+async function corpusOf(run: ResearchRunRow, handle: string | null, use: 'TEACHING' | 'TO_CONFIRM' = 'TEACHING'): Promise<FoundryCorpusItem[]> {
   if (!handle) return [];
   const evidence = await researchRepo.runEvidence(run.id, { author: handle, kinds: ['POST', 'REPLY', 'QUOTE'], limit: 2_000 });
-  return evidence.map((e) => ({
+  /*
+    A voice is learned only from writing somebody can stand behind: grade A
+    (read on X) or B (a whole mirror copy by the right author that a second
+    source also saw). One mirror's unchecked word stays visible as evidence and
+    teaches nothing; a copy by somebody else never reaches here, because the
+    evidence is already filtered to the author.
+  */
+  const teaching =
+    use === 'TO_CONFIRM'
+      ? // Everything unchecked or disputed is worth reading on X: that is what settles it.
+        evidence
+      : evidence.filter((e) =>
+          gradeTeachesVoice(
+            gradeEvidence({
+              families: e.families,
+              disagreeing: e.disagreeingFamilies,
+              bestTier: e.bestTier,
+              bestCompleteness: e.completeness,
+              confirmedOnPlatform: e.confirmedOnPlatform,
+              author: e.author,
+              expectedAuthor: handle,
+            }).grade,
+          ),
+        );
+  return teaching.map((e) => ({
     id: e.id,
     objectId: e.id,
     text: e.content,
@@ -260,7 +286,7 @@ export async function advanceFoundryRun(run: ResearchRunRow, deps: FoundryDeps):
       }
 
       if (stage === 'DEDUPLICATING') {
-        const corpus = await corpusOf(current, plan.handle);
+        const corpus = await corpusOf(current, plan.handle, 'TO_CONFIRM');
         const unconfirmed = corpus.filter((c) => !c.confirmed && c.url);
         let confirmed = 0;
         let missing = 0;
