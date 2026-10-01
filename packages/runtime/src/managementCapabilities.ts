@@ -44,7 +44,48 @@ const Outcome = z.object({
   detail: z.string(),
 });
 
-const kindList = CHANGE_KINDS.map((k) => `${k}: ${CHANGES[k].describe}`).join(' ');
+/** The fields a kind takes, as the model has to write them. */
+function fieldsOf(kind: ChangeKindId): string[] {
+  const shape = (CHANGES[kind].input as unknown as { shape?: Record<string, unknown> }).shape;
+  return shape ? Object.keys(shape) : [];
+}
+
+/*
+  Each kind with the exact value it takes. Measured on a real installation: a
+  menu that named the kinds and not their fields had the model send the tone as
+  a bare string, then under the wrong key, and nothing changed.
+*/
+const kindList = CHANGE_KINDS.map((k) => {
+  const fields = fieldsOf(k);
+  return `${k} ${fields.length ? `{${fields.map((f) => `"${f}"`).join(', ')}}` : '{}'}: ${CHANGES[k].describe}`;
+}).join(' ');
+
+/**
+ * A value the model wrote loosely, put in the one place it can mean.
+ *
+ * Only for a kind with exactly one field: "dry, warm" for persona.tone is
+ * {"tone": "dry, warm"} and nothing else. The kind's own schema still decides
+ * whether that is valid; this never invents a field or a value.
+ */
+export function normaliseChangeValue(kind: ChangeKindId, value: unknown): unknown {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const fields = fieldsOf(kind);
+    const keys = Object.keys(value);
+    // {"value": "dry"} or {"tone_description": "dry"} for a one-field kind.
+    if (fields.length === 1 && keys.length === 1 && !fields.includes(keys[0]!)) {
+      return normaliseChangeValue(kind, (value as Record<string, unknown>)[keys[0]!]);
+    }
+    return value;
+  }
+  const fields = fieldsOf(kind);
+  if (fields.length !== 1 || value === undefined || value === null) return value ?? {};
+  const field = fields[0]!;
+  if (field === 'topics') {
+    const list = Array.isArray(value) ? value : String(value).split(/\s*,\s*/);
+    return { topics: list.map(String).filter(Boolean) };
+  }
+  return { [field]: value };
+}
 
 const changeSetting = defineCapability({
   id: 'agent.change_setting',
@@ -63,7 +104,7 @@ const changeSetting = defineCapability({
   audience: 'OWNER',
   input: z.object({
     kind: z.enum(CHANGE_KINDS as [ChangeKindId, ...ChangeKindId[]]),
-    value: z.record(z.string(), z.unknown()).default({}),
+    value: z.union([z.record(z.string(), z.unknown()), z.string(), z.number(), z.array(z.string())]).default({}),
   }),
   output: Outcome,
   modelCallable: true,
@@ -71,7 +112,7 @@ const changeSetting = defineCapability({
   async run(input, ctx) {
     requireOwnerChat(ctx);
     const { ownerId, origin } = originOf(ctx);
-    const out = await requestChange({ agentId: ctx.agentId, ownerId, kind: input.kind, value: input.value, origin });
+    const out = await requestChange({ agentId: ctx.agentId, ownerId, kind: input.kind, value: normaliseChangeValue(input.kind, input.value), origin });
     return { changeId: out.change.id, status: out.change.status, risk: out.change.risk, summary: out.change.summary, detail: out.message };
   },
 });
@@ -151,6 +192,31 @@ const myChanges = defineCapability({
     };
   },
 });
+
+/** The capabilities whose result is a change to the agent, for the honesty check in owner chat. */
+export const CHANGE_CAPABILITY_IDS = new Set(['agent.change_setting', 'agent.undo_change']);
+
+/**
+ * What an answer may say after trying to change the agent.
+ *
+ * A model writes "I changed my tone" whether or not the change went through;
+ * on a real installation it did exactly that after both attempts were
+ * refused. So when a change was attempted and none succeeded, the answer is
+ * replaced with what actually happened. A model is not a witness to its own
+ * tool use.
+ */
+export function honestChangeAnswer(answer: string, steps: ReadonlyArray<{ capabilityId: string; outcome: string; detail: string; output?: unknown }>): string {
+  const attempts = steps.filter((s) => CHANGE_CAPABILITY_IDS.has(s.capabilityId));
+  if (attempts.length === 0) return answer;
+  const succeeded = attempts.filter((s) => s.outcome === 'SUCCEEDED');
+  const applied = succeeded.filter((s) => {
+    const status = (s.output as { status?: string } | undefined)?.status;
+    return status === 'APPLIED' || status === 'AWAITING_CONFIRMATION' || status === 'UNDONE';
+  });
+  if (applied.length > 0) return answer;
+  const last = succeeded.length > 0 ? ((succeeded[succeeded.length - 1]!.output as { detail?: string } | undefined)?.detail ?? '') : attempts[attempts.length - 1]!.detail;
+  return `I tried to make that change and it did not go through, so nothing about me changed. ${last}`.trim();
+}
 
 export const MANAGEMENT_CAPABILITIES = [changeSetting, refuse, undo, myChanges] as unknown as AnyCapability[];
 
