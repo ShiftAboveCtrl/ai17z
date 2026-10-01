@@ -7,7 +7,9 @@ import {
   changesSince,
   confirmChange,
   declineChange,
+  honestChangeAnswer,
   looksLikeChangeRequest,
+  normaliseChangeValue,
   refuseChange,
   registerIntrospectionCapabilities,
   registerManagementCapabilities,
@@ -263,5 +265,53 @@ describe('who in a room is being asked', () => {
     const messages = await chatRepo.listMessages(conversation.id);
     expect(messages.map((m) => m.authorKind)).toEqual(['OWNER', 'NOTICE']);
     expect(messages.every((m) => m.status === 'DONE')).toBe(true);
+  });
+});
+
+describe('what the installed proof found', () => {
+  it('a bare or misnamed value lands in the one field it can mean, and nothing is invented', () => {
+    expect(normaliseChangeValue('persona.tone', 'dry, warm, a little playful')).toEqual({ tone: 'dry, warm, a little playful' });
+    expect(normaliseChangeValue('persona.tone', { tone_description: 'dry' })).toEqual({ tone: 'dry' });
+    expect(normaliseChangeValue('persona.add_topics', 'Solana, Robinhood Chain')).toEqual({ topics: ['Solana', 'Robinhood Chain'] });
+    expect(normaliseChangeValue('persona.tone', { tone: 'dry' })).toEqual({ tone: 'dry' });
+    // Two fields: nothing is guessed.
+    expect(normaliseChangeValue('policy.emoji', 'NONE')).toBe('NONE');
+  });
+
+  it('the model sending the tone as a bare string still changes it', async () => {
+    const f = await createFixture({ persona: { tone: 'formal' } });
+    let turn = 0;
+    const loop = await runCapabilityLoop({
+      agentId: f.agentId,
+      jobId: null,
+      accountId: null,
+      messages: [{ role: 'user', content: 'Change your tone to: dry, warm, a little playful.' }],
+      task: 'Change your tone to: dry, warm, a little playful.',
+      generate: async () =>
+        turn++ === 0
+          ? '<use-capability>{"id":"agent.change_setting","input":{"kind":"persona.tone","value":"dry, warm, a little playful"}}</use-capability>'
+          : 'Done.',
+      permissions: new Map(),
+      paused: false,
+      audience: 'OWNER',
+      origin: { conversationId: null as never, messageId: null as never, text: 'Change your tone', ownerId: f.ownerId },
+    });
+    expect(loop.steps[0]).toMatchObject({ outcome: 'SUCCEEDED' });
+    expect((await agentsRepo.getActivePersona(f.agentId))!.tone).toBe('dry, warm, a little playful');
+  });
+
+  it('an answer never claims a change that did not happen', () => {
+    const refused = [
+      { capabilityId: 'agent.change_setting', outcome: 'REFUSED', detail: 'The input was wrong.', output: null },
+      { capabilityId: 'agent.change_setting', outcome: 'FAILED', detail: 'That change needs a tone.', output: null },
+    ];
+    const said = honestChangeAnswer("I changed my tone to dry, warm, and a little playful. That's the new voice.", refused);
+    expect(said).toMatch(/did not go through, so nothing about me changed/);
+    expect(said).not.toMatch(/I changed my tone/);
+    const nothingNeeded = [{ capabilityId: 'agent.change_setting', outcome: 'SUCCEEDED', detail: '', output: { status: 'FAILED', detail: 'That did not stick.' } }];
+    expect(honestChangeAnswer('Done!', nothingNeeded)).toMatch(/did not go through/);
+    const applied = [{ capabilityId: 'agent.change_setting', outcome: 'SUCCEEDED', detail: '', output: { status: 'APPLIED', detail: 'Done.' } }];
+    expect(honestChangeAnswer('Done, I sound drier now.', applied)).toBe('Done, I sound drier now.');
+    expect(honestChangeAnswer('Just chatting.', [])).toBe('Just chatting.');
   });
 });
