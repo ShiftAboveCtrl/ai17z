@@ -586,13 +586,43 @@ begin
     end;
 end;
 
+{ The primary installation's data folder, as the wizard may offer it for a new
+  installation: only when no installation still uses it. Offering a folder
+  another installation owns would have two installations share one .env, one
+  Docker project and one database. }
 function PreviousDataDir(): String;
 var
   Stored: String;
+  I: Integer;
 begin
   Result := '';
-  if RegQueryStringValue(HKCU, 'Software\AI17Z', 'DataDir', Stored) and (Stored <> '') then
-    Result := Stored;
+  if not (RegQueryStringValue(HKCU, 'Software\AI17Z', 'DataDir', Stored) and (Stored <> '')) then Exit;
+  if GetArrayLength(Installs) = 0 then FindInstalls();
+  for I := 0 to GetArrayLength(Installs) - 1 do
+    if CompareText(RemoveBackslash(Installs[I].Data), RemoveBackslash(Stored)) = 0 then Exit;
+  Result := Stored;
+end;
+
+{ Whether this installation may name itself the primary one. The same rule as
+  Test-Ai17zShouldClaimPrimary in Setup-AI17Z.ps1: only when there is none, when
+  it already is, or when the folder named belongs to no other installation.
+  Updating a second installation must not make it the primary. }
+function MayClaimPrimary(Mine: String): Boolean;
+var
+  Stored: String;
+  I: Integer;
+begin
+  Result := True;
+  if not (RegQueryStringValue(HKCU, 'Software\AI17Z', 'DataDir', Stored) and (Stored <> '')) then Exit;
+  if CompareText(RemoveBackslash(Stored), RemoveBackslash(Mine)) = 0 then Exit;
+  if GetArrayLength(Installs) = 0 then FindInstalls();
+  for I := 0 to GetArrayLength(Installs) - 1 do
+    if (CompareText(RemoveBackslash(Installs[I].Data), RemoveBackslash(Stored)) = 0)
+       and (CompareText(RemoveBackslash(Installs[I].Program_), RemoveBackslash(ExpandConstant('{app}'))) <> 0) then
+    begin
+      Result := False;
+      Exit;
+    end;
 end;
 
 { ---------------------------------------------------------------------------
@@ -1131,8 +1161,10 @@ begin
     same file with a different channel in it, and AI17Z Setup writes it too. }
   WriteInstallInfo();
 
-  { And the registry, so the next installer offers the same folder. }
-  RegWriteStringValue(HKCU, 'Software\AI17Z', 'DataDir', DataDir());
+  { And the registry, naming the primary installation, but only if this one may
+    be it: updating a second installation must not take that over. }
+  if MayClaimPrimary(DataDir()) then
+    RegWriteStringValue(HKCU, 'Software\AI17Z', 'DataDir', DataDir());
 
   { And into the list, so the next installer can find this one even after a
     second installation has taken over the single uninstall entry. }
@@ -1227,6 +1259,14 @@ begin
     who moved their data to another drive must not have the default folder
     offered for deletion instead. }
   Result := ExpandConstant('{localappdata}') + '\AI17Z';
+  { This installation's own pointer first. The registry value names the primary
+    installation, which is somebody else's data whenever this is not it. }
+  Stored := ReadLineFrom(ExpandConstant('{app}') + '\data-location.txt');
+  if Stored <> '' then
+  begin
+    Result := Stored;
+    Exit;
+  end;
   if RegQueryStringValue(HKCU, 'Software\AI17Z', 'DataDir', Stored) and (Stored <> '') then
     Result := Stored;
 end;

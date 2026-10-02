@@ -1235,6 +1235,24 @@ async function instances(stage: string): Promise<void> {
   }
   say(`${label}: ${names.join(', ')} installed, each with its own program, data and .env`);
 
+  // ---- Which installation is the primary one ------------------------------
+  //
+  // HKCU\Software\AI17Z\DataDir names the machine's primary installation: the
+  // classic installer offers it by default and its uninstaller offers it for
+  // deletion. It used to be written by every install and every update, so
+  // updating a test installation made it the primary one on a real machine.
+  // Installing three more must leave whatever was primary where it was.
+  const primaryNow = async () =>
+    (await powershell(`(Get-ItemProperty 'HKCU:\\Software\\AI17Z' -ErrorAction SilentlyContinue).DataDir`)).trim();
+  const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase();
+  if (previousDataDir && existsSync(previousDataDir) && !samePath(await primaryNow(), previousDataDir)) {
+    fail(`${label}: installing ${names.join(', ')} took over the primary installation`, `was ${previousDataDir}, now ${await primaryNow()}`);
+  }
+  // Then make alpha the primary, the way an owner's main installation is, and
+  // keep asserting it through everything that happens to the other two.
+  await powershell(`Set-ItemProperty -Path 'HKCU:\\Software\\AI17Z' -Name DataDir -Value '${where(names[0]!).data}'`);
+  if (!samePath(await primaryNow(), where(names[0]!).data)) fail(`${label}: could not record ${names[0]} as the primary installation`, '');
+
   // ---- What the two that are not being updated look like now -------------
   const [alpha, target, gamma] = names as [string, string, string];
   const untouched = [alpha, gamma];
@@ -1317,6 +1335,43 @@ async function instances(stage: string): Promise<void> {
     if (alphaNow.get(file) !== hash) fail(`${label}: the refused update still touched ${alpha}`, file);
   }
   say(`${label}: asked to update ${alpha} from inside ${target}, it refused and touched neither`);
+
+  if (!samePath(await primaryNow(), where(alpha).data)) {
+    fail(`${label}: updating ${target} made it the primary installation`, `expected ${where(alpha).data}, found ${await primaryNow()}`);
+  }
+  say(`${label}: updating ${target} left ${alpha} the primary installation`);
+
+  // Removing one, data and all, must not touch the primary or anything of it.
+  const removed = await shortcutWith(where(gamma).program, join('packaging', 'windows', 'Uninstall-AI17Z.ps1'), ['-Quiet', '-RemoveData']);
+  if (removed.code !== 0) fail(`${label}: uninstalling ${gamma} failed`, removed.stdout.slice(-1500));
+  if (existsSync(where(gamma).data)) fail(`${label}: ${gamma}'s data was kept although removal was asked for`, '');
+  if (!samePath(await primaryNow(), where(alpha).data)) {
+    fail(`${label}: uninstalling ${gamma} changed the primary installation`, `found ${await primaryNow()}`);
+  }
+  const alphaAfter = new Map([...(await hashTree(where(alpha).program)), ...(await hashTree(where(alpha).data))]);
+  for (const [file, hash] of fingerprints.get(alpha)!) {
+    if (alphaAfter.get(file) !== hash) fail(`${label}: uninstalling ${gamma} touched ${alpha}`, file);
+  }
+  const listed = await powershell(`(Get-Item 'HKCU:\\Software\\AI17Z\\Installs' -ErrorAction SilentlyContinue).GetValueNames() -join '|'`);
+  if (listed.toLowerCase().includes(where(gamma).program.toLowerCase())) fail(`${label}: ${gamma} is still listed after it was removed`, listed);
+  if (!listed.toLowerCase().includes(where(alpha).program.toLowerCase())) fail(`${label}: removing ${gamma} unlisted ${alpha}`, listed);
+  say(`${label}: removing ${gamma} with its data left ${alpha} primary, listed and byte for byte the same`);
+
+  // And the owner can still choose: -MakePrimary is the one way to move it.
+  const promoted = await shortcutWith(where(target).program, 'update-ai17z.ps1', ['-Package', after, '-SkipStart']);
+  if (promoted.code !== 0) fail(`${label}: updating ${target} a second time failed`, promoted.stdout.slice(-1500));
+  if (!samePath(await primaryNow(), where(alpha).data)) fail(`${label}: a second update of ${target} took the primary over`, await primaryNow());
+  const chosen = await runSetup([
+    '-Update', '-MakePrimary',
+    '-InstanceName', target,
+    '-ProgramDir', where(target).program,
+    '-DataDir', where(target).data,
+    '-LocalPackage', after,
+    '-SkipDependencies', '-NoStart', '-NoBrowser',
+  ]);
+  if (chosen.code !== 0) fail(`${label}: making ${target} primary on request failed`, chosen.out.slice(-1500));
+  if (!samePath(await primaryNow(), where(target).data)) fail(`${label}: -MakePrimary did not make ${target} the primary`, await primaryNow());
+  say(`${label}: only -MakePrimary moved the primary installation, to ${target}`);
 
   await machine.restore(previousDataDir);
   if (!keep) await rm(room, { recursive: true, force: true }).catch(() => undefined);

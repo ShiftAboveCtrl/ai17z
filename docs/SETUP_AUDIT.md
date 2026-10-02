@@ -139,12 +139,15 @@ page rather than fetching a binary instead.
 | Start Menu → `AI17Z` | five shortcuts: start, diagnostics, stop, update, uninstall |
 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\...` | the Add/Remove Programs entry, replacing an older entry for this same directory |
 | `HKCU\Software\AI17Z\Installs` | so the next run finds this installation rather than making a second one |
+| `HKCU\Software\AI17Z\DataDir` | the primary installation: written when there is none, when it already names this one, or with -MakePrimary |
 
 Per user, under your own profile. Nothing is written to `Program Files`, nothing
 machine-wide, no system files, no drivers.
 
 **A second installation** made with `-NewInstance` or `-Instance <name>` derives
-every one of those paths from that name and shares nothing with the first.
+every one of those paths from that name and shares nothing with the first. It
+does not become the primary installation by being installed or updated; only
+`-MakePrimary` does that.
 
 ---
 

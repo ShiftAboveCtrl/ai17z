@@ -59,6 +59,12 @@
 .PARAMETER ProgramDir
   Where the program goes. Default %LOCALAPPDATA%\Programs\<InstanceName>.
 
+.PARAMETER MakePrimary
+  Make this installation the machine's primary one: the data folder
+  HKCU\Software\AI17Z\DataDir names, which the classic installer offers by
+  default and its uninstaller offers to remove. Without it, installing or
+  updating a second installation leaves the primary one as it was.
+
 .PARAMETER DataDir
   Where your data goes. Default %LOCALAPPDATA%\<InstanceName>. Never replaced,
   never regenerated, and not touched by an update.
@@ -108,6 +114,7 @@ param(
   [string] $InstanceName = 'AI17Z',
   [string] $ProgramDir = '',
   [string] $DataDir = '',
+  [switch] $MakePrimary,
   [string] $LocalPackage = '',
   [switch] $Update,
   # Install another, independent AI17Z beside the ones already here, rather than
@@ -187,7 +194,8 @@ $script:Ai17zSetup = [ordered]@{
     '%LOCALAPPDATA%\AI17Z-setup\  the log, and the resume note while a restart is pending',
     'Start Menu\Programs\<instance>\  shortcuts',
     'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\...  the Add/Remove Programs entry, replacing an older entry for this same directory',
-    'HKCU\Software\AI17Z\Installs  so the next run finds this installation'
+    'HKCU\Software\AI17Z\Installs  so the next run finds this installation',
+    'HKCU\Software\AI17Z\DataDir  the primary installation: written when there is none, when it already names this one, or with -MakePrimary'
   )
   # Anything that outlives the run, so "what did it leave behind" has an answer.
   Persistence = @(
@@ -1310,6 +1318,31 @@ function Select-Ai17zSupersededEntries {
     $out += $name
   }
   return ,$out
+}
+
+<#
+  Whether this run may name its own data folder as the machine's primary
+  installation, HKCU\Software\AI17Z\DataDir.
+
+  That value was written by every install and every update, so it named
+  whichever installation was touched last. Updating a test installation made
+  it the one the classic installer offers by default and the one its
+  uninstaller offers to delete. Now an installation claims it only when there
+  is no primary, when it already is the primary, when the folder named
+  belongs to no installation any more, or when the owner asks.
+#>
+function Test-Ai17zShouldClaimPrimary {
+  param([string] $Current, [string] $Mine, [string[]] $OthersData = @(), [bool] $Requested = $false)
+  if ($Requested) { return $true }
+  $norm = { param($p) if (-not $p) { '' } else { ('' + $p).Trim().TrimEnd('\', '/').ToLowerInvariant() } }
+  $c = & $norm $Current
+  if ($c -eq '') { return $true }
+  if ($c -eq (& $norm $Mine)) { return $true }
+  foreach ($other in $OthersData) {
+    if ((& $norm $other) -eq $c) { return $false }
+  }
+  # A folder no installation owns any more is a pointer to nothing in use.
+  return $true
 }
 
 if ($LoadOnly) { return }
@@ -2476,7 +2509,17 @@ function Write-Ai17zUninstallEntry {
     if (-not (Test-Path $installs)) { New-Item -Path $installs -Force | Out-Null }
     New-ItemProperty -Path $installs -Name $Layout.ProgramDir -Value $Layout.ProgramDir -PropertyType String -Force | Out-Null
     if (-not (Test-Path 'HKCU:\Software\AI17Z')) { New-Item -Path 'HKCU:\Software\AI17Z' -Force | Out-Null }
-    New-ItemProperty -Path 'HKCU:\Software\AI17Z' -Name 'DataDir' -Value $Layout.DataDir -PropertyType String -Force | Out-Null
+    $current = ''
+    try { $current = '' + (Get-ItemProperty -Path 'HKCU:\Software\AI17Z' -ErrorAction Stop).DataDir } catch { $current = '' }
+    $others = @()
+    try {
+      $others = @(Get-Ai17zInstallations | Where-Object { $_.ProgramDir.TrimEnd('\').ToLowerInvariant() -ne $Layout.ProgramDir.TrimEnd('\').ToLowerInvariant() } | ForEach-Object { '' + $_.DataDir })
+    } catch { $others = @() }
+    if (Test-Ai17zShouldClaimPrimary -Current $current -Mine $Layout.DataDir -OthersData $others -Requested ([bool] $MakePrimary)) {
+      New-ItemProperty -Path 'HKCU:\Software\AI17Z' -Name 'DataDir' -Value $Layout.DataDir -PropertyType String -Force | Out-Null
+    } else {
+      Write-Ai17zLog ('left the primary installation as it was: ' + $current) 'info'
+    }
   } catch {
     Write-Ai17zLog ('could not record the installation: ' + $_.Exception.Message) 'warn'
   }
