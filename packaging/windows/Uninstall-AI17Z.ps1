@@ -126,7 +126,14 @@ Set-Content -LiteralPath $batch -Value $removeProgram -Encoding ascii
 if ($alsoData -and $data -and (Test-Path $data)) {
   Write-Line 'Removing your data, as asked...' 'Yellow'
   Remove-Item -LiteralPath $data -Recurse -Force -ErrorAction SilentlyContinue
-  try { Remove-ItemProperty -Path 'HKCU:\Software\AI17Z' -Name 'DataDir' -Force -ErrorAction SilentlyContinue } catch { }
+  # Only if it named this installation: removing one installation's data says
+  # nothing about which installation is the primary one.
+  try {
+    $primary = '' + (Get-ItemProperty -Path 'HKCU:\Software\AI17Z' -ErrorAction Stop).DataDir
+    if ($primary.TrimEnd('\').ToLowerInvariant() -eq $data.TrimEnd('\').ToLowerInvariant()) {
+      Remove-ItemProperty -Path 'HKCU:\Software\AI17Z' -Name 'DataDir' -Force -ErrorAction SilentlyContinue
+    }
+  } catch { }
 } elseif ($data) {
   Write-Line ('Your data is kept at ' + $data) 'Green'
   Write-Line 'Reinstalling AI17Z will pick up where you left off.'

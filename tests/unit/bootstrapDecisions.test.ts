@@ -840,4 +840,29 @@ describe('what AI17Z Setup decides about a machine', () => {
     });
   });
 
+  describe('which installation is the primary one', () => {
+    // Forward slashes: the rule trims either separator, and nothing needs escaping.
+    const MAIN = 'C:/Data/AI17Z-main';
+    const TEST = 'C:/Data/AI17Z-test';
+    it.skipIf(!shell)('updating a second installation never takes the primary over', () => {
+      const [updateTest, updateMain, firstEver, staleOne, sameCase, asked] = askValues<boolean>([
+        // The live defect: main is primary, test updates itself.
+        { fn: 'Test-Ai17zShouldClaimPrimary', args: [MAIN, TEST, [MAIN], false] },
+        { fn: 'Test-Ai17zShouldClaimPrimary', args: [MAIN, MAIN, [TEST], false] },
+        { fn: 'Test-Ai17zShouldClaimPrimary', args: ['', TEST, [], false] },
+        // Names a folder nothing uses any more: a pointer to nothing.
+        { fn: 'Test-Ai17zShouldClaimPrimary', args: ['C:/Data/Gone', TEST, [MAIN], false] },
+        { fn: 'Test-Ai17zShouldClaimPrimary', args: [MAIN.toUpperCase() + '/', TEST, [MAIN], false] },
+        // The owner asked.
+        { fn: 'Test-Ai17zShouldClaimPrimary', args: [MAIN, TEST, [MAIN], true] },
+      ]);
+      expect(updateTest).toBe(false);
+      expect(updateMain).toBe(true);
+      expect(firstEver).toBe(true);
+      expect(staleOne).toBe(true);
+      expect(sameCase).toBe(false);
+      expect(asked).toBe(true);
+    });
+  });
+
 });

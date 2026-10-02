@@ -40,6 +40,7 @@ $Allowed = @(
   # several AI17Z installations turns on.
   'Select-Ai17zTarget',
   'Test-Ai17zInstallInfoTrustworthy',
+  'Test-Ai17zShouldClaimPrimary',
   'New-Ai17zInstanceName',
   # Whether a release tag may become a filename.
   'Test-Ai17zReleaseTag',
