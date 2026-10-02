@@ -1,6 +1,6 @@
 import { createLogger } from '@xbam/shared';
 import { accounts as accountsRepo, personaSources, relationships as relationshipsRepo } from '@xbam/database';
-import { xIntelligence, type XPostRecord, type XUser } from '@xbam/channels';
+import { emptyTimelineDetail, xIntelligence, type XPostRecord, type XUser } from '@xbam/channels';
 import { buildChannelContext } from '@xbam/runtime';
 import { syncPersonaSource } from '@xbam/persona';
 
@@ -135,10 +135,14 @@ export async function collectPersonaFromX(input: {
     { channel },
   );
 
+  // Nothing new since the last read is a finished sync, not a missing source.
+  if (timeline.outcome === 'EMPTY' && input.sincePostId) {
+    return { outcome: 'OK', detail: `Nothing new by @${user.handle} since the last read.`, user, collected: 0, stored: 0, traits: 0, backend: timeline.provenance.backend };
+  }
   if (timeline.outcome !== 'OK' || timeline.data.length === 0) {
     const detail =
       timeline.outcome === 'EMPTY'
-        ? `@${user.handle} has no public posts AI17Z can read.`
+        ? emptyTimelineDetail(user.handle, user.posts)
         : timeline.detail || `AI17Z could not read @${user.handle}'s posts.`;
     // An empty corpus never becomes a persona. The source is marked so the
     // screen says what happened instead of spinning at a collection that

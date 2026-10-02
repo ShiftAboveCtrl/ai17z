@@ -90,6 +90,25 @@ export const X_READ_OUTCOMES = [
  */
 export type XReadOutcome = (typeof X_READ_OUTCOMES)[number];
 
+/**
+ * Whether an empty timeline is an empty account or a read that failed.
+ *
+ * X's own profile says how many posts an account has. A timeline that comes
+ * back empty for an account X says has posted is not a valid empty corpus: it
+ * is a read that did not work, and anything built from it is built from
+ * nothing. Only an account X itself counts at zero, or one X did not count,
+ * is taken at its word.
+ */
+export function emptyTimelineIsReal(postsOnProfile: number | null | undefined): boolean {
+  return postsOnProfile === null || postsOnProfile === undefined || postsOnProfile <= 0;
+}
+
+export function emptyTimelineDetail(handle: string, postsOnProfile: number | null | undefined): string {
+  return emptyTimelineIsReal(postsOnProfile)
+    ? `@${handle} has no public posts AI17Z can read.`
+    : `X says @${handle} has ${postsOnProfile} posts, and showed none of them, so the read failed rather than finding an empty account.`;
+}
+
 /** Outcomes where trying a different backend is reasonable. */
 export const WORTH_ANOTHER_BACKEND: readonly XReadOutcome[] = [
   'SCHEMA_CHANGED',

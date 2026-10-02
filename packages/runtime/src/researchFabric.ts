@@ -84,6 +84,12 @@ export interface SourceAnswer {
    * carry on without it.
    */
   retryAfterMs?: number | null;
+  /**
+   * The source answered, and the answer means this research cannot be done:
+   * the account does not exist, is protected, or X wants a person. Said once,
+   * never retried, and never papered over with what other sources found.
+   */
+  fatal?: string | null;
 }
 
 export interface FabricSource {
@@ -108,6 +114,7 @@ export interface FamilyReport {
   disagreements: number;
   requests: number;
   retryAfterMs: number | null;
+  fatal: string | null;
 }
 
 export interface GatherReport {
@@ -175,6 +182,7 @@ export async function gather(input: {
       disagreements: 0,
       requests: 0,
       retryAfterMs: null,
+      fatal: null,
     };
 
     const health = await researchRepo.sourceHealth(source.family).catch(() => null);
@@ -199,6 +207,7 @@ export async function gather(input: {
         row.detail = answer.detail;
         row.requests = answer.requests;
         row.retryAfterMs = answer.retryAfterMs ?? null;
+        row.fatal = answer.fatal ?? null;
 
         for (const observation of answer.observations.slice(0, remainingObjects)) {
           const outcome = await researchRepo.recordObservation(input.ownerId, input.runId, observation);

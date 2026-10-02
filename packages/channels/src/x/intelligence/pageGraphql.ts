@@ -525,11 +525,31 @@ export function classifyDetailed(status: number, error: string | null) {
 }
 
 /** Walk a GraphQL answer for the entries a timeline is made of. */
+const MAX_PAYLOAD_DEPTH = 24;
+
+/**
+ * Whether a post is by the account whose timeline was asked for.
+ *
+ * A replies timeline also carries the posts being replied to, and a quote
+ * carries the post it quotes, each by somebody else. Those are context, never
+ * this account's writing, and a persona learned from them would speak in
+ * other people's words. The numeric id decides when both sides have one; the
+ * handle only when one side does not.
+ */
+export function isByRequestedUser(post: { authorId: string | null; authorHandle: string | null }, request: { userId?: string | null; handle: string }): boolean {
+  if (post.authorId && request.userId) return post.authorId === request.userId;
+  return (post.authorHandle ?? '').replace(/^@+/, '').toLowerCase() === request.handle.replace(/^@+/, '').toLowerCase();
+}
+
 function timelineEntries(json: unknown): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   const seen = new Set<unknown>();
   const walk = (node: unknown, depth: number) => {
-    if (!node || typeof node !== 'object' || depth > 14 || seen.has(node)) return;
+    // Deep enough for a conversation module. A replies timeline puts a reply
+    // and the post it answers in a module, where the tweet sits at depth 15 or
+    // 16; a walk that stopped at 14 dropped every one of them without a word,
+    // which reads as an account that replies less than it does.
+    if (!node || typeof node !== 'object' || depth > MAX_PAYLOAD_DEPTH || seen.has(node)) return;
     seen.add(node);
     if (Array.isArray(node)) {
       for (const item of node) walk(item, depth + 1);
@@ -866,6 +886,7 @@ export const pageGraphqlBackend: XIntelligenceBackend = {
         for (const tweet of tweetsFrom(answer.json)) {
           const post = toPost(tweet, NAME);
           if (!post || !post.text) continue;
+          if (!isByRequestedUser(post, request)) continue;
           if (post.repost && request.includeReposts === false) continue;
           if (request.sincePostId && post.postId === request.sincePostId) {
             cursor = null;

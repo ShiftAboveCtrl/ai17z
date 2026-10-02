@@ -68,7 +68,10 @@ export type CorpusOutcome =
   | 'PROTECTED'
   | 'EMPTY'
   | 'SIGNED_OUT'
-  | 'CHALLENGE';
+  | 'CHALLENGE'
+  /** X did not show the timeline: an error screen, a page that never drew, or a different profile. */
+  | 'UNAVAILABLE'
+  | 'RATE_LIMITED';
 
 export interface AuthoredPost {
   statusId: string;
@@ -145,6 +148,40 @@ export function authoredBy(handle: string, seen: Seen[]): AuthoredPost[] {
   return [...byId.values()];
 }
 
+/**
+ * Which profile a page is, from its address.
+ *
+ * Read before anything is harvested, because a redirect to another account
+ * draws a perfectly good timeline that belongs to somebody else. The author
+ * filter would then quietly reduce it to nothing and the read would look like
+ * an empty account. Reserved first segments are never a profile.
+ */
+export function profileOfUrl(url: string): string | null {
+  try {
+    const first = new URL(url).pathname.split('/').filter(Boolean)[0] ?? '';
+    if (/^(i|home|explore|search|notifications|messages|settings|login|logout|account)$/i.test(first)) return null;
+    return /^[A-Za-z0-9_]{1,15}$/.test(first) ? first : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a timeline area says when it has nothing in it, in X's own words.
+ *
+ * Three different things look identical as "zero articles": an account that
+ * has genuinely never posted, which X says in so many words; X's error screen,
+ * which says to try reloading; and a page that simply never drew. Only the
+ * first is an empty account. The others are a read that failed, and a persona
+ * built from one is a persona built from nothing.
+ */
+export function readTimelineState(text: string): 'ERROR' | 'RATE_LIMITED' | 'EMPTY_STATE' | null {
+  if (/rate limit exceeded|you are being rate limited|too many requests/i.test(text)) return 'RATE_LIMITED';
+  if (/something went wrong\.?\s*try reloading|something went wrong, but don.t fret/i.test(text)) return 'ERROR';
+  if (/hasn.t posted|hasn.t replied|when they (?:do|post)[^.]{0,40}will show up here/i.test(text)) return 'EMPTY_STATE';
+  return null;
+}
+
 /** What X put on the page instead of a timeline, in the words it used. */
 function readProfileState(text: string): { outcome: CorpusOutcome; detail: string } | null {
   if (/This account doesn.t exist|user has been suspended|Account suspended/i.test(text)) {
@@ -199,9 +236,27 @@ export async function collectPersonaCorpus(
       );
     }
 
-    const pageText = await readText(page).catch(() => '');
+    // The page has to be the profile that was asked for, before anything on it
+    // is read. A rename or a redirect lands somewhere else without an error.
+    const landed = profileOfUrl(page.url());
+    if (!landed || landed.toLowerCase() !== handle.toLowerCase()) {
+      return empty(handle, 'UNAVAILABLE', `X showed ${landed ? `@${landed}` : 'a different page'} instead of @${handle}'s timeline, so nothing was read from it.`);
+    }
+
+    let pageText = await readText(page).catch(() => '');
     const refused = readProfileState(pageText);
     if (refused) return empty(handle, refused.outcome, refused.detail);
+
+    // X's error screen is usually momentary. One reload, and no more: a page
+    // that shows it twice is not going to be talked out of it by a third.
+    if (readTimelineState(pageText) === 'ERROR') {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => undefined);
+      await settle(1_500, 2_500);
+      pageText = await readText(page).catch(() => '');
+    }
+    const state = readTimelineState(pageText);
+    if (state === 'RATE_LIMITED') return empty(handle, 'RATE_LIMITED', 'X asked for fewer requests, so the timeline was not read.');
+    if (state === 'ERROR') return empty(handle, 'UNAVAILABLE', `X showed its error screen on @${handle}'s timeline twice, so it was not read.`);
 
     const profile = await readProfileCard(page, handle);
 
@@ -237,14 +292,18 @@ export async function collectPersonaCorpus(
       // that has genuinely never posted and one whose timeline would not load
       // are different, and the article count is what tells them apart.
       const anyArticle = accumulated.length > 0;
+      const finalState = anyArticle ? null : readTimelineState(await readText(page).catch(() => ''));
+      // Only X saying the account has not posted is an empty account. Nothing
+      // drawn at all is a timeline that did not load, and is reported as one.
+      const [outcome, detail]: [CorpusOutcome, string] = anyArticle
+        ? ['EMPTY', `X showed @${handle}'s timeline but none of it was written by them.`]
+        : finalState === 'EMPTY_STATE'
+          ? ['EMPTY', `@${handle} has not posted anything public.`]
+          : finalState === 'RATE_LIMITED'
+            ? ['RATE_LIMITED', 'X asked for fewer requests, so the timeline was not read.']
+            : ['UNAVAILABLE', `X did not draw @${handle}'s timeline, so nothing could be read from it.`];
       return {
-        ...empty(
-          handle,
-          'EMPTY',
-          anyArticle
-            ? `X showed @${handle}'s timeline but none of it was written by them.`
-            : `X did not show any posts for @${handle}.`,
-        ),
+        ...empty(handle, outcome, detail),
         ...profile,
         scrollPasses: passes,
       };

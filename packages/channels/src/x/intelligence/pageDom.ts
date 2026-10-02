@@ -51,6 +51,8 @@ const OUTCOMES: Record<CorpusOutcome, XReadOutcome> = {
   EMPTY: 'EMPTY',
   SIGNED_OUT: 'NEEDS_SIGN_IN',
   CHALLENGE: 'CHALLENGE',
+  UNAVAILABLE: 'UNAVAILABLE',
+  RATE_LIMITED: 'RATE_LIMITED',
 };
 
 /** What this reader can never see, carried with every answer it gives. */
