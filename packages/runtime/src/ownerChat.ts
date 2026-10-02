@@ -377,7 +377,7 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
       origin: { conversationId: conversation.id, messageId: answer.answers ?? answer.id, text: question, ownerId: conversation.ownerId },
     });
 
-    const validated = validateOutput(honestChangeAnswer(loop.answer, loop.steps), chatPolicy(policy), null, [persona.biography, persona.customInstructions].join('\n'));
+    const validated = validateOutput(honestChangeAnswer(loop.answer, loop.steps, question), chatPolicy(policy), null, [persona.biography, persona.customInstructions].join('\n'));
     const model = last as GenerateResult | null;
     const evidence = {
       model: model ? { provider: model.provider, model: model.model, role: model.role, latencyMs: model.latencyMs } : null,

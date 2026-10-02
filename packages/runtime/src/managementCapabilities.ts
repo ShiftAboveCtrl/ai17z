@@ -17,6 +17,7 @@ import {
   refuseChange,
   requestChange,
   undoChange,
+  looksLikeChangeRequest,
   type ChangeKindId,
   type ChangeOrigin,
   type NeverKind,
@@ -95,7 +96,12 @@ const changeSetting = defineCapability({
     'emoji, subjects to avoid, how automated you are, or your own posting. Pick exactly one kind and give its value. ' +
     `Kinds: ${kindList} Small changes apply at once and can be undone; bigger ones wait for the owner to confirm. ` +
     'Say what happened in one sentence, using the detail returned. When the owner asks you to fix yourself, read your health ' +
-    'first; change a setting only if it is the cause, and for a browser, account, provider or model problem say which screen fixes it.',
+    'first; change a setting only if it is the cause, and for a browser, account, provider or model problem say which screen fixes it. ' +
+    // In the words owners use, because the shortlist matches words. Measured
+    // on a real installation: "make your replies slightly shorter" offered
+    // nothing, and the agent answered that it would, having changed nothing.
+    'Owners ask in words like: make your replies shorter or longer, be less formal, sound more casual, use fewer emoji, ' +
+    "stop posting, post less often, add or drop topics, don't talk about something, call yourself something else.",
   category: 'ACCOUNT',
   effect: 'WRITE',
   risk: 'LOW',
@@ -146,7 +152,8 @@ const undo = defineCapability({
   name: 'Undo own change',
   description:
     'Undoes a change you made to your own settings when the owner asks to undo, revert or put it back. ' +
-    'Without an id it undoes the most recent one.',
+    'Without an id it undoes the most recent one. Owners ask in words like: undo that, change it back, ' +
+    'put it back the way it was, revert the last change.',
   category: 'ACCOUNT',
   effect: 'WRITE',
   risk: 'LOW',
@@ -205,9 +212,24 @@ export const CHANGE_CAPABILITY_IDS = new Set(['agent.change_setting', 'agent.und
  * replaced with what actually happened. A model is not a witness to its own
  * tool use.
  */
-export function honestChangeAnswer(answer: string, steps: ReadonlyArray<{ capabilityId: string; outcome: string; detail: string; output?: unknown }>): string {
+/** An answer saying something about the agent has changed, or will from now on. */
+const CLAIMS_A_CHANGE =
+  /\b(?:from now on|going forward|i(?:'ll| will) (?:keep|be|make|use|stop|start|post|avoid|sound|try to|cut|go)|i(?:'ve| have) (?:changed|updated|set|switched|made|adjusted|turned)|(?:changed|updated|adjusted|switched) (?:my|it|that)|done\b)/i;
+
+export function honestChangeAnswer(
+  answer: string,
+  steps: ReadonlyArray<{ capabilityId: string; outcome: string; detail: string; output?: unknown }>,
+  question = '',
+): string {
   const attempts = steps.filter((s) => CHANGE_CAPABILITY_IDS.has(s.capabilityId));
-  if (attempts.length === 0) return answer;
+  if (attempts.length === 0) {
+    // Asked for a change, attempted none, and said it was done: that is a
+    // promise nothing will keep. Measured on a real installation.
+    if (looksLikeChangeRequest(question) && CLAIMS_A_CHANGE.test(answer)) {
+      return 'I have not changed anything: that request did not reach my settings, so nothing about me changed. Ask again and name the setting, for example "make your replies shorter".';
+    }
+    return answer;
+  }
   const succeeded = attempts.filter((s) => s.outcome === 'SUCCEEDED');
   const applied = succeeded.filter((s) => {
     const status = (s.output as { status?: string } | undefined)?.status;
