@@ -21,6 +21,7 @@ export {
   pageGraphqlBackend,
   // The parsing of X's own payloads. Pure, and where its shape bites.
   tweetsFrom,
+  isByRequestedUser,
   toUser,
   toPost,
   nextCursor,
@@ -28,6 +29,8 @@ export {
   findUserResult,
   ancestorChain,
   forgetXReads,
+  emptyTimelineDetail,
+  emptyTimelineIsReal,
 } from './x/intelligence/index';
 export type {
   XId,
@@ -46,6 +49,8 @@ export {
   authoredBy,
   collectPersonaCorpus,
   normaliseHandle,
+  profileOfUrl,
+  readTimelineState,
   type AuthoredPost,
   type CorpusOutcome,
   type PersonaCorpus,

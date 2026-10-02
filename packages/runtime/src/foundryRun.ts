@@ -74,6 +74,9 @@ export function nextStage(run: Pick<ResearchRunRow, 'stageLog'>): FoundryStage |
   return FOUNDRY_STAGES.find((stage) => !done.has(stage)) ?? null;
 }
 
+/** How many times a run may come back for a timeline X would not show, before it says so and stops. */
+export const MAX_X_ATTEMPTS = 5;
+
 interface FoundryPlan {
   handle: string | null;
   projects: string[];
@@ -267,10 +270,25 @@ export async function advanceFoundryRun(run: ResearchRunRow, deps: FoundryDeps):
             sources,
           });
         }
-        // The platform resting is a reason to wait, never a reason to build a
-        // persona without it: the run comes back when the account may read again.
+        // An account that cannot be read at all ends the run with that reason.
+        // Building a persona from whatever else turned up would present
+        // mirrors and search snippets as somebody's voice.
+        const refused = report.families.find((f) => f.family === 'X' && f.fatal);
+        if (stage === 'READING_X' && refused) {
+          if (!(await commit(stage, `${label}: ${refused.fatal} Nothing was proposed.`, { status: 'FAILED' }))) return 'LOST_LEASE';
+          return 'FAILED';
+        }
+        // The platform resting, or failing for the moment, is a reason to wait,
+        // never a reason to build a persona without it. Bounded: a timeline X
+        // will not show after several tries an hour apart is reported, not
+        // waited on for ever.
         const resting = report.families.find((f) => f.family === 'X' && f.retryAfterMs);
         if (stage === 'READING_X' && resting) {
+          if (current.attempts >= MAX_X_ATTEMPTS) {
+            const said = `${label}: X would not show @${plan.handle}'s timeline after ${current.attempts} tries (${resting.detail}). Nothing was proposed.`;
+            if (!(await commit(stage, said, { status: 'FAILED' }))) return 'LOST_LEASE';
+            return 'FAILED';
+          }
           await researchRepo.deferRun(current.id, deps.workerId, Math.max(60_000, resting.retryAfterMs!), `Waiting for X: ${resting.detail}`);
           return 'DEFERRED';
         }

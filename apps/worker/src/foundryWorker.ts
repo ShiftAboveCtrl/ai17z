@@ -2,6 +2,8 @@ import { createLogger, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, agents as agentsRepo, research as researchRepo } from '@xbam/database';
 import {
   collectIndexedMirror,
+  emptyTimelineDetail,
+  emptyTimelineIsReal,
   MIRROR_PROFILE_URLS,
   observationFromSearchResult,
   observationFromXPost,
@@ -43,6 +45,33 @@ const log = createLogger('foundry-worker');
  */
 
 const LEASE_MS = 10 * 60_000;
+
+/**
+ * What a timeline read that did not come back OK means for research.
+ *
+ * Exported and pure because it is the judgement that matters: an empty
+ * account, a read that failed, X asking for less and X asking for a person
+ * all look like "no posts", and each needs something different.
+ */
+export function xReadVerdict(
+  outcome: string,
+  detail: string,
+  handle: string,
+  postsOnProfile: number | null,
+): { state: 'AVAILABLE' | 'DEGRADED' | 'UNAVAILABLE'; detail: string; retryAfterMs?: number; fatal?: string } {
+  if (outcome === 'EMPTY') {
+    return emptyTimelineIsReal(postsOnProfile)
+      ? { state: 'AVAILABLE', detail: emptyTimelineDetail(handle, postsOnProfile) }
+      : { state: 'UNAVAILABLE', detail: emptyTimelineDetail(handle, postsOnProfile), retryAfterMs: 15 * 60_000 };
+  }
+  if (outcome === 'RATE_LIMITED') return { state: 'DEGRADED', detail, retryAfterMs: 15 * 60_000 };
+  if (outcome === 'NOT_FOUND' || outcome === 'PROTECTED') return { state: 'UNAVAILABLE', detail, fatal: detail };
+  if (outcome === 'CHALLENGE' || outcome === 'NEEDS_SIGN_IN') {
+    return { state: 'UNAVAILABLE', detail, fatal: `${detail} This needs you in the AI17Z browser window; nothing here answers it.` };
+  }
+  // SCHEMA_CHANGED, UNAVAILABLE: usually momentary. Come back, bounded.
+  return { state: 'UNAVAILABLE', detail: detail || `X did not show @${handle}'s timeline.`, retryAfterMs: 10 * 60_000 };
+}
 /** Mirror pages opened per run: enough to corroborate a voice, few enough to be a reader rather than a crawler. */
 const MIRROR_PAGES_PER_RUN = 8;
 let running: string | null = null;
@@ -86,12 +115,10 @@ function depsFor(channel: ChannelContext | null, workerId: string): FoundryDeps 
           await noteXRead(accountId!, 'BROAD');
           const at = new Date().toISOString();
           const observations = posts.data.map((p) => observationFromXPost(p, at)).filter((o): o is NonNullable<typeof o> => o !== null);
-          return {
-            state: posts.outcome === 'OK' ? 'AVAILABLE' : observations.length > 0 ? 'DEGRADED' : 'UNAVAILABLE',
-            detail: posts.outcome === 'OK' ? `Read ${observations.length} posts and replies by @${user.data.handle}.` : posts.detail,
-            observations,
-            requests: 2,
-          };
+          if (posts.outcome === 'OK') {
+            return { state: 'AVAILABLE', detail: `Read ${observations.length} posts and replies by @${user.data.handle}.`, observations, requests: 2 };
+          }
+          return { ...xReadVerdict(posts.outcome, posts.detail, user.data.handle, user.data.posts), observations, requests: 2 };
         },
       }
     : null;

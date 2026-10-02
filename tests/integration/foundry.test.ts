@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ResearchObservation } from '@xbam/shared/contracts';
-import { agents as agentsRepo, foundry as foundryRepo, knowledge as knowledgeRepo, research as researchRepo, stances as stancesRepo } from '@xbam/database';
-import { advanceFoundryRun, applyFoundry, nextStage, type FabricSource, type FoundryDeps } from '@xbam/runtime';
+import { agents as agentsRepo, foundry as foundryRepo, knowledge as knowledgeRepo, query, research as researchRepo, stances as stancesRepo } from '@xbam/database';
+import { MAX_X_ATTEMPTS, advanceFoundryRun, applyFoundry, nextStage, type FabricSource, type FoundryDeps } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { builderPersona } from '../support/syntheticPersonas';
@@ -306,5 +306,60 @@ describe('a queued run says why it is waiting', () => {
 
     await report(true);
     expect((await foundryRunView(run.id))!.waitingFor).toBeNull();
+  });
+});
+
+describe('a persona X would not show', () => {
+  const withPlatform = (collect: FabricSource['collect']): FoundryDeps => ({
+    ...deps(),
+    platform: { family: 'X', tier: 'PRIMARY_PLATFORM', label: 'X', roles: ['PERSONA_RESEARCH'], optional: false, collect },
+    mirrors: [],
+  });
+
+  it('waits rather than building a persona from a failed read, and stops saying why after the bound', async () => {
+    const { run } = await startRun();
+    const d = withPlatform(async () => ({
+      state: 'UNAVAILABLE',
+      detail: 'X says @synthbuilder has 237 posts, and showed none of them, so the read failed rather than finding an empty account.',
+      observations: [],
+      requests: 2,
+      retryAfterMs: 15 * 60_000,
+    }));
+    const claimed = (await researchRepo.claimDueRun(d.workerId, d.leaseMs))!;
+    expect(await advanceFoundryRun(claimed, d)).toBe('DEFERRED');
+    expect(await foundryRepo.listItems(run.id)).toEqual([]);
+
+    await query(`UPDATE research_runs SET attempts = $2, next_attempt_at = now() WHERE id = $1`, [run.id, MAX_X_ATTEMPTS]);
+    const again = (await researchRepo.claimDueRun(d.workerId, d.leaseMs))!;
+    expect(await advanceFoundryRun(again, d)).toBe('FAILED');
+    const done = (await researchRepo.getRun(run.id))!;
+    expect(done.status).toBe('FAILED');
+    expect(done.stageLog.at(-1)!.detail).toMatch(/would not show @synthbuilder's timeline .* Nothing was proposed/);
+    expect(await foundryRepo.listItems(run.id)).toEqual([]);
+  });
+
+  it('stops at once, with the reason, when the account cannot be read at all', async () => {
+    const { run } = await startRun();
+    const d = withPlatform(async () => ({
+      state: 'UNAVAILABLE',
+      detail: 'That account is protected.',
+      observations: [],
+      requests: 2,
+      fatal: 'That account is protected, so its posts are not public and AI17Z cannot read them.',
+    }));
+    const claimed = (await researchRepo.claimDueRun(d.workerId, d.leaseMs))!;
+    expect(await advanceFoundryRun(claimed, d)).toBe('FAILED');
+    const done = (await researchRepo.getRun(run.id))!;
+    expect(done.stageLog.at(-1)!.detail).toMatch(/protected.*Nothing was proposed/);
+    expect(await foundryRepo.listItems(run.id)).toEqual([]);
+  });
+
+  it('an account X itself shows as empty is honestly low data, not a failure', async () => {
+    const { run } = await startRun();
+    const d = withPlatform(async () => ({ state: 'AVAILABLE', detail: '@synthbuilder has no public posts AI17Z can read.', observations: [], requests: 2 }));
+    const claimed = (await researchRepo.claimDueRun(d.workerId, d.leaseMs))!;
+    expect(await advanceFoundryRun(claimed, d)).toBe('READY');
+    const done = (await researchRepo.getRun(run.id))!;
+    expect(done.stageLog.find((s) => s.stage === 'VOICE')!.detail).toMatch(/0 measurements from 0 items/);
   });
 });

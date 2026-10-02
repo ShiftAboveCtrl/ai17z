@@ -27,6 +27,7 @@ export {
   // The parsing, exported because it is pure and it is where X's own
   // shape actually bites -- nested wrappers, long-form text, cursors.
   tweetsFrom,
+  isByRequestedUser,
   toUser,
   toPost,
   nextCursor,
