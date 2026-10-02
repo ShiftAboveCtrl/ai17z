@@ -68,6 +68,21 @@ const FAMILY_HINTS: Record<string, string[]> = {
     "what's broken", 'what is broken', 'what is wrong', "what's wrong", 'why did you', "why didn't you", 'why did not you',
     'stayed silent', 'you learning', 'you learned', 'you grown', 'your goals', 'you believe', 'your setup',
   ],
+  /*
+    Asking the agent to change itself, in the words owners use. A family of its
+    own, so a change request lifts the three capabilities that act on it and not
+    every introspection read beside them: lifted together, eight reads filled
+    the menu and the undo was cut. Measured on a real installation: "make your
+    replies slightly shorter" reached nothing, and the agent said it would
+    comply having changed nothing.
+  */
+  self: [
+    'your replies', 'replies shorter', 'replies longer', 'shorter replies', 'longer replies', 'your tone',
+    'be less', 'be more', 'sound more', 'sound less', 'fewer emoji', 'less emoji', 'more emoji', 'no emoji',
+    'stop posting', 'start posting', 'post less', 'post more', 'to your topics', 'from your topics',
+    "don't talk about", 'do not talk about', 'call yourself',
+    'undo that', 'undo the', 'change it back', 'put it back', 'revert the',
+  ],
   x: ['tweet', 'post', 'thread', 'timeline', 'profile', 'mention', 'follower', 'reply', 'quote'],
   github: ['github', 'repo', 'repository', 'commit', 'release', 'pull request', 'issue', 'shipped', 'changelog'],
   chain: ['ethereum', 'evm', 'base', 'arbitrum', 'optimism', 'polygon', 'gas', 'block', 'receipt', 'onchain'],
@@ -141,7 +156,11 @@ function mentions(asked: Set<string>, hint: string): boolean {
 }
 
 /** The part of an id before the first dot: `x.read_post` is in the `x` family. */
+/** The capabilities by which an agent changes itself, scored as their own family. */
+const SELF_CHANGE = new Set(['agent.change_setting', 'agent.undo_change', 'agent.cannot_change']);
+
 export function familyOf(capabilityId: string): string {
+  if (SELF_CHANGE.has(capabilityId)) return 'self';
   const dot = capabilityId.indexOf('.');
   return dot === -1 ? capabilityId : capabilityId.slice(0, dot);
 }

@@ -15,9 +15,10 @@ import {
   registerManagementCapabilities,
   requestChange,
   runCapabilityLoop,
+  shortlistCapabilities,
   undoChange,
 } from '@xbam/runtime';
-import { invokeCapability, listCapabilities, registerBuiltinCapabilities } from '@xbam/tools';
+import { invokeCapability, listCapabilities, listModelCallable, registerBuiltinCapabilities } from '@xbam/tools';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -313,5 +314,40 @@ describe('what the installed proof found', () => {
     const applied = [{ capabilityId: 'agent.change_setting', outcome: 'SUCCEEDED', detail: '', output: { status: 'APPLIED', detail: 'Done.' } }];
     expect(honestChangeAnswer('Done, I sound drier now.', applied)).toBe('Done, I sound drier now.');
     expect(honestChangeAnswer('Just chatting.', [])).toBe('Just chatting.');
+  });
+});
+
+describe('reaching a change by the words an owner uses', () => {
+  const offered = (task: string) =>
+    shortlistCapabilities(listModelCallable().filter((c) => c.audience === 'OWNER' || c.audience === undefined), task).offered.map((c) => c.id);
+
+  it('offers the change for the ordinary ways of asking', () => {
+    for (const ask of [
+      'Shift, make your replies slightly shorter.',
+      'be less formal',
+      'stop posting for today',
+      'add Solana to your topics',
+      'use fewer emoji please',
+      'can you sound more casual',
+      'post less often',
+      "don't talk about politics",
+    ]) {
+      expect(offered(ask), ask).toContain('agent.change_setting');
+    }
+  });
+
+  it('offers the undo for the ordinary ways of taking one back', () => {
+    for (const ask of ['undo that', 'change it back', 'put it back the way it was', 'revert the last change']) {
+      expect(offered(ask), ask).toContain('agent.undo_change');
+    }
+  });
+
+  it('a change asked for and not attempted is never reported as made', () => {
+    const said = honestChangeAnswer("Got it. I'll keep my replies shorter from now on.", [], 'Shift, make your replies slightly shorter.');
+    expect(said).not.toMatch(/from now on/);
+    expect(said).toMatch(/nothing about me changed/i);
+    // Ordinary conversation is left alone.
+    expect(honestChangeAnswer('Sure, here is a short summary.', [], 'give me a short summary of today')).toBe('Sure, here is a short summary.');
+    expect(honestChangeAnswer("I'll keep that in mind.", [], 'what do you think about Solana?')).toBe("I'll keep that in mind.");
   });
 });
