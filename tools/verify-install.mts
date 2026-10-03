@@ -46,7 +46,7 @@
  */
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -529,6 +529,29 @@ async function attempt(label: string, stage: string): Promise<string> {
   // What the installer put there, so anything that appears later is something
   // running the application wrote.
   const installed = new Set(await readdir(program));
+
+  // And that what it put there says when it was put there.
+  //
+  // Every entry in the package carries 1980-01-01: tools/zip.ts fixes the
+  // timestamp on all of them so identical input produces an identical archive
+  // and the hash the install command pins is the identity of the payload.
+  // Right for the archive, wrong for the disk. Docker's builder decides
+  // whether a context file changed from its path, size and modification time,
+  // and a version bump changes the manifests without changing either. The
+  // lockfiles of beta.61 and beta.62 are both exactly 261594 bytes, so an
+  // updated installation handed its builder the previous release's manifests
+  // and went on installing the dependencies of a release several versions old,
+  // with every label saying otherwise.
+  for (const name of ['package.json', 'package-lock.json']) {
+    const when = (await stat(join(program, name))).mtime;
+    if (when.getUTCFullYear() <= 2000) {
+      fail(
+        `${label}: ${name} was laid down carrying the archive timestamp`,
+        `mtime ${when.toISOString()}\nDocker's builder reads this to decide whether the file changed, and a version bump does not change its length.`,
+      );
+    }
+  }
+  say(`${label}: the manifests say when they were written, not what the archive claims`);
 
   try {
     // ---- 1. The thing the desktop icon and the Start Menu both point at ----
