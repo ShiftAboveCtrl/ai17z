@@ -2324,6 +2324,26 @@ function Expand-Ai17zPackage {
     if (-not $root.EndsWith('\')) { $root += '\' }
     $count = 0
     $total = $archive.Entries.Count
+    # When these files were put here, which is not what the archive says.
+    #
+    # Every entry in the package carries 1980-01-01, deliberately: tools/zip.ts
+    # fixes the timestamp on all of them so that identical input produces an
+    # identical archive and the hash the install command pins is the identity
+    # of the payload. That is right for the archive and wrong for the disk.
+    #
+    # Docker's builder decides whether a file in its context changed from the
+    # path, the size and the modification time. A version bump changes
+    # package.json and package-lock.json without changing either length, and a
+    # fixed archive timestamp means the time does not move either, so an
+    # updated installation handed its builder the previous release's manifests
+    # and went on installing the dependencies of a release several versions
+    # old. Measured: two installations reporting 1.0.0-beta.61 were serving
+    # fastify 5.12.1 out of a lockfile from 1.0.0-beta.52, and the lockfiles of
+    # beta.61 and beta.62 are both exactly 261594 bytes.
+    #
+    # So the extraction time is stamped on what it writes. The archive stays
+    # reproducible and the disk stops claiming nothing happened.
+    $extractedAt = [DateTime]::UtcNow
     foreach ($entry in $archive.Entries) {
       $target = [System.IO.Path]::GetFullPath((Join-Path $Destination $entry.FullName))
       # Belt and braces: the name passed the check above, and this proves the
@@ -2338,6 +2358,7 @@ function Expand-Ai17zPackage {
       $parent = Split-Path -Parent $target
       if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
       [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+      [System.IO.File]::SetLastWriteTimeUtc($target, $extractedAt)
       $count += 1
       if ($StepKey -and ($count % 250 -eq 0)) {
         Set-Ai17zStep $StepKey 'active' ('{0} of {1} files' -f $count, $total)

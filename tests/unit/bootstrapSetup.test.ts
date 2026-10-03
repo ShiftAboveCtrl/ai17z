@@ -661,3 +661,39 @@ describe('the audit document describes the program it ships with', () => {
     expect(audit).toContain('Do not run it');
   });
 });
+
+/**
+ * What the extraction leaves on the disk, as opposed to what the archive says.
+ *
+ * tools/zip.ts fixes every entry in the package to 1980-01-01 on purpose, so
+ * that identical input produces an identical archive and the hash the install
+ * command checks is the identity of the payload. Extracting it used to put that
+ * timestamp on the files as well.
+ *
+ * Docker's builder decides whether a file in its build context changed from the
+ * path, the size and the modification time. A version bump changes
+ * package.json and package-lock.json without changing either length: the
+ * lockfiles of 1.0.0-beta.61 and 1.0.0-beta.62 are both exactly 261594 bytes.
+ * So nothing the builder looks at moved, it kept the copy it already had, and
+ * two installations reporting beta.61 served dependencies resolved from a
+ * beta.52 lockfile while every label said they were current.
+ *
+ * verify:install proves the behaviour against a real extraction. This is here
+ * because that gate is not what runs on every change, and a line whose absence
+ * is silent needs something cheap watching it.
+ */
+describe('laying the package down stamps when it happened', () => {
+  it('sets a write time on every file it extracts', () => {
+    expect(setup, 'the extraction no longer stamps a write time').toContain('SetLastWriteTimeUtc');
+    // Taken once, so every file of one extraction agrees, and from the clock
+    // rather than from the entry.
+    expect(setup).toMatch(/\$extractedAt\s*=\s*\[DateTime\]::UtcNow/);
+    expect(setup).toMatch(/SetLastWriteTimeUtc\(\$target,\s*\$extractedAt\)/);
+  });
+
+  it('keeps the archive itself reproducible', () => {
+    // The fix must not have been applied by making the package non-deterministic.
+    const zip = read('tools/zip.ts');
+    expect(zip, 'the archive stopped using one fixed timestamp').toMatch(/1980/);
+  });
+});
