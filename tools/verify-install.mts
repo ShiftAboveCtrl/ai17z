@@ -283,6 +283,44 @@ async function compose(program: string, data: string, args: string[]): Promise<s
   return stdout + stderr;
 }
 
+/**
+ * That each node image was built against the lockfile that is installed.
+ *
+ * The web image is nginx serving built assets and holds no lockfile, so it
+ * cannot be asked. A rebuild rebuilds all three together, so the two that can
+ * be asked are enough to catch a build that reused cached dependencies.
+ */
+async function imagesHoldTheLock(label: string, program: string, project: string | null): Promise<void> {
+  if (!project) fail(`${label}: no Docker project to ask about the images`, 'AI17Z_INSTANCE is unset');
+  const { createHash } = await import('node:crypto');
+  const want = createHash('sha256')
+    .update(await readFile(join(program, 'package-lock.json')))
+    .digest('hex');
+  for (const service of ['api', 'worker']) {
+    let held = '';
+    try {
+      const { stdout } = await run('docker', [
+        'run',
+        '--rm',
+        '--entrypoint',
+        'sha256sum',
+        `${project}-${service}`,
+        '/app/package-lock.json',
+      ]);
+      held = stdout.trim().split(/\s+/)[0] ?? '';
+    } catch (error) {
+      fail(`${label}: could not read the lockfile out of the ${service} image`, (error as Error).message);
+    }
+    if (held !== want) {
+      fail(
+        `${label}: the ${service} image was built against a different package-lock.json`,
+        `image ${held || 'nothing'}, installed ${want}\nIts dependencies are not the ones this release pins.`,
+      );
+    }
+  }
+  say(`${label}: the api and worker images hold the installed lockfile`);
+}
+
 async function get(url: string): Promise<{ status: number; body: string }> {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
@@ -515,6 +553,24 @@ async function attempt(label: string, stage: string): Promise<string> {
       fail(`${label}: ${applied} migrations applied, ${expected} shipped`, counted.trim());
     }
     say(`${label}: ${applied} migrations applied`);
+
+    // ---- 2b. The images hold the dependencies this installation pins -----
+    //
+    // `ai17z.built-from` records what a build *intended*: the launcher stamps
+    // every image from the installed stamp whatever Docker's layer cache
+    // served, so an image can carry one release's label over another
+    // release's dependencies and the staleness check still passes. Two real
+    // installations at beta.61 were serving fastify 5.12.1 after a release
+    // had replaced it with 5.12.5 to close five advisories, with every stamp
+    // and health screen reporting the current version.
+    //
+    // `--rmi local` in the teardown removes images but not the build cache,
+    // so this room can reproduce it, which is the whole reason the assertion
+    // belongs here rather than beside the launcher.
+    //
+    // Asked of the file in the image rather than of a label, because a label
+    // is what somebody meant and the file is what is there.
+    await imagesHoldTheLock(label, program, await projectOf());
 
     // ---- 3. What a person would actually look at -------------------------
     const health = await get(`http://localhost:${ports.api}/api/health/live`);

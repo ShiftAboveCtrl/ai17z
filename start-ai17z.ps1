@@ -581,6 +581,48 @@ function Get-ImageStamp {
   return $parsed.'ai17z.built-from'
 }
 
+<#
+  Which dependencies an image actually holds, asked of the image.
+
+  `ai17z.built-from` records what a build *intended*. It is applied from the
+  installed stamp whatever Docker's layer cache served, so an image can carry
+  one release's label over another release's dependencies and every check
+  above it passes. Found on two real installations at beta.61 whose API
+  containers were serving fastify 5.12.1, which beta.60 had replaced with
+  5.12.5 to close five advisories: the source layers were current, the
+  `COPY package.json package-lock.json` layer was months old, and the stamp
+  said the installation was up to date. The giveaway was that the image's
+  package.json and its lockfile named different releases, which no checkout of
+  one commit ever does.
+
+  So this reads the lockfile out of the image rather than asking a label about
+  it. A label can be wrong about what an image holds; the file cannot.
+
+  Empty when the image has no lockfile or cannot be read, which the caller
+  treats the way it treats a missing stamp.
+#>
+function Get-ImageLockDigest {
+  param([Parameter(Mandatory)] [string] $Image)
+  $out = Invoke-Quiet docker @(
+    'run', '--rm', '--entrypoint', 'sha256sum', $Image, '/app/package-lock.json'
+  )
+  if (-not $out) { return '' }
+  return ([string]$out).Trim().Split(' ')[0]
+}
+
+<#
+  The lockfile this installation pins, as a digest in the same form.
+#>
+function Get-SourceLockDigest {
+  $lock = Join-Path $PSScriptRoot 'package-lock.json'
+  if (-not (Test-Path $lock)) { return '' }
+  try {
+    return (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash.ToLowerInvariant()
+  } catch {
+    return ''
+  }
+}
+
 # Rebuild when the images are not the code that is installed.
 #
 # `docker compose up -d` builds only when an image is *missing*. It has no idea
@@ -644,9 +686,60 @@ if (-not $needsBuild) {
   }
 }
 
+# And whether the images hold the dependencies this installation pins.
+#
+# Separate from the stamp loop because it is a different question: the stamp
+# says which source an image was built from, and this says which dependencies
+# came out of that build. Only the two node images are asked, because the web
+# image is nginx serving built assets and has no lockfile in it. A rebuild
+# rebuilds all three anyway, so one of them noticing is enough.
+if (-not $needsBuild) {
+  $wantLock = Get-SourceLockDigest
+  if ($wantLock) {
+    foreach ($service in @('api', 'worker')) {
+      $heldLock = Get-ImageLockDigest "$composeProject-$service"
+      if ($heldLock -ne $wantLock) {
+        $needsBuild = $true
+        $why = "the $service image was built against a different package-lock.json"
+        break
+      }
+    }
+  }
+}
+
 if ($needsBuild) {
   Write-Step "Building images: $why..."
   Invoke-Native docker (@('compose') + $ComposeEnv + @('build', 'api', 'web', 'worker')) 'The image build failed. The output above says why.' | Out-Null
+
+  # Whether the build delivered what it was asked for.
+  #
+  # Checked after the fact because a build can report success and still hand
+  # back the dependencies of a much older release. Measured on this machine:
+  # BuildKit held a stale snapshot of the program directory and kept serving a
+  # months-old package-lock.json out of it, through a plain build and through
+  # `--no-cache` alike. Only clearing the builder cache fixed it, and that is
+  # the owner's call rather than something to do to their machine from here:
+  # it would throw away every other project's build cache too.
+  #
+  # So this says what is wrong, in a sentence, and leaves the installation
+  # running. Serving the previous release's dependencies without telling
+  # anybody is the thing worth avoiding, and refusing to start over it would
+  # be worse than saying so.
+  $wantLock = Get-SourceLockDigest
+  if ($wantLock) {
+    foreach ($service in @('api', 'worker')) {
+      if ((Get-ImageLockDigest "$composeProject-$service") -ne $wantLock) {
+        Write-Warn "The $service image still holds a different package-lock.json than this installation."
+        Write-Host '  Its dependencies are not the ones this release pins, so a fix shipped in a' -ForegroundColor Yellow
+        Write-Host '  dependency will not be running. Docker is serving a stale copy of this folder' -ForegroundColor Yellow
+        Write-Host '  to its builder; clearing the build cache is what fixes it:' -ForegroundColor Yellow
+        Write-Host '    docker builder prune -af' -ForegroundColor White
+        Write-Host '  then start AI17Z again. That removes build caches for everything on this' -ForegroundColor Yellow
+        Write-Host '  machine, not only AI17Z, which is why this does not do it for you.' -ForegroundColor Yellow
+        break
+      }
+    }
+  }
 } else {
   Write-Step "Images are up to date ($($env:AI17Z_BUILD_STAMP))."
 }
