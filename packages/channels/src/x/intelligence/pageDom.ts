@@ -168,6 +168,9 @@ export const pageDomBackend: XIntelligenceBackend = {
       // not on the page, so it is said here instead of guessed there.
       isReply: post.kind === 'reply',
       quotedPostId: null,
+      // Said here for the same reason, and from the same read: the collector
+      // saw a quoted article, and which status it was is not on the page.
+      isQuote: post.kind === 'quote',
       repost: false,
       lang: null,
       metrics: null,
