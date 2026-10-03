@@ -637,3 +637,57 @@ describe('stopping closes Chrome before it kills anything', () => {
     expect(stop).toContain('psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"');
   });
 });
+
+/**
+ * Whether the images hold the dependencies the installation pins.
+ *
+ * `ai17z.built-from` records what a build *intended*. Every launcher stamps
+ * its images from the installed stamp whatever Docker's layer cache served,
+ * so an image can carry one release's label over another release's
+ * dependencies and the staleness check still passes. Two real installations
+ * at beta.61 were serving fastify 5.12.1 after a release had replaced it with
+ * 5.12.5 to close five advisories: the source layers were current, the
+ * lockfile layer was months old, and every stamp said up to date.
+ *
+ * All three launchers had the same hole because they have the same shape, so
+ * all three are held to the fix here. The web image is nginx serving built
+ * assets and holds no lockfile, so only the node images can be asked.
+ */
+describe('every launcher asks what dependencies its images actually hold', () => {
+  const launchers = [
+    'start-ai17z.ps1',
+    'packaging/ubuntu/ai17z-lifecycle.sh',
+    'packaging/macos/ai17z-lifecycle.sh',
+  ];
+  const read = (name: string) => readFileSync(resolve(root, name), 'utf8');
+
+  it.each(launchers)('%s reads the lockfile out of the image', (name) => {
+    const text = read(name);
+    // Out of the image, not off a label: a label is what somebody meant.
+    expect(text, 'does not read the image lockfile').toContain('/app/package-lock.json');
+    expect(text, 'does not run a digest in the image').toContain('--entrypoint');
+  });
+
+  it.each(launchers)('%s rebuilds, and says why, when they disagree', (name) => {
+    // The consequence is the part that matters: detecting it and carrying on
+    // would leave the same containers serving the same dependencies.
+    expect(read(name)).toContain('built against a different package-lock.json');
+  });
+
+  it.each(launchers)('%s checks again after building, because a build can lie', (name) => {
+    // The build that cannot fix this reports success. BuildKit served a stale
+    // snapshot of the program directory through a plain build and through
+    // `--no-cache`, so the only honest move left is to say so.
+    const text = read(name);
+    expect(text, 'never re-checks after the build').toContain('still holds a different package-lock.json');
+    expect(text, 'does not name the one thing that fixes it').toContain('docker builder prune -af');
+  });
+
+  it.each(launchers)('%s does not prune the machine on the owner behalf', (name) => {
+    // It would throw away every other project's build cache. Named as advice,
+    // never run from here.
+    const text = read(name);
+    const runs = text.split('\n').filter((line) => /docker builder prune/.test(line) && !/^\s*(#|note |Write-Host|\*)/.test(line));
+    expect(runs, `would run a prune: ${runs.join(' | ')}`).toEqual([]);
+  });
+});

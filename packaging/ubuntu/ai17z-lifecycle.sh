@@ -181,8 +181,61 @@ image_stamp() { # image
   docker inspect --format '{{index .Config.Labels "ai17z.built-from"}}' "$1" 2>/dev/null || printf ''
 }
 
+# Which dependencies an image actually holds, asked of the image.
+#
+# `ai17z.built-from` records what a build *intended*. It is applied from the
+# installed stamp whatever Docker's layer cache served, so an image can carry
+# one release's label over another release's dependencies while every check
+# above passes. Found on two real installations serving fastify 5.12.1 after a
+# release had replaced it with 5.12.5 to close five advisories: the source
+# layers were current, the lockfile layer was months old, and the stamp said
+# the installation was up to date. A label can be wrong about what an image
+# holds; the file in it cannot.
+image_lock() { # image
+  docker run --rm --entrypoint sha256sum "$1" /app/package-lock.json 2>/dev/null \
+    | cut -d' ' -f1 | tr -d '\n'
+}
+
+source_lock() {
+  [ -f "$APP_ROOT/package-lock.json" ] || { printf ''; return; }
+  sha256sum "$APP_ROOT/package-lock.json" 2>/dev/null | cut -d' ' -f1 | tr -d '\n'
+}
+
+# Whether the build delivered what it was asked for.
+#
+# Checked after the fact because a build can report success and still hand back
+# the dependencies of a much older release. Measured: BuildKit held a stale
+# snapshot of the program directory and kept serving a months-old
+# package-lock.json out of it, through a plain build and through `--no-cache`
+# alike. Only clearing the builder cache fixed it, and that is the owner's call
+# rather than something to do to their machine from here, because it throws
+# away every other project's build cache too.
+#
+# So this says what is wrong and leaves the installation running. Serving the
+# previous release's dependencies without telling anybody is the thing worth
+# avoiding; refusing to start over it would be worse than saying so.
+warn_if_lock_still_differs() {
+  local project want_lock held_lock
+  want_lock="$(source_lock)"
+  [ -n "$want_lock" ] || return 0
+  project="$(ai17z_compose config 2>/dev/null | sed -n 's/^name: //p' | head -1)"
+  [ -n "$project" ] || return 0
+  for service in api worker; do
+    held_lock="$(image_lock "${project}-${service}")"
+    [ "$held_lock" = "$want_lock" ] && continue
+    warn "The ${service} image still holds a different package-lock.json than this installation."
+    note "Its dependencies are not the ones this release pins, so a fix shipped in a"
+    note "dependency will not be running. Docker is serving a stale copy of this folder"
+    note "to its builder; clearing the build cache is what fixes it:"
+    note "  docker builder prune -af"
+    note "then start AI17Z again. That removes build caches for everything on this"
+    note "machine, not only AI17Z, which is why this does not do it for you."
+    return 0
+  done
+}
+
 images_are_stale() {
-  local project want built
+  local project want built want_lock held_lock
   want="$(build_stamp)"
   [ -n "$want" ] || return 1
   project="$(ai17z_compose config 2>/dev/null | sed -n 's/^name: //p' | head -1)"
@@ -194,6 +247,20 @@ images_are_stale() {
       return 0
     }
   done
+  # A different question from the stamp: that says which source an image was
+  # built from, this says which dependencies came out of the build. Only the
+  # node images are asked, because the web image is nginx serving built assets
+  # and holds no lockfile. A rebuild rebuilds all three, so one is enough.
+  want_lock="$(source_lock)"
+  if [ -n "$want_lock" ]; then
+    for service in api worker; do
+      held_lock="$(image_lock "${project}-${service}")"
+      [ "$held_lock" = "$want_lock" ] || {
+        note "The ${service} image was built against a different package-lock.json."
+        return 0
+      }
+    done
+  fi
   return 1
 }
 
@@ -221,6 +288,7 @@ cmd_start() {
       oops "The containers would not build." "Full log: $LOG_DIR/compose-build.log"
     }
     good "Containers rebuilt"
+    warn_if_lock_still_differs
   fi
 
   step "Starting AI17Z"
