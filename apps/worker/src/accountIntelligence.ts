@@ -189,14 +189,22 @@ async function readTheirPosts(channel: unknown, user: XUser, limit: number) {
   );
 }
 
-function toReadPost(post: XPostRecord): ReadPost {
+export function toReadPost(post: XPostRecord): ReadPost {
   return {
     id: post.postId,
     text: post.text,
     createdAt: post.createdAt,
     url: post.url,
-    reply: Boolean(post.replyToPostId),
-    quote: Boolean(post.quotedPostId),
+    // The parent's id, or the reader saying so without one. A drawn article
+    // carries "Replying to @someone" and no status id, so a reader that fell
+    // back to the page leaves `replyToPostId` null and sets `isReply`. Asking
+    // only for the id therefore counted every reply on that path as an
+    // announcement. Measured on a real installation: five accounts read one
+    // after another, one of them an agent that does little else but answer
+    // people, every one of them reported as nought replies and nought quotes.
+    // That is the opposite of what this read is for.
+    reply: Boolean(post.replyToPostId) || post.isReply === true,
+    quote: Boolean(post.quotedPostId) || post.isQuote === true,
     // Only what was counted. `metrics` is null from a reader that could not see
     // exact numbers, and a null count must never arrive downstream as a zero.
     ...(post.metrics?.likes === null || post.metrics?.likes === undefined ? {} : { likes: post.metrics.likes }),

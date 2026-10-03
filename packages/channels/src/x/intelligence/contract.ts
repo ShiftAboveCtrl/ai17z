@@ -213,6 +213,17 @@ export interface XPostRecord {
   /** The post this quotes, when it quotes one. */
   quotedPostId: XId | null;
   /**
+   * Whether this quotes somebody, when that is known without the quoted id.
+   *
+   * The same shape as `isReply` and for the same reason: a drawn article shows
+   * the quoted post without saying which status it is, so the rendered-page
+   * reader knows a post is a quote while `quotedPostId` stays null. Absent
+   * means only `quotedPostId` says. Without it a reader that cannot see the
+   * id reports every quote as an ordinary post, which is a stated no built
+   * out of an absence.
+   */
+  isQuote?: boolean;
+  /**
    * Somebody else's post, passed on without comment.
    *
    * Kept and marked rather than dropped here: whether a repost counts depends

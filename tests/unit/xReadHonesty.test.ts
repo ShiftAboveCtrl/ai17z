@@ -17,6 +17,8 @@ import {
   type XReadOutcome,
 } from '@xbam/channels';
 import type { xMonitors } from '@xbam/channels';
+import { readAccount } from '@xbam/runtime';
+import { toReadPost } from '../../apps/worker/src/accountIntelligence';
 import { xReadVerdict } from '../../apps/worker/src/foundryWorker';
 
 /**
@@ -236,5 +238,61 @@ describe('falling back from the structured reader to the page', () => {
       expect(out.outcome).toBe(stop);
       expect(dom.asked).toEqual([]);
     }
+  });
+});
+
+/**
+ * What an account read says somebody spends their time doing.
+ *
+ * The reading's own reason for keeping replies is that "an account described
+ * only by its announcements is described as somebody it is not". A reader that
+ * fell back to the rendered page cannot see the parent's status id, so it says
+ * `isReply` instead, and the mapping asked only for the id. Measured on a
+ * real installation: five accounts read one after another, one of them an
+ * agent that does little else but answer people, every one of them reported
+ * as nought replies and nought quotes.
+ */
+describe('how much of what somebody writes is conversation', () => {
+  const record = (over: Partial<XPostRecord> & { postId: string }): XPostRecord =>
+    ({
+      authorId: null,
+      authorHandle: 'someone',
+      text: 'words',
+      createdAt: '2026-10-03T00:00:00.000Z',
+      url: `https://x.com/someone/status/${over.postId}`,
+      conversationId: null,
+      replyToPostId: null,
+      replyToUserId: null,
+      quotedPostId: null,
+      repost: false,
+      lang: null,
+      metrics: null,
+      media: [],
+      links: [],
+      provenance: provenanceFor('x-page', { collectedAt: '2026-10-03T00:00:00.000Z' }),
+      ...over,
+    }) as XPostRecord;
+
+  it('counts a reply the rendered page reported without a parent id', () => {
+    // What the page reader can say, and all it can say.
+    expect(toReadPost(record({ postId: '1', isReply: true })).reply).toBe(true);
+    expect(toReadPost(record({ postId: '2', isQuote: true })).quote).toBe(true);
+    // What the structured reader says, which already worked.
+    expect(toReadPost(record({ postId: '3', replyToPostId: '9' })).reply).toBe(true);
+    expect(toReadPost(record({ postId: '4', quotedPostId: '9' })).quote).toBe(true);
+    // And an announcement is still an announcement.
+    const plain = toReadPost(record({ postId: '5' }));
+    expect(plain.reply).toBe(false);
+    expect(plain.quote).toBe(false);
+  });
+
+  it('reports the mix of a page-read timeline rather than calling all of it announcements', () => {
+    const posts = [
+      record({ postId: '1', isReply: true }),
+      record({ postId: '2', isReply: true }),
+      record({ postId: '3', isQuote: true }),
+      record({ postId: '4' }),
+    ].map(toReadPost);
+    expect(readAccount(posts).mix).toEqual({ posts: 1, replies: 2, quotes: 1 });
   });
 });
