@@ -395,6 +395,15 @@ what was stored and compares a hash. `backupReadiness` reports honestly that no
 store is registered rather than claiming a backup happened, because the local
 product already learned that "ready" did not prove a worker was running.
 
+`packages/runtime/src/backupStoreFs.ts` is the simplest real store, and it is
+**not registered on import**: a store that registered itself would make
+`backupReadiness` say a hosted runtime is recoverable on the strength of a
+directory existing on the machine that is holding it. It is also **not
+off-host**, and says so in the line an operator reads, because a backup on
+the machine it is protecting reads as solved on a status screen and is not.
+It writes under the storage directory rather than beside the program, since
+the program directory is replaced on every upgrade.
+
 `mayRecoverElsewhere` is the guarded one. Restoring a runtime onto a different
 host while the original may be alive is the two-copies problem again, so it
 refuses unless the original is known not to be running. **`HOST_UNREACHABLE`
@@ -553,8 +562,10 @@ Written here rather than discovered later:
 - No capacity has been measured, so no capacity is claimed. A runtime class
   says what is set aside; what a machine can actually carry is a different
   number and nothing has produced it.
-- Backup and restore are implemented and tested against a fake store. Neither
-  has been executed against a real one.
+- Backup and restore have been executed against a filesystem store: real
+  bytes written, read back, hashed, truncated to prove CORRUPT, deleted to
+  prove MISSING, and restored byte for byte. No off-host store exists, so
+  nothing has survived losing the machine.
 - `tools/hosted-lab.mts` has been run against a real database: 25 checks, all
   of them refusals that had to hold, and it removes its own rows. That is the
   control plane and the gateway exercised end to end; it starts no guest.

@@ -173,6 +173,13 @@ export * from './hostedCapacity';
 export * from './hostedExport';
 export * from './hostObservability';
 export * from './runtimeBackup';
+/*
+  The simplest real backup store, deliberately not registered on import: a
+  store that registered itself would make backupReadiness say a hosted
+  runtime is recoverable on the strength of a directory on the machine that
+  is holding it.
+*/
+export * from './backupStoreFs';
 export * from './walletCapabilities';
 export * from './socialTests';
 export * from './publicSelf';
