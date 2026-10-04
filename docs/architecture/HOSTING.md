@@ -282,6 +282,19 @@ When nothing can be placed, the refusal names every host and why each one
 refused, because "no capacity" is the least useful thing an operator can be
 told.
 
+**What a host has reserved is a sum, not a count.** A runtime class is a row
+(`runtime_classes`, migration 0106) and `host_reservations` adds up the CPU,
+memory and disk of the classes of the runtimes on each host. Before that the
+only record was a class name, so placement was built and deliberately not
+exposed: multiplying a count by an assumed class produces refusals and
+acceptances nobody can explain.
+
+A class is **retired, never deleted**, because a runtime created under it still
+names it and what an agent was given is a fair question afterwards. A host
+holding a runtime whose class is no longer recorded is counted as
+`unmeasured` and **refused**: that sum has a hole in it, which makes the host
+look emptier than it is, and absent is not zero here either.
+
 **No slot count is asserted anywhere in this repository without being measured
 on the hardware it is claimed for.** There is no "supports N agents" number,
 and `tools/hosted-lab.mts` exists to produce one honestly rather than to
@@ -522,7 +535,9 @@ Written here rather than discovered later:
 - No egress ruleset has been loaded. `verifyLoadedRuleset` has only ever been
   given text this repository rendered itself.
 - No capacity has been sold and no entitlement issued.
-- No capacity has been measured, so no capacity is claimed.
+- No capacity has been measured, so no capacity is claimed. A runtime class
+  says what is set aside; what a machine can actually carry is a different
+  number and nothing has produced it.
 - Backup and restore are implemented and tested against a fake store. Neither
   has been executed against a real one.
 - No load or chaos measurement has been run.
