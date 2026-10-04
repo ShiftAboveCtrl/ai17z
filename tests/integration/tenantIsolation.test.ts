@@ -6,7 +6,12 @@ import {
   HEARTBEAT_STALE_AFTER_SEC,
   assignmentFor,
   authoriseGatewayRequest,
+  lifecycleAction,
+  mayProvisionAnother,
   placeRuntime,
+  tenantDatabaseName,
+  tenantRoleName,
+  type CapacityEntitlement,
   type HostForScheduling,
 } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
@@ -340,5 +345,75 @@ describe('a backup is not authority to read it', () => {
 describe('the heartbeat bound is the one the rest of AI17Z already uses', () => {
   it('is 90 seconds, matching the browser panel', () => {
     expect(HEARTBEAT_STALE_AFTER_SEC).toBe(90);
+  });
+});
+
+describe('a tenant database is one tenant', () => {
+  it('derives a different database and role for every runtime', async () => {
+    // Real uuids rather than fixture ids, because the shape of the input is
+    // what the name is derived from and a uuid is the real shape.
+    const a = await tenantWithRuntime('dbone');
+    const b = await tenantWithRuntime('dbtwo');
+
+    expect(tenantDatabaseName(a.runtime.id)).not.toBe(tenantDatabaseName(b.runtime.id));
+    expect(tenantRoleName(a.runtime.id)).not.toBe(tenantRoleName(b.runtime.id));
+    for (const name of [tenantDatabaseName(a.runtime.id), tenantRoleName(a.runtime.id)]) {
+      // Postgres cuts an identifier at 63 bytes, and truncating is how two
+      // long ids become one database.
+      expect(name.length).toBeLessThanOrEqual(63);
+      expect(name).toMatch(/^[a-z_][a-z0-9_]*$/);
+    }
+  });
+
+  it('never names the shared database this installation already uses', async () => {
+    const { runtime } = await tenantWithRuntime('dbthree');
+    expect(tenantDatabaseName(runtime.id)).not.toBe('xbam');
+  });
+});
+
+describe('capacity is bounded before a runtime exists', () => {
+  const entitlement = (tenantId: string, runtimes: number): CapacityEntitlement => ({
+    tenantId,
+    runtimeClassId: 'general-1',
+    runtimes,
+    browser: true,
+    coversUntil: new Date(Date.now() + 86_400_000).toISOString(),
+    source: 'OPERATOR_GRANT',
+  });
+
+  it('counts a suspended runtime against the entitlement it was created under', async () => {
+    // It still holds a database, a disk, a key and a backup, so counting only
+    // the acting ones would let somebody hold ten suspended agents on an
+    // entitlement for one.
+    const { tenant, runtime } = await tenantWithRuntime('cap');
+    await hosting.transitionRuntime(runtime.id, 'ACTIVE', 'SUSPENDED');
+
+    const runtimes = await hosting.runtimesOfTenant(tenant.id);
+    const usage = { runtimes: runtimes.map((r) => ({ runtimeClassId: r.runtimeClass, state: r.state, browser: false })) };
+
+    const out = mayProvisionAnother(entitlement(tenant.id, 1), usage);
+    expect(out.allowed).toBe(false);
+    if (out.allowed) return;
+    expect(out.why).toContain('suspended and retained');
+
+    expect(mayProvisionAnother(entitlement(tenant.id, 2), usage).allowed).toBe(true);
+  });
+});
+
+describe('a lapse is never a deletion', () => {
+  it('returns no deletion for a real runtime whose entitlement has run out', async () => {
+    const { runtime } = await tenantWithRuntime('lapse');
+    const lapsed = await hosting.transitionRuntime(runtime.id, 'ACTIVE', 'ACTIVE', {
+      entitledUntil: new Date(Date.now() - 400 * 86_400_000).toISOString(),
+    });
+
+    const action = lifecycleAction({
+      state: lapsed!.state,
+      entitledUntil: lapsed!.entitledUntil,
+      since: lapsed!.updatedAt,
+    });
+    // The furthest it goes is scheduling one, with notice, and that is a
+    // separate act somebody takes.
+    expect(JSON.stringify(action)).not.toContain('DELETED');
   });
 });
