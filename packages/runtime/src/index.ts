@@ -144,6 +144,7 @@ export * from './spamControls';
 export * from './agentManagement';
 export * from './managementCapabilities';
 export * from './walletCore';
+export * from './tradingRisk';
 export * from './walletCapabilities';
 export * from './socialTests';
 export * from './publicSelf';
