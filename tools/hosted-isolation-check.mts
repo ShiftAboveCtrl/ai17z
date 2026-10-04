@@ -10,6 +10,10 @@
  * It reads and reports. It changes nothing, loads nothing, and provisions
  * nothing, so it is safe to run on a host holding live tenants.
  *
+ * It sees one server. A tenant provisioned on a different Postgres server is
+ * reported as unavailable rather than as a failure, because absence here is
+ * not evidence of absence anywhere.
+ *
  *   npx tsx tools/hosted-isolation-check.mts                  everything it can reach
  *   npx tsx tools/hosted-isolation-check.mts --runtime rt-1   one runtime's database
  *   npx tsx tools/hosted-isolation-check.mts --json           for something else to read
@@ -158,7 +162,18 @@ async function checkTenantDatabase(runtimeId: string): Promise<void> {
       [plan.role],
     );
     if (roles.length === 0) {
-      record(`Tenant database for ${runtimeId}`, 'FAIL', `The server has no role named ${plan.role}, so this runtime has no database of its own.`);
+      /*
+        Either this tenant was never provisioned or it was provisioned on a
+        server this tool is not connected to. The control plane's database and
+        a tenant's database need not be the same server, so absence here is
+        not evidence of either, and reporting FAIL read as "this tenant is not
+        isolated".
+      */
+      record(
+        `Tenant database for ${runtimeId}`,
+        'UNAVAILABLE',
+        `This server has no role named ${plan.role}. That is either a tenant nobody provisioned or a tenant on another server, and this tool cannot tell which: it only sees the server it is connected to.`,
+      );
       return;
     }
 
@@ -172,7 +187,13 @@ async function checkTenantDatabase(runtimeId: string): Promise<void> {
       [plan.database, plan.role],
     );
     if (databases.length === 0) {
-      record(`Tenant database for ${runtimeId}`, 'FAIL', `The server has no database named ${plan.database}.`);
+      // The role is here and the database is not, which is a half-provisioned
+      // tenant on this server rather than a tenant somewhere else.
+      record(
+        `Tenant database for ${runtimeId}`,
+        'FAIL',
+        `The role ${plan.role} exists on this server and the database ${plan.database} does not, so provisioning stopped half way.`,
+      );
       return;
     }
 

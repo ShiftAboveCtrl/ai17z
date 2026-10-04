@@ -34,6 +34,22 @@ interface Readiness {
   caveats: string[];
 }
 
+interface ClassRow {
+  id: string;
+  label: string;
+  cpuCores: number;
+  memoryMb: number;
+  diskGb: number;
+  browser: boolean;
+  maxAgents: number;
+  live: boolean;
+}
+
+interface Classes {
+  headroom: { cpu: number; memory: number; disk: number };
+  classes: ClassRow[];
+}
+
 interface HostRow {
   id: string;
   label: string;
@@ -82,6 +98,7 @@ function describe(host: HostRow, staleAfterSec: number): string {
 export function HostingPage() {
   const readiness = useResource<Readiness>('/api/hosting/readiness');
   const hosts = useResource<Hosts>('/api/hosting/hosts');
+  const classes = useResource<Classes>('/api/hosting/classes');
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -252,11 +269,57 @@ export function HostingPage() {
             ))}
           </ul>
           <p className="text-xs text-slate-500 break-words">
-            There is no placement control here yet. Choosing a host needs what is already reserved on it in CPU, memory
-            and disk, and nothing reports that: multiplying a count by an assumed class would produce refusals nobody
-            could explain.
+            A runtime is placed from its own class rather than from whatever is asked for, so it cannot be placed
+            against a smaller reservation than it was created under. A host holding a runtime whose class is no longer
+            recorded is refused: that sum has a hole in it, which makes the machine look emptier than it is.
           </p>
       </section>
+
+      {classes.error ? (
+        <RetryablePanel title="The classes could not be read" detail={classes.error} onRetry={classes.reload} />
+      ) : null}
+      {classes.data ? (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Runtime classes</h2>
+          <p className="text-xs text-slate-400 break-words">
+            What one runtime reserves, subtracted from a host before anything starts. A class says what is set aside;
+            what a machine can actually carry is a different number and nothing here has measured one. Headroom keeps{' '}
+            {Math.round((1 - classes.data.headroom.memory) * 100)}% of memory and{' '}
+            {Math.round((1 - classes.data.headroom.disk) * 100)}% of disk unallocated, because a host at its own
+            measured limit has no room to recover anything.
+          </p>
+          {classes.data.classes.length === 0 ? (
+            <EmptyState
+              title="No class is recorded"
+              detail="A runtime cannot be placed until the class it was created under is a row, because what it reserves in CPU, memory and disk is what placement subtracts."
+            />
+          ) : (
+            <ul className="space-y-2">
+              {classes.data.classes.map((row) => (
+                <li key={row.id} className="rounded-lg border border-slate-800 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium break-words">
+                        {row.label} <span className="font-mono text-xs text-slate-500">{row.id}</span>
+                      </p>
+                      <p className="text-xs text-slate-400 break-words">
+                        {row.cpuCores} cores, {row.memoryMb} MB, {row.diskGb} GB
+                        {row.browser ? ', with a browser' : ', no browser'}, up to {row.maxAgents} agent
+                        {row.maxAgents === 1 ? '' : 's'}
+                      </p>
+                    </div>
+                    {row.live ? null : (
+                      <span className="shrink-0 text-xs text-slate-500">
+                        retired, and still named by the runtimes created under it
+                      </span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }

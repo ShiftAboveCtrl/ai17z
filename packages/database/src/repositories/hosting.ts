@@ -443,6 +443,28 @@ export async function placeRuntimeOn(runtimeId: string, hostId: string): Promise
   );
 }
 
+/**
+ * Moves a runtime from the host it is on to another one.
+ *
+ * Conditional on the host it is leaving, in the same statement, for the same
+ * reason `placeRuntimeOn` is conditional on having none: two callers deciding
+ * to move one runtime at the same moment would otherwise both think they did.
+ *
+ * Separate from `placeRuntimeOn` rather than a looser version of it, because a
+ * first placement and a move are different decisions. A move changes a
+ * tenant's egress address, and an API that could do it by passing the same
+ * argument twice is an API where it happens by accident.
+ */
+export async function moveRuntimeTo(runtimeId: string, toHostId: string): Promise<HostedRuntimeRow | null> {
+  return mapRow<HostedRuntimeRow>(
+    await queryOne(
+      `UPDATE hosted_runtimes SET host_id = $2, generation = generation + 1, updated_at = now()
+         WHERE id = $1 AND host_id IS NOT NULL AND host_id <> $2 RETURNING *`,
+      [runtimeId, toHostId],
+    ),
+  );
+}
+
 export async function transitionRuntime(
   id: string,
   from: RuntimeState | readonly RuntimeState[],
