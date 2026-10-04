@@ -1,6 +1,6 @@
 import type { ApiResponse } from '@xbam/shared/contracts';
+import { clearsSessionOn401, transportBase, transportHeaders } from './transport';
 
-const BASE = (import.meta.env.VITE_XBAM_API_URL ?? '').replace(/\/+$/, '');
 const TOKEN_KEY = 'ai17z.session';
 // Read once from the pre-rename key so the rename does not sign anyone out.
 const LEGACY_TOKEN_KEY = 'xbam.session';
@@ -58,11 +58,11 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   const token = getToken();
   let response: Response;
   try {
-    response = await fetch(`${BASE}${path}`, {
+    response = await fetch(`${transportBase()}${path}`, {
       method: options.method ?? 'GET',
       headers: {
         ...(options.body !== undefined ? { 'content-type': 'application/json' } : {}),
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...transportHeaders(token),
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: options.signal,
@@ -77,7 +77,9 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   }
 
   if (response.status === 401) {
-    setToken(null);
+    // A hosted grant is not a session: clearing the local token would sign
+    // somebody out of their own machine because a gateway grant expired.
+    if (clearsSessionOn401()) setToken(null);
     throw new ApiError('UNAUTHORIZED', 'Your session expired. Sign in again.', 401);
   }
 
@@ -104,8 +106,8 @@ export const del = <T>(path: string) => api<T>(path, { method: 'DELETE' });
 /** Artifact URLs need the token, so they are fetched as blobs rather than linked. */
 export async function artifactObjectUrl(artifactId: string): Promise<string> {
   const token = getToken();
-  const response = await fetch(`${BASE}/api/artifacts/${artifactId}`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
+  const response = await fetch(`${transportBase()}/api/artifacts/${artifactId}`, {
+    headers: transportHeaders(token),
   });
   if (!response.ok) throw new ApiError('NOT_FOUND', 'That screenshot is no longer available.', response.status);
   return URL.createObjectURL(await response.blob());
@@ -123,11 +125,11 @@ export async function postFile<T>(path: string, file: Blob): Promise<T> {
   const token = getToken();
   let response: Response;
   try {
-    response = await fetch(`${BASE}${path}`, {
+    response = await fetch(`${transportBase()}${path}`, {
       method: 'POST',
       headers: {
         'content-type': file.type || 'application/octet-stream',
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...transportHeaders(token),
       },
       body: file,
     });
@@ -167,8 +169,8 @@ export async function postFile<T>(path: string, file: Blob): Promise<T> {
 export async function fetchImageObjectUrl(path: string): Promise<string> {
   if (!path.startsWith('/api/')) return path;
   const token = getToken();
-  const response = await fetch(`${BASE}${path}`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
+  const response = await fetch(`${transportBase()}${path}`, {
+    headers: transportHeaders(token),
   });
   if (!response.ok) throw new ApiError('NOT_FOUND', 'That image could not be loaded.', response.status);
   return URL.createObjectURL(await response.blob());
