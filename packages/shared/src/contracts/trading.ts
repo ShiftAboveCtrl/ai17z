@@ -249,7 +249,8 @@ export type TradeIntentStatus = (typeof TRADE_INTENT_STATUSES)[number];
 /** Statuses from which a new signature must never be produced. */
 export const TRADE_NO_RESIGN_STATUSES: readonly TradeIntentStatus[] = ['SIGNED', 'SUBMITTED', 'UNKNOWN', 'CONFIRMED'];
 
-export const TradeSide = z.enum(['BUY', 'SELL']);
+export const TRADE_SIDES = ['BUY', 'SELL'] as const;
+export const TradeSide = z.enum(TRADE_SIDES);
 export type TradeSide = z.infer<typeof TradeSide>;
 
 export const TradeIntent = z

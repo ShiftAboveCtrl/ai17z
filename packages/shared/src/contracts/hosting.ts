@@ -230,6 +230,20 @@ export function runtimeStateKept(state: RuntimeState): boolean {
   return state !== 'DELETED';
 }
 
+/**
+ * How a runtime's master key is held.
+ *
+ * `HOST_SEALED` is what first-party hosting does today: the key is sealed on
+ * the host, which means a host operator with root could in principle reach it.
+ * `ATTESTED_RELEASE` is the confidential tier, where the key is released only
+ * against an attestation report that passed every requirement in
+ * TIER_REQUIREMENTS. The second is designed and not enabled, and the column
+ * exists so that enabling it is a migration of data rather than of meaning.
+ */
+export const KEY_CUSTODY_VALUES = ['HOST_SEALED', 'ATTESTED_RELEASE'] as const;
+export const KeyCustody = z.enum(KEY_CUSTODY_VALUES);
+export type KeyCustody = (typeof KEY_CUSTODY_VALUES)[number];
+
 // ---------------------------------------------------------------------------
 // Egress
 // ---------------------------------------------------------------------------
