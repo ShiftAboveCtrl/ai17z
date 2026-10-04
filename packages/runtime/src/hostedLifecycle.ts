@@ -73,7 +73,26 @@ const daysSince = (iso: string, now: Date) => (now.getTime() - Date.parse(iso)) 
  * separate, later, deliberate step that a person can still stop.
  */
 export function lifecycleAction(view: LifecycleView, policy: LifecyclePolicy = DEFAULT_LIFECYCLE, now: Date = new Date()): LifecycleAction {
-  const entitled = view.entitledUntil !== null && Date.parse(view.entitledUntil) > now.getTime();
+  /*
+    Three answers, not two. An expiry in the future is entitled; one in the
+    past has lapsed; and no expiry at all is unrecorded, which is neither.
+    Reading the third as a lapse made a runtime nobody had written an expiry
+    for march to a scheduled deletion in about three months, and an
+    operator-created runtime has no expiry.
+  */
+  const expiry = view.entitledUntil === null ? null : Date.parse(view.entitledUntil);
+  const unrecorded = expiry === null || !Number.isFinite(expiry);
+  const entitled = !unrecorded && (expiry as number) > now.getTime();
+
+  if (unrecorded) {
+    return {
+      action: 'NONE',
+      detail:
+        view.entitledUntil === null
+          ? 'No entitlement is recorded for this runtime, so nothing is due. An absent expiry is not an expired one.'
+          : `The recorded entitlement (${view.entitledUntil}) is not a date anything can read, so nothing is due.`,
+    };
+  }
 
   // Paying again brings an agent straight back, from anywhere it has not been
   // deleted. That is the whole reason state is kept.

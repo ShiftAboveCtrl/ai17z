@@ -154,3 +154,54 @@ describe('where secrets may not go', () => {
     expect(all).toContain('storing one is not permission to read it');
   });
 });
+
+describe('the fields that exist to be printed instead of a key', () => {
+  // 43 characters of base64url, which is what a sha256 thumbprint is and
+  // exactly the shape looksSecret looks for.
+  const THUMB = 'A'.repeat(43);
+
+  it('passes a host row carrying a key thumbprint', () => {
+    /*
+      This refused, which meant the hosts screen could not answer at all once a
+      real host existed: the one field that exists so a key can be named in a
+      log without printing the key was the field that made the response
+      unprintable.
+    */
+    const host = {
+      id: '11111111-1111-4111-8111-111111111111',
+      label: 'host-a',
+      state: 'ACTIVE',
+      keyThumbprint: THUMB,
+    };
+    const hit = carriesSecret(host);
+    expect(hit.found, JSON.stringify(hit)).toBe(false);
+  });
+
+  it('passes a key id and a custody label', () => {
+    expect(carriesSecret({ keyId: THUMB }).found).toBe(false);
+    expect(carriesSecret({ keyCustody: 'HOST_SEALED' }).found).toBe(false);
+  });
+
+  it('still refuses a whole JWK, and that is the safe direction', () => {
+    /*
+      The exemption covers a key-adjacent name holding a string, not a whole
+      object: the coordinates inside a JWK are base64url and look exactly like
+      key material, and a member called `d` would be a private key. Nothing
+      returns a JWK in a response, so this costs nothing, and the rule in this
+      file is to err towards refusing because a false positive is a confusing
+      error and a false negative is a key in a log.
+    */
+    expect(carriesSecret({ publicKeyJwk: { kty: 'EC', crv: 'P-256', x: THUMB, y: THUMB } }).found).toBe(true);
+  });
+
+  it('still refuses a private key however it is spelled', () => {
+    for (const field of ['privateKey', 'private_key', 'masterKey', 'apiKey', 'walletKey', 'signingSecret']) {
+      expect(carriesSecret({ [field]: 'anything' }).found, field).toBe(true);
+    }
+  });
+
+  it('still refuses key material that arrives under an ordinary name', () => {
+    // The exemption is a list of names, not a way for anything to get through.
+    expect(carriesSecret({ note: THUMB }).found).toBe(true);
+  });
+});

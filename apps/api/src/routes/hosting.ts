@@ -392,9 +392,10 @@ export async function hostingRoutes(app: FastifyInstance): Promise<void> {
       // is allowed to be. A record carrying prose or a field nobody allowed is
       // reported as refused rather than rendered.
       const published = runtime.health;
-      const health = isCleanHealth(published)
+      const shape = isCleanHealth(published);
+      const health = shape.ok
         ? { ok: true as const, verdict: judgeRuntimeHealth(published as unknown as RuntimeHealth) }
-        : { ok: false as const, why: isCleanHealth(published).ok ? '' : 'The published health record is not a shape a health record may be.' };
+        : { ok: false as const, why: shape.why };
 
       return clean({
         runtime: {

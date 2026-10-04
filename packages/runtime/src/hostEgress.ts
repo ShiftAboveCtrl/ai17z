@@ -242,6 +242,22 @@ export function nftablesRuleset(plan: EgressPlan, iface: string): string {
   return lines.join('\n');
 }
 
+/**
+ * Whether a ruleset actually names a CIDR, rather than merely containing its
+ * characters.
+ *
+ * `10.0.0.0/8` contains `0.0.0.0/8`, so a plain substring test let a host pass
+ * on the strength of a different rule: the unspecified range could have failed
+ * to load and the private range would have covered for it. The boundary is
+ * anything that is not a digit or a dot before, and not a digit after, which
+ * is how an address appears in `nft list ruleset` and in every other rendering
+ * of one.
+ */
+function mentions(text: string, cidr: string): boolean {
+  const escaped = cidr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^0-9.:])${escaped}(?![0-9])`).test(text);
+}
+
 export type EnforcementVerdict =
   | { enforced: true }
   | { enforced: false; missing: readonly string[]; why: string };
@@ -266,7 +282,7 @@ export function verifyLoadedRuleset(observed: string, plan: EgressPlan = egressP
   }
 
   const missing = plan.rules
-    .filter((r) => r.action === 'DENY' && r.target !== 'any' && !text.includes(r.target))
+    .filter((r) => r.action === 'DENY' && r.target !== 'any' && !mentions(text, r.target))
     .map((r) => r.target);
 
   if (missing.length > 0) {

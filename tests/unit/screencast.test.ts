@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { startScreencast, type ScreencastBounds } from '@xbam/browser';
 import { STREAM_BOUNDS } from '@xbam/runtime';
@@ -95,7 +97,13 @@ describe('the acknowledgement is the flow control', () => {
     await session.emit('Page.screencastFrame', frame(1));
     await session.emit('Page.screencastFrame', frame(2));
     expect(session.sent.filter((s) => s.method === 'Page.screencastFrameAck')).toHaveLength(0);
-    expect(handle.unacked()).toBe(2);
+    /*
+      Nothing is awaiting an acknowledgement: these two frames were declined
+      rather than queued, and will never be acknowledged. Counting them for
+      ever made one stutter past the bound permanent, so the stream could not
+      resume once the viewer caught up.
+    */
+    expect(handle.unacked()).toBe(0);
   });
 
   it('treats a sink that throws as a viewer that has gone', async () => {
@@ -174,5 +182,49 @@ describe('what a stream leaves behind', () => {
     // The sink saw it; nothing in the handle retains it.
     expect(seen).toEqual(['base64frame']);
     expect(JSON.stringify(handle)).not.toContain('base64frame');
+  });
+});
+
+describe('a stream that nobody is watching stops', () => {
+  const SOURCE = readFileSync(
+    join(__dirname, '..', '..', 'packages', 'browser', 'src', 'screencast.ts'),
+    'utf8',
+  );
+
+  it('decides to stop on a timer rather than inside the frame handler', () => {
+    /*
+      Not acknowledging is what makes Chrome stop sending, so a check that
+      lives in the frame handler is a check that stops running exactly when it
+      is needed. The cast then stays open on the machine holding everybody's
+      tenants.
+    */
+    // Both, not either. The handler is immediate and free while frames are
+    // arriving; the timer is for after they stop, which is what withholding
+    // an acknowledgement causes.
+    expect(SOURCE).toContain('setInterval(');
+    const handler = SOURCE.slice(SOURCE.indexOf('const onFrame'), SOURCE.indexOf("session.on('Page.screencastFrame'"));
+    expect(handler).toContain('idleStopAfterMs');
+    const afterHandler = SOURCE.slice(SOURCE.indexOf("session.on('Page.screencastFrame'"));
+    expect(afterHandler).toContain('idleStopAfterMs');
+  });
+
+  it('clears that timer when the cast stops', () => {
+    // A lock whose release can be lost is not a lock, and a timer whose clear
+    // can be missed is a worker that will not exit.
+    const stop = SOURCE.slice(SOURCE.indexOf('const stop = async'));
+    expect(stop.slice(0, stop.indexOf('try {'))).toContain('clearInterval(idleTimer)');
+  });
+
+  it('does not hold a process open on its own', () => {
+    expect(SOURCE).toContain('idleTimer.unref');
+  });
+
+  it('counts frames waiting to be acknowledged rather than frames that arrived', () => {
+    // Counting a declined frame for ever made one stutter past the bound
+    // permanent: the stream could not resume after the viewer caught up.
+    expect(SOURCE).toContain('Declined rather than queued');
+    const handler = SOURCE.slice(SOURCE.indexOf('const onFrame'), SOURCE.indexOf("session.on('Page.screencastFrame'"));
+    // One decrement on the acknowledged path and one on the declined path.
+    expect(handler.match(/unacked = Math\.max\(0, unacked - 1\)/g)?.length).toBe(2);
   });
 });

@@ -110,9 +110,20 @@ export async function judgeTradeInput(q: StoredTradeQuestion) {
   // row is removed from the totals before its size is tested against them.
   const mine = BigInt(q.intentRow.maxIn);
   const counted = ['APPROVED', 'SIMULATED', 'SIGNED', 'SUBMITTED', 'UNKNOWN', 'CONFIRMED'].includes(q.intentRow.status);
+  /*
+    `spentTodayBase` is a trailing total from the start of today and
+    `exposureOf` adds a row to it only when the row was created today. So an
+    intent drafted yesterday and judged today must not be subtracted from it:
+    doing that understated today's spend by exactly this trade's size and let
+    an agent past its daily limit. The open-exposure figure has no such
+    window, which is why the two lines are not the same.
+  */
+  const countedToday = Date.parse(q.intentRow.createdAt) >= startOfDay(now).getTime();
   const withoutMe = counted && q.intentRow.mode === 'LIVE'
     ? {
-        spentTodayBase: (BigInt(exposure.spentTodayBase) - mine).toString(),
+        spentTodayBase: countedToday
+          ? (BigInt(exposure.spentTodayBase) - mine).toString()
+          : exposure.spentTodayBase,
         openExposureBase:
           q.intentRow.status === 'CONFIRMED'
             ? exposure.openExposureBase

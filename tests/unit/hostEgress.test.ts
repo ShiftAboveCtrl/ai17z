@@ -160,6 +160,8 @@ describe('rendering a ruleset', () => {
   });
 });
 
+const NEWLINE = String.fromCharCode(10);
+
 describe('what actually loaded on the host', () => {
   it('accepts a ruleset carrying every denial and a drop policy', () => {
     const text = nftablesRuleset(egressPlan(), 'tap0');
@@ -181,6 +183,22 @@ describe('what actually loaded on the host', () => {
     expect(out.enforced).toBe(false);
     if (out.enforced) return;
     expect(out.missing).toContain('169.254.169.254/32');
+  });
+
+  it('does not let one denial cover for another that is a substring of it', () => {
+    // `10.0.0.0/8` contains `0.0.0.0/8`. A plain substring test passed a host
+    // whose unspecified-range rule had failed to load, on the strength of its
+    // private-range rule, which is exactly the silent pass this function
+    // exists to prevent.
+    const text = nftablesRuleset(egressPlan(), 'tap0')
+      .split(NEWLINE)
+      .filter((line) => !/\s0\.0\.0\.0\/8\s/.test(line))
+      .join(NEWLINE);
+    expect(text).toContain('10.0.0.0/8');
+    const out = verifyLoadedRuleset(text);
+    expect(out.enforced).toBe(false);
+    if (out.enforced) return;
+    expect(out.missing).toContain('0.0.0.0/8');
   });
 
   it('refuses a ruleset that denies everything named and accepts by default', () => {

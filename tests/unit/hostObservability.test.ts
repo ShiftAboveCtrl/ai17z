@@ -73,6 +73,30 @@ describe('a health record holds counts and states, never content', () => {
     expect(out.ok).toBe(false);
   });
 
+  it('refuses prose hidden inside an allowed field', () => {
+    // A field name on the allowlist is not a value on it. This passed while
+    // only the names were checked, which is the whole failure the allowlist
+    // exists to prevent.
+    const out = isCleanHealth({ ...health(), jobsQueued: { note: 'the mentions tab is wedged' } });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.why).toContain('jobsQueued');
+  });
+
+  it('refuses a list in an allowed field', () => {
+    expect(isCleanHealth({ ...health(), browserTabs: ['ACTION', 'MENTIONS'] }).ok).toBe(false);
+  });
+
+  it('refuses a number that is not one', () => {
+    expect(isCleanHealth({ ...health(), cpuPercent: Number.NaN }).ok).toBe(false);
+    expect(isCleanHealth({ ...health(), memoryUsedMb: Number.POSITIVE_INFINITY }).ok).toBe(false);
+  });
+
+  it('still accepts an absent count', () => {
+    // Absent is not zero, and it is not a refusal either.
+    expect(isCleanHealth({ ...health(), jobsQueued: null }).ok).toBe(true);
+  });
+
   it('refuses something that is not an object at all', () => {
     for (const bad of [null, undefined, 'a string', 42, [health()]]) {
       expect(isCleanHealth(bad).ok, String(bad)).toBe(false);

@@ -228,3 +228,40 @@ describe('what a guest may never reach', () => {
     }
   });
 });
+
+describe('a move is not a placement', () => {
+  it('says a runtime was moved, and why its own host was refused', () => {
+    /*
+      This read as a first placement before, which is the one event an operator
+      has to be able to see: a browser tenant that changes machine changes
+      egress address, and that is how an account picks up a security challenge
+      nobody asked for.
+    */
+    const theirs = host({ id: 'host-theirs', state: 'DRAINING' });
+    const other = host({ id: 'host-other' });
+
+    const out = placeRuntime([theirs, other], ask({ preferHostId: 'host-theirs' }));
+
+    expect(out.placed).toBe(true);
+    if (!out.placed) return;
+    expect(out.hostId).toBe('host-other');
+    expect(out.detail).toContain('Moved off host-theirs');
+    expect(out.detail).toContain('DRAINING');
+  });
+
+  it('does not call a first placement a move', () => {
+    // No preferred host at all, which is what a first placement is.
+    const out = placeRuntime([host({ id: 'host-only' })], ask());
+    expect(out.placed).toBe(true);
+    if (!out.placed) return;
+    expect(out.detail).not.toContain('Moved off');
+  });
+
+  it('still keeps a tenant where it was when that host will do', () => {
+    const out = placeRuntime([host({ id: 'host-a' }), host({ id: 'host-b' })], ask({ preferHostId: 'host-b' }));
+    expect(out.placed).toBe(true);
+    if (!out.placed) return;
+    expect(out.hostId).toBe('host-b');
+    expect(out.detail).toContain('Kept on the host');
+  });
+});

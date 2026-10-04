@@ -93,10 +93,22 @@ export async function startScreencast(
         // The session went away underneath us; the stop below will tidy up.
         live = false;
       }
+    } else {
+      /*
+        Declined rather than queued. This frame will never be acknowledged, so
+        counting it for ever made one stutter past the bound permanent: the
+        comparison above stayed false and the stream could not resume after the
+        viewer caught up. The counter means "waiting to be acknowledged".
+      */
+      unacked = Math.max(0, unacked - 1);
     }
 
-    // Nobody has wanted a frame for a while, so stop rather than stream to an
-    // empty room on somebody else's machine.
+    /*
+      Checked here as well as on the timer. Here is immediate and free while
+      frames are still arriving; the timer is for after they stop, which is
+      exactly what withholding an acknowledgement causes. One without the
+      other is either a slow stop or no stop at all.
+    */
     if (Date.now() - lastWanted > bounds.idleStopAfterMs) {
       live = false;
       await stop();
@@ -105,11 +117,29 @@ export async function startScreencast(
 
   session.on('Page.screencastFrame', onFrame);
 
+  /*
+    On its own timer, because the check cannot live in the frame handler: not
+    acknowledging is what makes Chrome stop sending, so the handler stops being
+    called and the condition that would end the cast is never evaluated again.
+    A stream nobody is watching then stays open on the machine holding
+    everybody's tenants, with a renderer drawing frames into nothing.
+
+    The same asymmetry this project already paid fifty-six minutes for: a wait
+    had a bound and a hold did not.
+  */
+  const idleCheckMs = Math.max(1_000, Math.floor(bounds.idleStopAfterMs / 3));
+  const idleTimer = setInterval(() => {
+    if (Date.now() - lastWanted > bounds.idleStopAfterMs) void stop();
+  }, idleCheckMs);
+  // Never the reason a worker cannot exit.
+  idleTimer.unref?.();
+
   let stopped = false;
   const stop = async () => {
     if (stopped) return;
     stopped = true;
     live = false;
+    clearInterval(idleTimer);
     // Each step is attempted independently: a page that has already gone is
     // the ordinary way a stream ends, not a failure worth reporting.
     try {

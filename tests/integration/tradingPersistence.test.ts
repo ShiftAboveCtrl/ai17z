@@ -338,3 +338,46 @@ describe('the gate and the rows agree', () => {
     expect(verdict.needsOwnerApproval).toBe(true);
   }, 60_000);
 });
+
+describe('today is a window, and yesterday is outside it', () => {
+  it("does not subtract a trade created yesterday from today's spend", async () => {
+    /*
+      An intent is removed from the exposure figures before its own size is
+      tested against them, which is right. But `spentTodayBase` only counts
+      rows created today, so subtracting a row created yesterday took its size
+      off a total that never included it, understated today's spend by exactly
+      that much, and let an agent past its daily limit. The open-exposure
+      figure has no such window, which is why the two lines are not the same
+      and why this was easy to miss.
+    */
+    const { fixture, mandate } = await agentWithMandate();
+
+    // One trade today, which does count against the day.
+    const today = await trading.createIntent(draft(fixture.agentId, mandate.id, `w1-${fixture.agentId}`));
+    await trading.transitionIntent(today.row.id, 'DRAFTED', 'APPROVED');
+
+    // And one from yesterday, which does not.
+    const old = await trading.createIntent(draft(fixture.agentId, mandate.id, `w2-${fixture.agentId}`));
+    const approved = await trading.transitionIntent(old.row.id, 'DRAFTED', 'APPROVED');
+    await query(`UPDATE trade_intents SET created_at = now() - interval '2 days' WHERE id = $1`, [old.row.id]);
+    const backdated = { ...approved!, createdAt: new Date(Date.now() - 2 * 86_400_000).toISOString() };
+
+    const input = await judgeTradeInput({ intentRow: backdated, mandateRow: mandate, fresh: snapshot() });
+
+    // Today's spend is the one trade from today, with nothing taken off for a
+    // trade the total never counted.
+    expect(input.exposure.spentTodayBase).toBe('1000000000000000000');
+    // Its own open exposure is still removed, because that figure counted it.
+    expect(input.exposure.openExposureBase).toBe('1000000000000000000');
+  }, 60_000);
+
+  it("still subtracts a trade created today from today's spend", async () => {
+    const { fixture, mandate } = await agentWithMandate();
+    const { row } = await trading.createIntent(draft(fixture.agentId, mandate.id, `w3-${fixture.agentId}`));
+    const approved = await trading.transitionIntent(row.id, 'DRAFTED', 'APPROVED');
+
+    const input = await judgeTradeInput({ intentRow: approved!, mandateRow: mandate, fresh: snapshot() });
+    expect(input.exposure.spentTodayBase).toBe('0');
+    expect(input.exposure.openExposureBase).toBe('0');
+  }, 60_000);
+});

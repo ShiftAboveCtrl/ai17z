@@ -63,7 +63,10 @@ not a rule that is loaded, and a host whose ruleset failed to apply looks
 exactly like one where it did until a guest reaches the metadata endpoint.
 Denials are checked for both families, because an allowlist that forgets v6 is
 not one, and an allow placed above a deny is refused outright: first match
-wins, so that mistake is invisible in a diff. `mayConnectTo` is the belt to
+wins, so that mistake is invisible in a diff. A ruleset is searched for each
+denial as an address rather than as characters, because `10.0.0.0/8` contains
+`0.0.0.0/8`: a substring test passed a host whose unspecified-range rule had
+failed to load, on the strength of its private-range rule. `mayConnectTo` is the belt to
 that braces, and it delegates to `addressVerdict` in `@xbam/upstream` rather
 than judging an address a second way. The
 denials are infrastructure rather than content: a hosted agent researching the
@@ -263,6 +266,12 @@ treated as "not running" whatever the last snapshot said.
 Placement is **sticky**. A runtime that has a host keeps it, because migrating
 is a restore and a restore is the risky operation.
 
+When the preferred host is refused the runtime moves, and **the answer says it
+moved and why that host was refused**. It used to read identically to a first
+placement, and the move is the one event an operator has to see: a tenant
+driving a browser that changes machine changes egress address, which is how an
+account picks up a security challenge nobody asked for.
+
 **A host that stops answering does not have its runtimes reassigned.**
 `strandRuntimesOf` marks them `HOST_UNREACHABLE` and stops. Reassigning on its
 own would mean starting a second copy of a runtime whose first copy may be
@@ -310,6 +319,16 @@ ACTIVE -> GRACE (7 days, still acting)
       -> DELETION_SCHEDULED (notice given, 14 days)
 ```
 
+**An absent expiry is not an expired one.** `entitledUntil` has three readings
+and not two: in the future is entitled, in the past has lapsed, and absent is
+unrecorded. Reading the third as a lapse sent an operator-created runtime, or
+one whose billing integration failed to write the column, to GRACE and from
+there to a scheduled deletion inside about three months, with nobody having
+decided that. Nothing is due, and the operator screen says the entitlement is
+unrecorded so somebody can notice. The errors are not symmetric: a runtime
+running longer than somebody paid for costs money an operator can see, and an
+agent deleted because a column was never written is irreversible.
+
 **`lifecycleAction` never returns a deletion.** The furthest it goes is
 scheduling one, with notice, and deleting is a separate act somebody takes. A
 function that could return "delete this customer's agent" is a function one bug
@@ -330,11 +349,18 @@ suspended runtime they cannot export is a hostage.
 local product already writes: `.ai17z-agent`, JSON, every schema `.strict()`,
 nowhere to put anything executable.
 
-SHARE is configuration. MOVE adds memories and the picture.
-`HOSTED_EXPORT_OMITS` names what is deliberately absent and why, and
-relationships and stances remain absent for the reason they always were: both
-rebuild themselves from what gets published, so carrying them would put a list
-of everybody the agent has spoken to into a file that gets emailed around.
+SHARE is configuration. MOVE adds memories and the picture, and memories are
+the whole of what it adds: `readLearned` in `agentPackage.ts` selects from
+`memories` and nothing else, deliberately.
+
+**Relationships and stances travel in no mode, MOVE included.** Both rebuild
+themselves from what the agent actually published, so carrying them would put
+a list of everybody it has spoken to into a file that gets emailed around, in
+order to reconstruct something that reconstructs itself. `HOSTED_EXPORT_CARRIES`
+claimed they travelled and `HOSTED_EXPORT_OMITS` said they were absent only in
+SHARE, which is the worst kind of wrong for a list whose whole job is telling
+an owner what travels before they decide. It is now held against the exporter's
+own source rather than against a memory of it.
 
 A runtime's master key is not in an export. Neither are provider credentials,
 sealed plugin secrets or a browser profile. `mayExport` refuses with a named
@@ -358,7 +384,13 @@ product already learned that "ready" did not prove a worker was running.
 
 `mayRecoverElsewhere` is the guarded one. Restoring a runtime onto a different
 host while the original may be alive is the two-copies problem again, so it
-refuses unless the original is known not to be running. `RESTORE_CAVEATS` says
+refuses unless the original is known not to be running. **`HOST_UNREACHABLE`
+does not establish that**, and allowing it was the same mistake as reading a
+broadcast nobody saw as a broadcast that did not happen: the host stopped
+answering, which is precisely the case where it may be alive and partitioned.
+A restore from there needs the old host fenced, meaning its key revoked so
+whatever is still running cannot reach anything, or somebody having looked at
+the machine. `RESTORE_CAVEATS` says
 what does not survive a restore, in particular that a browser profile's
 signed-in session may not, because Chrome on Windows ties cookies to its own
 identity and a restored profile can arrive logged out.
@@ -373,7 +405,12 @@ failure mode is somebody adding a field rather than somebody adding one whose
 name was predicted. The pressure to include "just the last error message" or
 "just the current page title" is constant and each one is a small window into
 somebody's work. `isCleanHealth` refuses prose even inside an allowed field,
-and refuses anything key-shaped.
+and refuses anything key-shaped. **A field name on the allowlist is not a value
+on it**: checking only the names let
+`{ jobsQueued: { note: 'the mentions tab is wedged' } }` through, under an
+allowed name, carrying exactly the content the allowlist exists to keep out. So
+every value is a finite number, a boolean or absent, and `state` and `version`
+are the only strings.
 
 `judgeHealth` answers what an operator should look at first. The distinction it
 exists for is **busy against wedged**: a long queue on a runtime that is still
