@@ -145,6 +145,7 @@ export * from './agentManagement';
 export * from './managementCapabilities';
 export * from './walletCore';
 export * from './tradingRisk';
+export * from './tradingGate';
 export * from './walletCapabilities';
 export * from './socialTests';
 export * from './publicSelf';
