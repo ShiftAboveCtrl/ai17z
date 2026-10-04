@@ -129,6 +129,8 @@ export { STANDARD_WORK } from './repositories/workers';
 export * as spam from './repositories/spam';
 export * as agentChanges from './repositories/agentChanges';
 export * as trading from './repositories/trading';
+export * as hosting from './repositories/hosting';
+export type { HostNodeRow, HostProviderRow, HostedRuntimeRow, HostedTenantRow, RuntimeBackupRow, RuntimeGrantRow } from './repositories/hosting';
 export type { TradeIntentRow, TradeMandateRow, TradePauseRow } from './repositories/trading';
 export * as wallets from './repositories/wallets';
 export type { WalletIntentRow, WalletRow } from './repositories/wallets';
