@@ -1,5 +1,6 @@
 import {
   ACCOUNT_STATUSES,
+  APPROVAL_MODES,
   ACTION_STATUSES,
   ACTION_TYPES,
   AGENT_STATES,
@@ -32,7 +33,11 @@ import {
   MODEL_ROLES,
   PIPELINE_NODE_KINDS,
   PROVIDER_KINDS,
+  PROVIDER_TIERS,
+  HOST_STATES,
+  KEY_CUSTODY_VALUES,
   RADAR_STATUSES,
+  RUNTIME_STATES,
   REFLECTION_KINDS,
   RESEARCH_RUN_KINDS,
   RESEARCH_RUN_STATUSES,
@@ -42,6 +47,10 @@ import {
   STANCE_POSITIONS,
   STANCE_STATUSES,
   TRACE_EVENT_TYPES,
+  TRADE_INTENT_STATUSES,
+  TRADE_MODES,
+  TRADE_PAUSE_SCOPES,
+  TRADE_SIDES,
 } from '@xbam/shared/contracts';
 import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
 import { ENGAGEMENT_KINDS, ENGAGEMENT_STATUSES } from './repositories/engagements';
@@ -449,6 +458,18 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'agent_wallets', column: 'family', values: WALLET_FAMILY_VALUES },
   { table: 'wallet_intents', column: 'kind', values: WALLET_INTENT_KIND_VALUES },
   { table: 'wallet_intents', column: 'status', values: WALLET_INTENT_STATUS_VALUES },
+  // Trading (migration 0104).
+  { table: 'trade_mandates', column: 'mode', values: TRADE_MODES },
+  { table: 'trade_mandates', column: 'approval', values: APPROVAL_MODES },
+  { table: 'trade_intents', column: 'mode', values: TRADE_MODES },
+  { table: 'trade_intents', column: 'side', values: TRADE_SIDES },
+  { table: 'trade_intents', column: 'status', values: TRADE_INTENT_STATUSES },
+  { table: 'trade_pauses', column: 'scope', values: TRADE_PAUSE_SCOPES },
+  // Hosted runtimes (migration 0105).
+  { table: 'host_providers', column: 'tier', values: PROVIDER_TIERS },
+  { table: 'host_nodes', column: 'state', values: HOST_STATES },
+  { table: 'hosted_runtimes', column: 'state', values: RUNTIME_STATES },
+  { table: 'hosted_runtimes', column: 'key_custody', values: KEY_CUSTODY_VALUES },
 ];
 
 /** Reads the vocabulary a CHECK constraint actually enforces, from the catalogue. */

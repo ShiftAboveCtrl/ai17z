@@ -151,6 +151,7 @@ export * from './paperTrading';
 export * from './hostScheduler';
 export * from './tenantGateway';
 export * from './browserTakeover';
+export * from './hostDaemon';
 export * from './walletCapabilities';
 export * from './socialTests';
 export * from './publicSelf';
