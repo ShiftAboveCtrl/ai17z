@@ -31,6 +31,7 @@ const GLOBAL: Destination[] = [
   { id: 'activity', title: 'Activity', where: 'Every job and what came of it', href: '/activity', words: ['activity', 'jobs', 'failures', 'errors', 'history', 'queue'] },
   { id: 'plugins', title: 'Plugins', where: 'What agents may use', href: '/plugins', words: ['plugins', 'capabilities', 'tools', 'toolspace', 'permissions', 'integrations'] },
   { id: 'health', title: 'Health', where: 'Is everything working', href: '/health', words: ['health', 'status', 'broken', 'diagnostics', 'working'] },
+  { id: 'hosting', title: 'Hosted runtimes', where: 'Running AI17Z somewhere else', href: '/hosting', words: ['hosting', 'hosted', 'host', 'cloud', 'runtime', 'runtimes', 'tenant', 'tenants', 'server', 'remote', 'always on', 'capacity'] },
   { id: 'providers', title: 'Model providers', where: 'Settings', href: '/settings#providers', words: ['providers', 'models', 'api key', 'openai', 'anthropic', 'openrouter', 'llm'] },
   { id: 'accounts', title: 'Accounts and sessions', where: 'Settings', href: '/settings#accounts', words: ['accounts', 'x account', 'sign in', 'login', 'session', 'connect'] },
   { id: 'browser', title: 'Browser', where: 'Settings', href: '/settings#browser', words: ['browser', 'chrome', 'edge', 'chromium', 'profile'] },

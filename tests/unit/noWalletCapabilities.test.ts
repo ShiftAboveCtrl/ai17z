@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listCapabilities, registerBuiltinCapabilities, resetCapabilitiesForTest } from '@xbam/tools';
-import { registerManagementCapabilities, registerWalletCapabilities } from '@xbam/runtime';
+import { NEVER_MODEL_CALLABLE, capabilityCrossesTheLine, registerManagementCapabilities, registerWalletCapabilities } from '@xbam/runtime';
 
 /**
  * Paying for something is the owner's act, never the agent's.
@@ -73,6 +73,35 @@ describe('no capability can move money', () => {
       }
       expect(text, file).not.toMatch(/prepareMarketplacePurchase|prepareStudioPurchase|eth_sendTransaction|encodeTransfer/);
       expect(text, file).not.toMatch(/\b(submitIntent|approveIntent|draftIntent|simulateIntent|sealedSecretOf|openSecret)\b|\.sign\(|\.broadcast\(/);
+    }
+  });
+});
+
+/**
+ * The same line, for trading.
+ *
+ * Here rather than in a file of its own, because "can a model move value" has
+ * one answer and two places that both look authoritative about it is how
+ * something ends up allowed on one and refused on the other.
+ */
+describe('no capability can place a trade either', () => {
+  it('registers no trade capability at all yet', () => {
+    registerAll();
+    // When one appears it has to come with a decision about effect, audience
+    // and default permission, and this failing is where that decision gets
+    // made rather than inherited.
+    expect(listCapabilities().filter((c) => c.id.startsWith('trade.')).map((c) => c.id)).toEqual([]);
+  });
+
+  it('refuses every registered capability whose verb is a generic transaction', () => {
+    registerAll();
+    const offenders = listCapabilities().filter((c) => !capabilityCrossesTheLine(c.id).ok);
+    expect(offenders.map((c) => c.id)).toEqual([]);
+  });
+
+  it('names the verbs, so the list cannot quietly shrink', () => {
+    for (const verb of ['send', 'transfer', 'approve', 'sign', 'signTypedData', 'contractCall', 'calldata']) {
+      expect(NEVER_MODEL_CALLABLE, verb).toContain(verb);
     }
   });
 });

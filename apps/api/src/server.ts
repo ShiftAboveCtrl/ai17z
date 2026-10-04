@@ -31,6 +31,7 @@ import { growthRoutes } from './routes/growth';
 import { peopleRoutes } from './routes/people';
 import { mindRoutes } from './routes/mind';
 import { experimentRoutes } from './routes/experiments';
+import { hostingRoutes } from './routes/hosting';
 
 const log = createLogger('api');
 
@@ -87,6 +88,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(setupCheckRoutes);
   await app.register(spamRoutes);
   await app.register(walletRoutes);
+  await app.register(hostingRoutes);
   await app.register(easyStartRoutes);
   await app.register(characterRoutes);
   await app.register(providerRoutes);
