@@ -47,8 +47,22 @@ export interface HostForScheduling {
   state: HostState;
   tier: ProviderTier;
   capacity: HostCapacity;
-  /** What is already reserved on it, summed from live deployments. */
-  reserved: { cpuCores: number; memoryMb: number; diskGb: number; runtimes: number; browserRuntimes: number };
+  /**
+   * What is already reserved on it, summed from live deployments.
+   *
+   * `unmeasured` is how many of those runtimes were created under a class
+   * nobody recorded, so their share of the sum is missing. Optional because a
+   * caller that cannot tell is saying none rather than saying nothing, and
+   * every existing caller summed only classes it had.
+   */
+  reserved: {
+    cpuCores: number;
+    memoryMb: number;
+    diskGb: number;
+    runtimes: number;
+    browserRuntimes: number;
+    unmeasured?: number;
+  };
   /** Seconds since the last heartbeat, or null if it has never sent one. */
   heartbeatAgeSec: number | null;
 }
@@ -123,6 +137,19 @@ export function refusalsFor(host: HostForScheduling, request: PlacementRequest):
   }
   if (!host.capacity.runtimeVersions.includes(request.runtimeVersion)) {
     no('VERSION_NOT_AVAILABLE', `The host cannot run ${request.runtimeVersion}.`);
+  }
+
+  /*
+    A sum with a hole in it makes a host look emptier than it is, and the
+    answer to that is a refusal rather than an optimistic placement. This is
+    the same rule as absent not being zero: a runtime whose class nobody
+    recorded reserves an unknown amount, not nothing.
+  */
+  if ((host.reserved.unmeasured ?? 0) > 0) {
+    no(
+      'RESERVATION_INCOMPLETE',
+      `${host.reserved.unmeasured} runtime${host.reserved.unmeasured === 1 ? '' : 's'} on this host were created under a class that is no longer recorded, so what it has reserved cannot be summed.`,
+    );
   }
 
   const want = reservationFor(request.runtimeClass);

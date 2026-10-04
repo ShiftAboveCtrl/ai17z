@@ -10,6 +10,7 @@ import {
 } from '@xbam/shared/contracts';
 import {
   CAPACITY_CAVEATS,
+  HOST_HEADROOM,
   HEARTBEAT_STALE_AFTER_SEC,
   MANDATORY_DENIALS,
   MICROVM_CAVEATS,
@@ -24,9 +25,11 @@ import {
   lifecycleAction,
   mayProvisionAnother,
   ownerOptionsFor,
+  placeRuntime,
   spendPermissionFor,
   tenantDatabaseName,
   type CapacityEntitlement,
+  type HostForScheduling,
   type RuntimeHealth,
 } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
@@ -56,12 +59,12 @@ import { handler, params, parseBody, requireUser } from '../http';
  * **Nothing here deletes a customer's runtime.** The lifecycle refuses to
  * return a deletion and these routes offer no way around it.
  *
- * There is deliberately **no placement route yet**. Choosing a host needs what
- * is already reserved on it in CPU, memory and disk, and the only honest
- * source for that is a runtime class definition the database does not hold and
- * a reservation the hosts do not yet report. Multiplying a count by an assumed
- * class would produce refusals and acceptances nobody could explain, so
- * placement waits for the measurement rather than guessing at it.
+ * Placement exists now that a runtime class is a row and `host_reservations`
+ * sums what each host has set aside. It did not before, because the only thing
+ * recorded was a class name, and multiplying a count by an assumed class would
+ * produce refusals and acceptances nobody could explain. A host whose sum has
+ * a hole in it, meaning a runtime created under a class nobody recorded, is
+ * refused rather than placed against optimistically.
  */
 
 const Tier = z.enum(PROVIDER_TIERS);
@@ -503,6 +506,133 @@ export async function hostingRoutes(app: FastifyInstance): Promise<void> {
       await requireUser(request);
       const revoked = await hosting.revokeGrantsOfRuntime(params(request).id!);
       return clean({ revoked });
+    }),
+  );
+  // -------------------------------------------------------------------------
+  // Runtime classes
+  // -------------------------------------------------------------------------
+
+  app.get(
+    '/api/hosting/classes',
+    handler(async (request) => {
+      await requireUser(request);
+      const classes = await hosting.listRuntimeClasses(true);
+      return clean({
+        headroom: HOST_HEADROOM,
+        classes: classes.map((row) => ({ ...row, live: row.retiredAt === null })),
+      });
+    }),
+  );
+
+  app.post(
+    '/api/hosting/classes',
+    handler(async (request) => {
+      await requireUser(request);
+      const body = parseBody(
+        z.object({
+          id: z.string().trim().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/, 'A class id is lower case letters, digits, dash and underscore.'),
+          label: z.string().trim().min(1).max(120),
+          cpuCores: z.number().min(0.25).max(256),
+          memoryMb: z.number().int().min(512).max(1024 * 1024),
+          diskGb: z.number().int().min(1).max(65_536),
+          browser: z.boolean().default(false),
+          maxAgents: z.number().int().min(1).max(1000),
+        }),
+        request,
+      );
+      return clean(await hosting.putRuntimeClass(body));
+    }),
+  );
+
+  app.post(
+    '/api/hosting/classes/:id/retire',
+    handler(async (request) => {
+      await requireUser(request);
+      const retired = await hosting.retireRuntimeClass(params(request).id!);
+      if (!retired) throw new Error('There is no live class with that id.');
+      // Retired rather than deleted: a runtime created under it still names
+      // it, and what an agent was given is a fair question afterwards.
+      return clean(retired);
+    }),
+  );
+
+  // -------------------------------------------------------------------------
+  // Placement
+  // -------------------------------------------------------------------------
+
+  /**
+   * Chooses a host for a runtime, or says why no host will do.
+   *
+   * The class comes from the row rather than from the request, so a caller
+   * cannot place a runtime against a smaller reservation than it was created
+   * under. A refusal names every host and why each one refused, because "no
+   * capacity" is the least useful thing an operator can be told.
+   */
+  app.post(
+    '/api/hosting/runtimes/:id/place',
+    handler(async (request) => {
+      await requireUser(request);
+      const runtime = await hosting.getRuntime(params(request).id!);
+      if (!runtime) throw new Error('There is no such runtime.');
+
+      const klass = await hosting.getRuntimeClass(runtime.runtimeClass);
+      if (!klass) {
+        throw new Error(
+          `This runtime was created under the class ${runtime.runtimeClass}, which is not recorded, so what it reserves is unknown. Record that class before placing it.`,
+        );
+      }
+
+      const [hosts, providers, reserved] = await Promise.all([
+        hosting.listHosts(),
+        hosting.listProviders(),
+        hosting.reservedByHost(),
+      ]);
+      const tierOf = new Map(providers.map((p) => [p.id, p.tier]));
+
+      const forScheduling: HostForScheduling[] = hosts.flatMap((host) => {
+        const tier = tierOf.get(host.providerId);
+        // A host whose provider is gone has no tier, and a tier is what says
+        // whether it may hold a tenant at all. Left out rather than defaulted.
+        if (!tier || !host.capacity) return [];
+        return [
+          {
+            id: host.id,
+            state: host.state,
+            tier,
+            capacity: host.capacity,
+            reserved: reserved.get(host.id) ?? {
+              cpuCores: 0,
+              memoryMb: 0,
+              diskGb: 0,
+              runtimes: 0,
+              browserRuntimes: 0,
+              unmeasured: 0,
+            },
+            heartbeatAgeSec: heartbeatAgeSec(host.lastHeartbeatAt),
+          },
+        ];
+      });
+
+      const placement = placeRuntime(forScheduling, {
+        runtimeClass: {
+          id: klass.id,
+          label: klass.label,
+          cpuCores: Number(klass.cpuCores),
+          memoryMb: klass.memoryMb,
+          diskGb: klass.diskGb,
+          browser: klass.browser,
+          maxAgents: klass.maxAgents,
+        },
+        // Sticky: a tenant driving a browser stays where its profile and its
+        // egress address already are.
+        preferHostId: runtime.hostId,
+        region: runtime.region,
+        runtimeVersion: runtime.version,
+      });
+
+      if (!placement.placed) return clean(placement);
+      const updated = await hosting.placeRuntimeOn(runtime.id, placement.hostId);
+      return clean({ ...placement, runtime: updated });
     }),
   );
 }

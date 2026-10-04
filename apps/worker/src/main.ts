@@ -24,6 +24,7 @@ import {
 } from '@xbam/runtime';
 import { activeSessionAccountIds, closeAllSessions, sessionIdentity, sessionTabs } from '@xbam/browser';
 import { ChannelPoller } from './poller';
+import { HostAgent } from './hostAgent';
 import { SignInWatcher } from './signIn';
 import { SocialRadar } from './radar';
 import { PersonaSyncRunner } from './personaSync';
@@ -466,6 +467,14 @@ async function main(): Promise<void> {
   // browser, and the job queue routes that to a worker that has one.
   const posts = new PostScheduler();
   posts.start();
+  /*
+    Off unless this machine was asked to be a host. Every installation runs
+    this worker, so an agent that enabled itself would turn every laptop
+    running the product into a machine advertising capacity to a control
+    plane. It measures and reports; it boots nothing.
+  */
+  const hostAgent = new HostAgent();
+  hostAgent.start();
   await worker.start();
   if (capabilities.browserCapable) {
     poller.start();
@@ -495,6 +504,7 @@ async function main(): Promise<void> {
     // One last honest snapshot before the browsers go.
     await publishTabs().catch(() => undefined);
     poller.stop();
+    hostAgent.stop();
     browserTaskRunner.stop();
     // Awaited: a check already reading a sign-in page has to finish before the
     // browsers below are closed, or it reads the close as the owner giving up.

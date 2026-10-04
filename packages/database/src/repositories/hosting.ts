@@ -244,6 +244,117 @@ export async function markSilentHosts(staleSeconds: number): Promise<number> {
 }
 
 /** What each host is already holding, for the scheduler's sums. */
+/**
+ * What one runtime of a class reserves.
+ *
+ * A row rather than a name, because placement needs CPU, memory and disk and
+ * the only thing recorded before was the name. Multiplying a count by an
+ * assumed class would produce refusals and acceptances nobody could explain.
+ */
+export interface RuntimeClassRow {
+  id: string;
+  label: string;
+  cpuCores: number;
+  memoryMb: number;
+  diskGb: number;
+  browser: boolean;
+  maxAgents: number;
+  createdAt: string;
+  retiredAt: string | null;
+}
+
+export async function putRuntimeClass(input: {
+  id: string;
+  label: string;
+  cpuCores: number;
+  memoryMb: number;
+  diskGb: number;
+  browser: boolean;
+  maxAgents: number;
+}): Promise<RuntimeClassRow> {
+  return mapRow<RuntimeClassRow>(
+    await queryOne(
+      `INSERT INTO runtime_classes (id, label, cpu_cores, memory_mb, disk_gb, browser, max_agents)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (id) DO UPDATE SET
+         label = excluded.label,
+         cpu_cores = excluded.cpu_cores,
+         memory_mb = excluded.memory_mb,
+         disk_gb = excluded.disk_gb,
+         browser = excluded.browser,
+         max_agents = excluded.max_agents,
+         retired_at = NULL
+       RETURNING *`,
+      [input.id, input.label, input.cpuCores, input.memoryMb, input.diskGb, input.browser, input.maxAgents],
+    ),
+  ) as RuntimeClassRow;
+}
+
+export async function getRuntimeClass(id: string): Promise<RuntimeClassRow | null> {
+  return mapRow<RuntimeClassRow>(await queryOne(`SELECT * FROM runtime_classes WHERE id = $1`, [id]));
+}
+
+/** Live classes, which are the ones a new runtime may be created under. */
+export async function listRuntimeClasses(includeRetired = false): Promise<RuntimeClassRow[]> {
+  return mapRows<RuntimeClassRow>(
+    await query(
+      includeRetired
+        ? `SELECT * FROM runtime_classes ORDER BY id`
+        : `SELECT * FROM runtime_classes WHERE retired_at IS NULL ORDER BY id`,
+    ),
+  );
+}
+
+/**
+ * Retired, never deleted: a runtime created under this class still names it,
+ * and "what was this agent given" is a fair question afterwards.
+ */
+export async function retireRuntimeClass(id: string): Promise<RuntimeClassRow | null> {
+  return mapRow<RuntimeClassRow>(
+    await queryOne(`UPDATE runtime_classes SET retired_at = now() WHERE id = $1 AND retired_at IS NULL RETURNING *`, [id]),
+  );
+}
+
+/**
+ * What each host has set aside, in the shape the scheduler asks for.
+ *
+ * Read from the `host_reservations` view, so the sum and the rows cannot
+ * disagree. `unmeasured` counts runtimes whose class was never recorded: the
+ * scheduler must refuse rather than place against an incomplete sum, because
+ * treating those as reserving nothing makes a host look emptier than it is.
+ */
+export async function reservedByHost(): Promise<
+  Map<string, { cpuCores: number; memoryMb: number; diskGb: number; runtimes: number; browserRuntimes: number; unmeasured: number }>
+> {
+  const rows = mapRows<{
+    hostId: string;
+    runtimes: number;
+    browserRuntimes: number;
+    unmeasured: number;
+    cpuCores: string;
+    memoryMb: number;
+    diskGb: number;
+  }>(await query(`SELECT * FROM host_reservations`));
+
+  const out = new Map<
+    string,
+    { cpuCores: number; memoryMb: number; diskGb: number; runtimes: number; browserRuntimes: number; unmeasured: number }
+  >();
+  for (const r of rows) {
+    out.set(r.hostId, {
+      // numeric comes back as a string, and Number on a sum of two-decimal
+      // reservations is exact well past any plausible host.
+      cpuCores: Number(r.cpuCores),
+      memoryMb: Number(r.memoryMb),
+      diskGb: Number(r.diskGb),
+      runtimes: Number(r.runtimes),
+      browserRuntimes: Number(r.browserRuntimes),
+      unmeasured: Number(r.unmeasured),
+    });
+  }
+  return out;
+}
+
 export async function reservationsByHost(): Promise<Map<string, { runtimes: number; browserRuntimes: number }>> {
   const rows = mapRows<{ hostId: string; runtimeClass: string; n: string }>(
     await query(

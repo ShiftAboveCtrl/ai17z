@@ -8,7 +8,9 @@ import {
   authoriseGatewayRequest,
   lifecycleAction,
   mayProvisionAnother,
+  HOST_HEADROOM,
   placeRuntime,
+  refusalsFor,
   tenantDatabaseName,
   tenantRoleName,
   type CapacityEntitlement,
@@ -52,9 +54,12 @@ async function trustedHost(label = 'host') {
     region: 'lab',
     agentVersion: '1.0.0-test',
   });
-  const active = await hosting.enrolHost(offered.id, null);
-  await hosting.heartbeat({ id: offered.id, capacity: capacity(), agentVersion: '1.0.0-test' });
-  return active!;
+  await hosting.enrolHost(offered.id, null);
+  // The row after the heartbeat, not before it: capacity arrives with the
+  // heartbeat, and a helper called `trustedHost` that hands back a host with
+  // no measured capacity is handing back something no scheduler can use.
+  const reporting = await hosting.heartbeat({ id: offered.id, capacity: capacity(), agentVersion: '1.0.0-test' });
+  return reporting!;
 }
 
 /** A tenant with one runtime, placed and running. */
@@ -416,4 +421,107 @@ describe('a lapse is never a deletion', () => {
     // separate act somebody takes.
     expect(JSON.stringify(action)).not.toContain('DELETED');
   });
+});
+
+describe('a host can be placed on once what it reserves is a sum rather than a count', () => {
+  const aClass = {
+    id: 'general-1',
+    label: 'General',
+    cpuCores: 1,
+    memoryMb: 2_048,
+    diskGb: 20,
+    browser: false,
+    maxAgents: 3,
+  };
+
+  it('sums what a host has set aside from the classes of the runtimes on it', async () => {
+    // The thing that did not exist: the only record was a class name, and a
+    // count multiplied by an assumed class is a refusal nobody can explain.
+    await hosting.putRuntimeClass(aClass);
+    const { host } = await tenantWithRuntime('sum');
+
+    const reserved = await hosting.reservedByHost();
+    const mine = reserved.get(host.id);
+    expect(mine, 'the host reports what it holds').toBeDefined();
+    expect(mine!.runtimes).toBe(1);
+    expect(mine!.memoryMb).toBe(aClass.memoryMb);
+    expect(mine!.cpuCores).toBe(aClass.cpuCores);
+    expect(mine!.unmeasured).toBe(0);
+  }, 60_000);
+
+  it('counts a runtime whose class is not recorded as unmeasured, and refuses the host', async () => {
+    /*
+      Absent is not zero. A runtime created under a class nobody recorded
+      reserves an unknown amount, so the sum has a hole in it and the host
+      looks emptier than it is. Refusing is the answer; placing against it is
+      how a machine gets promised twice.
+    */
+    const host = await trustedHost('host-unmeasured');
+    const tenant = await hosting.upsertTenant({ accountRef: `acct-unmeasured-${uniqueSuffix()}` });
+    const { row } = await hosting.provisionRuntime({
+      tenantId: tenant.id,
+      runtimeClass: `never-recorded-${uniqueSuffix()}`,
+      version: '1.0.0-test',
+      region: 'lab',
+      provisionKey: `prov-unmeasured-${uniqueSuffix()}`,
+    });
+    await hosting.placeRuntimeOn(row.id, host.id);
+
+    const reserved = await hosting.reservedByHost();
+    expect(reserved.get(host.id)!.unmeasured).toBe(1);
+
+    const refusals = refusalsFor(
+      {
+        id: host.id,
+        state: 'ACTIVE',
+        tier: 'FIRST_PARTY_TRUSTED',
+        capacity: host.capacity!,
+        reserved: reserved.get(host.id)!,
+        heartbeatAgeSec: 5,
+      },
+      { runtimeClass: aClass, runtimeVersion: '1.0.0-test' },
+    );
+    expect(refusals.map((r) => r.code)).toContain('RESERVATION_INCOMPLETE');
+  }, 60_000);
+
+  it('keeps headroom, so a machine is never run to its measured limit', async () => {
+    await hosting.putRuntimeClass(aClass);
+    const host = await trustedHost('host-headroom');
+    const reserved = {
+      // Just inside the memory headroom, so one more of this class does not fit.
+      cpuCores: 0,
+      memoryMb: Math.floor(host.capacity!.memoryMb * HOST_HEADROOM.memory) - 1,
+      diskGb: 0,
+      runtimes: 1,
+      browserRuntimes: 0,
+      unmeasured: 0,
+    };
+    const out = placeRuntime(
+      [
+        {
+          id: host.id,
+          state: 'ACTIVE',
+          tier: 'FIRST_PARTY_TRUSTED',
+          capacity: host.capacity!,
+          reserved,
+          heartbeatAgeSec: 5,
+        },
+      ],
+      { runtimeClass: aClass, runtimeVersion: '1.0.0-test' },
+    );
+    expect(out.placed).toBe(false);
+    if (out.placed) return;
+    expect(out.refusals.map((r) => r.code)).toContain('NO_MEMORY');
+  }, 60_000);
+
+  it('retires a class rather than deleting it, because a runtime still names it', async () => {
+    const id = `retiring-${uniqueSuffix()}`;
+    await hosting.putRuntimeClass({ ...aClass, id });
+    const retired = await hosting.retireRuntimeClass(id);
+    expect(retired!.retiredAt).not.toBeNull();
+    // Still readable, so "what was this agent given" still has an answer.
+    expect((await hosting.getRuntimeClass(id))!.label).toBe(aClass.label);
+    expect((await hosting.listRuntimeClasses()).map((c) => c.id)).not.toContain(id);
+    expect((await hosting.listRuntimeClasses(true)).map((c) => c.id)).toContain(id);
+  }, 60_000);
 });
