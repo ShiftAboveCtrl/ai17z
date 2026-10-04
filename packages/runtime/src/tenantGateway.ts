@@ -123,7 +123,11 @@ export async function authoriseGatewayRequest(request: GatewayRequest): Promise<
     return {
       ok: false,
       refusal: 'RUNTIME_SUSPENDED',
-      detail: `The runtime is ${runtime.state}, so ${request.scope} is not available. Export and management still are.`,
+      // Named from the list rather than written out beside it, because the
+      // sentence said "export and management" while the list also allowed
+      // runtime.api, and a refusal that misdescribes what is still available
+      // sends somebody looking for a route that was there all along.
+      detail: `The runtime is ${runtime.state}, so ${request.scope} is not available. Still available: ${SCOPES_WHEN_NOT_ACTING.join(', ')}.`,
     };
   }
 

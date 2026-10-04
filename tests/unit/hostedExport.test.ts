@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AGENT_PACKAGE_EXTENSION, RUNTIME_STATES, type RuntimeState } from '@xbam/shared/contracts';
 import {
@@ -68,8 +70,11 @@ describe('export outlives the right to act', () => {
 
 describe('what honestly travels', () => {
   it('carries the durable agent', () => {
+    // `relationships` and `beliefs` were in this list and should never have
+    // been: the exporter reads memories and nothing else, so asserting they
+    // travelled pinned a false claim in place.
     const all = HOSTED_EXPORT_CARRIES.join(' ').toLowerCase();
-    for (const thing of ['identity', 'memories', 'relationships', 'beliefs', 'knowledge', 'goals', 'learning']) {
+    for (const thing of ['identity', 'memories', 'knowledge', 'goals', 'learning']) {
       expect(all, thing).toContain(thing);
     }
   });
@@ -146,3 +151,45 @@ describe('what an owner is told before moving', () => {
     expect(moveWarnings().join(' ')).toContain(AGENT_PACKAGE_EXTENSION);
   });
 });
+
+describe('what it says travels is what travels', () => {
+  const EXPORTER = readFileSync(
+    join(__dirname, '..', '..', 'packages', 'runtime', 'src', 'agentPackage.ts'),
+    'utf8',
+  );
+
+  it('does not claim to carry relationships or stances', () => {
+    /*
+      It did, and that was a false statement about where a list of everyone the
+      agent has spoken to ends up. `readLearned` selects from `memories` and
+      nothing else, on purpose.
+    */
+    const claims = HOSTED_EXPORT_CARRIES.join(' ').toLowerCase();
+    expect(claims).not.toContain('relationship');
+    expect(claims).not.toContain('stance');
+  });
+
+  it('names them among what is left behind, in every mode', () => {
+    const omitted = HOSTED_EXPORT_OMITS.find((o) => /relationship/i.test(o.what));
+    expect(omitted).toBeDefined();
+    expect(omitted!.what.toLowerCase()).toContain('every mode');
+  });
+
+  it('agrees with the exporter, which reads memories and nothing else', () => {
+    // The claim is about a file, so the file is what it is checked against. A
+    // list that only agrees with somebody's memory of the exporter is the
+    // thing that drifted in the first place.
+    const learned = EXPORTER.slice(EXPORTER.indexOf('async function readLearned'));
+    const body = learned.slice(0, learned.indexOf(NL + '}'));
+    expect(body).toContain('FROM memories');
+    for (const table of ['FROM relationships', 'FROM stances', 'FROM agent_stances']) {
+      expect(body, table).not.toContain(table);
+    }
+  });
+
+  it('still says memories travel, because they do', () => {
+    expect(HOSTED_EXPORT_CARRIES.join(' ')).toContain('Memories');
+  });
+});
+
+const NL = String.fromCharCode(10);

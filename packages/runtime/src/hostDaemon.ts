@@ -172,19 +172,45 @@ export function thumbprintOf(publicKeyJwk: { kty: string; crv?: string; x?: stri
  * cannot quietly start leaking customer data onto hosts.
  */
 export function assignmentIsAcceptable(assignment: Record<string, unknown>, forbidden: readonly string[]): { ok: true } | { ok: false; why: string } {
-  const keys = Object.keys(assignment);
-  const offending = keys.filter((k) => forbidden.some((f) => k.toLowerCase() === f.toLowerCase()));
-  if (offending.length > 0) {
-    return { ok: false, why: `The assignment carried ${offending.join(', ')}, which a host has no business holding.` };
-  }
-  // An email is recognisable wherever it is put, so the values are checked too
-  // rather than only the field names.
-  for (const [key, value] of Object.entries(assignment)) {
-    if (typeof value === 'string' && /@[^\s@]+\.[^\s@]+/.test(value)) {
-      return { ok: false, why: `The assignment field ${key} looks like an email address.` };
+  /*
+    All the way down, not just the top level. This checked `Object.keys` and
+    `Object.entries` of the outermost object, so `{ meta: { ownerEmail: ... } }`
+    passed: the forbidden name was one level in and the top-level value was an
+    object rather than a string. A guard against a field somebody adds later
+    has to look wherever a field can be added.
+  */
+  const denied = forbidden.map((f) => f.toLowerCase());
+
+  const walk = (value: unknown, path: string): { ok: true } | { ok: false; why: string } => {
+    if (typeof value === 'string') {
+      // An email is recognisable wherever it is put, so values are checked as
+      // well as names.
+      if (/@[^\s@]+\.[^\s@]+/.test(value)) {
+        return { ok: false, why: `The assignment field ${path || 'value'} looks like an email address.` };
+      }
+      return { ok: true };
     }
-  }
-  return { ok: true };
+    if (Array.isArray(value)) {
+      for (const [i, item] of value.entries()) {
+        const out = walk(item, `${path}[${i}]`);
+        if (!out.ok) return out;
+      }
+      return { ok: true };
+    }
+    if (value && typeof value === 'object') {
+      for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+        const here = path ? `${path}.${key}` : key;
+        if (denied.includes(key.toLowerCase())) {
+          return { ok: false, why: `The assignment carried ${here}, which a host has no business holding.` };
+        }
+        const out = walk(inner, here);
+        if (!out.ok) return out;
+      }
+    }
+    return { ok: true };
+  };
+
+  return walk(assignment, '');
 }
 
 /**

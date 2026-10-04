@@ -108,8 +108,20 @@ describe('paying again brings it back', () => {
     expect(out.action).toBe('NONE');
   });
 
-  it('treats a runtime with no entitlement at all as lapsed', () => {
-    expect(lifecycleAction(view({ entitledUntil: null }), DEFAULT_LIFECYCLE, NOW).action).toBe('TO_GRACE');
+  it('does not treat a runtime with no entitlement recorded as lapsed', () => {
+    /*
+      This asserted the opposite. The reasoning that changed it: an absent
+      expiry and an expiry in the past are different facts, and reading the
+      first as the second sent an operator-created runtime, or one whose
+      billing integration failed to write the column, to GRACE and from there
+      to a scheduled deletion in about three months. The errors are not
+      symmetric. A runtime running longer than somebody paid for costs money
+      an operator can see on this screen; an agent scheduled for deletion
+      because a column was never written is irreversible.
+    */
+    const out = lifecycleAction(view({ entitledUntil: null }), DEFAULT_LIFECYCLE, NOW);
+    expect(out.action).toBe('NONE');
+    expect(out.detail).toContain('No entitlement is recorded');
   });
 });
 
@@ -193,5 +205,34 @@ describe('the durations are configuration, not engineering facts', () => {
     expect(DEFAULT_LIFECYCLE.suspendedDays).toBeGreaterThanOrEqual(30);
     expect(DEFAULT_LIFECYCLE.retainedDays).toBeGreaterThanOrEqual(30);
     expect(DEFAULT_LIFECYCLE.deletionNoticeDays).toBeGreaterThan(0);
+  });
+});
+
+describe('an absent entitlement is not a lapsed one', () => {
+  const since = new Date(Date.now() - 400 * 86_400_000).toISOString();
+
+  it('does nothing to an ACTIVE runtime with no expiry recorded', () => {
+    // Reading null as lapsed sent a runtime nobody had written an expiry for
+    // to GRACE, and from there to a scheduled deletion in about three months.
+    const out = lifecycleAction({ state: 'ACTIVE', entitledUntil: null, since });
+    expect(out.action).toBe('NONE');
+    expect(out.detail).toContain('not an expired one');
+  });
+
+  it('does nothing from any state when the expiry is unrecorded', () => {
+    for (const state of ['GRACE', 'SUSPENDED', 'RETAINED'] as const) {
+      expect(lifecycleAction({ state, entitledUntil: null, since }).action, state).toBe('NONE');
+    }
+  });
+
+  it('refuses to read an unparseable expiry as either answer', () => {
+    const out = lifecycleAction({ state: 'ACTIVE', entitledUntil: 'whenever', since });
+    expect(out.action).toBe('NONE');
+    expect(out.detail).toContain('not a date anything can read');
+  });
+
+  it('still moves a runtime whose expiry really has passed', () => {
+    const lapsed = new Date(Date.now() - 1_000).toISOString();
+    expect(lifecycleAction({ state: 'ACTIVE', entitledUntil: lapsed, since }).action).toBe('TO_GRACE');
   });
 });

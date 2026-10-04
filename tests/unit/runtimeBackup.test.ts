@@ -191,7 +191,7 @@ describe('starting a tenant on new hardware', () => {
     // Two agents acting as one is worse than being down, for anything that
     // posts or trades.
     for (const state of ['ACTIVE', 'GRACE', 'READY', 'PROVISIONING']) {
-      const out = mayRecoverElsewhere({ oldRuntimeState: state, hasVerifiedBackup: true });
+      const out = mayRecoverElsewhere({ oldRuntimeState: state, hasVerifiedBackup: true, oldHostFenced: true });
       expect(out.ok, state).toBe(false);
       if (out.ok) continue;
       expect(out.why).toContain('two agents');
@@ -199,7 +199,7 @@ describe('starting a tenant on new hardware', () => {
   });
 
   it('refuses without a verified backup, even once the old one is gone', () => {
-    const out = mayRecoverElsewhere({ oldRuntimeState: 'HOST_UNREACHABLE', hasVerifiedBackup: false });
+    const out = mayRecoverElsewhere({ oldRuntimeState: 'HOST_UNREACHABLE', hasVerifiedBackup: false, oldHostFenced: true });
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.why).toContain('partial agent');
@@ -207,7 +207,7 @@ describe('starting a tenant on new hardware', () => {
 
   it('allows it once both halves are true', () => {
     for (const state of ['HOST_UNREACHABLE', 'FAILED', 'RETAINED', 'SUSPENDED']) {
-      expect(mayRecoverElsewhere({ oldRuntimeState: state, hasVerifiedBackup: true }).ok, state).toBe(true);
+      expect(mayRecoverElsewhere({ oldRuntimeState: state, hasVerifiedBackup: true, oldHostFenced: true }).ok, state).toBe(true);
     }
   });
 });
@@ -223,5 +223,57 @@ describe('what a restore does not bring back', () => {
     // And is clear about what does travel.
     expect(all).toContain('memories');
     expect(all).toContain('reconciled rather than repeated');
+  });
+});
+
+describe('a host that stopped answering has not stopped', () => {
+  it('refuses a restore from HOST_UNREACHABLE until the old host is fenced', () => {
+    // The state that looks like permission and is not: the host may be alive
+    // and partitioned, which is the two-copies hazard rather than a licence to
+    // avoid it.
+    const out = mayRecoverElsewhere({ oldRuntimeState: 'HOST_UNREACHABLE', hasVerifiedBackup: true });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.why).toContain('not the same as having stopped');
+  });
+
+  it('allows it once the key is revoked or the machine is confirmed down', () => {
+    expect(
+      mayRecoverElsewhere({ oldRuntimeState: 'HOST_UNREACHABLE', hasVerifiedBackup: true, oldHostFenced: true }).ok,
+    ).toBe(true);
+  });
+
+  it('needs no fence for a state that settled by itself', () => {
+    for (const state of ['FAILED', 'RETAINED', 'SUSPENDED']) {
+      expect(mayRecoverElsewhere({ oldRuntimeState: state, hasVerifiedBackup: true, oldHostFenced: true }).ok, state).toBe(true);
+    }
+  });
+
+  it('still refuses a state that may be running, fenced or not', () => {
+    for (const state of ['ACTIVE', 'GRACE', 'READY', 'PROVISIONING']) {
+      expect(mayRecoverElsewhere({ oldRuntimeState: state, hasVerifiedBackup: true, oldHostFenced: true }).ok, state).toBe(false);
+    }
+  });
+
+  it('says so in the caveats, where somebody reads before restoring', () => {
+    expect(RESTORE_CAVEATS.join(' ')).toContain('has not been shown to have stopped');
+  });
+});
+
+describe('a backup key is a path', () => {
+  it('refuses a runtime id that could climb out of its own folder', () => {
+    for (const bad of ['../../etc', 'a/b', '..', '', 'x'.repeat(65)]) {
+      expect(() => backupKeyFor({ runtimeId: bad, generation: 1 }, new Date()), bad).toThrow();
+    }
+  });
+
+  it('refuses a generation that is not one', () => {
+    expect(() => backupKeyFor({ runtimeId: 'rt-1', generation: 0 }, new Date())).toThrow();
+    expect(() => backupKeyFor({ runtimeId: 'rt-1', generation: 1.5 }, new Date())).toThrow();
+  });
+
+  it('sorts by runtime and generation', () => {
+    const key = backupKeyFor({ runtimeId: 'rt-1', generation: 3 }, new Date('2026-10-04T05:00:00.000Z'));
+    expect(key).toBe('rt-1/gen-3/2026-10-04T05-00-00-000Z.bin');
   });
 });

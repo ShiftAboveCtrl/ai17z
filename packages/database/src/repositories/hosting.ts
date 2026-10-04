@@ -208,6 +208,21 @@ export async function heartbeat(input: {
   );
 }
 
+/**
+ * One provider, for the tier a host is running under.
+ *
+ * Read by the host agent as well as the scheduler: the scheduler refusing is
+ * the control plane's decision, and the machine declining work it is not
+ * qualified for is its own.
+ */
+export async function getProvider(id: string): Promise<HostProviderRow | null> {
+  return mapRow<HostProviderRow>(await queryOne(`SELECT * FROM host_providers WHERE id = $1`, [id]));
+}
+
+export async function listProviders(): Promise<HostProviderRow[]> {
+  return mapRows<HostProviderRow>(await query(`SELECT * FROM host_providers ORDER BY created_at`));
+}
+
 export async function getHost(id: string): Promise<HostNodeRow | null> {
   return mapRow<HostNodeRow>(await queryOne(`SELECT * FROM host_nodes WHERE id = $1`, [id]));
 }

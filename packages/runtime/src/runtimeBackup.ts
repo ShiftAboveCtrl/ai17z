@@ -64,6 +64,16 @@ export type BackupOutcome =
 
 /** A key that sorts by runtime and generation, so a listing is readable. */
 export function backupKeyFor(plan: Pick<BackupPlan, 'runtimeId' | 'generation'>, at: Date): string {
+  // A key becomes a path in whatever store this is, and a path has `..`. The
+  // id is a uuid from the database today, which is exactly the sort of thing
+  // that stops being true quietly, and the format this project chose for agent
+  // packages was chosen precisely so there was nowhere to put one.
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(plan.runtimeId)) {
+    throw new Error(`${plan.runtimeId} is not a usable runtime id for a backup key.`);
+  }
+  if (!Number.isInteger(plan.generation) || plan.generation < 1) {
+    throw new Error('A backup generation is a whole number from one upwards.');
+  }
   const stamp = at.toISOString().replace(/[:.]/g, '-');
   return `${plan.runtimeId}/gen-${plan.generation}/${stamp}.bin`;
 }
@@ -184,11 +194,34 @@ export async function fetchForRestore(input: {
 export function mayRecoverElsewhere(input: {
   oldRuntimeState: string;
   hasVerifiedBackup: boolean;
+  /**
+   * Whether whatever is still on the old host has been stopped from acting:
+   * its key revoked, or somebody has confirmed the machine is down.
+   *
+   * Required for `HOST_UNREACHABLE`, which is the state that looks like
+   * permission and is not.
+   */
+  oldHostFenced?: boolean;
 }): { ok: true } | { ok: false; why: string } {
-  if (!['HOST_UNREACHABLE', 'FAILED', 'RETAINED', 'SUSPENDED'].includes(input.oldRuntimeState)) {
+  if (!RECOVERABLE_FROM.includes(input.oldRuntimeState)) {
     return {
       ok: false,
       why: `The runtime is ${input.oldRuntimeState}, which may still be running. Starting a second copy would have two agents acting as one.`,
+    };
+  }
+  /*
+    HOST_UNREACHABLE means the host stopped answering, not that the runtime
+    stopped. That is the one case where it may be alive and partitioned, which
+    is the two-copies hazard rather than permission to avoid it, and it is the
+    same mistake as reading a broadcast nobody saw as a broadcast that did not
+    happen. The state has to be settled by an act: the host's key revoked, so
+    whatever is still running there cannot reach anything, or somebody having
+    looked at the machine.
+  */
+  if (input.oldRuntimeState === 'HOST_UNREACHABLE' && !input.oldHostFenced) {
+    return {
+      ok: false,
+      why: 'That host stopped answering, which is not the same as having stopped. Revoke its key or confirm the machine is down first, or this restore is a second copy of an agent that may still be posting.',
     };
   }
   if (!input.hasVerifiedBackup) {
@@ -196,6 +229,14 @@ export function mayRecoverElsewhere(input: {
   }
   return { ok: true };
 }
+
+/**
+ * States a restore onto new hardware may start from.
+ *
+ * Named rather than inline so the one that needs a fence as well is obvious
+ * beside the ones that do not.
+ */
+export const RECOVERABLE_FROM: readonly string[] = ['HOST_UNREACHABLE', 'FAILED', 'RETAINED', 'SUSPENDED'];
 
 /**
  * What a restore cannot bring back, stated rather than discovered.
@@ -207,6 +248,7 @@ export function mayRecoverElsewhere(input: {
  * instead of implying the session travelled.
  */
 export const RESTORE_CAVEATS: readonly string[] = [
+  'A host that stopped answering has not been shown to have stopped. Recovering onto new hardware needs its key revoked or the machine confirmed down, or the restore is a second copy.',
   'A browser session may not survive a restore and may need signing in again.',
   'A signed-in Chrome profile is tied to the machine that created it on some platforms.',
   'Durable agent state travels: identity, memories, relationships, beliefs, knowledge, goals and configuration.',

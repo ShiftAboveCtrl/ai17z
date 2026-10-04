@@ -148,8 +148,13 @@ const KEY_ADJACENT_FIELDS = new Set([
   'keythumbprint',
 ]);
 
+/** Whether this field is one of the ones that is about a key rather than one. */
+function nameIsKeyAdjacent(key: string): boolean {
+  return KEY_ADJACENT_FIELDS.has(key.toLowerCase().replace(/[^a-z0-9]+/g, ''));
+}
+
 function nameIsSecret(key: string): boolean {
-  if (KEY_ADJACENT_FIELDS.has(key.toLowerCase().replace(/[^a-z0-9]+/g, ''))) return false;
+  if (nameIsKeyAdjacent(key)) return false;
   const words = key
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .split(/[^A-Za-z0-9]+/)
@@ -185,6 +190,13 @@ export function carriesSecret(payload: unknown, path = ''): { found: true; where
       if (nameIsSecret(key)) {
         return { found: true, where: path ? `${path}.${key}` : key };
       }
+      /*
+        And the exemption covers the value, not only the name. A key thumbprint
+        is 43 characters of base64url, which is the shape this looks for, so
+        testing it anyway made the one field that exists to be printed instead
+        of a key into the field that made a response unprintable.
+      */
+      if (nameIsKeyAdjacent(key) && typeof value === 'string') continue;
       const hit = carriesSecret(value, path ? `${path}.${key}` : key);
       if (hit.found) return hit;
     }

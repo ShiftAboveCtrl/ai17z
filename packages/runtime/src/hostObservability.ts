@@ -78,11 +78,28 @@ export function isCleanHealth(record: unknown): { ok: true } | { ok: false; why:
     }
     // Only `state` and `version` are strings, and both are bounded
     // vocabularies rather than anything somebody or something wrote.
-    if (typeof value === 'string' && key !== 'state' && key !== 'version') {
+    const textual = key === 'state' || key === 'version';
+    if (typeof value === 'string' && !textual) {
       return { ok: false, why: `${key} carries text, and a health record holds counts and states rather than prose.` };
     }
     if (typeof value === 'string' && value.length > 64) {
       return { ok: false, why: `${key} is longer than a state or a version should be.` };
+    }
+    /*
+      A field name on the allowlist is not a value on it. Checking only the
+      names let `{ jobsQueued: { note: 'the mentions tab is wedged' } }`
+      through, under an allowed name, carrying exactly the content the
+      allowlist exists to keep out. So every value is a number, a boolean or
+      absent, and the two textual fields are strings.
+    */
+    if (value !== null && value !== undefined && !textual && typeof value !== 'number' && typeof value !== 'boolean') {
+      return {
+        ok: false,
+        why: `${key} is a ${Array.isArray(value) ? 'list' : typeof value}, and a health record carries numbers, booleans and two bounded strings.`,
+      };
+    }
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      return { ok: false, why: `${key} is not a finite number.` };
     }
   }
   const secret = carriesSecret(record);

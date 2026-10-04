@@ -188,5 +188,21 @@ export function placeRuntime(hosts: readonly HostForScheduling[], request: Place
     // Ties broken by id so placement is deterministic and a test can assert it.
     return freeB - freeA || a.id.localeCompare(b.id);
   })[0]!;
-  return { placed: true, hostId: freest.id, detail: `Chosen as the emptiest acceptable host in ${freest.capacity.region}.`, refusals };
+
+  /*
+    A first placement and a move read identically unless the answer says
+    which. The move is the one an operator has to see: a tenant driving a
+    browser that changes machine changes egress address, and that is how an
+    account picks up a security challenge nobody asked for. The refusals were
+    in the result already; nothing said they were the reason this runtime left.
+  */
+  const movedFrom = request.preferHostId
+    ? refusals.filter((r) => r.hostId === request.preferHostId).map((r) => r.detail)
+    : [];
+  const detail =
+    movedFrom.length > 0
+      ? `Moved off ${request.preferHostId} to the emptiest acceptable host in ${freest.capacity.region}. It was refused: ${movedFrom.join(' ')}`
+      : `Chosen as the emptiest acceptable host in ${freest.capacity.region}.`;
+
+  return { placed: true, hostId: freest.id, detail, refusals };
 }

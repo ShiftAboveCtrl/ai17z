@@ -180,3 +180,49 @@ describe('a host declines work it is not qualified for', () => {
     expect(hostMayAcceptTenants('CONFIDENTIAL_COMPUTE', PROVIDER_TIERS_ENABLED)).toBe(false);
   });
 });
+
+describe('a host is told nothing about whose agent it holds, at any depth', () => {
+  it('refuses an owner identity hidden one level down', () => {
+    /*
+      This passed. The forbidden name was inside `meta`, and the top-level
+      value was an object rather than a string, so neither the name check nor
+      the email check saw it.
+    */
+    const out = assignmentIsAcceptable(
+      { runtimeId: 'rt-1', meta: { ownerEmail: 'someone@example.com' } },
+      ASSIGNMENT_FORBIDDEN_FIELDS,
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.why).toContain('meta.ownerEmail');
+  });
+
+  it('refuses an email hidden one level down', () => {
+    const out = assignmentIsAcceptable({ runtimeId: 'rt-1', notes: { detail: 'ask someone@example.com' } }, ASSIGNMENT_FORBIDDEN_FIELDS);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.why).toContain('notes.detail');
+  });
+
+  it('refuses one inside a list', () => {
+    const out = assignmentIsAcceptable({ runtimeId: 'rt-1', contacts: ['someone@example.com'] }, ASSIGNMENT_FORBIDDEN_FIELDS);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.why).toContain('contacts[0]');
+  });
+
+  it('still passes an assignment carrying only what a host needs', () => {
+    const out = assignmentIsAcceptable(
+      {
+        runtimeId: '11111111-1111-4111-8111-111111111111',
+        generation: 1,
+        runtimeClass: 'general-1',
+        version: '1.0.0',
+        keyCustody: 'HOST_SEALED',
+        limits: { memoryMb: 4096, cpuCores: 2 },
+      },
+      ASSIGNMENT_FORBIDDEN_FIELDS,
+    );
+    expect(out.ok, JSON.stringify(out)).toBe(true);
+  });
+});

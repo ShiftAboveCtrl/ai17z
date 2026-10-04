@@ -75,9 +75,7 @@ export function mayExport(input: {
  */
 export const HOSTED_EXPORT_CARRIES: readonly string[] = [
   'Identity and persona',
-  'Memories',
-  'Relationships',
-  'Beliefs and stances',
+  'Memories, in a MOVE',
   'Knowledge and its source provenance',
   'Goals and commitments',
   'Learning and configuration',
@@ -111,8 +109,8 @@ export const HOSTED_EXPORT_OMITS: readonly { what: string; why: string }[] = [
     why: 'The target installation has its own. Carrying one would mean two installations could read the same sealed data.',
   },
   {
-    what: 'Relationships and stances, in SHARE mode',
-    why: 'Both rebuild themselves from what gets published, and carrying them would put a list of everyone the agent has spoken to into a file meant to be handed to a stranger.',
+    what: 'Relationships and stances, in every mode including MOVE',
+    why: 'Both rebuild themselves from what the agent actually published, so carrying them would put a list of everyone it has spoken to into a file that gets emailed around, in order to reconstruct something that reconstructs itself. `readLearned` in agentPackage.ts reads memories and nothing else, and this list says so rather than describing a package somebody might assume.',
   },
 ];
 
