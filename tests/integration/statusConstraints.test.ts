@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_STATUSES, PIPELINE_NODE_KINDS, PROVIDER_KINDS, TRACE_EVENT_TYPES } from '@xbam/shared/contracts';
+import {
+  ACCOUNT_STATUSES,
+  APPROVAL_MODES,
+  PIPELINE_NODE_KINDS,
+  PROVIDER_KINDS,
+  TRACE_EVENT_TYPES,
+  TRADE_INTENT_STATUSES,
+  TRADE_MODES,
+  TRADE_PAUSE_SCOPES,
+} from '@xbam/shared/contracts';
 import {
   BROWSER_TASK_KINDS,
   accounts as accountsRepo,
@@ -8,6 +17,7 @@ import {
   observability,
   pipelines,
   providers,
+  trading,
   users,
 } from '@xbam/database';
 import { ingestNormalizedEvent } from '@xbam/runtime';
@@ -241,6 +251,126 @@ describe('every browser task kind the code can record is one the database accept
         kind: 'TYPE_A_PASSWORD_SOMEWHERE_ELSE' as never,
         requestedBy: fixture.ownerId,
       }),
+    ).rejects.toThrow();
+  });
+});
+
+/**
+ * The trading enums and their CHECK constraints have to agree.
+ *
+ * Five of them arrived with migration 0104: a mandate's mode and approval, an
+ * intent's mode, side and status, and a pause scope. Each is a CHECK, so
+ * growing one in the contract without widening the constraint fails at the
+ * database and passes every unit test, which is the failure this file exists
+ * for.
+ */
+describe('every trading value the code can produce is one the database accepts', () => {
+  const token = {
+    kind: 'ONCHAIN' as const,
+    network: 'robinhood' as const,
+    address: '0x00000000000000000000000000000000000000aa',
+    decimals: 18,
+  };
+  const quote = {
+    venue: 'PONS_V2_CURVE' as const,
+    network: 'robinhood' as const,
+    asset: token,
+    quoteAsset: { kind: 'NATIVE' as const, network: 'robinhood' as const },
+    atBlock: '1',
+    observedAt: new Date().toISOString(),
+    priceBaseUnits: '1',
+    liquidityBase: '1',
+    feeMicroBps: 0,
+    phase: 'CURVE' as const,
+    source: 'constraint-test',
+  };
+
+  const mandateFor = (agentId: string, mode: string, approval: string) => ({
+    agentId,
+    ownerId: null,
+    mandate: {
+      mode,
+      approval,
+      venues: ['PONS_V2_CURVE'],
+      networks: ['robinhood'],
+      allowedAssets: [token],
+      maxPerTrade: '1',
+      maxPerDay: '1',
+      maxOpenExposure: '1',
+      maxOpenPositions: 1,
+      maxSlippageBps: 1,
+      maxPriceImpactBps: 1,
+      minLiquidityBase: '1',
+      maxFeeBase: '1',
+      quoteMaxAgeMs: 1000,
+      expiresAt: null,
+      paused: false,
+    },
+  }) as never;
+
+  it('writes every mandate mode and approval mode', async () => {
+    const fixture = await createFixture();
+    for (const mode of TRADE_MODES) {
+      for (const approval of APPROVAL_MODES) {
+        const row = await trading.putMandate(mandateFor(fixture.agentId, mode, approval));
+        expect(row.mode).toBe(mode);
+        expect(row.approval).toBe(approval);
+      }
+    }
+  });
+
+  it('writes every intent status and both sides', async () => {
+    const fixture = await createFixture();
+    const mandate = await trading.putMandate(mandateFor(fixture.agentId, 'LIVE', 'OWNER_APPROVES_EACH'));
+    let n = 0;
+    for (const status of TRADE_INTENT_STATUSES) {
+      for (const side of ['BUY', 'SELL'] as const) {
+        const { row } = await trading.createIntent({
+          agentId: fixture.agentId,
+          mandateId: mandate.id,
+          walletId: null,
+          mode: 'LIVE',
+          venue: 'PONS_V2_CURVE',
+          network: 'robinhood',
+          side,
+          assetIn: side === 'BUY' ? { kind: 'NATIVE', network: 'robinhood' } : token,
+          assetOut: side === 'BUY' ? token : { kind: 'NATIVE', network: 'robinhood' },
+          maxIn: '1',
+          minOut: '1',
+          maxSlippageBps: 1,
+          maxPriceImpactBps: 1,
+          maxFeeBase: '1',
+          quote,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          idempotencyKey: `constraint-${fixture.agentId}-${n += 1}`,
+        });
+        // Straight to the status under test: this is about the constraint
+        // accepting the value, not about the lifecycle being walked.
+        const moved = await trading.transitionIntent(row.id, 'DRAFTED', status);
+        expect(moved?.status, status).toBe(status);
+      }
+    }
+  });
+
+  it('writes every pause scope', async () => {
+    const fixture = await createFixture();
+    for (const scope of TRADE_PAUSE_SCOPES) {
+      const row = await trading.pauseTrading({
+        scope,
+        target: scope === 'GLOBAL' ? null : `${scope}-${fixture.agentId}`,
+        reason: 'constraint test',
+        createdBy: null,
+      });
+      expect(row.scope).toBe(scope);
+      await trading.liftPause(row.id, null);
+    }
+  });
+
+  it('still refuses values that are not in the contract', async () => {
+    const fixture = await createFixture();
+    await expect(trading.putMandate(mandateFor(fixture.agentId, 'WHATEVER_I_LIKE', 'OWNER_APPROVES_EACH'))).rejects.toThrow();
+    await expect(
+      trading.pauseTrading({ scope: 'EVERYTHING' as never, target: null, reason: 'no', createdBy: null }),
     ).rejects.toThrow();
   });
 });

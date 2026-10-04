@@ -128,6 +128,8 @@ export type { ChatConversation, ChatMessage, ChatParticipant, ChatSave } from '.
 export { STANDARD_WORK } from './repositories/workers';
 export * as spam from './repositories/spam';
 export * as agentChanges from './repositories/agentChanges';
+export * as trading from './repositories/trading';
+export type { TradeIntentRow, TradeMandateRow, TradePauseRow } from './repositories/trading';
 export * as wallets from './repositories/wallets';
 export type { WalletIntentRow, WalletRow } from './repositories/wallets';
 export type { AgentChangeRow, AgentChangeRisk, AgentChangeStatus, AgentChangeSubsystem } from './repositories/agentChanges';
