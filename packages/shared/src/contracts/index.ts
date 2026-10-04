@@ -33,5 +33,6 @@ export * from './xDomain';
 export * from './research';
 export * from './wallet';
 export * from './trading';
+export * from './hosting';
 export * from './knowledgeCollections';
 export * from './foundry';

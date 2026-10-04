@@ -148,6 +148,7 @@ export * from './tradingRisk';
 export * from './tradingGate';
 export * from './marketData';
 export * from './paperTrading';
+export * from './hostScheduler';
 export * from './walletCapabilities';
 export * from './socialTests';
 export * from './publicSelf';
