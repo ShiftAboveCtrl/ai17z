@@ -575,6 +575,19 @@ export async function hostingRoutes(app: FastifyInstance): Promise<void> {
       const runtime = await hosting.getRuntime(params(request).id!);
       if (!runtime) throw new Error('There is no such runtime.');
 
+      const body = parseBody(
+        z.object({
+          /**
+           * Permission to move a runtime that already has a host.
+           *
+           * Off by default. A move changes the tenant's egress address, which
+           * is how an account picks up a security challenge nobody asked for.
+           */
+          allowMove: z.boolean().default(false),
+        }),
+        request,
+      );
+
       const klass = await hosting.getRuntimeClass(runtime.runtimeClass);
       if (!klass) {
         throw new Error(
@@ -631,8 +644,50 @@ export async function hostingRoutes(app: FastifyInstance): Promise<void> {
       });
 
       if (!placement.placed) return clean(placement);
+
+      /*
+        Three cases, and only one of them is a write.
+
+        `placeRuntimeOn` updates `WHERE host_id IS NULL`, which is what stops
+        two callers placing one runtime twice. Calling it for a runtime that
+        already has a host matches nothing, so the route used to answer
+        "Kept on the host it was already on" with a null runtime, and worse,
+        "Moved off host-X" while the database did not change.
+      */
+      if (runtime.hostId === placement.hostId) {
+        return clean({ ...placement, runtime, moved: false });
+      }
+
+      if (runtime.hostId) {
+        /*
+          A move, and it is not done on the strength of a scheduling answer.
+          Moving a tenant changes its egress address, which is how an account
+          picks up a security challenge nobody asked for, and stickiness
+          exists precisely to avoid that. So it is reported, with the host it
+          would move to and why its own host was refused, and somebody asks
+          for it on purpose.
+        */
+        if (!body.allowMove) {
+          return clean({
+            ...placement,
+            placed: false as const,
+            moved: false,
+            wouldMoveTo: placement.hostId,
+            why: `${placement.detail} Moving a tenant changes its egress address, so this needs allowMove.`,
+          });
+        }
+        const moved = await hosting.moveRuntimeTo(runtime.id, placement.hostId);
+        if (!moved) throw new Error('That runtime changed underneath this request. Read it again and decide again.');
+        return clean({ ...placement, runtime: moved, moved: true });
+      }
+
       const updated = await hosting.placeRuntimeOn(runtime.id, placement.hostId);
-      return clean({ ...placement, runtime: updated });
+      if (!updated) {
+        // Somebody else placed it between the read and the write, which is
+        // what the `host_id IS NULL` clause is for.
+        throw new Error('That runtime was placed by somebody else while this request was deciding.');
+      }
+      return clean({ ...placement, runtime: updated, moved: false });
     }),
   );
 }

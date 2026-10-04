@@ -525,3 +525,46 @@ describe('a host can be placed on once what it reserves is a sum rather than a c
     expect((await hosting.listRuntimeClasses(true)).map((c) => c.id)).toContain(id);
   }, 60_000);
 });
+
+describe('a first placement and a move are different writes', () => {
+  it('refuses to place a runtime that already has one, which is what stops two callers', async () => {
+    const { host, runtime } = await tenantWithRuntime('placed');
+    expect(await hosting.placeRuntimeOn(runtime.id, host.id)).toBeNull();
+  }, 60_000);
+
+  it('moves a runtime only from the host it is actually on', async () => {
+    /*
+      Conditional on the host it is leaving, in the same statement, for the
+      same reason the first placement is conditional on having none: two
+      callers deciding to move one runtime at the same moment would otherwise
+      both think they did.
+    */
+    const { host, runtime } = await tenantWithRuntime('moving');
+    const elsewhere = await trustedHost('host-destination');
+
+    const moved = await hosting.moveRuntimeTo(runtime.id, elsewhere.id);
+    expect(moved!.hostId).toBe(elsewhere.id);
+    // The generation moves with it, so a stale host reporting about the old
+    // one cannot be mistaken for the live copy.
+    expect(moved!.generation).toBe(runtime.generation + 1);
+
+    // The same move again is a no-op rather than a second success.
+    expect(await hosting.moveRuntimeTo(runtime.id, elsewhere.id)).toBeNull();
+    expect(host.id).not.toBe(elsewhere.id);
+  }, 60_000);
+
+  it('does not move a runtime that has no host at all', async () => {
+    const tenant = await hosting.upsertTenant({ accountRef: `acct-unplaced-${uniqueSuffix()}` });
+    const { row } = await hosting.provisionRuntime({
+      tenantId: tenant.id,
+      runtimeClass: 'general-1',
+      version: '1.0.0-test',
+      region: 'lab',
+      provisionKey: `prov-unplaced-${uniqueSuffix()}`,
+    });
+    const host = await trustedHost('host-for-unplaced');
+    // A move is from somewhere. This one belongs to placeRuntimeOn.
+    expect(await hosting.moveRuntimeTo(row.id, host.id)).toBeNull();
+    expect((await hosting.placeRuntimeOn(row.id, host.id))!.hostId).toBe(host.id);
+  }, 60_000);
+});

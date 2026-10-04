@@ -520,6 +520,21 @@ than rounding it up. A check that cannot run is the shape of a boundary nobody
 has verified, which is the same reason the release preflight is run in the
 packaging stage rather than assumed.
 
+`tools/tenant-preflight.mts` is the other half, and it runs **inside** a
+tenant before the application starts. Every rule it enforces is written down
+elsewhere, and a written-down rule is enforced where a process starts or it is
+enforced nowhere: a runtime that boots against the shared database has already
+read another tenant's rows before any later check could have an opinion. It
+asks four questions, refuses on any of them, and exits 1 so a launcher can
+branch on it.
+
+It derives the database and role names from the runtime id rather than reading
+configured ones, compares the master key as a digest so no key reaches a log,
+reads the server's own catalogue rather than the intention, and refuses to
+start a runtime the lifecycle says may not act. It has **no default runtime
+id**: one that guessed would pass for the wrong runtime, which is worse than
+not running.
+
 ## What has not been done
 
 Written here rather than discovered later:
@@ -540,6 +555,9 @@ Written here rather than discovered later:
   number and nothing has produced it.
 - Backup and restore are implemented and tested against a fake store. Neither
   has been executed against a real one.
+- `tools/hosted-lab.mts` has been run against a real database: 25 checks, all
+  of them refusals that had to hold, and it removes its own rows. That is the
+  control plane and the gateway exercised end to end; it starts no guest.
 - No load or chaos measurement has been run.
 - Venue adapters are not in this repository.
 - Nothing has been pushed. Phase 1 releases as a coherent whole or not at all.
