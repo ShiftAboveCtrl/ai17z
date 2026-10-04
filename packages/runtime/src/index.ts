@@ -152,6 +152,26 @@ export * from './hostScheduler';
 export * from './tenantGateway';
 export * from './browserTakeover';
 export * from './hostDaemon';
+/*
+  Hosted runtimes. Every one of these is a decision about somebody else's
+  machine holding somebody else's agent, and each refuses rather than
+  approximates: an egress plan that is not loaded is not enforcement, a guest
+  that is not jailed is not a boundary, a tier that has not proved an
+  attestation holds no key, and a provision that half succeeded is undone
+  rather than marked ready. docs/architecture/HOSTING.md is the account.
+*/
+export * from './hostEgress';
+export * from './microVm';
+export * from './hostAttestation';
+export * from './tenantDatabase';
+export * from './tenantProvisioning';
+export * from './hostedSecrets';
+export * from './hostedSignIn';
+export * from './hostedLifecycle';
+export * from './hostedCapacity';
+export * from './hostedExport';
+export * from './hostObservability';
+export * from './runtimeBackup';
 export * from './walletCapabilities';
 export * from './socialTests';
 export * from './publicSelf';

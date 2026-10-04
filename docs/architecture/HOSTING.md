@@ -33,6 +33,17 @@ layer of isolation is KVM, and that it is built so a single host can run
 workloads belonging to different customers. A guest with its own kernel is the
 boundary. A shared kernel with namespaces is a resource arrangement.
 
+`packages/runtime/src/microVm.ts` is the guest, described before anything
+boots it. Nothing in this repository has booted one, so what is there is a
+plan, the properties the plan must have, and `guestMatchesPlan`, which
+compares what a host reports with what it was asked to run. A plan is not a
+running guest, and a host that reports nothing has proved nothing.
+
+`plansShareAnything` checks two plans on one host against the list below.
+The read-only root image is deliberately absent from it: a measured image
+two tenants both boot is the one thing they are meant to share, and the
+single writable disk each gets is what they are not.
+
 Two things follow, and the second is the one that gets forgotten.
 
 `jailer` is mandatory, not recommended. The same document treats the jailer as
@@ -45,6 +56,16 @@ owes rather than something it inherits by choosing a hypervisor.
 `EGRESS_DENIED_CIDRS` in `packages/shared/src/contracts/hosting.ts` is that
 list, and the first entry is `169.254.169.254/32`, the cloud metadata address,
 which is the single most valuable thing a compromised guest can reach. The
+`packages/runtime/src/hostEgress.ts` turns that list into an ordered plan, a
+soundness check on the plan, and `verifyLoadedRuleset`, which reads a ruleset
+back off the host. That last one exists because a rule that was generated is
+not a rule that is loaded, and a host whose ruleset failed to apply looks
+exactly like one where it did until a guest reaches the metadata endpoint.
+Denials are checked for both families, because an allowlist that forgets v6 is
+not one, and an allow placed above a deny is refused outright: first match
+wins, so that mistake is invisible in a diff. `mayConnectTo` is the belt to
+that braces, and it delegates to `addressVerdict` in `@xbam/upstream` rather
+than judging an address a second way. The
 denials are infrastructure rather than content: a hosted agent researching the
 open web is the product working. Nothing in that list is about geography and
 nothing in it exists to get past anybody else's security controls.
@@ -92,6 +113,18 @@ vendor root of trust, match a measurement for an image AI17Z published and can
 reproduce, refuse a policy permitting debug, and release the runtime key only
 against a report that passed all three.
 
+`packages/runtime/src/hostAttestation.ts` is what "not enabled" looks like in
+code rather than in a comment. `attestationVerdict` has no path that trusts a
+host without a verifier registered against a hardware vendor root, and no
+verifier is registered in this repository. It refuses a report it cannot parse
+rather than guessing at one, so being wrong about a field position costs a
+refusal and never a false approval; it refuses a nonce it did not ask for,
+because the nonce is the only thing making a report about now; and it refuses
+firmware below the floor rather than warning, because accepting a version with
+a known break in it is how a fixed problem comes back. `mayReleaseRuntimeKey`
+is the one function that decides whether a customer's key is sent to a
+machine, so a tier being enabled and a key being released cannot disagree.
+
 Until that exists and has been exercised, **hosting is first-party hardware and
 is never described as host-blind.** `custodyFor` returns `HOST_SEALED` for the
 only enabled tier, and `CUSTODY_GUARANTEES` records in one place that a host
@@ -117,6 +150,103 @@ browser task's params, and never carried in an agent package. The existing
 local discipline is the same and for the same reason: `redact()` in
 `packages/shared/src/logger.ts` blanks anything key-shaped, and provider
 credentials are readable only through the one accessor that decrypts them.
+
+## One tenant, one database
+
+`packages/runtime/src/tenantDatabase.ts`. The boundary is Postgres' own: a
+database per tenant, a role that can reach exactly that database, and `PUBLIC`
+revoked before the tenant is granted anything, because the other order leaves a
+window in which the database exists and every role on the server can reach it.
+
+Names are derived from the runtime id rather than read back from a stored
+value, for the same reason `resolveProfileDir` derives a browser profile path:
+a name written by one machine and read by another is a second, empty thing that
+looks exactly like the first. They carry a hash suffix rather than a plain
+truncation, because Postgres cuts an identifier at 63 bytes and truncating is
+exactly how two long ids become one database.
+
+`observedIsolationProblems` is the half that matters. It compares what the
+server reports with what was asked for, because a GRANT that was generated is
+not a GRANT that ran, and a provisioning step that half failed leaves a
+database whose permissions nobody checked.
+
+A database per tenant is isolation between tenants and not from the server
+operator. A superuser reads every database on the server, which is why a
+tenant's own secrets are sealed under its own key rather than left in the clear
+in its own database.
+
+## Bringing one into existence
+
+`packages/runtime/src/tenantProvisioning.ts`. The dangerous state is not
+failure, it is half success: a guest booted before its egress rules loaded, a
+database reachable by PUBLIC because the revoke did not run, a grant issued
+against a runtime that never finished starting. Each of those is
+indistinguishable from a working tenant from the control plane's side, because
+every individual step returned.
+
+So it is ordered steps with a rollback, and three orderings are checked rather
+than remembered. The network is attached before the guest boots, or the guest
+is unfiltered for however long the rules take. The key is minted before
+anything is sealed under it. Isolation is verified before a grant exists,
+because a grant is what makes a runtime reachable and verifying afterwards
+means verifying something a customer can already use.
+
+`mayMarkReady` asks the host and the server rather than inferring anything from
+the steps having run. Rollback runs newest first, since an undo depends on what
+came before it still being there. `stateAfterFailure` returns no state in which
+a runtime may act. And `orphanReport` exists for the case nobody wants: a
+rollback that itself failed has left something on a host that the control plane
+has no record of, and nothing will find it by looking at the control plane.
+
+## Connecting an account
+
+`packages/runtime/src/hostedSignIn.ts`. Locally this is settled: a person signs
+in to the real browser window and the session lives in the profile. Hosting
+breaks the assumption that rested on, which is that the owner is at the
+keyboard, and the obvious replacement is the one thing that must not be built.
+
+Two routes exist. The default is the owner taking the runtime browser through
+the takeover stream and typing into the real page themselves, where the
+credential lands nowhere. The other is a password the owner stored on their own
+runtime, sealed under that runtime's own key, never in the control plane and
+never in a shared store. It is off by default, and the interface says what it
+buys: an account with two factor authentication on reaches the code step on
+every fresh sign-in and still needs a person.
+
+`REFUSED_SIGNIN_ROUTES` is the longer list, and it is written down because
+every entry on it is easier than the two above. A central form collecting a
+username, a password and a code for every customer. A vault the control plane
+can read. Relaying a texted code, which is answering a security challenge
+whether it is typed or forwarded. A CAPTCHA solver, paid or otherwise.
+Importing a customer's session cookies, which asks somebody to export a bearer
+credential and send it somewhere and is the shape of a phishing instruction
+whoever sends it. Holding recovery codes, which does not reduce the risk of
+holding a password but concentrates it.
+
+**AI17Z never answers a security challenge**, and hosting creates no exception.
+`CHALLENGE_STOP` states it in full in that file rather than linking elsewhere,
+because somebody reading it is looking for the exception and finding a link is
+how a reader concludes there might be one.
+
+## Capacity
+
+`packages/runtime/src/hostedCapacity.ts`, which is the core's half and not a
+shop. Nothing in it takes a payment, prices anything or talks to a payment
+provider: paying is the owner's act, exactly as it is for a marketplace Plugin.
+
+An entitlement bounds provisioning before a runtime exists rather than being
+reconciled afterwards, because a reconciliation that finds an extra runtime has
+already given somebody a machine, and taking it back means either a customer
+loses an agent they were using or the business absorbs capacity it never sold.
+Refusing to start the eleventh is a sentence on a screen.
+
+A suspended runtime still occupies its entitlement, since it still holds a
+database, a disk, a key and a backup. Widening takes effect at once; narrowing
+only at renewal, because applying a reduction immediately would mean choosing
+which of somebody's agents to stop. Being over capacity is reported rather than
+enforced, for the same reason. And `lapseEffect` types `deletesAnything` as the
+literal `false`, so a future change that wanted a lapse to delete something
+would not typecheck.
 
 ## Placement
 
@@ -326,12 +456,35 @@ does not exist and a feed that did not answer are different things to tell
 somebody, and treating the second as the first is how a bad price becomes a
 trade.
 
+## Asking a host rather than trusting it
+
+`tools/hosted-isolation-check.mts` is the observed half of every check above.
+It reads the loaded nftables ruleset, the process tree, and the server's own
+catalogue for each tenant database, and reports what it found. It writes
+nothing and provisions nothing, so it is safe to run on a host holding live
+tenants.
+
+Its one deliberate behaviour is that a check which could not run reports
+UNAVAILABLE rather than passing, and the summary says so in a sentence rather
+than rounding it up. A check that cannot run is the shape of a boundary nobody
+has verified, which is the same reason the release preflight is run in the
+packaging stage rather than assumed.
+
 ## What has not been done
 
 Written here rather than discovered later:
 
 - No microVM has been built or booted. `/dev/kvm` exists on the development
-  machine; nothing has run in a guest.
+  machine; nothing has run in a guest, and `microVmPlanProblems` has never
+  been handed a plan a host acted on.
+- No tenant has been provisioned. The statements in `tenantDatabase.ts` have
+  never been run against a real server.
+- No attestation has been verified. No vendor verifier is registered, and the
+  field and bit positions come from vendor specifications rather than from
+  hardware this repository has talked to.
+- No egress ruleset has been loaded. `verifyLoadedRuleset` has only ever been
+  given text this repository rendered itself.
+- No capacity has been sold and no entitlement issued.
 - No capacity has been measured, so no capacity is claimed.
 - Backup and restore are implemented and tested against a fake store. Neither
   has been executed against a real one.
