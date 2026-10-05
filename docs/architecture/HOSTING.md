@@ -898,7 +898,9 @@ dominates and the case nothing here has measured.
 The compute floor itself is in
 [CONFIDENTIAL_COMPUTE.md](CONFIDENTIAL_COMPUTE.md): **two vCPUs, because there
 is no smaller confidential size, at $37.67 to $89.79 a month** depending on
-region and commitment. `hostedCost.ts` is the ledger: twelve lines on a closed
+region and commitment. `npm run hosted:cost` computes that from the dated
+prices in `confidentialSkus.ts` and the measured footprint rather than reciting
+it, and prints what is not in it. `hostedCost.ts` is the ledger: twelve lines on a closed
 list so a new cost cannot be added without appearing in it, a line a tenant has
 none of recorded as zero so an omission means unknown, shared overhead kept
 apart from direct runtime cost, and planning on p95 rather than a mean because
