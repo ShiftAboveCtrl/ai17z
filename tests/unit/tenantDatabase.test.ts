@@ -6,8 +6,11 @@ import {
   isolationProblems,
   observedIsolationProblems,
   plansCollide,
+  PROVISIONING_CONNECTIONS,
   provisioningStatements,
+  statementIsControlPlaneSafe,
   tenantDatabaseName,
+  tenantSchemaStatements,
   tenantDatabasePlan,
   tenantRoleName,
   teardownStatements,
@@ -119,8 +122,15 @@ describe('the statements', () => {
     }
   });
 
-  it('revokes the public schema as well as the database', () => {
-    expect(sql.some((s) => s.includes('REVOKE ALL ON SCHEMA public FROM PUBLIC'))).toBe(true);
+  it('does not revoke the public schema from this connection', () => {
+    /*
+      It used to, and that was the defect: a schema REVOKE applies to the
+      database the connection is on, so it landed on the control plane's own
+      database instead of the tenant's. The statement still exists and is in
+      `tenantSchemaStatements`, which runs on the tenant database.
+    */
+    expect(sql.some((x) => x.includes('ON SCHEMA public'))).toBe(false);
+    expect(tenantSchemaStatements(plan).some((x) => x.includes('REVOKE ALL ON SCHEMA public FROM PUBLIC'))).toBe(true);
   });
 
   it('bounds a statement and an idle transaction', () => {
@@ -260,5 +270,65 @@ describe('what this does not claim', () => {
 
   it('says these statements have never been run against a real server', () => {
     expect(DATABASE_CAVEATS.join(' ').toLowerCase()).toContain('not been run against a real server');
+  });
+});
+
+describe('which connection a statement belongs on', () => {
+  const plan = tenantDatabasePlan('rt-alpha');
+
+  it('keeps every schema grant out of the control-plane list', () => {
+    /*
+      This is the defect. A schema GRANT or REVOKE applies to the database the
+      connection is on, so running the provisioning list on the control plane
+      connection sent REVOKE ALL ON SCHEMA public FROM PUBLIC to the shared
+      database and granted each new tenant role CREATE there. Provisioning a
+      tenant gave that tenant privileges inside the control plane.
+
+      No test over the SQL strings could see it, because a string does not know
+      which connection it will be sent on. It surfaced when DROP ROLE refused.
+    */
+    for (const statement of provisioningStatements(plan, 'a-sealed-secret')) {
+      const verdict = statementIsControlPlaneSafe(statement);
+      expect(verdict.ok, statement).toBe(true);
+    }
+  });
+
+  it('puts them in the tenant list instead', () => {
+    const tenant = tenantSchemaStatements(plan);
+    expect(tenant.some((s) => /REVOKE ALL ON SCHEMA public FROM PUBLIC/.test(s))).toBe(true);
+    expect(tenant.some((s) => /GRANT ALL ON SCHEMA public TO/.test(s))).toBe(true);
+    // And each of them is exactly what the guard refuses on the other
+    // connection, which is the point of there being two lists.
+    for (const statement of tenant) expect(statementIsControlPlaneSafe(statement).ok, statement).toBe(false);
+  });
+
+  it('says out loud which database each list runs on', () => {
+    expect(PROVISIONING_CONNECTIONS.provisioningStatements).toBe('CONTROL_PLANE');
+    expect(PROVISIONING_CONNECTIONS.tenantSchemaStatements).toBe('TENANT_DATABASE');
+    expect(PROVISIONING_CONNECTIONS.teardownStatements).toBe('CONTROL_PLANE');
+  });
+
+  it('refuses a grant over all tables as well, for the same reason', () => {
+    const out = statementIsControlPlaneSafe('GRANT SELECT ON ALL TABLES IN SCHEMA public TO somebody');
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.why).toContain('current database');
+  });
+
+  it('allows the database-scoped grants, which name their database', () => {
+    // `GRANT CONNECT ON DATABASE x` says which database, so it is safe from
+    // whichever connection it is sent on.
+    expect(statementIsControlPlaneSafe(`GRANT CONNECT ON DATABASE "${plan.database}" TO "${plan.role}"`).ok).toBe(true);
+    expect(statementIsControlPlaneSafe(`REVOKE CONNECT ON DATABASE "${plan.database}" FROM PUBLIC`).ok).toBe(true);
+  });
+
+  it('teardown stays on the control plane, because a database cannot drop itself', () => {
+    for (const statement of teardownStatements(plan)) {
+      expect(statementIsControlPlaneSafe(statement).ok, statement).toBe(true);
+    }
+  });
+
+  it('says what went wrong in the caveats, where somebody would repeat it', () => {
+    expect(DATABASE_CAVEATS.join(' ')).toContain('gave it privileges inside the control plane');
   });
 });
