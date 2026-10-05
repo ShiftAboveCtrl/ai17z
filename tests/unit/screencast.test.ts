@@ -191,6 +191,51 @@ describe('a stream that nobody is watching stops', () => {
     'utf8',
   );
 
+  it('stops with no further frame arriving at all', async () => {
+    /*
+      The one that matters, and the one a source assertion cannot make: not
+      acknowledging is what makes Chrome stop sending, so the handler stops
+      being called and anything that decides to stop from inside it never runs
+      again. This advances the clock and emits nothing. A mutation that guts
+      the timer's body leaves the `setInterval` call in place, so only
+      behaviour catches it.
+    */
+    vi.useFakeTimers();
+    try {
+      const session = fakeSession();
+      const handle = await startScreencast(pageWith(session), { ...bounds, idleStopAfterMs: 1_000 }, () => false);
+      expect(handle.live()).toBe(true);
+
+      // No frame is emitted. Only time passes.
+      await vi.advanceTimersByTimeAsync(2_500);
+
+      expect(handle.live()).toBe(false);
+      expect(session.sent.some((x) => x.method === 'Page.stopScreencast')).toBe(true);
+      expect(session.listenerCount('Page.screencastFrame')).toBe(0);
+      expect(session.detached()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps streaming while the viewer is still asking for frames', async () => {
+    // The other half: a timer that stopped a healthy stream would be worse
+    // than one that never fired.
+    vi.useFakeTimers();
+    try {
+      const session = fakeSession();
+      const handle = await startScreencast(pageWith(session), { ...bounds, idleStopAfterMs: 1_000 }, () => true);
+      for (let i = 0; i < 4; i += 1) {
+        await vi.advanceTimersByTimeAsync(400);
+        await session.emit('Page.screencastFrame', frame(i + 1));
+      }
+      expect(handle.live()).toBe(true);
+      expect(session.sent.some((x) => x.method === 'Page.stopScreencast')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('decides to stop on a timer rather than inside the frame handler', () => {
     /*
       Not acknowledging is what makes Chrome stop sending, so a check that
