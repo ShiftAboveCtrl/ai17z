@@ -201,6 +201,33 @@ describe('what actually loaded on the host', () => {
     expect(out.missing).toContain('0.0.0.0/8');
   });
 
+  it('accepts the kernel spelling of a single-host denial', () => {
+    /*
+      A kernel does not print back what it was given: `nft list ruleset`
+      renders a full-length prefix without it, so `169.254.169.254/32` comes
+      back as `169.254.169.254` and `::1/128` as `::1`. Measured against a
+      real kernel, where the first version of this reported three correctly
+      loaded denials as missing. A check that always fails is a check an
+      operator learns to ignore.
+    */
+    const text = nftablesRuleset(egressPlan(), 'tap0')
+      .replace(/169\.254\.169\.254\/32/g, '169.254.169.254')
+      .replace(/255\.255\.255\.255\/32/g, '255.255.255.255')
+      .replace(/::1\/128/g, '::1');
+    expect(text).not.toContain('169.254.169.254/32');
+    expect(verifyLoadedRuleset(text)).toEqual({ enforced: true });
+  });
+
+  it('does not accept a bare address for a denial that covers a range', () => {
+    // `10.0.0.0` is not `10.0.0.0/8`. Accepting the first for the second would
+    // be the substring bug again in a new coat.
+    const text = nftablesRuleset(egressPlan(), 'tap0').replace(/10\.0\.0\.0\/8/g, '10.0.0.0');
+    const out = verifyLoadedRuleset(text);
+    expect(out.enforced).toBe(false);
+    if (out.enforced) return;
+    expect(out.missing).toContain('10.0.0.0/8');
+  });
+
   it('refuses a ruleset that denies everything named and accepts by default', () => {
     const text = nftablesRuleset(egressPlan(), 'tap0').replace('policy drop', 'policy accept');
     const out = verifyLoadedRuleset(text);
