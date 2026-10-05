@@ -131,7 +131,7 @@ add(
   6,
   'Production provider selection is evidence-based',
   cc.includes('The difference that bears on the decision') ? 'UNCHECKABLE' : 'NOT_MET',
-  'The evidence is recorded and the decision-relevant difference is stated, but no provider has been selected because none has been provisioned. A selection without a canary would be a preference.',
+  'The evidence is recorded, the decision-relevant difference is stated, and the costs are now computed from dated prices rather than recited: both TEE families are priced, the region spread and the commitment are priced, and Google is present only as a premium because its all-in figure needs a credential this repository does not have. No provider has been selected, because none has been provisioned, and a selection without a canary would be a preference.',
 );
 
 add(
