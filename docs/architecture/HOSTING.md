@@ -746,6 +746,15 @@ runtime while that runtime was answering its own tenant**. The last of those is
 the one a guest cannot establish about itself, because from inside a guest a
 neighbour that has not finished booting looks exactly like one it cannot reach.
 
+**Three tenants have run at once**, which happened by accident: a provisioned
+tenant was still held when the two-tenant proof ran. Each as its own
+unprivileged user, `lab-one` at 518 MB resident for its 863 MB guest and the
+other two at 631 MB each for their 3,939 MB guests, with 24.9 GB still free on
+the host. So the per-tenant cost tracks what the guest was given rather than
+what it needs, and three is not a different regime from two. All three were
+idle or answering health checks; three *busy* tenants is still unmeasured, and
+it is the case a browser decides.
+
 **What the host says it ran is compared with what it was asked to run.**
 `guestMatchesPlan` had existed since `microVm.ts` was written and had never been
 given a real report. The boot now records one, from the running process rather
