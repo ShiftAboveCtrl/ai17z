@@ -234,6 +234,14 @@ const MUTATIONS: Mutation[] = [
     into: 'if (false) {',
     tests: ['tests/unit/tenantFootprint.test.ts'],
   },
+  {
+    id: 'drive-flush',
+    what: "a tenant's disk ignores the guest's flush requests, so a committed transaction is on no disk after a host crash",
+    file: 'packages/runtime/src/microVm.ts',
+    find: "export const DURABLE_CACHE: DriveCache = 'Writeback';",
+    into: "export const DURABLE_CACHE: DriveCache = 'Unsafe';",
+    tests: ['tests/unit/microVm.test.ts'],
+  },
 ];
 
 type Outcome = 'CAUGHT' | 'SURVIVED' | 'ANCHOR' | 'BROKEN';

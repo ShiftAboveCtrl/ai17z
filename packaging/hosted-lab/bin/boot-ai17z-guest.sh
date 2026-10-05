@@ -70,8 +70,15 @@ GUEST_IP="172.31.$OCTET.2"
 say "plan: uid $UID_N, $NS, $TAP, data $DATA_GB GB"
 
 # Stop anything from a previous run: a guest still up holds its tap.
-for pid in $(pgrep -f firecracker 2>/dev/null || true); do
-  if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -- "--id $ID"; then kill -TERM "$pid" 2>/dev/null || true; fi
+#
+# Matched on `^/firecracker`, which is how the process's own command line
+# begins, and never on the bare word. `pgrep -f firecracker` also matches
+# whatever invoked this script if the tenant's name or the word appears in its
+# command line, and the cmdline check below then confirms the match and kills
+# the caller. It did: a one-line shell that mentioned the tenant died here with
+# no output at all, which looked like the boot hanging.
+for pid in $(pgrep -f "^/firecracker --id $ID" 2>/dev/null || true); do
+  kill -TERM "$pid" 2>/dev/null || true
 done
 sleep 1
 

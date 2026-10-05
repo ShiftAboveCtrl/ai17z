@@ -195,6 +195,11 @@ say() { printf 'AI17Z-GUEST %s\n' "$*" > /dev/console; }
 say "booted kernel=$(uname -r) node=$(node --version 2>/dev/null)"
 if [ "$TENANT_DISK_OK" = "1" ]; then
   say "ok the root image is read-only and the tenant's own disk is mounted ($(df -h /var/lib | awk 'NR==2{print $2}'))"
+  # Whether an fsync in here means anything. Firecracker's drive cache_type
+  # defaults to Unsafe, which ignores flush requests, and a Postgres told its
+  # write-ahead log is on disk when it is not has no durability at all. The
+  # guest is the only place that can see what the device advertises.
+  say "disk flush=$(cat /sys/block/vdb/queue/write_cache 2>/dev/null || echo unknown) fua=$(cat /sys/block/vdb/queue/fua 2>/dev/null || echo unknown) mount=$(awk '$2=="/var/lib"{print $4}' /proc/mounts)"
 else
   say "FAIL the tenant's disk could not be mounted, so nothing written here would survive"
 fi
