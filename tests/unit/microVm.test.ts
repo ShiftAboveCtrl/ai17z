@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   MICROVM_CAVEATS,
+  CONFIG_IN_JAIL,
   bootConfiguration,
   guestMatchesPlan,
   imageFingerprint,
+  jailResources,
   launchArgv,
   microVmPlanProblems,
   plansShareAnything,
@@ -63,9 +65,26 @@ describe('a plan sound enough to boot', () => {
     expect(out.argv[0]).toBe('/usr/bin/jailer');
     const sep = out.argv.indexOf('--');
     expect(sep).toBeGreaterThan(0);
-    // Everything that configures the guest is inside the jail.
-    expect(out.argv.slice(sep)).toContain('--api-sock');
+    expect(out.argv.slice(sep)).toContain('--config-file');
     expect(out.argv.slice(0, sep)).toContain('--chroot-base-dir');
+  });
+
+  it('opens no control socket, so a running tenant has nothing left to negotiate', () => {
+    // An API socket lets anything on the host that can reach it attach a drive
+    // or an interface to a running guest. The configuration is settled before
+    // the guest starts instead.
+    const out = launchArgv(planFor('rt-alpha'));
+    if (!out.ok) throw new Error('expected a sound plan');
+    expect(out.argv).toContain('--no-api');
+    expect(out.argv).not.toContain('--api-sock');
+  });
+
+  it('names the configuration file inside the jail rather than on the host', () => {
+    const out = launchArgv(planFor('rt-alpha'));
+    if (!out.ok) throw new Error('expected a sound plan');
+    const named = out.argv[out.argv.indexOf('--config-file') + 1]!;
+    expect(named).toBe(CONFIG_IN_JAIL);
+    expect(named.startsWith('/')).toBe(false);
   });
 
   it('passes the runtime as the jailer instance id', () => {
@@ -152,6 +171,31 @@ describe('a plan that must not boot', () => {
 
 describe('the boot configuration', () => {
   const config = bootConfiguration(planFor('rt-alpha'));
+
+  it('names nothing by its path on the host, because Firecracker reads this inside the chroot', () => {
+    // The first boot from this module failed here: the kernel was named
+    // /opt/.../vmlinux, which does not exist inside a jail, and Firecracker
+    // reported a missing file without mentioning chroots.
+    const named = [config.bootSource.kernel_image_path, ...config.drives.map((d) => d.path_on_host)];
+    for (const name of named) expect(name.startsWith('/')).toBe(false);
+  });
+
+  it('says which host file belongs at each of those names', () => {
+    const plan = planFor('rt-alpha');
+    const placed = jailResources(plan);
+    const named = [bootConfiguration(plan).bootSource.kernel_image_path, ...bootConfiguration(plan).drives.map((d) => d.path_on_host)];
+    for (const name of named) {
+      expect(placed.some((r) => r.nameInJail === name)).toBe(true);
+    }
+    for (const resource of placed) expect(resource.from.startsWith('/')).toBe(true);
+  });
+
+  it('places exactly one writable file in the jail, which is the tenant\'s own disk', () => {
+    const plan = planFor('rt-alpha');
+    const writable = jailResources(plan).filter((r) => r.writable);
+    expect(writable).toHaveLength(1);
+    expect(writable[0]!.from).toBe(plan.resources.dataDiskPath);
+  });
 
   it('mounts the shared root image read only', () => {
     // A tenant that can write to the shared root can change what the next one
@@ -284,10 +328,15 @@ describe('image fingerprints', () => {
 });
 
 describe('what has not been proved', () => {
-  it('says no guest has been booted and no capacity measured', () => {
+  it('says where guests have booted, and that it is not a capacity number', () => {
+    // This caveat used to say nothing had ever been launched. It had, by the
+    // time this changed, and a caveat that is false is worse than one that is
+    // missing. What it must still refuse is the inference: one developer's
+    // machine is not capacity, and Firecracker is not confidential compute.
     const all = MICROVM_CAVEATS.join(' ').toLowerCase();
-    expect(all).toContain('no microvm has been launched');
-    expect(all).toContain('no capacity number exists');
+    expect(all).toContain('one developer machine');
+    expect(all).toContain('not a capacity number');
+    expect(all).toContain('not a confidential vm');
   });
 
   it('refuses a container as a fallback for missing KVM', () => {

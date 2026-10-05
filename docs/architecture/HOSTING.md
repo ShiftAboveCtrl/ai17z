@@ -615,14 +615,86 @@ Firecracker v1.17.0 and the jailer installed from the official release with the
 published checksum verified, the current CI kernel (6.18.51) and Ubuntu 24.04
 rootfs, converted to ext4.
 
+**The lab boots the plan AI17Z renders, and decides nothing itself.**
+`npm run tenant:vm-plan` builds a `MicroVmPlan`, refuses it if
+`microVmPlanProblems` finds a fault, and prints the jailer argument vector, the
+boot configuration, the uid, the namespace, the tap and which host file belongs
+at which name inside the jail. `boot-ai17z-guest.sh` places those files and runs
+that argument vector. The egress ruleset arrives the same way, from
+`npm run tenant:ruleset`.
+
+That was worth doing for a reason that showed up immediately. `microVm.ts` had
+described a launch since it was written and had never produced one, and pointing
+the lab at it found two faults at once:
+
+- **Every path after the jailer's `--` is inside the chroot.** The boot
+  configuration named the kernel by its path on the host, which does not exist
+  inside a jail: Firecracker reports a missing file and says nothing about
+  chroots. `jailResources` now says which host file goes at which name, and
+  `bootConfiguration` names only those names.
+- **Both tenants ran as uid 10000.** `plansShareAnything` has always refused two
+  plans that share a uid, because a process can signal and inspect another
+  running as the same user, and the lab was breaking that rule from the next
+  file along. The uid is derived from the runtime id, and the two tenants now
+  run as 23515 and 16373.
+
+A third thing changed on the way: the launch is `--no-api` with a configuration
+file rather than an open control socket. A socket that lives as long as the
+guest is something on the host that can attach a drive or an interface to a
+running tenant, and a tenant's guest is configured once and then has nothing
+left to negotiate.
+
 What a boot actually produced, read from the host rather than assumed:
 
-- Firecracker running as `ai17zvm`, not root.
+- Firecracker running as the unprivileged uid its own plan named, not root, and
+  a different one for each tenant.
 - `Seccomp: 2`, meaning filter mode, and `NoNewPrivs: 1`.
 - Its own network, mount and pid namespaces, all different from the host's and
   from the other tenant's.
 - Its own chroot, with neither tenant's containing the other.
+- The shared image mounted **read-only**, with exactly one writable disk, which
+  is the tenant's own. A tenant that can write to the shared image can change
+  what the next one boots.
 - Two tenants booted at once, each passing the egress proof.
+
+**Two tenants, running the real application, at the same moment.** The claim the
+product rests on is not about one guest, so `two-tenant-proof.sh` boots two and
+asks each what it can reach of the other while both are answering. Each reported
+Postgres started, its tenant database created, 106 migrations applied, the api
+answering its own health endpoint and the worker ready. Then, from outside: two
+different master keys, neither database holding a row marked for the other
+tenant, two separate disk images, and **neither able to reach the other's
+runtime while that runtime was answering its own tenant**. The last of those is
+the one a guest cannot establish about itself, because from inside a guest a
+neighbour that has not finished booting looks exactly like one it cannot reach.
+
+**What the host says it ran is compared with what it was asked to run.**
+`guestMatchesPlan` had existed since `microVm.ts` was written and had never been
+given a real report. The boot now records one, from the running process rather
+than from the plan, and `npm run guest:check` grades it. Tampering with a copy
+of a report refuses on every field: a different kernel, a different image, not
+jailed, seccomp off, running as root, the wrong namespace, and a field the
+report does not carry at all, which reads as a disagreement rather than as a
+default that passes.
+
+Two faults in the lab itself came out of running it twice, and both are the same
+mistake in different clothes: evidence that was not from the run being graded.
+
+The console log was emptied after the namespace, the ruleset and the uplink had
+been set up, which takes ten seconds or more, and the harness checked for the
+guest's last line once a second. On its first look it read the whole of the
+previous run and stopped waiting, so **every fact it then graded came from a run
+that had already finished**. The two liveness probes are what caught it, because
+those ask the guests rather than the log. The log is emptied first now, and the
+harness deletes both logs itself and refuses one older than its own start:
+removing the boot and running it again produces `refusing to grade it` rather
+than a pass.
+
+And the cross-tenant probes ran before anything had established that either
+runtime was answering, so a refusal recorded while a neighbour was still
+starting would have read as isolation. Liveness is established first, and
+retried: two guests on a loaded machine is enough for one to log a twenty-two
+second soft lockup, and a guest that is not running is not refusing anything.
 
 **The egress policy was tested by a guest trying, not by reading a rule
 listing.** A probe guest whose init connects to each denied range and each
@@ -660,10 +732,21 @@ with the api and worker actually running:
 | Excluded | two `tsx watch` supervisors at 70 MB each, development only |
 
 **Inside a guest, which is the figure that counts**, the same measurement with
-Postgres in the boundary: `total=3939MB available=3386MB used=553MB`, and a
-14 MB database after 106 migrations. The developer-machine figure of 434 MB
-excludes Postgres and includes a different operating system, so the guest's own
-number is the one a plan derives from.
+Postgres in the boundary: `total=3939MB available=3364MB used=575MB` for the
+higher of two tenants running at once, and a 14 MB database after 106
+migrations. The developer-machine figure of 434 MB excludes Postgres and
+includes a different operating system, so the guest's own number is the one a
+plan derives from.
+
+`MEASURED_TENANT_FOOTPRINT` in `tenantFootprint.ts` is where that figure lives,
+with how it was taken and when. Three things about it are deliberate. It is a
+record rather than a constant, and `STALE_AFTER_DAYS` makes it expire, because a
+measurement trusted for ever is a guess with a date on it. `sizeHoldsTenant`
+applies the headroom once, in one place, and **refuses a size the measurement
+does not fit rather than trimming the headroom to make a cheaper size work**.
+And it says out loud what it did not measure: no browser was running, the
+reading was taken idle, and Firecracker is not a confidential VM, which carries
+encryption overhead nothing here has measured.
 
 Against the eight gigabytes of the smallest confidential VM that leaves room,
 and the real consumer is Chrome, which this project already bounds at 4 GB a
@@ -697,8 +780,21 @@ Written here rather than discovered later, and corrected as things got done.
 
 **Done since this document was first written:**
 
-- A real microVM has booted, twice over, under the jailer as an unprivileged
-  user with seccomp filtering and its own namespaces.
+- A real microVM has booted, repeatedly, under the jailer as an unprivileged
+  user with seccomp filtering and its own namespaces, **from the plan
+  `microVm.ts` renders** rather than from a configuration written in a shell
+  script. That change found two faults in the plan in its first minute.
+- **The canonical AI17Z runs inside a guest**, and two tenants' runtimes have
+  run at the same moment: own Postgres, own tenant database, 106 migrations,
+  the api answering its own health endpoint, the worker ready, own master key,
+  own writable disk, and neither able to reach the other's runtime while that
+  runtime was answering its own tenant.
+- A guest image has been built and **its measurement is published by the build**
+  that made it, which is what lets `guestMatchesPlan` compare what a host
+  reports with what the control plane chose rather than with itself.
+- The tenant provisioning statements have been run against a real Postgres
+  server, which is how the privilege-escalation fault in them was found: schema
+  grants were being issued on the control plane's own connection.
 - The egress ruleset has been loaded into a real kernel, read back out of it,
   and verified from the kernel's own output. A guest has tried to reach each
   denied range and failed, and each permitted one and succeeded.
@@ -706,7 +802,8 @@ Written here rather than discovered later, and corrected as things got done.
   requests, a byte-for-byte round trip, a tampered object reported CORRUPT, an
   absent one told apart from a failure, and a read refused for a key outside
   the store's own prefix.
-- AI17Z's own resource use is measured rather than estimated.
+- AI17Z's own resource use is measured rather than estimated, on the host and
+  then again inside a guest, which is the figure a plan derives from.
 - Confidential provider research is current, with every figure sourced and
   dated and the Azure prices read from the retail prices API.
 
@@ -716,13 +813,18 @@ Written here rather than discovered later, and corrected as things got done.
   has been verified against real hardware and no key has been released to an
   attested runtime. This needs an authorised paid cloud environment and is the
   one item that cannot be advanced without one.
-- No AI17Z runtime image has been built, so there is no measurement to pin and
-  no signed measurement policy has been published.
+- **No signed measurement policy has been published.** An image has been built
+  and measured, and `runtimeMeasurement.ts` is what a signed, versioned,
+  rotatable allowed-measurement list would be, but nothing has signed one. The
+  lab publishes a measurement; a measurement nobody signed is a fact rather
+  than an authorisation.
 - No generation witness has been deployed, so a rolled-back runtime would be
   reported as `UNWITNESSED` rather than caught.
-- No tenant has been provisioned end to end. The statements in
-  `tenantDatabase.ts` have never been run against a real server, and AI17Z has
-  never started inside a guest.
+- **No tenant has been provisioned end to end by AI17Z itself.** The two halves
+  both work and have been proved separately: the provisioning statements
+  against a real Postgres, and a guest booted from a rendered plan. Nothing
+  joins them, so no request to the control plane has produced a running tenant,
+  and the host agent still applies no assignment.
 - No capacity figure is claimed. A runtime class says what is set aside; how
   many agents a machine actually carries is a different number and nothing has
   produced it.

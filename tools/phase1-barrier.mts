@@ -219,18 +219,26 @@ const cost = read('packages/runtime/src/hostedCost.ts');
 
 add(16, 'A cloud pricing model exists', cost.includes('monthlyRuntimeCost') ? 'MET' : 'NOT_MET', 'hostedCost.ts, with every line dated and sourced.');
 
+const footprint = read('packages/runtime/src/tenantFootprint.ts');
+
 add(
   17,
   'Actual AI17Z resource requirements have been measured',
-  has('tools/measure-runtime.mts') && hosting.includes('434 MB') ? 'MET' : 'NOT_MET',
-  'measure-runtime.mts on this machine: api 132MB, worker 193MB, runtime 109MB, database 29MB, development watchers excluded.',
+  has('tools/measure-runtime.mts') && footprint.includes("method: 'IN_GUEST'") ? 'MET' : 'NOT_MET',
+  'Measured twice, and the one that counts is from inside a guest: 575 MB for the whole runtime on two vCPU, 14 MB of schema, no browser. The host figure from measure-runtime.mts stays alongside it, because the gap between them is what a development machine costs.',
 );
+
+const derivesFromMeasurement =
+  cost.includes('priced from a guess') &&
+  footprint.includes('MEASURED_TENANT_FOOTPRINT') &&
+  footprint.includes('sizeHoldsTenant') &&
+  footprint.includes('STALE_AFTER_DAYS');
 
 add(
   18,
   'Plans derive from measured requirements rather than invented capacity',
-  cost.includes('priced from a guess') ? 'UNCHECKABLE' : 'NOT_MET',
-  'minimumRetailUsd refuses to price from nothing and reports a sample too small to be a percentile. No plan exists yet, so there is nothing to check a derivation against.',
+  derivesFromMeasurement ? 'MET' : 'NOT_MET',
+  'A size is judged against the measurement rather than against an opinion: sizeHoldsTenant refuses one that does not fit and will not trim the headroom to make a cheaper size work, and the measurement expires rather than being trusted for ever. minimumRetailUsd still refuses to price from nothing.',
 );
 
 add(19, 'A cost ledger exists', cost.includes('COST_LINES') && cost.includes('missing') ? 'MET' : 'NOT_MET', 'Twelve lines on a closed list, and a total that names the lines it has no figure for.');
@@ -277,10 +285,14 @@ add(
 add(
   25,
   'The Firecracker lab is proven and not mislabelled as host protection',
-  hosting.includes('None of this is protection from the host operator') && has('packaging/hosted-lab/bin/probe-egress.sh')
+  hosting.includes('None of this is protection from the host operator') &&
+  has('packaging/hosted-lab/bin/probe-egress.sh') &&
+  has('packaging/hosted-lab/bin/two-tenant-proof.sh') &&
+  has('tools/tenant-vm-plan.mts') &&
+  has('tools/guest-report-check.mts')
     ? 'MET'
     : 'NOT_MET',
-  'A guest booted, two tenants at once, a guest that could not reach the metadata address, and the sentence refusing the stronger claim.',
+  'The lab boots the plan microVm.ts renders rather than one written in a shell script, which is what makes a lab result a claim about this repository: two tenants ran the canonical AI17Z at once, each as its own unprivileged user on a read-only shared image, neither able to reach the other, and guestMatchesPlan graded what the host reported against what it was asked to run. The sentence refusing the stronger claim is still there, because none of it is protection from the host operator.',
 );
 
 // ---------------------------------------------------------------------------
@@ -305,7 +317,7 @@ add(
   28,
   'The original Phase 1 hosted and trading barrier remains satisfied',
   has('docs/architecture/TRADING.md') && has('tests/integration/tradingPersistence.test.ts') ? 'UNCHECKABLE' : 'NOT_MET',
-  'The pieces are present and tested, and the original barrier included a tenant provisioned end to end, which has not happened. Judged against that it is not satisfied.',
+  'Both halves of provisioning a tenant work and have been proved separately against real things: the provisioning statements against a real Postgres, and a guest booted from a rendered plan running the canonical AI17Z. Nothing joins them, so no request to the control plane has produced a running tenant, and the original barrier asked for one end to end.',
 );
 
 /*
