@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MICROVM_CAVEATS,
   CONFIG_IN_JAIL,
+  DURABLE_CACHE,
   bootConfiguration,
   guestMatchesPlan,
   imageFingerprint,
@@ -208,6 +209,29 @@ describe('the boot configuration', () => {
     const writable = config.drives.filter((d) => !d.is_read_only);
     expect(writable).toHaveLength(1);
     expect(writable[0]!.drive_id).toBe('data');
+  });
+
+  it("passes the guest's flush requests through on the tenant's own disk", () => {
+    // Firecracker's default is Unsafe, which does not pass them on: the
+    // backing file is never fsynced, so a host crash loses whatever its page
+    // cache held, and the guest reports `write through` so ext4 stops issuing
+    // barriers. The tenant is told its transaction is committed and nothing is.
+    const data = config.drives.find((d) => d.drive_id === 'data');
+    expect(data?.cache_type).toBe('Writeback');
+    expect(DURABLE_CACHE).toBe('Writeback');
+  });
+
+  it('leaves the shared read-only image on the cheaper setting', () => {
+    // Nothing writes to it, so there is nothing to flush and no reason to buy
+    // an fsync for every tenant that boots.
+    const root = config.drives.find((d) => d.is_root_device);
+    expect(root?.cache_type).toBe('Unsafe');
+  });
+
+  it('names a cache type on every drive rather than leaving one defaulted', () => {
+    for (const drive of config.drives) {
+      expect(['Unsafe', 'Writeback'], drive.drive_id).toContain(drive.cache_type);
+    }
   });
 
   it('turns hyperthreading off', () => {

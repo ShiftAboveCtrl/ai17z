@@ -211,6 +211,35 @@ export function launchArgv(plan: MicroVmPlan): LaunchVerdict {
 export const CONFIG_IN_JAIL = 'ai17z-guest.json';
 
 /** What each of a guest's files is called inside the jail. */
+/**
+ * How a drive treats the guest's flush requests.
+ *
+ * Firecracker's own two words for it. `Unsafe` is its default and means flushes
+ * are not passed on: the backing file is never fsynced, so a host crash loses
+ * whatever its page cache held. `Writeback` passes the flush through, at the
+ * cost of an fsync on the host.
+ */
+export type DriveCache = 'Unsafe' | 'Writeback';
+
+/**
+ * What a tenant's own disk uses, and why it is not the default.
+ *
+ * Measured in the lab, and the surprise is which case was fine. A guest killed
+ * with SIGKILL, as hard as a power cut to the VM, came back with its cluster,
+ * its database, its key and its schema: the writes had reached the host's file
+ * and Postgres recovered its own write-ahead log. That was never the exposure.
+ *
+ * The exposure is the host crashing. Under `Unsafe` the backing file is never
+ * fsynced, and the guest cannot tell: it reports `write through` for the
+ * device, which means the guest kernel believes there is no volatile cache
+ * worth flushing and ext4 stops issuing barriers. So the tenant is told its
+ * transaction is committed, the guest is told the device is already durable,
+ * and neither is true.
+ *
+ * A product selling durable agent state pays the fsync.
+ */
+export const DURABLE_CACHE: DriveCache = 'Writeback';
+
 export const IN_JAIL = {
   kernel: 'vmlinux',
   rootfs: 'rootfs.ext4',
@@ -250,7 +279,13 @@ export function jailResources(plan: MicroVmPlan): readonly { readonly from: stri
 export function bootConfiguration(plan: MicroVmPlan): {
   readonly bootSource: { kernel_image_path: string };
   readonly machineConfig: { vcpu_count: number; mem_size_mib: number; smt: false };
-  readonly drives: readonly { drive_id: string; path_on_host: string; is_root_device: boolean; is_read_only: boolean }[];
+  readonly drives: readonly {
+    drive_id: string;
+    path_on_host: string;
+    is_root_device: boolean;
+    is_read_only: boolean;
+    cache_type: DriveCache;
+  }[];
   readonly network: readonly { iface_id: string; host_dev_name: string }[];
 } {
   return {
@@ -268,8 +303,8 @@ export function bootConfiguration(plan: MicroVmPlan): {
       smt: false,
     },
     drives: [
-      { drive_id: 'rootfs', path_on_host: IN_JAIL.rootfs, is_root_device: true, is_read_only: true },
-      { drive_id: 'data', path_on_host: IN_JAIL.data, is_root_device: false, is_read_only: false },
+      { drive_id: 'rootfs', path_on_host: IN_JAIL.rootfs, is_root_device: true, is_read_only: true, cache_type: 'Unsafe' },
+      { drive_id: 'data', path_on_host: IN_JAIL.data, is_root_device: false, is_read_only: false, cache_type: DURABLE_CACHE },
     ],
     network: [{ iface_id: 'eth0', host_dev_name: plan.isolation.tapDevice }],
   };
