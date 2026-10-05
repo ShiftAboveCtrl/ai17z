@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ATTESTED_PROVISIONING_STEPS,
+  KEY_AND_STATE_STEPS,
   PROVISIONING_CAVEATS,
   PROVISIONING_STEPS,
   PROVISIONING_STEP_NAMES,
   mayMarkReady,
   nextAction,
   orphanReport,
+  custodyProblems,
   provisioningProblems,
   rollbackOrder,
+  stepsFor,
   stateAfterFailure,
   type IsolationEvidence,
   type ProvisioningStep,
@@ -83,6 +87,7 @@ describe('the step list itself', () => {
     const added: ProvisioningStep = {
       name: 'SOMETHING_ONE_WAY',
       what: 'An expensive one-way operation somebody added without an undo.',
+      performedBy: 'CONTROL_PLANE',
       idempotent: false,
       undo: null,
     };
@@ -247,5 +252,91 @@ describe('what this does not claim', () => {
 
   it('says a failed rollback needs a person', () => {
     expect(PROVISIONING_CAVEATS.join(' ').toLowerCase()).toContain('needs a person');
+  });
+});
+
+describe('which tier a step list belongs to', () => {
+  it('has both lists pass the properties they share', () => {
+    expect(provisioningProblems(PROVISIONING_STEPS)).toEqual([]);
+    expect(provisioningProblems(ATTESTED_PROVISIONING_STEPS)).toEqual([]);
+  });
+
+  it('gives the attested list no complaint of its own', () => {
+    expect(custodyProblems('ATTESTED_RELEASE')).toEqual([]);
+  });
+
+  it('says nothing about a host-sealed tenant, because its state is on the host and that is stated', () => {
+    expect(custodyProblems('HOST_SEALED')).toEqual([]);
+  });
+
+  it('picks the list from the custody rather than from a constant', () => {
+    expect(stepsFor('ATTESTED_RELEASE')).toBe(ATTESTED_PROVISIONING_STEPS);
+    expect(stepsFor('HOST_SEALED')).toBe(PROVISIONING_STEPS);
+  });
+
+  it('refuses the host-sealed list under attested release, which is what went unnoticed', () => {
+    // The step list was written before attestation existed and never caught
+    // up: MINT_MASTER_KEY is the control plane minting a key, and whatever
+    // minted it held it.
+    const problems = custodyProblems('ATTESTED_RELEASE', PROVISIONING_STEPS).join(' ');
+    expect(problems).toContain('whatever minted it held it');
+    expect(problems).toContain('Nothing attests the runtime');
+  });
+
+  it('refuses a key step the control plane performs', () => {
+    const moved = ATTESTED_PROVISIONING_STEPS.map((step) =>
+      step.name === 'RELEASE_MASTER_KEY' ? { ...step, performedBy: 'CONTROL_PLANE' as const } : step,
+    );
+    expect(custodyProblems('ATTESTED_RELEASE', moved).join(' ')).toContain('the host operator holds the key');
+  });
+
+  it('refuses a tenant database the control plane creates', () => {
+    // A database on a server the host operates is a database the host reads,
+    // and the tenant's state is not sealed the way its secrets are.
+    const moved = ATTESTED_PROVISIONING_STEPS.map((step) =>
+      step.name === 'CREATE_DATABASE' ? { ...step, performedBy: 'CONTROL_PLANE' as const } : step,
+    );
+    expect(custodyProblems('ATTESTED_RELEASE', moved).join(' ')).toContain('reads the state');
+  });
+
+  it('refuses a key released before the runtime proved what it is', () => {
+    const reordered = [...ATTESTED_PROVISIONING_STEPS];
+    const attest = reordered.findIndex((s) => s.name === 'ATTEST_RUNTIME');
+    const release = reordered.findIndex((s) => s.name === 'RELEASE_MASTER_KEY');
+    [reordered[attest], reordered[release]] = [reordered[release]!, reordered[attest]!];
+    expect(custodyProblems('ATTESTED_RELEASE', reordered).join(' ')).toContain('release with nothing behind it');
+  });
+
+  it('refuses attestation before the guest boots, because nothing is running to attest', () => {
+    const reordered = [...ATTESTED_PROVISIONING_STEPS];
+    const boot = reordered.findIndex((s) => s.name === 'BOOT_GUEST');
+    const attest = reordered.findIndex((s) => s.name === 'ATTEST_RUNTIME');
+    [reordered[boot], reordered[attest]] = [reordered[attest]!, reordered[boot]!];
+    expect(custodyProblems('ATTESTED_RELEASE', reordered).join(' ')).toContain('nothing to attest');
+  });
+
+  it('refuses a list with nothing attesting at all', () => {
+    const without = ATTESTED_PROVISIONING_STEPS.filter((s) => s.name !== 'ATTEST_RUNTIME');
+    expect(custodyProblems('ATTESTED_RELEASE', without).join(' ')).toContain('released to whatever booted');
+  });
+
+  it('names the steps that decide this rather than matching on a word', () => {
+    // A step added later is either on the list deliberately or is not one of
+    // these, which a substring match could not express.
+    expect(KEY_AND_STATE_STEPS).toContain('RELEASE_MASTER_KEY');
+    expect(KEY_AND_STATE_STEPS).toContain('CREATE_DATABASE');
+    expect(KEY_AND_STATE_STEPS).toContain('MIGRATE_SCHEMA');
+  });
+
+  it('boots the guest before anything else exists under attested release', () => {
+    const names = ATTESTED_PROVISIONING_STEPS.map((s) => s.name);
+    expect(names.indexOf('BOOT_GUEST')).toBeLessThan(names.indexOf('CREATE_DATABASE'));
+    expect(names).not.toContain('MINT_MASTER_KEY');
+  });
+
+  it('has every step say who performs it', () => {
+    for (const step of [...PROVISIONING_STEPS, ...ATTESTED_PROVISIONING_STEPS]) {
+      expect(['CONTROL_PLANE', 'GUEST'], step.name).toContain(step.performedBy);
+    }
   });
 });

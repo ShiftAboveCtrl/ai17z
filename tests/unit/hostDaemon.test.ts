@@ -3,6 +3,11 @@ import { PROVIDER_TIERS_ENABLED } from '@xbam/shared/contracts';
 import {
   ASSIGNMENT_FORBIDDEN_FIELDS,
   BROWSER_SLOT_MEMORY_MB,
+  GUEST_HOST_OVERHEAD_MB,
+  MEASURED_TENANT_FOOTPRINT,
+  STALE_AFTER_DAYS,
+  judgeFootprint,
+  runtimeSlotMemoryMb,
   HEARTBEAT_EVERY_SEC,
   HEARTBEAT_STALE_AFTER_SEC,
   HOST_OVERHEAD,
@@ -224,5 +229,49 @@ describe('a host is told nothing about whose agent it holds, at any depth', () =
       ASSIGNMENT_FORBIDDEN_FIELDS,
     );
     expect(out.ok, JSON.stringify(out)).toBe(true);
+  });
+});
+
+describe('what a runtime slot is', () => {
+  const measuredAt = new Date(MEASURED_TENANT_FOOTPRINT.measuredAt);
+  const soonAfter = new Date(measuredAt.getTime() + 86_400_000);
+
+  it('comes from the measurement rather than from a round number', () => {
+    // This was 1,024 MB, in a file whose header says a capacity figure
+    // somebody typed is a promise the machine never made.
+    const sized = judgeFootprint(MEASURED_TENANT_FOOTPRINT, soonAfter);
+    expect(sized.usable).toBe(true);
+    if (!sized.usable) return;
+    expect(runtimeSlotMemoryMb(soonAfter)).toBe(sized.memoryMb + GUEST_HOST_OVERHEAD_MB);
+  });
+
+  it('allows for what the host carries beyond what the guest reports', () => {
+    // Measured: 575 MB inside the guest against 704 MB resident on the host.
+    // A plan sized on the in-guest figure is short by about a fifth a tenant.
+    expect(GUEST_HOST_OVERHEAD_MB).toBeGreaterThan(0);
+    expect(runtimeSlotMemoryMb(soonAfter)).toBeGreaterThan(MEASURED_TENANT_FOOTPRINT.memoryMb);
+  });
+
+  it('falls back rather than advertising nothing when the measurement goes stale', () => {
+    // A host that advertises nothing looks exactly like a host that is full.
+    const late = new Date(measuredAt.getTime() + (STALE_AFTER_DAYS + 2) * 86_400_000);
+    expect(judgeFootprint(MEASURED_TENANT_FOOTPRINT, late).usable).toBe(false);
+    expect(runtimeSlotMemoryMb(late)).toBe(1_024);
+  });
+
+  it('sizes a host from it, so a bigger slot means fewer tenants', () => {
+    const machine = {
+      totalMemoryMb: 32_768,
+      cpuCores: 32,
+      freeDiskGb: 500,
+      browserPresent: false,
+      region: 'lab',
+      runtimeVersions: ['v1.0.0'],
+    };
+    const out = capacityFrom(machine);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const usable = 32_768 - HOST_OVERHEAD.memoryMb;
+    expect(out.capacity.runtimeSlots).toBe(Math.min(Math.floor(usable / runtimeSlotMemoryMb()), (32 - HOST_OVERHEAD.cpuCores) * 2));
   });
 });

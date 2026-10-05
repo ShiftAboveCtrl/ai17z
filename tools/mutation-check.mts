@@ -194,6 +194,46 @@ const MUTATIONS: Mutation[] = [
     into: 'is checked by asking for runtime.key.fingerprint',
     tests: ['tests/unit/tenantPreflight.test.ts'],
   },
+  {
+    id: 'jail-host-paths',
+    what: 'the boot configuration names the kernel by its path on the host, which does not exist inside the jail',
+    file: 'packages/runtime/src/microVm.ts',
+    find: 'bootSource: { kernel_image_path: IN_JAIL.kernel }',
+    into: 'bootSource: { kernel_image_path: plan.image.kernelPath }',
+    tests: ['tests/unit/microVm.test.ts'],
+  },
+  {
+    id: 'guest-control-socket',
+    what: 'a tenant guest is launched with a control socket that lives as long as it does',
+    file: 'packages/runtime/src/microVm.ts',
+    find: "    '--no-api',\n    '--config-file',\n    CONFIG_IN_JAIL,",
+    into: "    '--api-sock',\n    plan.apiSocketPath,",
+    tests: ['tests/unit/microVm.test.ts'],
+  },
+  {
+    id: 'shared-tenant-uid',
+    what: 'two tenants may run as one uid, so either can signal and inspect the other on the host',
+    file: 'packages/runtime/src/microVm.ts',
+    find: "if (a.isolation.uid === b.isolation.uid) shared.push('a uid, so one guest could reach the other on the host');",
+    into: '// two tenants sharing a uid is allowed again',
+    tests: ['tests/unit/microVm.test.ts'],
+  },
+  {
+    id: 'footprint-headroom',
+    what: 'a runtime is sized at exactly what it was observed to use, with nowhere to go',
+    file: 'packages/runtime/src/tenantFootprint.ts',
+    find: 'const needed = Math.ceil(footprint.memoryMb * HEADROOM);',
+    into: 'const needed = footprint.memoryMb;',
+    tests: ['tests/unit/tenantFootprint.test.ts'],
+  },
+  {
+    id: 'footprint-staleness',
+    what: 'a measurement taken once is trusted for ever, which is a guess with a date on it',
+    file: 'packages/runtime/src/tenantFootprint.ts',
+    find: 'if (days > STALE_AFTER_DAYS) {',
+    into: 'if (false) {',
+    tests: ['tests/unit/tenantFootprint.test.ts'],
+  },
 ];
 
 type Outcome = 'CAUGHT' | 'SURVIVED' | 'ANCHOR' | 'BROKEN';

@@ -27,6 +27,8 @@ import { HostCapacity, type ProviderTier } from '@xbam/shared/contracts';
  * back by continuing to report.
  */
 
+import { MEASURED_TENANT_FOOTPRINT, judgeFootprint } from './tenantFootprint';
+
 /** What the daemon reserves for itself, before anything is offered to a tenant. */
 export const HOST_OVERHEAD = {
   /** The daemon, the supervisor and the operating system. */
@@ -46,6 +48,43 @@ export const HOST_OVERHEAD = {
  * of failed polls.
  */
 export const BROWSER_SLOT_MEMORY_MB = 4_096;
+
+/**
+ * What the host carries for a guest beyond what the guest reports about itself.
+ *
+ * Measured against a guest sized the way a plan would size one: the
+ * provisioned tenant, given its 863 MB, reported 410 MB used inside itself
+ * while its Firecracker process was resident at 461 MB on the host. Fifty-one
+ * megabytes, which is Firecracker's own process and the virtio queues.
+ *
+ * It was first measured at 129 MB, from a guest given 4,096 MB: 575 MB used
+ * inside, 704 MB resident outside. That measurement was not wrong about what
+ * it measured, it was measuring the wrong guest. A guest with four gigabytes
+ * to play with has the host backing pages it never needed, and no tenant is
+ * given four gigabytes. Both figures are here because the difference between
+ * them is what somebody would otherwise rediscover.
+ */
+export const GUEST_HOST_OVERHEAD_MB = 51;
+
+/**
+ * Memory one runtime slot needs, derived rather than chosen.
+ *
+ * This was 1,024 MB, which is a figure somebody typed, in a file whose own
+ * header says a capacity figure somebody typed is a promise the machine never
+ * made. It is now the measured footprint with its headroom applied, plus what
+ * the host carries on top, so re-measuring a tenant re-sizes every host
+ * instead of leaving a constant behind that nobody remembers to revisit.
+ *
+ * `judgeFootprint` applies the headroom, and refuses a measurement that has
+ * gone stale. A stale one falls back to the figure this project used before
+ * any of it was measured, because a host that advertises nothing looks exactly
+ * like a host that is full.
+ */
+export function runtimeSlotMemoryMb(now: Date = new Date()): number {
+  const sized = judgeFootprint(MEASURED_TENANT_FOOTPRINT, now);
+  if (!sized.usable) return 1_024;
+  return sized.memoryMb + GUEST_HOST_OVERHEAD_MB;
+}
 
 export interface MachineReport {
   /** From the operating system, not from configuration. */
@@ -78,8 +117,11 @@ export function capacityFrom(report: MachineReport): { ok: true; capacity: HostC
   }
 
   // Slots are whichever bound runs out first. Memory is usually it, which is
-  // why the scheduler sorts on memory too.
-  const runtimeSlots = Math.max(0, Math.min(Math.floor(memoryMb / 1_024), Math.floor(cpuCores * 2)));
+  // why the scheduler sorts on memory too. Two vCPUs a runtime, because that
+  // is the smallest confidential size that exists and nothing smaller can be
+  // bought however much memory is free.
+  const perSlotMb = runtimeSlotMemoryMb();
+  const runtimeSlots = Math.max(0, Math.min(Math.floor(memoryMb / perSlotMb), Math.floor(cpuCores * 2)));
   const browserSlots = report.browserPresent ? Math.min(runtimeSlots, Math.floor(memoryMb / BROWSER_SLOT_MEMORY_MB)) : 0;
 
   const parsed = HostCapacity.safeParse({

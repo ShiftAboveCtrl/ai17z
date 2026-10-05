@@ -316,8 +316,12 @@ add(
 add(
   28,
   'The original Phase 1 hosted and trading barrier remains satisfied',
-  has('docs/architecture/TRADING.md') && has('tests/integration/tradingPersistence.test.ts') ? 'UNCHECKABLE' : 'NOT_MET',
-  'Both halves of provisioning a tenant work and have been proved separately against real things: the provisioning statements against a real Postgres, and a guest booted from a rendered plan running the canonical AI17Z. Nothing joins them, so no request to the control plane has produced a running tenant, and the original barrier asked for one end to end.',
+  has('docs/architecture/TRADING.md') &&
+  has('tests/integration/tradingPersistence.test.ts') &&
+  has('tools/hosted-provision-tenant.mts')
+    ? 'UNCHECKABLE'
+    : 'NOT_MET',
+  'A tenant is provisioned end to end, driven by AI17Z\'s own step machine: stepsFor chooses the list, nextAction decides each step from what was recorded, a failure rolls back in rollbackOrder, and mayMarkReady refuses to finish on less than evidence the host and the guest gave back. The run walks the attested list, and the one step it cannot perform is ATTEST_RUNTIME, because this machine has no confidential hardware. That refusal rolls the whole provision back, which is the gate working. So this is the same blocked item as 6 and 12 rather than a different one, and the verdict stays short of met because the tier a customer would buy is the tier that needs the hardware.',
 );
 
 /*

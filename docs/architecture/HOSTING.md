@@ -242,7 +242,81 @@ operator. A superuser reads every database on the server, which is why a
 tenant's own secrets are sealed under its own key rather than left in the clear
 in its own database.
 
+### Which tier that arrangement belongs to
+
+**A tenant database on a host-operated server cannot satisfy the confidential
+tier, and that follows from the sentence above rather than from anything new.**
+The V1 claim is that the host operator cannot read the customer's durable
+state. Secrets are sealed; state is not. An operator reading `agent_memories`
+on their own server has read the customer's agent, which is the thing being
+sold as private, and no amount of attestation in front of the runtime changes
+what is sitting in the clear behind it.
+
+So each arrangement belongs to a tier, and the tier decides:
+
+| Tier | Where the database is | What the operator can read |
+| --- | --- | --- |
+| Host-sealed, not enabled | A Postgres server the host operates | Everything not sealed under the tenant's key |
+| Confidential, not yet provisioned | Inside the confidential VM, on the tenant's encrypted disk | Nothing, if attestation and the encrypted disk hold |
+
+`tenantDatabase.ts` is the host-sealed arrangement. It is not wrong, it is what
+the provisioning lab proved against a real Postgres, and the
+privilege-escalation fault it had was worth finding there. The confidential
+tier's database is the guest's own, which is what the microVM lab has been
+running since it started: Postgres inside the boundary, on the tenant's own
+writable disk, reachable only on the guest's own loopback.
+
+This changes two of the provisioning steps rather than the list of them. For a
+confidential tenant, `CREATE_DATABASE` is work the **guest** does after it has
+proved what it is, and the control plane's part is confirming it happened. And
+`MINT_MASTER_KEY` is not the control plane's work at all, because a control
+plane that minted the key held the key, which is the one thing this design says
+it must never do.
+
 ## Bringing one into existence
+
+**A tenant has been provisioned end to end, and the step that stopped it is
+the one that matters.** `tools/hosted-provision-tenant.mts` walks
+`ATTESTED_PROVISIONING_STEPS`, which is the list a customer's runtime would
+use: `nextAction` decides each step from what was recorded rather than from
+where a loop reached, a failure rolls back in `rollbackOrder`, and
+`mayMarkReady` refuses to finish on anything short of evidence the host and the
+guest gave back.
+
+The default run gets four steps in and stops:
+
+```
+  RESERVE_PLACEMENT   26661 MB available on the lab host, 863 MB set aside.
+  CREATE_DATA_DISK    /opt/ai17z-lab/data/lab-one.data.ext4, sized from the measurement.
+  ATTACH_NETWORK      14 rules staged for tap50252785, loaded before the guest can send a packet.
+  BOOT_GUEST          booted, AI17Z running, 404 MB used inside the guest.
+  ATTEST_RUNTIME      FAILED: no confidential hardware here: no attestation report exists.
+```
+
+and then rolls the whole thing back. **That is the gate working.** A provision
+that cannot prove what it booted must not proceed, and a gate nobody has
+watched refuse is a gate nobody has watched. The refusal is a refusal rather
+than a simulation: `judgeConfidentialEvidence` would reject anything this
+machine could produce and would be right to, and a tool that manufactured an
+attestation would be teaching somebody that this works.
+
+`--lab` records that refusal and performs the rest, which produces a running
+tenant and **is not the confidential tier**: the key the guest generated is on
+a disk the host can read, and the host's root can read the guest's memory. Every
+line it prints says so. What it then establishes is the rest of the machinery:
+the guest's own Postgres inside the boundary, the schema applied in there, the
+egress rules read back out of the kernel, the host's report compared with the
+plan by `guestMatchesPlan`, one tenant in the database, a key digest, and
+`ISSUE_GRANT` **refused by design** because a grant is what would make a lab
+tenant reachable and no customer may be placed on this tier.
+
+What a provisioned tenant cost, measured on the one that ran: a guest sized at
+863 MB from the measurement, 410 MB used inside it, and 461 MB resident on the
+host. That last figure is why `GUEST_HOST_OVERHEAD_MB` is 51 rather than the
+129 first measured: the earlier number came from a guest given 4,096 MB, where
+the host backs pages the guest never needed. No tenant is given four gigabytes.
+
+The steps themselves follow below.
 
 `packages/runtime/src/tenantProvisioning.ts`. The dangerous state is not
 failure, it is half success: a guest booted before its egress rules loaded, a
@@ -717,6 +791,24 @@ ending in `policy drop` discard the other's traffic: both tenants lose all
 egress while every rule reads as correct and every denial appears loaded.
 `namespaceHoldsOneTenant` refuses that arrangement and says what would happen.
 
+**A tenant restarts with what it had.** The read-only image made the data disk
+the only thing that survives, and nothing had restarted a tenant until it was
+tried. Three things were wrong, and the serious one was the key: it was minted
+fresh on every boot, so two boots of one tenant produced two different keys and
+everything sealed under the first became unreadable. Provider credentials,
+account credentials and Plugin secrets are all sealed under the master key, so
+a restart was silently costing a tenant all of them.
+
+That is now `HOST_SEALED` custody done properly, which is the word the contract
+already had: the key is generated in the runtime on its first boot and kept on
+the tenant's own disk, where the host could in principle reach it, and the
+documentation says so rather than claiming otherwise. `ATTESTED_RELEASE` is the
+confidential tier and is unchanged: nothing in that guest keeps a key, and the
+key is released only to a guest that can prove which runtime it is. A restart
+now reports the cluster reused, the database already there, the key reused with
+the same digest, and the schema already current, rather than two failures for
+correct behaviour.
+
 **None of this is protection from the host operator**, and the lab is never
 cited as though it were.
 
@@ -820,14 +912,21 @@ Written here rather than discovered later, and corrected as things got done.
   than an authorisation.
 - No generation witness has been deployed, so a rolled-back runtime would be
   reported as `UNWITNESSED` rather than caught.
-- **No tenant has been provisioned end to end by AI17Z itself.** The two halves
-  both work and have been proved separately: the provisioning statements
-  against a real Postgres, and a guest booted from a rendered plan. Nothing
-  joins them, so no request to the control plane has produced a running tenant,
-  and the host agent still applies no assignment.
-- No capacity figure is claimed. A runtime class says what is set aside; how
-  many agents a machine actually carries is a different number and nothing has
-  produced it.
+- **No confidential tenant has been provisioned**, which is the same blocked
+  item as the first on this list rather than a separate one. A tenant *has*
+  been provisioned end to end by AI17Z's own step machine, and the step it
+  cannot perform is `ATTEST_RUNTIME`. Everything after that step is proved only
+  in `--lab`, where the refusal is recorded and the run continues, and nothing
+  that produces may hold a customer.
+- The host agent still applies no assignment. Provisioning is driven from a
+  tool, and putting a process spawner into the worker is a decision about the
+  product rather than about this lab.
+- A slot is 914 MB now, derived from the measurement rather than the 1,024 MB
+  that was there before, and that is still a figure about one idle tenant with
+  no browser. **How many agents a machine actually carries is a different
+  number and nothing has produced it**: nothing has run a tenant under
+  pipeline load, with a model provider and a browser, which is the case Chrome
+  dominates.
 - No plan has been priced, no entitlement issued and no capacity sold.
 - Google's all-in confidential instance cost is unmeasured, pending a billing
   catalog credential.

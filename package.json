@@ -57,7 +57,8 @@
     "latency": "tsx tools/latency.mts",
     "tenant:ruleset": "tsx tools/tenant-ruleset.mts",
     "tenant:vm-plan": "tsx tools/tenant-vm-plan.mts",
-    "guest:check": "tsx tools/guest-report-check.mts"
+    "guest:check": "tsx tools/guest-report-check.mts",
+    "hosted:provision": "tsx tools/hosted-provision-tenant.mts"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
