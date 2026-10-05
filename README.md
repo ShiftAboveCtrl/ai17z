@@ -230,6 +230,7 @@ memory.
 - [Connecting an account and security challenges](docs/architecture/SIGN_IN.md) · [Persona sources](docs/architecture/PERSONA_SOURCES.md)
 - [Browser runtime](docs/architecture/X_RUNTIME.md) · [Reading a channel](docs/architecture/X_READING.md) · [Owner notifications](docs/architecture/NOTIFICATIONS.md)
 - [Agentic trading](docs/architecture/TRADING.md) · in development: what a model may propose, and the generic transaction verbs it can never reach
+- [Confidential compute](docs/architecture/CONFIDENTIAL_COMPUTE.md) · in development: what would actually protect a hosted agent from the machine's operator, and what has not been proved
 - [Hosted runtimes](docs/architecture/HOSTING.md) · in development: the isolation boundary, key custody, and what has deliberately not been claimed
 - [Agent packages](docs/architecture/AGENT_PACKAGES.md) · [Growth](docs/architecture/GROWTH.md) · [Security](docs/architecture/SECURITY.md) · [Updates](docs/architecture/UPDATES.md)
 

@@ -19,10 +19,59 @@ X bot. The agent inside it is the same agent the local product builds, with the
 same persona, memory, relationships, beliefs, deliberation and policy, because
 it is the same code.
 
+They subscribe, a private runtime is provisioned, and they open AI17Z in a
+browser. No Docker, no terminal, no server of their own, no local install, no
+host setup. They connect X if they want to, install Plugins if they want to,
+and the hosted runtime is the canonical AI17Z rather than a cloud edition of
+it.
+
 So the properties a hosted runtime must have are the properties the local one
 already has, plus the ones that only matter once somebody else is holding the
 machine: isolation from other customers, a key only this runtime can use, an
 expiry that is not a deletion, and a way out.
+
+## V1 is paid confidential hosting, not community compute
+
+The host/provider abstraction stays, so somebody else's hardware can become
+eligible later. **It is not a V1 dependency and no third-party machine holds a
+secret-bearing customer agent.** A product where a stranger installs a daemon
+and receives other people's provider keys and X sessions is not something to
+build, and building the abstraction is not the same as enabling it.
+
+What would make third-party compute eligible is the whole of
+[docs/architecture/CONFIDENTIAL_COMPUTE.md](CONFIDENTIAL_COMPUTE.md):
+confidential isolation, remote attestation, a verified measurement,
+attestation-gated key release, rollback protection, revocation and a host
+network policy, each implemented and each proved. Until then production
+secret-bearing workloads run on infrastructure that satisfies the trust policy,
+and the public wording never says otherwise.
+
+## The security property, stated so it can be checked
+
+**A host operator must not be able to read or silently alter a customer's
+durable AI17Z state, secrets, browser session, wallet material or agent
+configuration.**
+
+That is confidentiality and integrity. It is not availability, and the two are
+separated everywhere in this document because conflating them is how a security
+claim becomes untrue. A host operator can always power a machine off, pull its
+network or delete a disk, and **nothing here promises immunity from denial of
+service**.
+
+What it has to prevent is that operator being able to read tenant plaintext
+memory, read the tenant database in the clear, read provider keys or wallet
+keys or X cookies, substitute a modified runtime and still receive the
+decryption keys, enable debug and still receive them, replay a stale
+attestation, forge an owner-authorised financial action, or roll durable state
+back to an older version without the owner noticing.
+
+**A microVM does not deliver that.** KVM protects a tenant from its
+neighbours, which the Firecracker lab below proves against a real kernel and a
+real guest. It does nothing about the administrator controlling the
+hypervisor, who can read guest memory and attach a debugger. So production
+hosted AI17Z requires hardware-backed confidential compute, the Firecracker
+lab stays a development and isolation lab, and it is never described as
+protection from the host.
 
 ## Isolation: what the boundary actually is
 
@@ -98,6 +147,21 @@ the thing a single SQL mistake defeats, and it is how multi-tenant systems leak.
 | `FIRST_PARTY_TRUSTED` | Hardware the operator controls | Yes |
 | `VERIFIED_PROVIDER` | A named operator under agreement, no attested key release | No |
 | `CONFIDENTIAL_COMPUTE` | A measured guest, key released only against attestation | No |
+
+**`CONFIDENTIAL_COMPUTE` is the production V1 target**, and it is the only tier
+that addresses the security property above. It is not enabled because nothing
+has been provisioned, attested or released against real hardware.
+`CONFIDENTIAL_PROVIDERS_ENABLED` in
+[`confidential.ts`](../../packages/shared/src/contracts/confidential.ts) is
+empty for the same reason, and it is written out rather than derived so that
+researching a provider cannot enable it.
+
+`FIRST_PARTY_TRUSTED` being the one enabled tier is therefore a statement
+about today rather than about the architecture: it is hardware the operator
+controls, with the key sealed on the host, which means an operator with root
+could in principle reach it. That is the sentence confidential compute exists
+to delete, and until it is deleted it is said in full wherever a customer
+could read a claim instead.
 
 `PROVIDER_TIERS_ENABLED` is written out rather than derived, so adding a tier
 to the vocabulary cannot quietly make it schedulable. `TIER_REQUIREMENTS` keeps
@@ -544,31 +608,121 @@ start a runtime the lifecycle says may not act. It has **no default runtime
 id**: one that guessed would pass for the wrong runtime, which is worse than
 not running.
 
+## The Firecracker lab, and what it proved
+
+`packaging/hosted-lab/bin/`, against a real kernel on this machine.
+Firecracker v1.17.0 and the jailer installed from the official release with the
+published checksum verified, the current CI kernel (6.18.51) and Ubuntu 24.04
+rootfs, converted to ext4.
+
+What a boot actually produced, read from the host rather than assumed:
+
+- Firecracker running as `ai17zvm`, not root.
+- `Seccomp: 2`, meaning filter mode, and `NoNewPrivs: 1`.
+- Its own network, mount and pid namespaces, all different from the host's and
+  from the other tenant's.
+- Its own chroot, with neither tenant's containing the other.
+- Two tenants booted at once, each passing the egress proof.
+
+**The egress policy was tested by a guest trying, not by reading a rule
+listing.** A probe guest whose init connects to each denied range and each
+permitted one reported: metadata `169.254.169.254` blocked, link-local blocked,
+all three private ranges blocked, carrier-grade NAT blocked, and
+`1.1.1.1:443`, `8.8.8.8:53` and `9.9.9.9:443` reached. The permitted half
+matters as much as the denied half: the first run of this blocked everything,
+and the reason was not the rules.
+
+Two defects came out of that, both of which only a kernel was going to find.
+
+`verifyLoadedRuleset` reported three correctly loaded denials as missing,
+because `nft list ruleset` renders a single-host prefix without it:
+`169.254.169.254/32` comes back as `169.254.169.254`. A check that always fails
+teaches an operator to stop reading it.
+
+And **one tenant, one namespace, one tap** is now a guard rather than a
+convention. nftables evaluates every chain at a hook, so two tenant tables each
+ending in `policy drop` discard the other's traffic: both tenants lose all
+egress while every rule reads as correct and every denial appears loaded.
+`namespaceHoldsOneTenant` refuses that arrangement and says what would happen.
+
+**None of this is protection from the host operator**, and the lab is never
+cited as though it were.
+
+## What it costs, and what a plan has to clear
+
+Measured rather than estimated, by `tools/measure-runtime.mts` on this machine
+with the api and worker actually running:
+
+| | |
+| --- | --- |
+| AI17Z at idle | about 434 MB: api 132, worker 193, runtime 109 |
+| Database | 29 MB for one agent with 313 memories and 312 actions |
+| Excluded | two `tsx watch` supervisors at 70 MB each, development only |
+
+Against the eight gigabytes of the smallest confidential VM that leaves room,
+and the real consumer is Chrome, which this project already bounds at 4 GB a
+slot and has measured at 3,801 MB in a mentions renderer. So the floor holds
+AI17Z, its database and a browser with room to spare, which is the measured
+argument for several of one owner's agents sharing a runtime rather than each
+getting a VM.
+
+The compute floor itself is in
+[CONFIDENTIAL_COMPUTE.md](CONFIDENTIAL_COMPUTE.md): **two vCPUs, because there
+is no smaller confidential size, at $37.67 to $89.79 a month** depending on
+region and commitment. `hostedCost.ts` is the ledger: twelve lines on a closed
+list so a new cost cannot be added without appearing in it, a line a tenant has
+none of recorded as zero so an omission means unknown, shared overhead kept
+apart from direct runtime cost, and planning on p95 rather than a mean because
+a plan priced from the mean loses money on the ordinary heavy customer.
+
+The margin target arrives as an argument. 60% is an engineering planning
+figure, not a business policy, and `judgePlanEconomics` refuses a structurally
+unprofitable allocation before the runtime exists and names what would have to
+change. **No plan has been priced and no public price exists.**
+
+Model tokens are **BYOK**. A customer brings their own provider key, which is
+the only initial policy a margin against a $38 to $90 floor survives, and
+`MODEL_API` keeps a cost line so a later platform-funded option is metered
+separately rather than absorbed.
+
 ## What has not been done
 
-Written here rather than discovered later:
+Written here rather than discovered later, and corrected as things got done.
 
-- No microVM has been built or booted. `/dev/kvm` exists on the development
-  machine; nothing has run in a guest, and `microVmPlanProblems` has never
-  been handed a plan a host acted on.
-- No tenant has been provisioned. The statements in `tenantDatabase.ts` have
-  never been run against a real server.
-- No attestation has been verified. No vendor verifier is registered, and the
-  field and bit positions come from vendor specifications rather than from
-  hardware this repository has talked to.
-- No egress ruleset has been loaded. `verifyLoadedRuleset` has only ever been
-  given text this repository rendered itself.
-- No capacity has been sold and no entitlement issued.
-- No capacity has been measured, so no capacity is claimed. A runtime class
-  says what is set aside; what a machine can actually carry is a different
-  number and nothing has produced it.
-- Backup and restore have been executed against a filesystem store: real
-  bytes written, read back, hashed, truncated to prove CORRUPT, deleted to
-  prove MISSING, and restored byte for byte. No off-host store exists, so
-  nothing has survived losing the machine.
-- `tools/hosted-lab.mts` has been run against a real database: 25 checks, all
-  of them refusals that had to hold, and it removes its own rows. That is the
-  control plane and the gateway exercised end to end; it starts no guest.
-- No load or chaos measurement has been run.
+**Done since this document was first written:**
+
+- A real microVM has booted, twice over, under the jailer as an unprivileged
+  user with seccomp filtering and its own namespaces.
+- The egress ruleset has been loaded into a real kernel, read back out of it,
+  and verified from the kernel's own output. A guest has tried to reach each
+  denied range and failed, and each permitted one and succeeded.
+- Backup and restore run against a real S3-compatible object store: signed
+  requests, a byte-for-byte round trip, a tampered object reported CORRUPT, an
+  absent one told apart from a failure, and a read refused for a key outside
+  the store's own prefix.
+- AI17Z's own resource use is measured rather than estimated.
+- Confidential provider research is current, with every figure sourced and
+  dated and the Azure prices read from the retail prices API.
+
+**Still not done, and each of these is a real gap rather than a formality:**
+
+- No confidential VM has been provisioned on either provider, so no attestation
+  has been verified against real hardware and no key has been released to an
+  attested runtime. This needs an authorised paid cloud environment and is the
+  one item that cannot be advanced without one.
+- No AI17Z runtime image has been built, so there is no measurement to pin and
+  no signed measurement policy has been published.
+- No generation witness has been deployed, so a rolled-back runtime would be
+  reported as `UNWITNESSED` rather than caught.
+- No tenant has been provisioned end to end. The statements in
+  `tenantDatabase.ts` have never been run against a real server, and AI17Z has
+  never started inside a guest.
+- No capacity figure is claimed. A runtime class says what is set aside; how
+  many agents a machine actually carries is a different number and nothing has
+  produced it.
+- No plan has been priced, no entitlement issued and no capacity sold.
+- Google's all-in confidential instance cost is unmeasured, pending a billing
+  catalog credential.
 - Venue adapters are not in this repository.
-- Nothing has been pushed. Phase 1 releases as a coherent whole or not at all.
+- Nothing has been pushed except the documentation-only front page. Phase 1
+  releases as a coherent whole or not at all.
