@@ -659,6 +659,12 @@ with the api and worker actually running:
 | Database | 29 MB for one agent with 313 memories and 312 actions |
 | Excluded | two `tsx watch` supervisors at 70 MB each, development only |
 
+**Inside a guest, which is the figure that counts**, the same measurement with
+Postgres in the boundary: `total=3939MB available=3386MB used=553MB`, and a
+14 MB database after 106 migrations. The developer-machine figure of 434 MB
+excludes Postgres and includes a different operating system, so the guest's own
+number is the one a plan derives from.
+
 Against the eight gigabytes of the smallest confidential VM that leaves room,
 and the real consumer is Chrome, which this project already bounds at 4 GB a
 slot and has measured at 3,801 MB in a mentions renderer. So the floor holds
