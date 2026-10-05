@@ -33,6 +33,36 @@ describe('the measured tenant footprint', () => {
     expect(MEASURED_TENANT_FOOTPRINT.version).toMatch(/^v\d/);
   });
 
+  it('records how much the guest was given, because the reading moves with it', () => {
+    // The same tenant reads 575 MB and 410 MB and both are real: a guest with
+    // memory to spare lets its page cache grow into it. A figure without its
+    // condition cannot explain the difference.
+    expect(MEASURED_TENANT_FOOTPRINT.memoryGivenMb).toBeGreaterThan(MEASURED_TENANT_FOOTPRINT.memoryMb);
+    expect(MEASURED_TENANT_FOOTPRINT.memoryWhenSizedMb).not.toBeNull();
+    expect(MEASURED_TENANT_FOOTPRINT.memoryWhenSizedMb!).toBeLessThan(MEASURED_TENANT_FOOTPRINT.memoryMb);
+  });
+
+  it('keeps the higher reading as the planning figure, deliberately', () => {
+    // Sizing on the worse reading is the right direction for a number that
+    // decides how many tenants fit on a machine.
+    const verdict = judgeFootprint(MEASURED_TENANT_FOOTPRINT, laterBy(1));
+    expect(verdict.usable).toBe(true);
+    if (!verdict.usable) return;
+    expect(verdict.memoryMb).toBeGreaterThan(MEASURED_TENANT_FOOTPRINT.memoryWhenSizedMb! * HEADROOM);
+    expect(verdict.why).toContain('kept on purpose');
+  });
+
+  it('says the figure moves with what the guest was given', () => {
+    expect(FOOTPRINT_CAVEATS.some((c) => /page cache|given/.test(c))).toBe(true);
+  });
+
+  it('says nothing about the condition when nobody measured a sized guest', () => {
+    const verdict = judgeFootprint(footprint({ memoryWhenSizedMb: null }), laterBy(1));
+    expect(verdict.usable).toBe(true);
+    if (!verdict.usable) return;
+    expect(verdict.why).not.toContain('kept on purpose');
+  });
+
   it('admits no browser was running, which is the limitation that matters most', () => {
     expect(MEASURED_TENANT_FOOTPRINT.withBrowser).toBe(false);
     expect(FOOTPRINT_CAVEATS.some((c) => /browser|Chrome/.test(c))).toBe(true);

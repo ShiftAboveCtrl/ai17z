@@ -33,6 +33,23 @@ export interface TenantFootprint {
   method: FootprintMethod;
   /** Resident memory the whole tenant runtime used, in MiB: Postgres, the api, the worker, the migrations having run. */
   memoryMb: number;
+  /**
+   * How much the guest was given when that was read.
+   *
+   * Without it the reading has no condition, and the condition is what makes
+   * two honest readings of one tenant disagree: a guest with memory to spare
+   * lets its page cache grow into it.
+   */
+  memoryGivenMb: number;
+  /**
+   * The same tenant in a guest sized the way a plan would size one.
+   *
+   * Null where nobody has measured that. Where it exists it is the lower
+   * figure, and `memoryMb` is deliberately kept as the one a host is packed
+   * against: sizing on the worse reading is the right direction for a number
+   * that decides how many tenants fit.
+   */
+  memoryWhenSizedMb: number | null;
   /** vCPUs the measurement was taken with. It is not a requirement; it is the condition. */
   vcpus: number;
   /** The tenant's database after its schema exists and before it holds anything, in MiB. */
@@ -64,11 +81,13 @@ export const MEASURED_TENANT_FOOTPRINT: TenantFootprint = {
   measuredAt: '2026-10-05T07:23:00.000Z',
   method: 'IN_GUEST',
   memoryMb: 575,
+  memoryGivenMb: 3_939,
+  memoryWhenSizedMb: 410,
   vcpus: 2,
   databaseMb: 14,
   imageMb: 621,
   withBrowser: false,
-  how: 'Two Firecracker guests at once, each with Postgres 16, 106 migrations applied, the api answering its own health endpoint and the worker reporting ready. The higher of the two memory readings.',
+  how: 'Two Firecracker guests at once, each with Postgres 16, 106 migrations applied, the api answering its own health endpoint and the worker reporting ready. The higher of the two memory readings, taken in a guest with 3,939 MB; the same tenant in its sized 863 MB used 410.',
 };
 
 /** How long a footprint counts for. Past this it is a figure with a date, not a measurement. */
@@ -118,10 +137,14 @@ export function judgeFootprint(footprint: TenantFootprint, now: Date): Footprint
   const browser = footprint.withBrowser
     ? 'measured with a browser running'
     : 'measured with no browser running, so a tenant that drives Chrome needs more than this';
+  const condition =
+    footprint.memoryWhenSizedMb === null
+      ? ''
+      : ` Read in a guest given ${footprint.memoryGivenMb} MB; the same tenant in its sized guest used ${footprint.memoryWhenSizedMb} MB, and the higher figure is kept on purpose.`;
   return {
     usable: true,
     memoryMb: needed,
-    why: `${footprint.memoryMb} MB observed ${footprint.method === 'IN_GUEST' ? 'inside the guest' : 'from outside it'}, ${browser}. Sized at ${needed} MB.`,
+    why: `${footprint.memoryMb} MB observed ${footprint.method === 'IN_GUEST' ? 'inside the guest' : 'from outside it'}, ${browser}. Sized at ${needed} MB.${condition}`,
   };
 }
 
@@ -178,7 +201,8 @@ export function tenantsPerRuntime(): { count: 1; why: string } {
 
 export const FOOTPRINT_CAVEATS: readonly string[] = [
   'Measured with no browser running. A tenant whose agent drives Chrome needs what resources.ts says Chrome needs on top of this.',
-  'Measured idle, immediately after boot. A tenant under load is the next measurement and is not this one.',
+  'Measured idle, immediately after boot. A tenant under load is the next measurement and is not this one. Under 135 requests a second it moved two megabytes, which is request load rather than pipeline load.',
+  'The figure moves with how much the guest was given, because the page cache grows into whatever is spare. Both readings are on the record and the higher one is what a host is packed against.',
   'Measured on Firecracker, not on a confidential VM. A confidential guest carries encryption overhead that has not been measured, and nothing here accounts for it.',
   'The database figure is a schema with nothing in it. It grows with memory, events, jobs and analytics, and the storage line in the cost ledger is where that belongs.',
 ];
