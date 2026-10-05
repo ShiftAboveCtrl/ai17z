@@ -864,6 +864,15 @@ migrations. The developer-machine figure of 434 MB excludes Postgres and
 includes a different operating system, so the guest's own number is the one a
 plan derives from.
 
+**The same tenant has been read at 575 MB and at 410 MB, and both are real.**
+The difference is how much the guest was given. With 3,939 MB to play with the
+page cache grows into it; the same tenant in the 863 MB a plan would actually
+give it uses 410, and its Firecracker process is resident at 461 MB on the
+host. So 575 is a high-water mark under generous memory rather than a
+requirement, and keeping it as the planning figure is a deliberate choice to
+size on the worse reading. A figure that moves with how much you gave it is one
+to state rather than to pick quietly.
+
 `MEASURED_TENANT_FOOTPRINT` in `tenantFootprint.ts` is where that figure lives,
 with how it was taken and when. Three things about it are deliberate. It is a
 record rather than a constant, and `STALE_AFTER_DAYS` makes it expire, because a
