@@ -304,9 +304,14 @@ else
   say "FAIL migrations $(tail -2 /tmp/migrate.log | tr '\n' ' ')"
 fi
 
+# Five minutes rather than one for each of these. A runtime that takes four
+# minutes to answer on a busy host has not failed, and a wait that expires
+# early turns a slow start into a fault nobody can reproduce on an idle
+# machine: measured, the worker was still connecting to Postgres when a
+# sixty-second wait gave up on it, and it came up fine a moment later.
 say "starting the api"
 node node_modules/tsx/dist/cli.mjs apps/api/src/main.ts > /tmp/api.log 2>&1 &
-for _ in $(seq 1 120); do
+for _ in $(seq 1 600); do
   if node -e "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then break; fi
   sleep 0.5
 done
@@ -319,7 +324,7 @@ fi
 
 say "starting the worker"
 node node_modules/tsx/dist/cli.mjs apps/worker/src/main.ts > /tmp/worker.log 2>&1 &
-for _ in $(seq 1 120); do grep -q 'worker ready' /tmp/worker.log 2>/dev/null && break; sleep 0.5; done
+for _ in $(seq 1 600); do grep -q 'worker ready' /tmp/worker.log 2>/dev/null && break; sleep 0.5; done
 if grep -q 'worker ready' /tmp/worker.log; then
   say "ok the worker reported ready"
 else
