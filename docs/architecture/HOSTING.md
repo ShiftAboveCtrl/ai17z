@@ -684,7 +684,11 @@ not running.
 
 ## The Firecracker lab, and what it proved
 
-`packaging/hosted-lab/bin/`, against a real kernel on this machine.
+`packaging/hosted-lab/bin/`, against a real kernel on this machine. It needs
+root, so every change it makes that outlives a run is written down in
+[PRIVILEGED_CHANGES.md](../../packaging/hosted-lab/PRIVILEGED_CHANGES.md),
+along with how to undo all of it: a lab that needs root is a lab somebody has
+to be able to take back off their machine.
 Firecracker v1.17.0 and the jailer installed from the official release with the
 published checksum verified, the current CI kernel (6.18.51) and Ubuntu 24.04
 rootfs, converted to ext4.
