@@ -48,6 +48,7 @@
     "worker:supervised": "tsx scripts/supervise-worker.mts",
     "release:check": "tsx tools/release-check.mts",
     "mutation:check": "tsx tools/mutation-check.mts",
+    "phase1:barrier": "tsx tools/phase1-barrier.mts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "worker:present": "tsx scripts/browser-worker-present.mts",
