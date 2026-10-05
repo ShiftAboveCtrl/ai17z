@@ -124,8 +124,9 @@ export function HostingPage() {
           <Server size={20} aria-hidden /> Hosted runtimes
         </h1>
         <p className="text-sm text-slate-400 break-words">
-          Running AI17Z somewhere an owner does not control. In development: nothing has been booted, provisioned or
-          sold from this installation.
+          Running AI17Z somewhere an owner does not control. In development: tenants have been booted and provisioned
+          in a lab, on hardware that cannot attest what it is running, so nothing confidential exists and no capacity
+          has been sold from this installation.
         </p>
       </header>
 
@@ -282,8 +283,9 @@ export function HostingPage() {
         <section className="space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Runtime classes</h2>
           <p className="text-xs text-slate-400 break-words">
-            What one runtime reserves, subtracted from a host before anything starts. A class says what is set aside;
-            what a machine can actually carry is a different number and nothing here has measured one. Headroom keeps{' '}
+            What one runtime reserves, subtracted from a host before anything starts. A class says what is set aside.
+            One idle tenant has been measured, with no browser and nothing generating; what a machine carries under
+            real load is a different number and nothing has measured that. Headroom keeps{' '}
             {Math.round((1 - classes.data.headroom.memory) * 100)}% of memory and{' '}
             {Math.round((1 - classes.data.headroom.disk) * 100)}% of disk unallocated, because a host at its own
             measured limit has no room to recover anything.
