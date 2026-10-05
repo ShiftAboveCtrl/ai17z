@@ -184,6 +184,7 @@ export * from './runtimeBackup';
   is holding it.
 */
 export * from './backupStoreFs';
+export * from './backupStoreObject';
 export * from './walletCapabilities';
 export * from './socialTests';
 export * from './publicSelf';

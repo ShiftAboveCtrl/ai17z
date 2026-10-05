@@ -164,6 +164,14 @@ const MUTATIONS: Mutation[] = [
     tests: ['tests/integration/tenantIsolation.test.ts'],
   },
   {
+    id: 'object-read-prefixing',
+    what: 'the object store read path prefixes whatever it is handed again, so the ownership check cannot refuse another tenant key',
+    file: 'packages/runtime/src/backupStoreObject.ts',
+    find: '    if (!keyIsOwned(config, location)) {',
+    into: '    if (!keyIsOwned(config, location.startsWith(prefix) ? location : `${prefix}${location}`)) {',
+    tests: ['tests/integration/objectBackup.test.ts'],
+  },
+  {
     id: 'preflight-key',
     what: 'the tenant preflight claims to have checked a key it cannot see from inside a tenant',
     file: 'tools/tenant-preflight.mts',
