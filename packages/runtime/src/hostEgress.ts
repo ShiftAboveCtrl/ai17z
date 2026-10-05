@@ -375,10 +375,50 @@ export function hostIsDenied(hostname: string, plan: EgressPlan): boolean {
  * Said out loud, because egress filtering is the kind of control that gets
  * described as complete and is never complete.
  */
+/**
+ * The prefix every tenant table carries, so one can be recognised in a
+ * ruleset without parsing it.
+ */
+export const TENANT_TABLE_PREFIX = 'ai17z_tenant_';
+
+export type NamespaceVerdict = { ok: true; tables: readonly string[] } | { ok: false; why: string; tables: readonly string[] };
+
+/**
+ * Whether a namespace holds exactly one tenant's rules.
+ *
+ * nftables evaluates **every** chain registered at a hook, and a packet any of
+ * them drops is dropped. Each tenant table ends in `policy drop` and matches
+ * only its own interface, so two tenant tables in one namespace means each
+ * one's policy drops the other one's traffic: both tenants lose all egress
+ * while every rule looks correct and every denial appears loaded.
+ *
+ * Measured, not reasoned about. A guest in a namespace that had picked up a
+ * second tenant table could reach nothing at all, and the first reading of
+ * that was that the denials were working: the permitted probes failed too,
+ * which is the only reason it was noticed.
+ *
+ * One tenant, one namespace, one tap is the product's shape and the reason it
+ * is the product's shape. This is what says so where somebody would otherwise
+ * put two.
+ */
+export function namespaceHoldsOneTenant(tables: readonly string[]): NamespaceVerdict {
+  const tenant = tables.filter((t) => t.includes(TENANT_TABLE_PREFIX));
+  if (tenant.length === 1) return { ok: true, tables: tenant };
+  if (tenant.length === 0) {
+    return { ok: false, why: 'This namespace holds no tenant egress table, so nothing is filtering the guest.', tables: tenant };
+  }
+  return {
+    ok: false,
+    why: `This namespace holds ${tenant.length} tenant egress tables (${tenant.join(', ')}). Every chain at a hook is evaluated, so each one's policy drop discards the other's traffic and both tenants lose all egress while every rule still reads as correct.`,
+    tables: tenant,
+  };
+}
+
 export const ENFORCEMENT_CAVEATS: readonly string[] = [
   'A plan is not a loaded ruleset. Loading needs root on the host, and verifyLoadedRuleset is what checks the host rather than the intention.',
   'A hostname is not an address. A name allowed at check time can resolve somewhere else at connect time, which is why the filter works on addresses.',
   "This denies infrastructure, not content. It is not a content filter, not a geographic restriction, and not a way past anybody else's controls.",
   'A tenant that reaches the public internet can reach a proxy on the public internet. Egress filtering bounds what the infrastructure exposes, not what a determined guest can see.',
+  'One tenant, one namespace, one tap. Two tenant tables in one namespace means each policy drop discards the other traffic, and every rule still reads as correct: namespaceHoldsOneTenant is what refuses that arrangement.',
   'IPv6 is denied by the same list. A host that routes v6 without these rules loaded is unfiltered on that family whatever the v4 rules say.',
 ];

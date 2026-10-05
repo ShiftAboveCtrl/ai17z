@@ -98,6 +98,14 @@ const MUTATIONS: Mutation[] = [
     tests: ['tests/unit/hostEgress.test.ts'],
   },
   {
+    id: 'one-tenant-namespace',
+    what: 'two tenant egress tables in one namespace stop being refused, so both tenants lose all egress while every rule reads as correct',
+    file: 'packages/runtime/src/hostEgress.ts',
+    find: '  if (tenant.length === 1) return { ok: true, tables: tenant };',
+    into: '  if (tenant.length >= 1) return { ok: true, tables: tenant };',
+    tests: ['tests/unit/hostEgress.test.ts'],
+  },
+  {
     id: 'recovery-fence',
     what: 'a restore from HOST_UNREACHABLE needs no fence, so a partitioned host becomes a second copy',
     file: 'packages/runtime/src/runtimeBackup.ts',
