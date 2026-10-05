@@ -164,6 +164,7 @@ export * from './hostDaemon';
 export * from './hostEgress';
 export * from './microVm';
 export * from './hostAttestation';
+export * from './confidentialAttestation';
 export * from './tenantDatabase';
 export * from './tenantProvisioning';
 export * from './hostedSecrets';

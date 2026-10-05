@@ -34,5 +34,6 @@ export * from './research';
 export * from './wallet';
 export * from './trading';
 export * from './hosting';
+export * from './confidential';
 export * from './knowledgeCollections';
 export * from './foundry';
