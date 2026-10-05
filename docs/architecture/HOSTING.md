@@ -809,6 +809,36 @@ now reports the cluster reused, the database already there, the key reused with
 the same digest, and the schema already current, rather than two failures for
 correct behaviour.
 
+**A tenant survives being killed as hard as a power cut.**
+`kill-tenant-proof.sh` is the harness and nothing had tried before it,
+which for a product selling somebody's agent state is the claim they would ask
+about first. A guest sent SIGKILL, with no graceful shutdown and nothing
+flushed, comes back and reuses its cluster, finds its database, reuses its key
+with the same digest, finds its schema current and serves: Postgres recovered
+its own write-ahead log inside the guest. The same holds for a kill at the
+worst moment, the instant its migrations committed during its first boot.
+Measured: 2,029 files on the disk, the cluster present, the log present, the
+key kept.
+
+**The first answer to that was wrong, and wrong in the dangerous direction.**
+`e2fsck -fn` cannot replay a journal, because with `-n` it opens the image
+read-only and reports the filesystem as it stands before replay. An interrupted
+tenant looked as though it had lost everything, 11 files where a healthy one
+has 2,058, and it had lost nothing. A durable system measured as lost is the
+wrong way round for a mistake about durability to go, and the measurement is
+now taken by mounting the disk, which replays.
+
+**So the exposure was never the guest. It is the host crashing.** Firecracker's
+drive `cache_type` defaults to `Unsafe`, which is its own word for it: flush
+requests are not passed on, so the backing file is never fsynced and whatever
+the host's page cache held is gone. The guest cannot tell, and now reports it
+on every boot: `disk flush=write through`, which means the guest kernel
+believes there is no volatile cache worth flushing and ext4 stops issuing
+barriers. A tenant is told its transaction is committed, the guest is told the
+device is already durable, and neither is true. A tenant's own disk is
+`Writeback` now; the shared read-only image stays on the cheaper setting
+because nothing writes to it.
+
 **None of this is protection from the host operator**, and the lab is never
 cited as though it were.
 
@@ -846,6 +876,20 @@ slot and has measured at 3,801 MB in a mentions renderer. So the floor holds
 AI17Z, its database and a browser with room to spare, which is the measured
 argument for several of one owner's agents sharing a runtime rather than each
 getting a VM.
+
+**How long a customer waits for a runtime: sixteen seconds**, timed from
+launching the jailer to the worker reporting ready, on an empty disk, including
+`initdb`, creating the database and applying all 106 migrations. Fifteen on an
+existing disk. That is the figure to re-measure on confidential hardware, where
+disk encryption and attestation both sit in front of it.
+
+**A tenant's memory stays put under request load.** 12,192 requests over 90
+seconds, about 135 a second, moved it by two megabytes and it did not come
+back down or climb further. Worth knowing rather than assumed, because the X
+SPA's renderer does climb and this project already bounds that one. What this
+is not is pipeline load: no model provider was configured in the guest, so
+nothing generated anything and no browser ran, which is the case Chrome
+dominates and the case nothing here has measured.
 
 The compute floor itself is in
 [CONFIDENTIAL_COMPUTE.md](CONFIDENTIAL_COMPUTE.md): **two vCPUs, because there
