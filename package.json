@@ -58,7 +58,13 @@
     "tenant:ruleset": "tsx tools/tenant-ruleset.mts",
     "tenant:vm-plan": "tsx tools/tenant-vm-plan.mts",
     "guest:check": "tsx tools/guest-report-check.mts",
-    "hosted:provision": "tsx tools/hosted-provision-tenant.mts"
+    "hosted:provision": "tsx tools/hosted-provision-tenant.mts",
+    "hosted:egress-proof": "tsx tools/hosted-egress-proof.mts",
+    "hosted:isolation": "tsx tools/hosted-isolation-check.mts",
+    "hosted:lab": "tsx tools/hosted-lab.mts",
+    "hosted:provision-db": "tsx tools/hosted-provision-lab.mts",
+    "hosted:measure": "tsx tools/measure-runtime.mts",
+    "hosted:preflight": "tsx tools/tenant-preflight.mts"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
