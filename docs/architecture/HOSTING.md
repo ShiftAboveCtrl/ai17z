@@ -916,6 +916,39 @@ the only initial policy a margin against a $38 to $90 floor survives, and
 `MODEL_API` keeps a cost line so a later platform-funded option is metered
 separately rather than absorbed.
 
+## Why the worker still launches nothing
+
+`hostAgent.ts` reports a machine and applies no assignment. The test beside it
+forbids the strings `child_process`, `spawn(`, `jailer`, `firecracker` and
+`launchArgv` from that file, and gave its reason: nothing in this repository
+had booted a guest, so a spawn there would be the first thing to make that
+claim false.
+
+That premise has changed. Guests boot, two at a time, and a tenant is
+provisioned end to end. So the question is live, and the answer is still no,
+for three reasons rather than for the old one.
+
+**Every installation runs this worker.** A VM launcher in it is a VM launcher
+on every laptop that installs AI17Z. It would be gated off, and a gate in code
+that runs everywhere is a different risk from a gate in a tool somebody chooses
+to run.
+
+**The only tier it could serve is one that must stay disabled.** A worker
+launching non-confidential guests can hold no customer, because the offer is
+that the host operator cannot read the customer's agent and on that tier it is
+false. Building the machinery for a tier that may not be sold is building the
+wrong half first.
+
+**The tool already proves the machinery.** `npm run hosted:provision` drives
+the real step machine, boots a real guest, verifies the real evidence and rolls
+back on the real refusal. Moving that into the worker would change where it
+runs, not whether it works.
+
+The right moment is when there is confidential hardware to launch on, because
+the launcher and the attestation belong to the same piece of work: a guest
+whose measurement nothing verifies is a guest there is no point launching
+automatically.
+
 ## The customer-facing half is not in this repository
 
 What is here is the control plane, the runtime, the isolation and the
@@ -998,9 +1031,8 @@ Written here rather than discovered later, and corrected as things got done.
   cannot perform is `ATTEST_RUNTIME`. Everything after that step is proved only
   in `--lab`, where the refusal is recorded and the run continues, and nothing
   that produces may hold a customer.
-- The host agent still applies no assignment. Provisioning is driven from a
-  tool, and putting a process spawner into the worker is a decision about the
-  product rather than about this lab.
+- The host agent still applies no assignment, and that is a decision rather
+  than a gap. See below.
 - A slot is 914 MB now, derived from the measurement rather than the 1,024 MB
   that was there before, and that is still a figure about one idle tenant with
   no browser. **How many agents a machine actually carries is a different
