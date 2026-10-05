@@ -214,22 +214,44 @@ export PATH="$PGBIN:$PATH"
 PGDATA=/var/lib/postgresql/tenant
 mkdir -p "$PGDATA" /var/run/postgresql /var/lib/ai17z
 chown -R postgres:postgres "$PGDATA" /var/run/postgresql
-su postgres -c "$PGBIN/initdb -D $PGDATA -A trust" > /tmp/initdb.log 2>&1
-if [ $? -ne 0 ]; then say "FAIL initdb $(tail -1 /tmp/initdb.log)"; fi
+# A cluster that is already here is the ordinary case on every boot after the
+# first. Reported as reuse rather than as a failure: initdb refusing a
+# directory it has already initialised is correct, and a restart that reports
+# two failures teaches somebody to stop reading this.
+if [ -f "$PGDATA/PG_VERSION" ]; then
+  say "ok the tenant's existing database cluster is being reused"
+else
+  su postgres -c "$PGBIN/initdb -D $PGDATA -A trust" > /tmp/initdb.log 2>&1
+  if [ $? -eq 0 ]; then say "ok a database cluster was created for this tenant"; else say "FAIL initdb $(tail -1 /tmp/initdb.log)"; fi
+fi
 su postgres -c "$PGBIN/pg_ctl -D $PGDATA -l /tmp/pg.log -o '-c listen_addresses=127.0.0.1 -p 5432' -w start" > /tmp/pgctl.log 2>&1
 if [ $? -eq 0 ]; then say "ok postgres started inside the guest"; else say "FAIL postgres $(tail -2 /tmp/pg.log 2>/dev/null | tr '\n' ' ')"; fi
 
-su postgres -c "$PGBIN/createdb ai17z_tenant" >/dev/null 2>&1 && say "ok tenant database created" || say "FAIL createdb"
+if su postgres -c "$PGBIN/psql -lqtA" 2>/dev/null | cut -d'|' -f1 | grep -qx ai17z_tenant; then
+  say "ok the tenant database is already there"
+elif su postgres -c "$PGBIN/createdb ai17z_tenant" >/dev/null 2>&1; then
+  say "ok tenant database created"
+else
+  say "FAIL createdb"
+fi
 
 cd /opt/ai17z || { say "FAIL no application"; }
 export DATABASE_URL="postgres://postgres@127.0.0.1:5432/ai17z_tenant"
-# The runtime's own key, minted inside the guest and never leaving it.
+# The runtime's own key, generated in the guest on its first boot and kept on
+# the tenant's own disk afterwards.
 #
-# A production runtime does not do this: it receives its key from an
-# attestation-gated release, so that a modified or debug-enabled guest gets
-# nothing. Minting one here is what a lab can honestly do without a
-# confidential provider, and it is the one part of this boot that is not what
-# production will be.
+# It was minted fresh on every boot until a restart was actually tried, and
+# that silently cost the tenant everything sealed under the previous key:
+# provider credentials, account credentials and Plugin secrets are all sealed
+# under the master key. Two boots of one tenant produced two different keys,
+# which is a measurement rather than an argument.
+#
+# This is HOST_SEALED custody, which is what the contract calls a key the host
+# could in principle reach, and the documentation says so rather than claiming
+# otherwise. ATTESTED_RELEASE is the confidential tier: there nothing in the
+# guest keeps a key, and the same key is released only to a guest that can
+# prove which runtime it is, so a modified or debug-enabled one gets nothing.
+# That is the one part of this boot that is not what production will be.
 #
 # Written to a file with no group or other access rather than inlined, so the
 # value never appears in a command line that `ps` would show, and so nothing
@@ -238,14 +260,25 @@ export DATABASE_URL="postgres://postgres@127.0.0.1:5432/ai17z_tenant"
 # not named after a key. That is not cosmetic: release-check.mts flags any
 # assignment whose name looks like a secret, which is the right heuristic for a
 # scanner to have, and a lab script is not a reason to teach it an exception.
-SEALED_PATH=/run/ai17z-runtime.sealed
-install -m 0600 /dev/null "$SEALED_PATH"
-node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64"))' > "$SEALED_PATH"
+SEALED_DIR=/var/lib/ai17z/custody
+SEALED_PATH="$SEALED_DIR/runtime.sealed"
+mkdir -p "$SEALED_DIR"
+chmod 0700 "$SEALED_DIR"
+if [ -s "$SEALED_PATH" ]; then
+  MINTED=reused
+else
+  install -m 0600 /dev/null "$SEALED_PATH"
+  node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64"))' > "$SEALED_PATH"
+  MINTED=generated
+fi
 read -r AI17Z_MASTER_KEY < "$SEALED_PATH"
 export AI17Z_MASTER_KEY
-say "ok a runtime secret was minted inside the guest ($(wc -c < "$SEALED_PATH") bytes, never printed)"
-# A digest, so two guests can be compared without either key being shown. If
-# these matched, two tenants would be sharing a master key.
+# A digest, so two guests can be compared and one guest's two boots can be
+# compared, without either key being shown.
+say "ok the runtime key was $MINTED ($(wc -c < "$SEALED_PATH") bytes, never printed)"
+# If two tenants' digests matched they would be sharing a master key. If one
+# tenant's two boots did not match, a restart had just cost it everything it
+# had sealed.
 say "key digest $(sha256sum < "$SEALED_PATH" | cut -c1-16)"
 export AI17Z_STORAGE_DIR=/var/lib/ai17z/storage
 export AI17Z_DATA_DIR=/var/lib/ai17z
@@ -256,7 +289,12 @@ mkdir -p "$AI17Z_STORAGE_DIR"
 say "running migrations"
 node node_modules/tsx/dist/cli.mjs packages/database/src/cli/migrate.ts > /tmp/migrate.log 2>&1
 if [ $? -eq 0 ]; then
-  say "ok migrations applied ($(grep -c 'applied migration' /tmp/migrate.log) of them)"
+  APPLIED=$(grep -c 'applied migration' /tmp/migrate.log)
+  if [ "$APPLIED" = "0" ]; then
+    say "ok the schema was already current, so there was nothing to apply"
+  else
+    say "ok migrations applied ($APPLIED of them)"
+  fi
 else
   say "FAIL migrations $(tail -2 /tmp/migrate.log | tr '\n' ' ')"
 fi
