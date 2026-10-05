@@ -768,6 +768,15 @@ harness deletes both logs itself and refuses one older than its own start:
 removing the boot and running it again produces `refusing to grade it` rather
 than a pass.
 
+A third of the same kind, found by running the proof while something else had
+the machine: the guest waited sixty seconds for its worker, the worker was
+still connecting to Postgres when that expired, and the guest wrote FAIL for a
+process that came up fine a moment later. The harness's own stronger check,
+asking the runtime, passed at the same time, and two checks of one thing
+disagreeing is the signal that the weaker one is wrong. The waits are five
+minutes each now, and whether AI17Z is running is decided by asking it rather
+than by reading its log.
+
 And the cross-tenant probes ran before anything had established that either
 runtime was answering, so a refusal recorded while a neighbour was still
 starting would have read as isolation. Liveness is established first, and

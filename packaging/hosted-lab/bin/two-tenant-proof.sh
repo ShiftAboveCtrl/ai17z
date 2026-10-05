@@ -107,11 +107,15 @@ done
 # ---------------------------------------------------------------------------
 say "Asked from outside, with both runtimes running:"
 
+# Whether AI17Z is running is decided by asking it, below, rather than by what
+# the log says: the guest gives up waiting after a while, and a runtime that
+# was slow to start says FAIL in its log and then answers. Two checks of one
+# thing disagreed exactly that way, and the weaker one was the log.
 for id in "$A" "$B"; do
-  if grep -q 'AI17Z-GUEST ok the worker reported ready' "$LAB/$id.console.log" 2>/dev/null; then
-    ok "$id is a running AI17Z: api answered, worker ready"
+  if grep -q 'AI17Z-GUEST ok the api answered its own health endpoint' "$LAB/$id.console.log" 2>/dev/null; then
+    say "  $id reported its api answering inside the guest$(grep -q 'AI17Z-GUEST ok the worker reported ready' "$LAB/$id.console.log" && echo ', and its worker ready' || echo ', and gave up waiting on its worker')"
   else
-    no "$id did not reach a running AI17Z"
+    no "$id never reported an api of its own, so it did not start"
   fi
 done
 
