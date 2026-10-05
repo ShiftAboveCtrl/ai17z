@@ -1,0 +1,619 @@
+# Installing and running AI17Z
+
+Everything about getting AI17Z onto a machine and keeping it running: what it
+needs, the three supported platforms, installing from source, updating,
+running more than one copy, and what to do when something is wrong.
+
+The short version is on the [front page](../README.md). This is the long one.
+
+---
+
+## What you need
+
+**The installer for your platform checks for all of this and handles what is
+missing.** This is what it looks for, so you can install it yourself first if
+you would rather.
+
+| | Why | Who provides it |
+| --- | --- | --- |
+| **Docker** | Postgres, the API and the interface run in containers | Docker Desktop on Windows and macOS; Docker Engine on Ubuntu |
+| **WSL 2** | what Docker Desktop runs on. **Windows only** — macOS and Ubuntu have no use for it | Microsoft, via `wsl --install` |
+| **Node 22** | the worker that drives a real browser runs on your machine, not in a container | **bundled** on macOS and Ubuntu; from winget on Windows |
+| **Google Chrome** | only for browser-backed channels such as X. Everything else works without it | Google |
+
+**macOS and Ubuntu need no Node of their own.** Those packages carry the exact
+Node they were built against, verified against nodejs.org's published checksums,
+and never consult your `PATH`. Installing, removing or switching a system Node
+cannot change how AI17Z behaves.
+
+**No platform needs Git** for a normal install. The application arrives as a
+release package that is downloaded and hash-checked, not cloned.
+
+Chrome means Google Chrome. Not Chromium, not Edge. AI17Z spawns it and attaches
+over the debugging protocol, and refuses to substitute another browser rather
+than pretend one is the other.
+
+About 6 GB of disk once the images are built, most of it the worker image, which
+carries a browser. The first build takes a few minutes; after that, seconds.
+
+You do **not** need: an OpenAI account, an X account, a server, a domain, or a
+paid anything. A local model through Ollama costs nothing and the mock provider
+costs less.
+
+---
+
+## Install
+
+AI17Z installs on Windows, macOS and Ubuntu. Pick yours.
+
+| | |
+| --- | --- |
+| **Windows** | one command in Windows Terminal — [below](#windows) |
+| **macOS 13+** | download a short installer, read it, run it — [below](#macos) |
+| **Ubuntu 22.04+** | download a short installer, read it, run it — [below](#ubuntu) |
+| From source | any of the three, plus Git and Node — [Other ways to install](#other-ways-to-install) |
+
+None of them needs Git. None needs a system Node: the macOS and Ubuntu packages
+carry their own, verified against nodejs.org at build time.
+
+All three need **Docker** for the database, and all three treat it as software
+you own rather than software AI17Z manages. **Google Chrome** is optional
+everywhere and enables browser-backed channels.
+
+<a id="windows"></a>
+## Windows
+
+Open **Windows Terminal** and paste this:
+
+```powershell
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+```
+
+That is the whole installation. It checks what this PC has, installs anything
+missing, installs AI17Z, starts it, checks it actually works, and opens it.
+
+**Install AI17Z only with the command published here.** Nowhere else distributes
+it.
+
+### Why a command and not a download
+
+AI17Z is not a signed application. Code signing for open-source projects is
+granted on the strength of an existing user base, and AI17Z does not have one
+yet — we applied, and were turned down for exactly that reason. So an AI17Z
+`.exe` would be an unsigned executable Windows has never seen, and Windows would
+say so, loudly, and be right to.
+
+The answer is not to talk you past that warning. It is to not ask for it:
+**nothing above is an executable, nothing is double-clicked, and no Windows
+security setting is touched, turned off, or argued with** — not SmartScreen, not
+Defender, not your execution policy. Windows' default policy permits individual
+commands and not script files; the command above is individual commands, and so
+is the way the installer it fetches is run.
+
+### What actually runs
+
+[`install.ps1`](../install.ps1) is short, public, and the file at the URL you just
+pasted — read it first if you like, that is what it is there for. All it does is
+work out the newest release, download the setup program from it, **check its
+SHA-256 against the hash that release published**, write it somewhere you can
+read it, and run the bytes it checked. A mismatch stops everything.
+
+The setup program is [`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/Setup-AI17Z.ps1)
+— the whole installer, as a script, published with every release.
+
+To see what it would do to this PC without doing any of it:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -WhatIfOnly
+```
+
+**[How to audit it](SETUP_AUDIT.md)** — every privileged action, every
+download, everything it writes, and how to check it yourself. Read that before
+you run it. It is the point of the thing being a script.
+
+### More than one AI17Z
+
+A machine can hold several independent installations — different agents,
+different databases, different signed-in accounts. They share nothing, and
+**updating one leaves the others exactly as they are.**
+
+```powershell
+$s = irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1
+& ([scriptblock]::Create($s)) -List                 # what is installed
+& ([scriptblock]::Create($s)) -NewInstance          # install another
+& ([scriptblock]::Create($s)) -Instance AI17Z-test  # update that one
+```
+
+Run the plain command on a machine that already has AI17Z and it asks which you
+meant rather than guessing.
+
+Also: [Installing on Windows](WINDOWS_INSTALL.md) ·
+[Uninstalling](WINDOWS_UNINSTALL.md)
+
+### Code signing
+
+AI17Z is **not signed**, and is not about to be: free certificates for
+open-source projects are granted on the strength of an existing user base, we
+applied, and we were turned down for not having one yet. Saying "signing is
+coming" would be a nicer sentence and not a true one.
+
+That is why the ordinary way in is a command rather than a download. **We will
+never ask you to disable SmartScreen, Smart App Control or your antivirus, or to
+click past a warning.** See [Windows trust and SmartScreen](WINDOWS_TRUST.md)
+for what those warnings actually mean, and
+[docs/CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) for where this stands.
+
+The one file on the releases page that is still an executable — the older full
+installer, kept for installations made with it — is unsigned and labelled as
+such. You do not need it.
+
+<a id="macos"></a>
+## macOS
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh
+less install-ai17z-macos.sh
+bash install-ai17z-macos.sh
+```
+
+Reading it first is the documented route, not a fallback: macOS warns about long
+commands pasted from web pages, and it is right to. The file is short so that
+looking at it is reasonable.
+
+It resolves the newest release, downloads the package for your architecture —
+Apple Silicon or Intel, built natively, never relabelled — **checks its SHA-256
+against the hash that release published**, and extracts it into your own Library.
+
+**No `sudo`, ever, for AI17Z itself.** Everything lives in
+`~/Library/Application Support/AI17Z/`, which is also why updates need no
+authorization.
+
+**AI17Z's macOS packages are not signed with an Apple Developer ID and are not
+notarized**, and AI17Z does not disable Gatekeeper or strip quarantine
+attributes to get around that. [What that actually means](MACOS_TRUST.md)
+is written out in full, including which prompts are Docker's or Google's rather
+than AI17Z's.
+
+**Every macOS package is built and run on a real Mac before it can be
+released** -- Apple Silicon and Intel, on every push, including the installer.
+What a hosted machine cannot represent is a person at one: Gatekeeper's dialogs,
+a downloaded file's quarantine, and Docker Desktop's own setup. Those are listed
+in [what still needs a Mac](MACOS_TEST_CHECKLIST.md).
+
+Also: [Installing on macOS](MACOS_INSTALL.md) ·
+[What still needs a Mac](MACOS_TEST_CHECKLIST.md)
+
+<a id="ubuntu"></a>
+## Ubuntu
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-ubuntu.sh
+less install-ai17z-ubuntu.sh
+bash install-ai17z-ubuntu.sh
+```
+
+Ubuntu 22.04, 24.04 and 26.04 LTS, on amd64 and arm64. It downloads the `.deb`
+for your architecture, checks its SHA-256, and installs it with `apt`.
+
+Run it as yourself. It asks for `sudo` exactly where installing a system package
+needs it, and refuses to run as root — your agents, keys and browser session
+belong to you, and a root install makes files in your home you cannot then
+delete.
+
+**Ubuntu Server works and is a supported arrangement.** Everything runs except
+browser-backed channels, which need a graphical session and Chrome; `ai17z
+doctor` reports that as *not available* rather than as a failure, and nothing
+installs a desktop to pretend otherwise. AI17Z binds to loopback and the docs
+recommend an SSH tunnel rather than exposing it.
+
+The package, the installer and the lifecycle are built and run on real Ubuntu
+machines -- amd64 and arm64 -- and the package is installed and exercised on
+22.04, 24.04 and 26.04, on every push. Chrome needs a graphical session and is
+not among them; [what still needs a real machine](UBUNTU_TEST_CHECKLIST.md)
+says what else.
+
+Also: [Installing on Ubuntu](UBUNTU_INSTALL.md) ·
+[What it touches](UBUNTU_SECURITY.md) ·
+[What still needs a real machine](UBUNTU_TEST_CHECKLIST.md)
+
+### Privacy
+
+AI17Z collects nothing and has no servers. It talks only to the services you
+configure, with the credentials you supply. See [docs/PRIVACY.md](PRIVACY.md).
+
+---
+
+## Other ways to install
+
+Three, and none of them is the one above. Use these if you are working on AI17Z,
+running it somewhere other than Windows, or would rather not run an installer at
+all.
+
+**The full Windows installer**, `AI17Z-Setup-<version>.exe`, is also on the
+releases page. It carries the application inside it rather than downloading it,
+and it is what installations made before AI17Z Setup existed update with. It does
+not install Docker, Node or Chrome for you beyond offering to; the wizard is a
+wizard. Both kinds of installation end up with the same program directory, the
+same data directory and the same updates.
+
+### From source, on Windows
+
+> **Not inside OneDrive, Dropbox or Google Drive.** npm links every package into
+> `node_modules` with a symlink, and a syncing folder refuses those while it is
+> reconciling, so the install dies several minutes in with `EBUSY: resource busy
+> or locked, symlink`. On Windows your Desktop is inside OneDrive by default,
+> which makes this the most likely way a first install fails. `C:\dev\ai17z` or
+> `%USERPROFILE%\ai17z` are both fine. The installer checks and stops rather than
+> letting you find out the slow way.
+
+One line, in PowerShell, in a folder you can write to:
+
+```powershell
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 | iex
+```
+
+That clones the repository into `.\ai17z`, checks the machine, and starts it.
+
+Piping a script from the internet into a shell asks you to trust whatever the
+server sends, and you are allowed to want to look first:
+
+```powershell
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 -OutFile bootstrap.ps1
+notepad bootstrap.ps1
+.\bootstrap.ps1
+```
+
+Or do it by hand, which is the same three steps the bootstrap runs:
+
+```powershell
+git clone https://github.com/ShiftAboveCtrl/ai17z.git ai17z
+cd ai17z
+.\install-ai17z.ps1 -Start
+```
+
+### Ubuntu
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.sh | bash
+```
+
+or by hand:
+
+```bash
+git clone https://github.com/ShiftAboveCtrl/ai17z.git ai17z
+cd ai17z
+./install-ai17z.sh --start
+```
+
+Connecting an X account opens a real Chrome window for you to sign in to, so
+that part needs a desktop session. The rest runs anywhere Docker does. See
+**Support** below for what has and has not actually been verified.
+
+### No git?
+
+Download the zip from the repository's **Code â†’ Download ZIP**, extract it, and
+run the installer from inside the folder. Nothing in AI17Z needs git after the
+files are on disk:
+
+```powershell
+cd ai17z-main
+.\install-ai17z.ps1 -Start
+```
+
+The bootstrap scripts do this for you if git is missing.
+
+### Then
+
+Open **http://localhost:8080**. The first screen asks you to create an account.
+That account is yours, it lives on this machine, and there is no sign-up.
+
+`install-ai17z.ps1` installs nothing behind your back: it checks what is there,
+says where to get whatever is missing, runs `npm install`, and writes a `.env`
+with a master key generated for your installation. It never overwrites an
+existing `.env`, because that file holds the key your stored provider
+credentials are encrypted with.
+
+## Opening it
+
+```powershell
+.\launch-ai17z.ps1
+```
+
+```bash
+./launch-ai17z.sh
+```
+
+Starts everything and opens the app. The Windows installer adds this to the
+Start Menu, so there is something to click; `-NoShortcut` skips that. It reads
+the port from your own `.env`, so a machine running two installations opens the
+right one.
+
+## If something is wrong
+
+```powershell
+.\doctor-ai17z.ps1
+```
+
+```bash
+./doctor-ai17z.sh
+```
+
+It reports every part separately and tells three things apart that otherwise
+look the same: working, not set up yet, and broken. A fresh installation with no
+model provider and no X account is not broken, and it says so, with the step
+that fixes each one.
+
+## Stopping
+
+```powershell
+.\stop-ai17z.ps1
+```
+
+```bash
+./stop-ai17z.sh
+```
+
+Data survives. `-Volumes` / `--volumes` deletes the database, every stored
+provider key and every browser session, and asks for the word DELETE first.
+
+## Restarting
+
+```powershell
+.\restart-ai17z.ps1
+```
+
+```bash
+./restart-ai17z.sh
+```
+
+Your signed-in Chrome survives a restart: AI17Z spawns the browser rather than
+letting the automation library launch it, so stopping AI17Z does not close a
+window you are signed in to, and starting again reattaches to the tabs already
+open instead of opening more. `-KeepStack` / `--keep-stack` restarts only the
+worker and leaves the containers alone, which is faster and enough for anything
+that is not a container change.
+
+## Updating
+
+AI17Z tells you when there is a new version on the **Version** panel in
+Settings, with the release notes, and never updates itself. How you take one
+depends on how it was installed, and the panel says which of these applies to
+your copy.
+
+**Installed with AI17Z Setup:** *Update AI17Z* in the Start Menu, or
+
+```powershell
+.\update-ai17z.ps1
+```
+
+which is the same thing. It hands over to the setup script that installed this
+copy: stop, download the new release, check it against its published SHA-256,
+replace the program, migrate, start, verify. If the hash does not match, nothing
+is replaced.
+
+**Installed with the full Windows installer:** download the new
+`AI17Z-Setup-<version>.exe` and run it over your existing copy.
+
+**A checkout:**
+
+```powershell
+.\update-ai17z.ps1 -Check
+.\update-ai17z.ps1
+```
+
+```bash
+./update-ai17z.sh --check
+./update-ai17z.sh
+```
+
+`-Check` / `--check` says what an update would bring and changes nothing: the
+commits, and any database migrations, which are the part that cannot be undone.
+It refuses to run over uncommitted changes rather than discarding them, and works
+out whether the update can be applied *before* stopping anything, so a checkout
+it cannot update is left running rather than left down.
+
+**However it was installed, your data and your `.env` are never touched.** The
+program directory is replaced; the data directory — agents, memories, provider
+keys, browser session, master key — is not.
+
+**And an update updates one installation: the one it was started from.** The
+Start Menu entry belongs to that installation and the Version panel names the
+copy it is offering to update. Neither goes looking for another AI17Z on the
+machine, and asking one to update a different one is refused rather than
+redirected.
+
+---
+
+## Quick start with Docker
+
+> You do not need this section if you used the install command above. It is here
+> for people who would rather drive Docker themselves.
+
+```bash
+npm run setup          # writes .env with a master key, if there is not one
+docker compose up -d
+```
+
+A containerised worker has no browser and no display, so it takes jobs and
+leaves browser-backed accounts alone. Run a native worker alongside it for
+those — the Windows script above does this for you, and
+A containerised worker cannot drive a browser on the host: run the worker on
+the machine that has the browser.
+
+Then open **http://localhost:8080** and create your owner account.
+
+| Service  | URL                   |
+| -------- | --------------------- |
+| Web      | http://localhost:8080 |
+| API      | http://localhost:8787 |
+| Postgres | localhost:55432       |
+
+The API applies migrations on start, so a fresh stack comes up ready to use.
+
+> The worker image is built on the Playwright base image and is large. If you do
+> not need a browser channel, set `AI17Z_BROWSER_ENABLED=0` and the worker will
+> decline browser work cleanly rather than failing mid-job.
+
+---
+
+## Quick start without Docker
+
+You need Node 22 or newer and a Postgres you can reach.
+
+```bash
+npm install
+npm run dev                   # api + worker + web
+```
+
+`dev`, `migrate` and `db:up` each make sure `.env` exists with a master key
+before they run, so there is nothing to generate or paste. Point `DATABASE_URL`
+at your own Postgres if you would rather not use the container.
+
+Open **http://localhost:5173**.
+
+---
+
+## First run
+
+1. **Create your owner account.** Local, one person, stored as a scrypt hash.
+2. **Add a model provider.** Settings â†’ Add provider. Ollama needs no key.
+   Everything else takes an API key, encrypted at rest with your master key and
+   never returned by the API afterwards.
+3. **Create an agent.** Eight short steps. Keep the mock channel.
+4. **Inject a test event.** On the agent page, Activity â†’ *Inject a test event*.
+   The whole pipeline runs locally: context, memory, prompt, model, validation,
+   target verification. Only the final action is simulated.
+5. **Open the job.** Every decision it made is on one page.
+
+Nothing here requires X, or any external account at all.
+
+---
+
+## Easy Mode and Advanced Mode
+
+Easy Mode is eight questions and is the default. It is not a cut-down second
+system: it writes the same versioned persona, policy, cadence and radar
+configuration the Advanced screens edit, and reads them back. Change something
+in Advanced and Easy shows it; change it in Easy and Advanced shows it.
+
+Advanced keeps everything -- prompt layers, pipeline nodes, memory scopes, model
+roles and fallbacks, the stance ledger, cadence, capabilities, browser
+diagnostics. Nothing was removed to make Easy Mode simple.
+
+The switch is in the header, and it is one setting for the whole application.
+
+---
+
+## Where your data lives
+
+Everything AI17Z stores is on your machine:
+
+| What | Where |
+| --- | --- |
+| Database (agents, events, jobs, memories, relationships) | Docker volume |
+| Provider API keys | The same database, encrypted with your master key |
+| X browser profiles and sessions | `storage/browser-profiles/` |
+| Failure screenshots | `storage/diagnostics/` |
+| The master key itself | `.env`, and nowhere else |
+
+**Back up `.env`.** Losing the master key makes every stored provider credential
+unreadable, and there is no recovery.
+
+### What leaves your machine
+
+The runtime is local. The model is not, unless you choose a local one.
+
+- **Ollama** runs on your machine. Nothing leaves it.
+- **OpenAI, Anthropic, OpenRouter, DeepSeek** and any other remote provider
+  receive the context AI17Z sends them: the incoming post, the conversation
+  around it, the retrieved memories and the persona. That is how they answer.
+
+If that matters to you, use Ollama.
+
+---
+
+## Support
+
+Honest about what has actually been verified:
+
+| Platform | Status |
+| --- | --- |
+| Windows 11 + Docker Desktop + Google Chrome | Verified end to end, including real X |
+| Ubuntu Desktop | Scripts written and syntax-checked; **not verified on Ubuntu** |
+| Ubuntu Server (headless) | Not a supported flow. Signing in to X needs a real browser window |
+
+Ubuntu is not claimed as tested. The install, start, stop and doctor scripts
+exist and their logic runs, but nobody has yet taken a clean Ubuntu machine
+through the whole flow. If you do, the doctor tells you what it finds.
+
+---
+
+## Troubleshooting
+
+**"Docker is installed but not running."** Start Docker Desktop and wait for it
+to settle, then run the start script again.
+
+**Ports already in use.** Something else has 8080, 8787 or 55432. Set
+`AI17Z_WEB_PORT`, `AI17Z_API_PORT` or `POSTGRES_PORT` in `.env`.
+
+**"Google Chrome not found."** Install it from google.com/chrome. Chromium and
+Edge are different browsers and are not used as substitutes.
+
+**An X account will not connect.** Connecting opens a real Chrome window and
+waits for you to sign in by hand. If X asks for a code, a CAPTCHA or confirms an
+unusual login, AI17Z stops and leaves the window alone -- it never answers a
+security challenge, and there is no setting for that. Finish it yourself and it
+carries on.
+
+You can optionally store a username and password on the account so AI17Z can
+fill the form itself after a session lapses. It is off unless you fill it in,
+what you store is sealed under your master key, and it changes nothing about the
+paragraph above: a challenge still stops everything and waits for you, which for
+an account with two-factor authentication on is every fresh sign-in.
+
+**The agent is running but never replies.** Open the agent's Activity. Every
+decision is recorded, including the decision not to answer and the reasons
+behind it. "Not worth answering: nothing to do with what this agent follows" is
+the system working.
+
+**Something is wrong and you cannot tell what.** Run the doctor.
+
+---
+
+**`EBUSY: resource busy or locked, symlink` during install.** The folder is
+inside OneDrive, Dropbox or another syncing folder. Move the project somewhere
+that is not synced and install again. Nothing is wrong with npm or the machine:
+the sync driver holds the directory while it reconciles a freshly created tree,
+and npm workspaces need real symlinks. It is intermittent, which makes it worse
+rather than better, since one install can succeed and the next fail on a
+different package.
+
+## Running a second installation
+
+This is about a second *clone*. For a second installed copy, the install command
+does it in one flag — see [More than one AI17Z](#more-than-one-ai17z) above.
+
+Every installation names itself after the folder it was installed into, and that
+name decides which Docker volumes it uses. A clone into `ai17z-test` is
+`ai17z-test`: its own database, its own browser profiles, its own containers.
+Nothing is shared with any other checkout on the machine.
+
+That name is written into `.env` once, when the installer creates it, and never
+touched again -- so updating in place with `git pull` keeps the data it already
+had.
+
+Two of them can run side by side if you give the second one its own ports:
+
+```
+AI17Z_API_PORT=8797
+AI17Z_WEB_PORT=8090
+POSTGRES_PORT=55450
+DATABASE_URL=postgres://xbam:xbam@localhost:55450/xbam
+```
+
+`DATABASE_URL` carries its own port and is what migrations and the native worker
+dial, so it has to move with `POSTGRES_PORT`. The start script refuses if the two
+disagree rather than letting one installation migrate another's database.
+
+---
+
