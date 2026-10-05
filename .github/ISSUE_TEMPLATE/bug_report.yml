@@ -1,0 +1,86 @@
+name: Bug report
+description: Something behaves differently from how it is documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time. The most useful bug reports say what you
+        expected, what happened instead, and enough about the machine to
+        reproduce it.
+
+        **Please do not paste secrets.** Logs can contain account identifiers.
+        API keys, master keys, cookies and wallet material should never appear
+        in an issue. If a security vulnerability is involved, use
+        [SECURITY.md](https://github.com/ShiftAboveCtrl/ai17z/blob/main/SECURITY.md) instead of a public issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, and what AI17Z did instead of what you expected.
+      placeholder: |
+        I connected an account and turned the agent on. It read mentions but
+        never replied to any of them.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: AI17Z version
+      description: The version on the Health screen, or from `BUILD_INFO.json` in the program folder.
+      placeholder: 1.0.0-beta.63
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+        - Ubuntu
+        - Other Linux
+        - From source
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it was installed
+      options:
+        - The install command
+        - A release installer or package
+        - From source
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: |
+        Anything the diagnostics tool reported, or the lines around the
+        failure. Redact account handles if you would rather.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have removed any keys, tokens, cookies or wallet material from what I pasted.
+          required: true
+        - label: This is not a security vulnerability (those go to SECURITY.md).
+          required: true

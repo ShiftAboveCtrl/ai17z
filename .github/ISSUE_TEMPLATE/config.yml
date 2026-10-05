@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/ShiftAboveCtrl/ai17z/security/advisories/new
+    about: Please report vulnerabilities privately rather than in a public issue. See SECURITY.md.
+  - name: Installation and troubleshooting
+    url: https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/INSTALL.md
+    about: Platform instructions, updating, running several copies, and what to do when something is wrong.
+  - name: How it works
+    url: https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/ENGINEERING.md
+    about: The invariants the runtime holds, and what broke to produce each one.

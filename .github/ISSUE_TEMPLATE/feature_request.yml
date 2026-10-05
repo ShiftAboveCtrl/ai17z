@@ -1,0 +1,48 @@
+name: Feature request
+description: Something AI17Z should be able to do and cannot.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most useful requests describe the situation rather than the
+        implementation: what you were trying to get an agent to do, and where
+        AI17Z stopped being able to help.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you were trying to do
+      description: The situation, not the feature. What would an agent have achieved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What happens today
+      description: How you work around it now, if you do.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you think would help
+      description: Optional. A shape rather than a design is fine.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of AI17Z
+      options:
+        - Agent identity, persona or voice
+        - Memory, beliefs or knowledge
+        - Models and providers
+        - Channels and browser automation
+        - Plugins and capabilities
+        - Owner chat or the Foundry
+        - Installation, updates or packaging
+        - Something else
+    validations:
+      required: true
