@@ -197,11 +197,11 @@ if [ -f "$LAB/jail/$A/firecracker/$A/root/rootfs.ext4" ] && [ -f "$LAB/jail/$B/f
 fi
 
 # Two processes, two jails, each as the unprivileged uid.
-RUNNING=$(pgrep -fc 'firecracker --id' 2>/dev/null || true)
+RUNNING=$(pgrep -fc '^/firecracker --id' 2>/dev/null || true)
 say ""
 say "  firecracker processes: ${RUNNING:-0}"
 for id in "$A" "$B"; do
-  P=$(pgrep -f "firecracker --id $id" | head -1 || true)
+  P=$(pgrep -f "^/firecracker --id $id" | head -1 || true)
   WANT=$(jq -r .uid "$LAB/$id.plan.json")
   if [ -n "$P" ]; then
     U=$(stat -c %u "/proc/$P" 2>/dev/null || echo "?")
