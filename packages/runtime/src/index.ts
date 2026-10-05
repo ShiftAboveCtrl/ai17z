@@ -168,6 +168,7 @@ export * from './confidentialAttestation';
 export * from './runtimeMeasurement';
 export * from './stateGeneration';
 export * from './hostedCost';
+export * from './tenantFootprint';
 export * from './tenantDatabase';
 export * from './tenantProvisioning';
 export * from './hostedSecrets';

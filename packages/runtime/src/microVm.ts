@@ -164,8 +164,8 @@ export function launchArgv(plan: MicroVmPlan): LaunchVerdict {
   if (problems.length > 0) return { ok: false, problems };
 
   // The jailer's own arguments, then `--`, then Firecracker's. Everything
-  // after the separator is inside the chroot, which is why the socket path is
-  // relative to it rather than absolute on the host.
+  // after the separator runs inside the chroot, so every path there is a name
+  // inside the jail rather than a path on the host.
   const argv = [
     plan.jailerPath,
     '--id',
@@ -181,11 +181,62 @@ export function launchArgv(plan: MicroVmPlan): LaunchVerdict {
     '--netns',
     plan.isolation.netns,
     '--',
-    '--api-sock',
-    plan.apiSocketPath,
+    /*
+      No API socket, and a configuration settled before the guest starts.
+
+      `--api-sock` leaves a control socket open for the guest's whole life, and
+      anything on the host that can reach it can attach a drive or a network
+      interface to a running tenant. A tenant's guest is configured once, by
+      the control plane, and then has nothing left to negotiate, so the
+      configuration arrives as a file and the socket is never created.
+
+      `plan.apiSocketPath` stays part of the plan: it is still what makes a
+      plan specific to its runtime, and it is the path that would be used if
+      something ever genuinely needed to drive a running guest.
+    */
+    '--no-api',
+    '--config-file',
+    CONFIG_IN_JAIL,
   ];
 
   return { ok: true, argv };
+}
+
+/**
+ * The configuration file's name inside the jail.
+ *
+ * A name rather than a path: the jailer chroots into the runtime's own
+ * directory, so this is next to the kernel and the disks it names.
+ */
+export const CONFIG_IN_JAIL = 'ai17z-guest.json';
+
+/** What each of a guest's files is called inside the jail. */
+export const IN_JAIL = {
+  kernel: 'vmlinux',
+  rootfs: 'rootfs.ext4',
+  data: 'data.ext4',
+} as const;
+
+/**
+ * Which host file belongs at which name inside the jail.
+ *
+ * The jailer does not fetch anything. Whatever launches a guest has to put
+ * these there first, and this is the one list of what they are, so a boot
+ * configuration naming a file nobody placed is a mistake with a single place
+ * to correct it.
+ *
+ * The root filesystem is placed read-only and shared between tenants on
+ * purpose: it is the one thing they are meant to have in common, and
+ * `plansShareAnything` deliberately leaves it off the list of things they must
+ * not. The data disk is the opposite, one per tenant, and is the only image a
+ * guest can write to.
+ */
+export function jailResources(plan: MicroVmPlan): readonly { readonly from: string; readonly nameInJail: string; readonly writable: boolean }[] {
+  return [
+    { from: plan.image.kernelPath, nameInJail: IN_JAIL.kernel, writable: false },
+    { from: plan.image.rootfsPath, nameInJail: IN_JAIL.rootfs, writable: false },
+    { from: plan.resources.dataDiskPath, nameInJail: IN_JAIL.data, writable: true },
+  ];
 }
 
 /**
@@ -203,7 +254,11 @@ export function bootConfiguration(plan: MicroVmPlan): {
   readonly network: readonly { iface_id: string; host_dev_name: string }[];
 } {
   return {
-    bootSource: { kernel_image_path: plan.image.kernelPath },
+    // Named inside the jail, not on the host. Firecracker reads this after the
+    // jailer has chrooted, so a host path here is a path that does not exist:
+    // the guest fails to boot reporting a missing file, and the message says
+    // nothing about chroots. `jailResources` says which host file goes where.
+    bootSource: { kernel_image_path: IN_JAIL.kernel },
     machineConfig: {
       vcpu_count: plan.resources.vcpus,
       mem_size_mib: plan.resources.memoryMb,
@@ -213,8 +268,8 @@ export function bootConfiguration(plan: MicroVmPlan): {
       smt: false,
     },
     drives: [
-      { drive_id: 'rootfs', path_on_host: plan.image.rootfsPath, is_root_device: true, is_read_only: true },
-      { drive_id: 'data', path_on_host: plan.resources.dataDiskPath, is_root_device: false, is_read_only: false },
+      { drive_id: 'rootfs', path_on_host: IN_JAIL.rootfs, is_root_device: true, is_read_only: true },
+      { drive_id: 'data', path_on_host: IN_JAIL.data, is_root_device: false, is_read_only: false },
     ],
     network: [{ iface_id: 'eth0', host_dev_name: plan.isolation.tapDevice }],
   };
@@ -318,7 +373,7 @@ export function imageFingerprint(image: Pick<GuestImage, 'kernelSha256' | 'rootf
 // ---------------------------------------------------------------------------
 
 export const MICROVM_CAVEATS: readonly string[] = [
-  'Nothing here has booted a guest. No microVM has been launched from this repository, and no capacity number exists.',
+  'Guests have booted from these plans in the Firecracker lab on one developer machine, two tenants at once, each running the canonical AI17Z. That is not a capacity number and not a confidential VM.',
   'A plan is not a running guest. guestMatchesPlan is what compares a host report with the plan, and a host that reports nothing has proved nothing.',
   'KVM is the isolation boundary. A host where KVM is unavailable does not fall back to a container, it refuses to hold tenants.',
   'Firecracker filters no guest traffic. The egress rules in hostEgress.ts are the filtering, and a guest whose namespace carries no rules is unfiltered.',
