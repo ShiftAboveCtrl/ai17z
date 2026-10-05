@@ -28,21 +28,22 @@ say() { printf '  %s\n' "$*"; }
 # which is what "resource busy" means, and the probe cannot be re-run until it
 # lets go.
 # ---------------------------------------------------------------------------
-pkill -f "jailer --id $ID" 2>/dev/null || true
-for p in $(pgrep -f firecracker 2>/dev/null || true); do
-  if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -- "--id $ID"; then
-    kill -TERM "$p" 2>/dev/null || true
-  fi
+# Matched on `^/firecracker --id <this one>`, which is how the process's own
+# command line begins. The bare word matches anything that mentions it,
+# including whatever invoked this script, and `id $ID` matches any command line
+# with those characters in it. Scoped to this probe's own guest as well, so
+# running it never takes down a tenant somebody else is measuring.
+pkill -f "^/usr/local/bin/jailer --id $ID" 2>/dev/null || true
+for p in $(pgrep -f "^/firecracker --id $ID" 2>/dev/null || true); do
+  kill -TERM "$p" 2>/dev/null || true
 done
 # Give them a moment, then insist.
 for _ in $(seq 1 20); do
-  pgrep -f "id $ID" >/dev/null 2>&1 || break
+  pgrep -f "^/firecracker --id $ID" >/dev/null 2>&1 || break
   sleep 0.2
 done
-for p in $(pgrep -f firecracker 2>/dev/null || true); do
-  if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -- "--id $ID"; then
-    kill -KILL "$p" 2>/dev/null || true
-  fi
+for p in $(pgrep -f "^/firecracker --id $ID" 2>/dev/null || true); do
+  kill -KILL "$p" 2>/dev/null || true
 done
 
 ip netns del "$NS" 2>/dev/null || true

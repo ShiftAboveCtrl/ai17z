@@ -180,7 +180,7 @@ fi
 # control plane chose, and this is what the machine did. The measurements are
 # taken from the files in the jail rather than copied out of the plan, or the
 # comparison would be a number against itself.
-FC_PID="$(pgrep -f "firecracker --id $ID" | head -1 || true)"
+FC_PID="$(pgrep -f "^/firecracker --id $ID" | head -1 || true)"
 REPORT="$LAB/$ID.report.json"
 jailed=false
 seccomp=false
