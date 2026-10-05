@@ -336,7 +336,7 @@ add(
   29,
   'Local AI17Z remains healthy',
   'UNCHECKABLE',
-  `The gates pass here and the tree has ${dirty === '' ? 'no' : String(dirty.split('\n').length)} uncommitted change(s), but health means an installed instance works. Neither ai17z-test nor ai17z-main has been updated from this stack, and nothing here can speak for them.`,
+  `The gates pass here and the tree has ${dirty === '' ? 'no' : String(dirty.split('\n').length)} uncommitted change(s), and both installed instances were measured healthy and undisturbed after this work, their containers up and their APIs answering. But health means an installed instance running this stack, and neither has been updated from it, so nothing here can speak for that. Promoting needs either a published release or a copy of unreleased source, and the second is the route to avoid.`,
 );
 
 add(
