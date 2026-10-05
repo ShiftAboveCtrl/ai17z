@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   ENFORCEMENT_CAVEATS,
   MANDATORY_DENIALS,
+  TENANT_TABLE_PREFIX,
+  addressFamilyOf,
   effectiveDenials,
   egressPlan,
-  addressFamilyOf,
   hostIsDenied,
   mayConnectTo,
+  namespaceHoldsOneTenant,
   nftablesRuleset,
   planIsSound,
   verifyLoadedRuleset,
@@ -296,5 +298,45 @@ describe('what this does not do', () => {
   it('does not claim to stop a determined guest seeing the public web', () => {
     const all = ENFORCEMENT_CAVEATS.join(' ').toLowerCase();
     expect(all).toContain('proxy');
+  });
+});
+
+describe('one tenant, one namespace', () => {
+  it('accepts a namespace holding exactly one tenant table', () => {
+    const out = namespaceHoldsOneTenant(['ai17z_tenant_tap0', 'nat']);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.tables).toEqual(['ai17z_tenant_tap0']);
+  });
+
+  it('refuses two, and says why both tenants would lose everything', () => {
+    /*
+      Measured against a real kernel. nftables evaluates every chain at a hook,
+      so two tenant tables each ending in `policy drop` discard the other's
+      traffic: both tenants lose all egress while every rule reads as correct
+      and every denial appears loaded. It was only noticed because the
+      permitted probes failed too.
+    */
+    const out = namespaceHoldsOneTenant(['ai17z_tenant_tapa', 'ai17z_tenant_tapb']);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.why).toContain('2 tenant egress tables');
+    expect(out.why).toContain('reads as correct');
+  });
+
+  it('refuses a namespace with none, because nothing is filtering the guest', () => {
+    const out = namespaceHoldsOneTenant(['nat', 'filter']);
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.why).toContain('nothing is filtering');
+  });
+
+  it('recognises a tenant table by the prefix the ruleset actually writes', () => {
+    const text = nftablesRuleset(egressPlan(), 'tap0');
+    expect(text).toContain(TENANT_TABLE_PREFIX);
+  });
+
+  it('says so in the caveats, where somebody would otherwise put two', () => {
+    expect(ENFORCEMENT_CAVEATS.join(' ')).toContain('One tenant, one namespace, one tap');
   });
 });

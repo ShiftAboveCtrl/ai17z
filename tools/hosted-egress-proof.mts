@@ -23,7 +23,13 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MANDATORY_DENIALS, egressPlan, nftablesRuleset, verifyLoadedRuleset } from '@xbam/runtime';
+import {
+  MANDATORY_DENIALS,
+  egressPlan,
+  namespaceHoldsOneTenant,
+  nftablesRuleset,
+  verifyLoadedRuleset,
+} from '@xbam/runtime';
 
 const argv = process.argv.slice(2);
 const flag = (name: string): string | undefined => {
@@ -96,7 +102,30 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// 2. What the kernel reports back still passes the guard.
+// 2. The namespace holds one tenant's rules and no more.
+//
+// Two tenant tables in one namespace is the arrangement where every rule reads
+// as correct and no traffic moves at all: nftables evaluates every chain at a
+// hook, so each policy drop discards the other tenant's packets. Checked here
+// because a namespace is where it can be seen.
+// ---------------------------------------------------------------------------
+try {
+  const tables = onLinux(`ip netns exec ${netns} nft list tables`)
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/).pop() ?? '')
+    .filter(Boolean);
+  const verdict = namespaceHoldsOneTenant(tables);
+  record(
+    'The namespace holds one tenant',
+    verdict.ok ? 'PASS' : 'FAIL',
+    verdict.ok ? `Exactly one tenant table: ${verdict.tables[0]}.` : verdict.why,
+  );
+} catch (error) {
+  record('The namespace holds one tenant', 'FAIL', `the table list could not be read: ${(error as Error).message}`);
+}
+
+// ---------------------------------------------------------------------------
+// 3. What the kernel reports back still passes the guard.
 // ---------------------------------------------------------------------------
 let observed = '';
 try {
@@ -116,7 +145,7 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// 3. The half that matters: the guard notices a missing denial.
+// 4. The half that matters: the guard notices a missing denial.
 //
 // A checker that cannot fail has not been tested. One denial is removed, the
 // ruleset is reloaded, and the guard has to say so about the kernel's own
@@ -150,7 +179,7 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Put the real ruleset back, so the lab is left filtered.
+// 5. Put the real ruleset back, so the lab is left filtered.
 // ---------------------------------------------------------------------------
 try {
   const path = stage(ruleset, 'egress.nft');
