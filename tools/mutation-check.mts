@@ -172,6 +172,21 @@ const MUTATIONS: Mutation[] = [
     tests: ['tests/integration/objectBackup.test.ts'],
   },
   {
+    id: 'schema-grant-connection',
+    what: 'a schema grant goes back into the control-plane statement list, where it lands on the shared database and gives each tenant role CREATE there',
+    file: 'packages/runtime/src/tenantDatabase.ts',
+    /*
+      Anchored on the signature rather than on the regular expression inside,
+      so the mutation carries no escape sequences of its own: an anchor that
+      has to be escaped to be written down is an anchor that drifts the first
+      time somebody reformats the line.
+    */
+    find: 'export function statementIsControlPlaneSafe(statement: string): { ok: true } | { ok: false; why: string } {',
+    into:
+      'export function statementIsControlPlaneSafe(statement: string): { ok: true } | { ok: false; why: string } {\n  return { ok: true };',
+    tests: ['tests/unit/tenantDatabase.test.ts'],
+  },
+  {
     id: 'preflight-key',
     what: 'the tenant preflight claims to have checked a key it cannot see from inside a tenant',
     file: 'tools/tenant-preflight.mts',

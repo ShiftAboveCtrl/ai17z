@@ -158,10 +158,6 @@ export function provisioningStatements(plan: TenantDatabasePlan, sealedPassword:
     `REVOKE ALL ON DATABASE ${db} FROM PUBLIC`,
     `REVOKE CONNECT ON DATABASE ${db} FROM PUBLIC`,
     `GRANT CONNECT ON DATABASE ${db} TO ${role}`,
-    // The schema, not just the database. A role that cannot connect to the
-    // database but can reach `public` in another one is a different leak.
-    `REVOKE ALL ON SCHEMA public FROM PUBLIC`,
-    `GRANT ALL ON SCHEMA public TO ${role}`,
     `ALTER ROLE ${role} LOGIN PASSWORD ${quoteLiteral(sealedPassword)}`,
     // A statement timeout is not isolation, but a tenant holding a lock for
     // ever is a tenant affecting the server every other tenant is on.
@@ -172,6 +168,76 @@ export function provisioningStatements(plan: TenantDatabasePlan, sealedPassword:
     // inherited one is not.
     `ALTER ROLE ${role} SET search_path = 'public'`,
   ];
+}
+
+/**
+ * The statements that have to run **connected to the tenant's own database**.
+ *
+ * Separate from the ones above, and separate because running them on the wrong
+ * connection has already happened and did real damage.
+ *
+ * `GRANT` and `REVOKE` on a schema apply to the database the connection is on.
+ * A caller that ran one list on one connection therefore executed
+ * `REVOKE ALL ON SCHEMA public FROM PUBLIC` against the **control plane's own
+ * database**, taking schema rights away from PUBLIC there, and granted each
+ * new tenant's role `USAGE` and `CREATE` on `public` **in the shared
+ * database**. Provisioning a tenant gave that tenant privileges inside the
+ * control plane: the exact inversion of what the whole design is for.
+ *
+ * It was invisible in every unit test, because a test over the SQL strings
+ * cannot see which connection they would be sent on. It showed up when
+ * `DROP ROLE` refused, because the role held grants somewhere nobody had
+ * looked.
+ *
+ * So the two lists are different types of thing and are named differently, and
+ * `provisioningConnection` says out loud which database each belongs to.
+ */
+export function tenantSchemaStatements(plan: TenantDatabasePlan): readonly string[] {
+  const role = quoteIdentifier(plan.role);
+  return [
+    // The schema, not just the database. A role that cannot connect to the
+    // database but can reach `public` is a different leak.
+    `REVOKE ALL ON SCHEMA public FROM PUBLIC`,
+    `GRANT ALL ON SCHEMA public TO ${role}`,
+  ];
+}
+
+/**
+ * Which database each list of statements has to be sent on.
+ *
+ * Data rather than a comment, so a caller can assert it and a test can check
+ * that a caller did.
+ */
+export const PROVISIONING_CONNECTIONS = {
+  provisioningStatements: 'CONTROL_PLANE',
+  tenantSchemaStatements: 'TENANT_DATABASE',
+  teardownStatements: 'CONTROL_PLANE',
+} as const;
+
+export type ProvisioningConnection = (typeof PROVISIONING_CONNECTIONS)[keyof typeof PROVISIONING_CONNECTIONS];
+
+/**
+ * Whether a statement is safe to run on the control plane's connection.
+ *
+ * A schema-scoped `GRANT` or `REVOKE` is not, because it would land on the
+ * wrong database and look like it worked. Checked rather than remembered: the
+ * remembering is what failed.
+ */
+export function statementIsControlPlaneSafe(statement: string): { ok: true } | { ok: false; why: string } {
+  const text = statement.trim().toUpperCase();
+  if (/^(GRANT|REVOKE)\b/.test(text) && /\bON\s+SCHEMA\b/.test(text)) {
+    return {
+      ok: false,
+      why: 'A schema grant applies to the database the connection is on, so this would change the control plane rather than the tenant. It belongs in tenantSchemaStatements, run on the tenant database.',
+    };
+  }
+  if (/^(GRANT|REVOKE)\b/.test(text) && /\bON\s+(ALL\s+TABLES|ALL\s+SEQUENCES|ALL\s+FUNCTIONS)\b/.test(text)) {
+    return {
+      ok: false,
+      why: 'A grant over all tables applies to the current database, so this would change the control plane rather than the tenant.',
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -297,6 +363,7 @@ export function observedIsolationProblems(
 }
 
 export const DATABASE_CAVEATS: readonly string[] = [
+  'A schema GRANT or REVOKE applies to the database the connection is on. Running the provisioning list on one connection sent REVOKE ALL ON SCHEMA public FROM PUBLIC to the control plane database and granted every new tenant role CREATE there: provisioning a tenant gave it privileges inside the control plane. Found by DROP ROLE refusing, because the role held grants somewhere nobody had looked.',
   SHARED_DATABASE_REFUSAL,
   'A database per tenant is isolation between tenants, not from the server operator. A Postgres superuser reads every database on the server, which is why a tenant\'s own secrets are sealed under its own key rather than left in the clear in its own database.',
   'A statement timeout is not a boundary. It stops one tenant holding a lock for ever; it does not stop one tenant being noisy.',
