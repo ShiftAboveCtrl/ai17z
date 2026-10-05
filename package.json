@@ -47,6 +47,7 @@
     "owner:password": "tsx tools/owner-password.mts",
     "worker:supervised": "tsx scripts/supervise-worker.mts",
     "release:check": "tsx tools/release-check.mts",
+    "mutation:check": "tsx tools/mutation-check.mts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "worker:present": "tsx scripts/browser-worker-present.mts",
