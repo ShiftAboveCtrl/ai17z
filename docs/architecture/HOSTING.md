@@ -910,6 +910,36 @@ the only initial policy a margin against a $38 to $90 floor survives, and
 `MODEL_API` keeps a cost line so a later platform-funded option is metered
 separately rather than absorbed.
 
+## The customer-facing half is not in this repository
+
+What is here is the control plane, the runtime, the isolation and the
+measurements. A customer never sees any of it: the screen in `apps/web` is
+deliberately not a shop, and its own header says so.
+
+The place a customer signs up is AI17Z Studio, which is a separate codebase for
+the same reason the Plugin registry is: this repository is what an owner
+installs on their own machine, and a shop that lives inside it is a shop
+shipped to everybody who installs AI17Z.
+[STUDIO_LINK.md](STUDIO_LINK.md) is the connector, outbound only, and nothing
+here depends on it.
+
+Two things gate that half, and neither is a matter of writing it.
+
+**Nothing may be sold until the confidential tier exists.** The whole offer is
+that the host operator cannot read the customer's agent, and on this hardware
+that is not true. Selling it first and fixing it later would make every word of
+the pitch a thing to retract.
+
+**No price exists, and one may not be invented.** `hostedCost.ts` refuses to
+price from nothing and says a sample too small to be a percentile is too small.
+What has been measured is one idle tenant on hardware that is not the hardware
+it would run on, with no browser and nothing generating. A plan priced from
+that would be priced from the easy case, and the hard case is the one that
+loses money.
+
+So the honest order is: the hardware, then the measurements on it, then a
+price, then a shop. Not the other way round.
+
 ## What has not been done
 
 Written here rather than discovered later, and corrected as things got done.
