@@ -163,6 +163,22 @@ So the compute floor for one confidential tenant runtime is between roughly
 egress, backup storage, or the control plane. That figure, not a guess about
 it, is what the pricing model has to clear.
 
+**These prices are data rather than a table here**, in
+`packages/runtime/src/confidentialSkus.ts`, each carrying when it was read and
+from where, so one can go stale and say so instead of ageing quietly.
+`npm run hosted:cost` computes the floor from them and from the measured
+tenant: it asks `sizeHoldsTenant` which sizes hold one, takes the cheapest that
+does, and refuses when nothing fits or the measurement has expired. A price in
+prose is a price nobody can check against a measurement, and the floor above
+was exactly that until it was computed.
+
+The computation also makes plain the fact that decides the shape of a plan, and
+it is not about AI17Z at all: **the floor is set by what can be bought rather
+than by what a tenant needs.** A tenant sized at 863 MB from the measurement is
+given 8,192 because nothing smaller is sold, so 7,329 MB of it is spare. That
+is the measured argument for several of one owner's agents sharing a runtime,
+and for a browser living in that spare room rather than in a size up.
+
 Google's SEV-SNP premium is **$0.0027502 per vCPU per hour** on demand, which
 is small; the premium sits on top of the N2D instance price. The all-in Google
 figure is **not recorded here**, because getting it from the Cloud Billing
