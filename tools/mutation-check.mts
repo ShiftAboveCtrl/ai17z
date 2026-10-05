@@ -90,6 +90,14 @@ const MUTATIONS: Mutation[] = [
     tests: ['tests/unit/hostEgress.test.ts'],
   },
   {
+    id: 'egress-kernel-spelling',
+    what: 'the guard stops accepting the kernel spelling of a single-host denial, so a filtered host reports unfiltered',
+    file: 'packages/runtime/src/hostEgress.ts',
+    find: '  const forms = [cidr, ...bareFormOf(cidr)];',
+    into: '  const forms = [cidr];',
+    tests: ['tests/unit/hostEgress.test.ts'],
+  },
+  {
     id: 'recovery-fence',
     what: 'a restore from HOST_UNREACHABLE needs no fence, so a partitioned host becomes a second copy',
     file: 'packages/runtime/src/runtimeBackup.ts',

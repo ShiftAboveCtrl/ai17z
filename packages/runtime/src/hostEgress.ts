@@ -252,10 +252,43 @@ export function nftablesRuleset(plan: EgressPlan, iface: string): string {
  * anything that is not a digit or a dot before, and not a digit after, which
  * is how an address appears in `nft list ruleset` and in every other rendering
  * of one.
+ *
+ * And a kernel does not print back what it was given. `nft list ruleset`
+ * renders a single-host prefix without it: `169.254.169.254/32` comes back as
+ * `169.254.169.254` and `::1/128` as `::1`. Measured against a real kernel,
+ * which is the only way this was going to be noticed: the first version of
+ * this function reported three correctly loaded denials as missing, and a
+ * check that always fails is a check an operator learns to ignore, which is
+ * how a real failure gets missed.
+ *
+ * So a full-length prefix is accepted in either spelling. Any other prefix
+ * length is matched exactly, because `10.0.0.0/8` and `10.0.0.0` are different
+ * claims and accepting the second for the first would be the substring bug
+ * again in a new coat.
  */
 function mentions(text: string, cidr: string): boolean {
-  const escaped = cidr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^0-9.:])${escaped}(?![0-9])`).test(text);
+  const forms = [cidr, ...bareFormOf(cidr)];
+  return forms.some((form) => {
+    const escaped = form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Nothing that could be part of a longer address before, and no digit or
+    // prefix separator after: `169.254.169.254` must not be matched inside
+    // `169.254.169.254/32` when looking for the bare form, nor inside a
+    // longer address.
+    return new RegExp(`(^|[^0-9.:])${escaped}(?![0-9/])`).test(text);
+  });
+}
+
+/**
+ * The address alone, where the prefix covers exactly one host.
+ *
+ * Empty for anything shorter, so a range is never satisfied by its own base
+ * address appearing somewhere.
+ */
+function bareFormOf(cidr: string): string[] {
+  const [address, prefix] = cidr.split('/');
+  if (!address || !prefix) return [];
+  const single = address.includes(':') ? prefix === '128' : prefix === '32';
+  return single ? [address] : [];
 }
 
 export type EnforcementVerdict =
