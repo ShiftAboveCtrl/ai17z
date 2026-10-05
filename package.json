@@ -64,7 +64,8 @@
     "hosted:lab": "tsx tools/hosted-lab.mts",
     "hosted:provision-db": "tsx tools/hosted-provision-lab.mts",
     "hosted:measure": "tsx tools/measure-runtime.mts",
-    "hosted:preflight": "tsx tools/tenant-preflight.mts"
+    "hosted:preflight": "tsx tools/tenant-preflight.mts",
+    "hosted:cost": "tsx tools/hosted-cost.mts"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

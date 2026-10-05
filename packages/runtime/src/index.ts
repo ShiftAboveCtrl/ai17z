@@ -169,6 +169,7 @@ export * from './runtimeMeasurement';
 export * from './stateGeneration';
 export * from './hostedCost';
 export * from './tenantFootprint';
+export * from './confidentialSkus';
 export * from './tenantDatabase';
 export * from './tenantProvisioning';
 export * from './hostedSecrets';
