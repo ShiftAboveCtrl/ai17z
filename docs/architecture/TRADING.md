@@ -154,10 +154,57 @@ treating the second as the first is how a bad price becomes a trade.
   broadcast.
 - **No funded brokerage order.**
 - **No unattended live-mainnet autonomous trading.**
-- No venue adapter is in this repository. The parts that can move value are
-  first-party adapters the owner installs, for the same reason `wallet.ts`
-  holds none.
+- No venue adapter is in this repository, and three of them exist outside it.
+  The parts that can move value are first-party adapters the owner installs,
+  for the same reason `wallet.ts` holds no key. See below.
 - No private venue source has been published here.
+
+## The venue adapters, which are private
+
+Three first-party adapters exist outside this repository, with no remote, and
+none of their source is here. What is public is the contract they implement:
+`MarketReader` for reading a venue, and a proposal shaped like the fields of a
+`TradeIntent`. The public pipeline owns the intent, the mandate, the risk
+arithmetic, the approval and the signing boundary; an adapter owns the venue
+and nothing else.
+
+Each one implements the same four rules, and each refuses rather than improvises:
+
+- **No address or program id is a constant.** Every deployment is configuration
+  verified against chain state before use: the chain id, that code or an
+  executable account is actually there, and a recorded hash so a redeployment
+  is a disagreement rather than a silent substitution. A ticker never
+  identifies an asset; exact chain plus exact address does.
+- **Four typed operations each: two questions and two proposals.** An allowlist
+  rather than a denylist, with the forbidden verbs checked as well, so an
+  operation whose name crosses the line is refused twice. No adapter holds a
+  key and none can sign.
+- **A built transaction is inspected before it could reach a signing
+  boundary.** The venue that returns one gets its transaction deserialised, and
+  the fee payer, every program, the instruction count, the asset and the
+  required signer count are all checked against what was asked for. Signing
+  because an API said so is blind signing.
+- **The generations and phases are read, never assumed.** Pricing a bonding
+  curve as a pool, or the reverse, produces a plausible number that is wrong,
+  and the window between graduation and migration is a refusal rather than a
+  guess.
+
+What is blocked, and only this:
+
+| Adapter | Blocked on |
+| --- | --- |
+| Pons | a Robinhood Chain RPC endpoint, without which the deployment check refuses |
+| Pump | a Solana RPC endpoint; the funded half is not authorised at all |
+| Robinhood | an agentic-account authorisation, which only the account holder can grant |
+
+The Robinhood adapter does one thing worth naming here. Its Trading MCP tool
+names are not published anywhere, so it **discovers** them through `tools/list`
+and maps what comes back onto AI17Z's own operations, rather than asserting
+names that would fail the first time somebody connected. A tool the mapping
+does not recognise is reported rather than ignored, and a tool that places,
+submits, cancels or executes is refused whatever it is called. Robinhood's own
+trade-approval setting is treated as a second gate and never as a substitute
+for the owner's mandate.
 
 ## Chain facts, and where they came from
 
@@ -172,7 +219,9 @@ address is not a verified one.
 ## What has not been done
 
 - No adapter has executed anything, in paper or otherwise, against a real
-  venue.
+  venue. Each is source-complete and test-proven against fixtures and
+  arithmetic, and each refuses without the credential it names.
 - No mandate has been created on a live installation.
-- The Robinhood MCP surface is understood and not implemented here.
+- The Robinhood MCP surface is discovered rather than asserted, and has never
+  been discovered against the real server.
 - `tradeExecution.ts` has never been handed a real broadcast result.
