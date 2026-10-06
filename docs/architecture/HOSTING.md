@@ -861,6 +861,37 @@ device is already durable, and neither is true. A tenant's own disk is
 `Writeback` now; the shared read-only image stays on the cheaper setting
 because nothing writes to it.
 
+**Six tenants at once, measured one at a time.** `load-proof.sh` boots them in
+sequence, and after each one it asks every earlier tenant again, because the
+question is not whether the newest started but whether the older ones are
+still there. All six answered throughout.
+
+| | |
+| --- | --- |
+| Resident on the host, per tenant | 533 to 539 MB, across all six |
+| Used inside each guest | 423 to 440 MB |
+| By host free memory, per tenant | 531 MB |
+| Host free at six tenants | 23.6 GB of 26.8 GB |
+
+The per-tenant cost is flat from one to six: nothing degrades, and nothing
+about the sixth is more expensive than the first. So on this machine the
+arithmetic is not optimistic, and the slot reservation is **conservative on
+purpose**. A slot reserves 914 MB because that is what the guest is *given* and
+a guest may touch all of it; 531 MB is what it actually resides at while it is
+idle. Reserving the first and measuring the second is the right way round, and
+the gap is the headroom a tenant doing real work would use.
+
+**It refuses rather than finding the limit by hitting it.** The harness will not
+start without room for every tenant it was asked for plus a floor, and stops
+once the host drops below it. A load test that takes the machine down has
+measured nothing except its own recklessness, and the work somebody had open is
+not a test resource.
+
+What this is not: six *busy* tenants. All six were idle or answering health
+checks. Three things are still unmeasured and the first one dominates: a
+browser, a pipeline run with a model provider, and a tenant under sustained
+request load while five others do the same.
+
 **None of this is protection from the host operator**, and the lab is never
 cited as though it were.
 
