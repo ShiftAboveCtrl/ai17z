@@ -11,7 +11,9 @@
  * subprocess because it is a script that reports and exits.
  */
 import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = resolve(__dirname, '..', '..');
@@ -129,6 +131,49 @@ describe('it says what a canary would not prove', () => {
 
   it('keeps the standing caveats, including that no provider is enabled', () => {
     expect(report.caveats.join(' ')).toMatch(/CONFIDENTIAL_PROVIDERS_ENABLED is empty/);
+  });
+
+  it('emits each body with the command that would send it, and no value of anybody\'s', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ai17z-canary-'));
+    try {
+      execFileSync(process.execPath, ['--import', 'tsx', 'tools/hosted-canary.mts', '--emit', dir], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+      });
+    } catch {
+      // Non-zero because it is blocked, which is correct. The files are what
+      // this case is about.
+    }
+
+    const files = readdirSync(dir);
+    expect(files).toContain('README.md');
+    expect(files).toContain('azure-provision.json');
+
+    // A body that does not parse is a body nobody can send.
+    const body = JSON.parse(readFileSync(join(dir, 'azure-provision.json'), 'utf8')) as {
+      properties: { securityProfile: { securityType: string; uefiSettings: { vTpmEnabled: boolean; secureBootEnabled: boolean } } };
+    };
+    expect(body.properties.securityProfile.securityType).toBe('ConfidentialVM');
+    expect(body.properties.securityProfile.uefiSettings.vTpmEnabled).toBe(true);
+    expect(body.properties.securityProfile.uefiSettings.secureBootEnabled).toBe(true);
+
+    const readme = readFileSync(join(dir, 'README.md'), 'utf8');
+    expect(readme).toContain('az rest --method put');
+    expect(readme).toContain('--body @azure-provision.json');
+    // The binding has to be read before the policy is used, so the warning
+    // travels with the file rather than staying in the terminal.
+    expect(readme).toContain('PLATFORM_ONLY');
+    expect(readme).toMatch(/not the claim this product needs/);
+
+    // Nothing of anybody's may end up in a file. The placeholders are the point:
+    // the subscription, resource group and vault are the owner's and this has
+    // never held them.
+    const everything = files.map((f) => readFileSync(join(dir, f), 'utf8')).join('\n');
+    expect(everything).toContain('{subscriptionId}');
+    expect(everything).toContain('{resourceGroup}');
+    expect(everything).not.toMatch(/\bBearer [A-Za-z0-9._-]{20,}/);
+    expect(everything).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
   });
 
   it('gives the canary as ordered steps, starting with the credential', () => {
