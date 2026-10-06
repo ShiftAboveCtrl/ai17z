@@ -70,6 +70,121 @@ export interface ConfidentialExpectation {
   maxAgeMs: number;
   /** Where Azure's token must have come from. Pinned, never read from the token. */
   azureAuthority?: string;
+  /**
+   * Which instance this token must have come from.
+   *
+   * Google's `assertion.submods.gce.instance_id` and Azure's
+   * `x-ms-azurevm-vmid`. Optional because an evidence shape may legitimately
+   * not carry one, and when it is given a mismatch is a refusal: a token from
+   * a correctly-measured runtime belonging to somebody else is still somebody
+   * else's.
+   */
+  instance?: string;
+  /** The runtime this verification is about, so a refusal can name it. */
+  runtimeId?: string;
+}
+
+/**
+ * What a token proved about which instance it came from.
+ *
+ * Separate from the rest of the verdict because the answer has three states
+ * and two of them are not failures: it matched, it did not match, or the
+ * evidence carried no instance at all. The third is the documented Azure
+ * example, and reporting it as a match would be the worst of the three.
+ */
+export type InstanceVerdict = 'MATCHED' | 'MISMATCHED' | 'NOT_CARRIED';
+
+/** Three states rather than a boolean, because "not carried" is not a match. */
+function instanceVerdict(carried: string | undefined, expected: string | undefined): InstanceVerdict {
+  if (!carried) return 'NOT_CARRIED';
+  if (!expected) return 'NOT_CARRIED';
+  return carried === expected ? 'MATCHED' : 'MISMATCHED';
+}
+
+/**
+ * What the control plane asserts about a runtime, which no token can prove.
+ *
+ * A token says what booted and, where the provider carries it, which instance
+ * it booted on. It cannot say whose tenant that runtime is or which deployment
+ * generation it belongs to: those are records, kept by the thing that
+ * provisioned it.
+ */
+export interface RuntimeRecord {
+  runtimeId: string;
+  tenantId: string;
+  /** The instance the control plane provisioned for this runtime. */
+  instance: string;
+  generation: number;
+}
+
+export type BindingVerdict =
+  | {
+      bound: true;
+      /** What the token itself established. */
+      attested: readonly string[];
+      /** What the control plane's own record asserts, which is a different thing. */
+      asserted: readonly string[];
+    }
+  | { bound: false; reasons: readonly string[] };
+
+/**
+ * Whether this evidence belongs to this runtime, this tenant and this generation.
+ *
+ * Kept apart from `judgeConfidentialEvidence` on purpose, and the two lists it
+ * returns are the reason. Folding a record into a verdict about a token turns
+ * "we wrote this down" into "the hardware said so", which is the one
+ * substitution this whole design exists to prevent.
+ *
+ * It refuses rather than warns, because a runtime whose tenant cannot be
+ * established is a runtime that must not be given a tenant's key.
+ */
+export function judgeRuntimeBinding(
+  evidence: ConfidentialEvidence,
+  expect: ConfidentialExpectation,
+  record: RuntimeRecord,
+  expectedGeneration: number,
+): BindingVerdict {
+  const reasons: string[] = [];
+
+  if (expect.runtimeId && expect.runtimeId !== record.runtimeId) {
+    reasons.push(`This verification is about ${expect.runtimeId} and the record is for ${record.runtimeId}.`);
+  }
+  if (expect.instance && expect.instance !== record.instance) {
+    reasons.push(`The expectation names instance ${expect.instance} and the record names ${record.instance}.`);
+  }
+  if (!record.tenantId.trim()) {
+    reasons.push('The record names no tenant, so there is no tenant whose key this could be.');
+  }
+  if (record.generation !== expectedGeneration) {
+    reasons.push(
+      `The record is generation ${record.generation} and ${expectedGeneration} is current. A runtime from an older generation must not unseal newer state, which is what stateGeneration.ts refuses separately.`,
+    );
+  }
+
+  const carried =
+    evidence.provider === 'GOOGLE_CLOUD' ? evidence.claims.instanceId : evidence.claims.vmId;
+  if (!carried) {
+    reasons.push(
+      'The evidence carries no instance identity, so nothing ties this token to the instance the control plane provisioned. On Azure that is the documented two-claim example, and it is not enough for this.',
+    );
+  } else if (carried !== record.instance) {
+    reasons.push(`The token came from instance ${carried} and ${record.instance} is the one recorded for this runtime.`);
+  }
+
+  if (reasons.length > 0) return { bound: false, reasons };
+
+  return {
+    bound: true,
+    attested: [
+      `the token came from instance ${carried}`,
+      'the measurement, the hardware, the debug state and the nonce, which judgeConfidentialEvidence checked',
+    ],
+    asserted: [
+      `instance ${record.instance} is the runtime ${record.runtimeId}`,
+      `runtime ${record.runtimeId} belongs to tenant ${record.tenantId}`,
+      `that runtime is deployment generation ${record.generation}`,
+    ],
+  };
 }
 
 export type ConfidentialVerdict =
@@ -120,6 +235,7 @@ export function judgeConfidentialEvidence(
 
   let measurement = '';
   let tee: TeeKind = expect.tee;
+  let instance: InstanceVerdict = 'NOT_CARRIED';
 
   if (evidence.provider === 'AZURE') {
     const claims = evidence.claims;
@@ -135,6 +251,12 @@ export function judgeConfidentialEvidence(
     }
     if (claims.isolationTee.complianceStatus !== AZURE_COMPLIANT_CVM) {
       reasons.push(`x-ms-isolation-tee.x-ms-compliance-status is ${claims.isolationTee.complianceStatus} rather than ${AZURE_COMPLIANT_CVM}.`);
+    }
+    instance = instanceVerdict(claims.vmId, expect.instance);
+    if (instance === 'MISMATCHED') {
+      reasons.push(
+        `x-ms-azurevm-vmid is ${claims.vmId} and ${expect.instance} is the VM recorded for ${expect.runtimeId ?? 'this runtime'}. A correctly measured runtime belonging to somebody else is still somebody else's.`,
+      );
     }
     /*
       The claim the documented example does not have. Those two claims together
@@ -180,6 +302,12 @@ export function judgeConfidentialEvidence(
       reasons.push('The workload image digest is not one AI17Z published and can reproduce.');
     } else {
       measurement = claims.imageDigest;
+      instance = instanceVerdict(claims.instanceId, expect.instance);
+      if (instance === 'MISMATCHED') {
+        reasons.push(
+          `assertion.submods.gce.instance_id is ${claims.instanceId} and ${expect.instance} is the instance recorded for ${expect.runtimeId ?? 'this runtime'}.`,
+        );
+      }
     }
     if (!claims.softwareVersion) {
       reasons.push('assertion.swversion is absent, so the Confidential Space image version is unknown.');

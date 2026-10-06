@@ -118,6 +118,15 @@ export const AzureAttestationClaims = z
      * runtime.
      */
     attestedPcrValues: z.record(z.string()).optional(),
+    /**
+     * `x-ms-azurevm-vmid`: which VM this token came from.
+     *
+     * Optional in the shape and required by policy, for the same reason as the
+     * PCR values. Without it a token from one correctly-measured runtime
+     * satisfies another runtime's expectation, and a host that holds two of
+     * them can put a nonce it was given to either.
+     */
+    vmId: z.string().trim().min(1).optional(),
     /** When the token was issued, for refusing a replayed one. */
     issuedAt: z.string().datetime(),
     nonce: z.string().trim().min(16),
