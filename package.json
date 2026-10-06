@@ -66,6 +66,7 @@
     "hosted:measure": "tsx tools/measure-runtime.mts",
     "hosted:preflight": "tsx tools/tenant-preflight.mts",
     "hosted:cost": "tsx tools/hosted-cost.mts",
+    "hosted:canary": "tsx tools/hosted-canary.mts",
     "phase1:freeze": "tsx tools/phase1-freeze.mts"
   },
   "devDependencies": {

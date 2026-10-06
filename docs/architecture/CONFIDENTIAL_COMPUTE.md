@@ -163,6 +163,27 @@ So the compute floor for one confidential tenant runtime is between roughly
 egress, backup storage, or the control plane. That figure, not a guess about
 it, is what the pricing model has to clear.
 
+## The canary, as one command
+
+`npm run hosted:canary` renders the whole of it: for each provider, whether the
+adapter could act and the exact credential it is missing with where that
+credential comes from, the provision request verbatim with its monthly cost and
+the security properties it asserts, the key release policy and **what that
+policy binds**, and every operation that would need a live provider shown as the
+call it would make. Then what a canary would prove, what it would **not** prove,
+and the eight steps in order. It exits non-zero while it is blocked, so it
+cannot be mistaken in a script for a canary that passed.
+
+It exists because "blocked on confidential hardware" is a sentence, and a
+sentence cannot be checked. Somebody with a subscription should be able to read
+the output, see the one thing they have to supply, and run the canary; if they
+cannot, the remaining work was not configuration after all and the output says
+which part. Nothing in it provisions, pays for or contacts anything, and
+`tests/unit/hostedCanary.test.ts` holds it to that: the report must say nothing
+was provisioned, no provider may hold a tenant, every live operation must be a
+call that *would* be made, and the Azure policy must still read PLATFORM_ONLY
+rather than being rounded up to the stronger binding.
+
 **These prices are data rather than a table here**, in
 `packages/runtime/src/confidentialSkus.ts`, each carrying when it was read and
 from where, so one can go stale and say so instead of ageing quietly.
