@@ -185,7 +185,15 @@ describe('only the process driving the browser may say the session is gone', () 
     // read X. What it may not do is conclude anything about the account.
     expect(() => canonical(readResult('NEEDS_SIGN_IN'), 'a profile', ctxFor(account))).toThrow(/sign/i);
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    /*
+      Watched rather than slept past, and the direction matters. A sleep then
+      one check cannot tell "it never changed" from "it changed and changed
+      back", and under load it cannot tell a write that correctly never
+      happens from one that simply has not landed yet. So this test would have
+      passed even if the product had wrongly marked the account, as long as the
+      write arrived after 200ms.
+    */
+    await stays(async () => (await statusOf(account.id)).status, 'CONNECTED', { what: "the account's status" });
     const after = await statusOf(account.id);
     expect(after.status).toBe('CONNECTED');
     expect(after.last_error).toBeNull();
@@ -202,8 +210,7 @@ describe('only the process driving the browser may say the session is gone', () 
       'X asked for a sign-in, so nothing was read.',
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect((await statusOf(account.id)).status).toBe('CONNECTED');
+    await stays(async () => (await statusOf(account.id)).status, 'CONNECTED', { what: "the account's status" });
   });
 
   it('ignores one from a worker that takes jobs but drives no browser', async () => {
@@ -222,8 +229,7 @@ describe('only the process driving the browser may say the session is gone', () 
     });
 
     expect(() => canonical(readResult('NEEDS_SIGN_IN'), 'a profile', ctxFor(account))).toThrow(/sign/i);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect((await statusOf(account.id)).status).toBe('CONNECTED');
+    await stays(async () => (await statusOf(account.id)).status, 'CONNECTED', { what: "the account's status" });
   });
 
   it('ignores one from a browser worker that stopped heartbeating', async () => {
@@ -238,7 +244,6 @@ describe('only the process driving the browser may say the session is gone', () 
     );
 
     expect(() => canonical(readResult('NEEDS_SIGN_IN'), 'a profile', ctxFor(account))).toThrow(/sign/i);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect((await statusOf(account.id)).status).toBe('CONNECTED');
+    await stays(async () => (await statusOf(account.id)).status, 'CONNECTED', { what: "the account's status" });
   });
 });
