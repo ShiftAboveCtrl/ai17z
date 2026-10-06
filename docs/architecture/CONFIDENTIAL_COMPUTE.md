@@ -174,6 +174,17 @@ call it would make. Then what a canary would prove, what it would **not** prove,
 and the eight steps in order. It exits non-zero while it is blocked, so it
 cannot be mistaken in a script for a canary that passed.
 
+`npm run hosted:canary -- --emit <dir>` goes one step further and writes each
+rendered body to a file beside the one command that would send it, with a README
+carrying the credentials to supply first, the ordered steps, and what the canary
+would not prove. **There is no Terraform or Bicep here on purpose**: the
+provision body is rendered from the typed contract by the adapter, so a second
+hand-maintained copy in another language would be the duplication this codebase
+keeps refusing. The cost of that choice is that a body printed to a terminal is
+not something anybody can send, and this is what closes it. Every value that is
+the owner's stays a `{placeholder}`, and a test asserts the emitted files carry
+no bearer token and no identifier shaped like a subscription.
+
 It exists because "blocked on confidential hardware" is a sentence, and a
 sentence cannot be checked. Somebody with a subscription should be able to read
 the output, see the one thing they have to supply, and run the canary; if they
