@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { accounts as accountsRepo, query, workers as workersRepo } from '@xbam/database';
 import { thisWorkerId } from '@xbam/shared';
 import { canonicalOrPage as canonical, noteSignedOut } from '@xbam/channels';
+import { becomes, stays } from '../support/eventually';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 
@@ -83,8 +84,12 @@ describe('a read that finds the session gone says so', () => {
     expect(() => canonical(readResult('NEEDS_SIGN_IN'), 'a profile', ctxFor(account))).toThrow(/sign/i);
 
     // The write is deliberately not awaited inside `canonical`, because telling
-    // the owner must not slow a read down. It still has to land.
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // the owner must not slow a read down. It still has to land, so this waits
+    // for it rather than guessing how long it takes: a flat 150 ms was plenty
+    // here and not plenty on a loaded CI runner, where it failed reporting
+    // "expected 'CONNECTED' to be 'SESSION_EXPIRED'" as though the product had
+    // broken.
+    await becomes(async () => (await statusOf(account.id)).status, 'SESSION_EXPIRED', { what: "the account's status" });
     const after = await statusOf(account.id);
     expect(after.status).toBe('SESSION_EXPIRED');
     expect(after.last_error).toMatch(/sign in again/i);
@@ -103,8 +108,9 @@ describe('a read that finds the session gone says so', () => {
     const fresh = (await accountsRepo.getAccount(account.id))!;
 
     expect(() => canonical(readResult('NEEDS_SIGN_IN'), 'a profile', ctxFor(fresh))).toThrow();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect((await statusOf(account.id)).status).toBe('NEEDS_AUTH');
+    // Watched rather than slept through: a single check at the end cannot tell
+    // "it never changed" from "it changed and changed back".
+    await stays(async () => (await statusOf(account.id)).status, 'NEEDS_AUTH', { what: "the account's status" });
   });
 
   /*
@@ -117,8 +123,7 @@ describe('a read that finds the session gone says so', () => {
     await asTheBrowserWorker();
 
     expect(() => canonical(readResult('RATE_LIMITED'), 'a profile', ctxFor(account))).toThrow();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect((await statusOf(account.id)).status).toBe('CONNECTED');
+    await stays(async () => (await statusOf(account.id)).status, 'CONNECTED', { what: "the account's status" });
   });
 });
 
@@ -146,7 +151,7 @@ describe('the radar records a lost session as well', () => {
       'X asked for a sign-in, so nothing was read.',
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await becomes(async () => (await statusOf(account.id)).status, 'SESSION_EXPIRED', { what: "the account's status" });
     const after = await statusOf(account.id);
     expect(after.status).toBe('SESSION_EXPIRED');
     expect(after.last_error).toMatch(/sign-in/i);

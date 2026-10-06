@@ -178,7 +178,30 @@ real accounts by its authors.
 | Agent packages: share, move, export | Shipped |
 | Windows, macOS and Ubuntu packaging | Shipped |
 | Agent wallet: owner-approved, read-only to models | Shipped, disabled by default |
-| Hosted runtimes and agentic trading | **In development, not released** |
+| Hosted runtimes | Runtime proved, **not sold**: see below |
+| Agentic trading | Complete to the signing boundary, **no funded order** |
+
+**Hosted runtimes, specifically.** The runtime a customer would rent exists and
+runs: AI17Z boots inside its own virtual machine, from a plan this repository
+renders, with its own kernel, database, key, disk and unprivileged user. Two
+tenants run side by side and neither can reach the other's runtime while that
+runtime is answering its own. Six run at once at about 531 MB each. A tenant
+killed as hard as a power cut comes back with everything it had. A tenant is
+provisioned end to end by the step machine in
+[`tenantProvisioning.ts`](packages/runtime/src/tenantProvisioning.ts).
+
+**It is not sold, and the reason is the whole point.** The offer would be that
+whoever runs the machine cannot read your agent. On ordinary hardware that is
+false: tenants are isolated from each other and not from an administrator. What
+changes it is confidential hardware with attestation-gated key release, and
+none has been provisioned, so the attestation verifier, the measurement policy,
+the key-release interface and both cloud adapters are built and tested against
+fixtures rather than against a machine. Phase 1 contracts are frozen as a
+candidate with that canary outstanding.
+[CONFIDENTIAL_COMPUTE.md](docs/architecture/CONFIDENTIAL_COMPUTE.md) is the
+research, the costs and the provider comparison;
+[HOSTING.md](docs/architecture/HOSTING.md) is what was measured and what has
+deliberately not been claimed.
 
 Releases are versioned with strict semver and every one is gated on the full
 test suite, a cold typecheck, lint, a production web build, a production
