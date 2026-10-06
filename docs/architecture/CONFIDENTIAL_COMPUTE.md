@@ -185,6 +185,43 @@ figure is **not recorded here**, because getting it from the Cloud Billing
 Catalog API needs an API key this repository does not have, and reciting N2D
 prices from memory is exactly what this document is written to avoid.
 
+## The recommendation, and the one thing it waits on
+
+**On the security requirement alone, Google Confidential Space is the better
+fit, and it is not close.** The requirement is that a modified runtime must not
+receive tenant secrets and a debug-enabled guest must be refused. Confidential
+Space asserts `assertion.submods.container.image_digest` and
+`assertion.dbgstat` as first-class claims, so a policy can say exactly that in
+two lines. Azure's documented CVM release policy asserts that the platform is a
+compliant SEV-SNP confidential VM, which is a real and strong claim about the
+platform and says nothing about which image booted. Binding an Azure release to
+an approved AI17Z runtime needs the guest measurement, which lives in the
+SEV-SNP report and the measured-boot PCR values, and the documentation names a
+PCR claim in the Trusted Launch context rather than in the CVM release-policy
+example. That is a design task with a documented path, and it is more work than
+the example suggests.
+
+**On cost, Azure is the only one that can currently be compared at all.** Its
+prices are in the retail prices API and are recorded here with the date they
+were read. Google's SEV-SNP premium is published and small; its all-in instance
+price needs a Cloud Billing Catalog credential this repository does not have.
+So the honest comparison is a floor of $38 to $90 a month against an unknown.
+
+**Therefore: Google is recommended, conditional on its all-in cost landing
+within about one and a half times Azure's floor.** If it does, the stronger
+claim set is worth it, because the thing being sold is precisely the claim
+Confidential Space makes and Azure's documented example does not. If it does
+not, Azure plus the PCR work is the better trade, and that work is bounded and
+documented rather than speculative.
+
+**This is a recommendation and not a selection.** Nothing has been provisioned
+on either provider, no attestation has been verified against real hardware, and
+`CONFIDENTIAL_PROVIDERS_ENABLED` is empty. A selection made without a canary is
+a preference wearing a decision's clothes, and both adapters are built so that
+the canary decides rather than this paragraph: `confidentialProvider.ts` is
+cloud-neutral, `hostScheduler.ts` contains no provider name, and each adapter
+renders the request it would send rather than being trusted to be right.
+
 ## What this means for the product
 
 Two vCPUs and eight gigabytes is the smallest confidential unit that exists, so
