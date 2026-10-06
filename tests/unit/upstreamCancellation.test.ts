@@ -1,3 +1,4 @@
+import { becomes } from '../support/eventually';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -126,9 +127,13 @@ describe('abandoning an invocation', () => {
     registerUpstream(fake.upstream);
     registerCapability(reader('test.slot', 'narrow', 120));
 
-    // Occupies the only slot for 600ms.
+    // Occupies the only slot for 600ms. Waited for rather than slept past:
+    // thirty milliseconds is a guess that this call has reached the upstream
+    // and taken the slot, and if it has not then the abandoned call below
+    // takes the slot instead and the test is measuring something else
+    // entirely. The upstream having been called is the actual signal.
     const holding = ask<{ of: string }, string>('narrow', { of: 'holding' });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await becomes(async () => fake.calls.length, 1, { what: 'calls that reached the upstream' });
 
     // Queues behind it and gives up after 120ms, well before the slot frees.
     const abandoned = await invoke('test.slot');
