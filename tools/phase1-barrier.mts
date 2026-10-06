@@ -431,6 +431,12 @@ if (!asJson) {
     process.stdout.write('Uncheckable is not met. These need something that does not exist yet:\n');
     for (const i of uncheckable) process.stdout.write(`  ${i.n}. ${i.requirement}\n`);
     process.stdout.write('\n');
+    // Pointing at the command rather than restating the blocker. "Needs
+    // confidential hardware" is a sentence somebody has to take on trust;
+    // hosted:canary renders every request that hardware would receive and
+    // names the exact credential each provider is missing, so whether the
+    // remaining work really is configuration can be read instead of believed.
+    process.stdout.write('  npm run hosted:canary names exactly what each provider is missing, and renders every request a canary would send.\n\n');
   }
   if (notMet.length > 0) {
     process.stdout.write('Not met:\n');
