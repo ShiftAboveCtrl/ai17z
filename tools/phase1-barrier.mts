@@ -217,6 +217,19 @@ add(
 
 const cost = read('packages/runtime/src/hostedCost.ts');
 
+/*
+  Read from the freeze manifest rather than decided here. A barrier that
+  declared its own freeze status would be marking its own work, and the
+  manifest is the thing phase1:freeze checks the contracts against.
+*/
+const frozenStatus = (() => {
+  try {
+    return (JSON.parse(read('docs/architecture/PHASE1_FREEZE.json')) as { status?: string }).status ?? '';
+  } catch {
+    return '';
+  }
+})();
+
 add(16, 'A cloud pricing model exists', cost.includes('monthlyRuntimeCost') ? 'MET' : 'NOT_MET', 'hostedCost.ts, with every line dated and sourced.');
 
 const footprint = read('packages/runtime/src/tenantFootprint.ts');
@@ -342,8 +355,10 @@ add(
 add(
   30,
   'Phase 1 contracts are frozen',
-  'NOT_MET',
-  'Nothing is frozen while items above are unmet. A freeze over an unsatisfied barrier is a freeze of the wrong thing.',
+  frozenStatus === 'CANDIDATE_WITH_HARDWARE_CANARY_PENDING' ? 'MET' : 'NOT_MET',
+  frozenStatus === 'CANDIDATE_WITH_HARDWARE_CANARY_PENDING'
+    ? 'Fifteen contracts are frozen as CANDIDATE_WITH_HARDWARE_CANARY_PENDING, which is the only status available while no confidential VM has been provisioned: the attestation and key-release contracts are frozen as a design that has never met the hardware it is about. The freeze stores each surface as the names it is made of, so a mismatch says which export or field moved rather than only that something did, and phase1:freeze fails when one does.'
+    : `Nothing is frozen${frozenStatus ? ` beyond a status of ${frozenStatus}` : ''}. A freeze over an unsatisfied barrier is a freeze of the wrong thing, and a freeze claiming more than CANDIDATE_WITH_HARDWARE_CANARY_PENDING while no hardware has been met would be the substitution the architecture exists to prevent.`,
 );
 
 // ---------------------------------------------------------------------------

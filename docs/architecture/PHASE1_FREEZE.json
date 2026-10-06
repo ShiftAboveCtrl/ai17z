@@ -1,0 +1,105 @@
+{
+  "status": "CANDIDATE_WITH_HARDWARE_CANARY_PENDING",
+  "why": [
+    "No confidential VM has been provisioned, so the attestation and key-release contracts are frozen as a design that has never met the hardware it is about.",
+    "The private venue adapters are frozen against their public contracts, and none has read a real venue.",
+    "Calling this production confidential proven would be the substitution the architecture exists to prevent."
+  ],
+  "frozenAt": "2026-10-06T08:45:20.859Z",
+  "publicCoreHead": "0e1751a9f7adc917829540f19186f2988157de56",
+  "privatePluginHeads": {
+    "note": "Recorded by whoever froze, from the private workspace. Not read from here: this repository must not know the path."
+  },
+  "contracts": {
+    "migrations": {
+      "what": "106 migrations, 0106_runtime_classes.sql last",
+      "why": "An applied migration is never edited, so the list is append-only and a change to it is a change to every installed database.",
+      "value": "77c1fcf922008112",
+      "surface": "0001_foundation.sql,0002_agents.sql,0003_pipelines.sql,0004_accounts.sql,0005_runtime.sql,0006_actions.sql,0007_memory.sql,0008_ops.sql,0009_browser_tasks.sql,0010_legacy_ledger.sql,0011_browser_channel.sql,0012_deepseek_provider.sql,0013_browser_routing.sql,0014_preflight_task.sql,0015_pipeline_execution.sql,0016_edge_branch_key.sql,0017_persona_sources.sql,0018_cadence.sql,0019_capabilities.sql,0020_account_states.sql,0021_cancel_auth.sql,0022_worker_presence.sql,0023_account_status_check.sql,0024_social_radar.sql,0025_multimodal.sql,0026_model_roles.sql,0027_trace_types.sql,0028_node_kinds.sql,0029_relationships.sql,0030_relationship_node.sql,0031_stances.sql,0032_stance_nodes.sql,0033_engagement_nodes.sql,0034_voice.sql,0035_voice_nodes.sql,0036_arcs_entities.sql,0037_content.sql,0038_persona_sync_queue.sql,0039_worker_tools.sql,0040_browser_engine.sql,0041_browser_tabs.sql,0042_posting_schedule.sql,0043_shutdown_browser_task.sql,0044_research_trace.sql,0045_research_node.sql,0046_actions_updated_at.sql,0047_reply_triggers.sql,0048_knowledge_sources.sql,0049_xai_provider.sql,0050_content_idea_lifecycle.sql,0051_commitment_followups.sql,0052_commitments_updated_at.sql,0053_action_blocked_trace.sql,0054_owner_notifications.sql,0055_knowledge_url_sources.sql,0056_research_model_role.sql,0057_google_provider.sql,0058_radar_source_null_target.sql,0059_account_login_credentials.sql,0060_animal_provider.sql,0061_repost_action.sql,0062_retire_http_fetch_tool.sql,0063_capability_invocations.sql,0064_capability_used_trace.sql,0065_post_analytics.sql,0066_experiments.sql,0067_account_analytics.sql,0068_agent_capability_permissions.sql,0069_agent_capability_config.sql,0070_upstream_quota.sql,0071_feed_subscriptions.sql,0072_persona_collection_task.sql,0073_persona_source_progress.sql,0074_x_account_observations.sql,0075_deliberation.sql,0076_repository_watch.sql,0077_reflection_reason.sql,0078_repo_backfill.sql,0079_retire_legacy_narratives.sql,0080_engagement_intentions.sql,0081_rehearsal_task.sql,0082_retire_action_attempts.sql,0083_capability_offered_trace.sql,0084_post_views.sql,0085_timeline_views.sql,0086_installed_plugins.sql,0087_plugin_rows_follow_the_plugin.sql,0088_radar_source_side_work.sql,0089_autonomy_controls.sql,0090_owner_target_activity.sql,0091_x_capacity.sql,0092_agent_learning.sql,0093_studio_marketplace_ledger.sql,0094_studio_purchase_legs.sql,0095_reply_chain_index.sql,0096_research_fabric.sql,0097_knowledge_collections.sql,0098_agent_foundry.sql,0099_agent_test_suites.sql,0100_owner_chat.sql,0101_spam_defense.sql,0102_agent_changes.sql,0103_agent_wallets.sql,0104_agent_trading.sql,0105_hosted_runtimes.sql,0106_runtime_classes.sql"
+    },
+    "hostProtocol": {
+      "what": "hostDaemon.ts exports",
+      "why": "What a host says about itself and what the control plane may ask it. A host running an older build speaks this.",
+      "value": "db0e5ffcc34cdfc2",
+      "surface": "BROWSER_SLOT_MEMORY_MB,DaemonDecision,DaemonState,GUEST_HOST_OVERHEAD_MB,HEARTBEAT_EVERY_SEC,HOST_OVERHEAD,MachineReport,assignmentIsAcceptable,capacityFrom,daemonTick,hostMayAcceptTenants,runtimeSlotMemoryMb,thumbprintOf"
+    },
+    "runtimeProtocol": {
+      "what": "microVm.ts exports",
+      "why": "How a guest is described and launched. A plan rendered by one version and booted by another has to agree.",
+      "value": "1815ce407bda6409",
+      "surface": "CONFIG_IN_JAIL,DURABLE_CACHE,DriveCache,GuestImage,GuestIsolation,GuestReport,GuestResources,GuestVerdict,IN_JAIL,LaunchVerdict,MICROVM_CAVEATS,MicroVmPlan,PlanProblem,SharingVerdict,bootConfiguration,guestMatchesPlan,imageFingerprint,jailResources,launchArgv,microVmPlanProblems,plansShareAnything"
+    },
+    "gatewayAuth": {
+      "what": "tenantGateway.ts exports",
+      "why": "How a browser is mapped to an entitled runtime. Changing it changes who can reach whom.",
+      "value": "790828605a74140e",
+      "surface": "ASSIGNMENT_FORBIDDEN_FIELDS,GATEWAY_SCOPES,GatewayDecision,GatewayRefusal,GatewayRequest,GatewayScope,HostAssignment,assignmentFor,authoriseGatewayRequest"
+    },
+    "browserStream": {
+      "what": "screencast exports",
+      "why": "The frames an owner watches and the bounds on them.",
+      "value": "7c04ee24d4f87451",
+      "surface": "ScreencastBounds,ScreencastFrame,ScreencastHandle,startScreencast"
+    },
+    "backupFormat": {
+      "what": "backupStoreFs.ts and backupStoreObject.ts exports",
+      "why": "A backup written by one version is restored by another, possibly years later.",
+      "value": "0d0b1c1edc36395b",
+      "surface": "OFF_HOST,backupRoot,describeBackupRoot,filesystemBackupStore,pathFor,useFilesystemBackupStore|OBJECT_STORE_CAVEATS,ObjectStoreConfig,keyIsOwned,objectBackupStore,useObjectBackupStore"
+    },
+    "attestationPolicy": {
+      "what": "AzureAttestationClaims and ConfidentialSpaceClaims fields",
+      "why": "The claims a release policy asserts. A field renamed here is a policy that stops matching real tokens.",
+      "value": "68aba7bb89ff59a9",
+      "surface": "attestedPcrValues,authority,debugStatus,hardwareModel,imageDigest,instanceId,isolationTee,issuedAt,issuedAt,nonce,nonce,softwareVersion,supportAttributes,vmId|confidentialPremiumPerHourUsd,debugStatus,hardwareModel,imageDigest,instanceId,issuedAt,localDiskGb,memoryMb,nonce,pricePerHourUsd,priceSource,pricedAt,provider,region,sku,softwareVersion,supportAttributes,tee,vcpus"
+    },
+    "keyRelease": {
+      "what": "confidentialProvider.ts and hostedSecrets.ts exports",
+      "why": "How a key reaches an attested runtime and what custody it is under.",
+      "value": "91174f35679dbe01",
+      "surface": "ConfidentialProviderAdapter,KeyReleaseRequest,LiveOperation,LiveOutcome,MissingCredential,PROVIDER_CAVEATS,PolicyOutcome,ProviderReadiness,ProvisionOutcome,RenderedPolicy,RenderedRequest,RuntimeRequest,judgeFromAdapter,providerMayHold,requestProblems|CUSTODY_GUARANTEES,RUNTIME_KEY_BYTES,SECRET_PLACEMENT_RULES,carriesSecret,custodyFor,custodyGuaranteesAreComplete,newRuntimeMasterKey,secretsMatch"
+    },
+    "tradeIntent": {
+      "what": "TradeIntent fields and the venue list",
+      "why": "A durable row that exists before any signing boundary. A field renamed orphans every intent already written down.",
+      "value": "e122ecb45d133329",
+      "surface": "agentId,assetIn,assetOut,createdAt,expiresAt,id,idempotencyKey,mandateId,maxFeeBase,maxIn,maxPriceImpactBps,maxSlippageBps,minOut,mode,network,quote,side,status,venue|ABSENT"
+    },
+    "mandate": {
+      "what": "TradeMandate fields",
+      "why": "The owner's own limits. A model may never widen them and a version change must not either.",
+      "value": "2e46fdc06faf0ef4",
+      "surface": "agentId,agentId,allowedAssets,approval,assetIn,assetOut,createdAt,expiresAt,expiresAt,id,id,idempotencyKey,mandateId,maxFeeBase,maxFeeBase,maxIn,maxOpenExposure,maxOpenPositions,maxPerDay,maxPerTrade,maxPriceImpactBps,maxPriceImpactBps,maxSlippageBps,maxSlippageBps,minLiquidityBase,minOut,mode,mode,network,networks,paused,quote,quoteMaxAgeMs,side,status,venue,venues"
+    },
+    "marketSnapshot": {
+      "what": "MarketSnapshot fields",
+      "why": "What a venue reported, stored on the intent it priced. A private adapter on the other side of this returns exactly these.",
+      "value": "003f0ac97a5565fc",
+      "surface": "agentId,allowedAssets,approval,asset,atBlock,expiresAt,feeMicroBps,id,liquidityBase,maxFeeBase,maxOpenExposure,maxOpenPositions,maxPerDay,maxPerTrade,maxPriceImpactBps,maxSlippageBps,minLiquidityBase,mode,network,networks,observedAt,paused,phase,priceBaseUnits,quoteAsset,quoteMaxAgeMs,source,venue,venues"
+    },
+    "financialJournal": {
+      "what": "tradeExecution.ts exports",
+      "why": "What is recorded before a submission and reconciled after one. This is the thing that stops a trade becoming two.",
+      "value": "9e9e0fcf0b3f63d9",
+      "surface": "BroadcastDecision,BroadcastResult,EXECUTION_CAVEATS,NEVER_MODEL_CALLABLE,RemoteAnswer,SignContext,SignVerdict,SurfaceVerdict,UNKNOWN_ATTEMPTS_BEFORE_PERSON,UnknownResolution,afterBroadcast,capabilityCrossesTheLine,maySign,resolveUnknown"
+    },
+    "costModel": {
+      "what": "the cost lines and the confidential SKU list",
+      "why": "A closed list, so a new cost cannot be added without appearing in it, and prices that carry their own dates.",
+      "value": "ab2540c14c75b6c1",
+      "surface": "CONFIDENTIAL_COMPUTE,CONFIDENTIAL_PREMIUM,PERSISTENT_DISK,SNAPSHOT_STORAGE,BACKUP_STORAGE,BACKUP_TRANSFER,NETWORK_EGRESS,PUBLIC_IPV4,LOAD_BALANCER,GPU,CONTROL_PLANE_SHARE,MODEL_API|COMMITMENT_USD,CONFIDENTIAL_SKUS,FloorVerdict,GOOGLE_SEV_SNP_PREMIUM_PER_VCPU_HOUR_USD,PRICE_STALE_AFTER_DAYS,PriceAgeVerdict,REGION_SPREAD,SKU_CAVEATS,SkuForTenant,computeFloor,pricesStillCount,skusForTenant"
+    },
+    "resourceEnvelope": {
+      "what": "tenantFootprint.ts exports and the measured figure",
+      "why": "What a plan is sized from. Changing the measurement changes every host's capacity, so it is a contract rather than a note.",
+      "value": "5434bab1abe4a14e",
+      "surface": "Capacity,FOOTPRINT_CAVEATS,FootprintMethod,FootprintVerdict,HEADROOM,MEASURED_TENANT_FOOTPRINT,STALE_AFTER_DAYS,SizingVerdict,TenantFootprint,judgeFootprint,sizeHoldsTenant,tenantsPerRuntime"
+    },
+    "provisioningSteps": {
+      "what": "the two provisioning step lists",
+      "why": "The order is the design, and a resumed provision reads it. Reordering one changes what a half-finished tenant does next.",
+      "value": "f342b91527cc6dac",
+      "surface": "ABSENT|ATTESTED_PROVISIONING_STEPS,IsolationEvidence,KEY_AND_STATE_STEPS,NextAction,PROVISIONING_CAVEATS,PROVISIONING_STEPS,PROVISIONING_STEP_NAMES,Performer,ProvisioningProgress,ProvisioningStep,ReadyVerdict,custodyProblems,mayMarkReady,nextAction,orphanReport,provisioningProblems,rollbackOrder,stateAfterFailure,stepsFor"
+    }
+  }
+}
