@@ -24,7 +24,7 @@
  *   npx tsx tools/phase1-barrier.mts --json
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
@@ -345,11 +345,56 @@ add(
   which is the clearest possible sign it was measuring the wrong thing.
 */
 const dirty = git('status', '--porcelain');
+
+/**
+ * The installations on this machine, each with the version it is running.
+ *
+ * Read from the folders rather than from the registry, because the registry
+ * names the primary installation and this item is about all of them. An
+ * installation is one only if it carries both files: BUILD_INFO.json says what
+ * is running and INSTALL_INFO.json says a setup program put it there.
+ */
+const installations = ((): { name: string; version: string; commit: string }[] => {
+  const programs = process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs') : '';
+  if (programs === '' || !existsSync(programs)) return [];
+  const found: { name: string; version: string; commit: string }[] = [];
+  for (const name of readdirSync(programs)) {
+    const dir = join(programs, name);
+    if (!existsSync(join(dir, 'INSTALL_INFO.json'))) continue;
+    try {
+      const build = JSON.parse(readFileSync(join(dir, 'BUILD_INFO.json'), 'utf8')) as { version?: string; commit?: string };
+      if (typeof build.version === 'string' && typeof build.commit === 'string') {
+        found.push({ name, version: build.version, commit: build.commit });
+      }
+    } catch {
+      // No BUILD_INFO, or one that is not JSON. Not an installation this can speak for.
+    }
+  }
+  return found.sort((a, b) => a.name.localeCompare(b.name));
+})();
+
+/** Whether a commit is this history, so an installation is running code from it. */
+const isAncestorOfHead = (commit: string): boolean => {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', commit, 'HEAD'], { cwd: ROOT, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const fromThisHistory = installations.filter((i) => isAncestorOfHead(i.commit));
+const strangers = installations.filter((i) => !isAncestorOfHead(i.commit));
+
 add(
   29,
   'Local AI17Z remains healthy',
-  'UNCHECKABLE',
-  `The gates pass here and the tree has ${dirty === '' ? 'no' : String(dirty.split('\n').length)} uncommitted change(s), and both installed instances were measured healthy and undisturbed after this work, their containers up and their APIs answering. But health means an installed instance running this stack, and neither has been updated from it, so nothing here can speak for that. Promoting needs either a published release or a copy of unreleased source, and the second is the route to avoid.`,
+  installations.length === 0 ? 'UNCHECKABLE' : strangers.length > 0 ? 'NOT_MET' : 'MET',
+  installations.length === 0
+    ? 'No installation was found under this user\'s Programs directory, so nothing here can speak for one. This item needs an installed instance running this stack, and promoting one needs a published release rather than a copy of unreleased source.'
+    : strangers.length > 0
+      ? `${strangers.map((i) => `${i.name} is at ${i.version} (${i.commit.slice(0, 12)})`).join(', ')}, which is not a commit in this history. An installation running code this checkout does not contain is one nothing here can reason about.`
+      : `${fromThisHistory.map((i) => `${i.name} runs ${i.version} (${i.commit.slice(0, 12)})`).join(' and ')}, each a commit in this history, and the tree has ${dirty === '' ? 'no' : String(dirty.split('\n').length)} uncommitted change(s). This is read from each installation's own BUILD_INFO.json rather than claimed, because the version an installation reports is the only thing that says what it is running. What it does not read is whether each one answers: that was measured separately, by asking both APIs and both databases after the update, and a published release is what made the update possible at all.`,
 );
 
 add(
