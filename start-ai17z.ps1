@@ -341,6 +341,53 @@ function Test-PortTaken($Port) {
   return [bool](Get-NetTCPConnection -LocalPort ([int]$Port) -State Listen -ErrorAction SilentlyContinue)
 }
 
+# Ports Windows has reserved, which nothing is listening on and nothing may bind.
+#
+# This is the other half of "is this port free", and it was missing. Hyper-V and
+# WSL reserve blocks of ports for their own dynamic use, the blocks move when the
+# machine reboots, and a port inside one has no listener -- so the check above
+# says it is free, Docker then fails to bind it, and what an owner reads is
+# "ports are not available: exposing port TCP 127.0.0.1:8083 ... An attempt was
+# made to access a socket in a way forbidden by its access permissions."
+#
+# Measured: both installed copies here had run for weeks on 8083 and 8091, and
+# Windows later reserved 8041-8140. Nothing about either installation had
+# changed. A port chosen at install time is not a port that stays usable, so
+# this cannot be only an installer check.
+#
+# Read from netsh because there is no cmdlet for it. Failure is silent and
+# returns nothing reserved: a machine that will not answer this question gets
+# the ordinary behaviour rather than a refusal to start.
+# The parsing, separated from the asking, because what netsh prints on a given
+# machine is not something a test can arrange and the parsing of it is.
+function Read-ReservedPortRanges($Lines) {
+  $ranges = @()
+  foreach ($line in $Lines) {
+    # Two numbers alone on a line, optionally followed by the asterisk netsh
+    # puts beside an administered exclusion. The header rows are words and the
+    # rule row is dashes, so neither matches.
+    if ('' + $line -match '^\s*(\d+)\s+(\d+)\s*\*?\s*$') {
+      $ranges += @{ Low = [int]$matches[1]; High = [int]$matches[2] }
+    }
+  }
+  return $ranges
+}
+
+function Get-ReservedPortRanges {
+  try {
+    return Read-ReservedPortRanges (netsh interface ipv4 show excludedportrange protocol=tcp 2>$null)
+  } catch {
+    return @()
+  }
+}
+
+function Get-PortReservation($Port, $Ranges) {
+  foreach ($range in $Ranges) {
+    if ([int]$Port -ge $range.Low -and [int]$Port -le $range.High) { return $range }
+  }
+  return $null
+}
+
 $ourContainers = @()
 try { $ourContainers = @(docker compose @ComposeEnv ps --format '{{.Name}}' 2>$null) } catch { }
 $alreadyOurs = $ourContainers.Count -gt 0
@@ -387,6 +434,26 @@ if (-not $alreadyOurs) {
     @{ Name = 'Web';      Key = 'AI17Z_WEB_PORT';  Port = (Get-EnvPort 'AI17Z_WEB_PORT' '8080') },
     @{ Name = 'Postgres'; Key = 'POSTGRES_PORT';   Port = (Get-EnvPort 'POSTGRES_PORT' '55432') }
   )
+  # Reserved first, because a reserved port is a different problem with a
+  # different fix, and reporting it as "something is already using it" sends
+  # somebody looking for a program that does not exist.
+  $reservedRanges = Get-ReservedPortRanges
+  $reserved = @($wanted | Where-Object { $null -ne (Get-PortReservation $_.Port $reservedRanges) })
+  if ($reserved.Count -gt 0) {
+    $lines = ($reserved | ForEach-Object {
+      $range = Get-PortReservation $_.Port $reservedRanges
+      "    $($_.Name) wants $($_.Port), inside the reserved block $($range.Low)-$($range.High). Set $($_.Key) in .env to a port outside it."
+    }) -join "`n"
+    $extra = "`n`n  Nothing is listening on these: Windows has reserved them, usually for Hyper-V`n" +
+             "  or WSL, and the blocks move when the machine reboots. A port that worked`n" +
+             "  yesterday can be inside one today without anything about AI17Z changing.`n`n" +
+             "  To see every reserved block:`n    netsh interface ipv4 show excludedportrange protocol=tcp"
+    if ($reserved | Where-Object { $_.Key -eq 'POSTGRES_PORT' }) {
+      $extra += "`n`n  Changing POSTGRES_PORT is only half of it: DATABASE_URL carries its own`n  port and is what migrations dial. Change both, to the same number."
+    }
+    Stop-WithReason "Windows has reserved $($reserved.Count) of the ports AI17Z needs." "$lines$extra"
+  }
+
   $taken = @($wanted | Where-Object { Test-PortTaken $_.Port })
   if ($taken.Count -gt 0) {
     $lines = ($taken | ForEach-Object { "    $($_.Name) wants $($_.Port). Set $($_.Key) in .env to something else." }) -join "`n"
