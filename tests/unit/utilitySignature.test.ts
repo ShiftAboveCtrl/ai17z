@@ -20,8 +20,10 @@ import {
   isUtilityCapability,
   utilityAgentName,
   utilityPaperMandate,
+  widenedUtilitySandbox,
   verifyUtilitySignature,
 } from '@xbam/runtime';
+import { AssetRef } from '@xbam/shared/contracts';
 
 const SECRET = 'a-shared-secret-for-tests-only';
 const sign = (timestamp: string, body: string): string => `v1=${createHmac('sha256', SECRET).update(`${timestamp}.${body}`).digest('hex')}`;
@@ -246,5 +248,68 @@ describe('a caller gets its own journal and a paper-only mandate', () => {
 
   it('takes no arguments, so no request shape can influence it', () => {
     expect(utilityPaperMandate.length).toBe(0);
+  });
+
+  it('issues a mandate the contract will actually accept', () => {
+    // It did not. `minLiquidityBase` was '0', `BaseUnits` refuses zero, and
+    // every paper trade through this surface failed on saving the mandate with
+    // "Min Liquidity Base: An amount has to be more than zero". Nothing caught
+    // it because nothing could price a market, so no trade reached the save.
+    const mandate = utilityPaperMandate();
+    expect(BigInt(mandate.minLiquidityBase)).toBeGreaterThan(0n);
+    for (const amount of [mandate.maxPerTrade, mandate.maxPerDay, mandate.maxOpenExposure, mandate.maxFeeBase]) {
+      expect(BigInt(amount)).toBeGreaterThan(0n);
+    }
+  });
+
+  it('allows a network, because an empty list refuses every trade', () => {
+    // The risk gate denies NETWORK_NOT_ALLOWED for a network outside the list,
+    // so an empty list is not a permissive default: it is a closed door that
+    // looks like one.
+    expect(utilityPaperMandate().networks.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the paper sandbox records what a caller explored', () => {
+  const weth = AssetRef.parse({
+    kind: 'ONCHAIN',
+    network: 'ethereum',
+    address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+    decimals: 18,
+  });
+  const usdc = AssetRef.parse({
+    kind: 'ONCHAIN',
+    network: 'ethereum',
+    address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    decimals: 6,
+  });
+
+  it('adds an asset nobody had asked about yet', () => {
+    const widened = widenedUtilitySandbox(utilityPaperMandate(), [usdc, weth]);
+    expect(widened).not.toBeNull();
+    expect(widened!.allowedAssets).toHaveLength(2);
+  });
+
+  it('does nothing the second time, so a mandate is not rewritten per trade', () => {
+    const first = widenedUtilitySandbox(utilityPaperMandate(), [usdc, weth])!;
+    expect(widenedUtilitySandbox(first, [weth, usdc])).toBeNull();
+    // Two references to one asset are one row, not two.
+    expect(widenedUtilitySandbox(utilityPaperMandate(), [weth, weth])!.allowedAssets).toHaveLength(1);
+  });
+
+  it('changes nothing except the asset list', () => {
+    const before = utilityPaperMandate();
+    const after = widenedUtilitySandbox(before, [weth])!;
+    const { allowedAssets: _was, ...restBefore } = before;
+    const { allowedAssets: _now, ...restAfter } = after;
+    // Everything a live trade would rest on is carried across untouched, and
+    // this compares the whole object rather than a list of fields somebody
+    // remembered, so a field added later is covered without being named.
+    expect(restAfter).toEqual(restBefore);
+  });
+
+  it('refuses to touch a mandate that is not paper', () => {
+    // An owner's own mandate is never widened by somebody calling an API.
+    expect(widenedUtilitySandbox({ mode: 'LIVE', allowedAssets: [] }, [weth])).toBeNull();
   });
 });
