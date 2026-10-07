@@ -538,6 +538,35 @@ describe('the release workflow publishes under the derived name', () => {
     expect(existsSync(notes), `docs/release-notes/${version}.md is missing`).toBe(true);
     expect(readFileSync(notes, 'utf8').trim().length).toBeGreaterThan(200);
   });
+
+  /**
+   * The lockfile carries the version too, in two places, and npm only writes
+   * them when it runs.
+   *
+   * `v1.0.0-beta.64` shipped with `package.json` at beta.64 and
+   * `package-lock.json` still saying beta.63, because the bump edited one file
+   * and nothing regenerated the other. Every release from beta.60 to beta.63
+   * had agreed, so this was a regression rather than a standing habit, and no
+   * gate looked: `release:check` walks tracked files for things that must not
+   * ship, and the notes check above reads `package.json` alone.
+   *
+   * It resolved no dependency wrongly, which is why it was invisible. The
+   * installed lockfile digest matched the released source and the running
+   * containers exactly, and Fastify resolved to the same 5.12.5 everywhere. It
+   * is a manifest disagreeing with its own release, which is the class of fault
+   * the beta.63 work was about, so it gets a gate rather than a note.
+   */
+  it('has a lockfile that agrees with package.json, in both places npm writes it', () => {
+    const version = (JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as { version: string }).version;
+    const lock = JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8')) as {
+      version: string;
+      packages: Record<string, { version?: string }>;
+    };
+    expect(lock.version, 'package-lock.json top-level version lags package.json; run npm install --package-lock-only').toBe(version);
+    // npm writes it at the root package entry as well, and a hand edit of one
+    // and not the other is exactly what this is here to catch.
+    expect(lock.packages['']?.version, 'package-lock.json packages[""].version lags package.json').toBe(version);
+  });
 });
 
 /**
