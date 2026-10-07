@@ -294,8 +294,8 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   {
     table: 'browser_tasks',
     column: 'status',
-    values: ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'SUPERSEDED'],
-    note: 'Task lifecycle, owned by the browser-task repository.',
+    values: ['QUEUED', 'PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'SUPERSEDED'],
+    note: 'Task lifecycle, owned by the browser-task repository. QUEUED sits outside browser_tasks_active_key, which is what lets several reads wait while one runs.',
   },
   {
     table: 'commitments',
