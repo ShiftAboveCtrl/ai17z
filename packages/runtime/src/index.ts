@@ -169,6 +169,7 @@ export * from './runtimeMeasurement';
 export * from './stateGeneration';
 export * from './hostedCost';
 export * from './tenantFootprint';
+export * from './utilityCapabilities';
 export * from './confidentialSkus';
 export * from './confidentialProvider';
 export * from './providers/azureConfidential';
