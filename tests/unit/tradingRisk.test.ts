@@ -240,6 +240,24 @@ describe('bounds', () => {
     expect(codes(v)).not.toContain('LIQUIDITY_TOO_LOW');
   });
 
+  it('treats a fee nobody could read as unknown, not as free', () => {
+    // The same rule as the one above, one field over, and it was missing. A
+    // null fee reaches `afterFee` in the paper engine as no fee at all, so the
+    // simulated amount arriving is larger than any real fill could be, which
+    // is the one direction a simulation must never err. Measured rather than
+    // imagined: a Curve tri-crypto pool reports `pool_fee_percentage: null`
+    // while a Uniswap V3 pool reports 0.05.
+    const v = ask({ fresh: snapshot({ feeMicroBps: null }) });
+    expect(v.allowed).toBe(false);
+    expect(codes(v)).toContain('FEE_UNKNOWN');
+  });
+
+  it('allows a fee of nothing when the venue actually said nothing', () => {
+    // Zero is a reading. A venue that charges no fee is not a venue that
+    // declined to say, and conflating them would refuse a legitimate market.
+    expect(codes(ask({ fresh: snapshot({ feeMicroBps: 0 }) }))).not.toContain('FEE_UNKNOWN');
+  });
+
   it('refuses a venue, network or asset the mandate never allowed', () => {
     expect(codes(ask({ mandate: mandate({ venues: ['PONS_V1'] }) }))).toContain('VENUE_NOT_ALLOWED');
     expect(codes(ask({ mandate: mandate({ networks: ['ethereum'] }) }))).toContain('NETWORK_NOT_ALLOWED');

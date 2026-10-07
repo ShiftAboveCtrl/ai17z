@@ -27,8 +27,16 @@ export interface MarketReader {
    * and throws a sentence when the read failed. Those are different: a venue
    * that does not list an asset is an answer, and a node that timed out is
    * not, and a trade must never be priced off the difference being ignored.
+   *
+   * `quote` is what the price is wanted in, and a reader that cannot answer in
+   * it must return null rather than answer in something else. It is optional
+   * because a venue with one quote asset has nothing to choose, and it exists
+   * because a venue with many has everything to choose: measured live, the
+   * representative pool for WETH was a WETH/WBTC pool, so a trade meant to be
+   * priced in a dollar stablecoin was priced in Bitcoin. The price was true
+   * and it was the answer to a different question.
    */
-  read(asset: AssetRef, venue: TradeVenue): Promise<MarketSnapshot | null>;
+  read(asset: AssetRef, venue: TradeVenue, quote?: AssetRef): Promise<MarketSnapshot | null>;
 }
 
 const readers = new Map<string, MarketReader>();
@@ -73,13 +81,13 @@ export type MarketOutcome =
  * question than the one asked is the shape of a bug that prices one token off
  * another.
  */
-export async function readMarket(asset: AssetRef, venue: TradeVenue): Promise<MarketOutcome> {
+export async function readMarket(asset: AssetRef, venue: TradeVenue, quote?: AssetRef): Promise<MarketOutcome> {
   const reader = readers.get(venue);
   if (!reader) return { outcome: 'NO_READER', detail: marketReadiness(venue).detail };
 
   let raw: MarketSnapshot | null;
   try {
-    raw = await reader.read(asset, venue);
+    raw = await reader.read(asset, venue, quote);
   } catch (error) {
     return { outcome: 'UNAVAILABLE', detail: (error as Error).message || 'The market read failed.' };
   }
@@ -95,6 +103,16 @@ export async function readMarket(asset: AssetRef, venue: TradeVenue): Promise<Ma
   }
   if (assetKey(snapshot.asset) !== assetKey(asset)) {
     return { outcome: 'UNAVAILABLE', detail: 'The reader answered about a different asset than the one asked for.' };
+  }
+  if (quote !== undefined && assetKey(snapshot.quoteAsset) !== assetKey(quote)) {
+    // A true price in the wrong unit, which is the hardest kind of wrong to
+    // notice: it is in range, it moves with the market, and it is the answer
+    // to a question nobody asked. Caught here as well as in the reader so a
+    // reader that ignores the argument cannot quietly succeed.
+    return {
+      outcome: 'UNAVAILABLE',
+      detail: 'The reader priced this in something other than the asset asked for, so the number is not about this trade.',
+    };
   }
   if (snapshot.phase !== TRADE_VENUES[venue].phase) {
     // A curve venue answering with a pool phase, or the reverse, means the

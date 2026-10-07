@@ -27,6 +27,7 @@ import {
 import { InstallationQuotaCoordinator } from './upstreamQuota';
 import { registerInstalledPlugins } from './plugins';
 import { registerChainCapabilities } from './chainCapabilities';
+import { POOL_VENUES, registerPoolMarketReader } from './poolMarketReader';
 import { registerContractCapabilities } from './contractCapabilities';
 import { registerDefiCapabilities } from './defiCapabilities';
 import { registerTokenRiskCapabilities } from './tokenRiskCapabilities';
@@ -177,6 +178,16 @@ export async function bootstrapRuntime(): Promise<void> {
   registerScholarCapabilities();
   registerEntityCapabilities();
   registerSecCapabilities();
+
+  /*
+   * The market reader, registered after the upstream it asks.
+   *
+   * Here rather than at import time for the same reason as everything above
+   * it, and for one more: a test that installs its own reader on a pool venue
+   * must not have to undo one that arrived by being mentioned.
+   */
+  registerPoolMarketReader();
+  log.info('market readers installed', { venues: POOL_VENUES });
 
   await upgradePipelinesWithResearch().catch((error) =>
     log.warn('could not add the research node to existing pipelines', { message: errorMessage(error) }),

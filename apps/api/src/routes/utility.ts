@@ -234,8 +234,8 @@ async function runUtilityCapability(
       return { ok: true, simulated: true, portfolio: await paperPortfolio(agentId) };
     }
     case 'market.snapshot': {
-      const i = input as { subject: AssetRef; venue: TradeVenue };
-      const read = await readMarket(i.subject, i.venue);
+      const i = input as { subject: AssetRef; venue: TradeVenue; quote?: AssetRef };
+      const read = await readMarket(i.subject, i.venue, i.quote);
       // The outcome travels rather than being flattened to null: "no reader for
       // this venue" and "the venue answered with no liquidity" are different
       // facts and a caller has to be able to tell them apart.

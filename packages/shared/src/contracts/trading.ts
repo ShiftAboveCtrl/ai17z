@@ -47,6 +47,23 @@ export const TRADE_VENUES = {
   PUMP_CURVE: { label: 'Pump.fun (bonding curve)', family: 'SOLANA', networks: ['solana'], phase: 'CURVE' },
   PUMP_SWAP: { label: 'PumpSwap', family: 'SOLANA', networks: ['solana'], phase: 'POOL' },
   ROBINHOOD: { label: 'Robinhood', family: 'BROKER', networks: [], phase: 'BROKER' },
+  /**
+   * A public automated market maker pool, named for what it is rather than for
+   * one operator's brand.
+   *
+   * Kept distinct from Pons and Pump on purpose. Those are specific mechanisms
+   * with their own arithmetic and their own transaction shapes, and flattening
+   * them into "a pool" is the mistake the comment above is about. This is the
+   * ordinary case they are not: a constant-product or concentrated-liquidity
+   * pool on a public chain, which anybody can read without a credential.
+   *
+   * It exists because reading a market and executing on one are separate
+   * problems. A venue nothing can price is a venue nothing can simulate
+   * against, so paper trading had no real market at all while the only venues
+   * named were ones whose adapters are not in this repository.
+   */
+  AMM_POOL_EVM: { label: 'Public AMM pool (EVM)', family: 'EVM', networks: ['ethereum', 'bnb'], phase: 'POOL' },
+  AMM_POOL_SOLANA: { label: 'Public AMM pool (Solana)', family: 'SOLANA', networks: ['solana'], phase: 'POOL' },
 } as const satisfies Record<
   string,
   { label: string; family: WalletFamily | 'BROKER'; networks: readonly WalletNetwork[]; phase: 'CURVE' | 'POOL' | 'BROKER' }
