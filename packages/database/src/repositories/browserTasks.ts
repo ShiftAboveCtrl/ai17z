@@ -61,11 +61,59 @@ export const BROWSER_TASK_KINDS = [
 ] as const;
 export type BrowserTaskKind = (typeof BROWSER_TASK_KINDS)[number];
 
+/**
+ * Kinds where a second request is a *different* intention, so it waits rather
+ * than replacing the one before it.
+ *
+ * Every one of these names a target in its parameters: a handle to read, a
+ * handle to learn a voice from, a post to rehearse against. Asking to read
+ * Alice and then Bob is two requests and has to stay two.
+ *
+ * Everything not listed keeps replacing: pressing Connect again means "do it
+ * now", not "do it twice", and a newer sign-in request genuinely supersedes an
+ * older one.
+ */
+export const QUEUEABLE_BROWSER_TASK_KINDS: readonly BrowserTaskKind[] = ['READ_X_ACCOUNT', 'COLLECT_PERSONA', 'REHEARSE_X_POST'];
+
+/**
+ * How deep one account's queue may get.
+ *
+ * A bound rather than a policy: a loop that asks for a thousand reads is a bug
+ * somewhere else, and a queue that accepts them turns it into a browser holding
+ * an account's X budget for a day. Refused with a sentence rather than
+ * silently dropped, which is the fault this whole change is about.
+ */
+export const MAX_QUEUED_BROWSER_TASKS = 20;
+
+/**
+ * What a queueable task is *about*, so two requests for the same thing coalesce.
+ *
+ * Read off the parameters each route already sends rather than from a new
+ * column, because the target is already there and a second place to record it
+ * is a second thing to keep in step. A kind with no target never coalesces,
+ * which is the safe direction: it queues.
+ */
+export function browserTaskTarget(kind: BrowserTaskKind, params: Record<string, unknown> | null | undefined): string | null {
+  const read = (key: string): string | null => {
+    const value = (params ?? {})[key];
+    return typeof value === 'string' && value.trim() !== '' ? value.trim().toLowerCase() : null;
+  };
+  switch (kind) {
+    case 'READ_X_ACCOUNT':
+    case 'COLLECT_PERSONA':
+      return read('handle');
+    case 'REHEARSE_X_POST':
+      return read('postRef');
+    default:
+      return null;
+  }
+}
+
 export interface BrowserTaskRow {
   id: string;
   accountId: string | null;
   kind: BrowserTaskKind;
-  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  status: 'QUEUED' | 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'SUPERSEDED';
   requestedBy: string | null;
   params: Record<string, unknown>;
   result: Record<string, unknown> | null;
@@ -95,6 +143,18 @@ export async function enqueueBrowserTask(input: {
   requestedBy: string | null;
   params?: Record<string, unknown>;
 }): Promise<BrowserTaskRow> {
+  // A system task belongs to no account and has no lane to queue in, so only an
+  // account-bound task of a target-carrying kind can wait.
+  const queueableAccount = QUEUEABLE_BROWSER_TASK_KINDS.includes(input.kind) ? input.accountId : null;
+
+  // Two requests for the same thing are one request. Checked before inserting
+  // rather than after colliding, because the existing one may be QUEUED and so
+  // would not collide at all.
+  if (queueableAccount !== null) {
+    const existing = await sameTargetAlreadyWaiting(queueableAccount, input.kind, input.params ?? {});
+    if (existing) return existing;
+  }
+
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const row = await queryOne(
@@ -106,7 +166,13 @@ export async function enqueueBrowserTask(input: {
     } catch (error) {
       if (!isUniqueViolation(error) || attempt === 1) throw error;
 
-      // Free whatever is standing in the way, if it is not actually working.
+      // Something is already active on this account. For a kind that names a
+      // target, this request is a different one and waits its turn; the worker
+      // promotes it when the account has nothing active. For everything else
+      // the older task is an intention rather than an operation, and is
+      // replaced.
+      if (queueableAccount !== null) return await queueBehind({ ...input, accountId: queueableAccount });
+
       const cleared = await clearBlockingTask(input.accountId, input.kind);
       if (!cleared.freed) {
         throw new ConflictError(cleared.message, { taskId: cleared.taskId });
@@ -115,6 +181,55 @@ export async function enqueueBrowserTask(input: {
   }
   // The loop either returns or throws; this satisfies the compiler.
   throw new ConflictError('That browser task could not be queued.');
+}
+
+/** An unfinished request for the same target, which this one would duplicate. */
+async function sameTargetAlreadyWaiting(
+  accountId: string,
+  kind: BrowserTaskKind,
+  params: Record<string, unknown>,
+): Promise<BrowserTaskRow | null> {
+  const target = browserTaskTarget(kind, params);
+  if (target === null) return null;
+  const rows = mapRows<BrowserTaskRow>(
+    await query(
+      `SELECT * FROM browser_tasks
+        WHERE account_id = $1 AND kind = $2 AND status IN ('QUEUED','PENDING','RUNNING')
+        ORDER BY created_at`,
+      [accountId, kind],
+    ),
+  );
+  return rows.find((row) => browserTaskTarget(row.kind, row.params) === target) ?? null;
+}
+
+/**
+ * Records a request that has to wait, without taking the browser lane.
+ *
+ * QUEUED is outside `browser_tasks_active_key`, so this cannot collide with the
+ * active task, and exclusivity stays the index's to enforce.
+ */
+async function queueBehind(input: {
+  accountId: string;
+  kind: BrowserTaskKind;
+  requestedBy: string | null;
+  params?: Record<string, unknown>;
+}): Promise<BrowserTaskRow> {
+  const waiting = await queryOne<{ n: string }>(
+    `SELECT count(*)::text AS n FROM browser_tasks WHERE account_id = $1 AND status = 'QUEUED'`,
+    [input.accountId],
+  );
+  if (Number(waiting?.n ?? '0') >= MAX_QUEUED_BROWSER_TASKS) {
+    throw new ConflictError(
+      `${MAX_QUEUED_BROWSER_TASKS} browser requests are already waiting on this account. ` +
+        'Let those finish before asking for more.',
+    );
+  }
+  const row = await queryOne(
+    `INSERT INTO browser_tasks (account_id, kind, requested_by, params, status)
+     VALUES ($1,$2,$3,$4::jsonb,'QUEUED') RETURNING *`,
+    [input.accountId, input.kind, input.requestedBy, JSON.stringify(input.params ?? {})],
+  );
+  return mapRow<BrowserTaskRow>(row) as BrowserTaskRow;
 }
 
 /**
@@ -213,13 +328,34 @@ export async function listBrowserTasks(accountId: string, limit = 20): Promise<B
   );
 }
 
-/** Claims one pending task. Only the worker calls this. */
+/**
+ * Claims one task. Only the worker calls this.
+ *
+ * A QUEUED task is claimable only while its account has nothing PENDING or
+ * RUNNING, which is what makes waiting in line safe: one browser per profile
+ * throughout. The `NOT EXISTS` is belt as well as braces, because
+ * `browser_tasks_active_key` would refuse the update anyway -- but a unique
+ * violation on every poll is a worker fighting the database rather than
+ * reading it, so the condition is stated here too.
+ *
+ * Ordered by creation across both statuses, so a queued read that has been
+ * waiting is served before a request that arrived a moment ago.
+ */
 export async function claimBrowserTask(workerId: string): Promise<BrowserTaskRow | null> {
   const row = await queryOne(
     `UPDATE browser_tasks SET status = 'RUNNING', started_at = now(), locked_by = $1
       WHERE id = (
-        SELECT id FROM browser_tasks WHERE status = 'PENDING'
-         ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
+        SELECT t.id FROM browser_tasks t
+         WHERE t.status = 'PENDING'
+            OR (
+              t.status = 'QUEUED'
+              AND NOT EXISTS (
+                SELECT 1 FROM browser_tasks active
+                 WHERE active.account_id IS NOT DISTINCT FROM t.account_id
+                   AND active.status IN ('PENDING', 'RUNNING')
+              )
+            )
+         ORDER BY t.created_at FOR UPDATE SKIP LOCKED LIMIT 1
       )
       RETURNING *`,
     [workerId],

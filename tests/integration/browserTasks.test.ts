@@ -190,3 +190,151 @@ describe('worker presence', () => {
     expect(await workers.browserWorkerPresent()).toBe(false);
   });
 });
+
+/**
+ * Two reads of two people are two requests.
+ *
+ * `browser_tasks_active_key` allows one PENDING or RUNNING task per account,
+ * because a Chrome profile is held by one process. The index is right. What was
+ * wrong is that a collision superseded the pending task, which is correct for
+ * CONNECT and OPEN_AUTH -- pressing Connect twice means "do it now" -- and
+ * wrong for a read, where the second request names somebody else.
+ *
+ * Measured on a real installation before the fix: two READ_X_ACCOUNT requests
+ * for different handles produced one observation. The first ended SUPERSEDED
+ * with "Replaced by a newer request for the same account." and that person was
+ * never read.
+ */
+describe('a request that names a target waits rather than deleting the one before it', () => {
+  it('keeps both reads, and the second one waits', async () => {
+    const fixture = await createFixture();
+    const acct = await account(fixture.ownerId);
+
+    const alice = await browserTasks.enqueueBrowserTask({
+      accountId: acct.id,
+      kind: 'READ_X_ACCOUNT',
+      requestedBy: null,
+      params: { handle: 'alice' },
+    });
+    const bob = await browserTasks.enqueueBrowserTask({
+      accountId: acct.id,
+      kind: 'READ_X_ACCOUNT',
+      requestedBy: null,
+      params: { handle: 'bob' },
+    });
+
+    expect(bob.id).not.toBe(alice.id);
+    // Neither is lost, and which one waits is explicit rather than implied.
+    expect(alice.status).toBe('PENDING');
+    expect(bob.status).toBe('QUEUED');
+
+    const still = await browserTasks.getBrowserTask(alice.id);
+    expect(still?.status, 'the first read was superseded again').toBe('PENDING');
+  });
+
+  it('serves them one at a time, oldest first, and both eventually run', async () => {
+    const fixture = await createFixture();
+    const acct = await account(fixture.ownerId);
+
+    for (const handle of ['alice', 'bob', 'carol']) {
+      await browserTasks.enqueueBrowserTask({
+        accountId: acct.id,
+        kind: 'READ_X_ACCOUNT',
+        requestedBy: null,
+        params: { handle },
+      });
+    }
+
+    const served: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const claimed = await browserTasks.claimBrowserTask('w-1');
+      expect(claimed, `nothing claimable on round ${i + 1}`).not.toBeNull();
+      served.push(String(claimed!.params.handle));
+      // Only one may be running on an account at a time, which is the whole
+      // reason the others waited.
+      expect(await browserTasks.claimBrowserTask('w-2')).toBeNull();
+      await browserTasks.finishBrowserTask(claimed!.id, 'COMPLETED', {});
+    }
+
+    expect(served).toEqual(['alice', 'bob', 'carol']);
+  });
+
+  it('treats a second request for the same person as the same request', async () => {
+    const fixture = await createFixture();
+    const acct = await account(fixture.ownerId);
+
+    const first = await browserTasks.enqueueBrowserTask({
+      accountId: acct.id,
+      kind: 'READ_X_ACCOUNT',
+      requestedBy: null,
+      params: { handle: 'alice' },
+    });
+    // Different capitalisation and surrounding space is the same person.
+    const again = await browserTasks.enqueueBrowserTask({
+      accountId: acct.id,
+      kind: 'READ_X_ACCOUNT',
+      requestedBy: null,
+      params: { handle: ' Alice ' },
+    });
+
+    expect(again.id, 'asking twice for one person queued it twice').toBe(first.id);
+  });
+
+  it('refuses rather than silently dropping once the queue is full', async () => {
+    const fixture = await createFixture();
+    const acct = await account(fixture.ownerId);
+
+    // One takes the lane; the rest wait.
+    for (let i = 0; i <= browserTasks.MAX_QUEUED_BROWSER_TASKS; i += 1) {
+      await browserTasks.enqueueBrowserTask({
+        accountId: acct.id,
+        kind: 'READ_X_ACCOUNT',
+        requestedBy: null,
+        params: { handle: `person-${i}` },
+      });
+    }
+
+    await expect(
+      browserTasks.enqueueBrowserTask({
+        accountId: acct.id,
+        kind: 'READ_X_ACCOUNT',
+        requestedBy: null,
+        params: { handle: 'one-too-many' },
+      }),
+    ).rejects.toThrow(/already waiting/i);
+  });
+
+  it('leaves sign-in supersession alone, because a newer sign-in really does replace an older one', async () => {
+    const fixture = await createFixture();
+    const acct = await account(fixture.ownerId);
+
+    const first = await browserTasks.enqueueBrowserTask({ accountId: acct.id, kind: 'OPEN_AUTH', requestedBy: null });
+    const second = await browserTasks.enqueueBrowserTask({ accountId: acct.id, kind: 'OPEN_AUTH', requestedBy: null });
+
+    expect(second.status).toBe('PENDING');
+    expect((await browserTasks.getBrowserTask(first.id))?.status).toBe('SUPERSEDED');
+  });
+
+  it('does not let a queued read overtake a running task on the same account', async () => {
+    const fixture = await createFixture();
+    const acct = await account(fixture.ownerId);
+
+    await browserTasks.enqueueBrowserTask({
+      accountId: acct.id,
+      kind: 'READ_X_ACCOUNT',
+      requestedBy: null,
+      params: { handle: 'alice' },
+    });
+    await browserTasks.enqueueBrowserTask({
+      accountId: acct.id,
+      kind: 'READ_X_ACCOUNT',
+      requestedBy: null,
+      params: { handle: 'bob' },
+    });
+
+    const running = await browserTasks.claimBrowserTask('w-1');
+    expect(running).not.toBeNull();
+    // Bob is queued and alice is running: nothing else may take this profile.
+    expect(await browserTasks.claimBrowserTask('w-2')).toBeNull();
+  });
+});
