@@ -8,6 +8,9 @@ import {
   TRADE_INTENT_STATUSES,
   TRADE_MODES,
   TRADE_PAUSE_SCOPES,
+  TRADE_SIDES,
+  SHADOW_OUTCOMES,
+  AssetRef,
 } from '@xbam/shared/contracts';
 import {
   BROWSER_TASK_KINDS,
@@ -18,6 +21,7 @@ import {
   pipelines,
   providers,
   trading,
+  tradeShadows,
   users,
 } from '@xbam/database';
 import { ingestNormalizedEvent } from '@xbam/runtime';
@@ -372,5 +376,41 @@ describe('every trading value the code can produce is one the database accepts',
     await expect(
       trading.pauseTrading({ scope: 'EVERYTHING' as never, target: null, reason: 'no', createdBy: null }),
     ).rejects.toThrow();
+  });
+
+  it('writes every shadow side and outcome the contract names', async () => {
+    const fixture = await createFixture();
+    const draft = {
+      agentId: fixture.agentId,
+      ownerId: fixture.ownerId,
+      venue: 'PONS_V2_CURVE' as const,
+      assetIn: AssetRef.parse({ kind: 'NATIVE', network: 'robinhood' }),
+      assetOut: AssetRef.parse({
+        kind: 'ONCHAIN',
+        network: 'robinhood',
+        address: '0x00000000000000000000000000000000000000aa',
+        decimals: 18,
+      }),
+      subject: AssetRef.parse({
+        kind: 'ONCHAIN',
+        network: 'robinhood',
+        address: '0x00000000000000000000000000000000000000aa',
+        decimals: 18,
+      }),
+      maxIn: '1',
+      maxSlippageBps: 1,
+      maxPriceImpactBps: 1,
+      maxFeeBase: '1',
+      intervalSeconds: 300,
+    };
+    for (const side of TRADE_SIDES) {
+      const row = await tradeShadows.putShadow({ ...draft, label: `side ${side}`, side });
+      expect(row.side).toBe(side);
+      for (const outcome of SHADOW_OUTCOMES) {
+        expect((await tradeShadows.noteRun(row.id, outcome, 'constraint test'))!.lastOutcome).toBe(outcome);
+      }
+      await expect(tradeShadows.noteRun(row.id, 'NEITHER' as never, null)).rejects.toThrow();
+    }
+    await expect(tradeShadows.putShadow({ ...draft, label: 'sideways', side: 'SIDEWAYS' as never })).rejects.toThrow();
   });
 });

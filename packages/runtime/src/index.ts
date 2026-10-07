@@ -149,6 +149,7 @@ export * from './tradingGate';
 export * from './marketData';
 export * from './poolMarketReader';
 export * from './paperTrading';
+export * from './shadowTrading';
 export * from './tradeExecution';
 export * from './hostScheduler';
 export * from './tenantGateway';

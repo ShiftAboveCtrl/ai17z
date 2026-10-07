@@ -24,6 +24,7 @@ import { chatRoutes } from './routes/chat';
 import { setupCheckRoutes } from './routes/setupCheck';
 import { spamRoutes } from './routes/spam';
 import { walletRoutes } from './routes/wallets';
+import { shadowRoutes } from './routes/shadows';
 import { personaRoutes } from './routes/persona';
 import { artifactRoutes } from './routes/artifacts';
 import { settingsRoutes } from './routes/settings';
@@ -89,6 +90,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(setupCheckRoutes);
   await app.register(spamRoutes);
   await app.register(walletRoutes);
+  await app.register(shadowRoutes);
   await app.register(hostingRoutes);
   await app.register(utilityRoutes);
   await app.register(easyStartRoutes);

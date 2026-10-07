@@ -50,6 +50,7 @@ import {
   TRADE_INTENT_STATUSES,
   TRADE_MODES,
   TRADE_PAUSE_SCOPES,
+  SHADOW_OUTCOMES,
   TRADE_SIDES,
 } from '@xbam/shared/contracts';
 import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
@@ -465,6 +466,11 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'trade_intents', column: 'side', values: TRADE_SIDES },
   { table: 'trade_intents', column: 'status', values: TRADE_INTENT_STATUSES },
   { table: 'trade_pauses', column: 'scope', values: TRADE_PAUSE_SCOPES },
+  // Shadow trading (migration 0108). `side` has a CHECK; `venue` deliberately
+  // does not, here or on `trade_intents`, so the venue list stays a TypeScript
+  // contract and adding one needs no migration.
+  { table: 'trade_shadows', column: 'side', values: TRADE_SIDES },
+  { table: 'trade_shadows', column: 'last_outcome', values: SHADOW_OUTCOMES },
   // Hosted runtimes (migration 0105).
   { table: 'host_providers', column: 'tier', values: PROVIDER_TIERS },
   { table: 'host_nodes', column: 'state', values: HOST_STATES },

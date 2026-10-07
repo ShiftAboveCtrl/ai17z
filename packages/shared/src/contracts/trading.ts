@@ -270,6 +270,19 @@ export const TRADE_SIDES = ['BUY', 'SELL'] as const;
 export const TradeSide = z.enum(TRADE_SIDES);
 export type TradeSide = z.infer<typeof TradeSide>;
 
+/**
+ * What one shadow run came to.
+ *
+ * Four outcomes, not two, and the fourth is the one that matters: ERROR is not
+ * a failed run that vanishes, because a shadow nobody can see failing is worse
+ * than one that is not running. NO_MARKET is kept apart from REFUSED for the
+ * reason `MarketOutcome` keeps its four apart: "the venue could not be read"
+ * and "the mandate said no" need opposite things from whoever set it up.
+ */
+export const SHADOW_OUTCOMES = ['FILLED', 'REFUSED', 'NO_MARKET', 'ERROR'] as const;
+export const ShadowOutcome = z.enum(SHADOW_OUTCOMES);
+export type ShadowOutcome = z.infer<typeof ShadowOutcome>;
+
 export const TradeIntent = z
   .object({
     id: z.string().uuid(),

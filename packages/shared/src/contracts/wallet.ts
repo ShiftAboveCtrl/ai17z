@@ -95,7 +95,17 @@ export function addressShapeOk(family: WalletFamily, address: string): boolean {
 export const BaseUnits = z
   .string()
   .regex(/^[0-9]{1,78}$/, 'An amount is a whole number of the smallest unit, written in digits.')
-  .refine((v) => BigInt(v) > 0n, 'An amount has to be more than zero.');
+  /*
+   * Guarded, because zod runs every check on a string and collects the issues
+   * rather than stopping at the first failure. So this ran on input the regex
+   * had already rejected, and `BigInt('1.5')` throws a SyntaxError, which
+   * escaped validation entirely: `safeParse` threw instead of returning a
+   * failure and the API answered 500. Measured on '1.5' and 'abc'. Every
+   * amount in the product goes through here, so a person typing a decimal
+   * point into a limit got "Internal Server Error" rather than being told
+   * what an amount is.
+   */
+  .refine((v) => /^[0-9]+$/.test(v) && BigInt(v) > 0n, 'An amount has to be more than zero.');
 
 /**
  * What an owner may ask a wallet to do. Two kinds, both transfers, both typed.

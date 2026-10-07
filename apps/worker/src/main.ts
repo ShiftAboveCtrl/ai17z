@@ -32,7 +32,7 @@ import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
 import { pollDueFeeds, pollDueRepos, runDueEngagements, wakeDueAgents } from '@xbam/runtime';
-import { pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, studioSyncDue, syncStudio } from '@xbam/runtime';
+import { pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, runDueShadows, studioSyncDue, syncStudio } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -238,6 +238,18 @@ async function main(): Promise<void> {
       }
     } catch (error) {
       log.warn('Studio sync failed', { message: errorMessage(error) });
+    }
+    try {
+      /*
+        Shadows that are due. Usually one indexed query returning nothing,
+        because each shadow carries its own interval and the claim is what
+        decides whether any are due at all. On this sweep rather than a timer
+        of its own, like everything else here.
+      */
+      const shadows = await runDueShadows();
+      if (shadows.ran > 0) log.info('ran shadow trades', { ran: shadows.ran });
+    } catch (error) {
+      log.warn('shadow trading sweep failed', { message: errorMessage(error) });
     }
     // A week of broad-discovery decisions is plenty to answer "why was it
     // quiet". Pruned here, on the tick that already exists, rather than on a
