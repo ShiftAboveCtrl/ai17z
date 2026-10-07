@@ -7,6 +7,7 @@ import {
   UtilityRequest,
   inputSchemaFor,
   isUtilityCapability,
+  marketReadiness,
   readMarket,
   runPaperTrade,
   utilityAgentName,
@@ -15,7 +16,7 @@ import {
   type PaperTradeInput,
   type UtilityCapability,
 } from '@xbam/runtime';
-import { PersonaDraft, type AssetRef, type TradeVenue } from '@xbam/shared/contracts';
+import { PersonaDraft, TRADE_VENUE_IDS, type AssetRef, type TradeVenue } from '@xbam/shared/contracts';
 import { BadRequestError, NotFoundError, UnauthorizedError, XbamError } from '@xbam/shared';
 import { handler } from '../http';
 
@@ -69,6 +70,17 @@ export async function utilityRoutes(app: FastifyInstance): Promise<void> {
       capabilities: UTILITY_CAPABILITY_IDS.map((id) => ({ id, ...UTILITY_CAPABILITIES[id] })),
       refuses: UTILITY_REFUSALS,
       configured: (process.env.AI17Z_UTILITY_SIGNING_SECRET ?? '') !== '',
+      /**
+       * Which venues can actually be priced here.
+       *
+       * Reported rather than discovered by trying: without this, a caller
+       * submits a paper trade, waits, and gets NO_MARKET, which reads as the
+       * product being broken rather than as this runtime having no market data
+       * provider. A gateway can refuse up front instead, and say why.
+       */
+      venues: TRADE_VENUE_IDS.map((venue) => ({ venue, ...marketReadiness(venue) })),
+      /** Nothing can be priced at all, which is worth saying in one word. */
+      priceable: TRADE_VENUE_IDS.some((venue) => marketReadiness(venue).ready),
     })),
   );
 
