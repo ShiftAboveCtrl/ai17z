@@ -33,6 +33,7 @@ import { PoliciesSection } from './sections/PoliciesSection';
 import { ActivitySection } from './sections/ActivitySection';
 import { ChangesSection } from './sections/ChangesSection';
 import { WalletSection } from './sections/WalletSection';
+import { ShadowSection } from './sections/ShadowSection';
 import { SetupCheckPanel } from '@app/components/SetupCheckPanel';
 import { useViewMode } from '@app/lib/viewMode';
 import { EasyAgentView } from './EasyAgentView';
@@ -527,6 +528,7 @@ export function AgentPage() {
               onChanged={reload}
             />
             <WalletSection index={5} agentId={agent.id} />
+            <ShadowSection index={6} agentId={agent.id} />
           </>
         )}
 

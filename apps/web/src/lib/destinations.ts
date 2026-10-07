@@ -47,6 +47,30 @@ const PER_AGENT: (Omit<Destination, 'href' | 'where'> & { path: string })[] = [
   { id: 'identity', title: 'Identity and persona sources', path: '#identity', words: ['identity', 'persona', 'biography', 'persona source', 'who it is'] },
   { id: 'voice', title: 'Voice', path: '#voice', words: ['voice', 'style', 'tone', 'examples', 'how it sounds', 'repetition'] },
   { id: 'wallet', title: 'Wallet', path: '#wallet', words: ['wallet', 'address', 'balance', 'send', 'transaction', 'keys', 'solana', 'ethereum', 'bnb', 'robinhood chain'] },
+  {
+    id: 'shadows',
+    title: 'Shadow trading',
+    path: '#shadows',
+    // The words somebody actually uses while looking for this, which are
+    // mostly not "shadow": they want to know what it would have done, or
+    // whether it is any good, before giving it anything real.
+    words: [
+      'shadow',
+      'shadow trading',
+      'paper trading',
+      'simulate',
+      'simulated',
+      'dry run a trade',
+      'what would it have done',
+      'backtest',
+      'market',
+      'price',
+      'pool',
+      'venue',
+      'trade',
+      'trading',
+    ],
+  },
   { id: 'changes', title: 'Changes from chat', path: '#changes', words: ['changes from chat', 'what it changed', 'undo', 'changed today', 'change history', 'confirm a change'] },
   { id: 'beliefs', title: 'Beliefs', path: '#beliefs', words: ['beliefs', 'stances', 'positions', 'opinions', 'what it thinks'] },
   { id: 'knowledge', title: 'Knowledge', path: '#knowledge', words: ['knowledge', 'docs', 'documentation', 'repository', 'github', 'sources', 'facts'] },
