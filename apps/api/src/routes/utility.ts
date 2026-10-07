@@ -12,6 +12,7 @@ import {
   runPaperTrade,
   utilityAgentName,
   utilityPaperMandate,
+  widenedUtilitySandbox,
   verifyUtilitySignature,
   type PaperTradeInput,
   type UtilityCapability,
@@ -171,6 +172,21 @@ async function utilityAgentFor(caller: string): Promise<string> {
   return created.id;
 }
 
+/**
+ * Adds this request's assets to the caller's paper sandbox, if they are new.
+ *
+ * The decision is `widenedUtilitySandbox`, which is pure and tested on what it
+ * may not change. This is only the read and the write around it, so the rule
+ * lives in one place and the route holds no judgement of its own.
+ */
+async function widenSandboxFor(agentId: string, assets: readonly AssetRef[]): Promise<void> {
+  const current = await trading.liveMandate(agentId);
+  if (!current) return;
+  const widened = widenedUtilitySandbox(current, assets);
+  if (widened === null) return;
+  await trading.putMandate({ agentId, ownerId: current.ownerId, mandate: widened as never });
+}
+
 /** A caller's paper standing, read from the journal this runtime already keeps. */
 async function paperPortfolio(agentId: string): Promise<Record<string, unknown>> {
   const intents = await trading.listIntents(agentId, 200);
@@ -211,6 +227,16 @@ async function runUtilityCapability(
     case 'trading.paper_trade': {
       const agentId = await utilityAgentFor(caller);
       const i = input as PaperTradeInput;
+      /*
+       * The sandbox records what this caller has looked at.
+       *
+       * A standing mandate has to be written before anybody says what they
+       * want to trade, so its asset list cannot name the thing being asked
+       * about now. Widened here, before the engine reads it, rather than by
+       * the engine, because the engine's mandate check is the thing being
+       * relied on and must not be the thing that moves.
+       */
+      await widenSandboxFor(agentId, [i.assetIn, i.assetOut, i.subject]);
       // Straight through to canonical core. The website calculates no financial
       // semantics of its own: the mandate, market read, risk, quote, simulation
       // and journal are core's, and PAPER is forced there rather than passed in.

@@ -27,7 +27,7 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { AssetRef, TRADE_VENUE_IDS, TRADE_SIDES } from '@xbam/shared/contracts';
+import { AssetRef, TRADE_VENUE_IDS, TRADE_SIDES, WALLET_NETWORK_IDS, assetKey, type AssetRef as AssetRefValue } from '@xbam/shared/contracts';
 
 /**
  * How far out of step a request's clock may be.
@@ -247,7 +247,26 @@ export function utilityPaperMandate(): {
     // Every venue this build knows, because refusing a venue on paper teaches
     // nobody anything and the venue list is what a caller is exploring.
     venues: [...TRADE_VENUE_IDS],
-    networks: [],
+    /*
+     * Every network this build knows, and every asset the caller has asked
+     * about so far.
+     *
+     * Both lists were empty, and the risk gate denies `NETWORK_NOT_ALLOWED`
+     * on a network outside the list and `NO_ASSETS_ALLOWED` on an empty one.
+     * So no paper trade could ever have reached a fill through this surface:
+     * a mandate shaped like a mandate that refused everything. It passed its
+     * own tests because nothing could price a market, so no trade got as far
+     * as the gate.
+     *
+     * The asset list is the one bound a standing sandbox cannot express: it
+     * has to be written before anybody has said what they want to look at. It
+     * therefore grows, through `widenedUtilitySandbox`, and what it is is a
+     * record of what a caller explored rather than a restriction on them.
+     * That is honest on paper and only on paper: nothing here can move value,
+     * the mode is PAPER, and `widenedUtilitySandbox` cannot change that or
+     * anything else that would matter to a live trade.
+     */
+    networks: [...WALLET_NETWORK_IDS],
     allowedAssets: [],
     maxPerTrade: '1000000000000000000000',
     maxPerDay: '1000000000000000000000',
@@ -255,7 +274,18 @@ export function utilityPaperMandate(): {
     maxOpenPositions: 100,
     maxSlippageBps: 10_000,
     maxPriceImpactBps: 10_000,
-    minLiquidityBase: '0',
+    /*
+     * One base unit, because zero is not a legal amount.
+     *
+     * `BaseUnits` refuses zero, so the mandate this function returned could
+     * not be saved at all and every paper trade through this surface failed
+     * with "Min Liquidity Base: An amount has to be more than zero". One unit
+     * means "any depth the reader could actually see", which is the right
+     * floor here: that depth was *read* is already enforced, because the risk
+     * gate refuses a snapshot whose `liquidityBase` is null, and how much
+     * depth is enough is the caller's own judgement rather than a sandbox's.
+     */
+    minLiquidityBase: '1',
     maxFeeBase: '1000000000000000000000',
     // Thirty seconds, the same freshness a live trade would demand, because a
     // paper fill against a stale quote is a simulation of nothing.
@@ -263,4 +293,39 @@ export function utilityPaperMandate(): {
     expiresAt: null,
     paused: false,
   };
+}
+
+/**
+ * The same sandbox mandate, now also listing the assets of one request.
+ *
+ * Written as a pure function over the mandate it is handed so that what it may
+ * and may not change is testable rather than a promise in a comment. It
+ * returns null when nothing needs to change, which is the ordinary case after
+ * a caller's first trade in a pair.
+ *
+ * It only ever adds to `allowedAssets`. Every other field is carried across
+ * untouched, including the three that would matter if this were ever reached
+ * by anything but paper: `mode`, `approval` and `paused`. Nothing here can
+ * widen a limit, extend an expiry, unpause a mandate or make a trade live.
+ */
+export function widenedUtilitySandbox<T extends { mode: string; allowedAssets: readonly unknown[] }>(
+  mandate: T,
+  assets: readonly AssetRefValue[],
+): T | null {
+  // Not a paper mandate, so not this function's to touch. An owner's own
+  // mandate is never widened by somebody calling an API.
+  if (mandate.mode !== 'PAPER') return null;
+
+  const have = new Set((mandate.allowedAssets as AssetRefValue[]).map((asset) => assetKey(asset)));
+  const missing = assets.filter((asset) => !have.has(assetKey(asset)));
+  if (missing.length === 0) return null;
+
+  // Deduplicated on the way in: a trade of an asset against itself is already
+  // refused upstream, but two references to one asset must not become two rows.
+  const added: AssetRefValue[] = [];
+  for (const asset of missing) {
+    if (added.some((seen) => assetKey(seen) === assetKey(asset))) continue;
+    added.push(asset);
+  }
+  return { ...mandate, allowedAssets: [...(mandate.allowedAssets as AssetRefValue[]), ...added] };
 }
