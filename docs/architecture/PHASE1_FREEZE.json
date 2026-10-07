@@ -5,8 +5,8 @@
     "The private venue adapters are frozen against their public contracts, and none has read a real venue.",
     "Calling this production confidential proven would be the substitution the architecture exists to prevent."
   ],
-  "frozenAt": "2026-10-07T03:45:39.553Z",
-  "publicCoreHead": "7a5340d0a00ccf4f573459168f1b46fffc139dbd",
+  "frozenAt": "2026-10-07T03:48:21.342Z",
+  "publicCoreHead": "48b95587f541631ea859fc6b2587d3ae6d43e492",
   "privatePluginHeads": {
     "note": "Recorded by whoever froze, from the private workspace. Not read from here: this repository must not know the path."
   },
