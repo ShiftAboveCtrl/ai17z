@@ -147,6 +147,7 @@ export * from './walletCore';
 export * from './tradingRisk';
 export * from './tradingGate';
 export * from './marketData';
+export * from './poolMarketReader';
 export * from './paperTrading';
 export * from './tradeExecution';
 export * from './hostScheduler';

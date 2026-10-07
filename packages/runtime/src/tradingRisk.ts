@@ -189,6 +189,16 @@ export function judgeTrade(input: RiskInput): RiskVerdict {
     deny('LIQUIDITY_TOO_LOW', 'The venue has less depth than the mandate requires.');
   }
 
+  // The same rule, one field over, and it was missing. A null fee reaches
+  // `afterFee` as no fee at all, so the simulated amount arriving is larger
+  // than anything that could really arrive, and the error points the one
+  // direction a simulation must never err. Measured, not hypothetical: a
+  // Curve tri-crypto pool reports `pool_fee_percentage: null` while a Uniswap
+  // V3 pool reports 0.05, so a reader that answers for both produces this.
+  if (fresh.feeMicroBps === null) {
+    deny('FEE_UNKNOWN', 'The reader could not see what the venue charges, so a fill cannot be worked out without flattering it.');
+  }
+
   // ---- Simulation is not optional ----------------------------------------
 
   if (intent.mode === 'LIVE' && !simulated) {

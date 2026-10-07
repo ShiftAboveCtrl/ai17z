@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { trading } from '@xbam/database';
 import type { TradeIntentRow, TradeMandateRow } from '@xbam/database';
-import type { AssetRef, MarketSnapshot, TradeSide, TradeVenue } from '@xbam/shared/contracts';
+import { assetKey, type AssetRef, type MarketSnapshot, type TradeSide, type TradeVenue } from '@xbam/shared/contracts';
 import { readMarket } from './marketData';
 import { judgeTradeInput } from './tradingGate';
 import { judgeTrade, type RiskVerdict } from './tradingRisk';
@@ -95,7 +95,19 @@ export async function runPaperTrade(input: {
   const mandate = await trading.liveMandate(input.agentId);
   if (!mandate) return { outcome: 'NO_MARKET', detail: 'This agent has no mandate, so nothing may be traded even on paper.' };
 
-  const quoted = await readMarket(input.subject, input.venue);
+  /*
+   * Priced in the other side of this trade, not in whatever the venue felt
+   * like quoting.
+   *
+   * The subject is one of the two assets; the counterparty is the other, and
+   * that is the unit the price has to be in for `minOut` to mean anything.
+   * Before this the venue chose, and measured live it chose a WETH/WBTC pool
+   * for WETH: a true price, in Bitcoin, for a trade denominated in a dollar
+   * stablecoin, which `minOutFor` then turned into a floor off by a factor of
+   * tens of thousands.
+   */
+  const counterparty = assetKey(input.assetIn) === assetKey(input.subject) ? input.assetOut : input.assetIn;
+  const quoted = await readMarket(input.subject, input.venue, counterparty);
   if (quoted.outcome !== 'OK') return { outcome: 'NO_MARKET', detail: quoted.detail };
 
   // Written down before anything else happens, so a crash here leaves a record
@@ -130,14 +142,34 @@ export async function runPaperTrade(input: {
   const onRow = simulated ?? row;
 
   // The second read: what it would have executed against.
-  const atFill = await readMarket(input.subject, input.venue);
+  const atFill = await readMarket(input.subject, input.venue, counterparty);
   if (atFill.outcome !== 'OK') {
     await trading.transitionIntent(onRow.id, 'SIMULATED', 'FAILED', { error: atFill.detail });
     return { outcome: 'NO_MARKET', detail: atFill.detail };
   }
 
   const verdict = judgeTrade(
-    await judgeTradeInput({ intentRow: onRow, mandateRow: mandate as TradeMandateRow, fresh: atFill.snapshot, now }),
+    await judgeTradeInput({
+      intentRow: onRow,
+      mandateRow: mandate as TradeMandateRow,
+      fresh: atFill.snapshot,
+      /*
+       * The instant the verdict is reached, not the instant the function was
+       * entered.
+       *
+       * The gate compares the fresh read's `observedAt` against this, and
+       * refuses a quote observed after it. Taken once at the top, every
+       * millisecond the reads actually took made the venue's own answer look
+       * like it came from the future: the first live paper trade was refused
+       * `QUOTE_FROM_THE_FUTURE` against a quote it had just fetched itself.
+       * Invisible to every test, because a fake reader answers instantly with
+       * a timestamp somebody wrote down earlier.
+       *
+       * An explicit `now` still wins, because a test choosing the instant is
+       * choosing it for the comparison this is on both sides of.
+       */
+      now: input.now ?? new Date(),
+    }),
   );
   if (!verdict.allowed) {
     const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: verdict.reasons });

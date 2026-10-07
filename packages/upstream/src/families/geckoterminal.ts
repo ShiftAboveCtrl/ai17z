@@ -59,12 +59,30 @@ export const GeckoQuery = z.object({
   /** OHLCV only. */
   timeframe: z.enum(['minute', 'hour', 'day']).default('hour'),
   limit: z.number().int().min(1).max(100).default(24),
+  /**
+   * `token_pools` only: ask for the pools' tokens in the same answer.
+   *
+   * One request of about 33 KB carries every token's exact `decimals`, which
+   * otherwise costs one request per token. That matters because the measured
+   * budget here is four requests in ten seconds and it refuses rather than
+   * waits, so an operation needing a pool list and two token lookups does not
+   * fit inside it at all. A boolean rather than a free string: the only thing
+   * worth including is the pair, and a query parameter built from caller text
+   * is a URL somebody else gets to shape.
+   */
+  withTokens: z.boolean().default(false),
 });
 export type GeckoQuery = z.infer<typeof GeckoQuery>;
 
 export interface GeckoResult {
   /** The `data` member, in the source's own shape. Normalised by the capability. */
   data: unknown;
+  /**
+   * The `included` member, when something was asked for alongside the data.
+   * Absent rather than empty when nothing was, so a caller can tell "nothing
+   * came with it" from "it came with nothing".
+   */
+  included?: unknown;
 }
 
 const BASE = 'https://api.geckoterminal.com/api/v2';
@@ -79,7 +97,9 @@ function pathFor(query: GeckoQuery): string {
     case 'token':
       return `/networks/${network}/tokens/${address}`;
     case 'token_pools':
-      return `/networks/${network}/tokens/${address}/pools`;
+      // Comma encoded, because a bare comma in a query string is legal and
+      // being explicit here is cheaper than finding out it was not.
+      return `/networks/${network}/tokens/${address}/pools${query.withTokens ? '?include=base_token%2Cquote_token' : ''}`;
     case 'ohlcv':
       return `/networks/${network}/pools/${address}/ohlcv/${query.timeframe}?limit=${query.limit}`;
     case 'new_pools':
@@ -113,7 +133,9 @@ function geckoterminal(): Upstream<GeckoQuery, GeckoResult> {
     freshMs: 60_000,
     rank: 1,
     cacheKey: (query) =>
-      `${query.operation}:${query.network}:${query.address}:${query.timeframe}:${query.limit}`,
+      // `withTokens` is in the key because the two answers differ: a cached
+      // answer without the tokens would be served to a caller that needs them.
+      `${query.operation}:${query.network}:${query.address}:${query.timeframe}:${query.limit}:${query.withTokens ? 'tokens' : 'bare'}`,
     async fetch(query, ctx) {
       if (!(GECKO_OPERATIONS as readonly string[]).includes(query.operation)) {
         throw new UpstreamFailure('UNSUPPORTED', `${query.operation} is not something this reads.`);
@@ -137,6 +159,7 @@ function geckoterminal(): Upstream<GeckoQuery, GeckoResult> {
 
         const body = parseExactJson(response.text, 'the market answer') as {
           data?: unknown;
+          included?: unknown;
           status?: { error_code?: unknown; error_message?: unknown };
         };
 
@@ -148,7 +171,7 @@ function geckoterminal(): Upstream<GeckoQuery, GeckoResult> {
         if (body.data === undefined) {
           throw new UpstreamFailure('BAD_RESPONSE', 'It answered with neither data nor an error.');
         }
-        return { data: body.data };
+        return body.included === undefined ? { data: body.data } : { data: body.data, included: body.included };
       } catch (error) {
         throw classifyThrown(error);
       }

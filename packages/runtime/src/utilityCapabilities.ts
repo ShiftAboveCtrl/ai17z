@@ -110,6 +110,16 @@ export const MarketSnapshotInput = z
   .object({
     subject: AssetRef,
     venue: z.enum(TRADE_VENUE_IDS),
+    /**
+     * What the price is wanted in.
+     *
+     * Optional because a venue with one quote asset has nothing to choose.
+     * Worth offering because a venue with many has everything to choose: a
+     * pool venue asked about WETH answered a true price in Bitcoin, and a
+     * caller comparing that against dollars would have been out by four
+     * orders of magnitude without anything looking wrong.
+     */
+    quote: AssetRef.optional(),
   })
   .strict();
 
