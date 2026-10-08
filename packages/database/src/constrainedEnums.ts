@@ -493,6 +493,29 @@ export interface DiscoveredConstraint {
  * `column IN (...)`. Numeric and expression CHECKs are deliberately not matched:
  * a range check on an interval is not a vocabulary and has nothing to register.
  */
+/**
+ * Which column an enum-like CHECK is about.
+ *
+ * Not simply the text after `CHECK ((`, which is what this used to read. A
+ * nullable constrained column is written `col IS NULL OR col IN (...)`, and
+ * Postgres renders that as `CHECK (((col IS NULL) OR (col = ANY (...))))` --
+ * so the anchored match failed, the column came back as `?`, and the
+ * constraint was reported both as unregistered and as missing from the
+ * database at the same time. Every future nullable vocabulary would have
+ * done the same thing, silently, which is precisely the drift this registry
+ * exists to catch.
+ *
+ * Every `= ANY` in the definition has to name the same column. A CHECK that
+ * constrains two columns at once is not one vocabulary and must not be
+ * recorded as one: it comes back as `?` so the registry test says so out
+ * loud rather than registering half of it.
+ */
+export function columnOf(definition: string): string {
+  const named = [...definition.matchAll(/"?([a-z_][a-z0-9_]*)"?\s*=\s*ANY/g)].map((m) => m[1]!);
+  if (named.length === 0) return '?';
+  return named.every((name) => name === named[0]) ? named[0]! : '?';
+}
+
 export async function discoverConstrainedEnums(
   run: (sql: string) => Promise<Record<string, unknown>[]>,
 ): Promise<DiscoveredConstraint[]> {
@@ -506,7 +529,7 @@ export async function discoverConstrainedEnums(
     const def = String(row.def ?? '');
     return {
       table: String(row.tbl ?? ''),
-      column: def.match(/CHECK \(\("?([a-z_]+)"? = ANY/)?.[1] ?? '?',
+      column: columnOf(def),
       constraint: String(row.conname ?? ''),
       values: [...def.matchAll(/'([^']*)'::text/g)].map((m) => m[1]!),
     };

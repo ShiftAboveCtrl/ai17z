@@ -56,7 +56,7 @@ function every(seconds: number): string {
  * anything can move; nothing here can, ever. A shadow runs the same pipeline a
  * live trade would and stops at the point where a live one would sign.
  */
-export function ShadowSection({ index, agentId }: { index: number; agentId: string }) {
+export function ShadowsSection({ index, agentId }: { index: number; agentId: string }) {
   const { data, error, loading, reload } = useResource<ShadowState>(`/api/agents/${agentId}/shadows`);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

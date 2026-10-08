@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CONSTRAINED_ENUMS } from '@xbam/database';
+import { CONSTRAINED_ENUMS, columnOf } from '@xbam/database';
 import { X_READ_OUTCOMES } from '@xbam/channels';
 
 /**
@@ -30,5 +30,35 @@ describe('vocabularies that exist in two places', () => {
     );
     expect(registered, 'the outcome column must be registered as a constrained enum').toBeDefined();
     expect([...registered!.values].sort()).toEqual([...X_READ_OUTCOMES].sort());
+  });
+});
+
+describe('which column a CHECK is about', () => {
+  it('reads an ordinary one', () => {
+    expect(columnOf(`CHECK ((status = ANY (ARRAY['A'::text, 'B'::text])))`)).toBe('status');
+    expect(columnOf(`CHECK (("status" = ANY (ARRAY['A'::text])))`)).toBe('status');
+  });
+
+  it('reads a nullable one, which Postgres writes differently', () => {
+    // The shape this did not understand. A nullable constrained column is
+    // written `col IS NULL OR col IN (...)`, and the anchored match that used
+    // to be here failed on it: the column came back as `?`, so the constraint
+    // was reported as unregistered and as missing from the database at the
+    // same time. Every future nullable vocabulary would have done the same,
+    // silently, which is the drift the registry exists to catch.
+    expect(
+      columnOf(`CHECK (((last_outcome IS NULL) OR (last_outcome = ANY (ARRAY['FILLED'::text, 'ERROR'::text]))))`),
+    ).toBe('last_outcome');
+  });
+
+  it('refuses to name one column when a CHECK constrains two', () => {
+    // Not one vocabulary, so recording it as one would register half of it.
+    // `?` makes the registry test say so out loud instead.
+    expect(columnOf(`CHECK (((a = ANY (ARRAY['x'::text])) AND (b = ANY (ARRAY['y'::text]))))`)).toBe('?');
+  });
+
+  it('names nothing when there is nothing to name', () => {
+    expect(columnOf(`CHECK ((length(btrim(label)) > 0))`)).toBe('?');
+    expect(columnOf('')).toBe('?');
   });
 });
