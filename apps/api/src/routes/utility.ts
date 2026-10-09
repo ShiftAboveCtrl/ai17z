@@ -13,11 +13,14 @@ import {
   isUtilityCapability,
   marketReadiness,
   readMarket,
+  runBacktest,
   runPaperTrade,
   utilityAgentName,
   utilityPaperMandate,
   widenedUtilitySandbox,
   verifyUtilitySignature,
+  type BacktestInput,
+  type Candle,
   type PaperTradeInput,
   type UtilityCapability,
 } from '@xbam/runtime';
@@ -286,6 +289,54 @@ async function runUtilityCapability(
         ...(i.idempotencyKey === undefined ? {} : { idempotencyKey: i.idempotencyKey }),
       });
       return { ok: outcome.outcome === 'FILLED', simulated: true, outcome };
+    }
+    case 'trading.backtest': {
+      const i = input as BacktestInput;
+      const agentId = await utilityAgentFor(caller);
+      /*
+       * History is read once, through the same capability an agent reads it
+       * with, and every rule replays that one series. Recorded like any
+       * invocation, so the market read behind a backtest is on the record.
+       */
+      const read = await invokeCapability({
+        call: { id: 'market.ohlcv', input: { chain: i.chain, poolAddress: i.poolAddress, timeframe: i.timeframe, limit: i.candles } },
+        context: { agentId, jobId: null, accountId: null, config: {}, audience: 'PUBLIC', logger: bridgeLog },
+        permission: { stored: null, paused: false },
+      });
+      await capabilityInvocations
+        .recordInvocation({
+          agentId,
+          jobId: null,
+          accountId: null,
+          capabilityId: 'market.ohlcv',
+          step: 0,
+          outcome: read.outcome,
+          detail: read.detail,
+          input: read.input,
+          output: null,
+          durationMs: read.durationMs,
+        })
+        .catch((error: unknown) => bridgeLog.warn('could not record a backtest read', { error: String(error) }));
+      if (read.outcome !== 'SUCCEEDED') return { ok: false, simulated: true, detail: read.detail };
+
+      const history = read.output as { candles: Candle[]; unreadableRows: number; note: string; provenance: unknown };
+      return {
+        ok: true,
+        simulated: true,
+        history: {
+          chain: i.chain,
+          poolAddress: i.poolAddress,
+          timeframe: i.timeframe,
+          unreadableRows: history.unreadableRows,
+          // Said, because an unlabelled unit is how a backtest gets misread:
+          // the indexer reports candles in dollars per unit of the pool's
+          // base token, so every rule's spend is in dollars too.
+          priceUnit: "US dollars per unit of the pool's base token, as the market indexer reports it",
+          note: history.note,
+          provenance: history.provenance,
+        },
+        results: i.rules.map((rule) => runBacktest({ candles: history.candles, rule, costs: i.costs })),
+      };
     }
     case 'capability.invoke': {
       const i = input as { id: string; input: Record<string, unknown> };
