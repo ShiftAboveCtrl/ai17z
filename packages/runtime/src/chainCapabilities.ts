@@ -11,6 +11,7 @@ import {
   type EvmResult,
   type Provenance,
 } from '@xbam/upstream';
+import { transactionReconcileCapability } from './transactionReconcile';
 
 /**
  * What an agent may ask about a chain.
@@ -501,4 +502,6 @@ export function registerChainCapabilities(): void {
   registerCapability(block);
   registerCapability(logs);
   registerCapability(health);
+  // A judgement over the reads above, so it lives and registers beside them.
+  registerCapability(transactionReconcileCapability);
 }
