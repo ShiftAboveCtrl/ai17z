@@ -1,9 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { agents as agentsRepo, trading, users as usersRepo } from '@xbam/database';
+import { agents as agentsRepo, capabilityInvocations, trading, users as usersRepo } from '@xbam/database';
+import { getCapability, invokeCapability } from '@xbam/tools';
 import {
   UTILITY_CAPABILITIES,
   UTILITY_CAPABILITY_IDS,
+  UTILITY_BRIDGE,
   UTILITY_REFUSALS,
+  bridgeRefusal,
+  zodToDescription,
   UtilityRequest,
   inputSchemaFor,
   isUtilityCapability,
@@ -18,7 +22,7 @@ import {
   type UtilityCapability,
 } from '@xbam/runtime';
 import { PersonaDraft, TRADE_VENUE_IDS, type AssetRef, type TradeVenue } from '@xbam/shared/contracts';
-import { BadRequestError, NotFoundError, UnauthorizedError, XbamError } from '@xbam/shared';
+import { BadRequestError, NotFoundError, UnauthorizedError, XbamError, createLogger } from '@xbam/shared';
 import { handler } from '../http';
 
 /**
@@ -35,6 +39,8 @@ class UtilityNotConfiguredError extends XbamError {
     super('UNSAFE_CONFIGURATION', message, 503);
   }
 }
+
+const bridgeLog = createLogger('utility.bridge');
 
 /** The same class of answer for a runtime with no owner, which cannot keep a journal for anybody. */
 const NO_OWNER = "This runtime has no owner yet, so it cannot keep a caller's paper journal. Create one with POST /api/bootstrap/owner.";
@@ -92,6 +98,18 @@ export async function utilityRoutes(app: FastifyInstance): Promise<void> {
       venues: TRADE_VENUE_IDS.map((venue) => ({ venue, ...marketReadiness(venue) })),
       /** Nothing can be priced at all, which is worth saying in one word. */
       priceable: TRADE_VENUE_IDS.some((venue) => marketReadiness(venue).ready),
+      /*
+       * What `capability.invoke` will run, each with what it answers and the
+       * shape of its input, in the same words an agent's own menu uses. Only
+       * what is on the list and installed and still passes its own
+       * declaration, so a gateway never offers something this runtime would
+       * refuse.
+       */
+      bridge: UTILITY_BRIDGE.flatMap((id) => {
+        const declared = getCapability(id);
+        if (declared === null || bridgeRefusal(id, declared) !== null) return [];
+        return [{ id, name: declared.name, description: declared.description, input: zodToDescription(declared.input as never) }];
+      }),
     })),
   );
 
@@ -268,6 +286,51 @@ async function runUtilityCapability(
         ...(i.idempotencyKey === undefined ? {} : { idempotencyKey: i.idempotencyKey }),
       });
       return { ok: outcome.outcome === 'FILLED', simulated: true, outcome };
+    }
+    case 'capability.invoke': {
+      const i = input as { id: string; input: Record<string, unknown> };
+      const declared = getCapability(i.id);
+      const refusal = bridgeRefusal(i.id, declared ?? undefined);
+      // Refused before an agent is made or anything reached the network: a
+      // caller probing ids learns which are offered, which is public, and
+      // nothing else.
+      if (refusal !== null) throw new NotFoundError(refusal);
+      const agentId = await utilityAgentFor(caller);
+      /*
+       * The same path an agent's own call takes: the capability's input and
+       * output schemas, its timeout, its readiness and the upstream budgets
+       * every caller of this runtime shares, so one caller asking hard cannot
+       * spend everybody's quota faster than the limiter allows.
+       */
+      const result = await invokeCapability({
+        call: { id: i.id, input: i.input },
+        context: { agentId, jobId: null, accountId: null, config: {}, audience: 'PUBLIC', logger: bridgeLog },
+        permission: { stored: null, paused: false },
+      });
+      // Recorded as any agent's invocation is, so "what did this runtime reach
+      // for whom" has one answer. Losing the row does not lose the answer.
+      await capabilityInvocations
+        .recordInvocation({
+          agentId,
+          jobId: null,
+          accountId: null,
+          capabilityId: i.id,
+          step: 0,
+          outcome: result.outcome,
+          detail: result.detail,
+          input: result.input,
+          output: result.output,
+          durationMs: result.durationMs,
+        })
+        .catch((error: unknown) => bridgeLog.warn('could not record a utility invocation', { capability: i.id, error: String(error) }));
+      return {
+        ok: result.outcome === 'SUCCEEDED',
+        capability: i.id,
+        outcome: result.outcome,
+        detail: result.detail,
+        output: result.output,
+        durationMs: result.durationMs,
+      };
     }
     case 'trading.paper_portfolio': {
       const agentId = await utilityAgentFor(caller);

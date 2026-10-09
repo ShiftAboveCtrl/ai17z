@@ -59,7 +59,107 @@ export const UTILITY_CAPABILITIES = {
     costClass: 'MARKET_READ',
     riskClass: 'NONE',
   },
+  'capability.invoke': {
+    title: 'Public capability',
+    what: "Runs one of AI17Z's public, read-only capabilities, from an explicit list: asset identity, market history, chain and contract reads, transaction decoding, token risk, DeFi, governance, reference and research lookups. Through the same invocation path an agent uses, with its schemas, timeouts and shared upstream budgets.",
+    costClass: 'UPSTREAM_READ',
+    riskClass: 'NONE',
+  },
 } as const;
+
+/**
+ * The capabilities a shared runtime may run for anybody, by exact id.
+ *
+ * An allowlist rather than "every READ capability", because a capability
+ * added to core for an agent's own use must not become something strangers
+ * can call the day it merges. Every entry reads public data and touches
+ * nothing of the caller's or the operator's: no agent state, no wallet, no
+ * session, no owner introspection. The registry's own declaration is checked
+ * as well at call time (`bridgeRefusal`), so an entry whose capability later
+ * becomes a write or owner-only is refused rather than trusted.
+ *
+ * Deliberately absent: `agent.*` (the agent's own workings, OWNER), `wallet.*`
+ * (an agent's own wallet), `x.*` (a signed-in session nobody here has),
+ * `github.*` (an owner's watched repositories), and `web.history_capture`,
+ * which declares READ but asks an archive to make a capture, an action on
+ * somebody else's service.
+ */
+export const UTILITY_BRIDGE: readonly string[] = [
+  // Asset identity and markets.
+  'market.resolve_exact',
+  'market.ohlcv',
+  'market.new_pools',
+  'market.trending',
+  'market.price_check',
+  // EVM chains and contracts: the substance of a transaction inspector.
+  'chain.health',
+  'chain.read_balance',
+  'chain.read_block',
+  'chain.read_code',
+  'chain.read_logs',
+  'chain.read_receipt',
+  'chain.read_transaction',
+  'contract.abi',
+  'contract.decode_event',
+  'contract.decode_function',
+  'contract.inspect',
+  'contract.source_metadata',
+  'contract.verification',
+  'token.inspect_risk',
+  'address.risk_evidence',
+  // Solana and Bitcoin.
+  'solana.health',
+  'solana.read_account',
+  'solana.read_balance',
+  'solana.read_program',
+  'solana.read_signatures',
+  'solana.read_token',
+  'solana.read_transaction',
+  'bitcoin.health',
+  'bitcoin.read_address',
+  'bitcoin.read_fees',
+  'bitcoin.read_transaction',
+  'bitcoin.read_unspent',
+  // DeFi and governance.
+  'defi.chain_tvl',
+  'defi.chain_tvl_history',
+  'defi.protocol_tvl',
+  'defi.stablecoin_supply_by_chain',
+  'defi.stablecoins',
+  'governance.health',
+  'governance.list_proposals',
+  'governance.read_proposal',
+  'governance.read_space',
+  'governance.read_votes',
+  // Reference, research and public records.
+  'reference.look_up',
+  'research.paper_lookup',
+  'research.paper_search',
+  'entity.facts',
+  'entity.relationships',
+  'entity.resolve',
+  'company.filings',
+  'company.resolve',
+  'storage.describe_identifier',
+  'storage.read_document',
+  'feed.read',
+  'web.history',
+];
+
+/** Why a capability may not be run for a shared-runtime caller, or null when it may. */
+export function bridgeRefusal(
+  id: string,
+  declared: { effect: string; audience?: string; modelCallable: boolean } | undefined,
+): string | null {
+  if (!UTILITY_BRIDGE.includes(id)) return `${id} is not offered on this runtime.`;
+  if (declared === undefined) return `${id} is not installed on this runtime.`;
+  // Checked against the registry's own declaration, not only the list: an
+  // entry that has become a write or owner-only is refused, not trusted.
+  if (declared.effect !== 'READ') return `${id} changes something, and nothing that does is offered here.`;
+  if (declared.audience === 'OWNER') return `${id} is for an agent's owner, not for a shared runtime's callers.`;
+  if (!declared.modelCallable) return `${id} is driven by the runtime itself and cannot be called directly.`;
+  return null;
+}
 
 export type UtilityCapability = keyof typeof UTILITY_CAPABILITIES;
 export const UTILITY_CAPABILITY_IDS = Object.keys(UTILITY_CAPABILITIES) as [UtilityCapability, ...UtilityCapability[]];
@@ -125,6 +225,14 @@ export const MarketSnapshotInput = z
 
 export const PaperPortfolioInput = z.object({}).strict();
 
+/** One allowlisted capability and its own input, which the capability's schema then judges. */
+export const CapabilityInvokeInput = z
+  .object({
+    id: z.string().min(3).max(64),
+    input: z.record(z.unknown()),
+  })
+  .strict();
+
 /** Which schema belongs to which capability, in one place. */
 export function inputSchemaFor(capability: UtilityCapability): z.ZodTypeAny {
   switch (capability) {
@@ -134,6 +242,8 @@ export function inputSchemaFor(capability: UtilityCapability): z.ZodTypeAny {
       return PaperPortfolioInput;
     case 'market.snapshot':
       return MarketSnapshotInput;
+    case 'capability.invoke':
+      return CapabilityInvokeInput;
   }
 }
 
