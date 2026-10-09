@@ -67,6 +67,7 @@ const paperTrade = {
 
 describe('what this runtime says it offers', () => {
   it('lists its capabilities without a signature, and says whether it is configured', async () => {
+    await createFixture();
     const response = await app.inject({ method: 'GET', url: '/api/utility/capabilities' });
     expect(response.statusCode).toBe(200);
     const body = response.json().data as { capabilities: { id: string }[]; refuses: string[]; configured: boolean };
@@ -240,6 +241,22 @@ describe('a signed request reaches canonical core', () => {
 });
 
 describe('an unconfigured runtime says so rather than failing authentication', () => {
+  it('says it is not configured while it has no owner, and answers a trade 503 rather than 500', async () => {
+    // A fresh runtime with a secret and no owner. The first live canary of a
+    // real deployment answered this with INTERNAL, which a gateway reads as a
+    // refusal and fails the caller's job on, instead of waiting for an
+    // operator to finish setting it up.
+    const listed = (await app.inject({ method: 'GET', url: '/api/utility/capabilities' })).json().data as {
+      configured: boolean;
+      needsOwner: boolean;
+    };
+    expect(listed).toMatchObject({ configured: false, needsOwner: true });
+    const response = await invoke({ request_id: 'abcd1234', capability: 'trading.paper_trade', caller: 'caller-0001', input: paperTrade });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error.code).toBe('UNSAFE_CONFIGURATION');
+    expect(response.json().error.message).toMatch(/no owner yet/);
+  });
+
   it('answers 503 with no secret set, not 401', async () => {
     const saved = process.env.AI17Z_UTILITY_SIGNING_SECRET;
     delete process.env.AI17Z_UTILITY_SIGNING_SECRET;
