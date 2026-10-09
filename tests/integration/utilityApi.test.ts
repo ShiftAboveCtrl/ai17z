@@ -270,3 +270,113 @@ describe('an unconfigured runtime says so rather than failing authentication', (
     }
   });
 });
+
+describe('the bridge to public capabilities', () => {
+  /** Registered the way bootstrap registers them, so the allowlist is judged against the real declarations. */
+  async function registerPublicCapabilities() {
+    const tools = await import('@xbam/tools');
+    const upstream = await import('@xbam/upstream');
+    const runtime = await import('@xbam/runtime');
+    tools.resetCapabilitiesForTest();
+    tools.registerBuiltinCapabilities();
+    upstream.resetUpstreamsForTest();
+    for (const register of [
+      upstream.registerEvmUpstreams,
+      upstream.registerContractUpstreams,
+      upstream.registerMarketUpstreams,
+      upstream.registerDefiUpstreams,
+      upstream.registerTokenRiskUpstreams,
+      upstream.registerSolanaUpstreams,
+      upstream.registerBitcoinUpstreams,
+      upstream.registerGovernanceUpstreams,
+      upstream.registerIpfsUpstreams,
+      upstream.registerReferenceUpstreams,
+      upstream.registerSignatureUpstreams,
+      upstream.registerGeckoUpstreams,
+      upstream.registerWebHistoryUpstreams,
+      upstream.registerFeedUpstreams,
+      upstream.registerScholarUpstreams,
+      upstream.registerEntityUpstreams,
+      upstream.registerSecUpstreams,
+    ]) register();
+    for (const register of [
+      runtime.registerIntrospectionCapabilities,
+      runtime.registerWalletCapabilities,
+      runtime.registerChainCapabilities,
+      runtime.registerContractCapabilities,
+      runtime.registerDefiCapabilities,
+      runtime.registerTokenRiskCapabilities,
+      runtime.registerSolanaCapabilities,
+      runtime.registerBitcoinCapabilities,
+      runtime.registerGovernanceCapabilities,
+      runtime.registerStorageCapabilities,
+      runtime.registerReferenceCapabilities,
+      runtime.registerMarketCapabilities,
+      runtime.registerWebHistoryCapabilities,
+      runtime.registerFeedCapabilities,
+      runtime.registerScholarCapabilities,
+      runtime.registerEntityCapabilities,
+      runtime.registerSecCapabilities,
+    ]) register();
+  }
+
+  beforeEach(async () => {
+    await createFixture();
+    await registerPublicCapabilities();
+  });
+
+  it('offers only capabilities that read public data, judged against their own declarations', async () => {
+    const { UTILITY_BRIDGE, bridgeRefusal } = await import('@xbam/runtime');
+    const { getCapability } = await import('@xbam/tools');
+    for (const id of UTILITY_BRIDGE) {
+      const declared = getCapability(id);
+      expect(declared, `${id} is on the list and not registered`).not.toBeNull();
+      expect(bridgeRefusal(id, declared ?? undefined), id).toBeNull();
+    }
+  });
+
+  it('lists what it will run, with each input shape, and nothing it would refuse', async () => {
+    const listed = (await app.inject({ method: 'GET', url: '/api/utility/capabilities' })).json().data as {
+      bridge: { id: string; description: string; input: string }[];
+    };
+    const ids = listed.bridge.map((b) => b.id);
+    expect(ids).toContain('market.resolve_exact');
+    expect(ids).toContain('contract.decode_function');
+    expect(ids.some((id) => id.startsWith('agent.') || id.startsWith('wallet.') || id.startsWith('x.'))).toBe(false);
+    expect(listed.bridge.every((b) => b.input.length > 0 && b.description.length > 0)).toBe(true);
+  });
+
+  it("refuses an id that is not on the list, an owner's introspection and an archive capture", async () => {
+    const owner = (await usersRepo.listUsers())[0]!.id;
+    const before = (await agentsRepo.listAgents(owner)).length;
+    for (const id of ['agent.self_state', 'wallet.balances', 'web.history_capture', 'x.search', 'trading.live_trade']) {
+      const response = await invoke({ request_id: 'abcd1234', capability: 'capability.invoke', caller: 'caller-bridge', input: { id, input: {} } });
+      expect(response.statusCode, id).toBe(404);
+    }
+    // Refused before anything was made for the caller.
+    expect(await agentsRepo.listAgents(owner)).toHaveLength(before);
+  });
+
+  it('reaches the real invocation path, whose schema refuses a malformed input with a sentence', async () => {
+    const response = await invoke({
+      request_id: 'abcd1234',
+      capability: 'capability.invoke',
+      caller: 'caller-bridge',
+      input: { id: 'market.ohlcv', input: { nonsense: true } },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json().data as { ok: boolean; outcome: string; detail: string; capability: string };
+    expect(body).toMatchObject({ ok: false, outcome: 'REFUSED', capability: 'market.ohlcv' });
+    expect(body.detail).toMatch(/input for market\.ohlcv was wrong/);
+  });
+
+  it('refuses a body that is not exactly an id and an input', async () => {
+    const response = await invoke({
+      request_id: 'abcd1234',
+      capability: 'capability.invoke',
+      caller: 'caller-bridge',
+      input: { id: 'market.ohlcv', input: {}, mode: 'LIVE' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+});
