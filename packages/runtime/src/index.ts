@@ -151,6 +151,7 @@ export * from './poolMarketReader';
 export * from './paperTrading';
 export * from './backtest';
 export * from './transactionInspect';
+export * from './solanaInspect';
 export * from './tradePreflight';
 export * from './shadowTrading';
 export * from './tradeExecution';
