@@ -235,8 +235,30 @@ export async function findBrowser(engine: BrowserEngine): Promise<ChromeInstalla
   );
 }
 
+/**
+ * Ports the Fetch standard refuses outright, above 1023: `fetch` fails on
+ * them with "bad port" before sending anything. The debug port is probed with
+ * `fetch`, so a Chrome given one of these starts and is then never found.
+ * Ordinarily unreachable, because the operating system hands out ports from
+ * 49152 up; on Windows that range can start at 1024 once Hyper-V or Docker has
+ * moved it, and it does on at least one owner's machine.
+ */
+export const FETCH_BAD_PORTS: ReadonlySet<number> = new Set([
+  1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080,
+]);
+
 /** Finds a free loopback port. One Chrome per account means one port each. */
-export async function freePort(): Promise<number> {
+export async function freePort(draw: () => Promise<number> = anyFreePort): Promise<number> {
+  // A handful of tries is plenty: a bad port is roughly one draw in seven
+  // hundred even where the range starts at 1024.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const port = await draw();
+    if (!FETCH_BAD_PORTS.has(port)) return port;
+  }
+  throw new Error('Could not find a free port that fetch is willing to reach.');
+}
+
+function anyFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.on('error', reject);

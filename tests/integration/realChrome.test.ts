@@ -17,6 +17,7 @@ import {
   profilePathIsLocal,
   resolveProfileDir,
 } from '@xbam/browser';
+import { listenReachable } from '../support/listen';
 
 /**
  * Proof that AI17Z drives real Google Chrome, not the bundled Chromium.
@@ -299,9 +300,7 @@ describe('the profile persists between launches', () => {
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end('<!doctype html><title>persist</title><body>ok</body>');
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    const port = typeof address === 'object' && address ? address.port : 0;
+    const port = await listenReachable(server);
     const pageUrl = `http://127.0.0.1:${port}/`;
 
     try {
