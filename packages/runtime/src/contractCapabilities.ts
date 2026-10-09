@@ -1,4 +1,5 @@
 import { transactionInspectCapability } from './transactionInspect';
+import { solanaInspectCapability } from './solanaInspect';
 import { z } from 'zod';
 import { defineCapability, registerCapability } from '@xbam/tools';
 import {
@@ -386,6 +387,7 @@ export function registerContractCapabilities(): void {
   registerCapability(decodeEvent);
   // Beside the decoders it complements: they name a call, it says what one would do.
   registerCapability(transactionInspectCapability);
+  registerCapability(solanaInspectCapability);
 }
 
 // ── Naming a call or a log ───────────────────────────────────────────────────
