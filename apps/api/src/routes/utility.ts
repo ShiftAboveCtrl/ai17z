@@ -324,7 +324,13 @@ async function runUtilityCapability(
           durationMs: read.durationMs,
         })
         .catch((error: unknown) => bridgeLog.warn('could not record a backtest read', { error: String(error) }));
-      if (read.outcome !== 'SUCCEEDED') return { ok: false, simulated: true, detail: read.detail };
+      if (read.outcome !== 'SUCCEEDED') {
+        // The read's own outcome travels, so a gateway can tell a market
+        // source that is briefly refusing (try again later) from a request
+        // that was wrong (do not). The first live backtest after a paper
+        // trade met the first case: the source's budget was spent.
+        return { ok: false, simulated: true, outcome: read.outcome, retryable: read.outcome === 'FAILED' || read.outcome === 'TIMED_OUT', detail: read.detail };
+      }
 
       const history = read.output as { candles: Candle[]; unreadableRows: number; note: string; provenance: unknown };
       return {
