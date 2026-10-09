@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { trading } from '@xbam/database';
 import { AssetRef, MarketSnapshot, type TradeMandate, type TradeVenue } from '@xbam/shared/contracts';
 import {
+  amountOut,
   freshnessOf,
   minOutFor,
   readMarket,
@@ -255,6 +256,66 @@ describe('a paper trade runs the whole path and signs nothing', () => {
     await ask(fixture.agentId, { idempotencyKey: key });
     expect(await trading.listIntents(fixture.agentId)).toHaveLength(1);
   }, 60_000);
+});
+
+describe('what arrives is in the units of what arrives', () => {
+  /*
+   * The fill used to report spent minus fee, in the units spent, with no price
+   * in it. Every fixture priced its asset at one quote unit with eighteen
+   * decimals on both sides, the one market where that is right, so nothing
+   * noticed until a live paper trade of a tenth of an ether for USDC
+   * "received" 99,950,000,000,000,000 base units of a six-decimal coin.
+   */
+  const USDC = AssetRef.parse({ kind: 'ONCHAIN', network: 'ethereum', address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', decimals: 6 });
+  const WETH = AssetRef.parse({ kind: 'ONCHAIN', network: 'ethereum', address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', decimals: 18 });
+  // The canary's own reading: one USDC costs 399,829,160,600,000 wei of WETH.
+  const usdcInWeth = MarketSnapshot.parse({
+    venue: 'AMM_POOL_EVM',
+    network: 'ethereum',
+    asset: USDC,
+    quoteAsset: WETH,
+    atBlock: null,
+    observedAt: new Date().toISOString(),
+    priceBaseUnits: '399829160600000',
+    liquidityBase: '38227457595306041184813',
+    feeMicroBps: 500,
+    phase: 'POOL',
+    source: 'fixture from a live read',
+  });
+
+  it('turns WETH spent into USDC bought at the price', () => {
+    // 0.1 WETH at about 2,501 USDC each is about 250.1 USDC.
+    const out = amountOut(10n ** 17n, usdcInWeth, 'QUOTE');
+    expect(out).toBe((10n ** 17n * 10n ** 6n) / 399829160600000n);
+    expect(out > 250_000_000n && out < 250_200_000n).toBe(true);
+  });
+
+  it('turns USDC sold into WETH received at the same price', () => {
+    // 250 USDC back into WETH is about a tenth of one.
+    const out = amountOut(250_000_000n, usdcInWeth, 'ASSET');
+    expect(out).toBe((250_000_000n * 399829160600000n) / 10n ** 6n);
+    expect(out > 99_000_000_000_000_000n && out < 10n ** 17n).toBe(true);
+  });
+
+  it('fills a buy at a price that is not one, in the units of the token bought', async () => {
+    const fixture = await agent();
+    // Two native units per token: a whole native buys half a token, less fee.
+    const price = snap({ priceBaseUnits: '2000000000000000000' });
+    registerMarketReader(fakeReader([price, price]));
+    const out = await ask(fixture.agentId);
+    expect(out.outcome, out.outcome === 'REFUSED' ? out.verdict.reasons.map((r) => r.code).join(',') : '').toBe('FILLED');
+    if (out.outcome !== 'FILLED') return;
+    const netIn = 10n ** 18n - (10n ** 18n * 10_000n) / 1_000_000n;
+    expect(BigInt(out.fill.outBase)).toBe((netIn * 10n ** 18n) / 2_000000000000000000n);
+  });
+
+  it('asks a sale for a floor in what the sale receives', () => {
+    // Selling one token at two native each: at least 2 native less slippage,
+    // not half a native, which is what the buy-side formula would have said.
+    const quote = snap({ priceBaseUnits: '2000000000000000000' });
+    expect(BigInt(minOutFor('1000000000000000000', quote, 0, 'ASSET'))).toBe(2n * 10n ** 18n);
+    expect(BigInt(minOutFor('1000000000000000000', quote, 0, 'QUOTE'))).toBe(5n * 10n ** 17n);
+  });
 });
 
 describe('the floor a trade asks for', () => {

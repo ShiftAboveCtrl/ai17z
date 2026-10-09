@@ -107,6 +107,8 @@ export async function runPaperTrade(input: {
    * tens of thousands.
    */
   const counterparty = assetKey(input.assetIn) === assetKey(input.subject) ? input.assetOut : input.assetIn;
+  // Spending the priced asset is a sale of it; spending the other side buys it.
+  const spending: PricedSide = assetKey(input.assetIn) === assetKey(input.subject) ? 'ASSET' : 'QUOTE';
   const quoted = await readMarket(input.subject, input.venue, counterparty);
   if (quoted.outcome !== 'OK') return { outcome: 'NO_MARKET', detail: quoted.detail };
 
@@ -125,7 +127,7 @@ export async function runPaperTrade(input: {
     assetIn: input.assetIn,
     assetOut: input.assetOut,
     maxIn: input.maxIn,
-    minOut: minOutFor(input.maxIn, quoted.snapshot, input.maxSlippageBps),
+    minOut: minOutFor(input.maxIn, quoted.snapshot, input.maxSlippageBps, spending),
     maxSlippageBps: input.maxSlippageBps,
     maxPriceImpactBps: input.maxPriceImpactBps,
     maxFeeBase: input.maxFeeBase,
@@ -177,7 +179,10 @@ export async function runPaperTrade(input: {
   }
 
   const spent = BigInt(input.maxIn);
-  const { out, fee } = afterFee(spent, atFill.snapshot.feeMicroBps);
+  // The fee comes off what is spent, and what is left is converted at the
+  // price the fill executed against, into the units of what arrives.
+  const { out: netIn, fee } = afterFee(spent, atFill.snapshot.feeMicroBps);
+  const out = amountOut(netIn, atFill.snapshot, spending);
   const quotePrice = BigInt(onRow.quote.priceBaseUnits);
   const fillPrice = BigInt(atFill.snapshot.priceBaseUnits);
   const moved = quotePrice === 0n ? 0 : Number(((fillPrice > quotePrice ? fillPrice - quotePrice : quotePrice - fillPrice) * 10_000n) / quotePrice);
@@ -208,16 +213,48 @@ export async function runPaperTrade(input: {
  * safe. Rounding the other way would let a trade through that the owner's
  * ceiling did not quite permit.
  */
-export function minOutFor(maxIn: string, quote: MarketSnapshot, maxSlippageBps: number): string {
-  const inBase = BigInt(maxIn);
-  const price = BigInt(quote.priceBaseUnits);
-  if (price === 0n) return '1';
-  // One whole unit of the asset costs `price` quote base units, so this is
-  // how many base units of the asset the input buys at the quote.
-  const atQuote = (inBase * 10n ** BigInt(decimalsOf(quote.asset))) / price;
+export function minOutFor(
+  maxIn: string,
+  quote: MarketSnapshot,
+  maxSlippageBps: number,
+  spending: PricedSide = 'QUOTE',
+): string {
+  if (BigInt(quote.priceBaseUnits) === 0n) return '1';
+  const atQuote = amountOut(BigInt(maxIn), quote, spending);
   const worst = (atQuote * BigInt(10_000 - maxSlippageBps)) / 10_000n;
   // Never zero: a minOut of nothing is a trade with no floor at all.
   return (worst > 0n ? worst : 1n).toString();
+}
+
+/**
+ * Which side of a snapshot's price the input is in.
+ *
+ * A snapshot prices one asset (`asset`) in another (`quoteAsset`). Spending
+ * the quote asset buys the priced one; spending the priced asset sells it for
+ * the quote. The two conversions are inverses, and using one where the other
+ * belongs is wrong by the price squared.
+ */
+export type PricedSide = 'QUOTE' | 'ASSET';
+
+/**
+ * What an amount of one side is worth in the other, at a snapshot's price.
+ *
+ * `priceBaseUnits` is quote base units per one whole unit of the asset, so the
+ * asset's decimals are part of the arithmetic. Integer throughout, truncating
+ * last, which under-reports what arrives rather than over-reporting it.
+ *
+ * The paper fill used to report `spent - fee` as what arrived, in the units
+ * that were spent, with no price in it at all: a tenth of an ether spent on
+ * USDC "received" 99,950,000,000,000,000 base units of USDC. Every fixture
+ * priced its asset at exactly one quote unit with eighteen decimals on both
+ * sides, which is the one market where that is right. The first live canary
+ * through Studio's runtime found it.
+ */
+export function amountOut(amountIn: bigint, quote: MarketSnapshot, spending: PricedSide): bigint {
+  const price = BigInt(quote.priceBaseUnits);
+  const unit = 10n ** BigInt(decimalsOf(quote.asset));
+  if (price === 0n) return 0n;
+  return spending === 'QUOTE' ? (amountIn * unit) / price : (amountIn * price) / unit;
 }
 
 function decimalsOf(asset: AssetRef): number {

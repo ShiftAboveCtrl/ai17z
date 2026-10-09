@@ -36,6 +36,9 @@ class UtilityNotConfiguredError extends XbamError {
   }
 }
 
+/** The same class of answer for a runtime with no owner, which cannot keep a journal for anybody. */
+const NO_OWNER = "This runtime has no owner yet, so it cannot keep a caller's paper journal. Create one with POST /api/bootstrap/owner.";
+
 /**
  * The shared utility surface: one signed endpoint a gateway calls on a website
  * caller's behalf.
@@ -70,7 +73,14 @@ export async function utilityRoutes(app: FastifyInstance): Promise<void> {
     handler(async () => ({
       capabilities: UTILITY_CAPABILITY_IDS.map((id) => ({ id, ...UTILITY_CAPABILITIES[id] })),
       refuses: UTILITY_REFUSALS,
-      configured: (process.env.AI17Z_UTILITY_SIGNING_SECRET ?? '') !== '',
+      /*
+       * Configured means able to serve, which takes an owner as well as a
+       * secret: every caller's journal is an agent, and an agent belongs to
+       * an owner. Reported here so a gateway can say so before anybody waits
+       * on a trade that cannot run.
+       */
+      configured: (process.env.AI17Z_UTILITY_SIGNING_SECRET ?? '') !== '' && (await usersRepo.countUsers()) > 0,
+      needsOwner: (await usersRepo.countUsers()) === 0,
       /**
        * Which venues can actually be priced here.
        *
@@ -147,7 +157,11 @@ async function utilityAgentFor(caller: string): Promise<string> {
   const owners = await usersRepo.listUsers();
   const ownerId = owners[0]?.id;
   if (ownerId === undefined) {
-    throw new Error('This runtime has no owner yet, so it cannot keep a caller\'s paper journal.');
+    // A deployment that has not finished being set up, not a fault in the
+    // request: classified so a gateway waits rather than failing the caller's
+    // job, and so an operator reads a sentence instead of a 500. Found by the
+    // first live canary of a fresh runtime, which answered INTERNAL.
+    throw new UtilityNotConfiguredError(NO_OWNER);
   }
 
   const name = utilityAgentName(caller);
