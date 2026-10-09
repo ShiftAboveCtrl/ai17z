@@ -231,7 +231,7 @@ jobs:
             -v "$PWD:/repo:ro" \
             -v "$PWD/dist:/dist:ro" \
             -e "WANT_VERSION=${{ needs.version.outputs.version }}" \
-            "ubuntu:${{ matrix.release }}" \
+            "mirror.gcr.io/library/ubuntu:${{ matrix.release }}" \
             bash /repo/.github/scripts/prove-ubuntu-release.sh \
               "/dist/ai17z_${{ needs.version.outputs.version }}_amd64.deb"
 
