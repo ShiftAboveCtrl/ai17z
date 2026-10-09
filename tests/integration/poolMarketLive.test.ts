@@ -226,3 +226,34 @@ describeLive('a paper trade against a real market', () => {
     expect(outcome.verdict.needsOwnerApproval).toBe(false);
   }, 120_000);
 });
+
+describeLive('a backtest over real recorded history', () => {
+  it('replays a rule over the deepest WETH/USDC pool without seeing the future', async () => {
+    resetUpstreamsForTest();
+    registerGeckoUpstreams();
+    const runtime = await import('@xbam/runtime');
+    const tools = await import('@xbam/tools');
+    tools.resetCapabilitiesForTest();
+    runtime.registerMarketCapabilities();
+    const fixture = await createFixture();
+    const read = await tools.invokeCapability({
+      call: {
+        id: 'market.ohlcv',
+        // Uniswap V3 WETH/USDC 0.05%, the pool the canary priced against.
+        input: { chain: 'ethereum', poolAddress: '0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640', timeframe: 'hour', limit: 100 },
+      },
+      context: { agentId: fixture.agentId, jobId: null, accountId: null, config: {}, audience: 'PUBLIC', logger: console as never },
+      permission: { stored: null, paused: false },
+    });
+    expect(read.outcome, read.detail).toBe('SUCCEEDED');
+    const candles = (read.output as { candles: { at: string; open: string; close: string; high: string; low: string; volume: string }[] }).candles;
+    expect(candles.length).toBeGreaterThanOrEqual(50);
+
+    const result = runtime.runBacktest({ candles, rule: { kind: 'PERIODIC_BUY', spend: 100, everyCandles: 12 }, costs: { feeBps: 5, slippageBps: 10 } });
+    expect(result.simulated).toBe(true);
+    expect(result.trades.length).toBeGreaterThan(0);
+    // Every fill is at the open of a candle after the one that decided it.
+    for (const trade of result.trades) expect(Date.parse(trade.filledAt)).toBeGreaterThan(Date.parse(trade.decidedAt));
+    console.info(`live backtest: ${result.history.candles} candles, ${result.trades.length} buys, return ${result.returnBps} bps, hold ${result.holdReturnBps} bps`);
+  }, 60_000);
+});

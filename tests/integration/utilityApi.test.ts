@@ -370,6 +370,47 @@ describe('the bridge to public capabilities', () => {
     expect(body.detail).toMatch(/input for market\.ohlcv was wrong/);
   });
 
+  it('refuses a backtest rule that is not one of the written kinds, before reading anything', async () => {
+    const response = await invoke({
+      request_id: 'abcd1234',
+      capability: 'trading.backtest',
+      caller: 'caller-bridge',
+      input: {
+        chain: 'ethereum',
+        poolAddress: `0x${'8'.repeat(40)}`,
+        timeframe: 'hour',
+        candles: 50,
+        rules: [{ kind: 'MARTINGALE', spend: 100 }],
+        costs: { feeBps: 30, slippageBps: 20 },
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('reports a history it could not read rather than backtesting nothing', async () => {
+    // No market upstream answers in this suite, so the read fails. A backtest
+    // over an empty series would be a result about nothing; it says so instead.
+    const response = await invoke({
+      request_id: 'abcd1234',
+      capability: 'trading.backtest',
+      caller: 'caller-bridge',
+      input: {
+        chain: 'ethereum',
+        poolAddress: `0x${'8'.repeat(40)}`,
+        timeframe: 'hour',
+        candles: 50,
+        rules: [{ kind: 'PERIODIC_BUY', spend: 100, everyCandles: 6 }],
+        costs: { feeBps: 30, slippageBps: 20 },
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json().data as { ok: boolean; simulated: boolean; results?: unknown; detail: string };
+    expect(body.ok).toBe(false);
+    expect(body.simulated).toBe(true);
+    expect(body.results).toBeUndefined();
+    expect(body.detail.length).toBeGreaterThan(0);
+  });
+
   it('refuses a body that is not exactly an id and an input', async () => {
     const response = await invoke({
       request_id: 'abcd1234',

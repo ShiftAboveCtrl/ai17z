@@ -26,6 +26,7 @@
  * here would mean a signed HTTP request could move money.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { BacktestCosts, BacktestRule } from './backtest';
 import { z } from 'zod';
 import { AssetRef, TRADE_VENUE_IDS, TRADE_SIDES, WALLET_NETWORK_IDS, assetKey, type AssetRef as AssetRefValue } from '@xbam/shared/contracts';
 
@@ -56,6 +57,12 @@ export const UTILITY_CAPABILITIES = {
   'market.snapshot': {
     title: 'Market snapshot',
     what: 'Reads current venue state for an exact asset: price, liquidity, fees and when it was observed.',
+    costClass: 'MARKET_READ',
+    riskClass: 'NONE',
+  },
+  'trading.backtest': {
+    title: 'Backtest',
+    what: "Replays up to five written-down rules over one pool's recorded candles, read once so every rule sees exactly the same history. Each decision fills at the next candle's open, so none sees the future. Simulated; signs nothing.",
     costClass: 'MARKET_READ',
     riskClass: 'NONE',
   },
@@ -225,6 +232,25 @@ export const MarketSnapshotInput = z
 
 export const PaperPortfolioInput = z.object({}).strict();
 
+/**
+ * A backtest: one pool, one history window, up to five rules over it.
+ *
+ * More than one rule is the arena, and the rules share the one read of
+ * history on purpose: comparing rules on two different reads of a market is
+ * comparing the reads.
+ */
+export const BacktestInput = z
+  .object({
+    chain: z.string().min(2).max(20),
+    poolAddress: z.string().min(26).max(64),
+    timeframe: z.enum(['minute', 'hour', 'day']),
+    candles: z.number().int().min(10).max(100),
+    rules: z.array(BacktestRule).min(1).max(5),
+    costs: BacktestCosts,
+  })
+  .strict();
+export type BacktestInput = z.infer<typeof BacktestInput>;
+
 /** One allowlisted capability and its own input, which the capability's schema then judges. */
 export const CapabilityInvokeInput = z
   .object({
@@ -244,6 +270,8 @@ export function inputSchemaFor(capability: UtilityCapability): z.ZodTypeAny {
       return MarketSnapshotInput;
     case 'capability.invoke':
       return CapabilityInvokeInput;
+    case 'trading.backtest':
+      return BacktestInput;
   }
 }
 
