@@ -82,7 +82,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # The mirror, for the same reason as ci.yml.
+        image: mirror.gcr.io/library/postgres:16-alpine
         env:
           POSTGRES_USER: xbam
           POSTGRES_PASSWORD: xbam

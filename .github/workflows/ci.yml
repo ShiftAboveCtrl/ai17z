@@ -49,7 +49,10 @@ jobs:
     services:
       postgres:
         # Pinned to the major version the migrations are written against.
-        image: postgres:16-alpine
+        # Pulled through Google's mirror of Docker Hub's official images:
+        # GitHub's runners share addresses, and Docker Hub's anonymous pull
+        # limit failed whole runs that had nothing wrong with them.
+        image: mirror.gcr.io/library/postgres:16-alpine
         env:
           POSTGRES_USER: xbam
           POSTGRES_PASSWORD: xbam
