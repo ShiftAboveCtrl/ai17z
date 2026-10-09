@@ -4,6 +4,7 @@ import { AssetRef, MarketSnapshot, type TradeMandate, type TradeVenue } from '@x
 import {
   amountOut,
   freshnessOf,
+  preflightTrade,
   minOutFor,
   readMarket,
   registerMarketReader,
@@ -335,5 +336,63 @@ describe('the floor a trade asks for', () => {
     // A floor of zero is a trade with no floor at all.
     const quote = snap({ priceBaseUnits: '1' + '0'.repeat(40) });
     expect(BigInt(minOutFor('1', quote, 10_000))).toBeGreaterThan(0n);
+  });
+});
+
+describe('a preflight answers through the same gate, and writes nothing', () => {
+  const trade = (over: Record<string, unknown> = {}) => ({
+    venue: 'PONS_V2_CURVE' as const,
+    side: 'BUY' as const,
+    assetIn: NATIVE,
+    assetOut: TOKEN,
+    subject: TOKEN,
+    maxIn: '1000000000000000000',
+    maxSlippageBps: 50,
+    maxPriceImpactBps: 100,
+    maxFeeBase: '100000000000000000',
+    mandate: mandateDraft() as never,
+    ...over,
+  });
+
+  it('lets a paper trade inside its mandate through, and says what it assumed', async () => {
+    registerMarketReader(fakeReader([snap()]));
+    const result = await preflightTrade(trade());
+    expect(result.verdict, result.reasons.map((r) => r.code).join(',')).toBe('ALLOW');
+    expect(result.minOut).not.toBeNull();
+    expect(result.assumptions.join(' ')).toMatch(/simulation/);
+    expect(result.assumptions.join(' ')).toMatch(/No exposure was given/);
+  });
+
+  it('never answers a plain yes for a live mandate whose owner approves each trade', async () => {
+    registerMarketReader(fakeReader([snap()]));
+    const result = await preflightTrade(trade({ mandate: mandateDraft({ mode: 'LIVE' }) as never }));
+    expect(result.verdict).not.toBe('ALLOW');
+  });
+
+  it('refuses a trade above the mandate, naming the rule', async () => {
+    registerMarketReader(fakeReader([snap()]));
+    const result = await preflightTrade(trade({ maxIn: '20000000000000000000' }));
+    expect(result.verdict).toBe('DENY');
+    expect(result.reasons.length).toBeGreaterThan(0);
+  });
+
+  it('refuses an asset the mandate does not allow', async () => {
+    registerMarketReader(fakeReader([snap()]));
+    const result = await preflightTrade(trade({ mandate: mandateDraft({ allowedAssets: [NATIVE] }) as never }));
+    expect(result.verdict).toBe('DENY');
+  });
+
+  it('refuses when there is no market to judge from', async () => {
+    registerMarketReader(fakeReader([null]));
+    const result = await preflightTrade(trade());
+    expect(result).toMatchObject({ verdict: 'DENY', quote: null });
+    expect(result.reasons[0]!.code).toBe('NO_MARKET');
+  });
+
+  it('writes no intent anywhere', async () => {
+    const fixture = await agent();
+    registerMarketReader(fakeReader([snap()]));
+    await preflightTrade(trade());
+    expect(await trading.listIntents(fixture.agentId, 10)).toEqual([]);
   });
 });

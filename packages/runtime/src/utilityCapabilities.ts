@@ -27,6 +27,7 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { BacktestCosts, BacktestRule } from './backtest';
+import { TradePreflightInput } from './tradePreflight';
 import { z } from 'zod';
 import { AssetRef, TRADE_VENUE_IDS, TRADE_SIDES, WALLET_NETWORK_IDS, assetKey, type AssetRef as AssetRefValue } from '@xbam/shared/contracts';
 
@@ -63,6 +64,12 @@ export const UTILITY_CAPABILITIES = {
   'trading.backtest': {
     title: 'Backtest',
     what: "Replays up to five written-down rules over one pool's recorded candles, read once so every rule sees exactly the same history. Each decision fills at the next candle's open, so none sees the future. Simulated; signs nothing.",
+    costClass: 'MARKET_READ',
+    riskClass: 'NONE',
+  },
+  'trading.preflight': {
+    title: 'Trade preflight',
+    what: 'Reads the market for an exact trade and runs it through the same risk gate a real trade passes, against the mandate the caller gives. Answers ALLOW, APPROVAL_REQUIRED or DENY with every reason. Journals nothing and signs nothing.',
     costClass: 'MARKET_READ',
     riskClass: 'NONE',
   },
@@ -273,6 +280,8 @@ export function inputSchemaFor(capability: UtilityCapability): z.ZodTypeAny {
       return CapabilityInvokeInput;
     case 'trading.backtest':
       return BacktestInput;
+    case 'trading.preflight':
+      return TradePreflightInput;
   }
 }
 

@@ -13,6 +13,7 @@ import {
   isUtilityCapability,
   marketReadiness,
   readMarket,
+  preflightTrade,
   runBacktest,
   runPaperTrade,
   utilityAgentName,
@@ -20,6 +21,7 @@ import {
   widenedUtilitySandbox,
   verifyUtilitySignature,
   type BacktestInput,
+  type TradePreflightInput,
   type Candle,
   type PaperTradeInput,
   type UtilityCapability,
@@ -289,6 +291,11 @@ async function runUtilityCapability(
         ...(i.idempotencyKey === undefined ? {} : { idempotencyKey: i.idempotencyKey }),
       });
       return { ok: outcome.outcome === 'FILLED', simulated: true, outcome };
+    }
+    case 'trading.preflight': {
+      // No agent and no journal: a verdict about a trade that may never be
+      // written down, from the same gate a real one passes.
+      return { ok: true, ...(await preflightTrade(input as TradePreflightInput)) };
     }
     case 'trading.backtest': {
       const i = input as BacktestInput;
