@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { createHash } from 'node:crypto';
+import { listenReachable } from './listen';
 
 /**
  * A server that speaks the AI17Z Plugin Registry protocol.
@@ -112,9 +113,7 @@ export async function startRegistry(plugins: RegistryPlugin[]): Promise<FakeRegi
     send(404, { error: 'not found' });
   });
 
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
+  const port = await listenReachable(server);
 
   return {
     url: `http://127.0.0.1:${port}`,
