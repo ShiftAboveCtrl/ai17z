@@ -96,6 +96,7 @@ export const TOOLPACKS: Toolpack[] = [
       'solana.',
       'storage.',
       'token.',
+      'transaction.',
     ],
   },
   {
