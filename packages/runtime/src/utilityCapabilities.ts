@@ -121,6 +121,7 @@ export const UTILITY_BRIDGE: readonly string[] = [
   'contract.verification',
   'transaction.inspect',
   'transaction.inspect_solana',
+  'transaction.reconcile',
   'token.inspect_risk',
   'address.risk_evidence',
   // Solana and Bitcoin.
