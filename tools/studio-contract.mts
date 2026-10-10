@@ -30,6 +30,9 @@ const adminFlag = args.indexOf('--admin-url');
 const adminUrl = adminFlag >= 0 ? args[adminFlag + 1]! : 'postgres://ai17z:ai17z@localhost:55439/postgres';
 const DB = 'ai17z_studio_contract';
 const PORT = 3310;
+// The stand-in chain. Movable, because Windows reserves port ranges for
+// Hyper-V that move between boots, and 8547 has landed inside one.
+const CHAIN_PORT = Number(process.env.STUDIO_CONTRACT_CHAIN_PORT ?? 8547);
 // A dotted name, because a Plugin manifest may only name one, that needs no
 // hosts file entry: every name under .localhost is loopback (RFC 6761).
 const ORIGIN = `http://studio.localhost:${PORT}`;
@@ -65,8 +68,8 @@ const studioEnv: Record<string, string> = {
   NEXT_TELEMETRY_DISABLED: '1',
   // The test hosts a stand-in chain and DexScreener on this port (tests/support/fakeChain.ts),
   // so a reported transaction is confirmed by reading it, exactly as on the real chain.
-  ROBINHOOD_CHAIN_RPC_URL: 'http://127.0.0.1:8547',
-  DEXSCREENER_API_BASE: 'http://127.0.0.1:8547/dex',
+  ROBINHOOD_CHAIN_RPC_URL: `http://127.0.0.1:${CHAIN_PORT}`,
+  DEXSCREENER_API_BASE: `http://127.0.0.1:${CHAIN_PORT}/dex`,
   // The reference hosted backend the test starts, reachable only because Studio is served over http here.
   STUDIO_UNSAFE_DEV_PRIVATE_UPSTREAMS: 'http://127.0.0.1:8795',
   CONTRACT_PROPRIETARY_UPSTREAM: 'http://127.0.0.1:8795/',
@@ -130,7 +133,7 @@ try {
     [join(process.cwd(), 'node_modules', 'vitest', 'vitest.mjs'), 'run', 'tests/integration/studioContract.test.ts'],
     {
       cwd: process.cwd(),
-      env: { ...process.env, STUDIO_CONTRACT_URL: ORIGIN, STUDIO_CONTRACT_DIR: studioDir, STUDIO_CONTRACT_ENV: envFile },
+      env: { ...process.env, STUDIO_CONTRACT_URL: ORIGIN, STUDIO_CONTRACT_DIR: studioDir, STUDIO_CONTRACT_ENV: envFile, STUDIO_CONTRACT_CHAIN_PORT: String(CHAIN_PORT) },
       stdio: 'inherit',
     },
   );

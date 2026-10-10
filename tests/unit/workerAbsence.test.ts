@@ -55,13 +55,15 @@ describe('what a missing worker says', () => {
       `packages/runtime/src/health.ts` when Telegram became a second caller, so
       a phone and a screen could not disagree about whether anything was wrong.
       The route is two lines and no logic now, and this list follows the logic.
-      The test caught the move, which is what it is for.
+      The test caught the move, which is what it is for. It caught the next
+      one too: start's preflight moved into `packages/runtime/src/agentStart.ts`
+      when a linked Studio became a second way to resume an agent.
     */
     for (const file of [
       'packages/tools/src/diagnostics.ts',
       'packages/runtime/src/health.ts',
       'packages/runtime/src/notify.ts',
-      'apps/api/src/routes/easy.ts',
+      'packages/runtime/src/agentStart.ts',
     ]) {
       const source = read(file);
       expect(source, file).toMatch(/workerAbsenceSentence|noWorkerRunning|noBrowserWorker/);

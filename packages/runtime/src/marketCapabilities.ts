@@ -87,6 +87,18 @@ const ExactAddress = z
   .max(120)
   .refine((value) => /^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(value), IDENTITY_REFUSAL);
 
+/**
+ * A pool, which is not always an address. Uniswap v4 keeps every pool inside
+ * one contract and names each by a 32-byte id, and `market.new_pools` hands
+ * those out on Base daily: a pool reader that took only a 20-byte address
+ * refused the very pools discovery had just listed.
+ */
+const ExactPool = z
+  .string()
+  .trim()
+  .max(120)
+  .refine((value) => /^(0x[0-9a-fA-F]{40}|0x[0-9a-fA-F]{64}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(value), IDENTITY_REFUSAL);
+
 /** Below this a price is arithmetic rather than a market. */
 const THIN_LIQUIDITY_USD = 10_000;
 
@@ -273,7 +285,7 @@ const snapshot = defineCapability({
   category: 'READ',
   effect: 'READ',
   risk: 'LOW',
-  input: z.object({ chain: ChainName, poolAddress: ExactAddress }),
+  input: z.object({ chain: ChainName, poolAddress: ExactPool }),
   output: z.object({
     chain: z.string(),
     pool: Pool,
@@ -310,7 +322,7 @@ const history = defineCapability({
   risk: 'LOW',
   input: z.object({
     chain: ChainName,
-    poolAddress: ExactAddress,
+    poolAddress: ExactPool,
     timeframe: z.enum(['minute', 'hour', 'day']).default('hour'),
     limit: z.number().int().min(1).max(100).default(24),
   }),

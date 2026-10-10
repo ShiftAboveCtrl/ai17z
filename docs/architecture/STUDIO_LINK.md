@@ -15,7 +15,7 @@ address for an installation and never connects to one.
 
 | Sent to Studio | Never sent |
 | --- | --- |
-| A public key (P-256 JWK) | Agents, memories, prompts, conversations |
+| A public key (P-256 JWK) | Memories, prompts, conversations, drafts |
 | A name the owner can change: "AI17Z on Windows" | Provider keys, the master key |
 | Platform, AI17Z version, instance label | X sessions, cookies, Chrome profiles |
 | DPoP proofs and tokens Studio issued | Telegram credentials, files, anything an agent thought |
@@ -23,6 +23,43 @@ address for an installation and never connects to one.
 There is no code path in the connector that reads any of the right-hand
 column, which is the property that matters: nothing has to remember not to
 send it.
+
+One row was added to the left-hand column, and only behind a switch the
+owner turns on: **control from Studio** (below) sends each agent's id, name,
+state and the one sentence its status line already shows. Agents were in the
+right-hand column until then, and linking an installation still sends nothing
+about them.
+
+## Control from Studio
+
+`packages/runtime/src/studioControl.ts`. Off by default, a separate switch
+from linking (`studio.control`), because an owner linked for entitlements on
+the understanding that no agent was involved.
+
+When it is on, the worker's sweep, about once a minute, makes one
+`POST /api/v1/installation/exchange`: the agents and whether everything is
+paused, plus `want_commands`. Studio answers with whatever is waiting. The
+results go back in a second exchange that asks for nothing new, so a command
+is never handed into a sweep that has already finished. Turned off, the
+installation tells Studio once, Studio withdraws whatever was waiting, and
+nothing more is sent.
+
+The boundary is Telegram's (`telegramCommands.ts`), for the same reasons:
+
+- **A closed list.** `PAUSE_AGENT`, `RESUME_AGENT`, `PAUSE_ALL`, `RESUME_ALL`.
+  Studio's enum and core's list are the same four, and a test pins core's.
+  Nothing interprets free text and nothing reaches a prompt.
+- **Through what exists.** Resume runs `startPreflight`, the same checks as
+  the Start button, and repeats its refusal as the result. An agent that was
+  never set up is not started from a phone. Pause everything is `setPauseAll`.
+- **Stale is not an instruction.** Studio states each command's age and core
+  refuses one older than fifteen minutes; an age Studio did not state is
+  treated as stale, not fresh.
+- **Once.** A command Studio sends again because the answer was lost is
+  answered from the record of the first time.
+
+It speaks for the installation, like the Telegram chat: the account that
+linked this machine sees every agent on it.
 
 ## Identity
 
