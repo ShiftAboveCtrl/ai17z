@@ -61,6 +61,33 @@ The boundary is Telegram's (`telegramCommands.ts`), for the same reasons:
 It speaks for the installation, like the Telegram chat: the account that
 linked this machine sees every agent on it.
 
+## Live view
+
+`packages/runtime/src/studioLiveView.ts`. A third switch, off by default and
+separate from control, because a picture of a signed-in browser shows
+whatever is on it, which is more than a name and a state.
+
+Two more verbs, `START_VIEW` and `STOP_VIEW`. Studio hands them only to an
+exchange that says `browser: true`, which only the worker that owns the
+browser can say and only with the switch on; the containerised jobs worker
+never receives one. The frames are Chrome's own screencast of the tab the
+agent already has, found through `peekRolePage`, which takes no lease and
+no lock: a ten-minute view must not hold the tab a reply is waiting for.
+
+Bounded three ways. Every frame's answer says whether anybody is watching
+and a no stops it; a view ends after ten minutes; and the screencast stops
+itself when nothing wants frames. At most one frame a second leaves the
+machine, at 960 by 640. Studio keeps the latest frame per agent in memory
+and nowhere else, and forgets it a minute after the owner's page stops
+asking.
+
+**View only.** Nothing in either repository dispatches input from Studio.
+Typing into a signed-in browser through a website is what somebody who
+reached that page would want most, and an owner who needs to type can do it
+at the machine, which is also where a sign-in challenge is answered.
+`browserTakeover.ts` holds the state machine a hosted takeover would use;
+nothing here calls it.
+
 ## Identity
 
 The installation's identity is a key pair made when it links. The private
