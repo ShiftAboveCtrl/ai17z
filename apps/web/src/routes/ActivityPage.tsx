@@ -80,6 +80,18 @@ const FILTERS = [
   { key: 'all', label: 'Everything', statuses: '' },
 ] as const;
 
+/**
+ * The inbox by the server's triage, ties kept in arrival order. A row without
+ * triage (an older API) sorts as it came, rather than as the least important.
+ */
+function inboxOrder(items: MentionRow[], byPriority: boolean): MentionRow[] {
+  if (!byPriority) return items;
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => (b.item.triage?.score ?? 0) - (a.item.triage?.score ?? 0) || a.index - b.index)
+    .map(({ item }) => item);
+}
+
 /** One filter chip, so the two lists cannot drift apart visually. */
 const CHIP = (active: boolean) =>
   `whitespace-nowrap rounded-full border px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] transition-colors ${
@@ -117,6 +129,9 @@ export function ActivityPage() {
     answer is the second.
   */
   const [directOnly, setDirectOnly] = useState(true);
+  // Off by default: the list is in the order things happened, and reordering
+  // it unasked makes "what came in last" impossible to read.
+  const [byPriority, setByPriority] = useState(false);
 
   const path = useMemo(() => {
     const query = new URLSearchParams({ limit: '30' });
@@ -300,6 +315,16 @@ export function ActivityPage() {
               {directOnly ? 'Sent to this agent' : 'Everything the radar saw'}
             </button>
           )}
+          {view === 'inbox' && (
+            <button
+              type="button"
+              onClick={() => setByPriority((on) => !on)}
+              aria-pressed={byPriority}
+              className={CHIP(byPriority)}
+            >
+              {byPriority ? 'Most worth a look first' : 'Newest first'}
+            </button>
+          )}
           {view === 'inbox'
             ? MENTION_FILTERS.map((f) => (
                 <button
@@ -409,7 +434,7 @@ export function ActivityPage() {
           <div>
           <SpamPanel />
           <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-2">
-            {mentions.data?.items.map((mention, index) => (
+            {inboxOrder(mentions.data?.items ?? [], byPriority).map((mention, index) => (
               <FadeIn key={`${mention.eventId}:${mention.agentId ?? 'unassigned'}`} delay={Math.min(index * 0.04, 0.3)}>
                 <MentionCard mention={mention} showAgent={!agentId && manyAgents} onChanged={() => mentions.reload()} />
               </FadeIn>

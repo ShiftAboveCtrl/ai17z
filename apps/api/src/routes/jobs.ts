@@ -13,7 +13,7 @@ import {
   ops,
   type UserRow,
 } from '@xbam/database';
-import { approveJob, attentionWindow, cancelJob, rejectJob, retryJob } from '@xbam/runtime';
+import { approveJob, attentionWindow, cancelJob, inboxTriage, rejectJob, retryJob } from '@xbam/runtime';
 import { Pagination, handler, params, parseBody, parseQuery, requireUser } from '../http';
 
 async function ownedAgent(agentId: string, user: UserRow) {
@@ -103,7 +103,11 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
           directOnly: query.directOnly,
         }),
       ]);
-      return { items, counts };
+      // Triage rides on each row rather than reordering the list: the list is
+      // in the order things happened, and an owner can sort by priority on
+      // purpose without losing that.
+      const now = new Date();
+      return { items: items.map((item) => ({ ...item, triage: inboxTriage(item, now) })), counts };
     }),
   );
 

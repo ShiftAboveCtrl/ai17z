@@ -138,6 +138,18 @@ export function MentionCard({ mention, showAgent = false, onChanged }: { mention
         </span>
       </div>
 
+      {/*
+        Only where there is something to decide. A settled row needs no
+        advice, and a priority chip on everything would teach an owner to
+        ignore it.
+      */}
+      {mention.triage && (mention.triage.suggestion === 'ANSWER' || mention.triage.suggestion === 'REVIEW') && (
+        <p className="mt-3 break-words text-sm text-bone-dim" title={mention.triage.factors.map((f) => f.reason).join(' ')}>
+          {mention.triage.priority === 'HIGH' && <span className="chip mr-2">priority</span>}
+          {mention.triage.summary}
+        </p>
+      )}
+
       <p className="mt-4 line-clamp-4 break-words text-lg font-light leading-snug text-bone">
         {mention.text || '(no text)'}
       </p>

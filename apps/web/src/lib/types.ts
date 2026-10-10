@@ -124,6 +124,14 @@ export interface MentionRow {
   spamVerdict: string | null;
   spamReasons: string[] | null;
   spamDecidedBy: string | null;
+  /** Which to look at first, and why. A suggestion: nothing acts on it. */
+  triage?: {
+    priority: 'HIGH' | 'NORMAL' | 'LOW';
+    score: number;
+    suggestion: 'ANSWER' | 'REVIEW' | 'LEAVE' | 'NOTHING';
+    factors: { factor: string; points: number; reason: string }[];
+    summary: string;
+  };
 }
 
 export interface DiagnosticRow {
