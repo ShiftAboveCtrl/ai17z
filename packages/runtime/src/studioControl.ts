@@ -4,6 +4,7 @@ import { startPreflight } from './agentStart';
 import { agentStatusNow } from './agentStatusNow';
 import { pauseState, setPauseAll } from './killSwitch';
 import { studioExchange } from './studioLink';
+import { canShowBrowser, startView, stopView, studioLiveViewSetting } from './studioLiveView';
 
 const log = createLogger('studio-control');
 
@@ -42,7 +43,11 @@ const log = createLogger('studio-control');
  * linked this machine, and sees every agent on it.
  */
 
-export const STUDIO_COMMANDS = ['PAUSE_AGENT', 'RESUME_AGENT', 'PAUSE_ALL', 'RESUME_ALL'] as const;
+/**
+ * The whole list. The last two show the agent's browser and stop showing it,
+ * and run only where the live view switch is on and the browser lives.
+ */
+export const STUDIO_COMMANDS = ['PAUSE_AGENT', 'RESUME_AGENT', 'PAUSE_ALL', 'RESUME_ALL', 'START_VIEW', 'STOP_VIEW'] as const;
 export type StudioCommandKind = (typeof STUDIO_COMMANDS)[number];
 
 /** Fifteen minutes, as for a Telegram command: long enough for a slow sweep, short enough that nothing stale survives. */
@@ -125,6 +130,8 @@ export async function carryOut(
     resume: (id: string) => Promise<{ ok: true } | { ok: false; why: string }>;
     pauseAll: (paused: boolean) => Promise<void>;
     audit: (action: string, entityId: string | null) => Promise<void>;
+    startView?: (agentId: string, name: string) => Promise<{ ok: boolean; sentence: string }>;
+    stopView?: (agentId: string) => Promise<boolean>;
   },
 ): Promise<StudioCommandResult> {
   const answer = (ok: boolean, sentence: string): StudioCommandResult => ({ id: command.id, ok, sentence });
@@ -143,6 +150,15 @@ export async function carryOut(
   if (!command.agentId) return answer(false, 'The command did not say which agent.');
   const agent = await effects.agent(command.agentId);
   if (!agent) return answer(false, 'That agent is not on this AI17Z any more.');
+  if (kind === 'START_VIEW') {
+    if (!effects.startView) return answer(false, 'This part of AI17Z does not run the browser.');
+    const started = await effects.startView(agent.id, agent.name);
+    return answer(started.ok, started.sentence);
+  }
+  if (kind === 'STOP_VIEW') {
+    const stopped = effects.stopView ? await effects.stopView(agent.id) : false;
+    return answer(true, stopped ? `Stopped showing ${agent.name}'s browser.` : `${agent.name}'s browser was not being shown.`);
+  }
   if (kind === 'PAUSE_AGENT') {
     if (agent.state === 'PAUSED') return answer(true, `${agent.name} was already paused.`);
     await effects.pause(agent.id);
@@ -175,6 +191,8 @@ const realEffects = {
   audit: async (action: string, entityId: string | null) => {
     await ops.audit({ actorUserId: null, action, entityType: entityId ? 'agent' : 'settings', entityId: entityId ?? 'pause', data: { via: 'studio' } });
   },
+  startView,
+  stopView,
 };
 
 async function reportAgents(): Promise<ReportedAgent[]> {
@@ -208,7 +226,10 @@ export async function exchangeWithStudio(): Promise<{ ran: number; skipped?: str
     return { ran: 0, skipped: told.ok ? 'off' : told.why };
   }
 
-  const first = await studioExchange({ protocol: 1, control: true, paused: (await pauseState()).paused, agents: await reportAgents(), want_commands: true });
+  // Which commands this process can carry out: only the worker that owns the
+  // browser can show it, and only when the owner allowed showing it.
+  const shows = canShowBrowser() && (await studioLiveViewSetting()).enabled;
+  const first = await studioExchange({ protocol: 1, control: true, paused: (await pauseState()).paused, agents: await reportAgents(), browser: shows, want_commands: true });
   if (!first.ok) return { ran: 0, skipped: first.why };
   if (!setting.announced) await ops.setSetting(CONTROL_SETTING, { ...setting, announced: true });
 
@@ -233,7 +254,7 @@ export async function exchangeWithStudio(): Promise<{ ran: number; skipped?: str
     done.unshift(result);
   }
   await ops.setSetting(DONE_SETTING, done.slice(0, DONE_KEPT));
-  const second = await studioExchange({ protocol: 1, control: true, paused: (await pauseState()).paused, agents: await reportAgents(), results, want_commands: false });
+  const second = await studioExchange({ protocol: 1, control: true, paused: (await pauseState()).paused, agents: await reportAgents(), results, browser: shows, want_commands: false });
   if (!second.ok) log.warn('could not report Studio command results; they are sent again when redelivered', { why: second.why });
   return { ran: results.length };
 }

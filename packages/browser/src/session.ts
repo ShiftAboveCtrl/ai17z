@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { Browser, BrowserContext } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 import { PipelineError, createLogger, currentBudget, envBool, errorMessage } from '@xbam/shared';
 import type { BrowserIdentity, LeasedSession, SessionConfig } from './types';
 import {
@@ -568,6 +568,21 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
  *
  * Reads the live cache and never opens anything, so asking is always safe.
  */
+/**
+ * The page a role tab shows right now, for looking at and nothing else.
+ *
+ * Takes no lease and no lock, opens nothing, and never launches a browser:
+ * a live view watching the action tab for ten minutes must not hold the tab a
+ * reply is waiting for. Null when the account has no warm session or the
+ * role has no tab, which a viewer reports rather than fixes.
+ */
+export function peekRolePage(accountId: string, role: TabRole): Page | null {
+  const entry = contexts.get(accountId);
+  if (!entry || entry.dead || entry.closing) return null;
+  const page = entry.tabs.get(role)?.page ?? null;
+  return page && !page.isClosed() ? page : null;
+}
+
 export function sessionTabs(accountId: string): TabHealth[] {
   const entry = contexts.get(accountId);
   return entry ? tabHealth(entry.tabs) : tabHealth(new Map());

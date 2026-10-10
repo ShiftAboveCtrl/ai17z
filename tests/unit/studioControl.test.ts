@@ -32,8 +32,18 @@ function fakeEffects(agent: { id: string; name: string; state: string } | null, 
 const command = (kind: string, extra: Partial<StudioCommand> = {}): StudioCommand => ({ id: ID, kind, agentId: AGENT, ageMs: 1_000, ...extra });
 
 describe('Studio commands', () => {
-  it('is exactly four verbs, none of which writes anything an agent says', () => {
-    expect([...STUDIO_COMMANDS]).toEqual(['PAUSE_AGENT', 'RESUME_AGENT', 'PAUSE_ALL', 'RESUME_ALL']);
+  it('is exactly six verbs, none of which writes anything an agent says or types into a page', () => {
+    expect([...STUDIO_COMMANDS]).toEqual(['PAUSE_AGENT', 'RESUME_AGENT', 'PAUSE_ALL', 'RESUME_ALL', 'START_VIEW', 'STOP_VIEW']);
+  });
+
+  it('shows a browser only where something can show one', async () => {
+    const { effects } = fakeEffects({ id: AGENT, name: 'Scout', state: 'ACTIVE' });
+    expect(await carryOut(command('START_VIEW'), effects)).toMatchObject({ ok: false, sentence: expect.stringMatching(/does not run the browser/) });
+    const shown: string[] = [];
+    const withBrowser = { ...effects, startView: async (id: string, name: string) => (shown.push(id), { ok: true, sentence: `Showing ${name}'s browser.` }), stopView: async () => true };
+    expect(await carryOut(command('START_VIEW'), withBrowser)).toMatchObject({ ok: true, sentence: "Showing Scout's browser." });
+    expect(shown).toEqual([AGENT]);
+    expect(await carryOut(command('STOP_VIEW'), withBrowser)).toMatchObject({ ok: true, sentence: "Stopped showing Scout's browser." });
   });
 
   it('refuses a verb it does not know, and touches nothing', async () => {
