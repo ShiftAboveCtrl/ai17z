@@ -8,6 +8,7 @@ import { agentRoutes } from './routes/agents';
 import { agentConfigRoutes } from './routes/agentConfig';
 import { registerInboxRoutes as inboxRoutes } from './routes/inbox';
 import { registerPluginRoutes as pluginRoutes } from './routes/plugins';
+import { registerCouncilRoutes as councilRoutes } from './routes/council';
 import { registerStudioRoutes as studioRoutes } from './routes/studio';
 import { easyRoutes, easyStartRoutes } from './routes/easy';
 import { characterRoutes } from './routes/character';
@@ -83,6 +84,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(agentConfigRoutes);
   await app.register(inboxRoutes);
   await app.register(pluginRoutes);
+  await app.register(councilRoutes);
   await app.register(studioRoutes);
   await app.register(easyRoutes);
   await app.register(foundryRoutes);
