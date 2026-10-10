@@ -43,6 +43,9 @@ export interface PaperFill {
   slippageBps: number;
   /** Milliseconds from the quote being read to the fill being assumed. */
   latencyMs: number;
+  /** Basis points this size moved the price against itself, by the model named beside it. */
+  priceImpactBps: number;
+  impactModel: string;
 }
 
 export type PaperOutcome =
@@ -223,7 +226,20 @@ async function fillPaper(
   // The fee comes off what is spent, and what is left is converted at the
   // price the fill executed against, into the units of what arrives.
   const { out: netIn, fee } = afterFee(spent, atFill.snapshot.feeMicroBps);
-  const out = amountOut(netIn, atFill.snapshot, spending);
+  const atMid = amountOut(netIn, atFill.snapshot, spending);
+  const impact = withImpact(atMid, netIn, atFill.snapshot, spending);
+  const out = impact.out;
+  if (impact.bps > onRow.maxPriceImpactBps) {
+    const reasons = [
+      ...verdict.reasons,
+      {
+        code: 'PRICE_IMPACT_TOO_HIGH',
+        detail: `This size would move the price about ${impact.bps}bps against the trade (${impact.model}), more than the ${onRow.maxPriceImpactBps}bps it allows.`,
+      },
+    ];
+    const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: reasons });
+    return { outcome: 'REFUSED', verdict: { ...verdict, allowed: false, reasons }, intent: refused ?? onRow };
+  }
   const quotePrice = BigInt(onRow.quote.priceBaseUnits);
   const fillPrice = BigInt(atFill.snapshot.priceBaseUnits);
   const moved = quotePrice === 0n ? 0 : Number(((fillPrice > quotePrice ? fillPrice - quotePrice : quotePrice - fillPrice) * 10_000n) / quotePrice);
@@ -236,6 +252,8 @@ async function fillPaper(
     outBase: out.toString(),
     feeBase: fee.toString(),
     slippageBps: moved,
+    priceImpactBps: impact.bps,
+    impactModel: impact.model,
     latencyMs: Date.parse(atFill.snapshot.observedAt) - Date.parse(onRow.quote.observedAt),
   };
 
@@ -296,6 +314,31 @@ export function amountOut(amountIn: bigint, quote: MarketSnapshot, spending: Pri
   const unit = 10n ** BigInt(decimalsOf(quote.asset));
   if (price === 0n) return 0n;
   return spending === 'QUOTE' ? (amountIn * unit) / price : (amountIn * price) / unit;
+}
+
+/**
+ * What a trade of this size would really receive, given how deep the pool is.
+ *
+ * The mid price is what one unit trades at; a larger trade moves the price
+ * against itself as it goes. With the pool's reported depth this treats it as
+ * constant product, half of the reported value on each side, which overstates
+ * the impact on a concentrated-liquidity pool: the conservative direction for a
+ * simulation. Pools only: a curve or a broker is not this shape. Without a reported depth there is nothing to model from, and the
+ * fill says so rather than pretending the market is infinitely deep.
+ */
+export function withImpact(atMid: bigint, netIn: bigint, quote: MarketSnapshot, spending: PricedSide): { out: bigint; bps: number; model: string } {
+  // A bonding curve and a broker price differently from a pool, and a pool's
+  // formula applied to them would be a guess presented as a model.
+  if (quote.phase !== 'POOL') return { out: atMid, bps: 0, model: `not modelled for a ${quote.phase === 'CURVE' ? 'bonding curve' : 'broker'}` };
+  if (quote.liquidityBase === null || atMid === 0n) return { out: atMid, bps: 0, model: 'no depth reported, so no impact modelled' };
+  const side = BigInt(quote.liquidityBase) / 2n;
+  if (side <= 0n) return { out: atMid, bps: 0, model: 'no depth reported, so no impact modelled' };
+  // The trade's size in the counterparty's units: what is spent when spending
+  // it, what would arrive at the mid price when selling for it.
+  const size = spending === 'QUOTE' ? netIn : atMid;
+  const out = (atMid * side) / (side + size);
+  const bps = Number(((atMid - out) * 10_000n) / atMid);
+  return { out, bps, model: 'constant product on the reported depth' };
 }
 
 function decimalsOf(asset: AssetRef): number {

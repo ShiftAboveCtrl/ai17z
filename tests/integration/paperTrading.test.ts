@@ -396,3 +396,29 @@ describe('a preflight answers through the same gate, and writes nothing', () => 
     expect(await trading.listIntents(fixture.agentId, 10)).toEqual([]);
   });
 });
+
+describe('a pool is not infinitely deep', () => {
+  // PONS_V1 is a pool, so its fills are modelled; the curve fixtures above are not.
+  const pool = () => snap({ venue: 'PONS_V1', phase: 'POOL' });
+
+  it('fills a small trade a little worse than the mid price, and says by how much and how', async () => {
+    const fixture = await agent({ venues: ['PONS_V1'] });
+    registerMarketReader(fakeReader([pool(), pool()], ['PONS_V1']));
+    const out = await ask(fixture.agentId, { venue: 'PONS_V1' });
+    expect(out.outcome, out.outcome === 'REFUSED' ? out.verdict.reasons.map((r) => r.code).join(',') : '').toBe('FILLED');
+    if (out.outcome !== 'FILLED') return;
+    // One native into 250 native of quote-side depth, after the 1% fee.
+    expect(out.fill.priceImpactBps).toBe(39);
+    expect(out.fill.impactModel).toMatch(/constant product/);
+  });
+
+  it('refuses a trade whose size would move the price past what it allows', async () => {
+    const fixture = await agent({ venues: ['PONS_V1'] });
+    registerMarketReader(fakeReader([pool(), pool()], ['PONS_V1']));
+    const out = await ask(fixture.agentId, { venue: 'PONS_V1', maxIn: '10000000000000000000' });
+    expect(out.outcome).toBe('REFUSED');
+    if (out.outcome !== 'REFUSED') return;
+    expect(out.verdict.reasons.map((r) => r.code)).toContain('PRICE_IMPACT_TOO_HIGH');
+    expect(out.intent.status).toBe('RISK_REJECTED');
+  });
+});

@@ -12,6 +12,7 @@ import {
   registerIpfsUpstreams,
   registerReferenceUpstreams,
   registerGeckoUpstreams,
+  registerJupiterUpstreams,
   registerSignatureUpstreams,
   registerSolanaUpstreams,
   registerTokenRiskUpstreams,
@@ -44,6 +45,7 @@ import { registerGovernanceCapabilities } from './governanceCapabilities';
 import { registerStorageCapabilities } from './storageCapabilities';
 import { registerReferenceCapabilities } from './referenceCapabilities';
 import { registerMarketCapabilities } from './marketCapabilities';
+import { registerMarketIntelCapabilities } from './marketIntelCapabilities';
 import { defaultPipelineDraft } from './defaultPipeline';
 import { registerXCapabilities } from './xCapabilities';
 import { registerGithubCapabilities } from './githubCapabilities';
@@ -139,6 +141,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerReferenceUpstreams();
   registerSignatureUpstreams();
   registerGeckoUpstreams();
+  registerJupiterUpstreams();
   registerWebHistoryUpstreams();
   registerFeedUpstreams();
   registerScholarUpstreams();
@@ -175,6 +178,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerStorageCapabilities();
   registerReferenceCapabilities();
   registerMarketCapabilities();
+  registerMarketIntelCapabilities();
   registerWebHistoryCapabilities();
   registerWebReadCapability();
   registerSocialSignalCapabilities();

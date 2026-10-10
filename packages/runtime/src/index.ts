@@ -132,6 +132,7 @@ export * from './governanceCapabilities';
 export * from './storageCapabilities';
 export * from './referenceCapabilities';
 export * from './marketCapabilities';
+export * from './marketIntelCapabilities';
 export * from './researchFabric';
 export * from './knowledgeCollections';
 export * from './foundry';

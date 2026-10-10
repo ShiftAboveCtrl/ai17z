@@ -105,6 +105,11 @@ export const UTILITY_BRIDGE: readonly string[] = [
   'market.ohlcv',
   'market.new_pools',
   'market.trending',
+  'market.search',
+  'market.pair_detail',
+  'market.recent_trades',
+  'market.discover_solana',
+  'token.solana_profile',
   'market.price_check',
   // EVM chains and contracts: the substance of a transaction inspector.
   'chain.health',
