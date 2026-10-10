@@ -8,6 +8,8 @@ import {
   prepareStudioPurchase,
   recordStudioPurchaseSent,
   reviewStudioPurchase,
+  setStudioControl,
+  studioControlSetting,
   studioLinkWallet,
   studioWalletChallenge,
   studioWallets,
@@ -48,6 +50,30 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
     handler(async (request) => {
       await requireUser(request);
       return studioStatus();
+    }),
+  );
+
+  /*
+    Whether a linked Studio may see this installation's agents and pause or
+    resume them. Off by default and separate from linking, because linking
+    was agreed to for entitlements and sent nothing about any agent.
+  */
+  app.get(
+    '/api/studio/control',
+    handler(async (request) => {
+      await requireUser(request);
+      const setting = await studioControlSetting();
+      return { enabled: setting.enabled, changedAt: setting.changedAt };
+    }),
+  );
+
+  app.put(
+    '/api/studio/control',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
+      const setting = await setStudioControl(body.enabled, user.id);
+      return { enabled: setting.enabled, changedAt: setting.changedAt };
     }),
   );
 

@@ -3,10 +3,12 @@ import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ops, plugins as installedPlugins, studio as ledger } from '@xbam/database';
+import { agents as agentsRepo, ops, plugins as installedPlugins, studio as ledger } from '@xbam/database';
 import {
   beginStudioLink,
   disconnectStudio,
+  exchangeWithStudio,
+  setStudioControl,
   installFromRegistry,
   pollStudioLink,
   prepareStudioPurchase,
@@ -111,7 +113,7 @@ run('AI17Z core against a running AI17Z Studio', () => {
   let agentId: string;
 
   // Studio was started reading this stand-in chain; every checkout touches it, even one never paid.
-  const chain = new FakeChain(8547, {
+  const chain = new FakeChain(Number(process.env.STUDIO_CONTRACT_CHAIN_PORT ?? 8547), {
     poolId: '0x67a9703b571d37bfab8d864bcdff9f3508d19eef6929d21301a3692a7be5b346',
     token: AI17Z_PAYMENT.tokenChecksum,
     // 10,000,000 AI17Z per ETH, as DexScreener states it: ETH per AI17Z.
@@ -471,4 +473,45 @@ run('AI17Z core against a running AI17Z Studio', () => {
       backend?.kill();
     }
   }, 300_000);
+  it('is seen and steered from Studio only once the owner allows it, and only through the four verbs', async () => {
+    const local = (await createFixture()).agentId;
+    const installation = await linkAs();
+
+    // Linked but not allowed: nothing about the agent is sent, and Studio offers nothing.
+    expect(await exchangeWithStudio()).toMatchObject({ ran: 0, skipped: 'off' });
+    expect((await fixture('linked-agents')).agents).toEqual([]);
+    expect(await fixture('command', 'PAUSE_ALL', installation)).toMatchObject({ refused: 'FORBIDDEN' });
+
+    // Allowed: the agent appears under its own id, and a pause sent from Studio lands.
+    await setStudioControl(true, null);
+    expect((await exchangeWithStudio()).ran).toBe(0);
+    const seen = (await fixture('linked-agents')).agents as Array<Record<string, unknown>>;
+    expect(seen).toEqual([expect.objectContaining({ remoteAgentId: local, origin: 'LOCAL_LINKED' })]);
+    const pause = await fixture('command', 'PAUSE_AGENT', installation, local);
+    expect(pause.id).toBeTruthy();
+    expect((await exchangeWithStudio()).ran).toBe(1);
+    expect((await agentsRepo.getAgent(local))!.state).toBe('PAUSED');
+    expect(await fixture('command-status', pause.id)).toMatchObject({ state: 'DONE' });
+    expect(((await fixture('linked-agents')).agents as Array<Record<string, unknown>>)[0]).toMatchObject({ state: 'PAUSED', remoteState: 'PAUSED' });
+
+    // Resume runs the Start button's own checks: either it starts, or the machine's refusal is what Studio shows.
+    const resume = await fixture('command', 'RESUME_AGENT', installation, local);
+    await exchangeWithStudio();
+    const after = await fixture('command-status', resume.id);
+    const state = (await agentsRepo.getAgent(local))!.state;
+    if (after.state === 'DONE') {
+      expect(state).toBe('ACTIVE');
+    } else {
+      expect(after).toMatchObject({ state: 'FAILED', sentence: expect.stringMatching(/^Not started: /) });
+      expect(state).toBe('PAUSED');
+    }
+
+    // Turned off again: Studio is told, withdraws what waited, and offers nothing.
+    const waiting = await fixture('command', 'PAUSE_ALL', installation);
+    await setStudioControl(false, null);
+    await exchangeWithStudio();
+    expect(await fixture('command-status', waiting.id)).toMatchObject({ state: 'EXPIRED' });
+    expect(await fixture('command', 'PAUSE_ALL', installation)).toMatchObject({ refused: 'FORBIDDEN' });
+    await disconnectStudio();
+  }, 180_000);
 });

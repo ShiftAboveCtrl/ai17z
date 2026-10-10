@@ -873,6 +873,20 @@ const PurchaseList = z.object({
 });
 export type StudioPurchase = z.infer<typeof PurchaseList>['purchases'][number];
 
+/**
+ * One exchange on the control channel (`studioControl.ts`). The body is
+ * built there and carries nothing secret; this only adds the installation's
+ * token and proof.
+ */
+export async function studioExchange(json: Record<string, unknown>): Promise<{ ok: true; body: Record<string, unknown> | null } | StudioProblem> {
+  const answer = await authed('/api/v1/installation/exchange', { method: 'POST', json }).catch(
+    (error: Error) => ({ ok: false as const, why: error.message }),
+  );
+  if ('ok' in answer) return answer;
+  if (answer.status !== 200) return { ok: false, why: describe(answer) };
+  return { ok: true, body: answer.body };
+}
+
 export async function studioPurchases(): Promise<{ ok: true; purchases: StudioPurchase[] } | StudioProblem> {
   const answer = await authed('/api/v1/installation/purchases', { method: 'GET' }).catch(
     (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),

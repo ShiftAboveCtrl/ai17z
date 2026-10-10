@@ -77,6 +77,9 @@ export * from './pluginCapabilities';
 export * from './pluginFeatures';
 export * from './pluginRegistry';
 export * from './studioLink';
+export * from './studioControl';
+export * from './agentStart';
+export * from './agentStatusNow';
 /*
   The key the pipeline claims an action under, so a test can hold it against
   the one `performCapabilityAction` builds. Two writers spelling one key

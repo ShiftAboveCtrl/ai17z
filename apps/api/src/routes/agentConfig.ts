@@ -12,7 +12,6 @@ import {
   PipelineDraft,
   PolicyConfig,
   SetModelConfigInput,
-  IN_FLIGHT_JOB_STATUSES,
   CAPABILITY_PERMISSIONS,
 } from '@xbam/shared/contracts';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@xbam/shared';
@@ -21,7 +20,6 @@ import {
   setCapabilityPermission,
   toolpackViews,
   pauseState,
-  collectDiagnostics,
   compareModels,
   describeDuplicateScope,
   describeSpending,
@@ -35,7 +33,6 @@ import {
   packageFilename,
   serialisePackage,
   unpackAgent,
-  liveStatus,
   preflightEnabling,
   toolReadiness,
   toolSupply,
@@ -62,7 +59,7 @@ import {
   query,
   capabilityInvocations,
 } from '@xbam/database';
-import { compileForJob, fingerprintFor, refreshFingerprint, validateGraph } from '@xbam/runtime';
+import { agentStatusNow, compileForJob, fingerprintFor, refreshFingerprint, validateGraph } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAgent(agentId: string, user: UserRow) {
@@ -1080,38 +1077,8 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
 
-      const [diagnostics, inFlight, waiting] = await Promise.all([
-        collectDiagnostics(agent.id),
-        query<{ status: string; current_node_key: string | null; action_type: string }>(
-          `SELECT status, current_node_key, action_type FROM jobs
-            WHERE agent_id = $1 AND status = ANY($2::text[])`,
-          [agent.id, [...IN_FLIGHT_JOB_STATUSES]],
-        ),
-        /*
-          Through the one definition, scoped to this agent.
-
-          This was its own statement, and it counted the two decision statuses
-          without asking whether anything could be decided. A Response Lab
-          rehearsal is held in one of them and publishes nothing, so the agent
-          card said "2 messages are waiting for you to decide" on an
-          installation where one of the two was a rehearsal and the inbox
-          offered a single row.
-        */
-        jobsRepo.countAwaitingAPerson(agent.id),
-      ]);
-
-      return {
-        status: liveStatus({
-          diagnostics,
-          inFlight: inFlight.map((row: { status: string; current_node_key: string | null; action_type: string }) => ({
-            status: row.status,
-            currentNodeKey: row.current_node_key,
-            actionType: row.action_type,
-          })),
-          awaitingPeople: waiting,
-        }),
-        diagnostics,
-      };
+      const { status, diagnostics } = await agentStatusNow(agent.id);
+      return { status, diagnostics };
     }),
   );
 

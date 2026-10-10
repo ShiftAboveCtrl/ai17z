@@ -268,6 +268,18 @@ describe('what it refuses to imply', () => {
     expect(answer.candles[0]!.at).toMatch(/^2026-/);
     expect(answer.note).toMatch(/one pool’s history, not the token’s/i);
   });
+
+  it('reads a Uniswap v4 pool, which is named by a 32-byte id rather than an address', async () => {
+    // market.new_pools lists these on Base every day; a history read that
+    // refused them refused the pools discovery had just shown.
+    replies['/ohlcv/'] = {
+      body: JSON.stringify({ data: { attributes: { ohlcv_list: [[1789117200, '1', '1', '1', '1', '1']] } } }),
+    };
+    const v4 = '0x31f2c0267309632bd2008a3e4f0dee57e7f598e839ed21a4c90bfc4cd1470985';
+    const answer = await run<{ candles: unknown[]; poolAddress: string }>('market.ohlcv', { chain: 'base', poolAddress: v4 });
+    expect(answer.candles).toHaveLength(1);
+    expect(answer.poolAddress).toBe(v4);
+  });
 });
 
 describe('when the indexer misbehaves', () => {

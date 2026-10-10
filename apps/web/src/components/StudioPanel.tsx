@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, Link2, RefreshCw, ShieldAlert, Unlink, Wallet } from 'lucide-react';
 import { AI17Z_PAYMENT, formatBaseUnits, isExactPurchaseTransaction, type PreparedMarketplacePurchase } from '@xbam/shared/contracts';
-import { post } from '@app/lib/api';
+import { post, put } from '@app/lib/api';
 import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
 import { RetryablePanel, Working } from '@app/components/ui';
 import { ROBINHOOD_CHAIN_PARAMS, discoverWallets, ensureChain, type DiscoveredWallet, type Eip1193, type WalletWindow } from '@app/lib/walletDiscovery';
@@ -253,16 +253,65 @@ export function StudioPanel() {
       <LinkSection status={data} onChanged={status.reload} />
       {data.state === 'LINKED' ? (
         <>
+          <ControlSection />
           <EntitlementsSection status={data} onChanged={status.reload} />
           <PurchasesSection status={data} />
         </>
       ) : null}
       <p className="text-[11px] text-bone-faint">
         Linking is optional and nothing else in AI17Z depends on it. This installation always starts the conversation;
-        Studio never connects to it. What is sent: a public key, a name, the platform and the AI17Z version. Never your
-        agents, memories, prompts, provider keys, X sessions or files.
+        Studio never connects to it. What is sent: a public key, a name, the platform and the AI17Z version, and, only if
+        you turn on control from Studio, each agent&apos;s name, state and a one sentence status. Never memories, prompts,
+        drafts, provider keys, X sessions or files.
       </p>
     </div>
+  );
+}
+
+/**
+ * Whether Studio may see the agents here and pause or resume them. Separate
+ * from linking and off until switched on, because linking sent nothing about
+ * any agent and an owner agreed to it on that basis.
+ */
+function ControlSection() {
+  const control = useResource<{ enabled: boolean; changedAt: string | null }>('/api/studio/control');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const enabled = control.data?.enabled ?? false;
+  const toggle = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await put('/api/studio/control', { enabled: !enabled });
+      control.reload();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="rounded-lg border border-ink-line bg-ink-panel p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-medium text-bone">Control from Studio</h2>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          disabled={busy || control.loading}
+          onClick={() => void toggle()}
+          className="inline-flex items-center gap-1.5 rounded border border-ink-line px-3 py-1 text-xs text-bone hover:bg-ink-deep disabled:opacity-50"
+        >
+          {enabled ? 'Turn off' : 'Turn on'}
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-bone-faint">
+        {enabled
+          ? 'On. Studio shows the agents here with what each is doing, and can pause or resume one, or everything. Commands arrive within about a minute; resuming runs the same checks as Start.'
+          : 'Off. Studio sees nothing about the agents here. Turn it on to see them on Studio and pause or resume them from your phone.'}
+      </p>
+      {problem ? <p className="mt-2 break-words text-[11px] text-signal-fail">{problem}</p> : null}
+    </section>
   );
 }
 

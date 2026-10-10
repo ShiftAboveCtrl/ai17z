@@ -32,7 +32,7 @@ import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
 import { pollDueFeeds, pollDueRepos, runDueEngagements, wakeDueAgents } from '@xbam/runtime';
-import { pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, runDueShadows, studioSyncDue, syncStudio } from '@xbam/runtime';
+import { exchangeWithStudio, pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, runDueShadows, studioSyncDue, syncStudio } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -238,6 +238,17 @@ async function main(): Promise<void> {
       }
     } catch (error) {
       log.warn('Studio sync failed', { message: errorMessage(error) });
+    }
+    try {
+      /*
+        The control channel, when the owner turned it on. Every sweep rather
+        than every quarter of an hour, because a pause pressed in Studio should
+        land in about a minute; off, it costs nothing and sends nothing.
+      */
+      const control = await exchangeWithStudio();
+      if (control.ran > 0) log.info('carried out Studio commands', { ran: control.ran });
+    } catch (error) {
+      log.warn('Studio control exchange failed', { message: errorMessage(error) });
     }
     try {
       /*
