@@ -157,6 +157,7 @@ export * from './transactionReconcile';
 export * from './webReadCapability';
 export * from './council';
 export * from './socialSignals';
+export * from './inboxTriage';
 export * from './tradePreflight';
 export * from './shadowTrading';
 export * from './tradeExecution';
