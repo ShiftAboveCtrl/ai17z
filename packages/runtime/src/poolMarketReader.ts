@@ -71,6 +71,25 @@ const GECKO_NETWORKS: Partial<Record<WalletNetwork, string>> = {
  */
 export const MIN_POOLS_FOR_A_MEDIAN = 3;
 
+/**
+ * A fee for pools the indexer will not state one for, taken from the
+ * protocol's own published schedule, and only its ceiling.
+ *
+ * GeckoTerminal reports no `pool_fee_percentage` for pump.fun's bonding curve
+ * or for PumpSwap, which is where nearly every new Solana memecoin trades, so
+ * the rule above (a pool that will not say what it charges is not quoted)
+ * left every one of them unpriceable. Their fees are published, and tiered by
+ * market cap: pump.fun's fee page (updated 2026-10-08) gives 1.25% on the
+ * bonding curve and from 1.25% down to 0.30% on PumpSwap. The ceiling is used
+ * because a simulation must never charge less than the real thing, and the
+ * snapshot's source says it was the ceiling. Any other pool with no stated
+ * fee is still not quoted.
+ */
+export const DOCUMENTED_FEE_CEILINGS: Readonly<Record<string, { percent: string; source: string }>> = {
+  'pump-fun': { percent: '1.25', source: 'pump.fun fee schedule 2026-10-08, ceiling' },
+  pumpswap: { percent: '1.25', source: 'pump.fun fee schedule 2026-10-08, ceiling' },
+};
+
 /** One pool, reduced to the few things a snapshot needs. */
 interface PoolView {
   address: string;
@@ -374,11 +393,15 @@ export async function readPoolMarket(asset: AssetRef, venue: TradeVenue, quote?:
    */
   let chosen: PoolView | null = null;
   let fee: number | null = null;
+  let feeFrom: string | null = null;
   for (const candidate of poolsByDistanceFromMedian(all).slice(0, MAX_FEE_CANDIDATES)) {
-    const charged = await poolFee(network, candidate.address);
+    const stated = await poolFee(network, candidate.address);
+    const documented = stated === null && network === 'solana' && candidate.dex ? DOCUMENTED_FEE_CEILINGS[candidate.dex] : undefined;
+    const charged = stated ?? (documented ? feePercentToMicroBps(documented.percent) : null);
     if (charged !== null) {
       chosen = candidate;
       fee = charged;
+      feeFrom = documented ? documented.source : null;
       break;
     }
   }
@@ -437,7 +460,7 @@ export async function readPoolMarket(asset: AssetRef, venue: TradeVenue, quote?:
     phase: definition.phase,
     // Which pool, on which dex, out of how many. A snapshot that cannot say
     // where it came from is one nobody can check afterwards.
-    source: `${POOL_READER_ID} ${chosen.dex ?? 'unknown dex'} ${chosen.address} median of ${all.length}`.slice(0, 120),
+    source: `${POOL_READER_ID} ${chosen.dex ?? 'unknown dex'} ${chosen.address} median of ${all.length}${feeFrom ? `; fee: ${feeFrom}` : ''}`.slice(0, 120),
   };
   return snapshot;
 }

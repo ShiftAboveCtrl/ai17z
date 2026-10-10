@@ -300,6 +300,7 @@ describe('the bridge to public capabilities', () => {
       upstream.registerScholarUpstreams,
       upstream.registerEntityUpstreams,
       upstream.registerSecUpstreams,
+      upstream.registerJupiterUpstreams,
     ]) register();
     for (const register of [
       runtime.registerIntrospectionCapabilities,
@@ -314,6 +315,7 @@ describe('the bridge to public capabilities', () => {
       runtime.registerStorageCapabilities,
       runtime.registerReferenceCapabilities,
       runtime.registerMarketCapabilities,
+      runtime.registerMarketIntelCapabilities,
       runtime.registerWebHistoryCapabilities,
       runtime.registerWebReadCapability,
       runtime.registerSocialSignalCapabilities,

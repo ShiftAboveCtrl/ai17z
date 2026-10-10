@@ -38,16 +38,17 @@ import { parseExactJson } from '../exactNumbers';
  *   a token's pools    30 KB
  *   new pools          28 KB
  *   trending pools     31 KB
- *   **300 trades      223 KB**
+ *   300 trades        about 260 KB
  *
- * The last is why there is no trades capability: a fifth of a megabyte of
- * individual swaps is a large answer to a question nobody asked precisely, and
- * the cap below would refuse it anyway.
+ * Trades were left out at first as a large answer to a question nobody asked
+ * precisely. A trade tape on a token page is that question asked precisely,
+ * so `trades` exists now with a ceiling of its own; everything else keeps the
+ * smaller one.
  */
 
 export const GECKO_FAMILY = 'market_gecko';
 
-export const GECKO_OPERATIONS = ['pool', 'token', 'token_pools', 'ohlcv', 'new_pools', 'trending'] as const;
+export const GECKO_OPERATIONS = ['pool', 'token', 'token_pools', 'ohlcv', 'new_pools', 'trending', 'trades'] as const;
 export type GeckoOperation = (typeof GECKO_OPERATIONS)[number];
 
 export const GeckoQuery = z.object({
@@ -106,6 +107,8 @@ function pathFor(query: GeckoQuery): string {
       return `/networks/${network}/new_pools?page=1`;
     case 'trending':
       return `/networks/trending_pools?page=1`;
+    case 'trades':
+      return `/networks/${network}/pools/${address}/trades`;
   }
 }
 
@@ -151,7 +154,7 @@ function geckoterminal(): Upstream<GeckoQuery, GeckoResult> {
           // about 31 KB. Generous enough for those and far under the 223 KB a
           // trades page would be -- which is deliberate, since nothing asks for
           // one.
-          maxBytes: 120_000,
+          maxBytes: query.operation === 'trades' ? 400_000 : 120_000,
         });
 
         const status = classifyStatus(response.status, response.headers);
