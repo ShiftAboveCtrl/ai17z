@@ -42,7 +42,6 @@ import {
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
-  jobs as jobsRepo,
   capabilities as capabilitiesRepo,
   posting as postingRepo,
   relationships as relationshipsRepo,
