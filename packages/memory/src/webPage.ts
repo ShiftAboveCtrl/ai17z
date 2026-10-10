@@ -31,6 +31,7 @@
  *     mean this feature could fetch anything and run whatever it found.
  */
 import { createHash } from 'node:crypto';
+import { safeFetch } from '@xbam/upstream';
 
 /** Long enough for a slow documentation host, short enough not to hold a worker. */
 const FETCH_TIMEOUT_MS = 20_000;
@@ -204,6 +205,28 @@ function safeCodePoint(code: number): string {
   return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
 }
 
+/**
+ * The fetch every page read uses unless a test supplies its own.
+ *
+ * Through `safeFetch`, which resolves the name and judges the address it is
+ * about to connect to, and judges again after every redirect. The string
+ * check in `checkUrl` cannot do that: a public name that resolves to
+ * 127.0.0.1, an IPv6 spelling of a private address, or a redirect to a cloud
+ * metadata service all pass a check that only reads the hostname as written.
+ */
+const judgedFetch: typeof fetch = async (input, init) => {
+  const answer = await safeFetch(String(input), {
+    signal: init?.signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    headers: (init?.headers ?? {}) as Record<string, string>,
+    maxBytes: MAX_PAGE_BYTES,
+  });
+  // A response with one of these statuses may not carry a body at all.
+  const body = [101, 204, 205, 304].includes(answer.status) ? null : answer.text;
+  const response = new Response(body, { status: answer.status, headers: answer.headers });
+  Object.defineProperty(response, 'url', { value: answer.url });
+  return response;
+};
+
 export interface FetchPageOptions {
   /** Injectable so tests never touch the network. */
   fetchImpl?: typeof fetch;
@@ -221,7 +244,7 @@ export interface FetchPageOptions {
  * against.
  */
 export async function fetchPage(rawUrl: string, options: FetchPageOptions = {}): Promise<WebPage> {
-  const doFetch = options.fetchImpl ?? fetch;
+  const doFetch = options.fetchImpl ?? judgedFetch;
   const fetchedAt = (options.now ?? new Date()).toISOString();
   const empty = (refusal: string): WebPage => ({
     url: rawUrl,

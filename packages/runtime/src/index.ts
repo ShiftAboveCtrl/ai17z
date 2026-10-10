@@ -154,6 +154,7 @@ export * from './backtest';
 export * from './transactionInspect';
 export * from './solanaInspect';
 export * from './transactionReconcile';
+export * from './webReadCapability';
 export * from './tradePreflight';
 export * from './shadowTrading';
 export * from './tradeExecution';

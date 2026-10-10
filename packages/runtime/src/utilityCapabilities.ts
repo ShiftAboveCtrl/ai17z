@@ -123,6 +123,7 @@ export const UTILITY_BRIDGE: readonly string[] = [
   'transaction.inspect',
   'transaction.inspect_solana',
   'transaction.reconcile',
+  'web.read_page',
   'token.inspect_risk',
   'address.risk_evidence',
   // Solana and Bitcoin.
