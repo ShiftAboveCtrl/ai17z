@@ -874,6 +874,19 @@ const PurchaseList = z.object({
 export type StudioPurchase = z.infer<typeof PurchaseList>['purchases'][number];
 
 /**
+ * One frame of a live view (`studioLiveView.ts`). Studio's answer says
+ * whether anybody is still watching; anything but a clear yes stops the view.
+ */
+export async function studioViewFrame(json: Record<string, unknown>): Promise<{ ok: true; watching: boolean } | StudioProblem> {
+  const answer = await authed('/api/v1/installation/view-frame', { method: 'POST', json }).catch(
+    (error: Error) => ({ ok: false as const, why: error.message }),
+  );
+  if ('ok' in answer) return answer;
+  if (answer.status !== 200) return { ok: false, why: describe(answer) };
+  return { ok: true, watching: answer.body?.watching === true };
+}
+
+/**
  * One exchange on the control channel (`studioControl.ts`). The body is
  * built there and carries nothing secret; this only adds the installation's
  * token and proof.

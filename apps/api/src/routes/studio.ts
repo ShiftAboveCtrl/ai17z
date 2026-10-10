@@ -9,7 +9,9 @@ import {
   recordStudioPurchaseSent,
   reviewStudioPurchase,
   setStudioControl,
+  setStudioLiveView,
   studioControlSetting,
+  studioLiveViewSetting,
   studioLinkWallet,
   studioWalletChallenge,
   studioWallets,
@@ -74,6 +76,28 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
       const body = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
       const setting = await setStudioControl(body.enabled, user.id);
       return { enabled: setting.enabled, changedAt: setting.changedAt };
+    }),
+  );
+
+  /*
+    Whether Studio may show the agents' real browser, view only. Its own
+    switch, because pictures of a signed-in browser are more than a name and
+    a state.
+  */
+  app.get(
+    '/api/studio/live-view',
+    handler(async (request) => {
+      await requireUser(request);
+      return studioLiveViewSetting();
+    }),
+  );
+
+  app.put(
+    '/api/studio/live-view',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
+      return setStudioLiveView(body.enabled, user.id);
     }),
   );
 
