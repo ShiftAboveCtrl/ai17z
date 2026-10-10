@@ -73,6 +73,8 @@ describe('what this runtime says it offers', () => {
     const body = response.json().data as { capabilities: { id: string }[]; refuses: string[]; configured: boolean };
     expect(body.capabilities.map((c) => c.id)).toContain('trading.paper_trade');
     expect(body.configured).toBe(true);
+    // Said, so a gateway offers paper sales only to a runtime that checks them.
+    expect((body as { paperSells?: boolean }).paperSells).toBe(true);
     // Reading the list must not require a key: an operator checking
     // configuration has no gateway secret to hand.
     expect(body.refuses.join(' ')).toMatch(/signs, sends, transfers or approves/i);

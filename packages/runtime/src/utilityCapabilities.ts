@@ -30,6 +30,7 @@ import { BacktestCosts, BacktestRule } from './backtest';
 import { TradePreflightInput } from './tradePreflight';
 import { z } from 'zod';
 import { AssetRef, TRADE_VENUE_IDS, TRADE_SIDES, WALLET_NETWORK_IDS, assetKey, type AssetRef as AssetRefValue } from '@xbam/shared/contracts';
+import { sideAgrees } from './paperPositions';
 
 /**
  * How far out of step a request's clock may be.
@@ -220,7 +221,13 @@ export const PaperTradeInput = z
     /** The caller's own key for this trade, so a retry is the same trade. */
     idempotencyKey: z.string().min(8).max(200).optional(),
   })
-  .strict();
+  .strict()
+  // A SELL spends the priced asset and a BUY spends the other one. A request
+  // whose side and assets disagree would be priced as the other side.
+  .refine((v) => sideAgrees(v.side, v.assetIn, v.assetOut, v.subject), {
+    message: 'The side does not agree with the assets: a BUY spends another asset to get the subject, a SELL spends the subject.',
+    path: ['side'],
+  });
 export type PaperTradeInput = z.infer<typeof PaperTradeInput>;
 
 export const MarketSnapshotInput = z

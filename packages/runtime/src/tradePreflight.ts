@@ -4,6 +4,7 @@ import { AssetRef, BaseUnits, TRADE_VENUE_IDS, TradeMandate, TradeSide, assetKey
 import { readMarket } from './marketData';
 import { minOutFor, type PricedSide } from './paperTrading';
 import { judgeTrade, type RiskReason } from './tradingRisk';
+import { sideAgrees } from './paperPositions';
 
 /**
  * Would this trade pass, asked before anything is written down.
@@ -48,6 +49,9 @@ export const TradePreflightInput = z
     if (assetKey(v.subject) !== assetKey(v.assetIn) && assetKey(v.subject) !== assetKey(v.assetOut)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'The asset being priced has to be one of the two being traded.', path: ['subject'] });
     }
+    else if (!sideAgrees(v.side, v.assetIn, v.assetOut, v.subject)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'The side does not agree with the assets: a BUY spends another asset to get the subject, a SELL spends the subject.', path: ['side'] });
+    }
   });
 export type TradePreflightInput = z.infer<typeof TradePreflightInput>;
 
@@ -65,6 +69,9 @@ export async function preflightTrade(raw: TradePreflightInput, now: Date = new D
   const input = TradePreflightInput.parse(raw);
   const assumptions = ['The gate was asked as though the simulation a real trade must pass had succeeded; a preflight does not run one.'];
   if (!input.exposure) assumptions.push('No exposure was given, so nothing already spent today or already open was counted.');
+  if (input.side === 'SELL') {
+    assumptions.push('What is held was not checked: a preflight has no journal. A sale of more than is held is refused when it is placed.');
+  }
 
   const counterparty = assetKey(input.assetIn) === assetKey(input.subject) ? input.assetOut : input.assetIn;
   const spending: PricedSide = assetKey(input.assetIn) === assetKey(input.subject) ? 'ASSET' : 'QUOTE';

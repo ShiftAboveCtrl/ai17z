@@ -5,6 +5,7 @@ import { assetKey, type AssetRef, type MarketSnapshot, type TradeSide, type Trad
 import { readMarket } from './marketData';
 import { judgeTradeInput } from './tradingGate';
 import { judgeTrade, type RiskVerdict } from './tradingRisk';
+import { heldAgainst, paperPositions, sideAgrees } from './paperPositions';
 
 /**
  * A trade taken all the way to the signing boundary and deliberately stopped.
@@ -92,6 +93,16 @@ export async function runPaperTrade(input: {
   now?: Date;
 }): Promise<PaperOutcome> {
   const now = input.now ?? new Date();
+  // The side is checked against the assets, not trusted: a SELL that spends
+  // the quote asset would otherwise be priced, filled and journaled as a buy.
+  // The input schemas refuse it first; this is the engine refusing it too.
+  if (!sideAgrees(input.side, input.assetIn, input.assetOut, input.subject)) {
+    throw new Error(
+      input.side === 'SELL'
+        ? 'A SELL spends the asset being priced. This one spends the other asset, so it is refused rather than priced as a buy.'
+        : 'A BUY spends another asset to get the one being priced. This one does not, so it is refused rather than priced as a sale.',
+    );
+  }
   const mandate = await trading.liveMandate(input.agentId);
   if (!mandate) return { outcome: 'NO_MARKET', detail: 'This agent has no mandate, so nothing may be traded even on paper.' };
 
@@ -178,7 +189,37 @@ export async function runPaperTrade(input: {
     return { outcome: 'REFUSED', verdict, intent: refused ?? onRow };
   }
 
-  const spent = BigInt(input.maxIn);
+  // What is held is checked and the fill recorded under one lock on this
+  // agent's journal, so two sales of the same holding cannot both see it.
+  return trading.withPaperLock(input.agentId, async () => {
+    if (input.side === 'SELL') {
+      const held = heldAgainst(paperPositions(await trading.paperFillsOf(input.agentId)), input.subject, counterparty);
+      if (BigInt(input.maxIn) > held) {
+        const reasons = [
+          ...verdict.reasons,
+          {
+            code: 'SELLS_MORE_THAN_HELD',
+            detail: `This journal holds ${held} base units against that quote asset and the sale asks for ${input.maxIn}. Paper never goes short.`,
+          },
+        ];
+        const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: reasons });
+        return { outcome: 'REFUSED' as const, verdict: { ...verdict, allowed: false, reasons }, intent: refused ?? onRow };
+      }
+    }
+    return fillPaper(onRow, atFill.snapshot, input.maxIn, spending, verdict);
+  });
+}
+
+/** The fill itself, once the gate and the holdings have both allowed it. */
+async function fillPaper(
+  onRow: TradeIntentRow,
+  executed: MarketSnapshot,
+  maxIn: string,
+  spending: PricedSide,
+  verdict: RiskVerdict,
+): Promise<PaperOutcome> {
+  const atFill = { snapshot: executed };
+  const spent = BigInt(maxIn);
   // The fee comes off what is spent, and what is left is converted at the
   // price the fill executed against, into the units of what arrives.
   const { out: netIn, fee } = afterFee(spent, atFill.snapshot.feeMicroBps);

@@ -149,6 +149,7 @@ export * from './tradingGate';
 export * from './marketData';
 export * from './poolMarketReader';
 export * from './paperTrading';
+export * from './paperPositions';
 export * from './backtest';
 export * from './transactionInspect';
 export * from './solanaInspect';

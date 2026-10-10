@@ -26,7 +26,7 @@ import type {
   TradeSide,
   TradeVenue,
 } from '@xbam/shared/contracts';
-import { query, queryOne } from '../pool';
+import { getPool, query, queryOne } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
 export interface TradeMandateRow {
@@ -390,6 +390,73 @@ export async function exposureOf(agentId: string, since: Date): Promise<{ spentT
     }
   }
   return { spentTodayBase: spent.toString(), openExposureBase: open.toString(), openPositions: positions };
+}
+
+/** One paper fill as the journal holds it, for working out positions. */
+export interface PaperFillRow {
+  intentId: string;
+  side: TradeSide;
+  assetIn: AssetRef;
+  assetOut: AssetRef;
+  inBase: string;
+  outBase: string;
+  at: string;
+}
+
+/**
+ * Every paper fill an agent has, oldest first. All of them rather than a
+ * recent page, because what is held now depends on every buy and sale ever
+ * made; a position worked out from the last two hundred trades is wrong for
+ * any agent that has made more.
+ */
+export async function paperFillsOf(agentId: string): Promise<PaperFillRow[]> {
+  const rows = mapRows<{ id: string; side: TradeSide; assetIn: AssetRef; assetOut: AssetRef; postcondition: Record<string, unknown> | null; createdAt: string }>(
+    await query(
+      `SELECT id, side, asset_in, asset_out, postcondition, created_at FROM trade_intents
+         WHERE agent_id = $1 AND mode = 'PAPER' AND status = 'PAPER_FILLED'
+         ORDER BY created_at ASC`,
+      [agentId],
+    ),
+  );
+  const fills: PaperFillRow[] = [];
+  for (const r of rows) {
+    const inBase = r.postcondition?.inBase;
+    const outBase = r.postcondition?.outBase;
+    // A fill without its amounts cannot be counted; leaving it out is safer
+    // than counting it as zero, which would read as a free trade.
+    if (typeof inBase !== 'string' || typeof outBase !== 'string' || !/^[0-9]+$/.test(inBase) || !/^[0-9]+$/.test(outBase)) continue;
+    fills.push({ intentId: r.id, side: r.side, assetIn: r.assetIn, assetOut: r.assetOut, inBase, outBase, at: r.createdAt });
+  }
+  return fills;
+}
+
+/**
+ * Runs `fn` while holding a lock for one agent's paper journal, so a check of
+ * what it holds and the fill that depends on it cannot interleave with
+ * another of its trades. Two sales of the same holding arriving together
+ * would otherwise both see it.
+ *
+ * A session lock on a connection of its own rather than a transaction:
+ * `fn` uses the ordinary pooled queries, and those must never run inside a
+ * transaction, which they could neither see into nor wait on safely. The lock
+ * is released however `fn` ends, and dies with its connection.
+ */
+export async function withPaperLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+  const holder = await getPool().connect();
+  // A connection whose unlock did not happen goes back to the server closed,
+  // not to the pool: returned, it would hold the lock for whoever borrowed it.
+  let clean = false;
+  try {
+    await holder.query(`SELECT pg_advisory_lock(hashtext('paper_journal:' || $1))`, [agentId]);
+    try {
+      return await fn();
+    } finally {
+      await holder.query(`SELECT pg_advisory_unlock(hashtext('paper_journal:' || $1))`, [agentId]);
+      clean = true;
+    }
+  } finally {
+    holder.release(!clean);
+  }
 }
 
 // ---------------------------------------------------------------------------
