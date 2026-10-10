@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -99,6 +99,36 @@ const FEATURE_WORD: Record<string, string> = {
 
 const when = (value: string) => new Date(value).toLocaleString();
 
+/** One capability's path from the menu to use over the last thirty days, by id. */
+interface LifecycleRow {
+  capabilityId: string;
+  offered: number;
+  selected: number;
+  executed: number;
+  returned: number;
+  used: number;
+  lastSelectedAt: string | null;
+}
+const LifecycleContext = createContext<Map<string, LifecycleRow>>(new Map());
+
+/**
+ * Registered is not working. Each step is what was recorded: offered on a
+ * model's menu, chosen, actually run, a result returned, and that result in a
+ * job that went on to publish. Said only when there is something to say.
+ */
+function LifecycleLine({ id }: { id: string }) {
+  const row = useContext(LifecycleContext).get(id);
+  if (!row || (row.offered === 0 && row.selected === 0)) {
+    return <div className="text-[11px] text-bone-faint">Last 30 days: never offered to the model.</div>;
+  }
+  return (
+    <div className="text-[11px] text-bone-faint">
+      Last 30 days: offered {row.offered}, chosen {row.selected}, ran {row.executed}, returned {row.returned}, in{' '}
+      {row.used} published {row.used === 1 ? 'reply' : 'replies'}.
+    </div>
+  );
+}
+
 /** One capability, as every surface on this page receives it. */
 type PluginCapability = PluginView['capabilities'][number];
 
@@ -162,6 +192,7 @@ function CapabilityRow({
               ) : null}
             </div>
             <div className="text-[11px] text-bone-faint">{capability.description}</div>
+            <LifecycleLine id={capability.id} />
             <div className="text-[11px] text-bone-faint">
               {capability.status === 'AVAILABLE'
                 ? capability.lastUsedAt
@@ -636,6 +667,11 @@ export function PluginsPage() {
     [chosen],
   );
   const registry = useResource<RegistryState>('/api/plugins/registry');
+  const lifecycle = useResource<{ windowDays: number; rows: LifecycleRow[] }>(
+    chosen ? `/api/agents/${chosen}/plugins/lifecycle` : null,
+    [chosen],
+  );
+  const lifecycleById = new Map((lifecycle.data?.rows ?? []).map((row) => [row.capabilityId, row]));
 
   const reload = () => {
     plugins.reload();
@@ -668,6 +704,7 @@ export function PluginsPage() {
       only visible on a narrow window. `sm:pt-28` is unchanged, because from
       640px the navigation is one 67px row again.
     */
+    <LifecycleContext.Provider value={lifecycleById}>
     <main className="mx-auto max-w-page px-6 pb-24 pt-32 sm:px-10 sm:pt-28">
       <header className="mb-8">
         <FadeIn>
@@ -768,6 +805,7 @@ export function PluginsPage() {
         <SettingsTab resource={registry} />
       )}
     </main>
+    </LifecycleContext.Provider>
   );
 }
 

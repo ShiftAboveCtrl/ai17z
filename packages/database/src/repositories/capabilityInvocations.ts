@@ -134,3 +134,70 @@ export async function countRecent(agentId: string, capabilityId: string, sinceMs
   );
   return Number(rows[0]?.n ?? 0);
 }
+
+/** One capability's path from being on the menu to being used, for one agent over a window. */
+export interface CapabilityLifecycleRow {
+  capabilityId: string;
+  /** Times it was on the shortlist a model was shown. */
+  offered: number;
+  /** Times the model chose it, including choices the owner's settings refused. */
+  selected: number;
+  /** Times it actually ran: chosen and not refused. */
+  executed: number;
+  /** Times it ran and returned a result. */
+  returned: number;
+  /** Times a result it returned went into a job that went on to publish. */
+  used: number;
+  lastSelectedAt: string | null;
+}
+
+/**
+ * Registered is not offered, offered is not selected, selected is not
+ * executed, executed is not returned, and returned is not used. Each step is
+ * counted from what was recorded when it happened: offers from the trace the
+ * capability loop writes, the rest from the invocation rows, and "used" only
+ * when the job a successful result fed went on to publish. Anything weaker
+ * would be a guess about whether the model relied on it.
+ */
+export async function lifecycleForAgent(agentId: string, sinceDays = 30): Promise<CapabilityLifecycleRow[]> {
+  const offers = await query<{ capability_id: string; n: number }>(
+    `SELECT o.id AS capability_id, count(*)::int AS n
+       FROM trace_events t, jsonb_array_elements_text(t.data->'offered') AS o(id)
+      WHERE t.agent_id = $1 AND t.type = 'CAPABILITY_OFFERED' AND t.at > now() - ($2::int * interval '1 day')
+      GROUP BY o.id`,
+    [agentId, sinceDays],
+  );
+  const runs = await query<{ capability_id: string; selected: number; executed: number; returned: number; used: number; last_at: Date | null }>(
+    `SELECT ci.capability_id,
+            count(*)::int AS selected,
+            count(*) FILTER (WHERE ci.outcome <> 'REFUSED')::int AS executed,
+            count(*) FILTER (WHERE ci.outcome = 'SUCCEEDED')::int AS returned,
+            count(*) FILTER (WHERE ci.outcome = 'SUCCEEDED' AND j.status = 'EXECUTED')::int AS used,
+            max(ci.created_at) AS last_at
+       FROM capability_invocations ci
+       LEFT JOIN jobs j ON j.id = ci.job_id
+      WHERE ci.agent_id = $1 AND ci.created_at > now() - ($2::int * interval '1 day')
+      GROUP BY ci.capability_id`,
+    [agentId, sinceDays],
+  );
+  const rows = new Map<string, CapabilityLifecycleRow>();
+  const row = (id: string) => {
+    let r = rows.get(id);
+    if (!r) {
+      r = { capabilityId: id, offered: 0, selected: 0, executed: 0, returned: 0, used: 0, lastSelectedAt: null };
+      rows.set(id, r);
+    }
+    return r;
+  };
+  for (const o of offers) row(o.capability_id).offered = o.n;
+  for (const r of runs) {
+    Object.assign(row(r.capability_id), {
+      selected: r.selected,
+      executed: r.executed,
+      returned: r.returned,
+      used: r.used,
+      lastSelectedAt: r.last_at ? new Date(r.last_at).toISOString() : null,
+    });
+  }
+  return [...rows.values()].sort((a, b) => a.capabilityId.localeCompare(b.capabilityId));
+}

@@ -89,6 +89,20 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
   );
 
   /**
+   * Each capability's path from the menu to use, for this agent over the last
+   * thirty days: offered, selected, executed, returned, used. Registered and
+   * working are different claims, and this is the evidence for the second.
+   */
+  app.get(
+    '/api/agents/:id/plugins/lifecycle',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const agent = await ownedAgent(params(request).id!, user);
+      return { windowDays: 30, rows: await capabilityInvocations.lifecycleForAgent(agent.id, 30) };
+    }),
+  );
+
+  /**
    * One Plugin's own panel, when it declared one.
    *
    * Data rather than markup, and drawn by AI17Z's own components. A Plugin
