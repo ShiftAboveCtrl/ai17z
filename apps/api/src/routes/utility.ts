@@ -13,6 +13,7 @@ import {
   isUtilityCapability,
   marketReadiness,
   readMarket,
+  paperPositions,
   preflightTrade,
   runBacktest,
   runPaperTrade,
@@ -103,6 +104,13 @@ export async function utilityRoutes(app: FastifyInstance): Promise<void> {
       venues: TRADE_VENUE_IDS.map((venue) => ({ venue, ...marketReadiness(venue) })),
       /** Nothing can be priced at all, which is worth saying in one word. */
       priceable: TRADE_VENUE_IDS.some((venue) => marketReadiness(venue).ready),
+      /*
+       * This runtime checks a paper trade's side against its assets and
+       * refuses a sale of more than the caller's journal holds. Said, so a
+       * gateway offers selling only to a runtime that means it: an older one
+       * would have filled a sale with nothing behind it.
+       */
+      paperSells: true,
       /*
        * What `capability.invoke` will run, each with what it answers and the
        * shape of its input, in the same words an agent's own menu uses. Only
@@ -240,6 +248,10 @@ async function paperPortfolio(agentId: string): Promise<Record<string, unknown>>
     simulatedOrFilled: filled.length,
     refused: intents.filter((i) => i.status === 'RISK_REJECTED' || i.status === 'FAILED').length,
     exposure,
+    // What is held, from every fill this journal has: average cost and
+    // realised profit in the quote asset's base units, one position per asset
+    // and quote asset, simulated.
+    positions: paperPositions(await trading.paperFillsOf(agentId)),
     recent: intents.slice(0, 20).map((i) => ({
       id: i.id,
       venue: i.venue,
