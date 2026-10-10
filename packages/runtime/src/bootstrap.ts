@@ -37,6 +37,7 @@ import { registerEntityCapabilities } from './entityCapabilities';
 import { registerSecCapabilities } from './secCapabilities';
 import { registerWebHistoryCapabilities } from './webHistoryCapabilities';
 import { registerWebReadCapability } from './webReadCapability';
+import { registerSocialSignalCapabilities } from './socialSignals';
 import { registerSolanaCapabilities } from './solanaCapabilities';
 import { registerBitcoinCapabilities } from './bitcoinCapabilities';
 import { registerGovernanceCapabilities } from './governanceCapabilities';
@@ -176,6 +177,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerMarketCapabilities();
   registerWebHistoryCapabilities();
   registerWebReadCapability();
+  registerSocialSignalCapabilities();
   registerFeedCapabilities();
   registerScholarCapabilities();
   registerEntityCapabilities();

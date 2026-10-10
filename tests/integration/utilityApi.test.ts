@@ -316,6 +316,7 @@ describe('the bridge to public capabilities', () => {
       runtime.registerMarketCapabilities,
       runtime.registerWebHistoryCapabilities,
       runtime.registerWebReadCapability,
+      runtime.registerSocialSignalCapabilities,
       runtime.registerFeedCapabilities,
       runtime.registerScholarCapabilities,
       runtime.registerEntityCapabilities,

@@ -121,7 +121,9 @@ export const TOOLPACKS: Toolpack[] = [
     // their own: an owner deciding "my agent may look things up in reference
     // sources" is making one decision, and splitting it into three would turn a
     // simple screen back into the flat list of switches these exist to replace.
-    prefixes: ['reference.', 'research.', 'entity.'],
+    // Reading a set of public posts somebody supplies (social.) belongs here
+    // too: like a look-up it only reads what it is given, and fetches nothing.
+    prefixes: ['reference.', 'research.', 'entity.', 'social.'],
   },
   {
     id: 'web',
