@@ -9,6 +9,7 @@
   "dependencies": {
     "@xbam/database": "*",
     "@xbam/shared": "*",
+    "@xbam/upstream": "*",
     "pdfjs-dist": "6.3.289"
   }
 }

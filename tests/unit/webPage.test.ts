@@ -239,3 +239,17 @@ describe('reading one page', () => {
     expect(page.refusal).toContain('socket hang up');
   });
 });
+
+describe('a page read without a test fetch judges the address it connects to', () => {
+  // These spellings all name this machine or a private network, and none of
+  // them is caught by reading the hostname as written. The fetch the reader
+  // uses by default resolves and judges the real address, so each is refused
+  // before any connection is made, and the refusal says why.
+  it.each(['http://[::ffff:7f00:1]/docs', 'http://[::1]/docs', 'http://[fd00::1]/docs', 'http://0.0.0.0/docs'])('refuses %s', async (url) => {
+    const page = await fetchPage(url, { skipRobots: true });
+    expect(page.text).toBe('');
+    // The judgement's own words: a refused connection would also fail, but
+    // only the judgement refuses before connecting.
+    expect(page.refusal).toMatch(/is not fetched/);
+  });
+});
