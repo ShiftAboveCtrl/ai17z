@@ -135,6 +135,29 @@ imaginary positions would refuse real trades for imaginary reasons.
 for one rule, in the same spirit as the capability permission checked at ingest
 and again before execution.
 
+## A live trade is paper with the last step put back
+
+`liveTrading.ts`, Solana only, and dormant until an owner makes a mandate
+LIVE: nothing in AI17Z does that for them.
+
+- **Proposed** through the same mandate and gate as paper. A trade the gate
+  allows becomes a trade intent waiting for its owner, and a `SOLANA_SWAP`
+  wallet intent keyed `trade-intent:<id>`, so one decision can never become
+  two transactions. Its floor is the stricter of the route's promise and the
+  owner's slippage from the venue's price.
+- **Approved** by approving the wallet's digest of the exact transaction
+  message (`WALLET.md`, "A Solana swap"). The trade cannot be approved any
+  other way.
+- **Sent** only after `maySign` is asked at that moment, against the mandate
+  and the pause as they are then: back to paper, paused, a quote older than a
+  minute or no signer each stop it, with every reason given.
+- **Mirrored**: the wallet is the record of what happened on chain, and its
+  states (submitted, unknown, confirmed, failed) are carried onto the trade,
+  never the other way. Reconciling asks the chain by hash and never resends.
+- **No autonomy.** A mandate asking for trades without approval is refused:
+  the wallet signs nothing its owner did not approve by digest, and that is
+  not something a mandate can change.
+
 ## Market data: median, not deepest
 
 `marketData.ts`. The deepest UNI pair on DexScreener is UNI/SASHIMI reporting
@@ -150,7 +173,7 @@ treating the second as the first is how a bad price becomes a trade.
 
 ## What is explicitly not authorised
 
-- **No funded blockchain transaction.** None has been built, signed or
+- **No funded blockchain transaction.** The live path is built and proved against fakes; none has been signed or
   broadcast.
 - **No funded brokerage order.**
 - **No unattended live-mainnet autonomous trading.**
