@@ -81,12 +81,25 @@ machine, at 960 by 640. Studio keeps the latest frame per agent in memory
 and nowhere else, and forgets it a minute after the owner's page stops
 asking.
 
-**View only.** Nothing in either repository dispatches input from Studio.
-Typing into a signed-in browser through a website is what somebody who
-reached that page would want most, and an owner who needs to type can do it
-at the machine, which is also where a sign-in challenge is answered.
-`browserTakeover.ts` holds the state machine a hosted takeover would use;
-nothing here calls it.
+## Taking control
+
+A third switch, `studio.takeover`, off by default, lets the owner click and
+type into the agent's browser from Studio, for a sign-in check say. Studio
+also asks for a sign-in within the last fifteen minutes before it accepts a
+single key, because typing into a signed-in browser through a website is what
+somebody holding a stolen Studio session would want most.
+
+It follows `browserTakeover.ts`. `TAKE_CONTROL` marks the account held at once
+(`setOwnerHolding`), so `leaseSession` refuses every new operation with a
+retryable error; an operation already holding a tab finishes; then the owner
+has the page. Their input rides back on the answer to each frame, only while
+they hold it, as a closed list: a click, a scroll, text, and nine named keys,
+each one Playwright mouse or keyboard call on that page. `RELEASE_CONTROL`, the
+end of the view, or the switch going off gives it back, and the agent's next
+operation reads the page afresh. Owner input is never logged, stored, retried
+or replayed on either side; an audit row records that control was taken and for
+how long, never what was done. A security challenge on the page is the owner's
+to answer, which is the reason to hand it to them.
 
 ## Identity
 

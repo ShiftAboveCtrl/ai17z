@@ -4,7 +4,7 @@ import { startPreflight } from './agentStart';
 import { agentStatusNow } from './agentStatusNow';
 import { pauseState, setPauseAll } from './killSwitch';
 import { studioExchange } from './studioLink';
-import { canShowBrowser, startView, stopView, studioLiveViewSetting } from './studioLiveView';
+import { canShowBrowser, releaseControl, startView, stopView, studioLiveViewSetting, studioTakeoverSetting, takeControl } from './studioLiveView';
 
 const log = createLogger('studio-control');
 
@@ -47,7 +47,7 @@ const log = createLogger('studio-control');
  * The whole list. The last two show the agent's browser and stop showing it,
  * and run only where the live view switch is on and the browser lives.
  */
-export const STUDIO_COMMANDS = ['PAUSE_AGENT', 'RESUME_AGENT', 'PAUSE_ALL', 'RESUME_ALL', 'START_VIEW', 'STOP_VIEW'] as const;
+export const STUDIO_COMMANDS = ['PAUSE_AGENT', 'RESUME_AGENT', 'PAUSE_ALL', 'RESUME_ALL', 'START_VIEW', 'STOP_VIEW', 'TAKE_CONTROL', 'RELEASE_CONTROL'] as const;
 export type StudioCommandKind = (typeof STUDIO_COMMANDS)[number];
 
 /** Fifteen minutes, as for a Telegram command: long enough for a slow sweep, short enough that nothing stale survives. */
@@ -132,6 +132,8 @@ export async function carryOut(
     audit: (action: string, entityId: string | null) => Promise<void>;
     startView?: (agentId: string, name: string) => Promise<{ ok: boolean; sentence: string }>;
     stopView?: (agentId: string) => Promise<boolean>;
+    takeControl?: (agentId: string, name: string) => Promise<{ ok: boolean; sentence: string }>;
+    releaseControl?: (agentId: string) => Promise<boolean>;
   },
 ): Promise<StudioCommandResult> {
   const answer = (ok: boolean, sentence: string): StudioCommandResult => ({ id: command.id, ok, sentence });
@@ -158,6 +160,15 @@ export async function carryOut(
   if (kind === 'STOP_VIEW') {
     const stopped = effects.stopView ? await effects.stopView(agent.id) : false;
     return answer(true, stopped ? `Stopped showing ${agent.name}'s browser.` : `${agent.name}'s browser was not being shown.`);
+  }
+  if (kind === 'TAKE_CONTROL') {
+    if (!effects.takeControl) return answer(false, 'This part of AI17Z does not run the browser.');
+    const taken = await effects.takeControl(agent.id, agent.name);
+    return answer(taken.ok, taken.sentence);
+  }
+  if (kind === 'RELEASE_CONTROL') {
+    const released = effects.releaseControl ? await effects.releaseControl(agent.id) : false;
+    return answer(true, released ? `You gave ${agent.name} its browser back.` : `${agent.name} already had its browser.`);
   }
   if (kind === 'PAUSE_AGENT') {
     if (agent.state === 'PAUSED') return answer(true, `${agent.name} was already paused.`);
@@ -193,6 +204,8 @@ const realEffects = {
   },
   startView,
   stopView,
+  takeControl,
+  releaseControl,
 };
 
 async function reportAgents(): Promise<ReportedAgent[]> {
@@ -229,7 +242,8 @@ export async function exchangeWithStudio(): Promise<{ ran: number; skipped?: str
   // Which commands this process can carry out: only the worker that owns the
   // browser can show it, and only when the owner allowed showing it.
   const shows = canShowBrowser() && (await studioLiveViewSetting()).enabled;
-  const first = await studioExchange({ protocol: 1, control: true, paused: (await pauseState()).paused, agents: await reportAgents(), browser: shows, want_commands: true });
+  const takeover = shows && (await studioTakeoverSetting()).enabled;
+  const first = await studioExchange({ protocol: 1, control: true, paused: (await pauseState()).paused, agents: await reportAgents(), browser: shows, takeover, want_commands: true });
   if (!first.ok) return { ran: 0, skipped: first.why };
   if (!setting.announced) await ops.setSetting(CONTROL_SETTING, { ...setting, announced: true });
 
@@ -254,7 +268,7 @@ export async function exchangeWithStudio(): Promise<{ ran: number; skipped?: str
     done.unshift(result);
   }
   await ops.setSetting(DONE_SETTING, done.slice(0, DONE_KEPT));
-  const second = await studioExchange({ protocol: 1, control: true, paused: (await pauseState()).paused, agents: await reportAgents(), results, browser: shows, want_commands: false });
+  const second = await studioExchange({ protocol: 1, control: true, paused: (await pauseState()).paused, agents: await reportAgents(), results, browser: shows, takeover, want_commands: false });
   if (!second.ok) log.warn('could not report Studio command results; they are sent again when redelivered', { why: second.why });
   return { ran: results.length };
 }

@@ -255,6 +255,7 @@ export function StudioPanel() {
         <>
           <ControlSection />
           <LiveViewSection />
+          <TakeoverSection />
           <EntitlementsSection status={data} onChanged={status.reload} />
           <PurchasesSection status={data} />
         </>
@@ -322,6 +323,53 @@ function ControlSection() {
  * in Studio reaches the page. Off until switched on, and separate from
  * control, because a picture of a signed-in browser shows whatever is on it.
  */
+/**
+ * Whether Studio may hand the owner this browser to click and type in, for a
+ * sign-in check say. Off until switched on; the agent does nothing in the
+ * browser while the owner has it; Studio asks for a recent sign-in first.
+ */
+function TakeoverSection() {
+  const setting = useResource<{ enabled: boolean; changedAt: string | null }>('/api/studio/takeover');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const enabled = setting.data?.enabled ?? false;
+  const toggle = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await put('/api/studio/takeover', { enabled: !enabled });
+      setting.reload();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="rounded-lg border border-ink-line bg-ink-panel p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-medium text-bone">Take control from Studio</h2>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          disabled={busy || setting.loading}
+          onClick={() => void toggle()}
+          className="inline-flex items-center gap-1.5 rounded border border-ink-line px-3 py-1 text-xs text-bone hover:bg-ink-deep disabled:opacity-50"
+        >
+          {enabled ? 'Turn off' : 'Turn on'}
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-bone-faint">
+        {enabled
+          ? "On. While watching, you can take an agent's browser from Studio and click and type in it, for example to answer a sign-in check. The agent does nothing in it until you give it back. Studio asks you to have signed in within fifteen minutes, and what you type is never logged or kept."
+          : "Off. Studio can watch but never type into the agents' browser. Needs live view as well."}
+      </p>
+      {problem ? <p className="mt-2 break-words text-[11px] text-signal-fail">{problem}</p> : null}
+    </section>
+  );
+}
+
 function LiveViewSection() {
   const setting = useResource<{ enabled: boolean; changedAt: string | null }>('/api/studio/live-view');
   const [busy, setBusy] = useState(false);
@@ -356,7 +404,7 @@ function LiveViewSection() {
       </div>
       <p className="mt-1 text-xs text-bone-faint">
         {enabled
-          ? "On. From Studio you can watch an agent's browser, about one picture a second, for up to ten minutes at a time. Pictures are passed through and never stored. Nobody can type into it from Studio; for that, use this machine."
+          ? "On. From Studio you can watch an agent's browser, about one picture a second, for up to ten minutes at a time. Pictures are passed through and never stored. Typing into it from Studio needs the switch below as well."
           : "Off. Studio cannot show the agents' browser. Needs control from Studio as well."}
       </p>
       {problem ? <p className="mt-2 break-words text-[11px] text-signal-fail">{problem}</p> : null}
