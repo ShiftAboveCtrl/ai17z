@@ -494,3 +494,53 @@ describe('reading a venue end to end', () => {
     expect(requested[0]).toContain('include=base_token');
   });
 });
+
+describe('a Solana token on documented pools', () => {
+  const MEME = 'Meme111111111111111111111111111111111111111';
+  const WSOL = 'So11111111111111111111111111111111111111112';
+  const solPool = (address: string, dex: string, price: string, reserve: string) => ({
+    id: `solana_${address}`,
+    type: 'pool',
+    attributes: {
+      address,
+      name: `MEME / SOL`,
+      base_token_price_usd: price,
+      quote_token_price_usd: '150',
+      base_token_price_quote_token: (Number(price) / 150).toFixed(12),
+      quote_token_price_base_token: (150 / Number(price)).toFixed(4),
+      reserve_in_usd: reserve,
+      volume_usd: { h24: '1000000' },
+      pool_fee_percentage: null,
+    },
+    relationships: {
+      base_token: { data: { id: `solana_${MEME}`, type: 'token' } },
+      quote_token: { data: { id: `solana_${WSOL}`, type: 'token' } },
+      dex: { data: { id: dex, type: 'dex' } },
+    },
+  });
+
+  // Every Solana pool the indexer lists states no fee, so asking each one again cost requests and learned nothing.
+  it('is priced from the listing alone, at the documented ceiling, without asking each pool', async () => {
+    replies[`/tokens/${MEME}/pools`] = {
+      body: JSON.stringify({
+        data: [
+          solPool('PoolA111111111111111111111111111111111111111', 'pumpswap', '0.001', '500000'),
+          solPool('PoolB111111111111111111111111111111111111111', 'raydium', '0.00101', '300000'),
+          solPool('PoolC111111111111111111111111111111111111111', 'pumpswap', '0.00099', '200000'),
+        ],
+        included: [
+          { id: `solana_${MEME}`, type: 'token', attributes: { address: MEME, symbol: 'MEME', name: 'MEME', decimals: 6 } },
+          { id: `solana_${WSOL}`, type: 'token', attributes: { address: WSOL, symbol: 'SOL', name: 'SOL', decimals: 9 } },
+        ],
+      }),
+    };
+    registerPoolMarketReader();
+    const outcome = await readMarket({ kind: 'ONCHAIN', network: 'solana', address: MEME, decimals: 6 }, 'AMM_POOL_SOLANA');
+    expect(outcome.outcome, JSON.stringify(outcome)).toBe('OK');
+    if (outcome.outcome !== 'OK') return;
+    expect(outcome.snapshot.source).toMatch(/fee: pump\.fun fee schedule/);
+    expect(outcome.snapshot.feeMicroBps).toBe(12_500);
+    expect(requested.filter((u) => u.includes('/pools/Pool'))).toEqual([]);
+    expect(requested).toHaveLength(1);
+  });
+});
