@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { trading } from '@xbam/database';
 import type { TradeIntentRow, TradeMandateRow } from '@xbam/database';
 import { assetKey, type AssetRef, type MarketSnapshot, type TradeSide, type TradeVenue } from '@xbam/shared/contracts';
+import { JUPITER_SWAP_FAMILY, ask, type SwapQuoteQuery, type SwapQuoteResult } from '@xbam/upstream';
+import { errorMessage } from '@xbam/shared';
 import { readMarket } from './marketData';
+import { swapQuoteFrom } from './marketIntelCapabilities';
 import { judgeTradeInput } from './tradingGate';
 import { judgeTrade, type RiskVerdict } from './tradingRisk';
 import { heldAgainst, paperPositions, sideAgrees } from './paperPositions';
@@ -225,9 +228,16 @@ async function fillPaper(
   const spent = BigInt(maxIn);
   // The fee comes off what is spent, and what is left is converted at the
   // price the fill executed against, into the units of what arrives.
-  const { out: netIn, fee } = afterFee(spent, atFill.snapshot.feeMicroBps);
+  const { out: netIn, fee: modelledFee } = afterFee(spent, atFill.snapshot.feeMicroBps);
   const atMid = amountOut(netIn, atFill.snapshot, spending);
-  const impact = withImpact(atMid, netIn, atFill.snapshot, spending);
+  const modelled = withImpact(atMid, netIn, atFill.snapshot, spending);
+  // A real route for exactly this size, where there is one to ask; the depth model where there is not.
+  const routed = await routedOut(onRow.assetIn, onRow.assetOut, maxIn, onRow.maxSlippageBps);
+  const impact =
+    'out' in routed
+      ? { out: routed.out, bps: routed.impactBps, model: routed.model }
+      : { ...modelled, model: routed.gap ? `${modelled.model}; no route quote (${routed.gap})` : modelled.model };
+  const fee = 'out' in routed ? routed.fee : modelledFee;
   const out = impact.out;
   if (impact.bps > onRow.maxPriceImpactBps) {
     const reasons = [
@@ -262,6 +272,57 @@ async function fillPaper(
     postcondition: { ...fill },
   });
   return { outcome: 'FILLED', fill, verdict, intent: filled ?? onRow };
+}
+
+const WRAPPED_SOL = 'So11111111111111111111111111111111111111112';
+
+function solanaMint(asset: AssetRef): string | null {
+  if (asset.kind === 'NATIVE' && asset.network === 'solana') return WRAPPED_SOL;
+  if (asset.kind === 'ONCHAIN' && asset.network === 'solana') return asset.address;
+  return null;
+}
+
+/**
+ * What Jupiter's router would deliver for exactly this amount, when both sides
+ * are Solana tokens.
+ *
+ * A paper fill used to be the pool's mid price with an impact modelled from
+ * its reported depth. For a memecoin that is the least reliable number there
+ * is: depth is reported for one pool while a real swap is routed across
+ * several, and a thin pool's model is off in both directions. The router's
+ * answer for this exact size is what a live swap would be quoted, from the
+ * same never-cached read (`market.swap_quote`) that a live path would use, so
+ * paper and live differ only after the quote.
+ *
+ * Every way of not getting one is a gap with a sentence, and the fill falls
+ * back to the model and says so in `impactModel`; nothing here fails a trade.
+ */
+export async function routedOut(
+  assetIn: AssetRef,
+  assetOut: AssetRef,
+  amountIn: string,
+  slippageBps: number,
+): Promise<{ out: bigint; fee: bigint; impactBps: number; model: string } | { gap: string | null }> {
+  const inputMint = solanaMint(assetIn);
+  const outputMint = solanaMint(assetOut);
+  // Not a Solana swap, so there is no router to ask and nothing is missing.
+  if (!inputMint || !outputMint || inputMint === outputMint) return { gap: null };
+  const query: SwapQuoteQuery = { inputMint, outputMint, amount: amountIn, slippageBps: Math.min(5_000, Math.max(0, slippageBps)) };
+  try {
+    const answer = await ask<SwapQuoteQuery, SwapQuoteResult>(JUPITER_SWAP_FAMILY, query);
+    const quote = swapQuoteFrom(answer.value.order, query, answer.provenance.fetchedAt);
+    if (!quote) return { gap: 'the router answered with something that is not a quote for this swap' };
+    const venues = [...new Set(quote.route.map((r) => r.venue).filter((v): v is string => Boolean(v)))].slice(0, 4);
+    return {
+      out: BigInt(quote.outAmount),
+      // What the route charges, for the journal; the amount out is already net of it.
+      fee: quote.feeBps === null ? 0n : (BigInt(amountIn) * BigInt(Math.max(0, Math.round(quote.feeBps)))) / 10_000n,
+      impactBps: quote.priceImpactPercent === null ? 0 : Math.round(Math.abs(quote.priceImpactPercent) * 100),
+      model: `Jupiter route quote for this size${venues.length ? ` through ${venues.join(', ')}` : ''}`,
+    };
+  } catch (error) {
+    return { gap: errorMessage(error).slice(0, 160) };
+  }
 }
 
 /**
