@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { leaseSession, ownerHolds, setOwnerHolding } from '@xbam/browser';
+import { leaseSession, lockForOperation, ownerHolds, setOwnerHolding, type TabState } from '@xbam/browser';
 import { applyOwnerInput, carryOut, SENSITIVE_INPUT_RULES, STUDIO_COMMANDS } from '@xbam/runtime';
 
 /**
@@ -36,6 +36,28 @@ describe('taking control', () => {
     await expect(leaseSession({ accountId: 'acct-1' } as never)).rejects.toMatchObject({ reason: 'owner_has_the_browser' });
     setOwnerHolding('acct-1', false);
     expect(ownerHolds('acct-1')).toBe(false);
+  });
+
+  /*
+    The race the start-of-lease check alone left open: an operation queued
+    behind another on the same tab passed that check before the owner asked,
+    and took the tab once it came free, after the owner had been told the page
+    was theirs. Without the check after the lock, `waiting` resolves and this
+    fails.
+  */
+  it('refuses an operation that was already waiting for the tab when the owner took it', async () => {
+    const tab = { role: 'MENTIONS', queue: Promise.resolve(), busy: false, heldSince: null, lastUsedAt: 0, lastError: null } as unknown as TabState;
+    const first = await lockForOperation('acct-2', tab);
+    const waiting = lockForOperation('acct-2', tab);
+    setOwnerHolding('acct-2', true);
+    first();
+    await expect(waiting).rejects.toMatchObject({ reason: 'owner_has_the_browser' });
+    // Refused without keeping the tab: nothing the owner does next waits behind it.
+    expect(tab.busy).toBe(false);
+    setOwnerHolding('acct-2', false);
+    const after = await lockForOperation('acct-2', tab);
+    expect(tab.busy).toBe(true);
+    after();
   });
 
   it('turns each kind of owner input into one call on the page, and nothing else', async () => {
