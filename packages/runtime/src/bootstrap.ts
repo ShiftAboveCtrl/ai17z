@@ -13,6 +13,7 @@ import {
   registerReferenceUpstreams,
   registerGeckoUpstreams,
   registerJupiterUpstreams,
+  registerJupiterSwapUpstreams,
   registerSignatureUpstreams,
   registerSolanaUpstreams,
   registerTokenRiskUpstreams,
@@ -142,6 +143,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerSignatureUpstreams();
   registerGeckoUpstreams();
   registerJupiterUpstreams();
+  registerJupiterSwapUpstreams();
   registerWebHistoryUpstreams();
   registerFeedUpstreams();
   registerScholarUpstreams();

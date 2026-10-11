@@ -3,6 +3,7 @@ import { defineCapability, registerCapability } from '@xbam/tools';
 import {
   GECKO_FAMILY,
   JUPITER_FAMILY,
+  JUPITER_SWAP_FAMILY,
   ask,
   familyHealth,
   type GeckoQuery,
@@ -12,6 +13,8 @@ import {
   type MarketPairs,
   type MarketQuery,
   type Provenance,
+  type SwapQuoteQuery,
+  type SwapQuoteResult,
 } from '@xbam/upstream';
 
 /**
@@ -426,6 +429,8 @@ const SolanaToken = z.object({
   stats: z.object({ m5: Stats.nullable(), h1: Stats.nullable(), h6: Stats.nullable(), h24: Stats.nullable() }),
   website: z.string().nullable(),
   twitter: z.string().nullable(),
+  /** The token's picture as its creator set it. A link to somebody else's host, so a page should fetch it through its own origin. */
+  icon: z.string().nullable(),
   priceBlock: z.number().nullable(),
   updatedAt: z.string().nullable(),
 });
@@ -486,6 +491,7 @@ export function solanaTokenFrom(raw: unknown): SolanaToken | null {
     stats: { m5: stat(t.stats5m), h1: stat(t.stats1h), h6: stat(t.stats6h), h24: stat(t.stats24h) },
     website: safeLink(t.website),
     twitter: safeLink(t.twitter),
+    icon: safeLink(t.icon),
     priceBlock: num(t.priceBlockId),
     updatedAt: str(t.updatedAt),
   };
@@ -555,7 +561,122 @@ const solanaDiscover = defineCapability({
   },
 });
 
+// ── What a swap would get ───────────────────────────────────────────────────
+
+const WHOLE = /^[0-9]{1,40}$/;
+
+const SwapQuote = z.object({
+  inputMint: z.string(),
+  outputMint: z.string(),
+  /** Exact, in each token's smallest unit, as the router answered. */
+  inAmount: z.string(),
+  outAmount: z.string(),
+  /** The least this route promises to deliver. What a buyer is protected by, whatever slippage was asked for. */
+  minOut: z.string(),
+  requestedSlippageBps: z.number(),
+  /** What the router applied, which can differ: a market maker's firm quote applies none. */
+  appliedSlippageBps: z.number().nullable(),
+  /** A firm price from a market maker rather than a pool's curve. */
+  guaranteed: z.boolean(),
+  /** How far the price moves against the trade, in percent; negative is against. Null when not reported. */
+  priceImpactPercent: z.number().nullable(),
+  route: z.array(z.object({ venue: z.string().nullable(), pool: z.string().nullable(), percent: z.number().nullable() })),
+  router: z.string().nullable(),
+  feeBps: z.number().nullable(),
+  feeMint: z.string().nullable(),
+  inUsd: z.number().nullable(),
+  outUsd: z.number().nullable(),
+  quotedAt: z.string(),
+});
+export type SwapQuote = z.infer<typeof SwapQuote>;
+
+/**
+ * Jupiter's order as AI17Z reads it, or null when it is not a usable quote.
+ *
+ * Amounts stay strings of digits; nothing chain-sized passes through a float.
+ * `minOut` comes from `otherAmountThreshold`, the route's own floor, and is
+ * never derived from the slippage that was asked for, because a firm quote
+ * answers with none applied and a derived floor would then be a guess.
+ */
+export function swapQuoteFrom(order: unknown, asked: { inputMint: string; outputMint: string; amount: string; slippageBps: number }, quotedAt: string): SwapQuote | null {
+  const o = rec(order);
+  const inAmount = str(o.inAmount);
+  const outAmount = str(o.outAmount);
+  const minOut = str(o.otherAmountThreshold);
+  if (!inAmount || !outAmount || !minOut || ![inAmount, outAmount, minOut].every((v) => WHOLE.test(v))) return null;
+  // The router must have quoted what was asked: the same two mints and the same amount in.
+  if (o.inputMint !== asked.inputMint || o.outputMint !== asked.outputMint || inAmount !== asked.amount) return null;
+  if (BigInt(outAmount) === 0n || BigInt(minOut) > BigInt(outAmount)) return null;
+  const impact = num(o.priceImpact) ?? (num(o.priceImpactPct) === null ? null : num(o.priceImpactPct)! * 100);
+  return {
+    inputMint: asked.inputMint,
+    outputMint: asked.outputMint,
+    inAmount,
+    outAmount,
+    minOut,
+    requestedSlippageBps: asked.slippageBps,
+    appliedSlippageBps: num(o.slippageBps),
+    guaranteed: o.guaranteedPrice === true,
+    priceImpactPercent: impact,
+    route: list(o.routePlan)
+      .slice(0, 12)
+      .map((leg) => {
+        const l = rec(leg);
+        const info = rec(l.swapInfo);
+        return { venue: str(info.label), pool: str(info.ammKey), percent: num(l.percent) };
+      }),
+    router: str(o.router),
+    feeBps: num(o.feeBps),
+    feeMint: str(o.feeMint),
+    inUsd: num(o.inUsdValue),
+    outUsd: num(o.outUsdValue),
+    quotedAt,
+  };
+}
+
+const SWAP_CAVEATS = [
+  'A quote is what the router would do at the moment it was asked. It is not a reservation, and acting on it later means asking again.',
+  'No transaction was built and nothing can be signed from this answer.',
+];
+
+const swapQuote = defineCapability({
+  id: 'market.swap_quote',
+  name: 'Ask what a Solana swap would get right now',
+  description:
+    'For two exact Solana mints and an exact amount in the smallest unit: what the router would deliver now, the least ' +
+    'it promises, the price impact, the fee and the venues it would route through. A quote, never a trade.',
+  category: 'READ',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z
+    .object({
+      inputMint: z.string().trim().refine((v) => SOLANA_ADDRESS.test(v), IDENTITY_REFUSAL),
+      outputMint: z.string().trim().refine((v) => SOLANA_ADDRESS.test(v), IDENTITY_REFUSAL),
+      amount: z.string().trim().regex(/^[1-9][0-9]{0,30}$/, 'An amount is a whole number of the smallest unit, written in digits.'),
+      slippageBps: z.number().int().min(0).max(5_000).default(100),
+    })
+    .refine((v) => v.inputMint !== v.outputMint, 'A swap needs two different tokens.'),
+  output: z.object({ found: z.boolean(), quote: SwapQuote.nullable(), gap: z.string().nullable(), caveats: z.array(z.string()), provenance: ProvenanceOut }),
+  modelCallable: true,
+  timeoutMs: 20_000,
+  readiness: () => readable(JUPITER_SWAP_FAMILY, 'The Solana swap router'),
+  async run(input) {
+    const query: SwapQuoteQuery = { inputMint: input.inputMint, outputMint: input.outputMint, amount: input.amount, slippageBps: input.slippageBps };
+    const answer = await ask<SwapQuoteQuery, SwapQuoteResult>(JUPITER_SWAP_FAMILY, query);
+    const provenance = reported(answer.provenance);
+    const quote = swapQuoteFrom(answer.value.order, query, provenance.readAt);
+    return {
+      found: quote !== null,
+      quote,
+      gap: quote ? null : 'The router answered with something that is not a quote for exactly this swap, so none is reported.',
+      caveats: SWAP_CAVEATS,
+      provenance,
+    };
+  },
+});
+
 export function registerMarketIntelCapabilities(): void {
+  registerCapability(swapQuote);
   registerCapability(search);
   registerCapability(pairDetail);
   registerCapability(recentTrades);

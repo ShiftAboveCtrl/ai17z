@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ask,
   defineUpstream,
@@ -367,6 +367,22 @@ describe('a remembered answer', () => {
     const stale = await ask<Query, string>('evm', { of: 'height' }, { now: Date.now() + 5_000 });
     expect(stale.provenance.source).toBe('LIVE');
     expect(source.calls).toHaveLength(2);
+  });
+
+  it('is never kept when the freshness is zero, even within the same millisecond', async () => {
+    // A swap quote is a price at one moment. With the clock held still, the
+    // age of a stored answer is zero, which a zero freshness used to accept.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+    try {
+      const source = fake({ id: 'quote.router', freshMs: 0 });
+      registerUpstream(source.upstream);
+      await ask<Query, string>('quote', { of: 'sol-usdc' });
+      const again = await ask<Query, string>('quote', { of: 'sol-usdc' });
+      expect(again.provenance.source).toBe('LIVE');
+      expect(source.calls).toHaveLength(2);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('is not shared between two upstreams in one family', async () => {

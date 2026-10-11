@@ -31,5 +31,6 @@ export * from './families/reference';
 export * from './families/signatures';
 export * from './families/geckoterminal';
 export * from './families/jupiter';
+export * from './families/jupiterSwap';
 export * from './cid';
 export * from './bitcoinAddress';

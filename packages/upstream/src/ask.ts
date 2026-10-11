@@ -116,7 +116,8 @@ export async function ask<Q, R>(family: string, query: Q, options: AskOptions = 
     const upstream = member as unknown as Upstream<Q, R>;
     const key = `${upstream.id}:${upstream.cacheKey(query)}`;
 
-    const cached = lookup<R>(key, upstream.freshMs, now);
+    // Zero means never: a quote is a price at one moment, and an answer stored for even a millisecond can be handed out as current.
+    const cached = upstream.freshMs > 0 ? lookup<R>(key, upstream.freshMs, now) : null;
     if (cached) {
       return {
         value: cached.value,
@@ -176,7 +177,7 @@ export async function ask<Q, R>(family: string, query: Q, options: AskOptions = 
       });
 
       recordSuccess(upstream.id, fetchedAt);
-      if (!joined) remember(key, value, fetchedAt);
+      if (!joined && upstream.freshMs > 0) remember(key, value, fetchedAt);
       return {
         value,
         provenance: provenanceFor({
