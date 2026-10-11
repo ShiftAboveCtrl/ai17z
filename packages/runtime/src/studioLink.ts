@@ -877,13 +877,14 @@ export type StudioPurchase = z.infer<typeof PurchaseList>['purchases'][number];
  * One frame of a live view (`studioLiveView.ts`). Studio's answer says
  * whether anybody is still watching; anything but a clear yes stops the view.
  */
-export async function studioViewFrame(json: Record<string, unknown>): Promise<{ ok: true; watching: boolean } | StudioProblem> {
+export async function studioViewFrame(json: Record<string, unknown>): Promise<{ ok: true; watching: boolean; input: unknown[] } | StudioProblem> {
   const answer = await authed('/api/v1/installation/view-frame', { method: 'POST', json }).catch(
     (error: Error) => ({ ok: false as const, why: error.message }),
   );
   if ('ok' in answer) return answer;
   if (answer.status !== 200) return { ok: false, why: describe(answer) };
-  return { ok: true, watching: answer.body?.watching === true };
+  // Owner input rides back on the answer, only while the owner holds the page; it is applied and forgotten.
+  return { ok: true, watching: answer.body?.watching === true, input: Array.isArray(answer.body?.input) ? (answer.body.input as unknown[]) : [] };
 }
 
 /**

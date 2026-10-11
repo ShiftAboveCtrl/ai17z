@@ -32,8 +32,8 @@ function fakeEffects(agent: { id: string; name: string; state: string } | null, 
 const command = (kind: string, extra: Partial<StudioCommand> = {}): StudioCommand => ({ id: ID, kind, agentId: AGENT, ageMs: 1_000, ...extra });
 
 describe('Studio commands', () => {
-  it('is exactly six verbs, none of which writes anything an agent says or types into a page', () => {
-    expect([...STUDIO_COMMANDS]).toEqual(['PAUSE_AGENT', 'RESUME_AGENT', 'PAUSE_ALL', 'RESUME_ALL', 'START_VIEW', 'STOP_VIEW']);
+  it('is exactly eight verbs, none of which writes anything an agent says, and two of which hand the page to its owner', () => {
+    expect([...STUDIO_COMMANDS]).toEqual(['PAUSE_AGENT', 'RESUME_AGENT', 'PAUSE_ALL', 'RESUME_ALL', 'START_VIEW', 'STOP_VIEW', 'TAKE_CONTROL', 'RELEASE_CONTROL']);
   });
 
   it('shows a browser only where something can show one', async () => {
