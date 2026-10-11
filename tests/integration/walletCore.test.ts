@@ -53,7 +53,7 @@ function fakeAdapter(options: { broadcastFails?: boolean; signFails?: boolean; r
       ok: true,
       maxFee: '21000000000000',
       balanceBefore: '1500000000000000000',
-      balanceAfter: (1500000000000000000n - BigInt(intent.amount) - 21000000000000n).toString(),
+      balanceAfter: (1500000000000000000n - BigInt('amount' in intent ? intent.amount : intent.amountIn) - 21000000000000n).toString(),
       warnings: [],
       failure: null,
       pinned: { nonce: 7, maxFeePerGas: '1000000000', gasLimit: 21000 },
