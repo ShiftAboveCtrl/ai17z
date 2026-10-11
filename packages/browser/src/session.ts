@@ -25,6 +25,7 @@ import {
   type TabHealth,
   type TabMap,
   type TabRole,
+  type TabState,
 } from './tabs';
 import { diagnoseBrowser, orphanTabs, RESPONSE_BUDGET_MS, type BrowserVerdict, type TabProbe } from './watchdog';
 
@@ -423,6 +424,49 @@ function explainLaunchFailure(error: unknown, config: SessionConfig): PipelineEr
 }
 
 /**
+ * Accounts whose browser the owner is holding. While one is held, no new
+ * operation starts on it: a lease is refused with a retryable error, so a
+ * monitor backs off and a reply waits, and an operation already holding a tab
+ * finishes first. This is `agentMayBegin` from core's takeover state machine,
+ * enforced where every browser operation has to pass.
+ */
+const ownerHolding = new Set<string>();
+
+export function setOwnerHolding(accountId: string, held: boolean): void {
+  if (held) ownerHolding.add(accountId);
+  else ownerHolding.delete(accountId);
+}
+
+export function ownerHolds(accountId: string): boolean {
+  return ownerHolding.has(accountId);
+}
+
+function ownerHasTheBrowser(): PipelineError {
+  return PipelineError.retryable('owner_has_the_browser', 'Its owner has taken control of this browser; it waits until they give it back.');
+}
+
+/**
+ * Takes a tab's lock for one operation, and gives it straight back if the
+ * owner took the browser while the operation was on its way.
+ *
+ * Checking only at the start of a lease is not enough. An operation can pass
+ * that check and then spend seconds opening the context or queued behind
+ * another operation on the same tab; the owner is handed the page as soon as
+ * no tab is busy, and that operation would then take the tab and navigate it
+ * under their hands. `busy` is set inside `lockTab` before it returns, so
+ * every operation is either busy before the owner's mark, and waited for, or
+ * checked here after it, and refused.
+ */
+export async function lockForOperation(accountId: string, tab: TabState): Promise<() => void> {
+  const unlock = await lockTab(tab);
+  if (ownerHolding.has(accountId)) {
+    unlock();
+    throw ownerHasTheBrowser();
+  }
+  return unlock;
+}
+
+/**
  * Leases one role-bound tab for one operation.
  *
  * Contexts stay warm per account and are recycled when stale, which is what the
@@ -436,9 +480,7 @@ function explainLaunchFailure(error: unknown, config: SessionConfig): PipelineEr
  * doing something to the account, and that is the tab it is safe to disturb.
  */
 export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTION'): Promise<LeasedSession> {
-  if (ownerHolding.has(config.accountId)) {
-    throw PipelineError.retryable('owner_has_the_browser', 'Its owner has taken control of this browser; it waits until they give it back.');
-  }
+  if (ownerHolding.has(config.accountId)) throw ownerHasTheBrowser();
 
   if (!browserEnabled()) {
     throw PipelineError.permanent(
@@ -497,7 +539,7 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
   // Held until release(). Different roles never wait on each other; this is the
   // only thing stopping two operations sharing one tab and interleaving their
   // navigations.
-  const unlock = await lockTab(tab);
+  const unlock = await lockForOperation(config.accountId, tab);
 
   /*
     Everything between taking the lock and handing back the release runs here,
@@ -568,11 +610,6 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
 }
 
 /**
- * What each of an account's three tabs is doing.
- *
- * Reads the live cache and never opens anything, so asking is always safe.
- */
-/**
  * The page a role tab shows right now, for looking at and nothing else.
  *
  * Takes no lease and no lock, opens nothing, and never launches a browser:
@@ -580,24 +617,6 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
  * reply is waiting for. Null when the account has no warm session or the
  * role has no tab, which a viewer reports rather than fixes.
  */
-/**
- * Accounts whose browser the owner is holding. While one is held, no new
- * operation starts on it: a lease is refused with a retryable error, so a
- * monitor backs off and a reply waits, and an operation already holding a tab
- * finishes first. This is `agentMayBegin` from core's takeover state machine,
- * enforced where every browser operation has to pass.
- */
-const ownerHolding = new Set<string>();
-
-export function setOwnerHolding(accountId: string, held: boolean): void {
-  if (held) ownerHolding.add(accountId);
-  else ownerHolding.delete(accountId);
-}
-
-export function ownerHolds(accountId: string): boolean {
-  return ownerHolding.has(accountId);
-}
-
 export function peekRolePage(accountId: string, role: TabRole): Page | null {
   const entry = contexts.get(accountId);
   if (!entry || entry.dead || entry.closing) return null;
@@ -605,6 +624,11 @@ export function peekRolePage(accountId: string, role: TabRole): Page | null {
   return page && !page.isClosed() ? page : null;
 }
 
+/**
+ * What each of an account's three tabs is doing.
+ *
+ * Reads the live cache and never opens anything, so asking is always safe.
+ */
 export function sessionTabs(accountId: string): TabHealth[] {
   const entry = contexts.get(accountId);
   return entry ? tabHealth(entry.tabs) : tabHealth(new Map());
