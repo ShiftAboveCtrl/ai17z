@@ -411,8 +411,17 @@ export async function readPoolMarket(asset: AssetRef, venue: TradeVenue, quote?:
   let fee: number | null = null;
   let feeFrom: string | null = null;
   for (const candidate of poolsByDistanceFromMedian(all).slice(0, MAX_FEE_CANDIDATES)) {
-    const stated = await poolFee(network, candidate.address);
-    const documented = stated === null && network === 'solana' && candidate.dex ? DOCUMENTED_FEE_CEILINGS[candidate.dex] : undefined;
+    /*
+     * On Solana the indexer states no fee for any pool of a protocol whose fees
+     * are documented (measured on 2026-10-11 for Raydium and PumpSwap, on the
+     * listing and on the pool itself), so asking for each one spent up to three
+     * requests of a budget of four every ten seconds to learn nothing, and a
+     * live agent's paper trades were refused for want of that budget. The
+     * ceiling is used directly: it is the conservative answer either way.
+     */
+    const ceiling = network === 'solana' && candidate.dex ? DOCUMENTED_FEE_CEILINGS[candidate.dex] : undefined;
+    const stated = ceiling ? null : await poolFee(network, candidate.address);
+    const documented = stated === null ? ceiling : undefined;
     const charged = stated ?? (documented ? feePercentToMicroBps(documented.percent) : null);
     if (charged !== null) {
       chosen = candidate;
