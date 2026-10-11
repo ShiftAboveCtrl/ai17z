@@ -1,3 +1,4 @@
+import { currentPatience } from '@xbam/shared';
 import { InMemoryQuotaCoordinator } from './memoryQuota';
 import { quotaKey, weightOf, type QuotaCoordinator, type UpstreamLimit } from './quota';
 
@@ -73,6 +74,20 @@ export type SlotOutcome = { granted: true; slot: Slot } | { granted: false; retr
  */
 const MAX_PACING_WAIT_MS = 2_000;
 
+/** A pause that ends early when the caller gives up. */
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener('abort', done, { once: true });
+  });
+}
+
 /**
  * Takes a slot for one request, or says why not and for how long.
  *
@@ -136,6 +151,8 @@ export async function takeSlot(input: {
     byScope.set(key, [...(byScope.get(key) ?? []), window]);
   }
 
+  // Two seconds for whoever is waiting on a page; longer only for background work that said it can wait (`withPatience`).
+  const patience = Math.max(MAX_PACING_WAIT_MS, currentPatience());
   for (const [key, windows] of byScope) {
     let waited = 0;
     for (;;) {
@@ -143,10 +160,11 @@ export async function takeSlot(input: {
       if (reservation.granted) break;
       // Long enough that it will not refill soon, or long enough that we have
       // already waited our share: report it and let the family try a sibling.
-      if (reservation.retryAfterMs > MAX_PACING_WAIT_MS || waited + reservation.retryAfterMs > MAX_PACING_WAIT_MS) {
+      if (reservation.retryAfterMs > patience || waited + reservation.retryAfterMs > patience) {
         return { granted: false, retryAfterMs: reservation.retryAfterMs, why: `its ${reservation.window} budget` };
       }
-      await new Promise((resolve) => setTimeout(resolve, reservation.retryAfterMs));
+      await pause(reservation.retryAfterMs, input.signal);
+      if (input.signal?.aborted) return { granted: false, retryAfterMs: 0, why: 'the caller gave up while waiting for its budget' };
       waited += reservation.retryAfterMs;
     }
   }

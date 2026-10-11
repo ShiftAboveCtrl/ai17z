@@ -60,6 +60,11 @@ describe('price impact in a paper fill', () => {
   it('charges memecoin pools the published ceiling', () => {
     expect(feePercentToMicroBps(DOCUMENTED_FEE_CEILINGS['pumpswap']!.percent)).toBe(12_500);
     expect(feePercentToMicroBps(DOCUMENTED_FEE_CEILINGS['pump-fun']!.percent)).toBe(12_500);
-    expect(DOCUMENTED_FEE_CEILINGS['raydium']).toBeUndefined();
+    // Raydium publishes tiers up to 4% and the indexer does not say which product a pool is, so the ceiling is the highest.
+    expect(feePercentToMicroBps(DOCUMENTED_FEE_CEILINGS['raydium']!.percent)).toBe(40_000);
+    expect(feePercentToMicroBps(DOCUMENTED_FEE_CEILINGS['raydium-clmm']!.percent)).toBe(40_000);
+    // A dynamic fee with no published cap has no ceiling to take.
+    expect(DOCUMENTED_FEE_CEILINGS['orca']).toBeUndefined();
+    expect(DOCUMENTED_FEE_CEILINGS['meteora']).toBeUndefined();
   });
 });
