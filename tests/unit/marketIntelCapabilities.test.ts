@@ -35,6 +35,7 @@ vi.mock('undici', () => ({
 
 const {
   registerGeckoUpstreams,
+  registerJupiterSwapUpstreams,
   registerJupiterUpstreams,
   registerMarketUpstreams,
   resetBreakerForTest,
@@ -42,7 +43,8 @@ const {
   resetLimiterForTest,
   resetUpstreamsForTest,
 } = await import('@xbam/upstream');
-const { registerMarketIntelCapabilities, safeLink } = await import('@xbam/runtime');
+const { registerMarketIntelCapabilities, safeLink, swapQuoteFrom } = await import('@xbam/runtime');
+const { readFileSync } = await import('node:fs');
 const { getCapability, resetCapabilitiesForTest } = await import('@xbam/tools');
 
 function context() {
@@ -98,6 +100,7 @@ beforeEach(() => {
   resetCapabilitiesForTest();
   registerGeckoUpstreams();
   registerJupiterUpstreams();
+  registerJupiterSwapUpstreams();
   registerMarketUpstreams();
   registerMarketIntelCapabilities();
   replies = {};
@@ -212,6 +215,7 @@ describe('a Solana token', () => {
     usdPrice: 0.0000034,
     website: 'javascript:alert(1)',
     twitter: 'https://x.com/bonk',
+    icon: 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I',
     priceBlockId: 455417028,
     updatedAt: '2026-10-10T22:17:32Z',
   };
@@ -233,8 +237,15 @@ describe('a Solana token', () => {
       flaggedByIndex: false,
       website: null,
       twitter: 'https://x.com/bonk',
+      icon: 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I',
       priceBlock: 455417028,
     });
+  });
+
+  it('carries the token’s picture only as a web address', async () => {
+    replies[`/tokens/v2/search?query=${BONK}`] = { body: JSON.stringify([{ ...record, icon: 'javascript:alert(1)' }]) };
+    const answer = await run<{ token: { icon: string | null } }>('token.solana_profile', { mint: BONK });
+    expect(answer.token.icon).toBeNull();
   });
 
   it('lists only the categories and windows it knows, through a fixed path', async () => {
@@ -243,5 +254,70 @@ describe('a Solana token', () => {
     expect(answer.tokens.map((t) => t.mint)).toEqual([BONK]);
     expect(requested.at(-1)).toContain('/tokens/v2/toptraded/6h?limit=10');
     expect(getCapability('market.discover_solana')!.input.safeParse({ list: '../admin' }).success).toBe(false);
+  });
+});
+
+/*
+ * What a swap would get. The fixture is a real Swap API V2 order for 0.01 SOL
+ * into BONK, recorded with no taker, so it carries no transaction.
+ */
+describe('a swap quote', () => {
+  const ORDER = readFileSync(new URL('../fixtures/jupiter-swap-v2-order.json', import.meta.url), 'utf8');
+  const asked = { inputMint: SOL, outputMint: BONK, amount: '10000000', slippageBps: 100 };
+
+  it('reads the route, the floor and the impact exactly, without a float in an amount', async () => {
+    replies['/swap/v2/order?'] = { body: ORDER };
+    const answer = await run<{ found: boolean; quote: { inAmount: string; outAmount: string; minOut: string; priceImpactPercent: number; route: { venue: string }[]; guaranteed: boolean } }>('market.swap_quote', asked);
+    const order = JSON.parse(ORDER) as { outAmount: string; otherAmountThreshold: string };
+    expect(answer.found).toBe(true);
+    expect(answer.quote.inAmount).toBe('10000000');
+    expect(answer.quote.outAmount).toBe(order.outAmount);
+    expect(answer.quote.minOut).toBe(order.otherAmountThreshold);
+    expect(answer.quote.route.map((r) => r.venue)).toContain('Meteora');
+    expect(answer.quote.priceImpactPercent).toBeLessThan(0);
+    // Nothing was asked of the router that would let it build a transaction.
+    const url = requested.find((u) => u.includes('/swap/v2/order?'))!;
+    expect(url).not.toContain('taker');
+    expect(url).toContain(`inputMint=${SOL}`);
+  });
+
+  it('asks the router again every time, because an old quote is a wrong price', async () => {
+    replies['/swap/v2/order?'] = { body: ORDER };
+    await run('market.swap_quote', asked);
+    await run('market.swap_quote', asked);
+    expect(requested.filter((u) => u.includes('/swap/v2/order?'))).toHaveLength(2);
+  });
+
+  it('takes the floor from the route and never from the slippage it asked for', () => {
+    // A market maker's firm quote applies no slippage; the floor is what it promised.
+    const firm = { inputMint: SOL, outputMint: BONK, inAmount: '10000000', outAmount: '1092591', otherAmountThreshold: '1092591', slippageBps: 0, guaranteedPrice: true };
+    const quote = swapQuoteFrom(firm, asked, '2026-10-11T00:00:00Z')!;
+    expect(quote.minOut).toBe('1092591');
+    expect(quote.appliedSlippageBps).toBe(0);
+    expect(quote.requestedSlippageBps).toBe(100);
+    expect(quote.guaranteed).toBe(true);
+  });
+
+  it('refuses an answer that is not a quote for exactly this swap', () => {
+    const base = JSON.parse(ORDER) as Record<string, unknown>;
+    const at = '2026-10-11T00:00:00Z';
+    expect(swapQuoteFrom({ ...base, outputMint: SOL }, asked, at)).toBeNull();
+    expect(swapQuoteFrom({ ...base, inAmount: '20000000' }, asked, at)).toBeNull();
+    expect(swapQuoteFrom({ ...base, outAmount: '1.5' }, asked, at)).toBeNull();
+    expect(swapQuoteFrom({ ...base, otherAmountThreshold: '99999999999999' }, asked, at)).toBeNull();
+    expect(swapQuoteFrom({ ...base, outAmount: '0', otherAmountThreshold: '0' }, asked, at)).toBeNull();
+  });
+
+  it('says there is no route rather than inventing one', async () => {
+    replies['/swap/v2/order?'] = { body: JSON.stringify({ errorCode: 1, errorMessage: 'No routes found' }) };
+    await expect(run('market.swap_quote', asked)).rejects.toThrow(/no route/i);
+  });
+
+  it('refuses a symbol, a decimal amount and a swap into itself before asking anybody', async () => {
+    const capability = getCapability('market.swap_quote')!;
+    expect(capability.input.safeParse({ ...asked, outputMint: 'BONK' }).success).toBe(false);
+    expect(capability.input.safeParse({ ...asked, amount: '0.01' }).success).toBe(false);
+    expect(capability.input.safeParse({ ...asked, outputMint: SOL }).success).toBe(false);
+    expect(requested).toHaveLength(0);
   });
 });

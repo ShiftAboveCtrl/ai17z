@@ -111,6 +111,7 @@ export const UTILITY_BRIDGE: readonly string[] = [
   'market.discover_solana',
   'token.solana_profile',
   'market.price_check',
+  'market.swap_quote',
   // EVM chains and contracts: the substance of a transaction inspector.
   'chain.health',
   'chain.read_balance',
