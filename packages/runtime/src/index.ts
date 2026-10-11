@@ -158,6 +158,7 @@ export * from './paperPositions';
 export * from './backtest';
 export * from './transactionInspect';
 export * from './solanaInspect';
+export * from './solanaSwap';
 export * from './transactionReconcile';
 export * from './webReadCapability';
 export * from './council';

@@ -132,6 +132,29 @@ export const WalletIntentParams = z.discriminatedUnion('kind', [
     tokenDecimals: z.number().int().min(0).max(36),
     tokenSymbol: z.string().trim().min(1).max(20),
   }).strict(),
+  /*
+   * A swap on Solana, from the wallet to itself, through Jupiter's own router.
+   * There is no recipient: what comes back lands in the wallet that paid. The
+   * owner sets the least they will accept, and the transaction is refused
+   * before approval if either the route's promise or the simulated result is
+   * below it (`solanaSwap.ts`).
+   */
+  z.object({
+    kind: z.literal('SOLANA_SWAP'),
+    network: z.literal('solana'),
+    inputMint: z.string().trim().regex(BASE58),
+    outputMint: z.string().trim().regex(BASE58),
+    /** Exact, in the input token's smallest unit. */
+    amountIn: BaseUnits,
+    /** The least the owner accepts, in the output token's smallest unit. */
+    minOut: BaseUnits,
+    maxSlippageBps: z.number().int().min(1).max(1_000),
+    /** As the owner was shown them; the adapter checks them against the chain. */
+    inputDecimals: z.number().int().min(0).max(36),
+    outputDecimals: z.number().int().min(0).max(36),
+    inputSymbol: z.string().trim().min(1).max(20),
+    outputSymbol: z.string().trim().min(1).max(20),
+  }).strict(),
 ]);
 export type WalletIntentParams = z.infer<typeof WalletIntentParams>;
 

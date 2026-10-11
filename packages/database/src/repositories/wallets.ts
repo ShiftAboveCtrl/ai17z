@@ -10,7 +10,7 @@ import { query, queryOne } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
 export const WALLET_FAMILY_VALUES = ['EVM', 'SOLANA'] as const;
-export const WALLET_INTENT_KIND_VALUES = ['NATIVE_TRANSFER', 'TOKEN_TRANSFER'] as const;
+export const WALLET_INTENT_KIND_VALUES = ['NATIVE_TRANSFER', 'TOKEN_TRANSFER', 'SOLANA_SWAP'] as const;
 export const WALLET_INTENT_STATUS_VALUES = [
   'DRAFTED',
   'AWAITING_APPROVAL',
@@ -43,7 +43,7 @@ export interface WalletIntentRow {
   agentId: string;
   ownerId: string | null;
   network: string;
-  kind: 'NATIVE_TRANSFER' | 'TOKEN_TRANSFER';
+  kind: (typeof WALLET_INTENT_KIND_VALUES)[number];
   params: Record<string, unknown>;
   idempotencyKey: string;
   status: WalletIntentStatus;
@@ -94,7 +94,7 @@ export async function createIntent(input: {
   agentId: string;
   ownerId: string | null;
   network: string;
-  kind: 'NATIVE_TRANSFER' | 'TOKEN_TRANSFER';
+  kind: (typeof WALLET_INTENT_KIND_VALUES)[number];
   params: Record<string, unknown>;
   idempotencyKey: string;
 }): Promise<{ intent: WalletIntentRow; created: boolean }> {

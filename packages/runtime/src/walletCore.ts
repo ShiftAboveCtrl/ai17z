@@ -37,6 +37,7 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { agents as agentsRepo, ops, wallets as walletsRepo, type WalletIntentRow, type WalletRow } from '@xbam/database';
 import { NotFoundError, ValidationError, createLogger, errorMessage, openSecret, sealSecret } from '@xbam/shared';
+import { judgeSwapSimulation, signedMatchesApproved } from './solanaSwap';
 import {
   APPROVAL_TTL_MS,
   WALLET_NETWORKS,
@@ -231,6 +232,18 @@ export async function readActivity(agentId: string, network: WalletNetwork, limi
 
 // ── Intents: the only way value moves ──────────────────────────────────────
 
+/**
+ * How long a simulated swap may be approved and sent. A Solana transaction
+ * names a recent blockhash and the network refuses it after roughly a minute
+ * and a half, so a swap past this is simulated again rather than sent to fail.
+ */
+export const SWAP_VALID_MS = 60_000;
+
+function swapStale(simulation: unknown, now: number): boolean {
+  const at = Number((simulation as { pinned?: Record<string, unknown> } | null)?.pinned?.simulatedAt);
+  return !Number.isFinite(at) || now - at > SWAP_VALID_MS;
+}
+
 /** The digest of exactly what would be signed. The owner approves this, and only this. */
 export function intentDigest(input: { walletAddress: string; params: WalletIntentParams; simulation: WalletSimulation }): string {
   const canonical = JSON.stringify({
@@ -273,11 +286,19 @@ export async function draftIntent(input: { agentId: string; ownerId: string; par
   const wallet = await walletFor(input.agentId, params.network);
   if (!wallet) throw new ValidationError(`This agent has no ${network.family} wallet to send from.`);
   const a = requireAdapter();
-  if (!addressShapeOk(network.family, params.to) || !a.validAddress(network.family, params.to)) {
-    throw new ValidationError(`${params.to} is not a valid ${network.label} address.`);
+  if (params.kind === 'SOLANA_SWAP') {
+    // A swap has no recipient: what comes back lands in the wallet that paid.
+    if (params.inputMint === params.outputMint) throw new ValidationError('A swap needs two different tokens.');
+    if (!a.validAddress(network.family, params.inputMint) || !a.validAddress(network.family, params.outputMint)) {
+      throw new ValidationError('One of the token addresses is not valid on Solana.');
+    }
+  } else {
+    if (!addressShapeOk(network.family, params.to) || !a.validAddress(network.family, params.to)) {
+      throw new ValidationError(`${params.to} is not a valid ${network.label} address.`);
+    }
+    if (params.to === wallet.address) throw new ValidationError('That sends to the same wallet it comes from.');
+    if (params.kind === 'TOKEN_TRANSFER' && !a.validAddress(network.family, params.token)) throw new ValidationError('The token address is not valid on that network.');
   }
-  if (params.to === wallet.address) throw new ValidationError('That sends to the same wallet it comes from.');
-  if (params.kind === 'TOKEN_TRANSFER' && !a.validAddress(network.family, params.token)) throw new ValidationError('The token address is not valid on that network.');
   const out = await walletsRepo.createIntent({
     walletId: wallet.id,
     agentId: input.agentId,
@@ -296,7 +317,12 @@ export async function simulateIntent(id: string, ownerId: string): Promise<Walle
   const { intent, wallet } = await ownedIntent(id, ownerId);
   if (!['DRAFTED', 'AWAITING_APPROVAL', 'EXPIRED'].includes(intent.status)) throw new ValidationError('That transaction is past being simulated.');
   const params = WalletIntentParams.parse(intent.params);
-  const simulation = WalletSimulation.parse(await requireAdapter().simulate(params.network, wallet.address, params));
+  let simulation = WalletSimulation.parse(await requireAdapter().simulate(params.network, wallet.address, params));
+  if (params.kind === 'SOLANA_SWAP') {
+    // Judged here, whatever adapter is installed. The time is core's, and part of what is approved.
+    simulation = judgeSwapSimulation(params, wallet.address, simulation);
+    simulation = { ...simulation, pinned: { ...simulation.pinned, simulatedAt: String(Date.now()) } };
+  }
   const digest = simulation.ok ? intentDigest({ walletAddress: wallet.address, params, simulation }) : null;
   const next = await walletsRepo.transitionIntent(id, ['DRAFTED', 'AWAITING_APPROVAL', 'EXPIRED'], simulation.ok ? 'AWAITING_APPROVAL' : 'DRAFTED', {
     simulation,
@@ -317,6 +343,9 @@ export async function approveIntent(id: string, ownerId: string, digest: string)
   const { intent } = await ownedIntent(id, ownerId);
   if (intent.status !== 'AWAITING_APPROVAL' || !intent.digest) throw new ValidationError('That transaction is not waiting for approval. Simulate it first.');
   if (digest.trim().toLowerCase() !== intent.digest) throw new ValidationError('That is not the transaction currently simulated. Look at it again before approving.');
+  if (intent.kind === 'SOLANA_SWAP' && swapStale(intent.simulation, Date.now())) {
+    throw new ValidationError('That swap was priced more than a minute ago, and Solana will not accept it now. Simulate it again.');
+  }
   const next = await walletsRepo.transitionIntent(id, 'AWAITING_APPROVAL', 'APPROVED', { approvedDigest: intent.digest, approvedBy: ownerId });
   if (!next) throw new ValidationError('That transaction was already decided.');
   await intentAudit(ownerId, next, 'wallet.intent.approved');
@@ -348,7 +377,7 @@ export async function submitIntent(id: string, ownerId: string, now = Date.now()
   if (intentDigest({ walletAddress: wallet.address, params, simulation }) !== intent.approvedDigest) {
     throw new ValidationError('What would be signed no longer matches what was approved, so nothing was sent.');
   }
-  if (!intent.approvedAt || now - Date.parse(intent.approvedAt) > APPROVAL_TTL_MS) {
+  if (!intent.approvedAt || now - Date.parse(intent.approvedAt) > APPROVAL_TTL_MS || (params.kind === 'SOLANA_SWAP' && swapStale(simulation, now))) {
     await walletsRepo.transitionIntent(id, 'APPROVED', 'EXPIRED', { error: 'The approval expired before it was sent. Simulate and approve again.' });
     throw new ValidationError('The approval expired before it was sent. Simulate and approve it again.');
   }
@@ -371,6 +400,15 @@ export async function submitIntent(id: string, ownerId: string, now = Date.now()
     return failed!;
   } finally {
     secret.fill(0);
+  }
+  if (params.kind === 'SOLANA_SWAP') {
+    // The adapter signed something; it has to be the message that was approved. Nothing has been sent yet.
+    const match = signedMatchesApproved(signed.raw, simulation.pinned);
+    if (!match.ok) {
+      const failed = await walletsRepo.transitionIntent(id, 'SUBMITTING', 'FAILED', { error: `Nothing was sent: ${match.why}` });
+      await intentAudit(ownerId, failed!, 'wallet.intent.failed');
+      return failed!;
+    }
   }
   await walletsRepo.transitionIntent(id, 'SUBMITTING', 'SUBMITTING', { txHash: signed.txHash });
   try {

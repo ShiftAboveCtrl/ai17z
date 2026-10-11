@@ -25,7 +25,9 @@ interface Intent {
   id: string;
   network: string;
   kind: string;
-  params: { to: string; amount: string; tokenSymbol?: string; tokenDecimals?: number };
+  params:
+    | { kind?: 'NATIVE_TRANSFER' | 'TOKEN_TRANSFER'; to: string; amount: string; tokenSymbol?: string; tokenDecimals?: number }
+    | { kind: 'SOLANA_SWAP'; amountIn: string; minOut: string; inputSymbol: string; outputSymbol: string; inputDecimals: number; outputDecimals: number };
   status: string;
   simulation: { ok: boolean; maxFee: string; balanceBefore: string; balanceAfter: string; warnings: string[]; failure: string | null } | null;
   digest: string | null;
@@ -188,15 +190,24 @@ export function WalletSection({ index, agentId }: { index: number; agentId: stri
               <ul className="mt-2 divide-y divide-ink-line">
                 {data.intents.map((i) => {
                   const n = data.networks[i.network]!;
-                  const decimals = i.params.tokenDecimals ?? n.decimals;
-                  const symbol = i.params.tokenSymbol ?? n.native;
+                  const p = i.params;
+                  const decimals = p.kind === 'SOLANA_SWAP' ? p.inputDecimals : (p.tokenDecimals ?? n.decimals);
+                  const symbol = p.kind === 'SOLANA_SWAP' ? p.inputSymbol : (p.tokenSymbol ?? n.native);
                   return (
                     <li key={i.id} className="py-3 text-sm">
                       <p className="text-[11px] uppercase tracking-wide text-bone-faint">
                         {STATUS_WORDS[i.status] ?? i.status} · {n.label} · {timeAgo(i.createdAt)}
                       </p>
                       <p className="mt-0.5 break-all text-bone">
-                        {units(i.params.amount, decimals)} {symbol} to <span className="font-mono">{i.params.to}</span>
+                        {p.kind === 'SOLANA_SWAP' ? (
+                          <>
+                            Swap {units(p.amountIn, p.inputDecimals)} {p.inputSymbol} for at least {units(p.minOut, p.outputDecimals)} {p.outputSymbol}
+                          </>
+                        ) : (
+                          <>
+                            {units(p.amount, decimals)} {symbol} to <span className="font-mono">{p.to}</span>
+                          </>
+                        )}
                       </p>
                       {i.simulation?.ok && (
                         <p className="mt-0.5 text-xs text-bone-dim">
