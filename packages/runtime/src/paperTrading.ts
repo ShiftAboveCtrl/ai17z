@@ -3,7 +3,7 @@ import { trading } from '@xbam/database';
 import type { TradeIntentRow, TradeMandateRow } from '@xbam/database';
 import { assetKey, type AssetRef, type MarketSnapshot, type TradeSide, type TradeVenue } from '@xbam/shared/contracts';
 import { JUPITER_SWAP_FAMILY, ask, type SwapQuoteQuery, type SwapQuoteResult } from '@xbam/upstream';
-import { errorMessage } from '@xbam/shared';
+import { errorMessage, withPatience } from '@xbam/shared';
 import { readMarket } from './marketData';
 import { swapQuoteFrom } from './marketIntelCapabilities';
 import { judgeTradeInput } from './tradingGate';
@@ -82,7 +82,21 @@ function afterFee(amount: bigint, feeMicroBps: number | null): { out: bigint; fe
  * That is the same two-read shape a live trade has to have, so paper exercises
  * the staleness rule rather than skipping it.
  */
-export async function runPaperTrade(input: {
+/**
+ * How long a paper or shadow trade may wait for a market's rate budget.
+ *
+ * Both run in the background, and a trade refused because the market data
+ * budget was busy for a few seconds is recorded as NO_MARKET, which is a lie
+ * about the market. Measured on a live agent on 2026-10-11: nearly every buy
+ * since its first hour ended that way.
+ */
+export const PAPER_PATIENCE_MS = 30_000;
+
+export function runPaperTrade(input: Parameters<typeof runPaperTradeNow>[0]): Promise<PaperOutcome> {
+  return withPatience(PAPER_PATIENCE_MS, () => runPaperTradeNow(input));
+}
+
+async function runPaperTradeNow(input: {
   agentId: string;
   venue: TradeVenue;
   side: TradeSide;

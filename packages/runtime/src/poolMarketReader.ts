@@ -82,12 +82,28 @@ export const MIN_POOLS_FOR_A_MEDIAN = 3;
  * market cap: pump.fun's fee page (updated 2026-10-08) gives 1.25% on the
  * bonding curve and from 1.25% down to 0.30% on PumpSwap. The ceiling is used
  * because a simulation must never charge less than the real thing, and the
- * snapshot's source says it was the ceiling. Any other pool with no stated
- * fee is still not quoted.
+ * snapshot's source says it was the ceiling.
+ *
+ * Raydium is the same case one step on, and it is where a memecoin goes once
+ * it leaves pump.fun: GeckoTerminal states no fee for any Raydium pool, so a
+ * token whose deepest pools are Raydium's was NO_MARKET for every paper trade,
+ * measured on 2026-10-11 against a live agent whose buys almost all ended
+ * that way. Raydium publishes its tiers (docs.raydium.io/reference/fee-comparison,
+ * read 2026-10-11): AMM v4 charges 0.25% only, CPMM and CLMM tier from 0.005%
+ * and 0.01% up to 4%. Which Raydium product the indexer's `raydium` label
+ * covers is not something it says, so both labels take the 4% ceiling: an
+ * overstated fee makes a paper result worse than reality, never better.
+ *
+ * Orca and Meteora stay unquoted. Orca's fixed tiers stop at 2%, but its
+ * adaptive-fee pools add a volatility fee with no published cap, and
+ * Meteora's dynamic fee publishes none either. A ceiling nobody published is
+ * not a ceiling. Any other pool with no stated fee is still not quoted.
  */
 export const DOCUMENTED_FEE_CEILINGS: Readonly<Record<string, { percent: string; source: string }>> = {
   'pump-fun': { percent: '1.25', source: 'pump.fun fee schedule 2026-10-08, ceiling' },
   pumpswap: { percent: '1.25', source: 'pump.fun fee schedule 2026-10-08, ceiling' },
+  raydium: { percent: '4', source: 'Raydium fee comparison 2026-10-11, highest published tier' },
+  'raydium-clmm': { percent: '4', source: 'Raydium fee comparison 2026-10-11, highest published tier' },
 };
 
 /** One pool, reduced to the few things a snapshot needs. */

@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { trading, wallets as walletsRepo } from '@xbam/database';
 import type { TradeIntentRow, TradeMandateRow } from '@xbam/database';
-import { errorMessage } from '@xbam/shared';
+import { errorMessage, withPatience } from '@xbam/shared';
 import { assetKey, type AssetRef, type TradeSide, type TradeVenue } from '@xbam/shared/contracts';
 import { JUPITER_SWAP_FAMILY, ask, type SwapQuoteQuery, type SwapQuoteResult } from '@xbam/upstream';
 import { pauseState } from './killSwitch';
 import { readMarket } from './marketData';
 import { swapQuoteFrom } from './marketIntelCapabilities';
-import { minOutFor, type PricedSide } from './paperTrading';
+import { minOutFor, PAPER_PATIENCE_MS, type PricedSide } from './paperTrading';
 import { sideAgrees } from './paperPositions';
 import { SWAP_VALID_MS } from './walletCore';
 import { approveIntent, draftIntent, reconcileIntent, rejectIntent, simulateIntent, submitIntent, walletReadiness } from './walletCore';
@@ -75,7 +75,12 @@ function notLive(mandate: TradeMandateRow | null): string | null {
   return null;
 }
 
-export async function proposeLiveSwap(input: {
+/** A proposal reads the same markets as a paper trade, and is as patient with their budgets. */
+export function proposeLiveSwap(input: Parameters<typeof proposeLiveSwapNow>[0]): Promise<LiveProposal> {
+  return withPatience(PAPER_PATIENCE_MS, () => proposeLiveSwapNow(input));
+}
+
+async function proposeLiveSwapNow(input: {
   agentId: string;
   ownerId: string;
   venue: TradeVenue;

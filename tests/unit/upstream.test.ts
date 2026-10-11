@@ -8,12 +8,14 @@ import {
   listFamilies,
   perMinute,
   perSecond,
+  perTenSeconds,
   registerUpstream,
   resetBreakerForTest,
   resetCacheForTest,
   resetLimiterForTest,
   resetUpstreamsForTest,
 } from '@xbam/upstream';
+import { withPatience } from '@xbam/shared';
 
 /**
  * The runtime underneath Toolspace: asking an outside service politely, once,
@@ -399,5 +401,60 @@ describe('a remembered answer', () => {
     const answer = await ask<Query, string>('evm', { of: 'height' });
     expect(answer.provenance.upstreamId).toBe('evm.one');
     expect(one.calls).toHaveLength(1);
+  });
+});
+
+describe('patience', () => {
+  function tenSecondBudget(calls: string[]) {
+    registerUpstream(
+      defineUpstream<Query, string>({
+        id: 'tens.gecko', family: 'tens', name: 'tens', description: 'One request per ten seconds.', origin: 'tens.example',
+        limit: { concurrentPerProcess: 10, windows: [perTenSeconds(1, { scope: 'MACHINE' })] },
+        timeoutMs: 1_000, freshMs: 0, rank: 1, cacheKey: (q) => q.of,
+        async fetch(q) {
+          calls.push(q.of);
+          return 'answered';
+        },
+      }),
+    );
+  }
+
+  // A paper trade in the background was refused NO_MARKET because a ten-second budget was busy.
+  it('lets background work wait out a ten-second budget that a page would be refused', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: string[] = [];
+      tenSecondBudget(calls);
+      await ask<Query, string>('tens', { of: 'first' });
+      await expect(ask<Query, string>('tens', { of: 'impatient' })).rejects.toThrow(/Not asking yet/);
+      const patient = withPatience(30_000, () => ask<Query, string>('tens', { of: 'patient' }));
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect((await patient).value).toBe('answered');
+      expect(calls).toEqual(['first', 'patient']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops waiting the moment its caller gives up', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: string[] = [];
+      tenSecondBudget(calls);
+      await ask<Query, string>('tens', { of: 'first' });
+      const controller = new AbortController();
+      // Settled into a value at once, so the rejection is never left unhandled while time is advanced.
+      const outcome = withPatience(30_000, () => ask<Query, string>('tens', { of: 'abandoned' }, { signal: controller.signal })).then(
+        () => 'answered',
+        (error: Error) => error.message,
+      );
+      await vi.advanceTimersByTimeAsync(500);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await outcome).toMatch(/gave up/);
+      expect(calls).toEqual(['first']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
