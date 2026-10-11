@@ -10,8 +10,10 @@ import {
   reviewStudioPurchase,
   setStudioControl,
   setStudioLiveView,
+  setStudioTakeover,
   studioControlSetting,
   studioLiveViewSetting,
+  studioTakeoverSetting,
   studioLinkWallet,
   studioWalletChallenge,
   studioWallets,
@@ -98,6 +100,28 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
       const user = await requireUser(request);
       const body = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
       return setStudioLiveView(body.enabled, user.id);
+    }),
+  );
+
+  /*
+    Whether Studio may hand the owner this machine's browser to click and type
+    in. A third switch: typing into a signed-in browser through a website is
+    the thing somebody holding a stolen Studio session would want most.
+  */
+  app.get(
+    '/api/studio/takeover',
+    handler(async (request) => {
+      await requireUser(request);
+      return studioTakeoverSetting();
+    }),
+  );
+
+  app.put(
+    '/api/studio/takeover',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
+      return setStudioTakeover(body.enabled, user.id);
     }),
   );
 

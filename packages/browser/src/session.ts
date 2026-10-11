@@ -436,6 +436,10 @@ function explainLaunchFailure(error: unknown, config: SessionConfig): PipelineEr
  * doing something to the account, and that is the tab it is safe to disturb.
  */
 export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTION'): Promise<LeasedSession> {
+  if (ownerHolding.has(config.accountId)) {
+    throw PipelineError.retryable('owner_has_the_browser', 'Its owner has taken control of this browser; it waits until they give it back.');
+  }
+
   if (!browserEnabled()) {
     throw PipelineError.permanent(
       'browser_disabled',
@@ -576,6 +580,24 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
  * reply is waiting for. Null when the account has no warm session or the
  * role has no tab, which a viewer reports rather than fixes.
  */
+/**
+ * Accounts whose browser the owner is holding. While one is held, no new
+ * operation starts on it: a lease is refused with a retryable error, so a
+ * monitor backs off and a reply waits, and an operation already holding a tab
+ * finishes first. This is `agentMayBegin` from core's takeover state machine,
+ * enforced where every browser operation has to pass.
+ */
+const ownerHolding = new Set<string>();
+
+export function setOwnerHolding(accountId: string, held: boolean): void {
+  if (held) ownerHolding.add(accountId);
+  else ownerHolding.delete(accountId);
+}
+
+export function ownerHolds(accountId: string): boolean {
+  return ownerHolding.has(accountId);
+}
+
 export function peekRolePage(accountId: string, role: TabRole): Page | null {
   const entry = contexts.get(accountId);
   if (!entry || entry.dead || entry.closing) return null;
