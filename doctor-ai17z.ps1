@@ -196,13 +196,13 @@ function Test-Endpoint($Url) {
   } catch { return $false }
 }
 
-if (Test-Endpoint "http://localhost:$apiPort/api/health") {
+if (Test-Endpoint "http://127.0.0.1:$apiPort/api/health") {
   Add-Result 'API' 'PASS' "Answering on $apiPort." ''
 } else {
   Add-Result 'API' 'NOT RUNNING' "Nothing on $apiPort." 'Run .\start-ai17z.ps1.'
 }
 
-if (Test-Endpoint "http://localhost:$webPort") {
+if (Test-Endpoint "http://127.0.0.1:$webPort") {
   Add-Result 'Web' 'PASS' "Serving on $webPort." ''
 } else {
   Add-Result 'Web' 'NOT RUNNING' "Nothing on $webPort." 'Run .\start-ai17z.ps1.'
@@ -289,9 +289,9 @@ try {
 
 # -- What is configured inside the app ---------------------------------------
 # Only asked when the API is up, and only ever counted. No names, no keys.
-if (Test-Endpoint "http://localhost:$apiPort/api/health") {
+if (Test-Endpoint "http://127.0.0.1:$apiPort/api/health") {
   try {
-    $health = Invoke-WebRequest -Uri "http://localhost:$apiPort/api/health" -TimeoutSec 6 -UseBasicParsing |
+    $health = Invoke-WebRequest -Uri "http://127.0.0.1:$apiPort/api/health" -TimeoutSec 6 -UseBasicParsing |
       Select-Object -ExpandProperty Content | ConvertFrom-Json
     $db = $health.data.components | Where-Object { $_.name -eq 'Database' }
     if ($db -and $db.status -eq 'healthy') {
@@ -305,7 +305,7 @@ if (Test-Endpoint "http://localhost:$apiPort/api/health") {
     # it had one AI provider when it had none.
     $providers = @($health.data.components | Where-Object { $_.kind -eq 'provider' })
     if ($providers.Count -eq 0) {
-      Add-Result 'AI providers' 'NOT CONFIGURED' 'None yet. An agent cannot think without one.' "Open http://localhost:$webPort, go to Settings, add a provider."
+      Add-Result 'AI providers' 'NOT CONFIGURED' 'None yet. An agent cannot think without one.' "Open http://127.0.0.1:$webPort, go to Settings, add a provider."
     } else {
       $bad = @($providers | Where-Object { $_.status -eq 'offline' -or $_.status -eq 'degraded' })
       if ($bad.Count -gt 0) {
