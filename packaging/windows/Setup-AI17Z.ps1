@@ -2651,7 +2651,7 @@ function Test-Ai17zHttp {
 function Test-Ai17zHealthy {
   param([int] $ApiPort, [int] $WebPort)
   $problems = @()
-  $health = Test-Ai17zHttp ('http://localhost:' + $ApiPort + '/api/health') 10
+  $health = Test-Ai17zHttp ('http://127.0.0.1:' + $ApiPort + '/api/health') 10
   if (-not $health.Ok) {
     $problems += 'the API did not answer'
   } else {
@@ -2668,7 +2668,7 @@ function Test-Ai17zHealthy {
       $problems += 'the API answered with something that is not its health'
     }
   }
-  $web = Test-Ai17zHttp ('http://localhost:' + $WebPort + '/') 10
+  $web = Test-Ai17zHttp ('http://127.0.0.1:' + $WebPort + '/') 10
   if (-not $web.Ok) {
     $problems += 'the interface did not answer'
   } elseif ($web.Body -notmatch '<script' -or $web.Body.Length -lt 200) {
@@ -3333,7 +3333,9 @@ Set-Ai17zStep 'verify' 'done' 'everything answered'
 Clear-Ai17zResume
 Show-Ai17zProgress -Force
 
-$url = 'http://localhost:' + $webPort
+# The containers publish on 127.0.0.1 only. Where localhost resolves to ::1
+# first, a browser handed localhost reaches nothing, measured on a real machine.
+$url = 'http://127.0.0.1:' + $webPort
 Write-Host ''
 Write-Host ('  AI17Z ' + $displayName + ' is ready.') -ForegroundColor Green
 Write-Host ''

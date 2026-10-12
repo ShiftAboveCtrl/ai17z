@@ -950,7 +950,9 @@ Write-Host ''
 # installation was told to open 8080 while serving on 8090, which is the first
 # installation's address: the last line of a successful start pointed at
 # somebody else's copy.
-Write-Host '  Open  ' -NoNewline; Write-Host "http://localhost:$(Get-EnvPort 'AI17Z_WEB_PORT' '8080')" -ForegroundColor White
+# 127.0.0.1 rather than localhost: the port is published on IPv4 only, and
+# localhost can resolve to ::1 first and reach nothing.
+Write-Host '  Open  ' -NoNewline; Write-Host "http://127.0.0.1:$(Get-EnvPort 'AI17Z_WEB_PORT' '8080')" -ForegroundColor White
 Write-Host '  Stop  ' -NoNewline; Write-Host '.\stop-ai17z.ps1' -ForegroundColor White
 Write-Host ''
 
