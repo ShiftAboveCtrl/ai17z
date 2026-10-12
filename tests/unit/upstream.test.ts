@@ -9,6 +9,7 @@ import {
   perMinute,
   perSecond,
   perTenSeconds,
+  recordRateLimit,
   registerUpstream,
   resetBreakerForTest,
   resetCacheForTest,
@@ -453,6 +454,36 @@ describe('patience', () => {
       await vi.advanceTimersByTimeAsync(10);
       expect(await outcome).toMatch(/gave up/);
       expect(calls).toEqual(['first']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('a block the source asked for', () => {
+  // A stop-loss sale was refused "it asked us to wait 0s": a block with under a second left, refused instead of waited out.
+  it('is waited out within patience and still refused for a page when it is longer than a page waits', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: string[] = [];
+      registerUpstream(
+        defineUpstream<Query, string>({
+          id: 'blocked.gecko', family: 'blocked', name: 'blocked', description: 'Told us to wait.', origin: 'blocked.example',
+          limit: { concurrentPerProcess: 10, windows: [perSecond(100, { scope: 'MACHINE' })] },
+          timeoutMs: 1_000, freshMs: 0, rank: 1, cacheKey: (q) => q.of,
+          async fetch(q) {
+            calls.push(q.of);
+            return 'answered';
+          },
+        }),
+      );
+      const limit = { concurrentPerProcess: 10, windows: [perSecond(100, { scope: 'MACHINE' as const })] };
+      await recordRateLimit({ upstreamId: 'blocked.gecko', origin: 'blocked.example', limit, until: Date.now() + 5_000, why: '429' });
+      await expect(ask<Query, string>('blocked', { of: 'page' })).rejects.toThrow(/asked us to wait/);
+      const background = withPatience(30_000, () => ask<Query, string>('blocked', { of: 'background' }));
+      await vi.advanceTimersByTimeAsync(5_500);
+      expect((await background).value).toBe('answered');
+      expect(calls).toEqual(['background']);
     } finally {
       vi.useRealTimers();
     }
