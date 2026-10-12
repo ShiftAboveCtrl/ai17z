@@ -274,6 +274,49 @@ describe('a token mint', () => {
   });
 });
 
+describe('what a wallet holds', () => {
+  const OWNER = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+  const account = (pubkey: string, mint: string, amount: string, decimals: number) => ({
+    pubkey,
+    account: { data: { parsed: { info: { mint, tokenAmount: { amount, decimals } } } } },
+  });
+
+  it('reads both token programs, exactly, largest first, and leaves empty accounts out but counts them', async () => {
+    replies.getTokenAccountsByOwner = [
+      ok({
+        context: { slot: 455937484 },
+        value: [
+          account('Acct1111111111111111111111111111111111111111', USDC, '1500000', 6),
+          account('Acct2222222222222222222222222222222222222222', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', '0', 5),
+          // Past where a double counts by ones.
+          account('Acct3333333333333333333333333333333333333333', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', '9007199254740993', 6),
+        ],
+      }),
+      ok({ context: { slot: 455937484 }, value: [account('Acct4444444444444444444444444444444444444444', 'So11111111111111111111111111111111111111112', '42', 9)] }),
+    ];
+    const answer = await run<{ holdings: { mint: string; amount: string; rendered: string; program: string }[]; emptyAccounts: number; slot: number | null; note: string }>(
+      'solana.read_token_holdings',
+      { owner: OWNER },
+    );
+    expect(answer.holdings.map((h) => [h.amount, h.rendered])).toEqual([
+      ['9007199254740993', '9007199254.740993'],
+      ['1500000', '1.5'],
+      ['42', '0.000000042'],
+    ]);
+    expect(answer.holdings.map((h) => h.program)).toEqual(['Token', 'Token', 'Token-2022']);
+    expect(answer.emptyAccounts).toBe(1);
+    expect(answer.slot).toBe(455937484);
+    expect(answer.note).toMatch(/not what it is worth/);
+    const asked = calls.filter((c) => c.method === 'getTokenAccountsByOwner').map((c) => (c.params[1] as { programId: string }).programId);
+    expect(asked.sort()).toEqual(['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb']);
+  });
+
+  it('refuses an answer that is not a list rather than reporting an empty wallet', async () => {
+    replies.getTokenAccountsByOwner = ok({ context: { slot: 1 }, value: null });
+    await expect(run('solana.read_token_holdings', { owner: OWNER })).rejects.toThrow(/not a list/);
+  });
+});
+
 describe('an account that is not there', () => {
   it('is an answer, not a failure', async () => {
     replies.getAccountInfo = ok({ context: { slot: 1 }, value: null });

@@ -120,7 +120,9 @@ import { parseExactJson } from '../exactNumbers';
  * protocol's sense and executes caller-supplied instructions in practice, which
  * is the same objection that keeps `eth_call` out of the EVM family.
  * `getProgramAccounts` is absent because it scans -- it is the request that
- * gets an endpoint to stop answering.
+ * gets an endpoint to stop answering. `getTokenAccountsByOwner` is allowed:
+ * it is answered from an index keyed by the owner, names one token program,
+ * and is what every wallet asks to show what it holds.
  */
 
 /**
@@ -142,6 +144,7 @@ export const SOLANA_READ_METHODS = [
   'getSignatureStatuses',
   'getSlot',
   'getTokenAccountBalance',
+  'getTokenAccountsByOwner',
   'getTokenSupply',
   'getTransaction',
   'getVersion',
