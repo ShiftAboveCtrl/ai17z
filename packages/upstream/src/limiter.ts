@@ -130,13 +130,27 @@ export async function takeSlot(input: {
   // provoke it -- and a per-method budget that looked for a block under its own
   // key would never find it, which would turn "they told us to wait" into
   // "carry on" for every method-scoped window.
+  /*
+   * A block that ends within the caller's patience is waited out, not refused.
+   * Refusing it immediately reported "it asked us to wait 0s" for blocks with
+   * under half a second left, and on 2026-10-11 a paper agent's stop-loss sale
+   * was not made for exactly that, four times in two minutes. A page still gives
+   * up after two seconds; background work that said it can wait waits longer.
+   */
+  const patience = Math.max(MAX_PACING_WAIT_MS, currentPatience());
+  let blockedWaited = 0;
   for (const scope of new Set(input.limit.windows.map((window) => window.scope))) {
-    const blockedFor = await coordinator.blockedFor({
-      key: quotaKey({ upstreamId: input.upstreamId, origin: input.origin, scope }),
-      now: input.now,
-    });
-    if (blockedFor > 0) {
-      return { granted: false, retryAfterMs: blockedFor, why: 'it asked us to wait' };
+    const key = quotaKey({ upstreamId: input.upstreamId, origin: input.origin, scope });
+    for (;;) {
+      // The caller's clock first, as before; after a real wait, the real one.
+      const blockedFor = await coordinator.blockedFor({ key, now: blockedWaited === 0 ? input.now : Date.now() });
+      if (blockedFor <= 0) break;
+      if (blockedWaited + blockedFor > patience) {
+        return { granted: false, retryAfterMs: blockedFor, why: 'it asked us to wait' };
+      }
+      await pause(blockedFor, input.signal);
+      if (input.signal?.aborted) return { granted: false, retryAfterMs: 0, why: 'the caller gave up while waiting for its budget' };
+      blockedWaited += blockedFor;
     }
   }
 
@@ -152,7 +166,6 @@ export async function takeSlot(input: {
   }
 
   // Two seconds for whoever is waiting on a page; longer only for background work that said it can wait (`withPatience`).
-  const patience = Math.max(MAX_PACING_WAIT_MS, currentPatience());
   for (const [key, windows] of byScope) {
     let waited = 0;
     for (;;) {
