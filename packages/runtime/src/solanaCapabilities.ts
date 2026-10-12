@@ -295,6 +295,104 @@ const balance = defineCapability({
   },
 });
 
+/** The two programs an SPL token account can belong to. */
+const TOKEN_PROGRAMS = [
+  { id: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', name: 'Token' },
+  { id: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', name: 'Token-2022' },
+] as const;
+
+/** More than this many token accounts is a wallet somebody airdropped dust into; the largest are kept. */
+const MAX_HOLDINGS = 100;
+
+const holdings = defineCapability({
+  id: 'solana.read_token_holdings',
+  name: 'Read the tokens a Solana wallet holds',
+  description:
+    'Every SPL token a wallet holds a balance of, across both token programs: the mint, the exact amount ' +
+    'and its decimals. It names mints, never tickers, and says nothing about what any of it is worth.',
+  category: 'READ',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z.object({ owner: Address, commitment: Commitment_ }),
+  output: z.object({
+    owner: z.string(),
+    holdings: z.array(
+      z.object({
+        mint: z.string(),
+        account: z.string(),
+        program: z.string(),
+        amount: z.string(),
+        decimals: z.number(),
+        rendered: z.string(),
+      }),
+    ),
+    /** Accounts holding nothing are left out, and said so; so are any past the largest hundred. */
+    emptyAccounts: z.number(),
+    truncated: z.boolean(),
+    commitment: z.string(),
+    slot: z.number().nullable(),
+    note: z.string(),
+    provenance: ProvenanceOut,
+  }),
+  modelCallable: true,
+  timeoutMs: 30_000,
+  readiness: () => solanaReadable(),
+  async run(input) {
+    // One question per token program: a wallet's Token-2022 holdings are invisible to a read of the original program.
+    const reads = await Promise.all(
+      TOKEN_PROGRAMS.map((program) =>
+        readSolana(
+          'getTokenAccountsByOwner',
+          [input.owner, { programId: program.id }, { encoding: 'jsonParsed', commitment: input.commitment }],
+          input.commitment,
+        ).then((read) => ({ program, read })),
+      ),
+    );
+    const rows: { mint: string; account: string; program: string; amount: string; decimals: number; rendered: string }[] = [];
+    let emptyAccounts = 0;
+    for (const { program, read } of reads) {
+      const value = valueOf(read.result);
+      if (!Array.isArray(value)) throw new Error('The cluster answered with something that is not a list of token accounts.');
+      for (const entry of value as { pubkey?: unknown; account?: { data?: { parsed?: { info?: { mint?: unknown; tokenAmount?: { amount?: unknown; decimals?: unknown } } } } } }[]) {
+        const info = entry.account?.data?.parsed?.info;
+        const amount = exactInteger(info?.tokenAmount?.amount);
+        const decimals = info?.tokenAmount?.decimals;
+        if (typeof entry.pubkey !== 'string' || typeof info?.mint !== 'string' || amount === null || typeof decimals !== 'number') continue;
+        if (amount === '0') {
+          emptyAccounts += 1;
+          continue;
+        }
+        rows.push({ mint: info.mint, account: entry.pubkey, program: program.name, amount, decimals, rendered: withDecimals(amount, decimals) });
+      }
+    }
+    // Largest first by exact amount in whole units, compared without a double.
+    rows.sort((a, b) => compareRendered(b.rendered, a.rendered));
+    const first = reads[0]!.read;
+    return {
+      owner: input.owner,
+      holdings: rows.slice(0, MAX_HOLDINGS),
+      emptyAccounts,
+      truncated: rows.length > MAX_HOLDINGS,
+      commitment: first.commitment,
+      slot: first.slot,
+      note: 'Amounts are exact and in the token’s own units. This says what is held, not what it is worth; a mint is not a name, and anybody can create a token called anything.',
+      provenance: first.provenance,
+    };
+  },
+});
+
+/** Two non-negative decimal strings compared exactly, so a balance past 2^53 is still ordered right. */
+function compareRendered(a: string, b: string): number {
+  const [aw = '0', af = ''] = a.split('.');
+  const [bw = '0', bf = ''] = b.split('.');
+  if (aw.length !== bw.length) return aw.length - bw.length;
+  if (aw !== bw) return aw < bw ? -1 : 1;
+  const width = Math.max(af.length, bf.length);
+  const ap = af.padEnd(width, '0');
+  const bp = bf.padEnd(width, '0');
+  return ap === bp ? 0 : ap < bp ? -1 : 1;
+}
+
 const token = defineCapability({
   id: 'solana.read_token',
   name: 'Read an SPL token mint',
@@ -629,6 +727,7 @@ export function registerSolanaCapabilities(): void {
   registerCapability(account);
   registerCapability(balance);
   registerCapability(token);
+  registerCapability(holdings);
   registerCapability(program);
   registerCapability(transaction);
   registerCapability(signatures);
