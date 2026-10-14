@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { trading, wallets } from '@xbam/database';
 import { AssetRef, MarketSnapshot, type TradeMandate } from '@xbam/shared/contracts';
 import {
+  approveIntent,
   approveLiveSwap,
   base58,
   createWallet,
@@ -15,6 +16,7 @@ import {
   resetMarketReadersForTest,
   resetWalletAdapterForTest,
   setPauseAll,
+  submitIntent,
   submitLiveSwap,
   SWAP_PROGRAMS,
   type MarketReader,
@@ -172,6 +174,18 @@ describe('a live trade', () => {
     expect(calls).toEqual({ sign: 1, broadcast: 1 });
     expect((await reconcileLiveSwap(proposed.tradeIntent.id, f.ownerId)).status).toBe('CONFIRMED');
     expect(calls.broadcast).toBe(1);
+  });
+
+  it('cannot be approved or sent through the plain wallet routes, which would skip its own checks', async () => {
+    const { f, calls } = await setUp();
+    const proposed = await buy(f.agentId, f.ownerId, 'decision-plain');
+    if (proposed.outcome !== 'PROPOSED') throw new Error(proposed.outcome);
+    await expect(approveIntent(proposed.walletIntentId, f.ownerId, proposed.digest)).rejects.toThrow(/live trade/);
+    await approveLiveSwap(proposed.tradeIntent.id, f.ownerId, proposed.digest);
+    // Approved through the trade, and still only the trade may send it: a pause is read again there.
+    await expect(submitIntent(proposed.walletIntentId, f.ownerId)).rejects.toThrow(/live trade/);
+    expect(calls).toEqual({ sign: 0, broadcast: 0 });
+    expect(await submitLiveSwap(proposed.tradeIntent.id, f.ownerId)).toMatchObject({ sent: true });
   });
 
   it('sends nothing when the mandate went back to paper, everything is paused, or the quote went stale', async () => {

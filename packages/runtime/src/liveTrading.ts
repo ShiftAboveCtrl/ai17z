@@ -9,7 +9,7 @@ import { readMarket } from './marketData';
 import { swapQuoteFrom } from './marketIntelCapabilities';
 import { minOutFor, PAPER_PATIENCE_MS, type PricedSide } from './paperTrading';
 import { sideAgrees } from './paperPositions';
-import { SWAP_VALID_MS } from './walletCore';
+import { SWAP_VALID_MS, TRADE_INTENT_KEY_PREFIX } from './walletCore';
 import { approveIntent, draftIntent, reconcileIntent, rejectIntent, simulateIntent, submitIntent, walletReadiness } from './walletCore';
 import { maySign } from './tradeExecution';
 import { judgeTradeInput } from './tradingGate';
@@ -160,7 +160,7 @@ async function proposeLiveSwapNow(input: {
   const { intent: drafted } = await draftIntent({
     agentId: input.agentId,
     ownerId: input.ownerId,
-    idempotencyKey: `trade-intent:${row.id}`,
+    idempotencyKey: `${TRADE_INTENT_KEY_PREFIX}${row.id}`,
     params: {
       kind: 'SOLANA_SWAP',
       network: 'solana',
@@ -205,12 +205,50 @@ async function proposeLiveSwapNow(input: {
   return { outcome: 'PROPOSED', tradeIntent: waiting, walletIntentId: drafted.id, digest: simulated.digest };
 }
 
+/**
+ * Simulates a waiting trade again, for the owner who is looking at it now. A
+ * Solana transaction names a blockhash the network forgets in about a minute,
+ * so a trade prepared while nobody watched is stale by the time somebody
+ * does; this builds and judges the exact transaction afresh, and the owner
+ * approves the digest it returns. Nothing about the trade's floor changes: a
+ * route that now promises less than it is refused, not loosened.
+ */
+export async function refreshLiveSwap(tradeIntentId: string, ownerId: string): Promise<{ ok: true; tradeIntent: TradeIntentRow; digest: string } | { ok: false; why: string }> {
+  const row = await trading.getIntent(tradeIntentId);
+  const walletIntentId = row ? walletIntentOf(row) : null;
+  if (!row || !walletIntentId || row.status !== 'AWAITING_APPROVAL') return { ok: false, why: 'That trade is not waiting for approval.' };
+  let simulated;
+  try {
+    simulated = await simulateIntent(walletIntentId, ownerId);
+  } catch (error) {
+    return { ok: false, why: errorMessage(error) };
+  }
+  if (simulated.status !== 'AWAITING_APPROVAL' || !simulated.digest) {
+    await trading.transitionIntent(row.id, 'AWAITING_APPROVAL', 'FAILED', { error: simulated.error ?? 'The swap no longer simulates.' });
+    return { ok: false, why: simulated.error ?? 'The swap no longer simulates.' };
+  }
+  const updated = await trading.transitionIntent(row.id, 'AWAITING_APPROVAL', 'AWAITING_APPROVAL', {
+    simulation: { walletIntentId, digest: simulated.digest, simulatedAt: new Date().toISOString() },
+  });
+  if (!updated) return { ok: false, why: 'That trade changed while it was being simulated. Look again.' };
+  return { ok: true, tradeIntent: updated, digest: simulated.digest };
+}
+
+/** The owner says no, or Studio says its agent no longer wants it. Nothing was signed, and now nothing can be. */
+export async function withdrawLiveSwap(tradeIntentId: string, ownerId: string, why: string): Promise<TradeIntentRow | null> {
+  const row = await trading.getIntent(tradeIntentId);
+  const walletIntentId = row ? walletIntentOf(row) : null;
+  if (!row || !['DRAFTED', 'SIMULATED', 'AWAITING_APPROVAL'].includes(row.status)) return row;
+  if (walletIntentId) await rejectIntent(walletIntentId, ownerId).catch(() => undefined);
+  return trading.transitionIntent(row.id, ['DRAFTED', 'SIMULATED', 'AWAITING_APPROVAL'], 'CANCELLED', { error: why });
+}
+
 /** The owner approves the trade by approving the digest of its exact transaction. */
 export async function approveLiveSwap(tradeIntentId: string, ownerId: string, digest: string): Promise<TradeIntentRow> {
   const row = await trading.getIntent(tradeIntentId);
   const walletIntentId = row ? walletIntentOf(row) : null;
   if (!row || row.status !== 'AWAITING_APPROVAL' || !walletIntentId) throw new Error('That trade is not waiting for approval.');
-  await approveIntent(walletIntentId, ownerId, digest);
+  await approveIntent(walletIntentId, ownerId, digest, { viaTrade: true });
   const approved = await trading.transitionIntent(row.id, 'AWAITING_APPROVAL', 'APPROVED', { approvedBy: ownerId });
   if (!approved) throw new Error('That trade was already decided.');
   return approved;
@@ -244,7 +282,7 @@ export async function submitLiveSwap(
 
   let out;
   try {
-    out = await submitIntent(walletIntentId, ownerId, now);
+    out = await submitIntent(walletIntentId, ownerId, now, { viaTrade: true });
   } catch (error) {
     return { sent: false, why: [errorMessage(error)] };
   }

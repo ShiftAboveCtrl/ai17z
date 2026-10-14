@@ -257,6 +257,22 @@ export function intentDigest(input: { walletAddress: string; params: WalletInten
   return createHash('sha256').update(canonical).digest('hex');
 }
 
+/** The idempotency key of a wallet intent that carries a live trade (`liveTrading.ts`). */
+export const TRADE_INTENT_KEY_PREFIX = 'trade-intent:';
+
+/**
+ * A transaction that carries a live trade is approved and sent through the
+ * trade, never through the plain wallet routes. Those routes would sign the
+ * same approved digest, but without the trade's own checks at the moment of
+ * sending (the mandate, the pause, the quote's age) and without carrying the
+ * result onto the trade. One way to send a trade, not two.
+ */
+function refuseTradeOutsideTrade(intent: WalletIntentRow, viaTrade: boolean): void {
+  if (!viaTrade && intent.idempotencyKey.startsWith(TRADE_INTENT_KEY_PREFIX)) {
+    throw new ValidationError('This transaction is a live trade. Approve and send it from the trade, where the mandate and the pause are checked again.');
+  }
+}
+
 async function ownedIntent(id: string, ownerId: string): Promise<{ intent: WalletIntentRow; wallet: WalletRow }> {
   const intent = await walletsRepo.getIntent(id);
   if (!intent) throw new NotFoundError('Transaction');
@@ -339,8 +355,9 @@ export async function simulateIntent(id: string, ownerId: string): Promise<Walle
  * A digest that does not match means they were looking at something else,
  * perhaps an older simulation, and nothing is approved.
  */
-export async function approveIntent(id: string, ownerId: string, digest: string): Promise<WalletIntentRow> {
+export async function approveIntent(id: string, ownerId: string, digest: string, options: { viaTrade?: boolean } = {}): Promise<WalletIntentRow> {
   const { intent } = await ownedIntent(id, ownerId);
+  refuseTradeOutsideTrade(intent, options.viaTrade === true);
   if (intent.status !== 'AWAITING_APPROVAL' || !intent.digest) throw new ValidationError('That transaction is not waiting for approval. Simulate it first.');
   if (digest.trim().toLowerCase() !== intent.digest) throw new ValidationError('That is not the transaction currently simulated. Look at it again before approving.');
   if (intent.kind === 'SOLANA_SWAP' && swapStale(intent.simulation, Date.now())) {
@@ -368,8 +385,9 @@ export async function rejectIntent(id: string, ownerId: string): Promise<WalletI
  * ways out are SUBMITTED and UNKNOWN; there is no path back to APPROVED, so
  * there is no retry, blind or otherwise.
  */
-export async function submitIntent(id: string, ownerId: string, now = Date.now()): Promise<WalletIntentRow> {
+export async function submitIntent(id: string, ownerId: string, now = Date.now(), options: { viaTrade?: boolean } = {}): Promise<WalletIntentRow> {
   const { intent, wallet } = await ownedIntent(id, ownerId);
+  refuseTradeOutsideTrade(intent, options.viaTrade === true);
   if (intent.status !== 'APPROVED' || !intent.approvedDigest || !intent.simulation) throw new ValidationError('Only an approved transaction can be sent.');
   const params = WalletIntentParams.parse(intent.params);
   const simulation = WalletSimulation.parse(intent.simulation);

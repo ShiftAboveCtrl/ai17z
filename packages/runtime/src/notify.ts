@@ -64,6 +64,7 @@ export const notificationKey = {
   limitReached: (agentId: string, period: string) => `budget.reached:${agentId}:${period}`,
   workerStopped: () => 'worker.stopped',
   everythingPaused: () => 'runtime.paused',
+  liveTradeWaiting: (tradeIntentId: string) => `live-trade.waiting:${tradeIntentId}`,
 };
 
 /**
@@ -346,6 +347,31 @@ export async function everythingPaused(input: { by: string | null; reason: strin
 
 export async function everythingReleased(): Promise<void> {
   await notificationsRepo.resolve(notificationKey.everythingPaused());
+}
+
+/**
+ * A real trade is prepared and waiting for its owner's approval.
+ *
+ * Nothing happens without a person here by design: the wallet signs only an
+ * approved digest. So a trade waiting is exactly the kind of thing nobody
+ * will notice from a list of jobs, and a protective sale waiting is a stop
+ * that is not protecting anything yet. Cleared the moment it is approved,
+ * rejected or expires.
+ */
+export async function liveTradeWaiting(input: { tradeIntentId: string; agentName: string; summary: string; protective: boolean }): Promise<NotificationRecord | null> {
+  return notificationsRepo.raise({
+    kind: 'LIVE_TRADE_WAITING',
+    severity: 'WARNING',
+    title: input.protective ? `${input.agentName} wants to sell to protect a position` : `${input.agentName} has a real trade for you to approve`,
+    body: `${input.summary} Review it in AI17Z: it is built again when you look, and nothing is signed until you approve the exact transaction. Unapproved, it expires.`,
+    actionLabel: 'Review',
+    actionHref: '/plugins',
+    dedupeKey: notificationKey.liveTradeWaiting(input.tradeIntentId),
+  });
+}
+
+export async function liveTradeSettled(tradeIntentId: string): Promise<void> {
+  await notificationsRepo.resolve(notificationKey.liveTradeWaiting(tradeIntentId));
 }
 
 /**

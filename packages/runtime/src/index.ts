@@ -78,6 +78,7 @@ export * from './pluginFeatures';
 export * from './pluginRegistry';
 export * from './studioLink';
 export * from './studioControl';
+export * from './studioLiveTrades';
 export * from './studioLiveView';
 export * from './agentStart';
 export * from './agentStatusNow';
