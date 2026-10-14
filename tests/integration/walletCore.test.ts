@@ -220,4 +220,15 @@ describe('loading the adapter', () => {
     await loadWalletAdapter({ AI17Z_WALLET_ADAPTER: file, AI17Z_WALLET_ADAPTER_SHA256: sha });
     expect(walletReadiness().detail).toMatch(/does not export a wallet adapter/);
   });
+
+  it('finds index.mjs in the directory the owner installed it in, held to the same pin', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wallet-adapter-dir-'));
+    const text = 'export const walletAdapter = { id: "y" };\n';
+    writeFileSync(join(dir, 'index.mjs'), text);
+    await loadWalletAdapter({ AI17Z_WALLET_ADAPTER_DIR: dir, AI17Z_WALLET_ADAPTER_SHA256: '1'.repeat(64) });
+    expect(walletReadiness().detail).toMatch(/does not match/);
+    await loadWalletAdapter({ AI17Z_WALLET_ADAPTER_DIR: dir, AI17Z_WALLET_ADAPTER_SHA256: createHash('sha256').update(text).digest('hex') });
+    // Read and hashed from the directory: it got as far as asking what the module exports.
+    expect(walletReadiness().detail).toMatch(/does not export a wallet adapter/);
+  });
 });

@@ -115,10 +115,17 @@ services:
       AI17Z_CORS_ORIGINS: ${AI17Z_CORS_ORIGINS:-${XBAM_CORS_ORIGINS:-http://localhost:8080}}
       XBAM_STORAGE_DIR: /data/storage
       XBAM_RUN_MIGRATIONS: "1"
+      # The owner's wallet adapter, when they installed one: their own directory,
+      # mounted read-only below, and the file inside it pinned by its SHA-256.
+      # Empty is the shipped state and loads nothing.
+      AI17Z_WALLET_ADAPTER: ${AI17Z_WALLET_ADAPTER_DIR:+/opt/ai17z-wallet-adapter/index.mjs}
+      AI17Z_WALLET_ADAPTER_SHA256: ${AI17Z_WALLET_ADAPTER_SHA256:-}
     ports:
       - "${AI17Z_BIND_HOST:-127.0.0.1}:${AI17Z_API_PORT:-8787}:8787"
     volumes:
       - xbam_storage:/data/storage
+      # Read-only. Unset, an empty named volume, never a path beside the program.
+      - ${AI17Z_WALLET_ADAPTER_DIR:-xbam_no_wallet_adapter}:/opt/ai17z-wallet-adapter:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -181,9 +188,13 @@ services:
       # The container has no browser and no display. Browser-backed channels are
       # served by a worker running natively; see docs/operations/BROWSER_SESSIONS.md.
       AI17Z_WORKER_ROLE: ${AI17Z_WORKER_ROLE:-jobs}
+      # As for the API: the worker prepares real trades, so it simulates them.
+      AI17Z_WALLET_ADAPTER: ${AI17Z_WALLET_ADAPTER_DIR:+/opt/ai17z-wallet-adapter/index.mjs}
+      AI17Z_WALLET_ADAPTER_SHA256: ${AI17Z_WALLET_ADAPTER_SHA256:-}
     volumes:
       - xbam_storage:/data/storage
       - xbam_browser:/data/browser-profiles
+      - ${AI17Z_WALLET_ADAPTER_DIR:-xbam_no_wallet_adapter}:/opt/ai17z-wallet-adapter:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -217,3 +228,6 @@ volumes:
   xbam_pgdata:
   xbam_storage:
   xbam_browser:
+  # Stands in for the wallet adapter's directory when none is installed, so the
+  # mount always has something to name and nothing is created on the host.
+  xbam_no_wallet_adapter:

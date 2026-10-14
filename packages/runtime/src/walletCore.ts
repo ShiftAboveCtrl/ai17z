@@ -34,6 +34,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { agents as agentsRepo, ops, wallets as walletsRepo, type WalletIntentRow, type WalletRow } from '@xbam/database';
 import { NotFoundError, ValidationError, createLogger, errorMessage, openSecret, sealSecret } from '@xbam/shared';
@@ -139,7 +140,9 @@ function isAdapter(value: unknown): value is WalletAdapter {
  * that cannot load is a wallet that says so, and nothing else stops.
  */
 export async function loadWalletAdapter(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  const path = env.AI17Z_WALLET_ADAPTER?.trim();
+  // The module itself, or the directory it was installed in: one setting serves the containers and a native worker alike.
+  const dir = env.AI17Z_WALLET_ADAPTER_DIR?.trim();
+  const path = env.AI17Z_WALLET_ADAPTER?.trim() || (dir ? join(dir, 'index.mjs') : undefined);
   const pinned = env.AI17Z_WALLET_ADAPTER_SHA256?.trim().toLowerCase();
   if (!path) return;
   try {
