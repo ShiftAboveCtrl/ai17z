@@ -32,7 +32,7 @@ import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
 import { pollDueFeeds, pollDueRepos, runDueEngagements, wakeDueAgents } from '@xbam/runtime';
-import { exchangeWithStudio, pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, runDueShadows, studioSyncDue, syncStudio } from '@xbam/runtime';
+import { exchangeWithStudio, pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, runDueShadows, studioSyncDue, sweepStudioLiveTrades, syncStudio } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -249,6 +249,18 @@ async function main(): Promise<void> {
       if (control.ran > 0) log.info('carried out Studio commands', { ran: control.ran });
     } catch (error) {
       log.warn('Studio control exchange failed', { message: errorMessage(error) });
+    }
+    try {
+      /*
+        Real trades a Studio agent asks this installation to prepare, when the
+        owner turned that on. Every sweep, because a protective sale waiting a
+        quarter of an hour is a stop that did not protect anything; off, it
+        costs nothing and asks Studio nothing.
+      */
+      const live = await sweepStudioLiveTrades();
+      if (live.prepared > 0 || live.reported > 0) log.info('Studio live trades', { prepared: live.prepared, reported: live.reported });
+    } catch (error) {
+      log.warn('Studio live trade sweep failed', { message: errorMessage(error) });
     }
     try {
       /*

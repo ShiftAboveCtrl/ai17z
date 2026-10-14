@@ -4,6 +4,7 @@ import { AI17Z_PAYMENT, formatBaseUnits, isExactPurchaseTransaction, type Prepar
 import { post, put } from '@app/lib/api';
 import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
 import { RetryablePanel, Working } from '@app/components/ui';
+import { LiveTradesSection } from '@app/components/LiveTradesPanel';
 import { ROBINHOOD_CHAIN_PARAMS, discoverWallets, ensureChain, type DiscoveredWallet, type Eip1193, type WalletWindow } from '@app/lib/walletDiscovery';
 
 /**
@@ -256,6 +257,7 @@ export function StudioPanel() {
           <ControlSection />
           <LiveViewSection />
           <TakeoverSection />
+          <LiveTradesSection />
           <EntitlementsSection status={data} onChanged={status.reload} />
           <PurchasesSection status={data} />
         </>

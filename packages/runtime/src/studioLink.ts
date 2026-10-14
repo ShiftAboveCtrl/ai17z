@@ -1036,6 +1036,46 @@ export async function studioWallets(): Promise<{ ok: true; wallets: Array<{ addr
   return { ok: true, wallets: wallets as Array<{ address: string; chain_id: number; verified_at: string }> };
 }
 
+/** One real trade Studio asks this installation to prepare (`studioLiveTrades.ts`). */
+export interface StudioLiveRequest {
+  id: string;
+  agent_id: string;
+  /** The Studio agent's name, for the owner choosing which agent here carries it out. Absent from Studios before it was sent. */
+  agent_name?: string;
+  decision_id: string;
+  side: 'BUY' | 'SELL';
+  mint: string;
+  symbol: string | null;
+  decimals: number;
+  spend_lamports: string | null;
+  sell_base: string | null;
+  max_slippage_bps: number;
+  protective: boolean;
+  expires_at: string;
+}
+
+/** What Studio's agents ask of this installation, and what their owner withdrew. Only ever asked; Studio cannot push. */
+export async function studioLiveTradesCollect(): Promise<{ ok: true; requests: StudioLiveRequest[]; cancelled: string[] } | StudioProblem> {
+  const answer = await authed('/api/v1/installation/live-trades', { method: 'GET' }).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  const requests = answer.body?.requests;
+  const cancelled = answer.body?.cancelled;
+  if (answer.status !== 200 || !Array.isArray(requests) || !Array.isArray(cancelled)) return { ok: false, why: describe(answer) };
+  return { ok: true, requests: requests as StudioLiveRequest[], cancelled: cancelled.filter((c): c is string => typeof c === 'string') };
+}
+
+/** One step taken with a real trade, told to Studio. Studio takes it only forward, so telling it again is harmless. */
+export async function studioLiveTradeReport(id: string, report: Record<string, unknown>): Promise<{ ok: true; accepted: boolean } | StudioProblem> {
+  const answer = await authed(`/api/v1/installation/live-trades/${encodeURIComponent(id)}`, { method: 'POST', json: report }).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  if (answer.status !== 200) return { ok: false, why: describe(answer) };
+  return { ok: true, accepted: answer.body?.accepted === true };
+}
+
 /** A one-time message for the owner's wallet to sign, checked before it is shown. */
 export async function studioWalletChallenge(address: string): Promise<{ ok: true; challengeId: string; message: string } | StudioProblem> {
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return { ok: false, why: 'That is not a wallet address.' };

@@ -248,6 +248,16 @@ export async function intentByKey(key: string): Promise<TradeIntentRow | null> {
   return mapRow<TradeIntentRow>(await queryOne(`SELECT * FROM trade_intents WHERE idempotency_key = $1`, [key]));
 }
 
+/** Trade intents whose idempotency key starts with a prefix, most recent first, from the last few days: what a bridge is still following. */
+export async function intentsByKeyPrefix(prefix: string, sinceMs = 3 * 86_400_000, limit = 200): Promise<TradeIntentRow[]> {
+  return mapRows<TradeIntentRow>(
+    await query(
+      `SELECT * FROM trade_intents WHERE idempotency_key LIKE $1 AND updated_at > now() - ($2::bigint * interval '1 millisecond') ORDER BY updated_at DESC LIMIT $3`,
+      [`${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`, sinceMs, limit],
+    ),
+  );
+}
+
 export async function listIntents(agentId: string, limit = 50): Promise<TradeIntentRow[]> {
   return mapRows<TradeIntentRow>(
     await query(`SELECT * FROM trade_intents WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2`, [agentId, limit]),

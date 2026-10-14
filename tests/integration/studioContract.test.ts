@@ -5,8 +5,16 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { agents as agentsRepo, ops, plugins as installedPlugins, studio as ledger } from '@xbam/database';
 import {
+  approveLiveSwap,
   beginStudioLink,
+  bindStudioAgent,
   disconnectStudio,
+  refreshLiveSwap,
+  resetMarketReadersForTest,
+  resetWalletAdapterForTest,
+  setStudioLiveTrades,
+  submitLiveSwap,
+  sweepStudioLiveTrades,
   exchangeWithStudio,
   setStudioControl,
   installFromRegistry,
@@ -35,6 +43,9 @@ import { openSecret } from '@xbam/shared';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { FakeChain } from '../support/fakeChain';
+import { notifications, trading } from '@xbam/database';
+import { resetUpstreamsForTest } from '@xbam/upstream';
+import { BONK, LIVE_TX_HASH, LIVE_WALLET, liveAgent } from '../support/liveSwap';
 
 /**
  * AI17Z core against AI17Z Studio, both real.
@@ -513,5 +524,66 @@ run('AI17Z core against a running AI17Z Studio', () => {
     expect(await fixture('command-status', waiting.id)).toMatchObject({ state: 'EXPIRED' });
     expect(await fixture('command', 'PAUSE_ALL', installation)).toMatchObject({ refused: 'FORBIDDEN' });
     await disconnectStudio();
+  }, 180_000);
+
+  it('prepares a Studio agent\'s real trade only when its owner allows it, approves it here by digest, and tells Studio each step', async () => {
+    const f = await createFixture();
+    const { calls } = await liveAgent(f);
+    const installation = await linkAs();
+    const mint = BONK.kind === 'ONCHAIN' ? BONK.address : '';
+    try {
+      const asked = await fixture('live-ask', installation, 'BUY', mint, '10000000');
+
+      // Off: nothing is asked of Studio and nothing prepared.
+      expect(await sweepStudioLiveTrades()).toMatchObject({ prepared: 0, skipped: 'off' });
+      expect((await fixture('live-status', asked.requestId)).request).toMatchObject({ status: 'WAITING' });
+
+      // On, but no agent here chosen for it: refused with a sentence, and nothing prepared.
+      await setStudioLiveTrades(true, null);
+      await sweepStudioLiveTrades();
+      expect((await fixture('live-status', asked.requestId)).request).toMatchObject({ status: 'REFUSED', detail: expect.stringMatching(/No agent on this AI17Z is chosen/) });
+
+      // Bound: prepared under the local mandate, digest and wallet told to Studio, and nothing signed.
+      const second = await fixture('live-ask', installation, 'BUY', mint, '10000000');
+      await bindStudioAgent(second.agentId, f.agentId, f.ownerId);
+      expect((await sweepStudioLiveTrades()).prepared).toBe(1);
+      const prepared = (await fixture('live-status', second.requestId)).request;
+      expect(prepared).toMatchObject({ status: 'PREPARED', walletAddress: LIVE_WALLET, amountsFrom: 'SIMULATION', inBase: '10000000' });
+      expect(prepared.digest).toMatch(/^[0-9a-f]{64}$/);
+      expect(calls).toEqual({ sign: 0, broadcast: 0 });
+      // The owner is told a real trade waits for them.
+      const waiting = (await notifications.listOpen()).filter((n) => n.kind === 'LIVE_TRADE_WAITING');
+      expect(waiting).toHaveLength(1);
+      // Delivered again or swept again, it is one trade.
+      await sweepStudioLiveTrades();
+      const intent = (await trading.intentByKey(`studio-live:${second.requestId}`))!;
+      expect((await trading.listIntents(f.agentId)).filter((i) => i.mode === 'LIVE')).toHaveLength(1);
+
+      // The owner reviews here, approves the digest shown, and it is sent once; Studio hears every step.
+      const fresh = await refreshLiveSwap(intent.id, f.ownerId);
+      if (!fresh.ok) throw new Error(fresh.why);
+      await approveLiveSwap(intent.id, f.ownerId, fresh.digest);
+      expect(await submitLiveSwap(intent.id, f.ownerId)).toMatchObject({ sent: true });
+      await sweepStudioLiveTrades();
+      const done = (await fixture('live-status', second.requestId)).request;
+      expect(done).toMatchObject({ status: 'CONFIRMED', txHash: LIVE_TX_HASH, amountsFrom: 'SIMULATION' });
+      expect(calls).toEqual({ sign: 1, broadcast: 1 });
+      // Sent and confirmed, so nothing is waiting any more.
+      expect((await notifications.listOpen()).filter((n) => n.kind === 'LIVE_TRADE_WAITING')).toEqual([]);
+
+      // Withdrawn in Studio after it was prepared: withdrawn here, and never signable.
+      const third = await fixture('live-ask', installation, 'BUY', mint, '10000000');
+      await sweepStudioLiveTrades();
+      await fixture('live-cancel', third.requestId);
+      await sweepStudioLiveTrades();
+      expect((await trading.intentByKey(`studio-live:${third.requestId}`))!.status).toBe('CANCELLED');
+      expect(calls.sign).toBe(1);
+    } finally {
+      await setStudioLiveTrades(false, null);
+      resetMarketReadersForTest();
+      resetWalletAdapterForTest();
+      resetUpstreamsForTest();
+      await disconnectStudio();
+    }
   }, 180_000);
 });
