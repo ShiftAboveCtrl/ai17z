@@ -12,9 +12,16 @@ address, reading a node, simulating, signing and broadcasting are a
 their own machine and pins by hash:
 
 ```
-AI17Z_WALLET_ADAPTER=<absolute path to the adapter module>
-AI17Z_WALLET_ADAPTER_SHA256=<its sha256>
+AI17Z_WALLET_ADAPTER_DIR=<absolute path to the directory the adapter was installed in>
+AI17Z_WALLET_ADAPTER_SHA256=<the sha256 of index.mjs in it>
 ```
+
+In an installed copy the API and the jobs worker run in containers, so
+`docker-compose.yml` mounts that directory read-only at
+`/opt/ai17z-wallet-adapter` and points them at `index.mjs` there; a native
+worker reads the same directory directly. Unset, the mount is an empty named
+volume, so nothing is created beside the program. `AI17Z_WALLET_ADAPTER`, the
+module's own path, still works for a process outside Docker.
 
 The file is hashed before it is imported and refused on any mismatch, on a
 missing hash, or if it does not export an adapter. Without one, every wallet
