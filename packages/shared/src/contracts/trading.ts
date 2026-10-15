@@ -235,8 +235,10 @@ export const TradeMandate = z
     approval: ApprovalMode.default('OWNER_APPROVES_EACH'),
     venues: z.array(TradeVenueId).min(1),
     networks: z.array(WalletNetworkId),
-    /** Empty means no asset has been allowed yet, which denies everything. */
+    /** Empty means no asset has been allowed yet, which denies everything, unless the scope is wider. */
     allowedAssets: z.array(AssetRef),
+    /** LISTED allows only `allowedAssets`. ANY_SOLANA_TOKEN allows any token on Solana, for an agent that trades what it finds, bound by every other limit here. */
+    assetScope: z.enum(['LISTED', 'ANY_SOLANA_TOKEN']).default('LISTED'),
     maxPerTrade: BaseUnits,
     maxPerDay: BaseUnits,
     maxOpenExposure: BaseUnits,
