@@ -6,6 +6,7 @@ import {
   approveIntent,
   base58,
   draftIntent,
+  isRecoveryPhrase,
   newRecoveryPhrase,
   registerWalletAdapter,
   resetWalletAdapterForTest,
@@ -87,9 +88,10 @@ describe('restoring an agent wallet from its recovery phrase', () => {
       expect(mismatch.statusCode).toBe(422);
       expect(mismatch.body).toContain(address);
 
-      // A phrase with one word changed is not a phrase, and the answer does not repeat it.
+      // A phrase with one word changed is not a phrase, and the answer does not repeat it. The last word carries
+      // only four checksum bits, so one replacement in sixteen is still a valid phrase: choose one that is not.
       const words = phrase.split(' ');
-      const broken = [...words.slice(0, 11), words[11] === 'zoo' ? 'abandon' : 'zoo'].join(' ');
+      const broken = ['zoo', 'abandon', 'ability', 'able', 'about'].map((w) => [...words.slice(0, 11), w].join(' ')).find((p) => p !== phrase && !isRecoveryPhrase(p))!;
       const bad = await app.inject({ method: 'POST', url: `/api/agents/${f.agentId}/wallets/restore`, headers: auth, payload: { family: 'SOLANA', phrase: broken } });
       answers.push(bad.body);
       expect(bad.statusCode).toBe(422);
