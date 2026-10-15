@@ -17,6 +17,7 @@ interface Wallet {
   id: string;
   family: 'EVM' | 'SOLANA';
   address: string;
+  origin?: 'GENERATED' | 'PHRASE';
   backedUpAt: string | null;
   createdAt: string;
 }
@@ -82,6 +83,15 @@ export function WalletSection({ index, agentId }: { index: number; agentId: stri
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState({ network: 'ethereum', to: '', amount: '' });
+  // The phrase lives in this component only while it is typed, and is cleared whatever the answer.
+  const [restore, setRestore] = useState({ open: false, family: 'SOLANA' as 'SOLANA' | 'EVM', phrase: '', expected: '' });
+
+  const submitRestore = async (event: FormEvent) => {
+    event.preventDefault();
+    const body = { family: restore.family, phrase: restore.phrase, expectedAddress: restore.expected.trim() || null };
+    setRestore({ ...restore, phrase: '' });
+    await run(`/api/agents/${agentId}/wallets/restore`, body);
+  };
 
   const run = async (path: string, body: unknown = {}) => {
     setBusy(true);
@@ -139,7 +149,10 @@ export function WalletSection({ index, agentId }: { index: number; agentId: stri
                   <p className="text-xs text-bone-faint">
                     {w.family === 'EVM' ? 'Ethereum, BNB Smart Chain, Robinhood Chain' : 'Solana'} · made {timeAgo(w.createdAt)}
                   </p>
-                  {!w.backedUpAt && (
+                  {w.origin === 'PHRASE' && (
+                    <p className="mt-1 text-xs text-bone-dim">Restored from your recovery phrase: the words you hold open it in any standard wallet, with or without AI17Z.</p>
+                  )}
+                  {w.origin !== 'PHRASE' && !w.backedUpAt && (
                     <p className="mt-1 text-xs text-bone-dim">
                       This key is sealed under your master key. Losing the master key or the database loses the wallet.{' '}
                       <button type="button" className="btn-quiet px-0 text-xs underline" disabled={busy} onClick={() => void run(`/api/wallets/${w.id}/backed-up`)}>
@@ -158,7 +171,40 @@ export function WalletSection({ index, agentId }: { index: number; agentId: stri
                     Make {f === 'EVM' ? 'an EVM' : 'a Solana'} wallet
                   </button>
                 ))}
+              {data.wallets.length < 2 && (
+                <button type="button" className="btn-quiet px-0 text-xs" disabled={busy} onClick={() => setRestore({ ...restore, open: !restore.open, phrase: '' })}>
+                  {restore.open ? 'Close' : 'Restore from a recovery phrase'}
+                </button>
+              )}
             </div>
+            {restore.open && (
+              <form className="mt-3 space-y-2" onSubmit={(e) => void submitRestore(e)} autoComplete="off">
+                <p className="text-xs text-bone-dim">
+                  The twelve or twenty-four words you wrote down, for example when you made this agent's wallet in Studio. They are used on this computer to
+                  derive the key, which is sealed like any other, and then dropped: they are not stored, logged or sent anywhere. Paste the address you expect
+                  as well, and a phrase that opens a different wallet is refused.
+                </p>
+                <select aria-label="Which wallet" className="field w-auto" value={restore.family} onChange={(e) => setRestore({ ...restore, family: e.target.value as 'SOLANA' | 'EVM' })}>
+                  {(['SOLANA', 'EVM'] as const).filter((f) => !data.wallets.some((w) => w.family === f)).map((f) => (
+                    <option key={f} value={f}>{f === 'SOLANA' ? 'Solana' : 'EVM'}</option>
+                  ))}
+                </select>
+                <textarea
+                  aria-label="Recovery phrase"
+                  className="field min-h-[5rem] w-full font-mono"
+                  value={restore.phrase}
+                  onChange={(e) => setRestore({ ...restore, phrase: e.target.value })}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  data-gramm="false"
+                  data-lpignore="true"
+                />
+                <input aria-label="Address you expect" className="field w-full font-mono" placeholder="Address you expect (recommended)" value={restore.expected} onChange={(e) => setRestore({ ...restore, expected: e.target.value })} autoComplete="off" spellCheck={false} />
+                <button type="submit" className="btn-primary" disabled={busy || restore.phrase.trim().split(/\s+/).length < 12}>Restore</button>
+              </form>
+            )}
           </div>
 
           {data.wallets.length > 0 && (
