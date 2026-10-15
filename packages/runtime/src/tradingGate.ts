@@ -74,6 +74,7 @@ export function asMandate(row: TradeMandateRow): TradeMandate {
     quoteMaxAgeMs: row.quoteMaxAgeMs,
     expiresAt: row.expiresAt,
     paused: row.paused,
+    protectiveExits: row.protectiveExits ?? null,
   });
 }
 

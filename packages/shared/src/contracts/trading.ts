@@ -201,6 +201,31 @@ export const APPROVAL_MODES = [
 export const ApprovalMode = z.enum(APPROVAL_MODES);
 export type ApprovalMode = (typeof APPROVAL_MODES)[number];
 
+/**
+ * What an owner preauthorizes the guardian on their own machine to sell
+ * without waking them. It can only sell something the agent's wallet holds,
+ * back to the native coin, into that same wallet, never buy, and never at
+ * worse than the bounds here. Its author is the owner, as for the rest of the
+ * mandate; nothing an agent, a model or Studio sends can create or widen it.
+ */
+export const ProtectiveExitPolicy = z
+  .object({
+    /** Sell everything when the price is this far below the average cost. 2000 is 20 per cent. */
+    stopLossBps: z.number().int().min(100).max(9_500).nullable(),
+    /** Sell everything when the price has fallen this far from the best seen since entry. */
+    trailingBps: z.number().int().min(100).max(9_500).nullable(),
+    /** Sell everything when the pool's depth, in the quote's base units, falls below this. */
+    liquidityFloorBase: BaseUnits.nullable(),
+    /** Whether a protective sale Studio's guardian asks for may be signed without the owner, within these bounds. */
+    honorStudioProtective: z.boolean(),
+    /** The worst an exit may take. An exit that would need more waits for the owner. */
+    maxSlippageBps: z.number().int().min(1).max(3_000),
+    maxPriceImpactBps: z.number().int().min(1).max(5_000),
+    maxFeeBase: BaseUnits,
+  })
+  .strict();
+export type ProtectiveExitPolicy = z.infer<typeof ProtectiveExitPolicy>;
+
 export const TradeMandate = z
   .object({
     id: z.string().uuid(),
@@ -225,6 +250,8 @@ export const TradeMandate = z
     quoteMaxAgeMs: z.number().int().min(250).max(300_000),
     expiresAt: z.string().datetime().nullable(),
     paused: z.boolean().default(false),
+    /** Exits the owner preauthorized. Null: every exit waits for the owner, as every entry does. */
+    protectiveExits: ProtectiveExitPolicy.nullable().default(null),
   })
   .strict();
 export type TradeMandate = z.infer<typeof TradeMandate>;

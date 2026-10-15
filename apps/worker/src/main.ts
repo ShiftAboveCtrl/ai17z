@@ -32,7 +32,7 @@ import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
 import { pollDueFeeds, pollDueRepos, runDueEngagements, wakeDueAgents } from '@xbam/runtime';
-import { exchangeWithStudio, pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, runDueShadows, studioSyncDue, sweepStudioLiveTrades, syncStudio } from '@xbam/runtime';
+import { exchangeWithStudio, pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, runDueShadows, studioSyncDue, sweepStudioLiveTrades, syncStudio, guardLivePositions } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -285,6 +285,21 @@ async function main(): Promise<void> {
   };
   await sweep();
   const sweeper = startLoop('recovery-sweep', 60_000, sweep, 'ESSENTIAL');
+  /*
+    The guardian for real positions an owner preauthorized protective exits
+    for. Every fifteen seconds, essential at any memory pressure, and one
+    indexed query when there are none: a stop that waits a minute for a
+    shared loop is a stop a minute late.
+  */
+  const liveGuardian = startLoop(
+    'live-guardian',
+    15_000,
+    async () => {
+      const pass = await guardLivePositions();
+      if (pass.exits > 0) log.info('protective exits sent', pass);
+    },
+    'ESSENTIAL',
+  );
 
   /**
    * Looks at feeds that are due.
@@ -526,6 +541,7 @@ async function main(): Promise<void> {
     log.info('shutting down', { signal });
     clearInterval(heartbeat);
     clearInterval(sweeper);
+    clearInterval(liveGuardian);
     clearInterval(feedWatcher);
     clearInterval(deliberation);
     clearInterval(repoWatcher);

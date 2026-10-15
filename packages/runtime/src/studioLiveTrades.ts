@@ -3,6 +3,7 @@ import { createLogger, errorMessage } from '@xbam/shared';
 import { AssetRef } from '@xbam/shared/contracts';
 import { proposeLiveSwap, reconcileLiveSwap, withdrawLiveSwap } from './liveTrading';
 import { readBalances } from './walletCore';
+import { executeProtectiveExit } from './protectiveExits';
 import { liveTradeSettled, liveTradeWaiting } from './notify';
 import { studioLiveTradeReport, studioLiveTradesCollect, type StudioLiveRequest } from './studioLink';
 
@@ -192,6 +193,10 @@ async function prepare(request: StudioLiveRequest, localAgentId: string): Promis
     maxIn = held !== null && BigInt(held) < BigInt(request.sell_base) ? held : request.sell_base;
   }
 
+  // The bounds are the mandate's, or for a protective sale the exit policy the owner wrote: never a number Studio chose.
+  const mandate = await trading.liveMandate(localAgentId);
+  const exitPolicy = request.side === 'SELL' && request.protective ? (mandate?.protectiveExits ?? null) : null;
+  const caps = exitPolicy ?? { maxSlippageBps: mandate?.maxSlippageBps ?? 1, maxPriceImpactBps: mandate?.maxPriceImpactBps ?? 1, maxFeeBase: mandate?.maxFeeBase ?? '0' };
   const proposed = await proposeLiveSwap({
     agentId: localAgentId,
     ownerId: agent.ownerId,
@@ -201,14 +206,19 @@ async function prepare(request: StudioLiveRequest, localAgentId: string): Promis
     assetOut: request.side === 'BUY' ? token : SOL,
     subject: token,
     maxIn,
-    maxSlippageBps: Math.max(1, Math.min(1_000, request.max_slippage_bps)),
-    // A protective sale accepts a worse price than an entry, because a stop that does not fill protects nothing.
-    maxPriceImpactBps: request.protective ? 1_500 : 500,
-    maxFeeBase: request.side === 'BUY' ? maxIn : '100000000',
+    maxSlippageBps: Math.max(1, Math.min(caps.maxSlippageBps, request.max_slippage_bps)),
+    maxPriceImpactBps: caps.maxPriceImpactBps,
+    maxFeeBase: caps.maxFeeBase,
     idempotencyKey: `${STUDIO_LIVE_KEY_PREFIX}${request.id}`,
   });
   switch (proposed.outcome) {
     case 'PROPOSED':
+      // A protective sale the owner preauthorized is signed now, inside that policy, rather than waiting for them.
+      if (exitPolicy?.honorStudioProtective && mandate) {
+        const done = await executeProtectiveExit({ mandate, ownerId: agent.ownerId, mint: request.mint, decimals: request.decimals, symbol: request.symbol ?? undefined, amount: BigInt(maxIn), trigger: 'STUDIO_GUARDIAN', idempotencyKey: `${STUDIO_LIVE_KEY_PREFIX}${request.id}`, existing: proposed.tradeIntent });
+        if (done.sent) return report(request.id, { status: 'SUBMITTED', detail: 'Sold under the protective exit you preauthorized on this AI17Z.', ...(await factsOf(done.tradeIntent!)) });
+        log.warn('a preauthorized protective sale was not sent; it waits for the owner', { requestId: request.id, why: done.detail });
+      }
       await liveTradeWaiting({
         tradeIntentId: proposed.tradeIntent.id,
         agentName: request.agent_name ?? 'A Studio agent',

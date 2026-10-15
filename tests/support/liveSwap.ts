@@ -27,13 +27,21 @@ export const SOL = AssetRef.parse({ kind: 'ONCHAIN', network: 'solana', address:
 export const BONK = AssetRef.parse({ kind: 'ONCHAIN', network: 'solana', address: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', decimals: 5, symbol: 'BONK' });
 const ORDER = JSON.parse(readFileSync(new URL('../fixtures/jupiter-swap-v2-order.json', import.meta.url), 'utf8')) as Record<string, unknown>;
 const SECRET = new Uint8Array(randomBytes(32));
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
 export const LIVE_TX_HASH = '5'.repeat(88);
 export const LIVE_WALLET = base58(Uint8Array.from([9, ...SECRET.subarray(1)]));
+
+/** What the stand-in market says now: lamports per whole BONK, and the pool's depth. Tests move it; \`resetLiveMarket\` puts it back. */
+export const liveMarket = { price: '30', liquidity: '500000000000000' as string | null };
+export function resetLiveMarket(): void {
+  liveMarket.price = '30';
+  liveMarket.liquidity = '500000000000000';
+}
 
 const snap = (): MarketSnapshot =>
   MarketSnapshot.parse({
     venue: 'AMM_POOL_SOLANA', network: 'solana', asset: BONK, quoteAsset: SOL, atBlock: null, observedAt: new Date().toISOString(),
-    priceBaseUnits: '30', liquidityBase: '500000000000000', feeMicroBps: 2_500, phase: 'POOL', source: 'fake-reader',
+    priceBaseUnits: liveMarket.price, liquidityBase: liveMarket.liquidity, feeMicroBps: 2_500, phase: 'POOL', source: 'fake-reader',
   });
 
 const reader: MarketReader = { id: 'fake', version: '1', venues: ['AMM_POOL_SOLANA'], async read() { return snap(); } };
@@ -55,14 +63,17 @@ export function liveAdapter(held: { amount: string } = { amount: '0' }) {
         ok: true, maxFee: '5000', balanceBefore: '50000000', balanceAfter: '37955000', warnings: [], failure: null,
         pinned: {
           transaction: tx, messageSha256: messageSha256(tx), lastValidBlockHeight: '300000000', router: 'metis',
-          quotedOut: (floor + 100n).toString(), quotedMinOut: floor.toString(), simulatedOut: (floor + 50n).toString(), simulatedNativeSpent: '12045000',
+          quotedOut: (floor + 100n).toString(), quotedMinOut: floor.toString(), simulatedOut: (floor + 50n).toString(),
+          // A buy spends its SOL; a sale spends only the network fee.
+          simulatedNativeSpent: intent.kind === 'SOLANA_SWAP' && intent.inputMint !== SOL_MINT ? '5000' : '12045000',
         },
       };
     },
     sign: async () => {
       calls.sign += 1;
       // Shaped like a real Solana signature: base58, which Studio checks.
-      return { txHash: LIVE_TX_HASH, raw: withSignature(tx) };
+      // The first is the hash the contract test names; each one after differs, as real signatures do.
+      return { txHash: calls.sign === 1 ? LIVE_TX_HASH : `${'5'.repeat(86)}${'ABCDEFGHJKLMNPQRSTUVWXYZ'[calls.sign % 24]}${'abcdefghijkmnopqrstuvwxyz'[Math.floor(calls.sign / 24) % 25]}`, raw: withSignature(tx) };
     },
     broadcast: async () => {
       calls.broadcast += 1;
@@ -72,17 +83,25 @@ export function liveAdapter(held: { amount: string } = { amount: '0' }) {
   return { a, calls };
 }
 
-export function liveRouter() {
-  registerUpstream(
+// One object, so registering it again after a reset, or twice in one test, is the same registration.
+const ROUTER = (
     defineUpstream<SwapQuoteQuery, SwapQuoteResult>({
       id: `${JUPITER_SWAP_FAMILY}.test`, family: JUPITER_SWAP_FAMILY, name: 'test', description: 'test', origin: 'router.example',
       limit: { concurrentPerProcess: 10, windows: [perSecond(100, { scope: 'MACHINE' })] }, timeoutMs: 1_000, freshMs: 0, rank: 1,
-      cacheKey: (q) => q.amount,
-      async fetch() {
-        return { order: ORDER };
+      cacheKey: (q) => `${q.inputMint}:${q.outputMint}:${q.amount}:${liveMarket.price}`,
+      // The route for exactly what was asked, either way round, at the stand-in price now, as Jupiter answers.
+      async fetch(q: SwapQuoteQuery) {
+        const price = BigInt(liveMarket.price);
+        const buying = q.inputMint === SOL_MINT;
+        const out = buying ? (BigInt(q.amount) * 100_000n) / price : (BigInt(q.amount) * price) / 100_000n;
+        const floor = (out * BigInt(10_000 - q.slippageBps)) / 10_000n;
+        return { order: { ...ORDER, inputMint: q.inputMint, outputMint: q.outputMint, inAmount: q.amount, outAmount: out.toString(), otherAmountThreshold: floor.toString() } };
       },
-    }),
-  );
+    })
+);
+
+export function liveRouter() {
+  registerUpstream(ROUTER);
 }
 
 export const liveMandate = (over: Record<string, unknown> = {}) =>
