@@ -356,3 +356,23 @@ describe('the vocabulary itself', () => {
     }
   });
 });
+
+describe('a sale, which only reduces what is held', () => {
+  const sale = (over: Partial<TradeIntent> = {}) => intent({ side: 'SELL', assetIn: TOKEN, assetOut: NATIVE, maxIn: '900000000000000000000', minOut: '1', ...over });
+  const crowded = { spentTodayBase: '60000000000000000000', openExposureBase: '45000000000000000000', openPositions: 5 };
+
+  it('is not held to the limits that bound risk being taken on, so an exit is never refused for being an exit', () => {
+    const v = ask({ intent: sale(), exposure: crowded, fresh: snapshot({ liquidityBase: '1' }) });
+    expect(v.allowed, codes(v).join(',')).toBe(true);
+    // The same trade the other way is refused on every one of them.
+    const buy = ask({ intent: intent({ maxIn: '900000000000000000000' }), exposure: crowded, fresh: snapshot({ liquidityBase: '1' }) });
+    expect(codes(buy)).toEqual(expect.arrayContaining(['SIZE_ABOVE_MANDATE', 'DAILY_LIMIT', 'EXPOSURE_LIMIT', 'POSITION_LIMIT', 'LIQUIDITY_TOO_LOW']));
+  });
+
+  it('is still held to slippage, the price moving, a pause and simulation', () => {
+    expect(codes(ask({ intent: sale({ maxSlippageBps: 500 }) }))).toContain('SLIPPAGE_ABOVE_MANDATE');
+    expect(codes(ask({ intent: sale(), pausedScopes: ['GLOBAL'] as never }))).toContain('PAUSED');
+    expect(codes(ask({ intent: sale(), simulated: false }))).toContain('NOT_SIMULATED');
+    expect(codes(ask({ intent: sale(), fresh: snapshot({ priceBaseUnits: '1' }) }))).toContain('PRICE_MOVED');
+  });
+});

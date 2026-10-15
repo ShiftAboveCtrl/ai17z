@@ -20,6 +20,7 @@ import type {
   AssetRef,
   MarketSnapshot,
   TradeIntentStatus,
+  ProtectiveExitPolicy,
   TradeMandate,
   TradeMode,
   TradePauseScope,
@@ -49,6 +50,7 @@ export interface TradeMandateRow {
   quoteMaxAgeMs: number;
   expiresAt: string | null;
   paused: boolean;
+  protectiveExits: ProtectiveExitPolicy | null;
   createdAt: string;
   updatedAt: string;
   retiredAt: string | null;
@@ -124,8 +126,8 @@ export async function putMandate(input: {
          agent_id, owner_id, mode, approval, venues, networks, allowed_assets,
          max_per_trade, max_per_day, max_open_exposure, max_open_positions,
          max_slippage_bps, max_price_impact_bps, min_liquidity_base, max_fee_base,
-         quote_max_age_ms, expires_at, paused
-       ) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         quote_max_age_ms, expires_at, paused, protective_exits
+       ) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
        RETURNING *`,
       [
         input.agentId,
@@ -146,9 +148,17 @@ export async function putMandate(input: {
         m.quoteMaxAgeMs,
         m.expiresAt,
         m.paused,
+        m.protectiveExits ? JSON.stringify(m.protectiveExits) : null,
       ],
     ),
   ) as TradeMandateRow;
+}
+
+/** Every agent's current LIVE mandate that preauthorizes protective exits: what the guardian on this machine watches. */
+export async function mandatesWithProtectiveExits(): Promise<TradeMandateRow[]> {
+  return mapRows<TradeMandateRow>(
+    await query(`SELECT * FROM trade_mandates WHERE retired_at IS NULL AND mode = 'LIVE' AND protective_exits IS NOT NULL ORDER BY created_at`),
+  );
 }
 
 export async function liveMandate(agentId: string): Promise<TradeMandateRow | null> {
@@ -462,6 +472,33 @@ export async function withPaperLock<T>(agentId: string, fn: () => Promise<T>): P
       return await fn();
     } finally {
       await holder.query(`SELECT pg_advisory_unlock(hashtext('paper_journal:' || $1))`, [agentId]);
+      clean = true;
+    }
+  } finally {
+    holder.release(!clean);
+  }
+}
+
+/**
+ * One process at a time decides a live exit for an agent. An installed copy
+ * runs a worker in a container and another natively, both with the guardian;
+ * without this, two passes either side of a minute could each sell the whole
+ * position under different keys. Tried, never waited for: a pass that finds
+ * the agent held moves on, and the holder is the one already deciding.
+ */
+export async function withLiveExitLock<T>(agentId: string, fn: () => Promise<T>): Promise<{ ran: true; value: T } | { ran: false }> {
+  const holder = await getPool().connect();
+  let clean = false;
+  try {
+    const got = await holder.query<{ ok: boolean }>(`SELECT pg_try_advisory_lock(hashtext('live_exit:' || $1)) AS ok`, [agentId]);
+    if (!got.rows[0]?.ok) {
+      clean = true;
+      return { ran: false };
+    }
+    try {
+      return { ran: true, value: await fn() };
+    } finally {
+      await holder.query(`SELECT pg_advisory_unlock(hashtext('live_exit:' || $1))`, [agentId]);
       clean = true;
     }
   } finally {

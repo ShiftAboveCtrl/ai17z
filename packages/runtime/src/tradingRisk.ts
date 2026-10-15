@@ -160,33 +160,49 @@ export function judgeTrade(input: RiskInput): RiskVerdict {
 
   // ---- Bounds -------------------------------------------------------------
 
-  if (intent.maxSlippageBps > mandate.maxSlippageBps) {
-    deny('SLIPPAGE_ABOVE_MANDATE', `The intent allows ${intent.maxSlippageBps}bps of slippage and the mandate allows ${mandate.maxSlippageBps}bps.`);
+  // A sale may take what the owner's exit policy allows when that is wider: an
+  // owner who accepts eight per cent to get out and three to get in has said so.
+  const exitPolicy = intent.side === 'SELL' ? mandate.protectiveExits : null;
+  const slippageCap = Math.max(mandate.maxSlippageBps, exitPolicy?.maxSlippageBps ?? 0);
+  const impactCap = Math.max(mandate.maxPriceImpactBps, exitPolicy?.maxPriceImpactBps ?? 0);
+  const feeCap = exitPolicy && big(exitPolicy.maxFeeBase) > big(mandate.maxFeeBase) ? exitPolicy.maxFeeBase : mandate.maxFeeBase;
+  if (intent.maxSlippageBps > slippageCap) {
+    deny('SLIPPAGE_ABOVE_MANDATE', `The intent allows ${intent.maxSlippageBps}bps of slippage and the mandate allows ${slippageCap}bps.`);
   }
-  if (intent.maxPriceImpactBps > mandate.maxPriceImpactBps) {
-    deny('IMPACT_ABOVE_MANDATE', `The intent allows ${intent.maxPriceImpactBps}bps of price impact and the mandate allows ${mandate.maxPriceImpactBps}bps.`);
+  if (intent.maxPriceImpactBps > impactCap) {
+    deny('IMPACT_ABOVE_MANDATE', `The intent allows ${intent.maxPriceImpactBps}bps of price impact and the mandate allows ${impactCap}bps.`);
   }
-  if (big(intent.maxFeeBase) > big(mandate.maxFeeBase)) {
+  if (big(intent.maxFeeBase) > big(feeCap)) {
     deny('FEE_ABOVE_MANDATE', 'The intent allows a larger fee than the mandate.');
   }
-  if (big(intent.maxIn) > big(mandate.maxPerTrade)) {
-    deny('SIZE_ABOVE_MANDATE', 'The trade is larger than the mandate allows for one trade.');
-  }
-  if (big(exposure.spentTodayBase) + big(intent.maxIn) > big(mandate.maxPerDay)) {
-    deny('DAILY_LIMIT', 'This trade would take the day past the mandate daily limit.');
-  }
-  if (big(exposure.openExposureBase) + big(intent.maxIn) > big(mandate.maxOpenExposure)) {
-    deny('EXPOSURE_LIMIT', 'This trade would take open exposure past the mandate limit.');
-  }
-  if (exposure.openPositions >= mandate.maxOpenPositions) {
-    deny('POSITION_LIMIT', `There are already ${exposure.openPositions} open positions and the mandate allows ${mandate.maxOpenPositions}.`);
-  }
+  // A sale reduces exposure. The limits below bound risk being taken on, and a
+  // sale's maxIn is counted in the token rather than the quote, so applying
+  // them to it refused the exits they exist to allow: a large token balance
+  // read as an oversized trade, an agent at its position limit could not sell
+  // to get under it, and a pool losing liquidity, the moment an exit matters
+  // most, refused one. Slippage, the price moving, the venue, the asset, the
+  // quote's age, a pause and simulation still apply to both sides.
+  const reducing = intent.side === 'SELL';
+  if (!reducing) {
+    if (big(intent.maxIn) > big(mandate.maxPerTrade)) {
+      deny('SIZE_ABOVE_MANDATE', 'The trade is larger than the mandate allows for one trade.');
+    }
+    if (big(exposure.spentTodayBase) + big(intent.maxIn) > big(mandate.maxPerDay)) {
+      deny('DAILY_LIMIT', 'This trade would take the day past the mandate daily limit.');
+    }
+    if (big(exposure.openExposureBase) + big(intent.maxIn) > big(mandate.maxOpenExposure)) {
+      deny('EXPOSURE_LIMIT', 'This trade would take open exposure past the mandate limit.');
+    }
+    if (exposure.openPositions >= mandate.maxOpenPositions) {
+      deny('POSITION_LIMIT', `There are already ${exposure.openPositions} open positions and the mandate allows ${mandate.maxOpenPositions}.`);
+    }
 
-  // Absent is not zero. A depth nobody could read must fail this, not pass it.
-  if (fresh.liquidityBase === null) {
-    deny('LIQUIDITY_UNKNOWN', 'The reader could not see the venue depth, so the minimum cannot be shown to be met.');
-  } else if (big(fresh.liquidityBase) < big(mandate.minLiquidityBase)) {
-    deny('LIQUIDITY_TOO_LOW', 'The venue has less depth than the mandate requires.');
+    // Absent is not zero. A depth nobody could read must fail this, not pass it.
+    if (fresh.liquidityBase === null) {
+      deny('LIQUIDITY_UNKNOWN', 'The reader could not see the venue depth, so the minimum cannot be shown to be met.');
+    } else if (big(fresh.liquidityBase) < big(mandate.minLiquidityBase)) {
+      deny('LIQUIDITY_TOO_LOW', 'The venue has less depth than the mandate requires.');
+    }
   }
 
   // The same rule, one field over, and it was missing. A null fee reaches
