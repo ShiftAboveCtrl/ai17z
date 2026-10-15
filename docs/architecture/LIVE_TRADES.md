@@ -49,9 +49,55 @@ an approval the website could forge, so there is no such relay.
   JWT from signing a challenge message (the wallet signs two typed transaction
   kinds and never a message), and fills a stop at up to 20% slippage by
   default. That is a custody decision for the owner, not a default.
-- **No autonomous path.** A mandate asking for autonomy is refused, as it is for
-  a local trade. Under OWNER_APPROVES_EACH every exit, a protective sale
-  included, waits for the owner: a digest cannot be approved in advance.
+- **No autonomous buying.** A mandate asking for autonomy is refused, as it is
+  for a local trade. Every buy waits for the owner, because a digest cannot be
+  approved in advance. The one exception is a protective sale, below, and it
+  is an authority the owner wrote, never one the agent asked for.
+
+## Protective exits the owner authorised in advance
+
+A stop that waits for somebody to wake up is not a stop. So a mandate may carry
+a `protectiveExits` policy, written by the owner on the agent's Wallet section
+and by nobody else: a stop loss below average cost, a trailing stop from the
+highest price seen since entry (only once the position is in profit), and a
+liquidity floor under which it sells whatever the price. It also sets the worst
+slippage, price impact and fee such a sale may accept. Null, the default, means
+none.
+
+`guardLivePositions` in `packages/runtime/src/protectiveExits.ts` runs in the
+worker every fifteen seconds, as ESSENTIAL work, so memory pressure never
+delays it. It calls no model. For each position the chain confirmed it reads
+the wallet's balance and the pool, and when a trigger crosses it proposes the
+sale through the ordinary path (`proposeLiveSwap`), checks the prepared
+transaction against the policy's own bounds, and only then approves that exact
+digest under the policy and sends it. The approval is recorded as
+`live.protective_exit.approved_by_policy`, naming the trigger.
+
+What holds it:
+
+- **A sale only.** The policy can sell what the agent holds and nothing else.
+  It cannot buy, cannot raise a limit, and cannot be written or widened by a
+  model: the mandate editor is an owner route, and nothing an agent decides
+  reaches it.
+- **Sale-side checks are about the sale.** The size, daily, exposure, position
+  count and liquidity limits exist to stop buying too much; applied to a sale
+  they would refuse the exit a falling price needs. A sale is still held to its
+  slippage, impact and fee bounds, the wider of the mandate's and the policy's.
+- **One sale per position at a time.** An advisory lock per agent
+  (`withLiveExitLock`) and an in-flight check, which reconciles a SUBMITTED or
+  UNKNOWN sale by its hash before anything else is tried. The idempotency key is
+  the position and the minute, so a trigger seen on two passes is one trade.
+- **Paused means paused.** A paused mandate or PAUSE ALL stops it.
+- **Studio may ask, never decide.** A protective request from Studio is honoured
+  this way only when the policy says `honorStudioProtective`; otherwise it waits
+  for the owner like any other.
+
+## Which tokens
+
+`assetScope` on the mandate is `LISTED`, the default (only assets named in it),
+or `ANY_SOLANA_TOKEN`, which a memecoin agent needs: a token launched an hour ago
+cannot be listed in advance. It applies to on-chain Solana assets only, and
+every other limit still binds each trade.
 
 ## Two ways to send a trade would be one too many
 

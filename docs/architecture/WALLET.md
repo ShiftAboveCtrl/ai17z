@@ -110,6 +110,16 @@ and cannot be signed.
   every wallet, which is why the owner is asked to confirm they hold a backup
   of both (`POST /api/wallets/:id/backed-up`), and why the screen says so
   before anything is sent to a wallet.
+- **A Solana wallet can be restored from a recovery phrase** the owner holds
+  (`POST /api/agents/:id/wallets/restore`): BIP-39, twelve or twenty-four
+  words, derived at `m/44'/501'/0'/0'` with SLIP-0010, which is what Phantom and
+  Solflare use. The owner states the address they expect, and a phrase that
+  derives a different one is refused rather than creating a wallet nobody
+  recognises. The phrase is used once, to derive the key, and is sealed nowhere,
+  logged nowhere and shown to no model; the wallet records `origin: PHRASE`. The
+  derivation is pinned against published vectors in
+  `tests/unit/walletRecovery.test.ts`, and the integration test scans the whole
+  database and the process output for the phrase afterwards.
 - No plaintext export in this version. Moving an agent to another machine
   moves the installation; `.ai17z-agent` packages never carry a wallet.
 - A wallet is retired, never deleted, because it may still hold something.
