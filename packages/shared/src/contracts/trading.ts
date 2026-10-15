@@ -189,6 +189,8 @@ export type MarketSnapshot = z.infer<typeof MarketSnapshot>;
  * something is after it was approved and before it is sent.
  */
 export const TRADE_MODES = ['PAPER', 'LIVE'] as const;
+/** Which assets a mandate allows: those it lists, or any token on Solana within every other limit. */
+export const TRADE_ASSET_SCOPES = ['LISTED', 'ANY_SOLANA_TOKEN'] as const;
 export const TradeMode = z.enum(TRADE_MODES);
 export type TradeMode = (typeof TRADE_MODES)[number];
 
@@ -238,7 +240,7 @@ export const TradeMandate = z
     /** Empty means no asset has been allowed yet, which denies everything, unless the scope is wider. */
     allowedAssets: z.array(AssetRef),
     /** LISTED allows only `allowedAssets`. ANY_SOLANA_TOKEN allows any token on Solana, for an agent that trades what it finds, bound by every other limit here. */
-    assetScope: z.enum(['LISTED', 'ANY_SOLANA_TOKEN']).default('LISTED'),
+    assetScope: z.enum(TRADE_ASSET_SCOPES).default('LISTED'),
     maxPerTrade: BaseUnits,
     maxPerDay: BaseUnits,
     maxOpenExposure: BaseUnits,

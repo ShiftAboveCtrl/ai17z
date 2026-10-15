@@ -48,6 +48,7 @@ import {
   STANCE_STATUSES,
   TRACE_EVENT_TYPES,
   TRADE_INTENT_STATUSES,
+  TRADE_ASSET_SCOPES,
   TRADE_MODES,
   TRADE_PAUSE_SCOPES,
   SHADOW_OUTCOMES,
@@ -59,7 +60,7 @@ import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
 import { KNOWLEDGE_DOC_KINDS, KNOWLEDGE_SOURCE_KINDS } from './repositories/knowledge';
 import { SPAM_DECIDERS, SPAM_VERDICT_VALUES } from './repositories/spam';
 import { AGENT_CHANGE_RISKS, AGENT_CHANGE_STATUSES, AGENT_CHANGE_SUBSYSTEMS } from './repositories/agentChanges';
-import { WALLET_FAMILY_VALUES, WALLET_INTENT_KIND_VALUES, WALLET_INTENT_STATUS_VALUES } from './repositories/wallets';
+import { WALLET_FAMILY_VALUES, WALLET_INTENT_KIND_VALUES, WALLET_INTENT_STATUS_VALUES, WALLET_ORIGIN_VALUES } from './repositories/wallets';
 import { CHAT_AUTHOR_KINDS, CHAT_KINDS, CHAT_MESSAGE_STATUSES, CHAT_SAVE_TARGETS } from './repositories/chat';
 
 /**
@@ -471,6 +472,9 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   // contract and adding one needs no migration.
   { table: 'trade_shadows', column: 'side', values: TRADE_SIDES },
   { table: 'trade_shadows', column: 'last_outcome', values: SHADOW_OUTCOMES },
+  // A wallet restored from a phrase (migration 0110) and a mandate's asset scope (migration 0112).
+  { table: 'agent_wallets', column: 'origin', values: WALLET_ORIGIN_VALUES },
+  { table: 'trade_mandates', column: 'asset_scope', values: TRADE_ASSET_SCOPES },
   // Hosted runtimes (migration 0105).
   { table: 'host_providers', column: 'tier', values: PROVIDER_TIERS },
   { table: 'host_nodes', column: 'state', values: HOST_STATES },
