@@ -80,6 +80,7 @@ export * from './studioLink';
 export * from './studioControl';
 export * from './studioLiveTrades';
 export * from './protectiveExits';
+export * from './mandateEditor';
 export * from './studioLiveView';
 export * from './agentStart';
 export * from './agentStatusNow';

@@ -11,6 +11,7 @@ import { registerPluginRoutes as pluginRoutes } from './routes/plugins';
 import { registerCouncilRoutes as councilRoutes } from './routes/council';
 import { registerStudioRoutes as studioRoutes } from './routes/studio';
 import { liveTradeRoutes } from './routes/liveTrades';
+import { mandateRoutes } from './routes/mandates';
 import { easyRoutes, easyStartRoutes } from './routes/easy';
 import { characterRoutes } from './routes/character';
 import { providerRoutes } from './routes/providers';
@@ -88,6 +89,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(councilRoutes);
   await app.register(studioRoutes);
   await app.register(liveTradeRoutes);
+  await app.register(mandateRoutes);
   await app.register(easyRoutes);
   await app.register(foundryRoutes);
   await app.register(chatRoutes);

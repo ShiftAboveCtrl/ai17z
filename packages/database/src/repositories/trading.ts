@@ -39,6 +39,7 @@ export interface TradeMandateRow {
   venues: TradeVenue[];
   networks: string[];
   allowedAssets: AssetRef[];
+  assetScope: 'LISTED' | 'ANY_SOLANA_TOKEN';
   maxPerTrade: string;
   maxPerDay: string;
   maxOpenExposure: string;
@@ -126,8 +127,8 @@ export async function putMandate(input: {
          agent_id, owner_id, mode, approval, venues, networks, allowed_assets,
          max_per_trade, max_per_day, max_open_exposure, max_open_positions,
          max_slippage_bps, max_price_impact_bps, min_liquidity_base, max_fee_base,
-         quote_max_age_ms, expires_at, paused, protective_exits
-       ) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)
+         quote_max_age_ms, expires_at, paused, protective_exits, asset_scope
+       ) VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20)
        RETURNING *`,
       [
         input.agentId,
@@ -149,6 +150,7 @@ export async function putMandate(input: {
         m.expiresAt,
         m.paused,
         m.protectiveExits ? JSON.stringify(m.protectiveExits) : null,
+        m.assetScope ?? 'LISTED',
       ],
     ),
   ) as TradeMandateRow;

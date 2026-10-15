@@ -1,3 +1,4 @@
+import { MandateEditor } from './MandateEditor';
 import { useState, type FormEvent } from 'react';
 import { ApiError, post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
@@ -206,6 +207,8 @@ export function WalletSection({ index, agentId }: { index: number; agentId: stri
               </form>
             )}
           </div>
+
+          <MandateEditor agentId={agentId} hasSolanaWallet={data.wallets.some((w) => w.family === 'SOLANA')} />
 
           {data.wallets.length > 0 && (
             <form className="space-y-2" onSubmit={(e) => void submitDraft(e)}>

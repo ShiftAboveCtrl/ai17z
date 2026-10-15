@@ -124,11 +124,13 @@ export function judgeTrade(input: RiskInput): RiskVerdict {
   if (intent.network && !mandate.networks.includes(intent.network)) {
     deny('NETWORK_NOT_ALLOWED', `${intent.network} is not in the mandate.`);
   }
-  if (mandate.allowedAssets.length === 0) {
-    deny('NO_ASSETS_ALLOWED', 'The mandate allows no assets yet, so nothing can be traded.');
-  } else {
-    const subject = intent.side === 'BUY' ? intent.assetOut : intent.assetIn;
-    if (!assetAllowed(subject, mandate.allowedAssets)) {
+  const subject = intent.side === 'BUY' ? intent.assetOut : intent.assetIn;
+  // Any Solana token is a scope the owner chose, and it means a token on Solana by exact mint: never a native coin on another chain.
+  const inScope = mandate.assetScope === 'ANY_SOLANA_TOKEN' && subject.kind === 'ONCHAIN' && subject.network === 'solana';
+  if (!inScope) {
+    if (mandate.allowedAssets.length === 0) {
+      deny('NO_ASSETS_ALLOWED', 'The mandate allows no assets yet, so nothing can be traded.');
+    } else if (!assetAllowed(subject, mandate.allowedAssets)) {
       deny('ASSET_NOT_ALLOWED', 'The asset being traded is not in the mandate.');
     }
   }

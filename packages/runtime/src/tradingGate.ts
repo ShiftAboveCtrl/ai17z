@@ -63,6 +63,7 @@ export function asMandate(row: TradeMandateRow): TradeMandate {
     venues: row.venues,
     networks: row.networks,
     allowedAssets: row.allowedAssets,
+    assetScope: row.assetScope ?? 'LISTED',
     maxPerTrade: row.maxPerTrade,
     maxPerDay: row.maxPerDay,
     maxOpenExposure: row.maxOpenExposure,
