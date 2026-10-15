@@ -7,6 +7,10 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@noble/curves": "1.9.1",
+    "@noble/hashes": "1.8.0",
+    "@scure/bip32": "1.7.0",
+    "@scure/bip39": "1.6.0",
     "@xbam/browser": "*",
     "@xbam/channels": "*",
     "@xbam/database": "*",

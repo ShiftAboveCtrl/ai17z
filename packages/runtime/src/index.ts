@@ -150,6 +150,7 @@ export * from './spamControls';
 export * from './agentManagement';
 export * from './managementCapabilities';
 export * from './walletCore';
+export * from './walletRecovery';
 export * from './tradingRisk';
 export * from './tradingGate';
 export * from './marketData';

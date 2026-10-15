@@ -8,6 +8,7 @@ import {
   intentsOf,
   readBalances,
   reconcileIntent,
+  restoreWalletFromPhrase,
   rejectIntent,
   simulateIntent,
   submitIntent,
@@ -40,6 +41,22 @@ export async function walletRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const body = parseBody(z.object({ family: WalletFamily }), request);
       return { wallet: await createWallet({ agentId: params(request).id!, ownerId: user.id, family: body.family }) };
+    }),
+  );
+
+  /*
+    A wallet from the recovery phrase its owner holds, on this machine only.
+    The phrase is read, derived and dropped inside this request: it is not
+    stored, logged, audited, traced or returned, and an error never repeats
+    it. The owner may say which address they expect, and a phrase that opens
+    another is refused.
+  */
+  app.post(
+    '/api/agents/:id/wallets/restore',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(z.object({ family: WalletFamily, phrase: z.string().min(1).max(400), expectedAddress: z.string().trim().max(64).nullable().optional() }).strict(), request);
+      return { wallet: await restoreWalletFromPhrase({ agentId: params(request).id!, ownerId: user.id, family: body.family, phrase: body.phrase, expectedAddress: body.expectedAddress ?? null }) };
     }),
   );
 

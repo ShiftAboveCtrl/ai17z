@@ -39,6 +39,7 @@ import { pathToFileURL } from 'node:url';
 import { agents as agentsRepo, ops, wallets as walletsRepo, type WalletIntentRow, type WalletRow } from '@xbam/database';
 import { NotFoundError, ValidationError, createLogger, errorMessage, openSecret, sealSecret } from '@xbam/shared';
 import { judgeSwapSimulation, signedMatchesApproved } from './solanaSwap';
+import { secretFromPhrase } from './walletRecovery';
 import {
   APPROVAL_TTL_MS,
   WALLET_NETWORKS,
@@ -192,6 +193,46 @@ export async function createWallet(input: { agentId: string; ownerId: string; fa
     if (!a.validAddress(input.family, address)) throw new Error('The adapter produced an address it does not itself accept.');
     const wallet = await walletsRepo.createWallet({ agentId: input.agentId, family: input.family, address, sealedSecret: sealSecret(secretToText(secret)), adapter: a.id });
     await ops.audit({ actorUserId: input.ownerId, action: 'wallet.created', entityType: 'agent', entityId: input.agentId, data: { walletId: wallet.id, family: wallet.family, address: wallet.address } });
+    return wallet;
+  } finally {
+    secret.fill(0);
+  }
+}
+
+/**
+ * An agent wallet from the recovery phrase its owner holds: the key the
+ * standard path derives, sealed exactly like a generated one, and the phrase
+ * dropped. When the owner says which address they expect (the one Studio
+ * showed them when the phrase was made), a phrase that opens a different one
+ * is refused, because a mistyped word is still a valid phrase for somebody
+ * else's empty wallet. Restoring the wallet an agent already has is a no-op;
+ * an agent with a different live wallet keeps it until it is retired.
+ */
+export async function restoreWalletFromPhrase(input: { agentId: string; ownerId: string; family: WalletFamily; phrase: string; expectedAddress?: string | null }): Promise<WalletRow> {
+  await requireOwned(input.agentId, input.ownerId);
+  const a = requireAdapter();
+  if (!a.families.includes(input.family)) throw new ValidationError(`The installed wallet adapter does not support ${input.family} wallets.`);
+  let secret: Uint8Array;
+  try {
+    secret = secretFromPhrase(input.family, input.phrase);
+  } catch (error) {
+    // The phrase is never repeated back, in an error or anywhere else.
+    throw new ValidationError(errorMessage(error).includes('recovery phrase') ? errorMessage(error) : 'That recovery phrase could not be read.');
+  }
+  try {
+    const address = a.addressOf(input.family, secret);
+    if (!a.validAddress(input.family, address)) throw new ValidationError('The adapter produced an address it does not itself accept.');
+    const expected = input.expectedAddress?.trim();
+    if (expected && expected !== address) {
+      throw new ValidationError(`That phrase opens ${address}, not ${expected}. Check each word: a mistyped word is still a valid phrase for a different, empty wallet.`);
+    }
+    const existing = (await walletsRepo.liveWallets(input.agentId)).find((w) => w.family === input.family);
+    if (existing) {
+      if (existing.address === address) return existing;
+      throw new ValidationError(`This agent already has a ${input.family} wallet, ${existing.address}. Retire it before restoring another.`);
+    }
+    const wallet = await walletsRepo.createWallet({ agentId: input.agentId, family: input.family, address, sealedSecret: sealSecret(secretToText(secret)), adapter: a.id, origin: 'PHRASE' });
+    await ops.audit({ actorUserId: input.ownerId, action: 'wallet.restored', entityType: 'agent', entityId: input.agentId, data: { walletId: wallet.id, family: wallet.family, address: wallet.address } });
     return wallet;
   } finally {
     secret.fill(0);
