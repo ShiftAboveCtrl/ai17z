@@ -32,10 +32,15 @@ const install = read('install.ps1');
 const installCode = install.slice(install.indexOf('[CmdletBinding()]'));
 const setup = read('packaging/windows/Setup-AI17Z.ps1');
 const readme = read('README.md');
-const workflow = read('.github/workflows/release.yml');
+// The release pipeline: what builds the Windows half, what publishes, and what
+// the notes say.
+const windowsBuild = read('.gitlab/scripts/build-windows-release.ps1');
+const publishScript = read('.gitlab/scripts/publish-release.sh');
+const notesScript = read('.gitlab/scripts/release-notes.sh');
+const workflow = [read('.gitlab/ci/package.yml'), read('.gitlab/ci/release.yml'), windowsBuild, publishScript, notesScript].join('\n');
 
 /** The one line a person is asked to paste. Everything else follows from it. */
-const COMMAND = 'irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex';
+const COMMAND = 'irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex';
 
 describe('the install command', () => {
   it('is the same line in the README, the file itself, and the release notes', () => {
@@ -43,12 +48,12 @@ describe('the install command', () => {
     // them is a command that works in one and not another.
     expect(readme).toContain(COMMAND);
     expect(install).toContain(COMMAND);
-    expect(workflow).toContain(COMMAND);
+    expect(notesScript).toContain(COMMAND);
   });
 
   it('fetches the file the command names, from the branch the command names', () => {
     // The URL in the command and the file in the repository have to be the same
-    // thing. `install.ps1` at the root is what raw.githubusercontent serves for
+    // thing. `install.ps1` at the root is what GitLab's raw path serves for
     // that path.
     expect(COMMAND).toContain('/main/install.ps1');
   });
@@ -83,9 +88,10 @@ describe('what it will and will not reach', () => {
     expect(install).toContain('function Assert-AllowedUrl');
     expect(install).toMatch(/AllowedHosts -notcontains \$uri\.Host/);
     expect(install).toMatch(/\$uri\.Scheme -ne 'https'/);
-    for (const host of ['api.github.com', 'github.com', 'objects.githubusercontent.com']) {
-      expect(install, `${host} is not in the allow-list`).toContain(host);
-    }
+    // One host: GitLab answers a release download with one redirect on
+    // gitlab.com itself, measured never leaving it.
+    expect(install).toContain("$AllowedHosts = @('gitlab.com')");
+    expect(install).not.toMatch(/githubusercontent|api\.github\.com/);
   });
 
   it('checks the address before every fetch, not after', () => {
@@ -98,7 +104,7 @@ describe('what it will and will not reach', () => {
       const at = install.indexOf(helper);
       expect(install.slice(at, at + 400), `${helper} does not check the address`).toContain('Assert-AllowedUrl');
     }
-    const download = install.indexOf('$setupAsset.browser_download_url');
+    const download = install.indexOf('$setupAsset.direct_asset_url');
     expect(install.slice(Math.max(0, download - 300), download)).toContain('Assert-AllowedUrl');
   });
 
@@ -400,7 +406,7 @@ describe('a refusal sends somebody to the right place', () => {
       expect(refusal, `${name} still blames the connection outright`).not.toMatch(
         /^\s*"Check your internet connection/m,
       );
-      expect(refusal, `${name} does not mention the rate limit`).toMatch(/sixty an hour/);
+      expect(refusal, `${name} does not mention the rate limit`).toMatch(/limits addresses that are not signed in/);
       // And it still says nothing was changed, which is the half that matters.
       expect(refusal).toMatch(/was changed/);
     }
@@ -409,17 +415,17 @@ describe('a refusal sends somebody to the right place', () => {
 
 describe('the release publishes what the command needs', () => {
   it('publishes the setup program as a script', () => {
-    expect(workflow).toContain('Install-AI17Z-$version.ps1');
-    expect(workflow).toContain('dist/Install-AI17Z-*.ps1');
+    expect(windowsBuild).toContain('Install-AI17Z-$Version.ps1');
+    expect(publishScript).toMatch(/INSTALLABLE=\([^)]*Install-AI17Z-\*\.ps1/);
   });
 
   it('publishes the first stage too, so it can be pinned or compared', () => {
-    expect(workflow).toContain("Copy-Item 'install.ps1' 'build\\windows\\install.ps1'");
-    expect(workflow).toContain('dist/install.ps1');
+    expect(windowsBuild).toContain("Copy-Item 'install.ps1' 'build\\windows\\install.ps1'");
+    expect(publishScript).toMatch(/INSTALLABLE=\([^)]* install\.ps1 /);
   });
 
   it('hashes everything the command will fetch', () => {
-    const checksums = workflow.slice(workflow.indexOf('- name: Checksums'), workflow.indexOf('- name: The audit document'));
+    const checksums = publishScript.slice(publishScript.indexOf('say "checksums"'), publishScript.indexOf('say "nothing of an owner'));
     expect(checksums).toContain('Install-AI17Z-*.ps1');
     expect(checksums).toContain('install.ps1');
     expect(checksums).toContain('AI17Z-App-*.zip');
@@ -430,8 +436,8 @@ describe('the release publishes what the command needs', () => {
     // is the older full installer, which exists for the installations that
     // update by running one.
     expect(workflow).not.toContain('bootstrap.iss');
-    expect(workflow).not.toContain('Install-AI17Z-${{ steps.version.outputs.version }}.exe');
-    expect(workflow).toContain('AI17Z-Setup-${{ steps.version.outputs.version }}.exe');
+    expect(workflow).not.toMatch(/Install-AI17Z-[^\s'"]*\.exe/);
+    expect(windowsBuild).toContain('AI17Z-Setup-$Version.exe');
   });
 
   it('has no signing lane left to depend on', () => {

@@ -1,0 +1,63 @@
+# Everything here runs without an X account, a real Chrome session, or anybody's
+# API keys. A contributor who cannot sign in to X still gets a full signal on a
+# merge request; the tests that genuinely need those live in a separate manual
+# suite and are named so nobody mistakes one for the other.
+
+check:
+  stage: check
+  # The version this project says it needs, from the same image line every
+  # Dockerfile builds on.
+  #
+  # CI once said 20 while package.json said ">=22", every Dockerfile built on
+  # node:22, and the release validated on 22. So CI was the only thing testing
+  # a runtime nobody ships, and the only thing failing. tests/unit/nodeVersion
+  # holds the places that have to agree.
+  image: node:22-bookworm
+  services:
+    # Pinned to the major version the migrations are written against.
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_USER: xbam
+    POSTGRES_PASSWORD: xbam
+    POSTGRES_DB: xbam
+    DATABASE_URL: postgres://xbam:xbam@postgres:5432/xbam
+  cache:
+    key:
+      files: [package-lock.json]
+    paths: [.npm/]
+  rules:
+    - if: $AI17Z_PIPELINE =~ /^(change|main|release|rehearsal|manual)$/
+  script:
+    - npm ci --no-audit --no-fund
+    - npm run typecheck
+    # The rule this exists for is react-hooks/rules-of-hooks. A hook below an
+    # early return is not a style question here: React answers it by throwing
+    # during render and unmounting the tree, so it is a blank screen, and one
+    # reached a published release because TypeScript cannot see hook order.
+    - npm run lint
+    # What a stranger receives when they clone this. A secret pasted into a
+    # file, somebody's home folder in a documented path, a control character a
+    # shell escape left behind, or a tracked .env are all invisible to a
+    # typecheck and to a test, and two of them have already shipped from here.
+    - npm run release:check
+    # Browsers for the tests that drive a synthetic page. These prove nothing
+    # about Google Chrome and do not claim to: the real-Chrome suite skips
+    # loudly rather than passing where Chrome is absent.
+    - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium
+    - npm run migrate
+    - npx vitest run --reporter=default
+    - npm run build:web
+
+secret scan:
+  stage: check
+  image: alpine/git:latest
+  variables:
+    # Full history: removing a secret from the current tree does not remove it
+    # from the commits behind it.
+    GIT_DEPTH: 0
+  rules:
+    - if: $AI17Z_PIPELINE =~ /^(change|main|release|rehearsal|manual)$/
+  script:
+    - apk add --no-cache bash grep >/dev/null
+    - bash .gitlab/scripts/secret-scan.sh

@@ -24,7 +24,32 @@ const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 
 const install = read('install.ps1');
 const setup = read('packaging/windows/Setup-AI17Z.ps1');
-const workflow = read('.github/workflows/release.yml');
+const publishScript = read('.gitlab/scripts/publish-release.sh');
+const windowsBuild = read('.gitlab/scripts/build-windows-release.ps1');
+const packageJobs = read('.gitlab/ci/package.yml');
+const notesScript = read('.gitlab/scripts/release-notes.sh');
+
+/**
+ * A bash array's patterns, as written: `NAME=(a b c)` and any `NAME+=(d)`,
+ * with another array's expansion inlined. What the publish script hashes and
+ * what it attaches are both arrays, so this reads them rather than a
+ * rendering of them.
+ */
+function arrayIn(source: string, name: string): string[] {
+  const items: string[] = [];
+  for (const m of source.matchAll(new RegExp(`(?:^|\\s)${name}\\+?=\\(([^)]*)\\)`, 'g'))) {
+    for (const word of (m[1] ?? '').split(/\s+/).filter(Boolean)) {
+      const inner = /^"\$\{(\w+)\[@\]\}"$/.exec(word);
+      if (inner) items.push(...arrayIn(source, inner[1]!));
+      else items.push(word.replace(/"/g, '').replace(/\$\w+/g, '*'));
+    }
+  }
+  return items;
+}
+/** Hashed: the installable files. */
+const HASHED = arrayIn(publishScript, 'INSTALLABLE');
+/** Attached: everything uploaded and linked, signature bundles included. */
+const ATTACHED = [...new Set(arrayIn(publishScript, 'ASSETS'))];
 
 /** A concrete version, so patterns and workflow expressions can be compared as strings. */
 const VERSION = '9.9.9-beta.1';
@@ -36,11 +61,9 @@ function fromPattern(source: string, declaration: RegExp): string {
   return pattern!.replace('{0}', VERSION);
 }
 
-/** What the workflow publishes, with its version expression resolved. */
-function published(source: string): string[] {
-  const list = source.slice(source.lastIndexOf('files: |'));
-  const end = list.indexOf('\n\n');
-  return [...(end > 0 ? list.slice(0, end) : list).matchAll(/^\s+dist\/(\S+)$/gm)].map((m) => m[1] ?? '');
+/** What the release publishes, by pattern. */
+function published(): string[] {
+  return ATTACHED;
 }
 
 describe('the release publishes exactly what the installer goes looking for', () => {
@@ -48,9 +71,9 @@ describe('the release publishes exactly what the installer goes looking for', ()
     const wanted = fromPattern(install, /\$SetupAssetPattern = '([^']+)'/);
     expect(wanted).toBe(`Install-AI17Z-${VERSION}.ps1`);
 
-    // The workflow writes it under a name built from its own version output.
-    expect(workflow).toContain('Install-AI17Z-$version.ps1');
-    expect(published(workflow)).toContain('Install-AI17Z-*.ps1');
+    // The build writes it under a name built from its own version.
+    expect(windowsBuild).toContain('Install-AI17Z-$Version.ps1');
+    expect(published()).toContain('Install-AI17Z-*.ps1');
 
     // And the glob the release attaches actually matches the name asked for.
     expect(wanted).toMatch(/^Install-AI17Z-.+\.ps1$/);
@@ -59,8 +82,8 @@ describe('the release publishes exactly what the installer goes looking for', ()
   it('agrees on the application package name', () => {
     const wanted = fromPattern(setup, /Package\s*=\s*'([^']+)'/);
     expect(wanted).toBe(`AI17Z-App-${VERSION}.zip`);
-    expect(workflow).toContain('AI17Z-App-${{ steps.version.outputs.version }}.zip');
-    expect(published(workflow)).toContain('AI17Z-App-*.zip');
+    expect(packageJobs).toContain('build/windows/AI17Z-App-*.zip');
+    expect(published()).toContain('AI17Z-App-*.zip');
   });
 
   it('agrees on the checksum file name, in all three', () => {
@@ -68,28 +91,25 @@ describe('the release publishes exactly what the installer goes looking for', ()
     const fromSetup = /Checksums\s*=\s*'([^']+)'/.exec(setup)?.[1];
     expect(fromInstall).toBe('SHA256SUMS.txt');
     expect(fromSetup).toBe('SHA256SUMS.txt');
-    expect(published(workflow)).toContain('SHA256SUMS.txt');
+    expect(published()).toContain('SHA256SUMS.txt');
   });
 
   it('hashes every asset the install path has to verify', () => {
     // Publishing an asset without a line in SHA256SUMS.txt is the same failure
     // as not publishing it: both scripts refuse what they cannot check, so the
     // release would be attached, complete, and uninstallable.
-    const checksums = workflow.slice(workflow.indexOf('- name: Checksums'), workflow.indexOf('- name: Release notes'));
     for (const needed of ['Install-AI17Z-*.ps1', 'AI17Z-App-*.zip']) {
-      expect(checksums, `${needed} is published without a hash`).toContain(needed);
+      expect(HASHED, `${needed} is published without a hash`).toContain(needed);
     }
+    // And the line that hashes them is the array, not a copy of it.
+    expect(publishScript).toContain('sha256sum "${INSTALLABLE[@]}" | tee SHA256SUMS.txt');
   });
 
   it('publishes every asset it hashes', () => {
     // The other direction. A hash for something that is not attached is a line
     // nobody can use, and it is how a rename gets halfway done.
-    const checksums = workflow.slice(workflow.indexOf('- name: Checksums'), workflow.indexOf('- name: Release notes'));
-    const hashed = [...checksums.matchAll(/(?:^|\s)([A-Za-z0-9][\w.-]*\*[\w.-]*|install\.ps1)(?=\s)/g)]
-      .map((m) => m[1] ?? '')
-      .filter((name) => name !== 'tee');
-    const attached = published(workflow);
-    for (const name of new Set(hashed)) {
+    const attached = published();
+    for (const name of new Set(HASHED)) {
       expect(attached, `${name} is hashed but never attached to the release`).toContain(name);
     }
   });
@@ -98,8 +118,10 @@ describe('the release publishes exactly what the installer goes looking for', ()
     // `install.ps1` is published so somebody can pin or compare it, and the
     // README command points at the copy on `main`. Both are the same file, and
     // the release is where its hash comes from.
-    expect(published(workflow)).toContain('install.ps1');
-    expect(workflow).toContain('raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1');
+    expect(published()).toContain('install.ps1');
+    expect(notesScript).toContain('RAW="$PROJECT_URL/-/raw/main"');
+    expect(notesScript).toContain('irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex');
+    expect(notesScript).toContain('https://gitlab.com/shiftabovectrl/ai17z');
   });
 });
 
@@ -122,21 +144,10 @@ describe('the release publishes exactly what the installer goes looking for', ()
  * failing test rather than a failed release.
  */
 describe('a published asset is hashed or knowingly exempt', () => {
-  const root = resolve(__dirname, '../..');
-  const workflow = readFileSync(resolve(root, '.github/workflows/release.yml'), 'utf8');
-  const verifier = readFileSync(resolve(root, '.github/scripts/verify-published-release.sh'), 'utf8');
+  const verifier = read('.gitlab/scripts/verify-published-release.sh');
 
-  /** The `files:` block of the publish step, one pattern per line. */
-  const published = (() => {
-    const at = workflow.indexOf('          files: |');
-    const block = workflow.slice(at, workflow.indexOf('\n\n', at));
-    return block
-      .split('\n')
-      .slice(1)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith('#'))
-      .map((line) => line.replace(/^dist\//, '').replace(/^docs\//, ''));
-  })();
+  /** Every pattern the release attaches. */
+  const published = ATTACHED;
 
   /** The names the post-publish check skips rather than demanding a hash for. */
   const exempt = (() => {
@@ -144,23 +155,22 @@ describe('a published asset is hashed or knowingly exempt', () => {
     return line.split('|').map((entry) => entry.trim());
   })();
 
-  const hashed = (() => {
-    const at = workflow.indexOf('sha256sum ');
-    return workflow.slice(at, workflow.indexOf('| tee SHA256SUMS.txt', at));
-  })();
+  const hashed = HASHED;
+  /** An exemption covers a pattern when they are the same, or the exemption is a wildcard it falls under. */
+  const covers = (entry: string, pattern: string) =>
+    entry === pattern || (entry.endsWith('*') && pattern.startsWith(entry.slice(0, -1)));
 
   it('found the three lists it is comparing', () => {
     expect(published.length).toBeGreaterThan(8);
     expect(exempt.length).toBeGreaterThan(3);
-    expect(hashed).toContain('AI17Z-App-');
+    expect(hashed).toContain('AI17Z-App-*.zip');
   });
 
   it('every published pattern is hashed or listed as exempt', () => {
-    const orphans = published.filter((pattern) => {
-      const stem = pattern.replace(/\*.*$/, '');
-      if (hashed.includes(stem)) return false;
-      return !exempt.some((entry) => entry.replace(/\*.*$/, '') === stem || entry === pattern);
-    });
+    // Compared as whole patterns. `*.sigstore.json` starts with a wildcard, and
+    // comparing stems cut at the first `*` made it the empty string, which
+    // every list "includes", so a bundle would have passed as hashed.
+    const orphans = published.filter((pattern) => !hashed.includes(pattern) && !exempt.some((entry) => covers(entry, pattern)));
     expect(orphans, `published with neither a hash nor an exemption: ${orphans.join(', ')}`).toEqual([]);
   });
 
@@ -200,7 +210,7 @@ describe('a published asset is hashed or knowingly exempt', () => {
     }
   });
 
-  it('waives attestation for those two and nothing else', () => {
+  it('waives attestation for those two, and for the signatures themselves, and nothing else', () => {
     /*
       Exactly, in both directions.
 
@@ -211,9 +221,12 @@ describe('a published asset is hashed or knowingly exempt', () => {
       and must stay so. The only files that cannot be attested are the ones no
       build produced.
 
+      A Sigstore bundle is the attestation, so it is not itself attested: asking
+      whether a signature is signed is the same question one level down.
+
       Held as an exact set so that widening it is a decision somebody makes
       here rather than a release somebody spends finding out.
     */
-    expect([...notAttested].sort()).toEqual(['RELEASE_VALIDATION_REPORT.md', 'release-notes.md']);
+    expect([...notAttested].sort()).toEqual(['*.sigstore.json', 'RELEASE_VALIDATION_REPORT.md', 'release-notes.md']);
   });
 });

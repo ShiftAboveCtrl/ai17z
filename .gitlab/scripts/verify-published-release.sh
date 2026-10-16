@@ -5,24 +5,29 @@
 #
 #   verify-published-release.sh <tag>
 #
-# Nothing here reads a build output or a workflow artifact. It asks GitHub what
-# the release has, downloads all of it, hashes every file against the release's
-# own SHA256SUMS.txt, reads release-manifest.json back and checks it against the
-# files that actually arrived, and asks the attestations API whether each one
-# carries build provenance.
+# Nothing here reads a build output or a job artifact. It asks GitLab what the
+# release has, downloads all of it, hashes every file against the release's own
+# SHA256SUMS.txt, reads release-manifest.json back and checks it against the
+# files that actually arrived, and verifies each file's Sigstore bundle against
+# the identity of this project's own pipeline on that exact tag.
 #
-# That last check is here because it is the one that was wrong. The attestation
-# step in the release workflow named paths belonging to a different job, failed,
-# and was made green by `continue-on-error` -- so Beta 1.0.0 (16) was published
+# That last check is here because the equivalent was once wrong. The attestation
+# step of the GitHub release named paths belonging to a different job, failed,
+# and was made green by `continue-on-error`, so Beta 1.0.0 (16) was published
 # claiming build provenance while every one of its assets answered 404. A claim
 # nothing checks is a claim that stops being true without anybody noticing.
 set -uo pipefail
 
-TAG="${1:?a tag, such as v1.0.0-beta.17}"
+TAG="${1:?a tag, such as v1.0.0-beta.84}"
 VERSION="${TAG#v}"
-REPO="${GITHUB_REPOSITORY:-ShiftAboveCtrl/ai17z}"
-API="https://api.github.com/repos/$REPO"
-DL="https://github.com/$REPO/releases/download/$TAG"
+PROJECT="${CI_PROJECT_PATH:-shiftabovectrl/ai17z}"
+SERVER="${CI_SERVER_URL:-https://gitlab.com}"
+API="$SERVER/api/v4/projects/${PROJECT//\//%2F}"
+DL="$SERVER/$PROJECT/-/releases/$TAG/downloads"
+# Who may have signed: this project's pipeline, run from the tag being checked.
+# The double slash is GitLab's own spelling of the identity, not a typo.
+IDENTITY="$SERVER/$PROJECT//.gitlab-ci.yml@refs/tags/$TAG"
+COSIGN="${COSIGN:-cosign}"
 
 pass=0; fail=0
 failures=""
@@ -30,45 +35,38 @@ ok()  { printf '  ok      %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  FAIL    %s\n' "$1"; fail=$((fail+1)); failures="$failures
     $1"; }
 
-# The API calls below are all of public data and work signed out. A token is
-# used when one is offered purely for the rate limit: unauthenticated GitHub
-# allows sixty requests an hour per address, and a runner shares its address
-# with whoever else is on that machine. Being throttled would look exactly like
-# a release that has no attestations, which is the one answer this must never
-# get wrong by accident.
-AUTH=()
-[ -n "${GITHUB_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
-
 ROOM="$(mktemp -d)"
 cd "$ROOM" || exit 1
 
 echo "### what the release says it is"
-curl -fsSL "${AUTH[@]}" -H 'Accept: application/vnd.github+json' "$API/releases/tags/$TAG" > release.json \
-  || { echo "::error::there is no release at $TAG"; exit 1; }
+curl -fsSL -H 'Accept: application/json' "$API/releases/$TAG" > release.json \
+  || { echo "there is no release at $TAG"; exit 1; }
 
 jq -r '
   "  name        \(.name)",
   "  tag         \(.tag_name)",
-  "  prerelease  \(.prerelease)",
-  "  draft       \(.draft)",
-  "  published   \(.published_at)",
-  "  assets      \(.assets | length)"
+  "  released    \(.released_at)",
+  "  upcoming    \(.upcoming_release)",
+  "  links       \(.assets.links | length)"
 ' release.json
-jq -r '.assets[] | "    \(.name)  \(.size) bytes"' release.json | sort
+jq -r '.assets.links[] | "    \(.name)"' release.json | sort
 
-# A draft is not published, and a release whose tag is not the one asked for is
-# a different release.
-if [ "$(jq -r '.draft' release.json)" = false ]; then ok "it is published rather than a draft"; else bad "it is still a draft"; fi
+# An upcoming release is announced and not out, and a release whose tag is not
+# the one asked for is a different release.
+if [ "$(jq -r '.upcoming_release' release.json)" = false ]; then ok "it is released rather than upcoming"; else bad "it is still upcoming"; fi
 if [ "$(jq -r '.tag_name' release.json)" = "$TAG" ]; then ok "the tag is $TAG"; else bad "the tag is not $TAG"; fi
-# GitHub renders a title that is only the tag as no title at all, so a release
-# whose name is its tag is one nobody wrote a name for.
+# A release whose name is its tag is one nobody wrote a name for.
 name="$(jq -r '.name // empty' release.json)"
 if [ -n "$name" ] && [ "$name" != "$TAG" ]; then ok "it has a name of its own: $name"; else bad "it has no name but its tag"; fi
+# Every link must be the direct path the installers compose. One that is not is
+# a file the release lists and no installer can find by name.
+indirect="$(jq -r --arg tag "$TAG" '.assets.links[] | select((.direct_asset_url // "") | endswith("/-/releases/\($tag)/downloads/\(.name)") | not) | .name' release.json)"
+if [ -z "$indirect" ]; then ok "every file is linked at its own name"; else bad "linked somewhere else: $(echo $indirect)"; fi
 
 echo
 echo "### downloading every asset"
 mkdir -p assets
-mapfile -t ASSETS < <(jq -r '.assets[].name' release.json)
+mapfile -t ASSETS < <(jq -r '.assets.links[].name' release.json)
 for name in "${ASSETS[@]}"; do
   curl -fsSL -o "assets/$name" "$DL/$name" || bad "could not download $name"
 done
@@ -94,13 +92,11 @@ if [ -f assets/SHA256SUMS.txt ]; then
     # The checksums are the installable trust chain and nothing else: the
     # command and the setup program both refuse a payload whose hash they
     # cannot establish against this file, which is exactly why the list is
-    # narrow. Notes, a manifest and two reports are read, not unpacked, and
-    # putting them in that list would say they are something they are not.
-    #
-    # `release-notes.md` was added to the release before it was added here,
-    # and this is the check that caught it.
+    # narrow. Notes, a manifest, a report and the signature bundles are read,
+    # not unpacked, and putting them in that list would say they are something
+    # they are not.
     case "$name" in
-      SHA256SUMS.txt|release-manifest.json|release-notes.md|RELEASE_VALIDATION_REPORT.md|AI17Z-Setup-Audit-*) continue ;;
+      SHA256SUMS.txt|release-manifest.json|release-notes.md|RELEASE_VALIDATION_REPORT.md|AI17Z-Setup-Audit-*|*.sigstore.json) continue ;;
     esac
     grep -q "  $name\$" assets/SHA256SUMS.txt || { bad "$name is published with no hash"; missing=1; }
   done
@@ -122,11 +118,15 @@ if [ -f assets/release-manifest.json ]; then
 
   [ "$(jq -r '.version' assets/release-manifest.json)" = "$VERSION" ] \
     && ok "the manifest is for $VERSION" || bad "the manifest names another version"
+  # A platform the release deliberately did not build is said so in the
+  # manifest, and is reported here as what it is rather than as a fault.
   for platform in windows macos ubuntu; do
     if [ "$(jq -r ".platforms.$platform.supported" assets/release-manifest.json)" = true ]; then
       ok "$platform is supported"
+    elif [ "$(jq -r ".platforms.$platform.notBuilt // empty" assets/release-manifest.json)" != "" ]; then
+      ok "$platform was not built for this release, and the manifest says why: $(jq -r ".platforms.$platform.notBuilt" assets/release-manifest.json)"
     else
-      bad "the manifest says $platform is not supported"
+      bad "the manifest says $platform is not supported, and gives no reason"
     fi
   done
 
@@ -152,32 +152,30 @@ fi
 
 echo
 echo "### build provenance, as a stranger would ask for it"
+echo "  signer must be $IDENTITY"
 for name in "${ASSETS[@]}"; do
   # Published from the checkout rather than built, so it is not a build subject
-  # and is not claimed to be one.
+  # and is not claimed to be one. And a bundle is the signature itself.
   #
-  # Two files, and they are exempt for one reason rather than two: neither is
-  # produced by a build job, so neither is named when the build attests what it
-  # made, and asking whether they are attested can only ever be answered no.
-  # `release-notes.md` was added to the release and missed here, which cost a
-  # second release after the first was spent on missing the checksum list. The
-  # lists that decide what a published file owes are now held against each
-  # other by a test.
+  # The lists that decide what a published file owes are held against each
+  # other by a test: `release-notes.md` once missed one of them, which cost a
+  # second release after the first was spent on missing the checksum list.
   case "$name" in
-    RELEASE_VALIDATION_REPORT.md|release-notes.md) continue ;;
+    RELEASE_VALIDATION_REPORT.md|release-notes.md|*.sigstore.json) continue ;;
   esac
   [ -f "assets/$name" ] || continue
-  digest="$(sha256sum "assets/$name" | awk '{print $1}')"
-  code="$(curl -s -o "att.json" -w '%{http_code}' "${AUTH[@]}" \
-    -H 'Accept: application/vnd.github+json' "$API/attestations/sha256:$digest")"
-  if [ "$code" = 200 ] && [ "$(jq -r '.attestations | length' att.json 2>/dev/null || echo 0)" -gt 0 ]; then
-    ok "$name is attested"
-  elif [ "$code" = 403 ] || [ "$code" = 429 ]; then
-    # Rate limited. Saying "no attestation" here would be the same mistake in
-    # the other direction from the one this whole check exists for.
-    bad "the attestations API throttled this run (HTTP $code); $name is unanswered"
+  if [ ! -f "assets/$name.sigstore.json" ]; then
+    bad "$name has no signature bundle"
+    continue
+  fi
+  if "$COSIGN" verify-blob "assets/$name" \
+       --bundle "assets/$name.sigstore.json" \
+       --certificate-identity "$IDENTITY" \
+       --certificate-oidc-issuer "$SERVER" > verify.log 2>&1; then
+    ok "$name is signed by this project's pipeline at $TAG"
   else
-    bad "$name has no attestation (HTTP $code)"
+    sed 's/^/    /' verify.log
+    bad "$name does not verify against this project's pipeline at $TAG"
   fi
 done
 

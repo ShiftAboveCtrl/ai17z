@@ -30,8 +30,8 @@ set -uo pipefail
 
 TAG="${1:?a tag, such as v1.0.0-beta.17}"
 VERSION="${TAG#v}"
-REPO="${GITHUB_REPOSITORY:-ShiftAboveCtrl/ai17z}"
-DL="https://github.com/$REPO/releases/download/$TAG"
+PROJECT="${CI_PROJECT_PATH:-shiftabovectrl/ai17z}"
+DL="https://gitlab.com/$PROJECT/-/releases/$TAG/downloads"
 
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Where the tag's copy of the installer is. The same checkout unless the
@@ -55,7 +55,7 @@ says() { if printf '%s' "$2" | grep -qi -- "$3"; then ok "$1"; else
 # further worth asking.
 #
 # Everything after the install asks the installed copy about itself, so there
-# has to be one. Without a way to stop, a runner that could not reach GitHub
+# has to be one. Without a way to stop, a runner that could not reach GitLab
 # reported fourteen failures: no launcher, no BUILD_INFO.json, node is not a
 # Mach-O, no esbuild, tsx cannot transform, three directories missing. Every one
 # is the same fact said again, and the one that mattered was above them.
@@ -80,13 +80,13 @@ TARGET="$ROOM/AI17Z published"
 
 echo "### what the release published"
 curl -fsSL -o "$ROOM/SHA256SUMS.txt" "$DL/SHA256SUMS.txt" \
-  || { echo "::error::$TAG publishes no SHA256SUMS.txt"; exit 1; }
+  || { echo "$TAG publishes no SHA256SUMS.txt"; exit 1; }
 sed 's/^/    /' "$ROOM/SHA256SUMS.txt"
 
 echo
 echo "### the installer, as published"
 curl -fsSL -o "$ROOM/install-ai17z-macos.sh" "$DL/install-ai17z-macos.sh" \
-  || { echo "::error::$TAG publishes no install-ai17z-macos.sh"; exit 1; }
+  || { echo "$TAG publishes no install-ai17z-macos.sh"; exit 1; }
 
 said="$(grep '  install-ai17z-macos.sh$' "$ROOM/SHA256SUMS.txt" | awk '{print $1}')"
 got="$(shasum -a 256 "$ROOM/install-ai17z-macos.sh" | awk '{print $1}')"
@@ -131,7 +131,7 @@ echo "  docker is stubbed at the vendor boundary: $(command -v docker)"
 
 echo
 echo "### installing $TAG from the network, as published"
-# GitHub allows sixty API requests an hour to an address that is not signed in,
+# GitLab limits how often an address that is not signed in may ask its API,
 # and a hosted runner shares its address with whoever else is on that machine.
 # The published installer is unauthenticated by design -- that is what a
 # stranger runs, and giving it a token here would be testing something nobody
@@ -158,51 +158,19 @@ echo "### installing $TAG from the network, as published"
 # Either way this fails.
 why_it_failed() {
   if printf '%s' "$2" | grep -qE '403|429|rate limit|could not be read|could not be reached'; then
-    printf 'this runner could not reach the GitHub API after a retry (the second attempt exited %s). That is the sixty-an-hour ceiling on an address it shares, not something about the release.' "$1"
+    printf 'this runner could not reach the GitLab API after a retry (the second attempt exited %s). That is the anonymous rate limit on an address it shares, not something about the release.' "$1"
   else
-    printf 'the published installer failed twice, ninety seconds apart, exiting %s the second time. Everything else in this run reached the same release from the same URLs, so this is a finding about what was published rather than about this runner.' "$1"
+    printf 'the published installer failed twice, a minute apart, exiting %s the second time. Everything else in this run reached the same release from the same URLs, so this is a finding about what was published rather than about this runner.' "$1"
   fi
 }
-# How long to wait before the second attempt, asked of GitHub rather than guessed.
-#
-# Ninety seconds was a guess, and the comment above already admitted it could
-# not clear an hourly ceiling. Measured across three releases: the macOS arm64
-# runner was refused twice, ninety seconds apart, on two of them, while the
-# Intel Mac beside it installed the same release from the same URLs.
-#
-# GitHub says when the ceiling resets, in `/rate_limit`, and that endpoint is
-# free: it is explicitly not counted against the limit it reports. So this asks,
-# and waits the stated time when that is short enough to be worth waiting, and
-# otherwise waits the ninety seconds it always did.
-#
-# Bounded on both sides. Never longer than MAX_CEILING_WAIT, because a job that
-# sits for most of an hour is worse than a job that says it was rate limited,
-# and still exactly two attempts either way.
-MAX_CEILING_WAIT=600
-
 wait_for_the_ceiling() {
-  local reset now left
-  reset="$(curl -fsS -H 'User-Agent: ai17z-qualification' https://api.github.com/rate_limit 2>/dev/null \
-    | tr ',' '\n' | grep -m1 '"reset"' | tr -dc '0-9')"
-  now="$(date +%s)"
-  if [ -z "$reset" ] || [ -z "$now" ]; then
-    echo "  GitHub did not say when its ceiling resets. Waiting ninety seconds."
-    sleep 90
-    return
-  fi
-  left=$((reset - now + 5))
-  if [ "$left" -le 0 ]; then
-    echo "  GitHub says its ceiling has already reset. Trying again now."
-    return
-  fi
-  if [ "$left" -gt "$MAX_CEILING_WAIT" ]; then
-    echo "  GitHub says its ceiling resets in ${left}s, which is longer than this job will wait."
-    echo "  Waiting ninety seconds and trying once more anyway."
-    sleep 90
-    return
-  fi
-  echo "  GitHub says its ceiling resets in ${left}s. Waiting that long and trying once more."
-  sleep "$left"
+  # GitLab limits anonymous API callers per minute rather than per hour, and
+  # says nothing ahead of time about when a limit clears: it only sends
+  # RateLimit-Reset on the refusal itself, which the installer does not keep.
+  # So this waits one window and tries once more. Bounded, and still exactly
+  # two attempts either way.
+  echo "  Waiting sixty seconds, one rate-limit window, and trying once more."
+  sleep 60
 }
 
 install_once() {
@@ -218,8 +186,8 @@ install_once() {
 # tag-specific downloads and nothing else.
 #
 # It used to be answered by running the published installer, which resolves the
-# release through `api.github.com` without a token because that is what a
-# stranger runs. That made package correctness depend on a sixty-an-hour budget
+# release through GitLab's API without a token because that is what a
+# stranger runs. That made package correctness depend on an anonymous budget
 # shared with whoever else was on the runner, and twice in three releases it
 # came back 403 and the owner had to press re-run on a release that was fine.
 PACKAGE="AI17Z-macos-$ARCH-$VERSION.tar.gz"
@@ -274,8 +242,8 @@ case "$(attempt_verdict "$smoke_code" "$smoke")" in
   CEILING)
     # Said out loud and counted as neither pass nor fail: this is the shared
     # sixty-an-hour ceiling, and the package is already proved.
-    echo "  note  GitHub refused this runner's anonymous API twice. That is the shared hourly"
-    echo "        ceiling rather than anything about $TAG, which installed from its own bytes above."
+    echo "  note  GitLab refused this runner\'s anonymous API twice. That is the shared rate"
+    echo "        limit rather than anything about $TAG, which installed from its own bytes above."
     ;;
   *)
     bad "the published installer failed for something other than the API ceiling (exit $smoke_code). $(printf '%s' "$smoke" | grep -v '^[[:space:]]*$' | tail -4 | tr '\n' '/')"
