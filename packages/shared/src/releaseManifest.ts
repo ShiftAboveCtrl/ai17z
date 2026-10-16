@@ -277,6 +277,14 @@ export const releaseManifestSchema = z.object({
       architectures: z.array(z.enum(ARCHITECTURES)).min(1),
       methods: z.array(z.enum(INSTALL_METHODS)).min(1),
       requirements,
+      /**
+       * Why a platform was deliberately left out of this release, in a
+       * sentence. Absent on a supported platform. A platform that is
+       * unsupported with no reason is a release that lost something; one with
+       * a reason is a decision, and an updater says the reason rather than
+       * "no build". Optional and not strict, so an older reader ignores it.
+       */
+      notBuilt: z.string().min(1).optional(),
     }),
   ),
   artifacts: z.array(artifact),
@@ -368,7 +376,8 @@ export function preflight(manifest: ReleaseManifest, input: PreflightInput): Pre
   const platform = manifest.platforms[input.platform];
 
   if (!platform || !platform.supported) {
-    return { ok: false, blockers: [`AI17Z ${manifest.version} does not publish a ${input.platform} build.`], notes };
+    const why = platform?.notBuilt ? ` ${platform.notBuilt}` : '';
+    return { ok: false, blockers: [`AI17Z ${manifest.version} does not publish a ${input.platform} build.${why}`], notes };
   }
   if (!platform.architectures.includes(input.arch)) {
     blockers.push(
