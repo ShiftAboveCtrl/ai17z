@@ -22,8 +22,8 @@ HERE="$(dirname "$APP_ROOT")"
 . "$APP_ROOT/packaging/unix/ai17z-paths.sh"
 ai17z_resolve_paths "$APP_ROOT"
 
-REPOSITORY="ShiftAboveCtrl/ai17z"
-ALLOWED_HOSTS="api.github.com github.com objects.githubusercontent.com release-assets.githubusercontent.com"
+REPOSITORY="shiftabovectrl/ai17z"
+ALLOWED_HOSTS="gitlab.com"
 
 CHECK_ONLY=0; ASSUME_YES=0; WANT_RELEASE=""
 while [ $# -gt 0 ]; do
@@ -69,18 +69,9 @@ printf '\n  %sAI17Z%s  %s\n\n' "$GREEN" "$OFF" "$CURRENT"
 step "Checking for a newer AI17Z"
 # Which release, found without spending the REST budget.
 #
-# `ai17z_latest_release_tag` reads the releases feed on github.com rather than
-# asking api.github.com, because an agent watching a repository already spends
-# that sixty-an-hour allowance and the updater is what goes blind when it runs
-# out. Nothing is guessed: an empty answer is reported and the update stops.
-if [ -n "$WANT_RELEASE" ]; then
-  TAG="$WANT_RELEASE"
-else
-  TAG="$(ai17z_latest_release_tag "$REPOSITORY")"
-fi
-[ -n "$TAG" ] || oops "AI17Z could not be reached." "Nothing was changed." ""
-[ -n "$TAG" ] || oops "No release was found." "" ""
-VERSION="${TAG#v}"
+# `ai17z_latest_release_tag` asks GitLab's releases API, a different host from
+# the one an agent watching a GitHub repository spends its budget on, so the
+# two cannot starve each other.
 
 if [ "$VERSION" = "$CURRENT" ]; then good "AI17Z ${CURRENT} is the newest release"; printf '\n'; exit 0; fi
 

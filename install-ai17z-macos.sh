@@ -2,7 +2,7 @@
 #
 # Installs AI17Z on macOS.
 #
-#   curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh
+#   curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-macos.sh
 #   less install-ai17z-macos.sh      # read it first. That is why it is short.
 #   bash install-ai17z-macos.sh
 #
@@ -21,9 +21,13 @@
 
 set -euo pipefail
 
-REPOSITORY="ShiftAboveCtrl/ai17z"
-API="https://api.github.com/repos/${REPOSITORY}/releases"
-ALLOWED_HOSTS="api.github.com github.com objects.githubusercontent.com release-assets.githubusercontent.com desktop.docker.com"
+REPOSITORY="shiftabovectrl/ai17z"
+# GitLab's API takes the project path as one encoded segment.
+API="https://gitlab.com/api/v4/projects/${REPOSITORY%%/*}%2F${REPOSITORY#*/}/releases"
+# The page every file of a release is linked at, by its exact name. GitLab
+# answers it with one redirect on gitlab.com itself to the package registry.
+DOWNLOADS="https://gitlab.com/${REPOSITORY}/-/releases"
+ALLOWED_HOSTS="gitlab.com desktop.docker.com"
 # desktop.docker.com is Docker's own, and the only host here that is not
 # AI17Z's release. It is in the list rather than reached around it: the
 # Docker download used a bare curl, so the declared list was not the whole
@@ -105,7 +109,7 @@ assert_allowed_url() {
   case "$1" in https://*) host="${1#https://}"; host="${host%%/*}" ;;
     *) stop "AI17Z only downloads over HTTPS." "$1" "" ;; esac
   case " $ALLOWED_HOSTS " in *" $host "*) ;;
-    *) stop "AI17Z will not download from ${host}." "It only downloads from its own GitHub release." "" ;; esac
+    *) stop "AI17Z will not download from ${host}." "It only downloads from its own GitLab release." "" ;; esac
 }
 fetch() { assert_allowed_url "$2"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$1" "$2"; }
 # The same, with a progress bar. Docker Desktop is several hundred megabytes
@@ -135,7 +139,7 @@ if [ "${MACOS_MAJOR:-0}" -lt "$MIN_MACOS_MAJOR" ] 2>/dev/null; then
     "This is macOS ${MACOS_VERSION}. Google Chrome, which AI17Z drives, requires
 macOS ${MIN_MACOS_MAJOR}, and Docker Desktop supports only recent releases." \
     "Update macOS, or install from source:
-  https://github.com/${REPOSITORY}#from-source"
+  https://gitlab.com/${REPOSITORY}#from-source"
 fi
 
 case "$(uname -m)" in
@@ -172,14 +176,14 @@ if [ -n "$LOCAL_PACKAGE" ]; then
   good "AI17Z ${VERSION}"
 elif [ -n "$RELEASE" ]; then
   case "$RELEASE" in v[0-9]*|[0-9]*) ;; *) stop "\"$RELEASE\" is not a release version." "" "" ;; esac
-  RELEASE_JSON="$(fetch_stdout "${API}/tags/${RELEASE}")" || stop "Release ${RELEASE} could not be read." "" ""
+  RELEASE_JSON="$(fetch_stdout "${API}/${RELEASE}")" || stop "Release ${RELEASE} could not be read." "" ""
 else
   # The advice names no cause, because this cannot know one: `curl -f` collapses
   # every 4xx into one exit code, and the status cannot come back out of the
   # subshell this runs in. It used to say the connection was at fault, which is
-  # the single explanation that is definitely wrong when GitHub is rate limiting.
-  RELEASE_JSON="$(fetch_stdout "${API}?per_page=10")" || stop "AI17Z could not be reached." \
-    "Nothing on this Mac was changed." "GitHub did not answer. That can be this connection, or GitHub refusing requests from this address -- it allows sixty an hour to anybody who is not signed in, which a shared network reaches on its own.
+  # the single explanation that is definitely wrong when the server is rate limiting.
+  RELEASE_JSON="$(fetch_stdout "${API}?per_page=10&order_by=released_at&sort=desc")" || stop "AI17Z could not be reached." \
+    "Nothing on this Mac was changed." "GitLab did not answer. That can be this connection, or GitLab refusing requests from this address: it limits addresses that are not signed in, which a shared network can reach on its own.
 Wait a few minutes and run this again."
 fi
 
@@ -189,12 +193,16 @@ TAG="$(printf '%s' "$RELEASE_JSON" | grep -o '"tag_name"[[:space:]]*:[[:space:]]
 VERSION="${TAG#v}"
 
 TAR_NAME="AI17Z-macos-${ARCH}-${VERSION}.tar.gz"
-TAR_URL="$(printf '%s' "$RELEASE_JSON" | grep -o "https://[^\"]*/${TAR_NAME}" | head -1)"
-SUMS_URL="$(printf '%s' "$RELEASE_JSON" | grep -o 'https://[^"]*/SHA256SUMS\.txt' | head -1)"
+# Composed from the tag rather than read out of the JSON, because GitLab's link
+# `url` percent-encodes the dots in a file name; the JSON is only asked whether
+# the release names this exact file.
+TAR_URL=""; SUMS_URL=""
+grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${TAR_NAME}\"" <<<"$RELEASE_JSON" && TAR_URL="${DOWNLOADS}/${TAG}/downloads/${TAR_NAME}"
+grep -q '"name"[[:space:]]*:[[:space:]]*"SHA256SUMS\.txt"' <<<"$RELEASE_JSON" && SUMS_URL="${DOWNLOADS}/${TAG}/downloads/SHA256SUMS.txt"
 [ -n "$TAR_URL" ] || stop "Release ${TAG} does not contain ${TAR_NAME}." \
   "Nothing on this Mac was changed." \
   "AI17Z published Mac packages from the first release that had them.
-Install a newer one, or see https://github.com/${REPOSITORY}/releases"
+Install a newer one, or see https://gitlab.com/${REPOSITORY}/-/releases"
 [ -n "$SUMS_URL" ] || stop "Release ${TAG} publishes no SHA256SUMS.txt." \
   "AI17Z will not unpack something it cannot check." ""
 good "AI17Z ${VERSION}"
@@ -227,7 +235,7 @@ if [ "$EXPECTED" != "$ACTUAL" ]; then
 got       ${ACTUAL}
 
 The file has been deleted and nothing was unpacked." \
-    "If this happens twice, stop and report it at https://github.com/${REPOSITORY}/issues"
+    "If this happens twice, stop and report it at https://gitlab.com/${REPOSITORY}/-/issues"
 fi
 if [ -n "$LOCAL_PACKAGE" ]; then
   good "SHA-256 matches what was asked for"
