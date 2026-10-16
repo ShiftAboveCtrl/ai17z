@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -121,6 +122,20 @@ describe('the scripts the pipeline runs', () => {
     expect(text.startsWith('#!/usr/bin/env bash\n'), `${path} has no bash shebang`).toBe(true);
     expect(text.includes('\r'), `${path} carries a carriage return`).toBe(false);
     expect([...text].every((c) => c.charCodeAt(0) < 128), `${path} is not ASCII`).toBe(true);
+  });
+
+  it.each(shell)('%s parses, as bash reads it', (path) => {
+    // A script that cannot parse fails only when its job runs, which for the
+    // publishing scripts is the release. An apostrophe inside `${1:?...}`
+    // opened a quote that never closed and reached a commit, because the
+    // syntax was checked by hand before that line existed.
+    const bash = spawnSync('bash', ['--version']);
+    if (bash.error) {
+      console.log(`SKIPPED: no bash here, so ${path} was not parsed. This is not a pass.`);
+      return;
+    }
+    const parsed = spawnSync('bash', ['-n', resolve(root, path)], { encoding: 'utf8' });
+    expect(parsed.status, `${path} does not parse: ${parsed.stderr}`).toBe(0);
   });
 
   it.each(powershell)('%s is ASCII, because Windows PowerShell reads a file with no BOM as ANSI', (path) => {
