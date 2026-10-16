@@ -99,6 +99,8 @@ describe('things that name a person', () => {
       'user@db.internal',
       'git@github.com:owner/repo.git',
       '12345+name@users.noreply.github.com',
+      '12345-name@users.noreply.gitlab.com',
+      'git@gitlab.com:owner/repo.git',
     ]) {
       expect(findPersonalDetails(file('docs/x.md', address)), address).toEqual([]);
     }

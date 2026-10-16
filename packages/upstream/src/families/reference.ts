@@ -70,7 +70,7 @@ export interface ReferenceEntry {
  * Deliberately carries no address of anybody's: a project URL identifies the
  * software, which is what the policy is for.
  */
-const USER_AGENT = 'AI17Z/1.0 (+https://github.com/ShiftAboveCtrl/ai17z)';
+const USER_AGENT = 'AI17Z/1.0 (+https://gitlab.com/shiftabovectrl/ai17z)';
 
 function wikipedia(): Upstream<ReferenceQuery, ReferenceEntry> {
   return defineUpstream<ReferenceQuery, ReferenceEntry>({

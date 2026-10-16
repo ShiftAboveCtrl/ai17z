@@ -8,13 +8,13 @@
 
   Meant to be run this way:
 
-    irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 | iex
+    irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.ps1 | iex
 
   That pattern -- fetch a script and run it -- asks you to trust whatever the
   server sends. If you would rather look first, and you should, download it,
   read it, and run the file:
 
-    irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 -OutFile bootstrap.ps1
+    irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.ps1 -OutFile bootstrap.ps1
     notepad bootstrap.ps1
     .\bootstrap.ps1
 
@@ -42,8 +42,8 @@ $ErrorActionPreference = 'Stop'
 
 # Replaced when the repository is published. Both point at the same repository:
 # the first is what git clones, the second is what a browser downloads.
-$RepoUrl = 'https://github.com/ShiftAboveCtrl/ai17z.git'
-$ZipUrl  = 'https://github.com/ShiftAboveCtrl/ai17z/archive/refs/heads/main.zip'
+$RepoUrl = 'https://gitlab.com/shiftabovectrl/ai17z.git'
+$ZipUrl  = 'https://gitlab.com/shiftabovectrl/ai17z/-/archive/main/ai17z-main.zip'
 
 function Write-Step($Message) { Write-Host "  $Message" -ForegroundColor Cyan }
 function Write-Done($Message) { Write-Host "  $Message" -ForegroundColor Green }
@@ -109,7 +109,7 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
   try {
     Invoke-WebRequest -Uri $ZipUrl -OutFile $zip -UseBasicParsing
     Expand-Archive -Path $zip -DestinationPath $unpack -Force
-    # GitHub wraps the tree in one folder named after the repository and branch.
+    # GitLab wraps the tree in one folder named after the project and branch.
     $inner = Get-ChildItem -Directory $unpack | Select-Object -First 1
     if (-not $inner) { Stop-WithReason 'The download did not contain what was expected.' 'Try the git route, or clone by hand.' }
     Move-Item -Path $inner.FullName -Destination $Directory
