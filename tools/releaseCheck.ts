@@ -126,7 +126,7 @@ export function findPersonalDetails(file: FileToCheck): Finding[] {
   //   .local / .internal / .invalid  reserved for exactly this, by RFC
   //   git@github.com                   an SSH remote, not somebody's address
   const ALLOWED_EMAIL =
-    /@(?:example\.(?:com|test|org)|localhost|users\.noreply\.github\.com|[A-Za-z0-9.-]+\.(?:local|internal|invalid|test))\b/i;
+    /@(?:example\.(?:com|test|org)|localhost|users\.noreply\.github\.com|users\.noreply\.gitlab\.com|[A-Za-z0-9.-]+\.(?:local|internal|invalid|test))\b/i;
   const SSH_REMOTE = /\b(?:git|hg)@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 
   lines.forEach((line, index) => {
