@@ -76,6 +76,15 @@ step "Checking for a newer AI17Z"
 # `ai17z_latest_release_tag` asks GitLab's releases API, a different host from
 # the one an agent watching a GitHub repository spends its budget on, so the
 # two cannot starve each other.
+# Nothing is guessed: an empty answer is reported and the update stops.
+if [ -n "$WANT_RELEASE" ]; then
+  TAG="$WANT_RELEASE"
+else
+  TAG="$(ai17z_latest_release_tag "$REPOSITORY")"
+fi
+[ -n "$TAG" ] || oops "AI17Z could not be reached." \
+  "Nothing was changed." "Check your internet connection and try again."
+VERSION="${TAG#v}"
 
 if [ "$VERSION" = "$CURRENT" ]; then
   good "AI17Z ${CURRENT} is the newest release"
