@@ -133,37 +133,32 @@ ai17z_version_is_newer() { # candidate installed
     "$root/packaging/preflight.mts" --newer "$1" "$2" 2>/dev/null) || printf ''
 }
 
-# The newest published release tag, found without spending the REST budget.
+# The newest release's tag, from GitLab's releases API, newest first.
 #
-# Reads the releases feed on github.com rather than asking api.github.com. The
-# unauthenticated REST allowance is sixty requests an hour per address, and an
-# AI17Z installation already spends it elsewhere: an agent told to watch a
-# repository polls it through REST, several endpoints at a time. Two
-# installations on one connection exhaust sixty an hour between them, and what
-# breaks is the updater, which then cannot see a release that is published and
-# downloadable. Measured on Windows, where the same coupling exists: the budget
-# read 0 of 60 and the updater reported it could not reach GitHub.
+# Not permalink/latest, which is GitLab choosing by redirect; the list is read
+# and the first tag taken. It lists prereleases, which every AI17Z release so
+# far is. AI17Z's pipeline never dates a release in the future, so there is no
+# "upcoming" entry to step over.
 #
-# The feed is not charged against that allowance (measured: 56 before three
-# fetches, 56 after) and it lists prereleases, which `/releases/latest` does
-# not and which is every AI17Z release so far.
+# This used to read GitHub's releases feed, to keep clear of the REST budget an
+# agent watching a GitHub repository spends. That budget belongs to another host
+# now, so the two cannot meet.
 #
 # Prints the tag, or nothing. Nothing is a refusal for the caller to report; it
 # is never a reason to guess a version.
 ai17z_latest_release_tag() { # repository
   local repository="$1"
   curl -fsSL --proto '=https' --tlsv1.2 --retry 3 \
-    "https://github.com/${repository}/releases.atom" 2>/dev/null \
-    | grep -o 'releases/tag/[^"]*' | head -1 | sed 's|releases/tag/||'
+    "https://gitlab.com/api/v4/projects/${repository%%/*}%2F${repository#*/}/releases?per_page=10&order_by=released_at&sort=desc" 2>/dev/null \
+    | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
 }
 
 # Where one published file of one release lives, addressed by its own tag.
 #
 # Exact tag rather than "latest", so what is fetched is decided before the
-# request. No API call, which is what keeps an update independent of the
-# allowance above.
+# request. GitLab answers it with one redirect on gitlab.com itself.
 ai17z_release_asset_url() { # repository tag asset
-  printf 'https://github.com/%s/releases/download/%s/%s' "$1" "$2" "$3"
+  printf 'https://gitlab.com/%s/-/releases/%s/downloads/%s' "$1" "$2" "$3"
 }
 
 # One value out of the environment file.

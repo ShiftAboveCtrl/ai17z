@@ -5,7 +5,7 @@
 .DESCRIPTION
   This is the file behind the command on the AI17Z README:
 
-      irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+      irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex
 
   It is deliberately small, and deliberately not the installer. All it does is
   work out which AI17Z release to install, fetch that release's setup program,
@@ -64,7 +64,7 @@
 
   If you would rather look first -- and that is a reasonable thing to want:
 
-      irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 -OutFile install.ps1
+      irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 -OutFile install.ps1
       notepad install.ps1
 
   See docs/SETUP_AUDIT.md for everything the setup program can change, and how
@@ -125,8 +125,13 @@ $ErrorActionPreference = 'Stop'
 # the same journey. A request that does not start at one of these is refused
 # rather than followed.
 # ---------------------------------------------------------------------------
-$Repository = 'ShiftAboveCtrl/ai17z'
-$AllowedHosts = @('api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com')
+$Project = 'shiftabovectrl/ai17z'
+$ProjectUrl = 'https://gitlab.com/' + $Project
+# The API wants the path as one encoded segment: shiftabovectrl%2Fai17z.
+$ProjectApi = 'https://gitlab.com/api/v4/projects/' + [Uri]::EscapeDataString($Project)
+# One host. GitLab answers a release download with one redirect, on gitlab.com
+# itself, to the package registry file; measured, it never leaves the host.
+$AllowedHosts = @('gitlab.com')
 $SetupAssetPattern = 'Install-AI17Z-{0}.ps1'
 $ChecksumAsset = 'SHA256SUMS.txt'
 
@@ -176,18 +181,18 @@ function Get-CompatibleTags {
   param($Releases)
   $tags = @()
   foreach ($candidate in @($Releases)) {
-    if ($candidate.draft) { continue }
+    if ($candidate.upcoming_release) { continue }
     $candidateTag = '' + $candidate.tag_name
     if (-not (Test-ReleaseTag $candidateTag)) { continue }
     $wanted = [string]::Format($SetupAssetPattern, ($candidateTag -replace '^v', ''))
-    foreach ($asset in $candidate.assets) { if ($asset.name -ieq $wanted) { $tags += $candidateTag; break } }
+    foreach ($asset in @($candidate.assets.links)) { if ($asset.name -ieq $wanted) { $tags += $candidateTag; break } }
   }
   return $tags
 }
 
 # Whether a release tag is one this will build a name from.
 #
-# A tag is either typed by whoever ran this or read out of a document GitHub
+# A tag is either typed by whoever ran this or read out of a document GitLab
 # served, and what gets derived from it is an asset name. **A value off the
 # network has no business becoming a path**, and a tag also goes into a URL
 # path, where the host allow-list cannot tell that the path underneath it is
@@ -211,13 +216,13 @@ function Assert-AllowedUrl {
     Stop-Install 'A download was about to be made over plain HTTP.' 'AI17Z only ever downloads over HTTPS.' 'Report this.'
   }
   if ($AllowedHosts -notcontains $uri.Host) {
-    Stop-Install ('AI17Z will not download from ' + $uri.Host + '.') 'It only downloads from its own GitHub release.' `
-      ('Stop, and install AI17Z from https://github.com/' + $Repository)
+    Stop-Install ('AI17Z will not download from ' + $uri.Host + '.') 'It only downloads from its own GitLab release.' `
+      ('Stop, and install AI17Z from ' + $ProjectUrl)
   }
 }
 
 function Get-Text {
-  param([string] $Url, [string] $Accept = 'application/vnd.github+json')
+  param([string] $Url, [string] $Accept = 'application/json')
   Assert-AllowedUrl $Url
   $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -Headers @{ 'Accept' = $Accept; 'User-Agent' = 'AI17Z-Install' }
   # Windows PowerShell decides the shape of .Content from the response's content
@@ -254,11 +259,11 @@ if ($PSVersionTable.PSVersion.Major -lt 5) {
 # answer is always yes.
 if ((Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and -not $IsWindows) {
   Stop-Install 'AI17Z Setup installs on Windows.' 'This is not a Windows machine.' `
-    ('On Linux or macOS, follow the source install in https://github.com/' + $Repository)
+    ('On Linux or macOS, follow the source install in ' + $ProjectUrl)
 }
 
 # TLS 1.2 at the least. Windows PowerShell defaults to whatever was current when
-# it shipped, and GitHub has not accepted that for years.
+# it shipped, and GitLab does not accept that.
 try {
   $protocols = [Net.SecurityProtocolType]::Tls12
   try { $protocols = $protocols -bor [Net.SecurityProtocolType]::Tls13 } catch { }
@@ -276,10 +281,10 @@ Write-Line 'Looking up the newest release...' 'DarkGray'
 if ($Release -and -not (Test-ReleaseTag $Release)) {
   Stop-Install ('"' + $Release + '" is not a release version.') `
     'Releases are named like v1.0.0 or v1.0.0-beta.1.' `
-    ('Pick one from https://github.com/' + $Repository + '/releases and pass it to -Release.')
+    ('Pick one from ' + $ProjectUrl + '/-/releases and pass it to -Release.')
 }
 
-$base = 'https://api.github.com/repos/' + $Repository + '/releases'
+$base = $ProjectApi + '/releases'
 # Deliberately not named after what it holds.
 #
 # PowerShell variable names are case-insensitive, so a lower-case one here would
@@ -290,27 +295,27 @@ $chosen = $null
 $all = @()
 try {
   if ($Release) {
-    $chosen = Get-Text ($base + '/tags/' + $Release) | ConvertFrom-Json
+    $chosen = Get-Text ($base + '/' + $Release) | ConvertFrom-Json
     # The list as well, but only to answer "was there one that would have
     # worked" if the named release turns out not to carry what this needs.
     # Advice is not worth failing an install over, so this one is allowed to
     # come back empty.
     try {
-      $fetched = Get-Text ($base + '?per_page=20') | ConvertFrom-Json
+      $fetched = Get-Text ($base + '?per_page=20&order_by=released_at&sort=desc') | ConvertFrom-Json
       $all = @($fetched)
     } catch { $all = @() }
   } else {
-    # Not /releases/latest: that hides prereleases, and every AI17Z release so
-    # far is one.
+    # Not permalink/latest: that is GitLab choosing, by answering with a
+    # redirect, and here the list is read and the choice made in the open.
     #
     # Assigned first and wrapped second, never `@(... | ConvertFrom-Json)`:
     # Windows PowerShell hands an array down the pipeline as one object, so
     # wrapping in the same statement produces a one-element array containing
     # the array -- and every release then reads as a single release with
     # twenty of everything.
-    $fetched = Get-Text ($base + '?per_page=20') | ConvertFrom-Json
+    $fetched = Get-Text ($base + '?per_page=20&order_by=released_at&sort=desc') | ConvertFrom-Json
     $all = @($fetched)
-    $chosen = @($all | Where-Object { -not $_.draft } | Select-Object -First 1)[0]
+    $chosen = @($all | Where-Object { -not $_.upcoming_release } | Select-Object -First 1)[0]
   }
 } catch {
   $why = '' + $_.Exception.Message
@@ -321,42 +326,41 @@ try {
   if ($Release -and $why -match '\(404\)') {
     Stop-Install ('There is no release called "' + $Release + '".') `
       'Nothing on this PC was changed.' `
-      ('Pick one from https://github.com/' + $Repository + '/releases, or leave -Release off to take the newest.')
+      ('Pick one from ' + $ProjectUrl + '/-/releases, or leave -Release off to take the newest.')
   }
   # What to go and look at, decided by what actually happened.
   #
-  # This used to say "check your internet connection" whatever the answer was.
-  # GitHub allows sixty API requests an hour to an address that is not signed
-  # in, and a shared office, a university or a cloud box reaches that without
-  # anybody doing anything unusual -- so the one person whose connection is
-  # provably fine was the one being told to go and check it.
+  # This used to say "check your internet connection" whatever the answer was,
+  # and a refusal from the server is the one case where the connection is
+  # provably fine: a shared office, a university or a cloud box can reach an
+  # anonymous rate limit without anybody doing anything unusual.
   $advice = 'Check your internet connection and run the command again.'
   if ($why -match '\(40[39]\)' -or $why -match '\(429\)') {
-    $advice = 'GitHub refused the request. That is usually its rate limit: it allows sixty an hour from an address that is not signed in, which a shared network reaches on its own. Wait a few minutes and run the command again.'
+    $advice = 'GitLab refused the request. That is usually its rate limit for addresses that are not signed in, which a shared network can reach on its own. Wait a few minutes and run the command again.'
   }
   Stop-Install 'AI17Z could not work out which release to install.' `
     ("Nothing on this PC was changed.`n" + $why) `
     $advice
 }
 if (-not $chosen) {
-  Stop-Install 'That release does not exist.' '' ('Look at https://github.com/' + $Repository + '/releases and pass -Release <tag>.')
+  Stop-Install 'That release does not exist.' '' ('Look at ' + $ProjectUrl + '/-/releases and pass -Release <tag>.')
 }
 
 $tag = '' + $chosen.tag_name
-# The tag GitHub just handed over, before an asset name is built from it.
+# The tag GitLab just handed over, before an asset name is built from it.
 # Refused rather than sanitised: a release named something this does not
 # recognise is a release this does not understand, not one to guess at.
 if (-not (Test-ReleaseTag $tag)) {
   Stop-Install ('The newest release is called "' + $tag + '", which is not a version number.') `
     'Nothing was written and nothing was run.' `
-    ('Install a release by name with -Release <tag>, and report this at https://github.com/' + $Repository + '/issues')
+    ('Install a release by name with -Release <tag>, and report this at ' + $ProjectUrl + '/-/issues')
 }
 $version = $tag -replace '^v', ''
 $setupName = [string]::Format($SetupAssetPattern, $version)
 
 $setupAsset = $null
 $sumsAsset = $null
-foreach ($asset in $chosen.assets) {
+foreach ($asset in @($chosen.assets.links)) {
   if ($asset.name -ieq $setupName) { $setupAsset = $asset }
   if ($asset.name -ieq $ChecksumAsset) { $sumsAsset = $asset }
 }
@@ -370,7 +374,7 @@ if (-not $setupAsset) {
   }
   if ($Release) {
     # Somebody named this release. It exists; it just predates the command.
-    if (-not $advice) { $advice = 'See https://github.com/' + $Repository + '/releases' }
+    if (-not $advice) { $advice = 'See ' + $ProjectUrl + '/-/releases' }
     Stop-Install ('Release ' + $tag + ' cannot be installed with this command.') `
       ("It does not contain " + $setupName + ", which is the setup program this`ncommand checks and runs." +
        "`n`nReleases from before the terminal install command carry an installer on`ntheir own page instead." +
@@ -381,7 +385,7 @@ if (-not $setupAsset) {
   # to suggest, and saying "try an earlier one" would be worse than saying
   # nothing: every earlier one fails here for the same reason.
   if (-not $advice) {
-    $advice = 'Watch https://github.com/' + $Repository + '/releases'
+    $advice = 'Watch ' + $ProjectUrl + '/-/releases'
   }
   Stop-Install 'AI17Z Setup is newer than the latest published release.' `
     ("The latest release is " + $tag + ", which does not contain the new terminal`nsetup package (" + $setupName + ")." +
@@ -392,7 +396,7 @@ if (-not $setupAsset) {
 if (-not $sumsAsset) {
   Stop-Install ('Release ' + $tag + ' publishes no SHA256SUMS.txt.') `
     'AI17Z will not run a setup program it cannot check.' `
-    ('See https://github.com/' + $Repository + '/releases')
+    ('See ' + $ProjectUrl + '/-/releases')
 }
 
 # ---------------------------------------------------------------------------
@@ -402,7 +406,7 @@ if (-not $sumsAsset) {
 Write-Line ('Fetching AI17Z Setup ' + $version + '...') 'DarkGray'
 
 $expected = ''
-foreach ($line in ((Get-Text $sumsAsset.browser_download_url 'text/plain') -split "`r?`n")) {
+foreach ($line in ((Get-Text $sumsAsset.direct_asset_url 'text/plain') -split "`r?`n")) {
   $match = [regex]::Match($line.Trim(), '^([0-9a-fA-F]{64})\s+\*?(.+)$')
   if ($match.Success -and ($match.Groups[2].Value.Trim() -ieq $setupName)) {
     $expected = $match.Groups[1].Value.ToLowerInvariant()
@@ -411,11 +415,11 @@ foreach ($line in ((Get-Text $sumsAsset.browser_download_url 'text/plain') -spli
 if (-not $expected) {
   Stop-Install ('Release ' + $tag + ' does not publish a hash for ' + $setupName + '.') `
     'AI17Z will not run a setup program it cannot check.' `
-    ('See https://github.com/' + $Repository + '/releases')
+    ('See ' + $ProjectUrl + '/-/releases')
 }
 
-Assert-AllowedUrl $setupAsset.browser_download_url
-$response = Invoke-WebRequest -Uri $setupAsset.browser_download_url -UseBasicParsing -Headers @{ 'User-Agent' = 'AI17Z-Install' }
+Assert-AllowedUrl $setupAsset.direct_asset_url
+$response = Invoke-WebRequest -Uri $setupAsset.direct_asset_url -UseBasicParsing -Headers @{ 'User-Agent' = 'AI17Z-Install' }
 $bytes = $response.Content
 if ($bytes -isnot [byte[]]) { $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$bytes) }
 
@@ -426,7 +430,7 @@ if ($actual -ne $expected) {
   # Fail closed, and do not offer a way past it.
   Stop-Install 'The setup program does not match its published SHA-256.' `
     ("expected  " + $expected + "`ngot       " + $actual + "`n`nNothing was written and nothing was run.") `
-    ("Do not try again on the same network without thinking about why.`nIf it happens twice, stop and report it at https://github.com/" + $Repository + '/issues')
+    ("Do not try again on the same network without thinking about why.`nIf it happens twice, stop and report it at " + $ProjectUrl + '/-/issues')
 }
 
 # Written where the setup program keeps its own log, so everything setup owns is
@@ -568,7 +572,7 @@ if ($code -ne 0) {
       [System.IO.File]::AppendAllText($logPath, $entry, (New-Object System.Text.UTF8Encoding($false)))
       Write-Host ''
       Write-Host ('  Written down in full at ' + $logPath) -ForegroundColor DarkGray
-      Write-Host ('  Please report it at https://github.com/' + $Repository + '/issues') -ForegroundColor Yellow
+      Write-Host ('  Please report it at ' + $ProjectUrl + '/-/issues') -ForegroundColor Yellow
     } catch {
       # Could not write the log. The sentence above is still on screen, which is
       # the part that matters; failing to record a failure must not become a
