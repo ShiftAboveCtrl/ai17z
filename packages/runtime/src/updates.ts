@@ -3,7 +3,7 @@
  *
  * The shape of this is a deliberate answer to "am I being forced to update?".
  * Nothing here downloads anything, nothing replaces a running installation, and
- * nothing nags. It asks GitHub what has been released, compares that to what is
+ * nothing nags. It asks GitLab what has been released, compares that to what is
  * running, and puts the release notes on a screen. Everything after that is a
  * person clicking something.
  *
@@ -37,9 +37,11 @@ import {
   createLogger,
   errorMessage,
   nowIso,
+  RELEASE_PROJECT,
   releaseAssetUrl,
   releaseName,
-  releasesFeedUrl,
+  releasePageUrl,
+  releasesApiUrl,
   windowsInstallerAsset,
   windowsSetupAsset,
 } from '@xbam/shared';
@@ -54,9 +56,9 @@ const TIMEOUT_MS = 8_000;
  * How long an answer is reused.
  *
  * A version is published every few weeks at most, so asking more often than
- * this buys nothing and spends somebody's rate limit. Unauthenticated GitHub
+ * this buys nothing and spends somebody's rate limit. Unauthenticated API
  * requests are limited per IP address, and an installation that asked on every
- * page load would exhaust that for everything else on the same network.
+ * page load would spend that for everything else on the same network.
  */
 const CACHE_MS = 6 * 60 * 60 * 1000;
 
@@ -64,12 +66,12 @@ const CHECK_KEY = 'updates.check';
 const SKIPPED_KEY = 'updates.skipped';
 const ENABLED_KEY = 'updates.enabled';
 
-const REPOSITORY = process.env.AI17Z_UPDATE_REPO ?? 'ShiftAboveCtrl/ai17z';
+const REPOSITORY = process.env.AI17Z_UPDATE_REPO ?? RELEASE_PROJECT;
 
 export interface ReleaseInfo {
   /** The version, with no leading v: `0.1.1`, `0.2.0-rc.1`. */
   version: string;
-  /** What GitHub calls it, which is what a URL needs. */
+  /** What the tag is called, which is what a URL needs. */
   tag: string;
   /** The readable name: `AI17Z Beta 3.1`. */
   name: string;
@@ -124,7 +126,7 @@ export interface UpdateState {
    * Why the last check did not produce an answer.
    *
    * Kept rather than thrown: an installation with no internet is not broken,
-   * and a screen that says "could not reach GitHub" is more use than one that
+   * and a screen that says "could not reach GitLab" is more use than one that
    * silently shows nothing.
    */
   error: string | null;
@@ -213,52 +215,37 @@ interface CachedCheck {
 export { compareVersions } from '@xbam/shared';
 
 
-/** How many feed entries are read. Bounds the work regardless of feed size. */
-const FEED_ENTRIES = 20;
+/** How many releases are read. Bounds the work however many there are. */
+const RELEASES_READ = 20;
 
-interface FeedEntry {
+interface ListedRelease {
   tag: string;
   /** What the release is called, which is a title somebody may have written. */
   title: string;
-  /** When the feed says it was last touched. */
-  updated: string;
+  /** When it was released. */
+  released: string;
 }
 
 /**
- * What the releases feed is currently advertising, newest first.
+ * What the releases API is advertising, newest first.
  *
- * Parsed rather than deserialised, because three fields are wanted and an XML
- * parser is a dependency this does not otherwise need.
- *
- * The tag comes from the entry's own link, `.../releases/tag/<tag>`, and not
- * from the title: a title is written by a person and a tag is the thing every
- * filename and comparison here is built from.
- *
- * A draft release has no feed entry at all, which is the same exclusion the
- * REST path used to have to apply by hand.
+ * Validated field by field rather than trusted, because it is remote data and
+ * three fields are wanted. A release whose date is in the future is one GitLab
+ * calls upcoming: announced, not yet out. It is skipped, which is the same
+ * exclusion a draft had on GitHub.
  */
-function entriesFromFeed(xml: string): FeedEntry[] {
-  const entries: FeedEntry[] = [];
-  for (const chunk of xml.split('<entry').slice(1, FEED_ENTRIES + 1)) {
-    const tag = /releases\/tag\/([^"'<>\s]+)/.exec(chunk)?.[1];
-    if (!tag) continue;
-    entries.push({
-      tag: decodeXml(tag),
-      title: decodeXml(/<title[^>]*>([\s\S]*?)<\/title>/.exec(chunk)?.[1]?.trim() ?? ''),
-      updated: /<updated[^>]*>([\s\S]*?)<\/updated>/.exec(chunk)?.[1]?.trim() ?? '',
-    });
+export function releasesFromApi(body: unknown, now = Date.now()): ListedRelease[] {
+  if (!Array.isArray(body)) return [];
+  const releases: ListedRelease[] = [];
+  for (const item of body.slice(0, RELEASES_READ)) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as { tag_name?: unknown; name?: unknown; released_at?: unknown; upcoming_release?: unknown };
+    if (typeof r.tag_name !== 'string' || !r.tag_name) continue;
+    const released = typeof r.released_at === 'string' ? r.released_at : '';
+    if (r.upcoming_release === true || (released && Date.parse(released) > now)) continue;
+    releases.push({ tag: r.tag_name, title: typeof r.name === 'string' ? r.name : '', released });
   }
-  return entries;
-}
-
-/** The five entities an Atom document may use around a tag. */
-function decodeXml(value: string): string {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&');
+  return releases;
 }
 
 /** One bounded GET that must not be allowed to hang or run away. */
@@ -269,8 +256,8 @@ async function get(url: string, accept: string): Promise<Response> {
     return await fetch(url, {
       headers: {
         accept,
-        // GitHub asks for one, and an unidentified client is refused more
-        // readily. It names the product and nothing about the machine.
+        // An unidentified client is refused more readily. It names the
+        // product and nothing about the machine.
         'user-agent': 'AI17Z',
       },
       signal: controller.signal,
@@ -284,40 +271,30 @@ async function get(url: string, accept: string): Promise<Response> {
 /**
  * The newest release this installation would accept.
  *
- * Nothing here calls the REST API, and that is the point rather than a detail.
- * An installation whose agent watches a repository spends the unauthenticated
- * REST budget on that watching, and when the budget is gone the update check
- * used to go with it: the release was published, downloadable, and invisible.
- * The feed and the per-tag assets are ordinary `github.com` and are not charged
- * against it, so watching and updating can no longer starve each other.
- *
- * `/releases/latest` is still not used, for the reason it never was: it
- * excludes prereleases entirely, which is every release this product has made.
- *
  * Three steps, and each one refuses rather than guesses:
  *
- *   1. the feed says which tags exist, newest first
+ *   1. the releases API says which tags are out, newest first
  *   2. the tag says the version, and the channel rule says whether this
  *      installation is allowed to see it
  *   3. that tag's own manifest confirms the release is actually finished
  *
  * Step three is what stops a half-published release being offered. A release
- * appears in the feed the moment it is created, and its assets arrive after;
- * a manifest that is not there yet means the packages are not there either.
+ * is listed the moment it is created, and its assets are linked after; a
+ * manifest that is not there yet means the packages are not there either.
  */
 export async function fetchLatestRelease(current = buildVersion().version): Promise<ReleaseInfo | null> {
-  const feed = await get(releasesFeedUrl(REPOSITORY), 'application/atom+xml');
-  if (!feed.ok) {
-    throw new Error(`The releases feed answered ${feed.status} ${feed.statusText}`.trim());
+  const listed = await get(releasesApiUrl(REPOSITORY), 'application/json');
+  if (!listed.ok) {
+    throw new Error(`The releases list answered ${listed.status} ${listed.statusText}`.trim());
   }
   const onPrerelease = compareVersions(current, current.replace(/-.*$/, '')) < 0;
 
-  const candidates = entriesFromFeed(await feed.text())
+  const candidates = releasesFromApi(await listed.json())
     .map((entry) => ({ ...entry, version: entry.tag.replace(/^v/, '') }))
     .filter((entry) => entry.version.length > 0)
-    // A tag carrying a prerelease part is a prerelease, which is exactly what
-    // the release workflow tells GitHub: it sets the flag from the tag and
-    // says so. Somebody on a stable version is never shown a candidate build.
+    // A tag carrying a prerelease part is a prerelease. GitLab has no flag for
+    // it, so the tag is the only authority there is, as it always was here.
+    // Somebody on a stable version is never shown a candidate build.
     .filter((entry) => onPrerelease || !entry.version.includes('-'))
     .sort((a, b) => compareVersions(b.version, a.version));
 
@@ -345,7 +322,7 @@ export async function fetchLatestRelease(current = buildVersion().version): Prom
     );
   }
 
-  // GitHub defaults a release's title to its tag, and a heading that reads
+  // A release's title defaults to its tag, and a heading that reads
   // `v1.0.0-beta.2` above the notes tells somebody nothing they did not get
   // from the number beside it. A title that is only the tag is treated as no
   // title and rendered; a title somebody actually wrote is left alone.
@@ -360,13 +337,13 @@ export async function fetchLatestRelease(current = buildVersion().version): Prom
     label: named.short,
     channel: named.channel,
     notes: await fetchNotes(newest.tag),
-    url: `https://github.com/${REPOSITORY}/releases/tag/${newest.tag}`,
+    url: releasePageUrl(REPOSITORY, newest.tag),
     // Composed rather than looked up. `releaseManifest.ts` is the one place
     // that spells an asset name, so asking it costs no request and cannot
     // disagree with what the release actually published.
     installerUrl: releaseAssetUrl(REPOSITORY, newest.tag, windowsInstallerAsset(version)),
     setupUrl: releaseAssetUrl(REPOSITORY, newest.tag, windowsSetupAsset(version)),
-    publishedAt: newest.updated || nowIso(),
+    publishedAt: newest.released || nowIso(),
     prerelease: version.includes('-'),
   };
 }
@@ -375,8 +352,8 @@ export async function fetchLatestRelease(current = buildVersion().version): Prom
  * The release notes, as the Markdown they were written in.
  *
  * Published as an asset for the same reason everything else here is: it is
- * reachable at an exact tag without an API call. The feed carries a rendered
- * HTML copy, which is the wrong thing to hand a Markdown renderer.
+ * reachable at an exact tag, the same way as every other asset, and the panel
+ * renders exactly what was written.
  *
  * A release from before this asset existed simply has none, and the panel
  * already says so in a sentence. Notes are worth reading and are not worth
@@ -454,7 +431,7 @@ function updateMethod(): UpdateMethod {
  * What to show. Reads the cache unless it is stale or `refresh` is asked for.
  *
  * A failed check never throws: the answer is the state with `error` filled in,
- * because "we could not reach GitHub" is information and an exception is not.
+ * because "we could not reach GitLab" is information and an exception is not.
  */
 export async function updateState(options: { refresh?: boolean } = {}): Promise<UpdateState> {
   const current = buildVersion().version;
