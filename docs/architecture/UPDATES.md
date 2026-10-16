@@ -12,7 +12,7 @@ published — trades a problem nobody had for one they cannot see coming.
 ## What actually happens
 
 At most once every six hours, and only when something asks, the API reads
-GitHub's public list of releases for this repository, keeps the newest one that
+GitLab's public list of releases for this project, keeps the newest one that
 applies, and caches the answer in `app_settings` under `updates.check`. Opening
 a screen reads that cache. Pressing **Check now** is the only thing that forces
 a request.
@@ -79,7 +79,7 @@ first of a cycle drops its number, because "Beta 1.0.0 (1)" is a worse name than
 
 The name is a rendering and nothing parses it back. Ordering, the prerelease
 filter, the tag, the installer filename and `VersionInfoVersion` are all the
-number. GitHub defaults a release's title to its tag, so a title that is only
+number. A release's title defaults to its tag, so a title that is only
 the tag is treated as no title and rendered; one somebody wrote is left alone.
 
 The installer says the same thing and cannot call the same function, so
@@ -211,7 +211,7 @@ functions out of the shipped script itself.
 ## What the check sends
 
 A `User-Agent` of `AI17Z`, and nothing else. No identifier, no version, no
-account, nothing about any agent. GitHub learns what it learns from anybody
+account, nothing about any agent. GitLab learns what it learns from anybody
 opening the releases page. See `docs/PRIVACY.md`.
 
 ## Release notes

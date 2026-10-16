@@ -8,9 +8,8 @@
 
 The model is replaceable. The agent is durable.
 
-[![CI](https://github.com/ShiftAboveCtrl/ai17z/actions/workflows/ci.yml/badge.svg)](https://github.com/ShiftAboveCtrl/ai17z/actions/workflows/ci.yml)
-[![Platform packaging](https://github.com/ShiftAboveCtrl/ai17z/actions/workflows/platform-packaging.yml/badge.svg)](https://github.com/ShiftAboveCtrl/ai17z/actions/workflows/platform-packaging.yml)
-[![Release](https://img.shields.io/github/v/release/ShiftAboveCtrl/ai17z?include_prereleases&sort=semver)](https://github.com/ShiftAboveCtrl/ai17z/releases)
+[![CI](https://gitlab.com/shiftabovectrl/ai17z/badges/main/pipeline.svg)](https://gitlab.com/shiftabovectrl/ai17z/-/pipelines)
+[![Release](https://gitlab.com/shiftabovectrl/ai17z/-/badges/release.svg)](https://gitlab.com/shiftabovectrl/ai17z/-/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [Install](#install) · [What makes it different](#what-makes-it-different) · [Architecture](#architecture) · [Status](#status) · [Documentation](#documentation)
@@ -84,7 +83,7 @@ enables browser-backed channels.
 Open Windows Terminal and paste:
 
 ```powershell
-irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex
 ```
 
 That is the whole installation: it checks the machine, installs what is
@@ -93,12 +92,12 @@ missing, installs AI17Z, starts it, verifies it works, and opens it.
 ### macOS and Ubuntu
 
 Download the short installer from the
-[latest release](https://github.com/ShiftAboveCtrl/ai17z/releases), read it,
+[latest release](https://gitlab.com/shiftabovectrl/ai17z/-/releases), read it,
 and run it. Both are plain shell scripts, deliberately short enough to audit.
 
 > **Install AI17Z only with the command published here.** Nowhere else
 > distributes it. The command fetches
-> `raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1`, checks the
+> `gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1`, checks the
 > setup script against the release's own `SHA256SUMS.txt` before writing
 > anything, and re-checks it immediately before running it.
 >
@@ -264,7 +263,7 @@ can answer questions about the exact version you are running.
 
 ## Contributing
 
-Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers
+Issues and merge requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers
 the workflow and what the gates expect, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 covers the project's own spaces, and [SECURITY.md](SECURITY.md) is how to report
 a vulnerability privately.

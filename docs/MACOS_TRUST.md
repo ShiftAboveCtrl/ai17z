@@ -13,7 +13,8 @@ stand behind, and the things it cannot claim are named as such.
 | Does it strip quarantine attributes to get past a warning? | **No** |
 | Does it self-sign and present that as trusted? | **No** |
 | What verifies the package instead? | a SHA-256 published by the release, checked before anything is unpacked |
-| What proves where it came from? | GitHub artifact attestation — build provenance, **not** Apple notarization |
+| What proves where it came from? | Sigstore provenance from this project's GitLab pipeline: build provenance, **not** Apple notarization |
+| Which Macs? | Apple silicon (M1 or newer). There is no Intel package |
 
 ## Why it is a tarball
 
@@ -61,15 +62,26 @@ got are the bytes that release published. If the release itself were tampered
 with, the checksum would have been replaced alongside the payload and nothing in
 the chain would notice.
 
-**What stands against that** is that releases are built by a public GitHub
-workflow from a public tag, never uploaded from anybody's machine, and that
+**What stands against that** is that releases are built by a public GitLab
+pipeline from a public tag, never uploaded from anybody's machine, and that
 every published file is one you can read.
 
-**GitHub artifact attestation** signs a statement that these exact bytes came out
-of that workflow, at that commit, in that repository. That is build provenance.
-It is **not** Apple notarization, **not** code signing, and **not** a claim that
-any platform vendor has examined AI17Z. Verifying it needs the GitHub CLI and is
-never required to install AI17Z.
+**Sigstore provenance** signs every published file with the identity of this
+project's own GitLab pipeline, run from that tag: a bundle beside each file,
+named `<file>.sigstore.json`, saying these exact bytes came out of that
+pipeline, at that tag, in that project, and recorded in Sigstore's public
+transparency log. That is build provenance. It is **not** Apple notarization, **not** code
+signing, and **not** a claim that any platform vendor has examined AI17Z.
+Verifying it needs `cosign` and is never required to install AI17Z.
+
+## Why Apple silicon only
+
+AI17Z builds each package on the architecture it is for, and proves it there,
+because a package built for one architecture on another installs and then fails
+with "cannot load". GitLab's hosted Macs are Apple silicon. An Intel package
+built on one would run under Rosetta, which is a relabelled architecture rather
+than a proved one, so there is no Intel package. A Mac already running AI17Z
+keeps the version it has, and its updater says why no newer one is offered.
 
 ## Why not notarize
 
@@ -106,17 +118,20 @@ shasum -a 256 AI17Z-macos-arm64-<version>.tar.gz
 Compare it to the line in `SHA256SUMS.txt` on the release page. The installer
 does this itself and refuses on a mismatch, having written nothing.
 
-With the GitHub CLI, the provenance as well:
+With `cosign`, the provenance as well:
 
 ```bash
-gh attestation verify AI17Z-macos-arm64-<version>.tar.gz --repo ShiftAboveCtrl/ai17z
+cosign verify-blob AI17Z-macos-arm64-<version>.tar.gz \
+  --bundle AI17Z-macos-arm64-<version>.tar.gz.sigstore.json \
+  --certificate-identity "https://gitlab.com/shiftabovectrl/ai17z//.gitlab-ci.yml@refs/tags/v<version>" \
+  --certificate-oidc-issuer https://gitlab.com
 ```
 
 ## Reporting a problem
 
 If a hash does not match, or AI17Z does something this page does not describe:
 **stop, and open an issue** at
-<https://github.com/ShiftAboveCtrl/ai17z/issues>. For anything you believe is a
+<https://gitlab.com/shiftabovectrl/ai17z/-/issues>. For anything you believe is a
 security problem, [SECURITY.md](../SECURITY.md) says how to report it privately.
 
 ## What is written here has not been watched happen

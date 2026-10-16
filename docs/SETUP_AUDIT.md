@@ -5,7 +5,7 @@ lot of trust to ask for one pasted command, so this page is what it does, in
 full, and how to check that for yourself rather than taking our word for it.
 
 **Install AI17Z only from the official repository:
-<https://github.com/ShiftAboveCtrl/ai17z>.** Nowhere else distributes it. A copy
+<https://gitlab.com/shiftabovectrl/ai17z>.** Nowhere else distributes it. A copy
 from anywhere else is not AI17Z, whatever it is called.
 
 ---
@@ -14,9 +14,9 @@ from anywhere else is not AI17Z, whatever it is called.
 
 | | |
 | --- | --- |
-| What you paste | `irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 \| iex` |
+| What you paste | `irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 \| iex` |
 | What that fetches | [`install.ps1`](../install.ps1) — around 200 lines of code under a long comment explaining itself, in this repository, and the entire file at that URL |
-| What it does | asks GitHub for the newest release, downloads that release's setup script, **checks its SHA-256 against the release's own `SHA256SUMS.txt`**, writes it where you can read it, and runs the bytes it checked |
+| What it does | asks GitLab for the newest release, downloads that release's setup script, **checks its SHA-256 against the release's own `SHA256SUMS.txt`**, writes it where you can read it, and runs the bytes it checked |
 | What the setup program is | [`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/Setup-AI17Z.ps1) — the whole installer, as a script, published with every release as `Install-AI17Z-<version>.ps1` |
 | What is not involved | no executable, no download to double-click, and no change to SmartScreen, Defender, UAC or your execution policy |
 | What it installs | WSL 2, Docker Desktop, Node.js and Google Chrome — only the ones you do not already have |
@@ -111,9 +111,7 @@ is half-applied.
 
 | Host | What for |
 | --- | --- |
-| `api.github.com` | asking which release to install |
-| `github.com` | the release assets |
-| `objects.githubusercontent.com`, `release-assets.githubusercontent.com` | where GitHub redirects asset downloads |
+| `gitlab.com` | asking which release to install, and the release assets. GitLab answers a download with one redirect on `gitlab.com` itself, to the package registry |
 
 That is the complete list, and the script refuses to start a request anywhere
 else. It is not a guideline in a comment: `Assert-Ai17zAllowedUrl` checks every
@@ -257,7 +255,7 @@ have to take that on trust: the same URL in a browser shows you the file, and
 this reads it without running any of it.
 
 ```powershell
-irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | Out-File $env:TEMP\install.ps1
+irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | Out-File $env:TEMP\install.ps1
 notepad $env:TEMP\install.ps1
 ```
 
@@ -271,7 +269,7 @@ written to `%LOCALAPPDATA%\AI17Z-setup\Setup-AI17Z.checked.ps1`, and is kept
 there whenever anything goes wrong — or always, if you ask:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -KeepDownload
+& ([scriptblock]::Create((irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1))) -KeepDownload
 Get-FileHash $env:LOCALAPPDATA\AI17Z-setup\Setup-AI17Z.checked.ps1 -Algorithm SHA256
 ```
 
@@ -299,7 +297,7 @@ That hash is the one on the `Install-AI17Z-<version>.ps1` line of
 ### 5. Make it tell you what it would do
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -WhatIfOnly
+& ([scriptblock]::Create((irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1))) -WhatIfOnly
 ```
 
 It looks at the machine, prints what it would install, and changes nothing.
@@ -395,9 +393,12 @@ Neither is a defence against a compromised release: a checksum published by the
 release it describes is
 **not** a defence against a release that has itself been tampered with,
 because the checksum file and the payload would have been replaced together.
-What stands against that is that releases are built by a public GitHub workflow
-from a public tag, never uploaded from anybody's laptop, and that every published
-file is a file you can read.
+What stands against that is that releases are built by a public GitLab
+pipeline from a public tag, never uploaded from anybody's laptop, that every
+published file is a file you can read, and that every published file carries a
+Sigstore bundle signed by that pipeline's own identity at that tag, which a
+replaced file cannot carry. The setup program does not check those bundles;
+anybody can, with `cosign`. See [Windows trust](WINDOWS_TRUST.md).
 
 ### What the first URL costs, said plainly
 
@@ -406,10 +407,10 @@ what it returns is whatever that branch holds at the moment you paste it, and
 nothing in the command pins it. That is the one unpinned step, and it is where
 the chain starts rather than something the chain covers.
 
-What follows it is pinned: a specific release, read from GitHub's API; a specific
+What follows it is pinned: a specific release, read from GitLab's API; a specific
 asset; a hash from that release compared before a byte is written; and the same
 hash checked again by the process that runs it. So the honest statement is that
-you are trusting **GitHub's copy of this repository at the moment you run it** —
+you are trusting **GitLab's copy of this repository at the moment you run it**:
 the same thing you trust when you `git clone` it — and after that you are
 trusting a hash.
 
@@ -435,7 +436,7 @@ cover a lot of ground and the interesting part is always the edge of it.
 | **A release tag becoming a path** | the tag is the one value that arrives in a remote document and turns into a filename. Both scripts check it is a version number — no separator, no colon, no drive letter — before anything is derived from it, and **refuse** rather than repair one they do not recognise |
 | **A tampered resume note** | it is read for which instance was being set up and nothing else. Every step re-probes the machine, and a note from another instance, another schema or another day is discarded |
 | **Secrets in the log** | anything key-shaped is blanked as it is written, not as it is read |
-| **A compromised GitHub release** | **not defended against by the hash.** The checksum file and the package would have been replaced together. The defence is that releases are built by a public workflow from a public tag, never uploaded from anybody's machine |
+| **A compromised GitLab release** | **not defended against by the hash.** The checksum file and the package would have been replaced together. What stands against it is that releases are built by a public pipeline from a public tag, never uploaded from anybody's machine, and that every file carries a Sigstore bundle from that pipeline's identity, which a replaced file cannot. The setup program does not check the bundles; `cosign` can |
 | **A compromised `main` branch** | **not defended against**, and it is the first thing the command fetches. See [What the first URL costs](#what-the-first-url-costs-said-plainly) above. Clone at a tag instead if that matters to you |
 | **A compromised winget package** | not ours to defend. It is the same trust you place in winget every other time you use it, which is the argument for using it rather than fetching binaries ourselves |
 | **Windows warning you about an unsigned program** | there is no unsigned program to warn about. Nothing here is downloaded to be double-clicked, so SmartScreen's reputation check never applies, and no security setting is changed to achieve that. See [Windows trust and SmartScreen](WINDOWS_TRUST.md) |
@@ -458,5 +459,5 @@ Docker, Node.js, Chrome and WSL are left alone. See
 
 If a hash does not match, or Setup does something this page does not describe:
 **stop, and open an issue** at
-<https://github.com/ShiftAboveCtrl/ai17z/issues>. For anything you think is a
+<https://gitlab.com/shiftabovectrl/ai17z/-/issues>. For anything you think is a
 security problem, [SECURITY.md](../SECURITY.md) says how to report it privately.

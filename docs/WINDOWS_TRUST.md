@@ -20,7 +20,7 @@ explain the warning away, the recommended route stopped producing a file to
 double-click at all:
 
 ```powershell
-irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex
 ```
 
 **That is not a way around SmartScreen, and this document is not going to
@@ -123,8 +123,8 @@ tampered with, the checksum would have been replaced alongside the payload, and
 nothing in the chain would notice. AI17Z does not have the first of those and
 says so rather than implying the second covers it.
 
-**What stands in its place** is that every release is built by a public GitHub
-workflow from a public tag, never uploaded from anybody's machine; that every
+**What stands in its place** is that every release is built by a public GitLab
+pipeline from a public tag, never uploaded from anybody's machine; that every
 published file is a file you can read; and that
 [`install.ps1`](../install.ps1) checks the setup program's hash before writing it
 and the process that runs it checks again. [SETUP_AUDIT.md](SETUP_AUDIT.md) is
