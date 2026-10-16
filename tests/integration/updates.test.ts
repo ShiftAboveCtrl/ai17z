@@ -6,12 +6,13 @@ import { installHarness } from '../support/harness';
 
 installHarness();
 
-const REPO = 'ShiftAboveCtrl/ai17z';
-const DOWNLOAD = `https://github.com/${REPO}/releases/download`;
+const REPO = 'shiftabovectrl/ai17z';
+const DOWNLOAD = `https://gitlab.com/${REPO}/-/releases`;
+const asset = (tag: string, name: string) => `${DOWNLOAD}/${tag}/downloads/${name}`;
 
 /**
- * One release as the world can see it, through the two routes that cost no
- * REST budget: the feed entry, and the files published under its own tag.
+ * One release as the world can see it, through the two routes the updater
+ * uses: GitLab's releases list, and the files linked under its own tag.
  *
  * `manifest: null` is a release that exists and is not finished. `notes: null`
  * is one published before notes became an asset.
@@ -19,7 +20,8 @@ const DOWNLOAD = `https://github.com/${REPO}/releases/download`;
 interface FakeRelease {
   tag: string;
   title?: string;
-  updated?: string;
+  released?: string;
+  upcoming?: boolean;
   manifest?: Record<string, unknown> | null;
   notes?: string | null;
 }
@@ -28,39 +30,38 @@ function release(tag: string, extra: Partial<FakeRelease> = {}): FakeRelease {
   return {
     tag,
     title: `AI17Z ${tag}`,
-    updated: '2026-09-01T00:00:00.000Z',
+    released: '2026-09-01T00:00:00.000Z',
     manifest: { schemaVersion: 1, version: tag.replace(/^v/, ''), tag },
     notes: '### What changed\n\n- Something',
     ...extra,
   };
 }
 
-function atom(releases: FakeRelease[]): string {
-  const entries = releases
-    .map(
-      (entry) => `<entry>
-  <id>tag:github.com,2008:Repository/1/${entry.tag}</id>
-  <updated>${entry.updated ?? ''}</updated>
-  <link rel="alternate" type="text/html" href="https://github.com/${REPO}/releases/tag/${entry.tag}"/>
-  <title>${entry.title ?? ''}</title>
-  <content type="html">&lt;h3&gt;rendered, which is the wrong thing for a Markdown renderer&lt;/h3&gt;</content>
-</entry>`,
-    )
-    .join('\n');
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n${entries}\n</feed>`;
+/** The releases list, shaped the way GitLab's API answers it. */
+function listing(releases: FakeRelease[]): string {
+  return JSON.stringify(
+    releases.map((entry) => ({
+      tag_name: entry.tag,
+      name: entry.title ?? '',
+      released_at: entry.released ?? '',
+      upcoming_release: entry.upcoming ?? false,
+      description: '<h3>rendered, which is the wrong thing for a Markdown renderer</h3>',
+    })),
+  );
 }
 
-/** Every URL GitHub would have received, so "did it ask at all" is testable. */
+/** Every URL the updater asked for, so "did it ask at all" is testable. */
 let calls: string[] = [];
-const feedCalls = () => calls.filter((url) => url.endsWith('releases.atom'));
-const restCalls = () => calls.filter((url) => url.includes('api.github.com'));
+const isListing = (url: string) => url.startsWith(`https://gitlab.com/api/v4/projects/${encodeURIComponent(REPO)}/releases`);
+const listCalls = () => calls.filter(isListing);
+const githubCalls = () => calls.filter((url) => url.includes('github.com'));
 
 /**
  * The world, served the way the update path actually reaches it.
  *
  * Anything asking `api.github.com` is answered 403 on purpose. That is the
- * exhausted anonymous budget an agent watching a repository produces, and the
- * point of these tests is that the update path never touches it.
+ * exhausted anonymous budget an agent watching a GitHub repository produces,
+ * and the point of these tests is that the update path never touches GitHub.
  */
 function serve(releases: FakeRelease[] | Error, options: { restStatus?: number } = {}): void {
   vi.stubGlobal(
@@ -73,16 +74,15 @@ function serve(releases: FakeRelease[] | Error, options: { restStatus?: number }
       if (href.includes('api.github.com')) {
         return new Response('{"message":"API rate limit exceeded"}', { status: options.restStatus ?? 403 });
       }
-      if (href.endsWith('releases.atom')) {
-        return new Response(atom(releases), { status: 200, headers: { 'content-type': 'application/atom+xml' } });
+      if (isListing(href)) {
+        return new Response(listing(releases), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       for (const entry of releases) {
-        const base = `${DOWNLOAD}/${entry.tag}/`;
-        if (href === `${base}release-manifest.json`) {
+        if (href === asset(entry.tag, 'release-manifest.json')) {
           if (entry.manifest === null) return new Response('Not Found', { status: 404 });
           return new Response(JSON.stringify(entry.manifest), { status: 200 });
         }
-        if (href === `${base}release-notes.md`) {
+        if (href === asset(entry.tag, 'release-notes.md')) {
           if (entry.notes === null) return new Response('Not Found', { status: 404 });
           return new Response(entry.notes, { status: 200 });
         }
@@ -115,7 +115,7 @@ describe('finding out whether there is a newer version', () => {
     const state = await updateState({ refresh: true });
     expect(state.updateAvailable).toBe(true);
     expect(state.latest?.version).toBe('9.9.9');
-    expect(state.latest?.installerUrl).toBe(`${DOWNLOAD}/v9.9.9/AI17Z-Setup-9.9.9.exe`);
+    expect(state.latest?.installerUrl).toBe(asset('v9.9.9', 'AI17Z-Setup-9.9.9.exe'));
   });
 
   it('offers nothing when the newest release is this one or older', async () => {
@@ -142,26 +142,32 @@ describe('finding out whether there is a newer version', () => {
     expect(await fetchLatestRelease('1.0.0-beta.1')).toMatchObject({ version: '9.9.9-rc.1' });
   });
 
-  it('never sees a draft, because a draft has no feed entry', async () => {
-    // The REST path had to filter drafts by hand. The feed publishes only what
-    // is published, so the exclusion is structural rather than remembered.
-    serve([release('v0.0.1')]);
+  it('never offers a release GitLab calls upcoming', async () => {
+    // Announced with a date in the future and not out yet: GitLab's nearest
+    // thing to a draft. Both the flag and the date are honoured, so a list that
+    // carries only one of them still cannot offer it.
+    serve([
+      release('v9.9.9', { upcoming: true, released: '2999-01-01T00:00:00.000Z' }),
+      release('v9.9.8', { released: '2999-01-01T00:00:00.000Z' }),
+      release('v0.0.1'),
+    ]);
     const state = await updateState({ refresh: true });
     expect(state.updateAvailable).toBe(false);
+    expect(state.latest?.version).toBe('0.0.1');
   });
 
-  it('takes the newest, not the first the feed happens to list', async () => {
+  it('takes the newest, not the first the list happens to show', async () => {
     serve([release('v2.0.0'), release('v9.9.9'), release('v3.1.0')]);
     expect((await updateState({ refresh: true })).latest?.version).toBe('9.9.9');
   });
 
-  it('reads the feed and never the REST API', async () => {
+  it('asks for the list once and never asks GitLab to choose', async () => {
     serve([release('v9.9.9')]);
     await fetchLatestRelease('0.1.0');
-    expect(feedCalls()).toHaveLength(1);
-    expect(restCalls()).toHaveLength(0);
-    // `/releases/latest` hides prereleases, which is every release so far.
-    expect(calls.some((url) => url.includes('/releases/latest'))).toBe(false);
+    expect(listCalls()).toHaveLength(1);
+    expect(githubCalls()).toHaveLength(0);
+    // `permalink/latest` is GitLab deciding what is newest; here the tag does.
+    expect(calls.some((url) => url.includes('permalink/latest'))).toBe(false);
   });
 });
 
@@ -169,10 +175,10 @@ describe('finding out whether there is a newer version', () => {
  * The defect this architecture exists to close.
  *
  * An agent told to watch a repository polls GitHub through the REST API, and
- * the unauthenticated allowance is sixty an hour for the whole address. Two
- * installations on one connection exhaust it, and what went blind was the
- * updater: a release sat published and downloadable while the update check
- * reported that it could not reach GitHub to see which version.
+ * the unauthenticated allowance is sixty an hour for the whole address. When
+ * AI17Z itself was published there, two installations on one connection
+ * exhausted it and the updater went blind. Published on GitLab, the update
+ * path asks GitHub nothing, so that budget cannot reach it.
  */
 describe('not being starved by the agent that watches GitHub', () => {
   it('finds the release while the REST budget is exhausted', async () => {
@@ -184,10 +190,10 @@ describe('not being starved by the agent that watches GitHub', () => {
     expect(state.error).toBeNull();
   });
 
-  it('does not spend a single REST request doing it', async () => {
+  it('does not send a single request to GitHub doing it', async () => {
     serve([release('v9.9.9')]);
     await updateState({ refresh: true });
-    expect(restCalls()).toEqual([]);
+    expect(githubCalls()).toEqual([]);
   });
 
   it('needs no token, and gains no privilege from one', async () => {
@@ -241,7 +247,7 @@ describe('what happens when GitHub cannot be reached', () => {
   it('reports the failure instead of throwing it', async () => {
     // An installation with no internet is not a broken one, and a screen that
     // says so is more use than one that quietly shows nothing.
-    serve(new Error('getaddrinfo ENOTFOUND github.com'));
+    serve(new Error('getaddrinfo ENOTFOUND gitlab.com'));
     const state = await updateState({ refresh: true });
     expect(state.error).toContain('ENOTFOUND');
     expect(state.updateAvailable).toBe(false);
@@ -258,7 +264,7 @@ describe('what happens when GitHub cannot be reached', () => {
     expect(state.updateAvailable).toBe(true);
   });
 
-  it('says so when the feed answers with a status rather than a document', async () => {
+  it('says so when the releases list answers with a status rather than a document', async () => {
     vi.stubGlobal('fetch', (async () => new Response('nope', { status: 503 })) as unknown as typeof fetch);
     expect((await updateState({ refresh: true })).error).toContain('503');
   });
@@ -284,8 +290,8 @@ describe('what happens when GitHub cannot be reached', () => {
 /**
  * A release is only installable once its packages are published.
  *
- * The feed carries an entry the moment a release is created, and the assets
- * arrive afterwards. The manifest is what says the release is finished, and an
+ * The list carries a release the moment it is created, and the assets are
+ * linked afterwards. The manifest is what says the release is finished, and an
  * absent one is a refusal rather than an older version quietly offered instead.
  */
 describe('a release that is not finished yet', () => {
@@ -311,7 +317,7 @@ describe('a release that is not finished yet', () => {
       (async (url: string | URL) => {
         const href = String(url);
         calls.push(href);
-        if (href.endsWith('releases.atom')) return new Response(atom([release('v9.9.9')]), { status: 200 });
+        if (isListing(href)) return new Response(listing([release('v9.9.9')]), { status: 200 });
         if (href.endsWith('release-manifest.json')) return new Response('<html>not json</html>', { status: 200 });
         return new Response('', { status: 404 });
       }) as unknown as typeof fetch,
@@ -326,21 +332,21 @@ describe('how often it asks', () => {
   it('answers from the cache rather than asking again', async () => {
     serve([release('v9.9.9')]);
     await updateState({ refresh: true });
-    expect(feedCalls()).toHaveLength(1);
+    expect(listCalls()).toHaveLength(1);
 
     await updateState();
     await updateState();
     // Opening a screen must not send a request. GitHub rate-limits per address,
     // and an installation that asked on every page load would spend that on
     // everything else behind the same router.
-    expect(feedCalls()).toHaveLength(1);
+    expect(listCalls()).toHaveLength(1);
   });
 
   it('asks again when somebody presses the button', async () => {
     serve([release('v9.9.9')]);
     await updateState({ refresh: true });
     await updateState({ refresh: true });
-    expect(feedCalls()).toHaveLength(2);
+    expect(listCalls()).toHaveLength(2);
   });
 
   it('asks again once the answer is old', async () => {
@@ -351,7 +357,7 @@ describe('how often it asks', () => {
     await ops.setSetting('updates.check', { ...stale, checkedAt: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString() });
 
     await updateState();
-    expect(feedCalls()).toHaveLength(2);
+    expect(listCalls()).toHaveLength(2);
   });
 });
 
@@ -399,7 +405,7 @@ describe('what a release is called on the screen', () => {
     expect(state.latest?.name).toBe('The one where replies work');
   });
 
-  it('renders a name when the feed carries none at all', async () => {
+  it('renders a name when the list carries none at all', async () => {
     serve([release('v9.9.9', { title: '' })]);
     const state = await updateState({ refresh: true });
     expect(state.latest?.name).toBe('AI17Z 9.9.9');
@@ -428,8 +434,8 @@ describe('picking the right download out of a release', () => {
   it('addresses both by name, at the exact tag', async () => {
     serve([release('v9.9.9')]);
     const latest = await fetchLatestRelease('9.0.0');
-    expect(latest?.installerUrl).toBe(`${DOWNLOAD}/v9.9.9/AI17Z-Setup-9.9.9.exe`);
-    expect(latest?.setupUrl).toBe(`${DOWNLOAD}/v9.9.9/Install-AI17Z-9.9.9.ps1`);
+    expect(latest?.installerUrl).toBe(asset('v9.9.9', 'AI17Z-Setup-9.9.9.exe'));
+    expect(latest?.setupUrl).toBe(asset('v9.9.9', 'Install-AI17Z-9.9.9.ps1'));
   });
 
   it('does not mistake the command for the setup program it fetches', async () => {
@@ -445,8 +451,8 @@ describe('picking the right download out of a release', () => {
     serve([release('v9.9.9')]);
     const latest = await fetchLatestRelease('9.0.0');
     for (const url of [latest?.installerUrl, latest?.setupUrl, latest?.url]) {
-      expect(url).toContain(`${REPO}/releases`);
-      expect(url).toMatch(/^https:\/\/github\.com\//);
+      expect(url).toContain(`${REPO}/-/releases/v9.9.9`);
+      expect(url).toMatch(/^https:\/\/gitlab\.com\//);
     }
   });
 
@@ -462,11 +468,11 @@ describe('picking the right download out of a release', () => {
  * The notes, which are worth reading and are not worth failing a check over.
  */
 describe('the release notes', () => {
-  it('reads the Markdown that was published, not the rendered feed copy', async () => {
+  it('reads the Markdown that was published, not the rendered copy in the list', async () => {
     serve([release('v9.9.9', { notes: '### What changed\n\n- A thing' })]);
     const latest = await fetchLatestRelease('9.0.0');
     expect(latest?.notes).toContain('### What changed');
-    // The feed's own copy is HTML, which is the wrong thing to hand a Markdown
+    // The list's own copy is HTML, which is the wrong thing to hand a Markdown
     // renderer, so it must not be what arrives here.
     expect(latest?.notes).not.toContain('&lt;h3&gt;');
     expect(latest?.notes).not.toContain('<h3>');

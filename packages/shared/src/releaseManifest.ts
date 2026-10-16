@@ -126,33 +126,36 @@ export const MANIFEST_ASSET = 'release-manifest.json';
 export const NOTES_ASSET = 'release-notes.md';
 
 /**
+ * Where AI17Z is published: the project's path on GitLab.
+ *
+ * One constant, because the TypeScript side has one place to be wrong in. The
+ * installers and updaters are shell and PowerShell and cannot import this, so
+ * `tests/unit/releaseManifest.test.ts` holds each of their copies against it.
+ */
+export const RELEASE_HOST = 'gitlab.com';
+export const RELEASE_PROJECT = 'shiftabovectrl/ai17z';
+
+/** The project's own page. */
+export function projectUrl(project: string = RELEASE_PROJECT): string {
+  return `https://${RELEASE_HOST}/${project}`;
+}
+
+/**
  * Where an installation looks to find out what has been released.
  *
- * Deliberately `github.com` and not `api.github.com`, and that is the whole
- * point of this function existing rather than a URL being written inline.
+ * GitLab's releases API, newest first, which lists prereleases: GitLab has no
+ * prerelease flag at all, so whether a release is one is read from its tag,
+ * which is what the updater always did. `permalink/latest` is not used, because
+ * it answers with a redirect to whatever GitLab considers newest at that
+ * moment rather than letting the caller decide.
  *
- * The REST API allows sixty requests an hour to an unauthenticated address,
- * and an AI17Z installation already spends that budget on something else: a
- * repository an owner asked their agent to watch is polled through the REST
- * API, four endpoints at a time. Two installations on one home connection
- * during an active week exhaust sixty an hour between them, and what breaks is
- * not the watching. It is the update check, which then cannot discover a
- * release that is sitting there published. Measured: the core budget read
- * `0 of 60` and the updater reported that it could not reach GitHub to see
- * which version, correctly refusing rather than guessing, while the release it
- * was looking for had been downloadable the whole time.
- *
- * The releases feed is ordinary `github.com` and is not charged against that
- * budget. Measured across three consecutive fetches: the REST budget read 56
- * before and 56 after. It also lists prereleases, which is the reason
- * `/releases/latest` was rejected for this job long before any of the above:
- * it hides exactly the releases this product ships.
- *
- * So an owner's update check and an agent's repository watching no longer draw
- * on one budget, and neither can starve the other.
+ * The budget problem that shaped the GitHub version of this does not exist
+ * here: an agent watching a repository spends `api.github.com`'s budget, and
+ * this is a different host with limits measured in requests a minute, not an
+ * hour. An update check and repository watching cannot starve each other.
  */
-export function releasesFeedUrl(repository: string): string {
-  return `https://github.com/${repository}/releases.atom`;
+export function releasesApiUrl(project: string = RELEASE_PROJECT, perPage = 20): string {
+  return `https://${RELEASE_HOST}/api/v4/projects/${encodeURIComponent(project)}/releases?per_page=${perPage}&order_by=released_at&sort=desc`;
 }
 
 /**
@@ -160,11 +163,23 @@ export function releasesFeedUrl(repository: string): string {
  *
  * Exact tag rather than "latest", so what is fetched is decided before the
  * request rather than by whatever the server considers newest at that moment.
- * This is the same address the release qualification gate uses, and it needs no
- * API call, which is what makes an update independent of the budget above.
+ * The release links each asset at this `direct_asset_path`, and GitLab answers
+ * it with one redirect, on the same host, to the package registry file.
+ * Measured on a public project for an 18 MB asset: one 302, both on
+ * `gitlab.com`, so the only host a download needs is `gitlab.com`.
  */
-export function releaseAssetUrl(repository: string, tag: string, asset: string): string {
-  return `https://github.com/${repository}/releases/download/${tag}/${asset}`;
+export function releaseAssetUrl(project: string, tag: string, asset: string): string {
+  return `https://${RELEASE_HOST}/${project}/-/releases/${tag}/downloads/${asset}`;
+}
+
+/** A release's own page, for a person to read. */
+export function releasePageUrl(project: string, tag: string): string {
+  return `https://${RELEASE_HOST}/${project}/-/releases/${tag}`;
+}
+
+/** A file on the default branch, as raw text: what the install command fetches. */
+export function rawFileUrl(path: string, project: string = RELEASE_PROJECT, branch = 'main'): string {
+  return `https://${RELEASE_HOST}/${project}/-/raw/${branch}/${path}`;
 }
 
 /**
