@@ -58,6 +58,15 @@ const dist = resolve(flag('dist'));
 const version = flag('version').replace(/^v/, '');
 const commit = flag('commit');
 const runUrl = optional('run');
+/**
+ * Why platforms left out of `--expect` were left out, for the manifest to say.
+ *
+ * Required whenever a platform is left out and has nothing in the directory,
+ * because an unsupported platform with no reason reads exactly like a release
+ * that lost its packages. The packaging validation run leaves Windows out and
+ * says so; the release on GitLab's free tier leaves macOS out and says so.
+ */
+const notBuiltReason = optional('not-built');
 
 /**
  * Which platforms this directory is supposed to be complete for.
@@ -100,6 +109,12 @@ const owed = [
     expectedAssets(version, platform as (typeof PLATFORMS)[number]).map((name) => ({ platform, name })),
   ),
 ];
+const leftOut = PLATFORMS.filter((platform) => !expected.includes(platform));
+if (leftOut.length > 0 && !notBuiltReason) {
+  console.error(`  ${leftOut.join(', ')} left out of --expect with no --not-built reason.`);
+  console.error('  An unsupported platform with no reason reads exactly like a release that lost its packages.');
+  process.exit(2);
+}
 const absent = owed.filter((entry) => !present.has(entry.name));
 if (absent.length > 0) {
   console.error(`  ${dist} is missing ${absent.length} file(s) it was told to expect:`);
@@ -166,6 +181,7 @@ const manifest: ReleaseManifest = {
     },
     macos: {
       supported: builtFor('macos').length > 0,
+      ...(builtFor('macos').length === 0 && notBuiltReason ? { notBuilt: notBuiltReason } : {}),
       architectures: builtFor('macos').length > 0 ? builtFor('macos') : ['arm64'],
       methods: ['MACOS_PKG'],
       requirements: {
@@ -178,6 +194,7 @@ const manifest: ReleaseManifest = {
     },
     ubuntu: {
       supported: builtFor('ubuntu').length > 0,
+      ...(builtFor('ubuntu').length === 0 && notBuiltReason ? { notBuilt: notBuiltReason } : {}),
       architectures: builtFor('ubuntu').length > 0 ? builtFor('ubuntu') : ['x64'],
       methods: ['UBUNTU_DEB'],
       requirements: {
