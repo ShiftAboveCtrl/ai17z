@@ -16,7 +16,7 @@
 set -euo pipefail
 
 VERSION="${1:?a version}"
-SUMS="${2:?the release's SHA256SUMS.txt}"
+SUMS="${2:?the SHA256SUMS.txt of the release}"
 MACOS="${3:-}"
 PROJECT_URL="${CI_PROJECT_URL:-https://gitlab.com/shiftabovectrl/ai17z}"
 RAW="$PROJECT_URL/-/raw/main"
