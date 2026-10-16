@@ -66,7 +66,7 @@ everywhere and enables browser-backed channels.
 Open **Windows Terminal** and paste this:
 
 ```powershell
-irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex
 ```
 
 That is the whole installation. It checks what this PC has, installs anything
@@ -104,7 +104,7 @@ The setup program is [`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/
 To see what it would do to this PC without doing any of it:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -WhatIfOnly
+& ([scriptblock]::Create((irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1))) -WhatIfOnly
 ```
 
 **[How to audit it](SETUP_AUDIT.md)** — every privileged action, every
@@ -118,7 +118,7 @@ different databases, different signed-in accounts. They share nothing, and
 **updating one leaves the others exactly as they are.**
 
 ```powershell
-$s = irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1
+$s = irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1
 & ([scriptblock]::Create($s)) -List                 # what is installed
 & ([scriptblock]::Create($s)) -NewInstance          # install another
 & ([scriptblock]::Create($s)) -Instance AI17Z-test  # update that one
@@ -151,7 +151,7 @@ such. You do not need it.
 ## macOS
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh
+curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-macos.sh
 less install-ai17z-macos.sh
 bash install-ai17z-macos.sh
 ```
@@ -160,9 +160,10 @@ Reading it first is the documented route, not a fallback: macOS warns about long
 commands pasted from web pages, and it is right to. The file is short so that
 looking at it is reasonable.
 
-It resolves the newest release, downloads the package for your architecture —
-Apple Silicon or Intel, built natively, never relabelled — **checks its SHA-256
-against the hash that release published**, and extracts it into your own Library.
+It resolves the newest release, downloads the package for Apple silicon (M1 or
+newer), built natively and never relabelled, **checks its SHA-256 against the
+hash that release published**, and extracts it into your own Library. There is
+no Intel package; [why](MACOS_TRUST.md#why-apple-silicon-only).
 
 **No `sudo`, ever, for AI17Z itself.** Everything lives in
 `~/Library/Application Support/AI17Z/`, which is also why updates need no
@@ -174,8 +175,10 @@ attributes to get around that. [What that actually means](MACOS_TRUST.md)
 is written out in full, including which prompts are Docker's or Google's rather
 than AI17Z's.
 
-**Every macOS package is built and run on a real Mac before it can be
-released** -- Apple Silicon and Intel, on every push, including the installer.
+**Every macOS package is built and run on a real Apple-silicon Mac before it is
+released**, including the installer, on GitLab's hosted Macs. Those need a GitLab
+plan this project does not yet have, so until it does a release says it carries
+no macOS package rather than shipping one nothing ran.
 What a hosted machine cannot represent is a person at one: Gatekeeper's dialogs,
 a downloaded file's quarantine, and Docker Desktop's own setup. Those are listed
 in [what still needs a Mac](MACOS_TEST_CHECKLIST.md).
@@ -187,7 +190,7 @@ Also: [Installing on macOS](MACOS_INSTALL.md) ·
 ## Ubuntu
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-ubuntu.sh
+curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-ubuntu.sh
 less install-ai17z-ubuntu.sh
 bash install-ai17z-ubuntu.sh
 ```
@@ -249,7 +252,7 @@ same data directory and the same updates.
 One line, in PowerShell, in a folder you can write to:
 
 ```powershell
-irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 | iex
+irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.ps1 | iex
 ```
 
 That clones the repository into `.\ai17z`, checks the machine, and starts it.
@@ -258,7 +261,7 @@ Piping a script from the internet into a shell asks you to trust whatever the
 server sends, and you are allowed to want to look first:
 
 ```powershell
-irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.ps1 -OutFile bootstrap.ps1
+irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.ps1 -OutFile bootstrap.ps1
 notepad bootstrap.ps1
 .\bootstrap.ps1
 ```
@@ -266,7 +269,7 @@ notepad bootstrap.ps1
 Or do it by hand, which is the same three steps the bootstrap runs:
 
 ```powershell
-git clone https://github.com/ShiftAboveCtrl/ai17z.git ai17z
+git clone https://gitlab.com/shiftabovectrl/ai17z.git ai17z
 cd ai17z
 .\install-ai17z.ps1 -Start
 ```
@@ -274,13 +277,13 @@ cd ai17z
 ### Ubuntu
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/bootstrap.sh | bash
+curl -fsSL https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.sh | bash
 ```
 
 or by hand:
 
 ```bash
-git clone https://github.com/ShiftAboveCtrl/ai17z.git ai17z
+git clone https://gitlab.com/shiftabovectrl/ai17z.git ai17z
 cd ai17z
 ./install-ai17z.sh --start
 ```

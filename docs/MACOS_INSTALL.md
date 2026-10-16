@@ -3,7 +3,7 @@
 ## The short way
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh
+curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-macos.sh
 less install-ai17z-macos.sh
 bash install-ai17z-macos.sh
 ```
@@ -31,7 +31,7 @@ anything and call it trusted.
 | | |
 | --- | --- |
 | macOS | 13 Ventura and newer |
-| Architectures | Apple Silicon (arm64) and Intel (x86_64) |
+| Architectures | Apple silicon (arm64) only. Intel Macs: no package; see [MACOS_TRUST.md](MACOS_TRUST.md#why-apple-silicon-only) |
 
 macOS 13 is **Google's** floor for Chrome, which AI17Z drives — not a number
 AI17Z chose. Docker Desktop separately supports only the current and two

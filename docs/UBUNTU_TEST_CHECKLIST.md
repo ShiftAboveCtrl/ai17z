@@ -123,7 +123,7 @@ not Docker's own. If any step seems to, stop.
 **1. Fetch the installer and read it.**
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-ubuntu.sh
+curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-ubuntu.sh
 less install-ai17z-ubuntu.sh
 ```
 
@@ -221,21 +221,24 @@ either. If you want them gone, remove them yourself.
 
 ```bash
 sha256sum ai17z_1.0.0-beta.17_amd64.deb
-curl -fsSL https://github.com/ShiftAboveCtrl/ai17z/releases/download/v1.0.0-beta.17/SHA256SUMS.txt
+curl -fsSL https://gitlab.com/shiftabovectrl/ai17z/-/releases/v1.0.0-beta.17/downloads/SHA256SUMS.txt
 ```
 
-And the provenance, which needs the GitHub CLI and is never required to install:
+And the provenance, which needs `cosign` and is never required to install:
 
 ```bash
-gh attestation verify ai17z_1.0.0-beta.17_amd64.deb --repo ShiftAboveCtrl/ai17z
+cosign verify-blob ai17z_1.0.0-beta.84_amd64.deb \
+  --bundle ai17z_1.0.0-beta.84_amd64.deb.sigstore.json \
+  --certificate-identity "https://gitlab.com/shiftabovectrl/ai17z//.gitlab-ci.yml@refs/tags/v1.0.0-beta.84" \
+  --certificate-oidc-issuer https://gitlab.com
 ```
 
 *Expected:* the hashes agree, and the attestation verifies against this
-repository's release workflow. That is build provenance -- **not** Canonical
+project's release pipeline. That is build provenance -- **not** Canonical
 signing, and not a claim that anybody has examined AI17Z.
 
 ### If something disagrees
 
 Say what actually happened, including nothing happening, at
-<https://github.com/ShiftAboveCtrl/ai17z/issues>. A step that behaved
+<https://gitlab.com/shiftabovectrl/ai17z/-/issues>. A step that behaved
 differently from the sentence above is worth reporting even if it worked.

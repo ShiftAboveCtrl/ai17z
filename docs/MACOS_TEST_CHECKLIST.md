@@ -1,10 +1,14 @@
 # macOS: what has been tested, and what needs a Mac
 
-AI17Z's macOS packages are now built and run on real Macs, on every push:
-`macos-15` for Apple Silicon and `macos-15-intel` for Intel. The package, the
+AI17Z's macOS package is built and run on a real Apple-silicon Mac, GitLab's
+`saas-macos-medium-m1`, by the `package macos arm64` job. The package, the
 runtime, the architecture of both binaries, every workspace import, the
-lifecycle, the compatibility gate and the installer are all exercised there --
-see "Hosted platform validation" in `RELEASE_VALIDATION_REPORT.md`.
+lifecycle, the compatibility gate and the installer are all exercised there.
+That runner needs a GitLab plan this project does not yet have, so the job is
+manual until the project variable `AI17Z_MACOS` is set to 1, and a release built
+without it says it carries no macOS package. There is no Intel package: GitLab's
+Macs are Apple silicon, and one built under Rosetta would be relabelled rather
+than proved.
 
 What a hosted runner cannot represent is a person at a Mac: the dialogs, the
 downloads, and Docker Desktop's own setup. That is what is left here, and it is
@@ -14,8 +18,8 @@ Nothing below is a promise about behaviour that has not been observed.
 
 ## Proved on a real Mac, on every push
 
-`.github/scripts/prove-macos-package.sh` and `prove-macos-installer.sh`, run by
-the `macos-15` and `macos-15-intel` jobs. Both green.
+`.gitlab/scripts/prove-macos-package.sh` and `prove-macos-installer.sh`, run by
+the `package macos arm64` job.
 
 - the bundled Node starts and reports `darwin` and the right architecture
 - `file` confirms Node **and** esbuild are genuinely that architecture
@@ -150,10 +154,11 @@ runners have no Chrome and no screen.
 - [ ] **updating one instance leaves the others byte-identical** — the macOS
       equivalent of the Windows three-instance regression
 
-### Intel specifically
+### On an Intel Mac
 
-- [ ] the x64 package installs and runs on a real Intel Mac
-- [ ] GitHub's `macos-13` runner is still available when the release is built
+- [ ] the installer refuses, says AI17Z for macOS runs on Apple silicon, and changes nothing
+- [ ] an Intel Mac already running AI17Z is told by its updater why no newer version is offered, and keeps running
+- [ ] The project can run GitLab's hosted Macs (`AI17Z_MACOS=1`) when the release is built, or the release says it carries no macOS package
 
 ## How to record results
 
@@ -175,7 +180,7 @@ Nothing here asks you to lower a macOS protection. If any step seems to, stop.
 
 ```bash
 cd ~/Downloads
-curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh
+curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-macos.sh
 less install-ai17z-macos.sh
 ```
 
@@ -201,8 +206,8 @@ xattr -p com.apple.quarantine ~/Downloads/install-ai17z-macos.sh 2>&1
 bash install-ai17z-macos.sh
 ```
 
-*Expected:* it works out Apple Silicon or Intel, names the package it is
-fetching, prints the SHA-256 it checked and says it matched, tells you the
+*Expected:* it confirms the Mac is Apple silicon (and refuses an Intel one, saying
+why), names the package it is fetching, prints the SHA-256 it checked and says it matched, tells you the
 packages are unsigned, and never asks for `sudo`. Everything lands in
 `~/Library/Application Support/AI17Z/<instance>/`, and a launcher is symlinked
 into `~/.local/bin` -- never `/usr/local/bin`, which would need `sudo`.
@@ -282,21 +287,24 @@ session is still signed in.
 
 ```bash
 shasum -a 256 AI17Z-macos-arm64-1.0.0-beta.17.tar.gz
-curl -fsSL https://github.com/ShiftAboveCtrl/ai17z/releases/download/v1.0.0-beta.17/SHA256SUMS.txt
+curl -fsSL https://gitlab.com/shiftabovectrl/ai17z/-/releases/v1.0.0-beta.17/downloads/SHA256SUMS.txt
 ```
 
-And the provenance, which needs the GitHub CLI and is never required to install:
+And the provenance, which needs `cosign` and is never required to install:
 
 ```bash
-gh attestation verify AI17Z-macos-arm64-1.0.0-beta.17.tar.gz --repo ShiftAboveCtrl/ai17z
+cosign verify-blob AI17Z-macos-arm64-1.0.0-beta.84.tar.gz \
+  --bundle AI17Z-macos-arm64-1.0.0-beta.84.tar.gz.sigstore.json \
+  --certificate-identity "https://gitlab.com/shiftabovectrl/ai17z//.gitlab-ci.yml@refs/tags/v1.0.0-beta.84" \
+  --certificate-oidc-issuer https://gitlab.com
 ```
 
 *Expected:* the hashes agree, and the attestation verifies against this
-repository's release workflow. That is build provenance -- **not** Apple
+project's release pipeline. That is build provenance -- **not** Apple
 notarization, and not a claim that Apple has examined AI17Z.
 
 ### If something disagrees
 
 Say what actually happened, including nothing happening, at
-<https://github.com/ShiftAboveCtrl/ai17z/issues>. A step that behaved
+<https://gitlab.com/shiftabovectrl/ai17z/-/issues>. A step that behaved
 differently from the sentence above is worth reporting even if it worked.

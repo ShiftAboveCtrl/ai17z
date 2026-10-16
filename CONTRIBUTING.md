@@ -7,7 +7,7 @@ separated and named so nobody mistakes one for the other.
 ## Getting set up
 
 ```bash
-git clone https://github.com/ShiftAboveCtrl/ai17z.git ai17z
+git clone https://gitlab.com/shiftabovectrl/ai17z.git ai17z
 cd ai17z
 ./install-ai17z.sh        # or .\install-ai17z.ps1 on Windows
 npm run db:up
@@ -99,7 +99,7 @@ something went wrong once. The short version:
 - Errors carry a class and a human sentence. `500 Internal Server Error` is not
   an acceptable thing for somebody to read.
 
-## Before opening a pull request
+## Before opening a merge request
 
 ```bash
 npm run typecheck && npm test

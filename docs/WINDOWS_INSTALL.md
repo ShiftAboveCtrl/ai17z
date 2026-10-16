@@ -5,14 +5,14 @@
 Open **Windows Terminal** and paste this:
 
 ```powershell
-irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex
 ```
 
 That is the whole installation. It checks what this PC has, installs anything
 missing, installs AI17Z, starts it, checks it actually works, and opens it.
 
 **Install AI17Z only with the command above.** It is published here and on the
-[project page](https://github.com/ShiftAboveCtrl/ai17z), and nowhere else
+[project page](https://gitlab.com/shiftabovectrl/ai17z), and nowhere else
 distributes AI17Z.
 
 ## Why a command rather than a download
@@ -40,7 +40,7 @@ that is what it is there for.
 
 All it does is:
 
-1. ask GitHub for the newest release;
+1. ask GitLab for the newest release;
 2. download that release's setup program;
 3. **check its SHA-256 against the hash that release published** — and stop, with
    nothing written and nothing run, if they disagree;
@@ -59,7 +59,7 @@ the kind of program somebody should be able to read before running.
 To see what it would do to this PC without doing any of it:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -WhatIfOnly
+& ([scriptblock]::Create((irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1))) -WhatIfOnly
 ```
 
 **[How to audit it](SETUP_AUDIT.md)** covers every privileged action, every
@@ -99,7 +99,7 @@ recognise, and everything each step runs goes to a log rather than scrolling
 past. If you want the detail on screen as well:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -ShowDetails
+& ([scriptblock]::Create((irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1))) -ShowDetails
 ```
 
 Either way the whole of it is written to
@@ -142,7 +142,7 @@ not the database, not the browser profile, not the containers — and **updating
 one leaves the others exactly as they are.**
 
 ```powershell
-$s = irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1
+$s = irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1
 & ([scriptblock]::Create($s)) -List                 # what is installed here
 & ([scriptblock]::Create($s)) -NewInstance          # install another
 & ([scriptblock]::Create($s)) -Instance AI17Z-test  # act on that one
