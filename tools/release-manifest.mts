@@ -20,6 +20,7 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
   ARCHITECTURES,
+  ARCHITECTURES_OF,
   CHECKSUMS_ASSET,
   INSTALL_LAYOUT_SCHEMA,
   MANIFEST_ASSET,
@@ -126,10 +127,8 @@ add(artifact(windowsPackageAsset(version), 'app-package', 'windows', null));
 add(artifact(windowsSetupAsset(version), 'setup-script', 'windows', null));
 add(artifact(windowsInstallerAsset(version), 'installer-exe', 'windows', null));
 add(artifact('install.ps1', 'installer-script', 'windows', null));
-for (const arch of ARCHITECTURES) {
-  add(artifact(macosPackageAsset(version, arch), 'app-package', 'macos', arch));
-  add(artifact(ubuntuPackageAsset(version, arch), 'app-package', 'ubuntu', arch));
-}
+for (const arch of ARCHITECTURES_OF.macos) add(artifact(macosPackageAsset(version, arch), 'app-package', 'macos', arch));
+for (const arch of ARCHITECTURES_OF.ubuntu) add(artifact(ubuntuPackageAsset(version, arch), 'app-package', 'ubuntu', arch));
 add(artifact(installerScriptAsset('macos'), 'installer-script', 'macos', null));
 add(artifact(installerScriptAsset('ubuntu'), 'installer-script', 'ubuntu', null));
 add(artifact(CHECKSUMS_ASSET, 'checksums', null, null));
