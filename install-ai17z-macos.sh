@@ -144,7 +144,12 @@ fi
 
 case "$(uname -m)" in
   arm64) ARCH=arm64 ;;
-  x86_64) ARCH=x64 ;;
+  # Apple silicon only. AI17Z is built where it is published, and GitLab's
+  # Macs are Apple silicon; an Intel package from one would be built under
+  # Rosetta, which is a relabelled architecture, not a proved one.
+  x86_64) stop "AI17Z for macOS runs on Apple silicon (M1 or newer)." \
+    "This Mac has an Intel processor, and no Intel package is published." \
+    "Nothing on this Mac was changed." ;;
   *) stop "AI17Z has no package for this architecture." "uname says $(uname -m)." "" ;;
 esac
 good "macOS ${MACOS_VERSION} ($([ "$ARCH" = arm64 ] && echo "Apple Silicon" || echo "Intel"))"

@@ -32,6 +32,22 @@ export const ARCHITECTURES = ['x64', 'arm64'] as const;
 export type Architecture = (typeof ARCHITECTURES)[number];
 
 /**
+ * Which architectures each platform is built for: what a release owes, not
+ * what an installation may be.
+ *
+ * macOS ships for Apple silicon only. AI17Z is built where it is published,
+ * and GitLab's hosted Macs are Apple silicon; an x64 package from one would be
+ * built under Rosetta, and an architecture this repository has not proved on
+ * real hardware is a relabelled one. An Intel Mac already running AI17Z keeps
+ * its version and is told why no update is offered. `ARCHITECTURES` keeps x64
+ * because those installations still describe themselves with it.
+ */
+export const ARCHITECTURES_OF: Record<'macos' | 'ubuntu', readonly Architecture[]> = {
+  macos: ['arm64'],
+  ubuntu: ['x64', 'arm64'],
+};
+
+/**
  * How a copy got onto a machine, which is what decides how it updates.
  *
  * `BOOTSTRAP` and `INSTALLER` predate this file and keep their spelling,
@@ -198,7 +214,7 @@ export function expectedAssets(version: string, platform: Platform): string[] {
     return [windowsInstallerAsset(v), windowsSetupAsset(v), windowsPackageAsset(v), 'install.ps1'];
   }
   const packageFor = platform === 'macos' ? macosPackageAsset : ubuntuPackageAsset;
-  return [...ARCHITECTURES.map((arch) => packageFor(v, arch)), installerScriptAsset(platform)];
+  return [...ARCHITECTURES_OF[platform].map((arch) => packageFor(v, arch)), installerScriptAsset(platform)];
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +371,11 @@ export function preflight(manifest: ReleaseManifest, input: PreflightInput): Pre
     return { ok: false, blockers: [`AI17Z ${manifest.version} does not publish a ${input.platform} build.`], notes };
   }
   if (!platform.architectures.includes(input.arch)) {
-    blockers.push(`AI17Z ${manifest.version} has no ${input.arch} build for ${input.platform}.`);
+    blockers.push(
+      input.platform === 'macos' && input.arch === 'x64'
+        ? `AI17Z ${manifest.version} is built for Apple silicon only, and this Mac is Intel. The version installed here keeps running.`
+        : `AI17Z ${manifest.version} has no ${input.arch} build for ${input.platform}.`,
+    );
   }
 
   const osRule = platform.requirements.os;

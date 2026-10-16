@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   ARCHITECTURES,
+  ARCHITECTURES_OF,
   INSTALL_LAYOUT_SCHEMA,
   RELEASE_MANIFEST_SCHEMA,
   bareVersion,
@@ -74,8 +75,9 @@ describe('asset names come from one place', () => {
     // lost one of the four packages would have published a manifest saying that
     // platform was unsupported: true about the directory, and a lie about the
     // release. This is the list it checks against first.
+    // Apple silicon only: GitLab's Macs are Apple silicon, and an Intel package
+    // built on one would be a relabelled architecture.
     expect(expectedAssets(VERSION, 'macos')).toEqual([
-      'AI17Z-macos-x64-9.9.9-beta.1.tar.gz',
       'AI17Z-macos-arm64-9.9.9-beta.1.tar.gz',
       'install-ai17z-macos.sh',
     ]);
@@ -93,13 +95,13 @@ describe('asset names come from one place', () => {
   });
 
   it('owes a package for every architecture it claims to build', () => {
-    // Read off ARCHITECTURES rather than counted by hand, so adding one is not
+    // Read off ARCHITECTURES_OF rather than counted by hand, so adding one is not
     // a change that leaves this list quietly describing the old world.
     for (const platform of ['macos', 'ubuntu'] as const) {
       const names = expectedAssets(VERSION, platform);
-      expect(names).toHaveLength(ARCHITECTURES.length + 1);
+      expect(names).toHaveLength(ARCHITECTURES_OF[platform].length + 1);
       expect(names).toContain(installerScriptAsset(platform));
-      for (const arch of ARCHITECTURES) {
+      for (const arch of ARCHITECTURES_OF[platform]) {
         const asset = platform === 'macos' ? macosPackageAsset(VERSION, arch) : ubuntuPackageAsset(VERSION, arch);
         expect(names, `${platform} owes nothing for ${arch}`).toContain(asset);
       }
@@ -180,6 +182,19 @@ describe('preflight decides before anything is stopped', () => {
     const verdict = preflight(manifest, { ...ubuntu, arch: 'arm64' });
     expect(verdict.ok).toBe(false);
     expect(verdict.blockers[0]).toContain('no arm64 build');
+  });
+
+  it('tells an Intel Mac why there is no update, and that what it runs keeps running', () => {
+    const manifest = manifestFixture();
+    manifest.platforms.macos!.architectures = ['arm64'];
+    const intelMac = { platform: 'macos', arch: 'x64', osVersion: '14.5', dockerVersion: '27.0.0', chromeMajor: 140 } as const;
+    const verdict = preflight(manifest, intelMac);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.blockers[0]).toContain('Apple silicon only');
+    expect(verdict.blockers[0]).toContain('keeps running');
+    // Every architecture still describes an installation, so an Intel record stays readable.
+    expect(ARCHITECTURES).toContain('x64');
+    expect(ARCHITECTURES_OF.macos).toEqual(['arm64']);
   });
 
   it('refuses a Docker older than the release needs, and says who updates it', () => {

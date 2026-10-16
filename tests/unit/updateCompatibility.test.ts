@@ -202,7 +202,9 @@ describe('an update that cannot run here is refused before anything stops', () =
       platform: 'macos', arch: 'x64', osVersion: '14.5', dockerVersion: '27.0.0', chromeMajor: 140,
     });
     expect(verdict.ok).toBe(false);
-    expect(verdict.blockers[0]).toContain('no x64 build');
+    // Said as the reason and the reassurance, not as a missing file.
+    expect(verdict.blockers[0]).toContain('Apple silicon only');
+    expect(verdict.blockers[0]).toContain('keeps running');
   });
 
   it('a Docker too old, and it says who updates it', () => {
