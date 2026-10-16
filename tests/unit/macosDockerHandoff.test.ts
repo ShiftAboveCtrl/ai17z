@@ -187,7 +187,7 @@ describe('a packaged copy on first launch', () => {
     // rather than `npm --prefix`, which moves where npm installs and not where
     // it looks for the script -- the first version of this passed nothing.
     for (const proof of ['prove-macos-package.sh', 'prove-ubuntu-package.sh']) {
-      const text = readFileSync(resolve(root, '.github/scripts', proof), 'utf8');
+      const text = readFileSync(resolve(root, '.gitlab/scripts', proof), 'utf8');
       expect(text, `${proof} never runs npm`).toContain('run --silent probe');
       expect(text).toMatch(/cd "\$PROBE_DIR" &&/);
       expect(text).not.toMatch(/npm" --prefix/);

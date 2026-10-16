@@ -3,7 +3,22 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(__dirname, '../..');
-const workflow = readFileSync(resolve(root, '.github/workflows/release.yml'), 'utf8');
+/**
+ * The release pipeline's source: what decides when, and what it runs. The YAML
+ * says which jobs exist and in what order; the scripts are where each step
+ * lives, so that a step can be run by hand before a runner is asked.
+ */
+const pipelineParts = [
+  '.gitlab/ci/package.yml',
+  '.gitlab/ci/release.yml',
+  '.gitlab/scripts/build-windows-release.ps1',
+  '.gitlab/scripts/publish-release.sh',
+  '.gitlab/scripts/release-notes.sh',
+];
+const part = (path: string) => readFileSync(resolve(root, path), 'utf8');
+const workflow = pipelineParts.map(part).join('\n');
+const publishScript = part('.gitlab/scripts/publish-release.sh');
+const notesScript = part('.gitlab/scripts/release-notes.sh');
 const iss = readFileSync(resolve(root, 'packaging/windows/ai17z.iss'), 'utf8');
 const policy = readFileSync(resolve(root, 'docs/CODE_SIGNING_POLICY.md'), 'utf8');
 const readme = readFileSync(resolve(root, 'README.md'), 'utf8');
@@ -39,22 +54,24 @@ describe('the release does not pretend to sign anything', () => {
   });
 
   it('declares every job it has, and none of them is signing', () => {
-    // Read off the file rather than asserted as an absence, so a signing job
+    // Read off the files rather than asserted as an absence, so a signing job
     // reappearing under another name fails here rather than passing quietly.
-    // The platform jobs are named for what they build, and a fourth would have
+    // The platform jobs are named for what they build, and another would have
     // to be added here deliberately.
-    //
-    // `qualify` is last and builds nothing: it calls the qualification workflow
-    // on what was just published. It is called from here because the event that
-    // should have started it never happens -- a release created with
-    // GITHUB_TOKEN raises nothing a workflow can listen for.
-    const section = workflow.slice(workflow.indexOf('\njobs:'));
-    const jobs = [...section.matchAll(/^ {2}([a-z][a-z0-9-]*):\r?$/gm)].map((match) => match[1]);
-    expect(jobs).toEqual(['validate', 'build', 'macos', 'ubuntu', 'publish', 'qualify']);
+    const jobsIn = (path: string) => [...part(path).matchAll(/^([a-z][a-z0-9 -]*):\r?$/gm)].map((match) => match[1]);
+    expect(jobsIn('.gitlab/ci/package.yml')).toEqual([
+      'package ubuntu amd64',
+      'package ubuntu arm64',
+      'ubuntu takes the package',
+      'package macos arm64',
+      'package windows',
+      'contract',
+    ]);
+    expect(jobsIn('.gitlab/ci/release.yml')).toEqual(['publish', 'publish with macos']);
   });
 
   it('says unsigned where somebody reading the release page will see it', () => {
-    const notes = workflow.slice(workflow.indexOf('- name: Release notes'));
+    const notes = notesScript;
     expect(notes).toMatch(/unsigned/i);
     // And never the other way round.
     expect(/\bis signed\b|signature is valid/i.test(notes)).toBe(false);
@@ -73,7 +90,7 @@ describe('the release does not pretend to sign anything', () => {
  */
 describe('every published file has a hash beside it', () => {
   it('hashes the command, the setup script, the installer and the package', () => {
-    const checksums = workflow.slice(workflow.indexOf('- name: Checksums'), workflow.indexOf('- name: Release notes'));
+    const checksums = publishScript.slice(publishScript.indexOf('say "checksums"'), publishScript.indexOf('say "nothing of an owner'));
     for (const asset of ['install.ps1', 'Install-AI17Z-*.ps1', 'AI17Z-Setup-*.exe', 'AI17Z-App-*.zip']) {
       expect(checksums, `${asset} is published without a checksum`).toContain(asset);
     }
@@ -81,8 +98,8 @@ describe('every published file has a hash beside it', () => {
   });
 
   it('publishes the checksums themselves', () => {
-    const files = workflow.slice(workflow.lastIndexOf('files: |'));
-    expect(files).toContain('dist/SHA256SUMS.txt');
+    const files = publishScript.slice(publishScript.indexOf('ASSETS=('));
+    expect(files.split('\n')[0]).toContain('SHA256SUMS.txt');
   });
 });
 
@@ -101,7 +118,7 @@ describe('the installer carries product and version metadata', () => {
   });
 
   it('is checked in CI rather than assumed', () => {
-    expect(workflow).toContain("Check the legacy installer's metadata");
+    expect(workflow).toContain('the legacy installer metadata');
     expect(workflow).toContain('Wrong product name');
   });
 
@@ -361,14 +378,11 @@ describe('the release notes say what changed', () => {
   });
 
   it('checks out the history the changelog needs', () => {
-    // Three checkouts, and only the publishing one needs history. Without
-    // fetch-depth 0 there is one commit and no tags, so the changelog would be
-    // empty and nothing would say so.
-    expect(workflow).toContain('fetch-depth: 0');
-    const publish = workflow.slice(workflow.indexOf('publish the release'));
-    const checkout = publish.indexOf('actions/checkout@v4');
-    expect(checkout, 'the publish job no longer checks out').toBeGreaterThan(-1);
-    expect(publish.slice(checkout, checkout + 400)).toContain('fetch-depth: 0');
+    // Only the publishing job needs history. Without GIT_DEPTH 0 there is one
+    // commit and no tags, so the changelog would be empty and nothing would
+    // say so.
+    const publish = part('.gitlab/ci/release.yml').slice(part('.gitlab/ci/release.yml').indexOf('.publish:'));
+    expect(publish.slice(0, publish.indexOf('\npublish:'))).toContain('GIT_DEPTH: 0');
   });
 
   it('says nothing rather than something wrong when there is no tag', () => {
@@ -505,10 +519,10 @@ describe('what a release is called, in both places that say it', () => {
  * workflow reads that rather than composing a fourth version of the grammar.
  */
 describe('the release workflow publishes under the derived name', () => {
-  const workflow = readFileSync(resolve(root, '.github/workflows/release.yml'), 'utf8');
-
   it('carries the name out of the build job', () => {
-    expect(workflow).toContain('release-name: ${{ steps.stage.outputs.release-name }}');
+    // As a dotenv report, which is how one GitLab job hands a value to another.
+    expect(part('.gitlab/scripts/build-windows-release.ps1')).toContain('"RELEASE_NAME=$name"');
+    expect(part('.gitlab/ci/package.yml')).toContain('dotenv: release.env');
   });
 
   it('reads it from the packager rather than composing it again', () => {
@@ -519,7 +533,8 @@ describe('the release workflow publishes under the derived name', () => {
   });
 
   it('uses it when publishing', () => {
-    expect(workflow).toContain("name: ${{ needs.build.outputs.release-name || format('AI17Z {0}', needs.build.outputs.version) }}");
+    expect(publishScript).toContain('NAME="${RELEASE_NAME:-AI17Z $VERSION}"');
+    expect(publishScript).toContain('name: $name');
   });
 
   it('lets written notes win over the generated list of commit subjects', () => {
@@ -529,7 +544,7 @@ describe('the release workflow publishes under the derived name', () => {
     expect(workflow).toContain('NOTES="docs/release-notes/$VERSION.md"');
     expect(workflow).toContain('if [ -f "$NOTES" ]; then');
     // Appended, never discarded: the commit list is still the honest record.
-    expect(workflow).toMatch(/cat "\$NOTES"; echo; echo '---'/);
+    expect(notesScript).toMatch(/cat "\$NOTES"\s+echo\s+echo '---'/);
   });
 
   it('has the notes for the version this repository is on', () => {

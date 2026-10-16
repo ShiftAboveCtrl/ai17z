@@ -26,7 +26,10 @@ const uninstall = read('packaging/windows/Uninstall-AI17Z.ps1');
 const installer = read('packaging/windows/ai17z.iss');
 const stageZero = read('install.ps1');
 const packager = read('tools/package-windows.mts');
-const workflow = read('.github/workflows/release.yml');
+// The release pipeline: what builds the Windows half, and what publishes.
+const windowsBuild = read('.gitlab/scripts/build-windows-release.ps1');
+const publishScript = read('.gitlab/scripts/publish-release.sh');
+const workflow = [read('.gitlab/ci/package.yml'), read('.gitlab/ci/release.yml'), windowsBuild, publishScript].join('\n');
 const audit = read('docs/SETUP_AUDIT.md');
 const updater = read('update-ai17z.ps1');
 
@@ -125,7 +128,7 @@ describe('the setup program is a file somebody can read', () => {
       return;
     }
     expect(manifest).not.toBeNull();
-    expect(manifest!.repository).toBe('ShiftAboveCtrl/ai17z');
+    expect(manifest!.repository).toBe('shiftabovectrl/ai17z');
     expect(manifest!.packages.length).toBeGreaterThan(0);
   });
 });
@@ -133,11 +136,10 @@ describe('the setup program is a file somebody can read', () => {
 describe('where it may go on the network', () => {
   it('starts a request only at a host it declares', () => {
     if (!shell) return;
-    expect(manifest!.allowedHosts).toContain('api.github.com');
-    expect(manifest!.allowedHosts).toContain('github.com');
-    // GitHub redirects asset downloads to its own storage, so refusing that
-    // host would refuse every download.
-    expect(manifest!.allowedHosts.some((host) => host.endsWith('githubusercontent.com'))).toBe(true);
+    // One host. GitLab answers a release download with one redirect on
+    // gitlab.com itself to the package registry file, measured never leaving
+    // it, so nothing else needs to be reachable.
+    expect(manifest!.allowedHosts).toEqual(['gitlab.com']);
   });
 
   it('checks every address against that list rather than trusting the caller', () => {
@@ -158,8 +160,7 @@ describe('where it may go on the network', () => {
     const downloads = [...setup.matchAll(/https:\/\/[^\s'")]+/g)].map((match) => match[0]);
     for (const url of downloads) {
       const allowed =
-        url.includes('github.com/') ||
-        url.includes('githubusercontent.com') ||
+        url.includes('gitlab.com/') ||
         // Vendor pages, opened in a browser when winget is not available. Never
         // fetched.
         url.includes('nodejs.org') ||
@@ -173,7 +174,7 @@ describe('where it may go on the network', () => {
   });
 
   it('will not let a release tag become a filename without checking it', () => {
-    // The tag is the one value here that arrives in a document GitHub served
+    // The tag is the one value here that arrives in a document GitLab served
     // and turns into a local path: `AI17Z-App-<version>.zip`, written under the
     // setup folder. GitHub will not publish a tag with a separator in it today,
     // which is a fact about GitHub rather than a property of this program.
@@ -449,7 +450,7 @@ describe('there is no executable in the recommended route', () => {
     // installation made before the terminal route updates with, and breaking
     // those to tidy the new architecture would be the wrong trade.
     expect(existsSync(resolve(root, 'packaging/windows/ai17z.iss'))).toBe(true);
-    expect(workflow).toContain('AI17Z-Setup-${{ steps.version.outputs.version }}.exe');
+    expect(windowsBuild).toContain('AI17Z-Setup-$Version.exe');
   });
 
   it('derives a four-number version, because Windows still needs one', () => {
@@ -485,12 +486,12 @@ describe('the packaging and the release agree with the script', () => {
     // file nobody chose.
     expect(manifest!.assets.package).toBe('AI17Z-App-{0}.zip');
     expect(packager).toContain('`AI17Z-App-${version}.zip`');
-    expect(workflow).toContain('AI17Z-App-${{ steps.version.outputs.version }}.zip');
+    expect(workflow).toContain('build/windows/AI17Z-App-*.zip');
     expect(manifest!.assets.checksums).toBe('SHA256SUMS.txt');
   });
 
   it('hashes everything it publishes, including the package', () => {
-    const checksums = workflow.slice(workflow.indexOf('- name: Checksums'), workflow.indexOf('- name: Release notes'));
+    const checksums = publishScript.slice(publishScript.indexOf('say "checksums"'), publishScript.indexOf('say "nothing of an owner'));
     expect(checksums).toContain('AI17Z-App-*.zip');
     expect(checksums).toContain('Install-AI17Z-*.ps1');
     expect(checksums).toContain('AI17Z-Setup-*.exe');
@@ -501,23 +502,21 @@ describe('the packaging and the release agree with the script', () => {
   });
 
   it('publishes the setup script beside the executable, so the two can be compared', () => {
-    expect(workflow).toContain('Install-AI17Z-$version.ps1');
-    expect(workflow).toContain('-Manifest');
+    expect(windowsBuild).toContain('Install-AI17Z-$Version.ps1');
+    expect(windowsBuild).toContain('-Manifest');
   });
 
   it('publishes an audit document built from the files it actually published', () => {
-    const audit = workflow.slice(workflow.indexOf('- name: The audit document for this release'));
+    const audit = publishScript.slice(publishScript.indexOf('say "the audit document for this release"'));
     expect(audit.length, 'the release publishes no audit document').toBeGreaterThan(0);
     // The release's own identity, not just the script's declaration.
     for (const fact of ['tag:', 'commit:', 'signed:', 'artifacts:']) {
       expect(audit, `the audit document does not record ${fact}`).toContain(fact);
     }
-    // Built in the publish job, after signing. Signing rewrites the
-    // executables, so an audit document listing the hashes of the unsigned ones
-    // would be wrong about precisely the files somebody is checking.
-    const publishAt = workflow.indexOf('  publish:');
-    expect(workflow.indexOf('- name: The audit document for this release')).toBeGreaterThan(publishAt);
-    expect(workflow).toContain('dist/AI17Z-Setup-Audit-*.json');
+    // Built in the publish job, over the files it is about to publish, so its
+    // hashes are the ones somebody will check.
+    expect(publishScript.indexOf('say "the audit document for this release"')).toBeGreaterThan(publishScript.indexOf('say "checksums"'));
+    expect(publishScript).toContain('"AI17Z-Setup-Audit-$VERSION.json"');
   });
 
   it('publishes exactly one .exe, and it is the full installer', () => {
@@ -526,15 +525,15 @@ describe('the packaging and the release agree with the script', () => {
     // was also an executable there were two, and the order decided which of
     // them those installations were handed. Now there is one, and what has to
     // hold is that nothing new becomes an executable in this list.
-    const files = workflow.slice(workflow.lastIndexOf('files: |'));
-    const executables = [...files.matchAll(/^\s+dist\/(\S+\.exe)$/gm)].map((match) => match[1]);
+    const installable = publishScript.slice(publishScript.indexOf('INSTALLABLE=('), publishScript.indexOf('sha256sum "${INSTALLABLE[@]}"'));
+    const executables = [...installable.matchAll(/([A-Za-z0-9_*.-]+\.exe)\b/g)].map((match) => match[1]);
     expect(executables).toEqual(['AI17Z-Setup-*.exe']);
   });
 
   it('checks the executable it does publish before publishing it', () => {
-    const check = workflow.slice(workflow.indexOf("- name: Check the legacy installer's metadata"));
+    const check = windowsBuild.slice(windowsBuild.indexOf('the legacy installer metadata'));
     expect(check.length, 'nothing checks the installer metadata any more').toBeGreaterThan(0);
-    expect(check).toContain('AI17Z-Setup-${{ steps.version.outputs.version }}.exe');
+    expect(check).toContain('AI17Z-Setup-$Version.exe');
     expect(check).toContain("if ($product -ne 'AI17Z')");
   });
 });
@@ -636,11 +635,11 @@ describe('the audit document describes the program it ships with', () => {
   it('tells people where the only official source is', () => {
     // An unsigned installation has nothing to prove who wrote it, so where it
     // came from is the whole of the answer and both documents have to say it.
-    expect(audit).toContain('https://github.com/ShiftAboveCtrl/ai17z');
+    expect(audit).toContain('https://gitlab.com/shiftabovectrl/ai17z');
     expect(audit).toMatch(/only from the official repository/i);
     const readme = read('README.md');
     expect(readme).toMatch(/Install AI17Z only with the command published here/i);
-    expect(readme).toContain('raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1');
+    expect(readme).toContain('gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1');
   });
 
   it('says what the hash does and does not protect against', () => {

@@ -1,0 +1,87 @@
+# Installing what was published, from its published address, as a stranger
+# would. After every release, and again on a `qualify-v*` tag, which names a
+# release already out.
+#
+# Nothing here reads a build output: a release is judged by what anybody can
+# download, which is the only thing that matters about it. A rehearsal publishes
+# nothing, so there is nothing for this to qualify.
+
+.qualify:
+  stage: qualify
+  interruptible: false
+  rules:
+    - if: $AI17Z_PIPELINE =~ /^(release|qualify)$/
+  before_script:
+    - export TAG="v$(bash .gitlab/scripts/release-version.sh)" && echo "qualifying $TAG"
+    # Two copies, and the difference is the point. The tooling doing the
+    # checking is this pipeline's own commit, which for a `qualify-v*` tag can be
+    # newer than the release: once, a bad assertion in a qualifier frozen at the
+    # release failed both Macs with no way to correct it but another release.
+    # The installers being compared are the release tag's own, in tagged/,
+    # because that is a question about the release.
+    - command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null; }
+    - git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
+    - mkdir -p tagged && git archive "$TAG" install.ps1 install-ai17z-ubuntu.sh install-ai17z-macos.sh | tar -x -C tagged
+
+# Hashes, the manifest, and the provenance, from the published bytes alone.
+qualify the published bytes:
+  extends: .qualify
+  image: ubuntu:24.04
+  script:
+    - bash .gitlab/scripts/setup-ubuntu-job.sh
+    - bash .gitlab/scripts/setup-cosign.sh
+    - bash .gitlab/scripts/say-on-fail.sh 'the published release' --
+        bash .gitlab/scripts/verify-published-release.sh "$TAG"
+
+.qualify ubuntu:
+  extends: .qualify
+  image: ubuntu:24.04
+  # A Docker engine beside the job, because the published installer stops
+  # without one, as it should on a real machine. See setup-ubuntu-job.sh.
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  script:
+    - bash .gitlab/scripts/setup-ubuntu-job.sh
+    - bash .gitlab/scripts/say-on-fail.sh "the published Ubuntu release" --
+        bash .gitlab/scripts/as-stranger.sh bash .gitlab/scripts/qualify-published-ubuntu.sh "$TAG" "$CI_PROJECT_DIR/tagged"
+
+qualify published ubuntu amd64:
+  extends: .qualify ubuntu
+
+qualify published ubuntu arm64:
+  extends: .qualify ubuntu
+  tags: [saas-linux-small-arm64]
+
+qualify published windows:
+  extends: .qualify
+  tags: [saas-windows-medium-amd64]
+  before_script: []
+  script:
+    - $tag = 'v' + (('' + $env:CI_COMMIT_TAG) -replace '^(qualify-)?v', '')
+    # The release tag's own install.ps1, for comparison, as the other jobs do.
+    # Through cmd, because PowerShell redirection would re-encode the bytes the
+    # comparison is about.
+    - git fetch --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+    - New-Item -ItemType Directory -Force -Path tagged | Out-Null
+    - cmd /c "git show ${tag}:install.ps1 > tagged\install.ps1"
+    - powershell -NoProfile -File .gitlab\scripts\qualify-published-windows.ps1 -Tag $tag -Tagged tagged\install.ps1
+    - if ($LASTEXITCODE -ne 0) { throw "the published Windows route failed ($LASTEXITCODE)" }
+
+# On a Mac, when the project can run one. Manual by default, as packaging is.
+qualify published macos:
+  extends: .qualify
+  tags: [saas-macos-medium-m1]
+  image: macos-15-xcode-16
+  rules:
+    - if: $AI17Z_MACOS == "1" && $AI17Z_PIPELINE =~ /^(release|qualify)$/
+    - if: $AI17Z_PIPELINE =~ /^(release|qualify)$/
+      when: manual
+      allow_failure: true
+  script:
+    - source .gitlab/scripts/setup-macos-job.sh
+    - bash .gitlab/scripts/say-on-fail.sh 'the published macOS release' --
+        bash .gitlab/scripts/qualify-published-macos.sh "$TAG" "$CI_PROJECT_DIR/tagged"

@@ -8,8 +8,8 @@
 # produced.
 #
 # The distinction that matters is between a runner that could not ask and a
-# release that is wrong. GitHub allows sixty API requests an hour to an address
-# that is not signed in, a hosted runner shares its address with whoever else is
+# release that is wrong. GitLab limits how often an address that is not signed
+# in may ask its API, a hosted runner shares its address with whoever else is
 # on that machine, and the published installer is unauthenticated by design
 # because that is what a stranger runs. So an attempt can fail for a reason that
 # says nothing whatever about the package.
@@ -21,7 +21,7 @@
 # attempt_verdict <exit-code> <output-text>
 #
 #   OK       the attempt succeeded
-#   CEILING  it failed because GitHub would not answer an anonymous caller
+#   CEILING  it failed because the server would not answer an anonymous caller
 #   FAILED   it failed for a reason that belongs to the release or the machine
 #
 # CEILING is never inferred from the exit code alone: a non-zero exit with
@@ -37,11 +37,11 @@ attempt_verdict() {
     return 0
   fi
 
-  # The shapes GitHub's refusal actually takes, seen in the logs rather than
-  # imagined: curl's own 403 line, a bare 429, the installer's own sentence
-  # when it could not resolve a release, and the header GitHub sets when it
-  # wants a caller to wait.
-  if printf '%s' "$text" | grep -qiE '\(403\)|error: 403|\b403 Forbidden\b|\b429\b|rate.?limit|retry-after|could not be read|could not be reached|API rate limit'; then
+  # The shapes a refusal actually takes, seen in the logs rather than imagined:
+  # curl's own 403 line, a bare 429 (GitLab's answer), the installer's own
+  # sentence when it could not resolve a release, and the headers a server sets
+  # when it wants a caller to wait (Retry-After, and GitLab's RateLimit-Reset).
+  if printf '%s' "$text" | grep -qiE '\(403\)|error: 403|\b403 Forbidden\b|\b429\b|rate.?limit|retry-after|ratelimit-reset|could not be read|could not be reached|API rate limit|did not answer'; then
     printf 'CEILING'
     return 0
   fi
