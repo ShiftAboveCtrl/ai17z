@@ -6,9 +6,10 @@ this is what it does with it.
 
 ## Reporting something
 
-Open a private security advisory on the repository rather than a public issue.
-Include what you did, what happened, and what you expected. If you are not sure
-whether something counts, report it anyway.
+[Open a confidential issue](https://gitlab.com/shiftabovectrl/ai17z/-/issues/new?issuable_template=Security&issue[confidential]=true)
+with the Security template rather than a public one. Only you and the project's
+members can see it. Include what you did, what happened, and what you expected.
+If you are not sure whether something counts, report it anyway.
 
 Please do not open a public issue for anything that would let somebody else read
 another person's credentials, drive their browser, or act on their accounts.
