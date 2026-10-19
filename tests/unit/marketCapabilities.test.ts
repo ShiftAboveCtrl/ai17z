@@ -269,6 +269,20 @@ describe('what it refuses to imply', () => {
     expect(answer.note).toMatch(/one pool’s history, not the token’s/i);
   });
 
+  it('reads a longer history a page at a time, asking only for what came before a moment', async () => {
+    replies['/ohlcv/'] = { body: JSON.stringify({ data: { attributes: { ohlcv_list: [[1789117200, '1', '1', '1', '1', '1']] } } }) };
+    await run('market.ohlcv', { chain: 'ethereum', poolAddress: WETH_USDC_POOL, timeframe: 'hour', limit: 100, before: 1789120800 });
+    expect(requested.at(-1)).toMatch(/\/ohlcv\/hour\?limit=100&before_timestamp=1789120800$/);
+    await run('market.ohlcv', { chain: 'ethereum', poolAddress: WETH_USDC_POOL, timeframe: 'hour', limit: 100 });
+    expect(requested.at(-1)).not.toMatch(/before_timestamp/);
+  });
+
+  it('refuses a page boundary that is not a moment it could have history for', async () => {
+    replies['/ohlcv/'] = { body: JSON.stringify({ data: { attributes: { ohlcv_list: [] } } }) };
+    await expect(run('market.ohlcv', { chain: 'ethereum', poolAddress: WETH_USDC_POOL, before: 1000 })).rejects.toThrow();
+    await expect(run('market.ohlcv', { chain: 'ethereum', poolAddress: WETH_USDC_POOL, before: Math.round(Date.now() / 1000) + 10 * 86_400 })).rejects.toThrow();
+  });
+
   it('reads a Uniswap v4 pool, which is named by a 32-byte id rather than an address', async () => {
     // market.new_pools lists these on Base every day; a history read that
     // refused them refused the pools discovery had just shown.
