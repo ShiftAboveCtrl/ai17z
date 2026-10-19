@@ -61,6 +61,14 @@ export const GeckoQuery = z.object({
   timeframe: z.enum(['minute', 'hour', 'day']).default('hour'),
   limit: z.number().int().min(1).max(100).default(24),
   /**
+   * OHLCV only: candles that closed before this moment, in Unix seconds, so a
+   * history longer than one answer is read a page at a time. A number and
+   * never text, because it becomes part of a URL. Its bounds are enforced by
+   * the capability whose input is validated, since this shape is a type the
+   * callers build rather than one anything parses.
+   */
+  before: z.number().int().optional(),
+  /**
    * `token_pools` only: ask for the pools' tokens in the same answer.
    *
    * One request of about 33 KB carries every token's exact `decimals`, which
@@ -102,7 +110,7 @@ function pathFor(query: GeckoQuery): string {
       // being explicit here is cheaper than finding out it was not.
       return `/networks/${network}/tokens/${address}/pools${query.withTokens ? '?include=base_token%2Cquote_token' : ''}`;
     case 'ohlcv':
-      return `/networks/${network}/pools/${address}/ohlcv/${query.timeframe}?limit=${query.limit}`;
+      return `/networks/${network}/pools/${address}/ohlcv/${query.timeframe}?limit=${query.limit}${query.before === undefined ? '' : `&before_timestamp=${query.before}`}`;
     case 'new_pools':
       return `/networks/${network}/new_pools?page=1`;
     case 'trending':
@@ -138,7 +146,9 @@ function geckoterminal(): Upstream<GeckoQuery, GeckoResult> {
     cacheKey: (query) =>
       // `withTokens` is in the key because the two answers differ: a cached
       // answer without the tokens would be served to a caller that needs them.
-      `${query.operation}:${query.network}:${query.address}:${query.timeframe}:${query.limit}:${query.withTokens ? 'tokens' : 'bare'}`,
+      // `before` likewise: without it every page of a history is the first
+      // page for a minute, and a backfill records the same candles twice.
+      `${query.operation}:${query.network}:${query.address}:${query.timeframe}:${query.limit}:${query.withTokens ? 'tokens' : 'bare'}:${query.before ?? 'now'}`,
     async fetch(query, ctx) {
       if (!(GECKO_OPERATIONS as readonly string[]).includes(query.operation)) {
         throw new UpstreamFailure('UNSUPPORTED', `${query.operation} is not something this reads.`);

@@ -325,6 +325,18 @@ const history = defineCapability({
     poolAddress: ExactPool,
     timeframe: z.enum(['minute', 'hour', 'day']).default('hour'),
     limit: z.number().int().min(1).max(100).default(24),
+    /**
+     * Only candles before this moment, in Unix seconds: how a history longer
+     * than a hundred candles is read, a page at a time. Bounded below at 2020
+     * and above at a day past the present: nothing earlier traded on these
+     * networks, and a later one is a mistake rather than a question.
+     */
+    before: z
+      .number()
+      .int()
+      .min(1_577_836_800)
+      .refine((t) => t <= Date.now() / 1000 + 86_400, 'A moment in the future has no history yet.')
+      .optional(),
   }),
   output: z.object({
     chain: z.string(),
@@ -361,6 +373,7 @@ const history = defineCapability({
       address: input.poolAddress,
       timeframe: input.timeframe,
       limit: input.limit,
+      ...(input.before === undefined ? {} : { before: input.before }),
     });
     /*
       A pool with no history and a payload this cannot read are different
