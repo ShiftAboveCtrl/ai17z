@@ -122,7 +122,10 @@ import { parseExactJson } from '../exactNumbers';
  * `getProgramAccounts` is absent because it scans -- it is the request that
  * gets an endpoint to stop answering. `getTokenAccountsByOwner` is allowed:
  * it is answered from an index keyed by the owner, names one token program,
- * and is what every wallet asks to show what it holds.
+ * and is what every wallet asks to show what it holds. `getTokenLargestAccounts`
+ * is allowed for the same reason: it is answered from the mint's own index and
+ * returns at most twenty accounts, which is what every explorer shows as a
+ * token's holders.
  */
 
 /**
@@ -145,6 +148,7 @@ export const SOLANA_READ_METHODS = [
   'getSlot',
   'getTokenAccountBalance',
   'getTokenAccountsByOwner',
+  'getTokenLargestAccounts',
   'getTokenSupply',
   'getTransaction',
   'getVersion',

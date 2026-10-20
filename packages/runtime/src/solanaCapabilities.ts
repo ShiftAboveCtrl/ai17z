@@ -381,6 +381,132 @@ const holdings = defineCapability({
   },
 });
 
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+
+/**
+ * Who holds a token: the largest balances and who owns each one.
+ *
+ * A token account is owned by a key. When that key is an ordinary wallet, its
+ * own account belongs to the System Program (or does not exist, holding no
+ * SOL); when it belongs to anything else, the key is controlled by a program,
+ * which for a memecoin is usually a pool's vault or a launchpad's curve. That
+ * is the whole of the classification, and it is said to be a heuristic: it
+ * separates a pool from a person, and claims nothing about who the person is
+ * or whether two wallets are the same one.
+ */
+const holders = defineCapability({
+  id: 'solana.read_token_holders',
+  name: 'Read who holds an SPL token',
+  description:
+    'The largest holders of a token mint, up to twenty: each balance exactly, its share of the supply, and ' +
+    'whether its owner looks like a wallet or a program such as a pool or launchpad. Reports how concentrated ' +
+    'the supply is, with and without the programs. Takes the exact mint address.',
+  category: 'READ',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z.object({ mint: Address, commitment: Commitment_ }),
+  output: z.object({
+    mint: z.string(),
+    supply: z.string().nullable(),
+    decimals: z.number().nullable(),
+    holders: z.array(
+      z.object({
+        account: z.string(),
+        owner: z.string().nullable(),
+        amount: z.string(),
+        rendered: z.string(),
+        /** Per cent of the supply, to two places, from exact integers. */
+        sharePct: z.number().nullable(),
+        kind: z.enum(['WALLET', 'PROGRAM', 'UNKNOWN']),
+      }),
+    ),
+    /** Per cent of the supply in the ten largest accounts, and in the ten largest that belong to wallets. */
+    top10Pct: z.number().nullable(),
+    top10WalletsPct: z.number().nullable(),
+    observations: z.array(z.string()),
+    commitment: z.string(),
+    slot: z.number().nullable(),
+    provenance: ProvenanceOut,
+  }),
+  modelCallable: true,
+  timeoutMs: 30_000,
+  readiness: () => solanaReadable(),
+  async run(input) {
+    const [supplyRead, largestRead] = await Promise.all([
+      readSolana('getTokenSupply', [input.mint, { commitment: input.commitment }], input.commitment),
+      readSolana('getTokenLargestAccounts', [input.mint, { commitment: input.commitment }], input.commitment),
+    ]);
+    const supplyValue = valueOf(supplyRead.result) as { amount?: unknown; decimals?: unknown } | null;
+    const supply = exactInteger(supplyValue?.amount);
+    const decimals = typeof supplyValue?.decimals === 'number' ? supplyValue.decimals : null;
+    const largest = valueOf(largestRead.result);
+    if (!Array.isArray(largest)) throw new Error('The cluster answered with something that is not a list of token accounts.');
+    const rows = (largest as { address?: unknown; amount?: unknown }[])
+      .map((entry) => ({ account: typeof entry.address === 'string' ? entry.address : null, amount: exactInteger(entry.amount) }))
+      .filter((r): r is { account: string; amount: string } => r.account !== null && r.amount !== null && r.amount !== '0');
+
+    // Who owns each token account, then what kind of key each owner is.
+    const owners = new Map<string, string | null>();
+    if (rows.length > 0) {
+      const accounts = valueOf(
+        (await readSolana('getMultipleAccounts', [rows.map((r) => r.account), { encoding: 'jsonParsed', commitment: input.commitment }], input.commitment)).result,
+      ) as ({ data?: { parsed?: { info?: { owner?: unknown } } } } | null)[] | null;
+      rows.forEach((r, i) => {
+        const owner = accounts?.[i]?.data?.parsed?.info?.owner;
+        owners.set(r.account, typeof owner === 'string' ? owner : null);
+      });
+    }
+    const distinctOwners = [...new Set([...owners.values()].filter((o): o is string => o !== null))];
+    const ownerKind = new Map<string, 'WALLET' | 'PROGRAM' | 'UNKNOWN'>();
+    if (distinctOwners.length > 0) {
+      const ownerAccounts = valueOf(
+        (await readSolana('getMultipleAccounts', [distinctOwners, { encoding: 'base64', dataSlice: { offset: 0, length: 0 }, commitment: input.commitment }], input.commitment)).result,
+      ) as ({ owner?: unknown } | null)[] | null;
+      distinctOwners.forEach((owner, i) => {
+        if (!Array.isArray(ownerAccounts)) return ownerKind.set(owner, 'UNKNOWN');
+        const info = ownerAccounts[i];
+        // No account at all is a key that has never held SOL: a wallet, not a program.
+        ownerKind.set(owner, info === null || info?.owner === SYSTEM_PROGRAM ? 'WALLET' : typeof info?.owner === 'string' ? 'PROGRAM' : 'UNKNOWN');
+      });
+    }
+
+    // Share of supply from exact integers, in hundredths of a per cent.
+    const share = (amount: string) => (supply && supply !== '0' ? Number((BigInt(amount) * 10_000n) / BigInt(supply)) / 100 : null);
+    const list = rows.map((r) => {
+      const owner = owners.get(r.account) ?? null;
+      return {
+        account: r.account,
+        owner,
+        amount: r.amount,
+        rendered: decimals === null ? r.amount : withDecimals(r.amount, decimals),
+        sharePct: share(r.amount),
+        kind: owner ? (ownerKind.get(owner) ?? 'UNKNOWN') : ('UNKNOWN' as const),
+      };
+    });
+    const sumPct = (xs: typeof list) => (supply ? xs.reduce((n, h) => n + (h.sharePct ?? 0), 0) : null);
+    const top10Pct = sumPct(list.slice(0, 10));
+    const top10WalletsPct = sumPct(list.filter((h) => h.kind === 'WALLET').slice(0, 10));
+    const observations: string[] = [];
+    if (top10Pct !== null) observations.push(`The ten largest accounts hold ${top10Pct.toFixed(1)}% of the supply.`);
+    if (top10WalletsPct !== null) observations.push(`The ten largest that look like wallets hold ${top10WalletsPct.toFixed(1)}%; the rest of the top is held by programs such as pools or launchpads.`);
+    const biggestWallet = list.find((h) => h.kind === 'WALLET');
+    if (biggestWallet?.sharePct !== null && biggestWallet?.sharePct !== undefined) observations.push(`The largest wallet holds ${biggestWallet.sharePct.toFixed(2)}%.`);
+    observations.push('Whether an owner is a wallet or a program is read from what owns its key, a heuristic; it says nothing about who a wallet belongs to or whether two are the same person.');
+    return {
+      mint: input.mint,
+      supply,
+      decimals,
+      holders: list,
+      top10Pct,
+      top10WalletsPct,
+      observations,
+      commitment: largestRead.commitment,
+      slot: largestRead.slot,
+      provenance: largestRead.provenance,
+    };
+  },
+});
+
 /** Two non-negative decimal strings compared exactly, so a balance past 2^53 is still ordered right. */
 function compareRendered(a: string, b: string): number {
   const [aw = '0', af = ''] = a.split('.');
@@ -728,6 +854,7 @@ export function registerSolanaCapabilities(): void {
   registerCapability(balance);
   registerCapability(token);
   registerCapability(holdings);
+  registerCapability(holders);
   registerCapability(program);
   registerCapability(transaction);
   registerCapability(signatures);
