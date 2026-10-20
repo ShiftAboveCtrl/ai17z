@@ -80,6 +80,9 @@ jobs:
       # about Google Chrome and do not claim to: the real-Chrome suite skips
       # loudly rather than passing where Chrome is absent.
       - run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium
+      # PowerShell, for the tests that run the shipped Windows setup script's
+      # decisions. Without it they skip, and a skip is not a pass.
+      - run: bash .forgejo/scripts/setup-pwsh.sh
       - run: npm run migrate
       - run: npx vitest run --reporter=default
       - run: npm run build:web
