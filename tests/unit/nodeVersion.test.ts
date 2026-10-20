@@ -27,7 +27,7 @@ describe('every place that names a Node version names the same one', () => {
 
   it('is what CI installs', () => {
     // The check job runs on a Node image, named by its major version.
-    const images = [...read('.gitlab/ci/check.yml').matchAll(/image:\s*node:(\d+)/g)].map((m) => m[1]);
+    const images = [...read('.forgejo/workflows/check.yml').matchAll(/image:\s*node:(\d+)/g)].map((m) => m[1]);
     expect(images.length).toBeGreaterThan(0);
     for (const major of images) expect(major).toBe(String(REQUIRED_MAJOR));
   });
@@ -40,7 +40,7 @@ describe('every place that names a Node version names the same one', () => {
     const runtime = JSON.parse(read('packaging/node-runtime.json')) as { version: string };
     expect(runtime.version.replace(/^v/, '').split('.')[0]).toBe(String(REQUIRED_MAJOR));
     for (const setup of ['setup-ubuntu-job.sh', 'setup-macos-job.sh', 'setup-windows-job.ps1']) {
-      expect(read(`.gitlab/scripts/${setup}`), `${setup} installs some other Node`).toContain('packaging/node-runtime.json'.replace('/', setup.endsWith('.ps1') ? '\\' : '/'));
+      expect(read(`.forgejo/scripts/${setup}`), `${setup} installs some other Node`).toContain('packaging/node-runtime.json'.replace('/', setup.endsWith('.ps1') ? '\\' : '/'));
     }
   });
 
@@ -56,7 +56,7 @@ describe('every place that names a Node version names the same one', () => {
     // The notes are the first thing anybody reads, and they said 20 while the
     // project required 22. Somebody following them would have installed a
     // runtime this does not support and hit failures nothing explained.
-    const notes = read('.gitlab/scripts/release-notes.sh');
+    const notes = read('.forgejo/scripts/release-notes.sh');
     const claim = notes.match(/\*\*Node\.js ([\d]+)[^*]*\*\*/);
     expect(claim, 'the release notes no longer name a Node version').not.toBeNull();
     expect(claim![1]).toBe(String(REQUIRED_MAJOR));

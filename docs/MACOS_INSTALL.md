@@ -3,7 +3,7 @@
 ## The short way
 
 ```bash
-curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-macos.sh
+curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-macos.sh
 less install-ai17z-macos.sh
 bash install-ai17z-macos.sh
 ```

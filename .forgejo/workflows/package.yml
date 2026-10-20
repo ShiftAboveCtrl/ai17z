@@ -1,0 +1,98 @@
+# Whether every platform still builds, installs and runs, when something that
+# ships has changed. Publishes nothing.
+#
+# For a long time the only way to find that out was to publish a release and
+# see, which is the shape this repository has already paid for six times: a
+# release used as the test, with somebody else's machine as the test bed. The
+# release workflow calls the same scripts, so what this proves is what a
+# release ships. A second set of build steps written just for CI would prove
+# something else that happens to look similar.
+#
+# amd64 only. The release contract, which needs every architecture, is proved
+# by the release workflow on the release runners; arm64 has its own runner and
+# a pull request does not get to use it.
+#
+# Untrusted, like check.yml: a pull request's packaging runs on `ai17z-ci`, the
+# disposable machine that holds nothing. Its Docker engine is a service beside
+# the job, inside that machine, never the host's.
+
+name: package
+
+on:
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "tools/**"
+      - "packages/shared/src/releaseManifest.ts"
+      - "packages/shared/src/installLayout.ts"
+      - "install-ai17z-*.sh"
+      - "docker-compose.yml"
+      - "docker/**"
+      - ".env.example"
+      - "*-ai17z.sh"
+      - "docs/**"
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "SECURITY.md"
+      - ".forgejo/workflows/package.yml"
+      - ".forgejo/workflows/release.yml"
+      - ".forgejo/scripts/**"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches: [main]
+    # The same list as above. Spelled out twice rather than anchored, because a
+    # YAML anchor is a feature some workflow readers support and some do not.
+    paths:
+      - "packaging/**"
+      - "tools/**"
+      - "packages/shared/src/releaseManifest.ts"
+      - "packages/shared/src/installLayout.ts"
+      - "install-ai17z-*.sh"
+      - "docker-compose.yml"
+      - "docker/**"
+      - ".env.example"
+      - "*-ai17z.sh"
+      - "docs/**"
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "SECURITY.md"
+      - ".forgejo/workflows/package.yml"
+      - ".forgejo/workflows/release.yml"
+      - ".forgejo/scripts/**"
+      - "package.json"
+      - "package-lock.json"
+
+concurrency:
+  group: package-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-amd64:
+    runs-on: ai17z-ci
+    container:
+      image: ubuntu:24.04
+    # A Docker engine beside the job, because the installer this job also
+    # proves stops without one, as it should on a real machine.
+    services:
+      docker:
+        image: docker:27-dind
+        options: --privileged
+        env:
+          DOCKER_TLS_CERTDIR: ""
+    env:
+      DOCKER_HOST: tcp://docker:2375
+    timeout-minutes: 90
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: bash .forgejo/scripts/setup-ubuntu-job.sh
+      - run: npm ci --no-audit --no-fund
+      - run: |
+          VERSION="$(bash .forgejo/scripts/release-version.sh)"
+          bash .forgejo/scripts/package-ubuntu.sh "$VERSION" amd64 "$PWD/out"
+          bash .forgejo/scripts/say-on-fail.sh 'the Ubuntu installer' -- \
+            bash .forgejo/scripts/prove-ubuntu-installer.sh "$PWD/out/ai17z_${VERSION}_amd64.deb" "$VERSION" amd64

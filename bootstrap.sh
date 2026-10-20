@@ -7,12 +7,12 @@
 #
 # Meant to be run this way:
 #
-#   curl -fsSL https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.sh | bash
+#   curl -fsSL https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/bootstrap.sh | bash
 #
 # That pattern -- fetch a script and run it -- asks you to trust whatever the
 # server sends. If you would rather look first, and you should:
 #
-#   curl -fsSL https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.sh -o bootstrap.sh
+#   curl -fsSL https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/bootstrap.sh -o bootstrap.sh
 #   less bootstrap.sh
 #   bash bootstrap.sh
 #
@@ -28,8 +28,8 @@
 set -euo pipefail
 
 # Replaced when the repository is published.
-REPO_URL="https://gitlab.com/shiftabovectrl/ai17z.git"
-ZIP_URL="https://gitlab.com/shiftabovectrl/ai17z/-/archive/main/ai17z-main.zip"
+REPO_URL="https://code.ai17z.io/AI17Z/ai17z.git"
+ZIP_URL="https://code.ai17z.io/AI17Z/ai17z/archive/main.zip"
 
 GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
 step() { echo "  ${CYAN}$1${OFF}"; }
@@ -78,7 +78,7 @@ else
   trap 'rm -rf "$tmp"' EXIT
   curl -fsSL "$ZIP_URL" -o "$tmp/ai17z.zip" || stop_with_reason "The download failed." "Check the URL above and your connection."
   unzip -q "$tmp/ai17z.zip" -d "$tmp/unpacked"
-  # GitLab wraps the tree in one folder named after the project and branch.
+  # The archive wraps the tree in one folder named after the project.
   inner="$(find "$tmp/unpacked" -mindepth 1 -maxdepth 1 -type d | head -1)"
   [ -n "$inner" ] || stop_with_reason "The download did not contain what was expected." "Try the git route, or clone by hand."
   mv "$inner" "$dir"

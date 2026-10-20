@@ -234,7 +234,7 @@ install -m 0644 "$STAGE/LICENSE" "$PKG/usr/share/doc/ai17z/copyright"
 {
   printf 'ai17z (%s) stable; urgency=medium\n\n' "$VERSION"
   printf '  * AI17Z %s. Release notes:\n' "$VERSION"
-  printf '    https://gitlab.com/shiftabovectrl/ai17z/-/releases/v%s\n\n' "$VERSION"
+  printf '    https://code.ai17z.io/AI17Z/ai17z/releases/tag/v%s\n\n' "$VERSION"
   printf ' -- AI17Z <290837309+ShiftAboveCtrl@users.noreply.github.com>  %s\n' "$(date -R)"
 } > "$ROOT/changelog"
 # A version carrying a dash is a non-native package, and Debian wants the
@@ -263,7 +263,7 @@ Installed-Size: ${INSTALLED_KB}
 Depends: libc6, ca-certificates
 Recommends: docker-ce | docker.io
 Suggests: google-chrome-stable
-Homepage: https://gitlab.com/shiftabovectrl/ai17z
+Homepage: https://code.ai17z.io/AI17Z/ai17z
 Description: Local-first platform for running autonomous agents
  AI17Z runs autonomous agents on your own machine. An agent is an identity, a
  memory, a model, a policy, and a set of channels it can act on.

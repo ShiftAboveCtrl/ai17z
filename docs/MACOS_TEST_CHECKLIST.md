@@ -1,14 +1,14 @@
 # macOS: what has been tested, and what needs a Mac
 
-AI17Z's macOS package is built and run on a real Apple-silicon Mac, GitLab's
-`saas-macos-medium-m1`, by the `package macos arm64` job. The package, the
-runtime, the architecture of both binaries, every workspace import, the
-lifecycle, the compatibility gate and the installer are all exercised there.
-That runner needs a GitLab plan this project does not yet have, so the job is
-manual until the project variable `AI17Z_MACOS` is set to 1, and a release built
-without it says it carries no macOS package. There is no Intel package: GitLab's
-Macs are Apple silicon, and one built under Rosetta would be relabelled rather
-than proved.
+AI17Z's macOS package is built and run on a real Apple-silicon Mac registered
+with AI17Z Code as the `ai17z-release-macos-arm64` runner, by the
+`package-macos` job of the release workflow. The package, the runtime, the
+architecture of both binaries, every workspace import, the lifecycle, the
+compatibility gate and the installer are all exercised there. Until such a Mac
+is registered, the repository variable `AI17Z_MACOS` stays unset, the job does
+not run, and a release built without it says it carries no macOS package. There
+is no Intel package: the Mac runners are Apple silicon, and one built under
+Rosetta would be relabelled rather than proved.
 
 What a hosted runner cannot represent is a person at a Mac: the dialogs, the
 downloads, and Docker Desktop's own setup. That is what is left here, and it is
@@ -18,7 +18,7 @@ Nothing below is a promise about behaviour that has not been observed.
 
 ## Proved on a real Mac, on every push
 
-`.gitlab/scripts/prove-macos-package.sh` and `prove-macos-installer.sh`, run by
+`.forgejo/scripts/prove-macos-package.sh` and `prove-macos-installer.sh`, run by
 the `package macos arm64` job.
 
 - the bundled Node starts and reports `darwin` and the right architecture
@@ -158,7 +158,7 @@ runners have no Chrome and no screen.
 
 - [ ] the installer refuses, says AI17Z for macOS runs on Apple silicon, and changes nothing
 - [ ] an Intel Mac already running AI17Z is told by its updater why no newer version is offered, and keeps running
-- [ ] The project can run GitLab's hosted Macs (`AI17Z_MACOS=1`) when the release is built, or the release says it carries no macOS package
+- [ ] A Mac release runner is registered (`AI17Z_MACOS=1`) when the release is built, or the release says it carries no macOS package
 
 ## How to record results
 
@@ -180,7 +180,7 @@ Nothing here asks you to lower a macOS protection. If any step seems to, stop.
 
 ```bash
 cd ~/Downloads
-curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-macos.sh
+curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-macos.sh
 less install-ai17z-macos.sh
 ```
 
@@ -287,7 +287,7 @@ session is still signed in.
 
 ```bash
 shasum -a 256 AI17Z-macos-arm64-1.0.0-beta.17.tar.gz
-curl -fsSL https://gitlab.com/shiftabovectrl/ai17z/-/releases/v1.0.0-beta.17/downloads/SHA256SUMS.txt
+curl -fsSL https://code.ai17z.io/AI17Z/ai17z/releases/download/v1.0.0-beta.17/SHA256SUMS.txt
 ```
 
 And the provenance, which needs `cosign` and is never required to install:
@@ -295,7 +295,7 @@ And the provenance, which needs `cosign` and is never required to install:
 ```bash
 cosign verify-blob AI17Z-macos-arm64-1.0.0-beta.84.tar.gz \
   --bundle AI17Z-macos-arm64-1.0.0-beta.84.tar.gz.sigstore.json \
-  --certificate-identity "https://gitlab.com/shiftabovectrl/ai17z//.gitlab-ci.yml@refs/tags/v1.0.0-beta.84" \
+  --certificate-identity "https://code.ai17z.io/AI17Z/ai17z//.gitlab-ci.yml@refs/tags/v1.0.0-beta.84" \
   --certificate-oidc-issuer https://gitlab.com
 ```
 
@@ -306,5 +306,5 @@ notarization, and not a claim that Apple has examined AI17Z.
 ### If something disagrees
 
 Say what actually happened, including nothing happening, at
-<https://gitlab.com/shiftabovectrl/ai17z/-/issues>. A step that behaved
+<https://code.ai17z.io/AI17Z/ai17z/issues>. A step that behaved
 differently from the sentence above is worth reporting even if it worked.

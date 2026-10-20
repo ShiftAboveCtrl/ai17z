@@ -1,0 +1,18 @@
+# Blobs in this repository's history that the history scan matches and that are
+# known to be synthetic test fixtures, by blob id: a blob id is the hash of the
+# file's exact bytes, so an entry here can never excuse a different file, or
+# the same file once anything in it changes. One line each: id, then why.
+#
+# A new match is never added here to make the scan pass. It is read first, and
+# if it is a real secret it is rotated and the history question goes to the
+# owner. These were each read on 2026-10-20: every key is a placeholder
+# (sequential characters, `abc...`, a bot id of 123456789).
+04d520ae47959d6dabc93a1c53617350bfbc37cc tests/integration/ownerChat.test.ts: placeholder Anthropic-shaped key ending 6789
+28ebb1a8c5fe758eb99f6687b2dd3425bbfaa709 tests/integration/ownerChat.test.ts: the same placeholder, an earlier revision
+8e5199a1a8b9bb971abdf14242c0d22d6083e123 tests/unit/providerCatalogue.test.ts: placeholder key shapes for provider detection
+50db5201c0351a687b8b7493be0b31b068b36bbb tests/unit/providerKeys.test.ts: placeholder key shapes for provider detection
+14d0d3bbd4c3dbb256955034c0d140ce28c01c44 tests/unit/sourceFiles.test.ts: a PEM header written to prove the detector detects it
+13d45a8820fecf2fba6837178077f0ef011b0577 tests/integration/telegramCommands.test.ts: bot token 123456789:AA... placeholder
+3e3041b5498ba79e5733cc8ea3f8eb6159f76d0b tests/integration/telegramCommands.test.ts: the same placeholder, an earlier revision
+5212ced405d8623058cd5bd98ede0e5992daf3ef tests/integration/telegramCommands.test.ts: the same placeholder, an earlier revision
+d57a3cb6a630bd313674097558630ddea09b5105 tests/integration/telegramNotify.test.ts: bot token 123456789:AA... placeholder

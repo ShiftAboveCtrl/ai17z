@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+#
+# A published AI17Z release, installed on a real Mac the way a stranger would.
+#
+#   qualify-published-macos.sh <tag> [<checkout-of-that-tag>]
+#
+# The second argument is what the published installer is compared against,
+# and it defaults to this script's own checkout. The workflow passes them
+# separately on purpose: the tooling should be the current one, so a fault in
+# *this* file can be fixed and re-run against a release that already exists,
+# while the thing being compared still comes from the tag. With one checkout
+# for both, a bad assertion here was frozen at the tag and could only ever be
+# fixed for the next release.
+#
+# Everything before this proves the package a run has just built. This proves
+# the one that was published: the script comes off the release rather than out
+# of the checkout, the package comes off the release over the network, and the
+# hash it is checked against is the one the release published. Nothing here
+# reads a build output, and the only thing it takes from the repository is the
+# checkout it runs from -- which it uses to assert that the published installer
+# is byte for byte the file this tag holds.
+#
+# `--no-start` because a hosted Mac has no Docker daemon, and `--into` because
+# the runner's own Library is not a disposable place. The one thing stubbed is
+# the answer to Docker's vendor check, at the narrowest point it can be: Docker
+# Desktop's download, disk image, licence and first run are not reachable here
+# and are not claimed. See prove-macos-installer.sh, which says the same and for
+# the same reason.
+set -uo pipefail
+
+TAG="${1:?a tag, such as v1.0.0-beta.17}"
+VERSION="${TAG#v}"
+PROJECT="${GITHUB_REPOSITORY:-AI17Z/ai17z}"
+DL="https://code.ai17z.io/$PROJECT/releases/download/$TAG"
+
+HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Where the tag's copy of the installer is. The same checkout unless the
+# caller says otherwise, which is what makes running this by hand work.
+TAGGED="${2:-$HERE}"
+ARCH="$(uname -m)"; [ "$ARCH" = x86_64 ] && ARCH=x64
+
+pass=0; fail=0
+failures=""
+ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
+bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); failures="$failures
+    $1"; }
+says() { if printf '%s' "$2" | grep -qi -- "$3"; then ok "$1"; else
+  bad "$1"; printf '%s\n' "$2" | tail -15 | sed 's/^/        /'; fi; }
+
+# One implementation of what a failed attempt meant, shared with the Ubuntu
+# qualifier and exercised by tests/unit/qualifyAttemptVerdict.test.ts.
+. "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qualify-attempt-verdict.sh"
+
+# The summary, reachable from anywhere that has established there is nothing
+# further worth asking.
+#
+# Everything after the install asks the installed copy about itself, so there
+# has to be one. Without a way to stop, a runner that could not reach AI17Z Code
+# reported fourteen failures: no launcher, no BUILD_INFO.json, node is not a
+# Mach-O, no esbuild, tsx cannot transform, three directories missing. Every one
+# is the same fact said again, and the one that mattered was above them.
+#
+# Measured on Beta 4.7, where the arm64 Mac was refused by the unauthenticated
+# API ceiling it shares and reported "5 passed, 14 failed" for a release the
+# Intel Mac beside it installed perfectly from the same URLs. A cause is worth
+# more than its consequences, so this stops at the cause.
+finish() {
+  echo
+  [ "$fail" -eq 0 ] || printf '\n  what failed:%b\n' "$failures"
+  echo "  published macOS $ARCH: $pass passed, $fail failed"
+  [ "$fail" -eq 0 ]
+  exit $?
+}
+
+# A directory with a space in it, because the real one is "Application Support"
+# and an unquoted variable anywhere in the chain only ever shows up there.
+ROOM="${TMPDIR:-/tmp}/published release"
+rm -rf "$ROOM"; mkdir -p "$ROOM"
+TARGET="$ROOM/AI17Z published"
+
+echo "### what the release published"
+curl -fsSL -o "$ROOM/SHA256SUMS.txt" "$DL/SHA256SUMS.txt" \
+  || { echo "$TAG publishes no SHA256SUMS.txt"; exit 1; }
+sed 's/^/    /' "$ROOM/SHA256SUMS.txt"
+
+echo
+echo "### the installer, as published"
+curl -fsSL -o "$ROOM/install-ai17z-macos.sh" "$DL/install-ai17z-macos.sh" \
+  || { echo "$TAG publishes no install-ai17z-macos.sh"; exit 1; }
+
+said="$(grep '  install-ai17z-macos.sh$' "$ROOM/SHA256SUMS.txt" | awk '{print $1}')"
+got="$(shasum -a 256 "$ROOM/install-ai17z-macos.sh" | awk '{print $1}')"
+if [ -n "$said" ] && [ "$said" = "$got" ]; then
+  ok "the published installer matches the hash the release published"
+else
+  bad "the installer hashes $got and SHA256SUMS.txt says '${said:-nothing}'"
+fi
+
+# And that it is this tag's file rather than some other version of it. The
+# release copies the repository's own script in; a difference means the release
+# was assembled from something that is not this commit.
+if diff -q "$ROOM/install-ai17z-macos.sh" "$TAGGED/install-ai17z-macos.sh" >/dev/null 2>&1; then
+  ok "and is byte for byte the script this checkout holds"
+else
+  bad "the published installer differs from the one in the checkout"
+  diff "$TAGGED/install-ai17z-macos.sh" "$ROOM/install-ai17z-macos.sh" | head -20 | sed 's/^/        /'
+fi
+
+echo
+echo "### Docker, and only Docker"
+# A hosted Mac has no Docker Desktop and cannot be given one: its installer is a
+# disk image with a graphical setup and Docker's own licence to accept, and
+# AI17Z must never accept that for somebody. Answered at the vendor boundary so
+# that everything after that gate is reachable; nothing of AI17Z's own logic is
+# replaced.
+STUB="$ROOM/vendor-bin"
+mkdir -p "$STUB"
+cat > "$STUB/docker" <<'STUBBED'
+#!/bin/sh
+case "$1" in
+  info)    echo "Server Version: 27.4.0"; exit 0 ;;
+  version) echo "27.4.0"; exit 0 ;;
+  compose) echo "Docker Compose version v2.30.0"; exit 0 ;;
+  *)       exit 0 ;;
+esac
+STUBBED
+chmod +x "$STUB/docker"
+PATH="$STUB:$PATH"
+export PATH
+echo "  docker is stubbed at the vendor boundary: $(command -v docker)"
+
+echo
+echo "### installing $TAG from the network, as published"
+# AI17Z Code may limit how often an address that is not signed in may ask its API,
+# and a hosted runner shares its address with whoever else is on that machine.
+# The published installer is unauthenticated by design -- that is what a
+# stranger runs, and giving it a token here would be testing something nobody
+# else can run. So this does what the installer's own advice says to do: waits,
+# and tries once more. One refusal is the ceiling being shared. A second one,
+# ninety seconds later, is a finding.
+#
+# Seen for real: `curl: (56) The requested URL returned error: 403` from the
+# macOS arm64 runner, while the Intel one beside it installed fine.
+#
+# The retry turns on the attempt having failed, never on what it printed. A
+# condition written as a text match only fires for the wordings somebody thought
+# of, and the Windows half of this workflow proved how that ends: it matched on
+# (403), (409) and (429) in output that was empty on every run, so the retry it
+# appears to have could never once have happened. An exit status is there
+# whatever the failure was and whatever it managed to say about it.
+#
+# Two attempts, and no more. What it printed is still read, but only to describe
+# what happened once both of them have failed.
+
+# Both attempts failed, and the report has to name which kind of failure it is
+# rather than assume one. A shared runner's hourly API ceiling says nothing
+# about the release; anything else is a finding about what was published.
+# Either way this fails.
+why_it_failed() {
+  if printf '%s' "$2" | grep -qE '403|429|rate limit|could not be read|could not be reached'; then
+    printf 'this runner could not reach the AI17Z Code API after a retry (the second attempt exited %s). That is the anonymous rate limit on an address it shares, not something about the release.' "$1"
+  else
+    printf 'the published installer failed twice, a minute apart, exiting %s the second time. Everything else in this run reached the same release from the same URLs, so this is a finding about what was published rather than about this runner.' "$1"
+  fi
+}
+wait_for_the_ceiling() {
+  # AI17Z Code may limit anonymous API callers per minute rather than per hour, and
+  # says nothing ahead of time about when a limit clears: it only sends
+  # RateLimit-Reset on the refusal itself, which the installer does not keep.
+  # So this waits one window and tries once more. Bounded, and still exactly
+  # two attempts either way.
+  echo "  Waiting sixty seconds, one rate-limit window, and trying once more."
+  sleep 60
+}
+
+install_once() {
+  bash "$ROOM/install-ai17z-macos.sh" --release "$TAG" --into "$TARGET" --yes --no-start 2>&1
+}
+
+# The package, taken by its exact address rather than looked up.
+#
+# This is the gate, and it touches no API. The asset name is composed by
+# `releaseManifest.ts`, the release publishes it at a path that contains the
+# tag, and the hash comes from the SHA256SUMS.txt already fetched from that same
+# tag. So the question "is the published package correct" is answered from three
+# tag-specific downloads and nothing else.
+#
+# It used to be answered by running the published installer, which resolves the
+# release through AI17Z Code's API without a token because that is what a
+# stranger runs. That made package correctness depend on an anonymous budget
+# shared with whoever else was on the runner, and twice in three releases it
+# came back 403 and the owner had to press re-run on a release that was fine.
+PACKAGE="AI17Z-macos-$ARCH-$VERSION.tar.gz"
+echo
+echo "### the package for this Mac, by its exact address"
+if curl -fsSL -o "$ROOM/$PACKAGE" "$DL/$PACKAGE"; then
+  ok "fetched $PACKAGE from the tag"
+else
+  bad "$TAG publishes no $PACKAGE"
+  finish
+fi
+
+want="$(grep "  $PACKAGE\$" "$ROOM/SHA256SUMS.txt" | awk '{print $1}')"
+got="$(shasum -a 256 "$ROOM/$PACKAGE" | awk '{print $1}')"
+if [ -n "$want" ] && [ "$want" = "$got" ]; then
+  ok "it matches the hash the release published"
+else
+  bad "the package hashes $got and SHA256SUMS.txt says '${want:-nothing}'"
+  finish
+fi
+
+echo
+echo "### installing that exact package, with no network lookup at all"
+out="$(bash "$ROOM/install-ai17z-macos.sh" --package "$ROOM/$PACKAGE" --sha256 "$want" --into "$TARGET" --yes --no-start 2>&1)"
+code=$?
+if [ "$code" -ne 0 ]; then
+  bad "the published package would not install (exit $code). $(printf '%s' "$out" | grep -v '^[[:space:]]*$' | tail -4 | tr '\n' '/')"
+  printf '%s\n' "$out" | sed 's/^/    /' | tail -30
+  finish
+fi
+ok "it installed from the published bytes"
+
+echo
+echo "### and the anonymous route a stranger actually takes"
+# Kept, because it is the route people use, and reported rather than trusted.
+#
+# Not a gate. The package has already been proved above from the tag's own
+# bytes, so a runner that cannot reach the anonymous API says something about
+# the runner and nothing about the release. A failure for any other reason is
+# still a finding.
+smoke="$(bash "$ROOM/install-ai17z-macos.sh" --release "$TAG" --into "$ROOM/stranger" --yes --no-start 2>&1)"
+smoke_code=$?
+if [ "$smoke_code" -ne 0 ]; then
+  wait_for_the_ceiling
+  smoke="$(bash "$ROOM/install-ai17z-macos.sh" --release "$TAG" --into "$ROOM/stranger" --yes --no-start 2>&1)"
+  smoke_code=$?
+fi
+case "$(attempt_verdict "$smoke_code" "$smoke")" in
+  OK)
+    ok "the published installer resolved $TAG and installed it unauthenticated"
+    ;;
+  CEILING)
+    # Said out loud and counted as neither pass nor fail: this is the shared
+    # sixty-an-hour ceiling, and the package is already proved.
+    echo "  note  AI17Z Code refused this runner\'s anonymous API twice. That is the shared rate"
+    echo "        limit rather than anything about $TAG, which installed from its own bytes above."
+    ;;
+  *)
+    bad "the published installer failed for something other than the API ceiling (exit $smoke_code). $(printf '%s' "$smoke" | grep -v '^[[:space:]]*$' | tail -4 | tr '\n' '/')"
+    ;;
+esac
+
+printf '%s\n' "$out" | sed 's/^/    /' | tail -40
+
+says "the installed copy names this version" "$out" "$VERSION"
+says "it checked the bytes against the hash it was given" "$out" "SHA-256"
+says "it said the package is not signed or notarized" "$out" "notariz"
+# Which package it chose is asked of the bytes it installed, below, not of what
+# it printed: the installer names the version and never the asset, so grepping
+# the output for the architecture failed on both Macs while every check that
+# actually matters passed. `file` on the bundled node and on esbuild is the
+# stronger question anyway -- a package can be named anything.
+
+if [ -x "$TARGET/ai17z" ]; then
+  ok "the launcher is there"
+else
+  # The installer's own words, carried into the summary that is printed last.
+  # An annotation holds the last forty lines, and the checks below fill them --
+  # so a failed install arrived once as thirteen consequences and no cause.
+  bad "nothing was installed. The installer said: $(printf '%s' "$out" | grep -v '^[[:space:]]*$' | tail -6 | tr '\n' '/')"
+  finish
+fi
+if [ -d "$TARGET/app" ] && [ -d "$TARGET/runtime" ]; then ok "app and runtime are there"; else bad "app or runtime missing"; fi
+
+echo
+echo "### what was installed says what it is"
+said="$("$TARGET/ai17z" version 2>&1)"
+if [ "$said" = "$VERSION" ]; then ok "the launcher reports $said"; else bad "the launcher reports '$said', not $VERSION"; fi
+
+if [ -f "$TARGET/app/BUILD_INFO.json" ]; then
+  built="$("$TARGET/runtime/node/bin/node" -p "require('$TARGET/app/BUILD_INFO.json').version" 2>&1)"
+  if [ "$built" = "$VERSION" ]; then
+    ok "BUILD_INFO.json says $built"
+  else
+    # The defect this exists for: a package named after the tag and reporting
+    # the version that happened to be in package.json. An installed copy reads
+    # BUILD_INFO.json to decide whether it is up to date, so the two disagreeing
+    # means an update that is offered for ever.
+    bad "BUILD_INFO.json says '$built' and the package is named $VERSION"
+  fi
+else
+  bad "there is no BUILD_INFO.json in the installed application"
+fi
+
+echo
+echo "### the architecture, from the bytes rather than from the name"
+node="$TARGET/runtime/node/bin/node"
+says "node is a Mach-O for this Mac" "$(file -b "$node")" "$( [ "$ARCH" = arm64 ] && echo arm64 || echo x86_64 )"
+esbuild="$(find "$TARGET/app/node_modules/@esbuild" -type f -name esbuild 2>/dev/null | head -1)"
+if [ -n "$esbuild" ]; then
+  says "esbuild is a Mach-O for this Mac" "$(file -b "$esbuild")" "$( [ "$ARCH" = arm64 ] && echo arm64 || echo x86_64 )"
+else
+  bad "the published package has no esbuild binary"
+fi
+
+echo
+echo "### it runs"
+if "$TARGET/ai17z" node -p '1 + 1' >/dev/null 2>&1; then
+  ok "the bundled node runs, from a path with a space in it"
+else
+  bad "something in the chain lost a quote"
+fi
+if "$node" "$TARGET/app/node_modules/tsx/dist/cli.mjs" -e 'const n: number = 1; console.log(n)' >/dev/null 2>&1; then
+  ok "tsx transforms TypeScript"
+else
+  bad "tsx cannot transform, so no npm script an installed copy runs would work"
+fi
+
+echo
+echo "### the owner's directories, beside the program rather than inside it"
+for dir in data logs browser-profiles; do
+  if [ -d "$TARGET/$dir" ]; then
+    mode="$(stat -f '%A' "$TARGET/$dir")"
+    if [ "$mode" = 700 ]; then ok "$dir is 700"; else bad "$dir is $mode"; fi
+  else
+    bad "$dir was not created"
+  fi
+done
+
+echo
+echo "### a release that has no package for this Mac is refused, not half-installed"
+out="$(bash "$ROOM/install-ai17z-macos.sh" --release v0.0.0-does-not-exist --into "$ROOM/nowhere" --yes --no-start 2>&1)"
+if [ -d "$ROOM/nowhere/app" ]; then
+  bad "it installed something from a release that does not exist"
+else
+  ok "nothing was installed"
+fi
+says "and it said why" "$out" "release"
+
+finish

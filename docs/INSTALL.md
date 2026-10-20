@@ -66,7 +66,7 @@ everywhere and enables browser-backed channels.
 Open **Windows Terminal** and paste this:
 
 ```powershell
-irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex
+irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex
 ```
 
 That is the whole installation. It checks what this PC has, installs anything
@@ -104,7 +104,7 @@ The setup program is [`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/
 To see what it would do to this PC without doing any of it:
 
 ```powershell
-& ([scriptblock]::Create((irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1))) -WhatIfOnly
+& ([scriptblock]::Create((irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1))) -WhatIfOnly
 ```
 
 **[How to audit it](SETUP_AUDIT.md)** — every privileged action, every
@@ -118,7 +118,7 @@ different databases, different signed-in accounts. They share nothing, and
 **updating one leaves the others exactly as they are.**
 
 ```powershell
-$s = irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1
+$s = irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1
 & ([scriptblock]::Create($s)) -List                 # what is installed
 & ([scriptblock]::Create($s)) -NewInstance          # install another
 & ([scriptblock]::Create($s)) -Instance AI17Z-test  # update that one
@@ -151,7 +151,7 @@ such. You do not need it.
 ## macOS
 
 ```bash
-curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-macos.sh
+curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-macos.sh
 less install-ai17z-macos.sh
 bash install-ai17z-macos.sh
 ```
@@ -176,9 +176,9 @@ is written out in full, including which prompts are Docker's or Google's rather
 than AI17Z's.
 
 **Every macOS package is built and run on a real Apple-silicon Mac before it is
-released**, including the installer, on GitLab's hosted Macs. Those need a GitLab
-plan this project does not yet have, so until it does a release says it carries
-no macOS package rather than shipping one nothing ran.
+released**, including the installer, on a Mac registered with AI17Z Code as a
+release runner. Until one is, a release says it carries no macOS package rather
+than shipping one nothing ran.
 What a hosted machine cannot represent is a person at one: Gatekeeper's dialogs,
 a downloaded file's quarantine, and Docker Desktop's own setup. Those are listed
 in [what still needs a Mac](MACOS_TEST_CHECKLIST.md).
@@ -190,7 +190,7 @@ Also: [Installing on macOS](MACOS_INSTALL.md) ·
 ## Ubuntu
 
 ```bash
-curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-ubuntu.sh
+curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-ubuntu.sh
 less install-ai17z-ubuntu.sh
 bash install-ai17z-ubuntu.sh
 ```
@@ -252,7 +252,7 @@ same data directory and the same updates.
 One line, in PowerShell, in a folder you can write to:
 
 ```powershell
-irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.ps1 | iex
+irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/bootstrap.ps1 | iex
 ```
 
 That clones the repository into `.\ai17z`, checks the machine, and starts it.
@@ -261,7 +261,7 @@ Piping a script from the internet into a shell asks you to trust whatever the
 server sends, and you are allowed to want to look first:
 
 ```powershell
-irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.ps1 -OutFile bootstrap.ps1
+irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/bootstrap.ps1 -OutFile bootstrap.ps1
 notepad bootstrap.ps1
 .\bootstrap.ps1
 ```
@@ -269,7 +269,7 @@ notepad bootstrap.ps1
 Or do it by hand, which is the same three steps the bootstrap runs:
 
 ```powershell
-git clone https://gitlab.com/shiftabovectrl/ai17z.git ai17z
+git clone https://code.ai17z.io/AI17Z/ai17z.git ai17z
 cd ai17z
 .\install-ai17z.ps1 -Start
 ```
@@ -277,13 +277,13 @@ cd ai17z
 ### Ubuntu
 
 ```bash
-curl -fsSL https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.sh | bash
+curl -fsSL https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/bootstrap.sh | bash
 ```
 
 or by hand:
 
 ```bash
-git clone https://gitlab.com/shiftabovectrl/ai17z.git ai17z
+git clone https://code.ai17z.io/AI17Z/ai17z.git ai17z
 cd ai17z
 ./install-ai17z.sh --start
 ```

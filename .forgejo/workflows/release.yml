@@ -1,0 +1,323 @@
+# Building, signing and publishing a release, on AI17Z Code.
+#
+# A `v*` tag publishes. A `rehearsal-v*` tag does every step a release does,
+# signing included, and publishes nothing: the finished directory is kept as
+# the run's artifact so what would have been published can be downloaded and
+# looked at. Delete the rehearsal tag afterwards; it is a test fixture, not
+# release history.
+#
+# **Only trusted runners take these jobs.** A tag can be pushed only by somebody
+# with write access, and every job here runs on a runner registered for this
+# repository's releases (`ai17z-release-*`), never on `ai17z-ci`, which takes
+# pull requests from anybody. The release key and the release token are given to
+# the one job that signs and publishes, and to nothing else.
+#
+# A release must not be the first place anybody discovers the tests are red, so
+# publishing waits for the full check and every platform's package, in this
+# same run, built from this same commit.
+#
+# Every platform, or no release. A platform this run cannot build is left out
+# only when the repository says so (`vars.AI17Z_MACOS` is not "1"), and then
+# the release manifest and notes say why in a sentence. A release that silently
+# lost a platform is how an updater offers somebody nothing and no reason.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+      - "rehearsal-v[0-9]*"
+
+# One release at a time, and never cancelled halfway: a publish interrupted
+# between the draft and the release is a draft somebody has to clean up.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AI17Z_MASTER_KEY: dGVzdC1vbmx5LW1hc3Rlci1rZXktMzItYnl0ZXMhISE=
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  version:
+    runs-on: ai17z-release-linux
+    container:
+      image: node:22-bookworm
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The tag and package.json must name the same version. A tag on a commit
+      # whose package.json says something else is a release that would install
+      # one version while calling itself another.
+      - id: v
+        run: |
+          VERSION="$(bash .forgejo/scripts/release-version.sh)"
+          FILE="$(node -p "require('./package.json').version")"
+          [ "$VERSION" = "$FILE" ] || { echo "the tag says $VERSION and package.json says $FILE"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "releasing $VERSION from $GITHUB_SHA"
+
+  check:
+    needs: version
+    runs-on: ai17z-release-linux
+    container:
+      image: node:22-bookworm
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: xbam
+          POSTGRES_PASSWORD: xbam
+          POSTGRES_DB: xbam
+    env:
+      DATABASE_URL: postgres://xbam:xbam@postgres:5432/xbam
+    timeout-minutes: 120
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run release:check
+      - run: bash .forgejo/scripts/secret-scan.sh
+      - run: python3 .forgejo/scripts/history-scan.py .
+      - run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium
+      - run: npm run migrate
+      - run: npx vitest run --reporter=default
+      - run: npm run build:web
+
+  package-ubuntu:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ai17z-release-linux
+          # A machine that is arm64, so the package is proved where it will
+          # run. Never built on amd64 and relabelled.
+          - arch: arm64
+            runner: ai17z-release-linux-arm64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ubuntu:24.04
+    services:
+      docker:
+        image: docker:27-dind
+        options: --privileged
+        env:
+          DOCKER_TLS_CERTDIR: ""
+    env:
+      DOCKER_HOST: tcp://docker:2375
+    timeout-minutes: 120
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: bash .forgejo/scripts/setup-ubuntu-job.sh
+      - run: npm ci --no-audit --no-fund
+      - run: bash .forgejo/scripts/package-ubuntu.sh "${{ needs.version.outputs.version }}" "${{ matrix.arch }}" "$PWD/out"
+      # The installer, against the package just built, on a rehearsal. A
+      # release's installer is proved from its published address by `qualify`.
+      - if: startsWith(github.ref_name, 'rehearsal-')
+        run: |
+          bash .forgejo/scripts/say-on-fail.sh 'the Ubuntu installer' -- \
+            bash .forgejo/scripts/prove-ubuntu-installer.sh \
+              "$PWD/out/ai17z_${{ needs.version.outputs.version }}_${{ matrix.arch }}.deb" "${{ needs.version.outputs.version }}" "${{ matrix.arch }}"
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        with:
+          name: ubuntu-${{ matrix.arch }}
+          path: out/ai17z_*.deb
+          retention-days: 14
+
+  # Every Ubuntu release AI17Z supports takes the package, with only its
+  # declared dependencies, on a rehearsal.
+  ubuntu-takes-the-package:
+    if: startsWith(github.ref_name, 'rehearsal-')
+    needs: [version, package-ubuntu]
+    strategy:
+      matrix:
+        release: ["22.04", "24.04", "26.04"]
+    runs-on: ai17z-release-linux
+    container:
+      image: ubuntu:${{ matrix.release }}
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: https://data.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4
+        with:
+          name: ubuntu-amd64
+          path: out
+      - run: |
+          WANT_VERSION="${{ needs.version.outputs.version }}" bash .forgejo/scripts/say-on-fail.sh "Ubuntu ${{ matrix.release }}" -- \
+            bash .forgejo/scripts/prove-ubuntu-release.sh "$PWD/out/ai17z_${{ needs.version.outputs.version }}_amd64.deb"
+
+  # macOS, on Apple silicon only, on a Mac registered as a release runner. While
+  # there is none, `vars.AI17Z_MACOS` stays unset, this job does not run, and the
+  # release says it has no macOS package and why. Setting it to "1" makes macOS
+  # part of every release, and a release then waits for it.
+  package-macos:
+    if: vars.AI17Z_MACOS == '1'
+    needs: version
+    runs-on: ai17z-release-macos-arm64
+    timeout-minutes: 120
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: |
+          source .forgejo/scripts/setup-macos-job.sh
+          npm ci --no-audit --no-fund
+          bash .forgejo/scripts/package-macos.sh "${{ needs.version.outputs.version }}" "$PWD/out"
+          if [ "${GITHUB_REF_NAME#rehearsal-}" != "$GITHUB_REF_NAME" ]; then
+            bash .forgejo/scripts/say-on-fail.sh 'the macOS installer' -- \
+              bash .forgejo/scripts/prove-macos-installer.sh "$PWD/out/AI17Z-macos-arm64-${{ needs.version.outputs.version }}.tar.gz" "${{ needs.version.outputs.version }}"
+          fi
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        with:
+          name: macos-arm64
+          path: out/AI17Z-macos-*.tar.gz
+          retention-days: 14
+
+  # Windows, built on the Windows release runner from this commit. Proved before
+  # tagging by `npm run verify:install -- --twice --upgrade` on a real Windows
+  # machine, which no runner replaces.
+  package-windows:
+    needs: version
+    runs-on: ai17z-release-windows
+    timeout-minutes: 120
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - shell: powershell
+        run: |
+          . .\.forgejo\scripts\setup-windows-job.ps1
+          . .\.forgejo\scripts\build-windows-release.ps1 -Version '${{ needs.version.outputs.version }}'
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        with:
+          name: windows
+          path: |
+            build/windows/AI17Z-Setup-*.exe
+            build/windows/Install-AI17Z-*.ps1
+            build/windows/install.ps1
+            build/windows/AI17Z-App-*.zip
+            build/windows/setup-declaration.json
+            release.env
+          retention-days: 14
+
+  publish:
+    needs: [version, check, package-ubuntu, package-windows, package-macos]
+    # Waits for macOS only when macOS was asked for. `always()` with the
+    # results named is how a skipped job is told apart from a failed one.
+    if: >-
+      always() &&
+      needs.check.result == 'success' &&
+      needs.package-ubuntu.result == 'success' &&
+      needs.package-windows.result == 'success' &&
+      (needs.package-macos.result == 'success' || (vars.AI17Z_MACOS != '1' && needs.package-macos.result == 'skipped'))
+    runs-on: ai17z-release-linux
+    container:
+      image: ubuntu:24.04
+    timeout-minutes: 60
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
+      # The whole history, so the release notes can say what changed.
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - run: |
+          bash .forgejo/scripts/setup-ubuntu-job.sh
+          bash .forgejo/scripts/setup-cosign.sh
+          npm ci --no-audit --no-fund
+      - uses: https://data.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          [ -f dist/release.env ] && . dist/release.env && export RELEASE_NAME && rm -f dist/release.env
+          if [ "${GITHUB_REF_NAME#rehearsal-}" != "$GITHUB_REF_NAME" ]; then
+            bash .forgejo/scripts/publish-release.sh dist "$VERSION" rehearsal
+          else
+            bash .forgejo/scripts/publish-release.sh dist "$VERSION"
+          fi
+      - if: startsWith(github.ref_name, 'rehearsal-')
+        uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        with:
+          name: rehearsal-dist
+          path: dist/
+          retention-days: 7
+
+  # What was published, from its published address, as a stranger would get it.
+  # Nothing here reads a build output.
+  qualify:
+    if: ${{ !startsWith(github.ref_name, 'rehearsal-') }}
+    needs: [version, publish]
+    runs-on: ai17z-release-linux
+    container:
+      image: ubuntu:24.04
+    services:
+      docker:
+        image: docker:27-dind
+        options: --privileged
+        env:
+          DOCKER_TLS_CERTDIR: ""
+    env:
+      DOCKER_HOST: tcp://docker:2375
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: |
+          TAG="v${{ needs.version.outputs.version }}"
+          bash .forgejo/scripts/setup-ubuntu-job.sh
+          bash .forgejo/scripts/setup-cosign.sh
+          bash .forgejo/scripts/say-on-fail.sh 'the published release' -- bash .forgejo/scripts/verify-published-release.sh "$TAG"
+          mkdir -p tagged && git archive "$TAG" install.ps1 install-ai17z-ubuntu.sh install-ai17z-macos.sh | tar -x -C tagged
+          bash .forgejo/scripts/say-on-fail.sh 'the published Ubuntu release' -- \
+            bash .forgejo/scripts/as-stranger.sh bash .forgejo/scripts/qualify-published-ubuntu.sh "$TAG" "$PWD/tagged"
+
+  # The published arm64 package, installed on an arm64 machine.
+  qualify-ubuntu-arm64:
+    if: ${{ !startsWith(github.ref_name, 'rehearsal-') }}
+    needs: [version, publish]
+    runs-on: ai17z-release-linux-arm64
+    container:
+      image: ubuntu:24.04
+    services:
+      docker:
+        image: docker:27-dind
+        options: --privileged
+        env:
+          DOCKER_TLS_CERTDIR: ""
+    env:
+      DOCKER_HOST: tcp://docker:2375
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: |
+          TAG="v${{ needs.version.outputs.version }}"
+          bash .forgejo/scripts/setup-ubuntu-job.sh
+          mkdir -p tagged && git archive "$TAG" install-ai17z-ubuntu.sh | tar -x -C tagged
+          bash .forgejo/scripts/say-on-fail.sh 'the published Ubuntu release on arm64' -- \
+            bash .forgejo/scripts/as-stranger.sh bash .forgejo/scripts/qualify-published-ubuntu.sh "$TAG" "$PWD/tagged"
+
+  qualify-windows:
+    if: ${{ !startsWith(github.ref_name, 'rehearsal-') }}
+    needs: [version, publish]
+    runs-on: ai17z-release-windows
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - shell: powershell
+        run: |
+          $tag = 'v${{ needs.version.outputs.version }}'
+          New-Item -ItemType Directory -Force -Path tagged | Out-Null
+          # Through cmd, because PowerShell redirection would re-encode the
+          # bytes the comparison is about.
+          cmd /c "git show ${tag}:install.ps1 > tagged\install.ps1"
+          powershell -NoProfile -File .forgejo\scripts\qualify-published-windows.ps1 -Tag $tag -Tagged tagged\install.ps1
+          if ($LASTEXITCODE -ne 0) { throw "the published Windows route failed ($LASTEXITCODE)" }

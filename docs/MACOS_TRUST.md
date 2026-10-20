@@ -13,7 +13,7 @@ stand behind, and the things it cannot claim are named as such.
 | Does it strip quarantine attributes to get past a warning? | **No** |
 | Does it self-sign and present that as trusted? | **No** |
 | What verifies the package instead? | a SHA-256 published by the release, checked before anything is unpacked |
-| What proves where it came from? | Sigstore provenance from this project's GitLab pipeline: build provenance, **not** Apple notarization |
+| What proves where it came from? | a Sigstore signature by AI17Z's release key, in the public transparency log: release provenance, **not** Apple notarization |
 | Which Macs? | Apple silicon (M1 or newer). There is no Intel package |
 
 ## Why it is a tarball
@@ -62,15 +62,14 @@ got are the bytes that release published. If the release itself were tampered
 with, the checksum would have been replaced alongside the payload and nothing in
 the chain would notice.
 
-**What stands against that** is that releases are built by a public GitLab
-pipeline from a public tag, never uploaded from anybody's machine, and that
-every published file is one you can read.
+**What stands against that** is that releases are built by AI17Z Code's release pipeline, its own Forgejo Actions on runners that take nothing but this repository's tags, from a public tag, never uploaded from
+anybody's machine, and that every published file is one you can read.
 
-**Sigstore provenance** signs every published file with the identity of this
-project's own GitLab pipeline, run from that tag: a bundle beside each file,
-named `<file>.sigstore.json`, saying these exact bytes came out of that
-pipeline, at that tag, in that project, and recorded in Sigstore's public
-transparency log. That is build provenance. It is **not** Apple notarization, **not** code
+**Sigstore provenance** signs every published file with AI17Z's release key,
+whose public half is `.forgejo/cosign.pub` in this repository: a bundle beside
+each file, named `<file>.sigstore.json`, saying these exact bytes were signed
+by that key, and recorded in Sigstore's public transparency log. That is release
+provenance. It is **not** Apple notarization, **not** code
 signing, and **not** a claim that any platform vendor has examined AI17Z.
 Verifying it needs `cosign` and is never required to install AI17Z.
 
@@ -78,8 +77,8 @@ Verifying it needs `cosign` and is never required to install AI17Z.
 
 AI17Z builds each package on the architecture it is for, and proves it there,
 because a package built for one architecture on another installs and then fails
-with "cannot load". GitLab's hosted Macs are Apple silicon. An Intel package
-built on one would run under Rosetta, which is a relabelled architecture rather
+with "cannot load". AI17Z's Mac release runners are Apple silicon. An Intel
+package built on one would run under Rosetta, which is a relabelled architecture rather
 than a proved one, so there is no Intel package. A Mac already running AI17Z
 keeps the version it has, and its updater says why no newer one is offered.
 
@@ -123,7 +122,7 @@ With `cosign`, the provenance as well:
 ```bash
 cosign verify-blob AI17Z-macos-arm64-<version>.tar.gz \
   --bundle AI17Z-macos-arm64-<version>.tar.gz.sigstore.json \
-  --certificate-identity "https://gitlab.com/shiftabovectrl/ai17z//.gitlab-ci.yml@refs/tags/v<version>" \
+  --certificate-identity "https://code.ai17z.io/AI17Z/ai17z//.gitlab-ci.yml@refs/tags/v<version>" \
   --certificate-oidc-issuer https://gitlab.com
 ```
 
@@ -131,7 +130,7 @@ cosign verify-blob AI17Z-macos-arm64-<version>.tar.gz \
 
 If a hash does not match, or AI17Z does something this page does not describe:
 **stop, and open an issue** at
-<https://gitlab.com/shiftabovectrl/ai17z/-/issues>. For anything you believe is a
+<https://code.ai17z.io/AI17Z/ai17z/issues>. For anything you believe is a
 security problem, [SECURITY.md](../SECURITY.md) says how to report it privately.
 
 ## What is written here has not been watched happen

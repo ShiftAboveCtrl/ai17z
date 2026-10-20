@@ -6,13 +6,13 @@ import { installHarness } from '../support/harness';
 
 installHarness();
 
-const REPO = 'shiftabovectrl/ai17z';
-const DOWNLOAD = `https://gitlab.com/${REPO}/-/releases`;
-const asset = (tag: string, name: string) => `${DOWNLOAD}/${tag}/downloads/${name}`;
+const REPO = 'AI17Z/ai17z';
+const DOWNLOAD = `https://code.ai17z.io/${REPO}/releases/download`;
+const asset = (tag: string, name: string) => `${DOWNLOAD}/${tag}/${name}`;
 
 /**
  * One release as the world can see it, through the two routes the updater
- * uses: GitLab's releases list, and the files linked under its own tag.
+ * uses: AI17Z Code's releases list, and the files attached under its own tag.
  *
  * `manifest: null` is a release that exists and is not finished. `notes: null`
  * is one published before notes became an asset.
@@ -21,7 +21,7 @@ interface FakeRelease {
   tag: string;
   title?: string;
   released?: string;
-  upcoming?: boolean;
+  draft?: boolean;
   manifest?: Record<string, unknown> | null;
   notes?: string | null;
 }
@@ -37,22 +37,23 @@ function release(tag: string, extra: Partial<FakeRelease> = {}): FakeRelease {
   };
 }
 
-/** The releases list, shaped the way GitLab's API answers it. */
+/** The releases list, shaped the way Forgejo's API answers it. */
 function listing(releases: FakeRelease[]): string {
   return JSON.stringify(
     releases.map((entry) => ({
       tag_name: entry.tag,
       name: entry.title ?? '',
-      released_at: entry.released ?? '',
-      upcoming_release: entry.upcoming ?? false,
-      description: '<h3>rendered, which is the wrong thing for a Markdown renderer</h3>',
+      published_at: entry.released ?? '',
+      draft: entry.draft ?? false,
+      prerelease: entry.tag.includes('-'),
+      body: '### notes in the body, which the updater reads from the attached file instead',
     })),
   );
 }
 
 /** Every URL the updater asked for, so "did it ask at all" is testable. */
 let calls: string[] = [];
-const isListing = (url: string) => url.startsWith(`https://gitlab.com/api/v4/projects/${encodeURIComponent(REPO)}/releases`);
+const isListing = (url: string) => url.startsWith(`https://code.ai17z.io/api/v1/repos/${REPO}/releases`);
 const listCalls = () => calls.filter(isListing);
 const githubCalls = () => calls.filter((url) => url.includes('github.com'));
 
@@ -142,12 +143,13 @@ describe('finding out whether there is a newer version', () => {
     expect(await fetchLatestRelease('1.0.0-beta.1')).toMatchObject({ version: '9.9.9-rc.1' });
   });
 
-  it('never offers a release GitLab calls upcoming', async () => {
-    // Announced with a date in the future and not out yet: GitLab's nearest
-    // thing to a draft. Both the flag and the date are honoured, so a list that
-    // carries only one of them still cannot offer it.
+  it('never offers a draft, or a release dated in the future', async () => {
+    // Forgejo lists a draft only to somebody who may write to the repository,
+    // which an update check never is; but a release that says it is
+    // unfinished is unfinished whoever asks. A date in the future is announced
+    // and not out. Both are honoured, separately.
     serve([
-      release('v9.9.9', { upcoming: true, released: '2999-01-01T00:00:00.000Z' }),
+      release('v9.9.9', { draft: true }),
       release('v9.9.8', { released: '2999-01-01T00:00:00.000Z' }),
       release('v0.0.1'),
     ]);
@@ -161,13 +163,13 @@ describe('finding out whether there is a newer version', () => {
     expect((await updateState({ refresh: true })).latest?.version).toBe('9.9.9');
   });
 
-  it('asks for the list once and never asks GitLab to choose', async () => {
+  it('asks for the list once and never asks the server to choose', async () => {
     serve([release('v9.9.9')]);
     await fetchLatestRelease('0.1.0');
     expect(listCalls()).toHaveLength(1);
     expect(githubCalls()).toHaveLength(0);
-    // `permalink/latest` is GitLab deciding what is newest; here the tag does.
-    expect(calls.some((url) => url.includes('permalink/latest'))).toBe(false);
+    // `/releases/latest` is the server deciding what is newest; here the tag does.
+    expect(calls.some((url) => url.includes('/releases/latest'))).toBe(false);
   });
 });
 
@@ -177,8 +179,8 @@ describe('finding out whether there is a newer version', () => {
  * An agent told to watch a repository polls GitHub through the REST API, and
  * the unauthenticated allowance is sixty an hour for the whole address. When
  * AI17Z itself was published there, two installations on one connection
- * exhausted it and the updater went blind. Published on GitLab, the update
- * path asks GitHub nothing, so that budget cannot reach it.
+ * exhausted it and the updater went blind. Published on AI17Z Code, the
+ * update path asks GitHub nothing, so that budget cannot reach it.
  */
 describe('not being starved by the agent that watches GitHub', () => {
   it('finds the release while the REST budget is exhausted', async () => {
@@ -243,11 +245,11 @@ describe('not being made to update', () => {
   });
 });
 
-describe('what happens when GitHub cannot be reached', () => {
+describe('what happens when the release host cannot be reached', () => {
   it('reports the failure instead of throwing it', async () => {
     // An installation with no internet is not a broken one, and a screen that
     // says so is more use than one that quietly shows nothing.
-    serve(new Error('getaddrinfo ENOTFOUND gitlab.com'));
+    serve(new Error('getaddrinfo ENOTFOUND code.ai17z.io'));
     const state = await updateState({ refresh: true });
     expect(state.error).toContain('ENOTFOUND');
     expect(state.updateAvailable).toBe(false);
@@ -451,8 +453,7 @@ describe('picking the right download out of a release', () => {
     serve([release('v9.9.9')]);
     const latest = await fetchLatestRelease('9.0.0');
     for (const url of [latest?.installerUrl, latest?.setupUrl, latest?.url]) {
-      expect(url).toContain(`${REPO}/-/releases/v9.9.9`);
-      expect(url).toMatch(/^https:\/\/gitlab\.com\//);
+      expect(url).toMatch(/^https:\/\/code\.ai17z\.io\/AI17Z\/ai17z\/releases\/(tag|download)\/v9\.9\.9(\/|$)/);
     }
   });
 

@@ -42,11 +42,11 @@ needs to do its job, and the Activity screen shows what was sent and when.
 
 There is one request AI17Z makes that you did not configure, and this is it:
 
-- **The update check.** At most once every six hours, AI17Z asks GitLab's public
+- **The update check.** At most once every six hours, AI17Z asks AI17Z Code's public
   API which versions of AI17Z have been released. The request carries a
   `User-Agent` of `AI17Z` and nothing else -- no identifier, no version, no
   agent, no account, nothing about you. It is an ordinary anonymous read of a
-  public page, and GitLab learns from it exactly what it learns from anybody
+  public page, and AI17Z Code learns from it exactly what it learns from anybody
   visiting the releases page: that some address asked.
 
   Nothing is downloaded and nothing is installed. The answer becomes a line on
@@ -64,7 +64,7 @@ There is one request AI17Z makes that you did not configure, and this is it:
 AI17Z Setup runs once, before there is an AI17Z to have a privacy policy. What it
 sends is the same nothing:
 
-- It asks **GitLab** which release to install and downloads two files from that
+- It asks **AI17Z Code** which release to install and downloads two files from that
   release — the application, and the list of hashes to check it against. Ordinary
   anonymous reads of public URLs, with a `User-Agent` of `AI17Z-Setup`.
 - It asks **winget**, Microsoft's package manager, to install anything missing.
@@ -130,4 +130,4 @@ cannot be undone.
 
 ## Questions
 
-Open an issue: <https://gitlab.com/shiftabovectrl/ai17z/-/issues>
+Open an issue: <https://code.ai17z.io/AI17Z/ai17z/issues>

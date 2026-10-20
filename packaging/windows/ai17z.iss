@@ -21,7 +21,7 @@
 
 #define AppName "AI17Z"
 #define AppPublisher "AI17Z"
-#define AppUrl "https://gitlab.com/shiftabovectrl/ai17z"
+#define AppUrl "https://code.ai17z.io/AI17Z/ai17z"
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif

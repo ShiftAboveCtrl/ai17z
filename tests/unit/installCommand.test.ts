@@ -34,13 +34,13 @@ const setup = read('packaging/windows/Setup-AI17Z.ps1');
 const readme = read('README.md');
 // The release pipeline: what builds the Windows half, what publishes, and what
 // the notes say.
-const windowsBuild = read('.gitlab/scripts/build-windows-release.ps1');
-const publishScript = read('.gitlab/scripts/publish-release.sh');
-const notesScript = read('.gitlab/scripts/release-notes.sh');
-const workflow = [read('.gitlab/ci/package.yml'), read('.gitlab/ci/release.yml'), windowsBuild, publishScript, notesScript].join('\n');
+const windowsBuild = read('.forgejo/scripts/build-windows-release.ps1');
+const publishScript = read('.forgejo/scripts/publish-release.sh');
+const notesScript = read('.forgejo/scripts/release-notes.sh');
+const workflow = [read('.forgejo/workflows/package.yml'), read('.forgejo/workflows/release.yml'), windowsBuild, publishScript, notesScript].join('\n');
 
 /** The one line a person is asked to paste. Everything else follows from it. */
-const COMMAND = 'irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex';
+const COMMAND = 'irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex';
 
 describe('the install command', () => {
   it('is the same line in the README, the file itself, and the release notes', () => {
@@ -53,8 +53,8 @@ describe('the install command', () => {
 
   it('fetches the file the command names, from the branch the command names', () => {
     // The URL in the command and the file in the repository have to be the same
-    // thing. `install.ps1` at the root is what GitLab's raw path serves for
-    // that path.
+    // thing. `install.ps1` at the root is what AI17Z Code's raw path serves
+    // for that path.
     expect(COMMAND).toContain('/main/install.ps1');
   });
 
@@ -88,9 +88,9 @@ describe('what it will and will not reach', () => {
     expect(install).toContain('function Assert-AllowedUrl');
     expect(install).toMatch(/AllowedHosts -notcontains \$uri\.Host/);
     expect(install).toMatch(/\$uri\.Scheme -ne 'https'/);
-    // One host: GitLab answers a release download with one redirect on
-    // gitlab.com itself, measured never leaving it.
-    expect(install).toContain("$AllowedHosts = @('gitlab.com')");
+    // One host: AI17Z Code serves a release file itself, from its own storage.
+    expect(install).toContain("$AllowedHosts = @('code.ai17z.io')");
+    expect(install).not.toMatch(/gitlab\.com/);
     expect(install).not.toMatch(/githubusercontent|api\.github\.com/);
   });
 
@@ -104,7 +104,7 @@ describe('what it will and will not reach', () => {
       const at = install.indexOf(helper);
       expect(install.slice(at, at + 400), `${helper} does not check the address`).toContain('Assert-AllowedUrl');
     }
-    const download = install.indexOf('$setupAsset.direct_asset_url');
+    const download = install.indexOf('$setupAsset.browser_download_url');
     expect(install.slice(Math.max(0, download - 300), download)).toContain('Assert-AllowedUrl');
   });
 

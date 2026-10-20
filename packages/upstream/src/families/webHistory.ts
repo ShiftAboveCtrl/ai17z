@@ -238,7 +238,7 @@ export interface WebHistoryAnswer {
  * Named so an operator reading their logs can tell what this is and who to
  * contact. Anonymous traffic is what gets a netblock blocked for a day.
  */
-const USER_AGENT = 'AI17Z/1.0 (+https://gitlab.com/shiftabovectrl/ai17z) autonomous-agent-toolspace';
+const USER_AGENT = 'AI17Z/1.0 (+https://code.ai17z.io/AI17Z/ai17z) autonomous-agent-toolspace';
 
 /**
  * The largest archived record this will pull down, compressed.

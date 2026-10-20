@@ -87,7 +87,7 @@ export class Crash extends Component<Props, State> {
           </a>
           <a
             className="btn-quiet text-xs"
-            href="https://gitlab.com/shiftabovectrl/ai17z/-/issues"
+            href="https://code.ai17z.io/AI17Z/ai17z/issues"
             target="_blank"
             rel="noreferrer"
           >

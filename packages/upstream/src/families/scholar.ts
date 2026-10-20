@@ -212,7 +212,7 @@ export const MAX_AUTHORS = 25;
 /** How much abstract may travel. */
 export const MAX_ABSTRACT = 4_000;
 
-const USER_AGENT = 'AI17Z/1.0 (+https://gitlab.com/shiftabovectrl/ai17z) scholarly-metadata';
+const USER_AGENT = 'AI17Z/1.0 (+https://code.ai17z.io/AI17Z/ai17z) scholarly-metadata';
 
 /**
  * An installation's Crossref contact address, when its owner gave one.

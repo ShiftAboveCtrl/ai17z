@@ -43,9 +43,9 @@ is about the project's own spaces.
 
 ## Reporting
 
-Raise it with the maintainers through a
-[private security advisory](https://gitlab.com/shiftabovectrl/ai17z/-/issues/new?issuable_template=Security&issue[confidential]=true),
-which is the private channel this repository has. Reports are read by the
+Raise it with the maintainers privately at
+[ai17z.io/security/report](https://ai17z.io/security/report),
+which is the private channel this project has. Reports are read by the
 maintainers and not discussed publicly without the reporter's agreement.
 
 Maintainers may edit, hide or remove contributions, and may block accounts,

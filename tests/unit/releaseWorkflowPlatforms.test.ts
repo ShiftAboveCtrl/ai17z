@@ -22,52 +22,50 @@ import {
  *
  * Every property here was first held of the GitHub workflows this pipeline
  * replaced, and each one was paid for by a release; see the comments beside
- * them. They are held of the GitLab pipeline now: its YAML, which says which
- * jobs run where and when, and the scripts it calls, which say what each step
- * does.
+ * them. They are held of AI17Z Code's Forgejo workflows now: their YAML, which
+ * says which jobs run where and when, and the scripts they call, which say what
+ * each step does.
  */
 
 const root = resolve(__dirname, '../..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
-const packageYml = read('.gitlab/ci/package.yml');
-const releaseYml = read('.gitlab/ci/release.yml');
-const qualifyYml = read('.gitlab/ci/qualify.yml');
-const rootYml = read('.gitlab-ci.yml');
-const publish = read('.gitlab/scripts/publish-release.sh');
-const notes = read('.gitlab/scripts/release-notes.sh');
-const contract = read('.gitlab/scripts/package-contract.sh');
-const macosBuild = read('.gitlab/scripts/package-macos.sh');
-const ubuntuBuild = read('.gitlab/scripts/package-ubuntu.sh');
-const windowsBuild = read('.gitlab/scripts/build-windows-release.ps1');
+const packageYml = read('.forgejo/workflows/package.yml');
+const releaseYml = read('.forgejo/workflows/release.yml');
+const qualifyYml = read('.forgejo/workflows/qualify.yml');
+const publish = read('.forgejo/scripts/publish-release.sh');
+const notes = read('.forgejo/scripts/release-notes.sh');
+const macosBuild = read('.forgejo/scripts/package-macos.sh');
+const ubuntuBuild = read('.forgejo/scripts/package-ubuntu.sh');
+const windowsBuild = read('.forgejo/scripts/build-windows-release.ps1');
 // The proofs themselves live in scripts the builds call, so that a failure can
 // be run by hand on a machine of your own before a runner is asked.
-const macosProof = read('.gitlab/scripts/prove-macos-package.sh');
-const ubuntuProof = read('.gitlab/scripts/prove-ubuntu-package.sh');
-const qualifiers = [read('.gitlab/scripts/qualify-published-macos.sh'), read('.gitlab/scripts/qualify-published-ubuntu.sh')];
-const windowsQualifier = read('.gitlab/scripts/qualify-published-windows.ps1');
+const macosProof = read('.forgejo/scripts/prove-macos-package.sh');
+const ubuntuProof = read('.forgejo/scripts/prove-ubuntu-package.sh');
+const qualifiers = [read('.forgejo/scripts/qualify-published-macos.sh'), read('.forgejo/scripts/qualify-published-ubuntu.sh')];
+const windowsQualifier = read('.forgejo/scripts/qualify-published-windows.ps1');
 const VERSION = '9.9.9';
 
+type Step = { run?: string; uses?: string; env?: Record<string, string>; with?: Record<string, unknown>; if?: string };
 type Job = {
-  stage?: string;
-  extends?: string;
-  image?: string;
-  tags?: string[];
-  needs?: (string | { job: string })[];
-  rules?: { if?: string; when?: string }[];
-  script?: string[];
-  before_script?: string[];
-  id_tokens?: unknown;
-  artifacts?: { paths?: string[]; when?: string };
+  'runs-on'?: string;
+  if?: string;
+  needs?: string | string[];
+  container?: { image?: string };
+  strategy?: { matrix?: { include?: { arch?: string; runner?: string }[] } };
+  steps?: Step[];
 };
-const yamlJobs = (text: string) => load(text) as Record<string, Job>;
-const allJobs: Record<string, Job> = { ...yamlJobs(packageYml), ...yamlJobs(releaseYml), ...yamlJobs(qualifyYml) };
-function job(name: string): Job {
-  const own = allJobs[name];
+type Workflow = { on: Record<string, { tags?: string[] }>; jobs: Record<string, Job> };
+const release = load(releaseYml) as Workflow;
+const qualify = load(qualifyYml) as Workflow;
+const validation = load(packageYml) as Workflow;
+function job(w: Workflow, name: string): Job {
+  const own = w.jobs[name];
   if (!own) throw new Error(`no job ${name}`);
-  return own.extends ? { ...job(own.extends), ...own } : own;
+  return own;
 }
-const scriptOf = (name: string) => [...(job(name).before_script ?? []), ...(job(name).script ?? [])].join('\n');
-const jobNames = (text: string) => Object.keys(yamlJobs(text)).filter((name) => !name.startsWith('.'));
+/** Every shell line a job runs, in order. */
+const scriptOf = (w: Workflow, name: string) => (job(w, name).steps ?? []).map((step) => step.run ?? '').join('\n');
+const needsOf = (j: Job) => (Array.isArray(j.needs) ? j.needs : j.needs ? [j.needs] : []);
 /** A section of a script between two of its own headings. */
 const between = (text: string, from: string, to: string) => {
   const a = text.indexOf(from);
@@ -79,34 +77,44 @@ const between = (text: string, from: string, to: string) => {
 
 describe('the release builds every platform from one tag', () => {
   it('has a job for each, and publish waits for all of them', () => {
-    expect(jobNames(packageYml)).toEqual([
-      'package ubuntu amd64',
-      'package ubuntu arm64',
-      'ubuntu takes the package',
-      'package macos arm64',
-      'package windows',
-      'contract',
+    expect(Object.keys(release.jobs)).toEqual([
+      'version',
+      'check',
+      'package-ubuntu',
+      'ubuntu-takes-the-package',
+      'package-macos',
+      'package-windows',
+      'publish',
+      'qualify',
+      'qualify-ubuntu-arm64',
+      'qualify-windows',
     ]);
-    for (const name of ['package windows', 'package ubuntu amd64', 'package ubuntu arm64']) {
-      expect((job('publish').needs ?? []).map((n) => (typeof n === 'string' ? n : n.job))).toContain(name);
+    for (const name of ['package-windows', 'package-ubuntu', 'package-macos', 'check']) {
+      expect(needsOf(job(release, 'publish'))).toContain(name);
     }
+    // Both Ubuntu architectures are one matrix job, so publish waiting for it
+    // waits for both.
+    expect(job(release, 'package-ubuntu').strategy!.matrix!.include!.map((i) => i.arch)).toEqual(['amd64', 'arm64']);
   });
 
   it('names the runners exactly, and never by a moving alias', () => {
     // Named exactly rather than through a `latest`, which moves between major
     // versions and between architectures: the opposite of what a job whose
     // whole purpose is to be on a particular architecture wants.
-    expect(job('package ubuntu arm64').tags).toEqual(['saas-linux-small-arm64']);
-    expect(job('package macos arm64').tags).toEqual(['saas-macos-medium-m1']);
-    expect(job('package macos arm64').image).toMatch(/^macos-\d+-xcode-\d+$/);
-    expect(job('package windows').tags).toEqual(['saas-windows-medium-amd64']);
-    expect(job('package ubuntu amd64').image).toBe('ubuntu:24.04');
+    expect(job(release, 'package-ubuntu').strategy!.matrix!.include).toEqual([
+      { arch: 'amd64', runner: 'ai17z-release-linux' },
+      { arch: 'arm64', runner: 'ai17z-release-linux-arm64' },
+    ]);
+    expect(job(release, 'package-macos')['runs-on']).toBe('ai17z-release-macos-arm64');
+    expect(job(release, 'package-windows')['runs-on']).toBe('ai17z-release-windows');
+    expect(job(release, 'package-ubuntu').container?.image).toBe('ubuntu:24.04');
+    expect(job(validation, 'ubuntu-amd64').container?.image).toBe('ubuntu:24.04');
   });
 
   it('asks for no image that has been retired, and builds no Intel Mac', () => {
     // A label that no longer exists does not fail loudly: the job sits waiting
-    // for a runner that will never come. And GitLab's Macs are Apple silicon,
-    // so an x64 macOS job here could only be a relabelled one.
+    // for a runner that will never come. And AI17Z's Mac runners are Apple
+    // silicon, so an x64 macOS job here could only be a relabelled one.
     for (const text of [packageYml, releaseYml, qualifyYml]) {
       expect(text).not.toMatch(/image:\s*macos-1[1-3]\b|ubuntu:(18|20)\.04/);
       expect(text).not.toMatch(/macos[^\n]*x64|x86_64[^\n]*macos/i);
@@ -118,8 +126,9 @@ describe('the release builds every platform from one tag', () => {
     // Two lists of build steps is how one of them stops being true. A release
     // and a validation run call the same scripts, so what validation proves on
     // a change is what a release ships.
-    expect(scriptOf('package ubuntu amd64')).toContain('package-ubuntu.sh');
-    expect(scriptOf('package macos arm64')).toContain('package-macos.sh');
+    expect(scriptOf(release, 'package-ubuntu')).toContain('package-ubuntu.sh');
+    expect(scriptOf(validation, 'ubuntu-amd64')).toContain('package-ubuntu.sh');
+    expect(scriptOf(release, 'package-macos')).toContain('package-macos.sh');
     // And no pipeline file has grown a second implementation beside them.
     for (const text of [packageYml, releaseYml]) {
       expect(text).not.toContain('build-tarball.sh');
@@ -185,7 +194,7 @@ describe('the release builds every platform from one tag', () => {
     // The Windows one is built on Windows, where the scanner's tools are not
     // all there, so the check lives in the publish job, over the bytes about to
     // be attached.
-    const scanner = read('.gitlab/scripts/scan-artifact.sh');
+    const scanner = read('.forgejo/scripts/scan-artifact.sh');
     expect(scanner).toContain('windows)');
     expect(scanner).toContain('unzip -q');
     const scanning = between(publish, 'say "nothing of an owner', 'say "the release manifest"');
@@ -240,11 +249,10 @@ describe('the release builds every platform from one tag', () => {
     // Without one it narrows to the two it built, and says why, in the
     // manifest, so the release reads as a decision rather than a loss.
     expect(call).toContain('--expect windows,ubuntu --not-built "$MACOS_NOT_BUILT"');
-    expect(publish).toMatch(/MACOS_NOT_BUILT="macOS packages are built on GitLab's hosted Macs/);
-    // Validation never builds Windows and says so the same way, with the two
-    // readable installers in the directory exactly as the release copies them.
-    expect(contract).toContain('--expect "$EXPECT" --not-built "$REASON"');
-    expect(contract).toContain('cp "$ROOT/install-ai17z-macos.sh" "$ROOT/install-ai17z-ubuntu.sh" "$OUT/"');
+    expect(publish).toMatch(/MACOS_NOT_BUILT="macOS packages are built on a Mac registered with AI17Z Code/);
+    // The readable installers are in the directory exactly as the release
+    // publishes them, before anything is hashed.
+    expect(publish).toContain('cp "$PROJECT_DIR/install-ai17z-macos.sh" "$PROJECT_DIR/install-ai17z-ubuntu.sh" "$DIST/"');
     expect([...PLATFORMS].sort()).toEqual(['macos', 'ubuntu', 'windows']);
   });
 
@@ -258,16 +266,14 @@ describe('the release builds every platform from one tag', () => {
     // through the workspace symlinks `npm ci` writes. A publish job once ran it
     // with no install, and because the step was newer than the last release it
     // had never once run: a release would have been the first to find out.
-    const runsTools: Record<string, string> = {
-      'package ubuntu amd64': 'package-ubuntu.sh',
-      'package ubuntu arm64': 'package-ubuntu.sh',
-      'package macos arm64': 'package-macos.sh',
-      contract: 'package-contract.sh',
-      publish: 'publish-release.sh',
-      'publish with macos': 'publish-release.sh',
-    };
-    for (const [name, tool] of Object.entries(runsTools)) {
-      const text = scriptOf(name);
+    const runsTools: [Workflow, string, string][] = [
+      [release, 'package-ubuntu', 'package-ubuntu.sh'],
+      [validation, 'ubuntu-amd64', 'package-ubuntu.sh'],
+      [release, 'package-macos', 'package-macos.sh'],
+      [release, 'publish', 'publish-release.sh'],
+    ];
+    for (const [w, name, tool] of runsTools) {
+      const text = scriptOf(w, name);
       expect(text, `${name} runs ${tool} without installing dependencies`).toContain('npm ci');
       expect(text.indexOf('npm ci'), `${name} installs after it runs`).toBeLessThan(text.indexOf(tool));
     }
@@ -283,7 +289,7 @@ describe('the release builds every platform from one tag', () => {
     expect(macosBuild + ubuntuBuild).toContain("require('./packaging/node-runtime.json').version");
     // Every job's own Node is that one too, checked against nodejs.org.
     for (const setup of ['setup-ubuntu-job.sh', 'setup-macos-job.sh', 'setup-windows-job.ps1']) {
-      const text = read(`.gitlab/scripts/${setup}`);
+      const text = read(`.forgejo/scripts/${setup}`);
       expect(text, `${setup} does not read the pinned runtime`).toContain('node-runtime.json');
       expect(text, `${setup} does not check nodejs.org's hashes`).toContain('SHASUMS256.txt');
     }
@@ -308,25 +314,35 @@ describe('the release builds every platform from one tag', () => {
 /**
  * Provenance: what stands in for a signature nobody would grant.
  *
- * Sigstore keyless signing with the pipeline's own GitLab identity, the
- * successor to GitHub's artifact attestation. The first version of the GitHub
- * step ran in a job that did not hold the artifacts, every glob matched
- * nothing, and `continue-on-error` painted it green: Beta 1.0.0 (16) was
- * published saying it carried build provenance while every asset answered 404.
- * So: in the job that holds the files, over every file it publishes, and
- * required.
+ * Signed with AI17Z's release key into Sigstore's public transparency log.
+ * Keyless signing, which GitLab's pipeline identity made possible, needs an
+ * identity provider the public Sigstore instance trusts, and it does not trust
+ * a self-hosted Forgejo. The first version of the GitHub step ran in a job that
+ * did not hold the artifacts, every glob matched nothing, and
+ * `continue-on-error` painted it green: Beta 1.0.0 (16) was published saying it
+ * carried build provenance while every asset answered 404. So: in the job that
+ * holds the files, over every file it publishes, and required.
  */
 describe('provenance', () => {
   it('is signed without calling it something it is not', () => {
-    expect(publish).toContain('cosign sign-blob --yes --bundle "$subject.sigstore.json" "$subject"');
+    expect(publish).toContain('cosign sign-blob --yes --key env://COSIGN_PRIVATE_KEY --bundle "$subject.sigstore.json" "$subject"');
     const step = between(publish, 'say "sign what was built"', 'say "release notes"');
     expect(step).toMatch(/\*\*not\*\* Apple notarization/);
   });
 
   it('is signed in the job that holds the files, and only there', () => {
-    const holding = Object.keys(allJobs).filter((name) => !name.startsWith('.') && job(name).id_tokens);
-    expect(holding.sort()).toEqual(['publish', 'publish with macos']);
-    expect(releaseYml).toContain('aud: sigstore');
+    const publishing = (job(release, 'publish').steps ?? []).find((s) => (s.run ?? '').includes('publish-release.sh'))!;
+    expect(publishing.env?.COSIGN_PRIVATE_KEY).toBe('${{ secrets.COSIGN_PRIVATE_KEY }}');
+    for (const [name, def] of Object.entries(release.jobs)) {
+      if (name === 'publish') continue;
+      expect(JSON.stringify(def), `${name} names the release key`).not.toContain('COSIGN_PRIVATE_KEY');
+    }
+  });
+
+  it('verifies against a key that is public and only public', () => {
+    const key = read('.forgejo/cosign.pub');
+    expect(key.trim().startsWith('-----BEGIN PUBLIC KEY-----')).toBe(true);
+    expect(key).not.toMatch(/PRIVATE/);
   });
 
   it('covers every file it publishes, except what cannot be a build subject', () => {
@@ -339,21 +355,42 @@ describe('provenance', () => {
   });
 
   it('cannot fail quietly, and is checked before anything is released', () => {
-    // No token is a failure, not a skip, and every signature is verified
-    // against this pipeline's identity before the upload.
-    expect(publish).toContain('[ -n "${SIGSTORE_ID_TOKEN:-}" ] || {');
+    // No key is a failure, not a skip, and every signature is verified against
+    // the committed public key before a draft is even created.
+    expect(publish).toContain('[ -n "${COSIGN_PRIVATE_KEY:-}" ] && [ -n "${COSIGN_PASSWORD:-}" ]');
     expect(publish).toContain('set -euo pipefail');
-    expect(publish.indexOf('cosign verify-blob')).toBeLessThan(publish.indexOf('say "upload every file to the package registry"'));
-    expect(publish.indexOf('say "sign what was built"')).toBeLessThan(publish.indexOf('say "the release"'));
-    // And the publish jobs are never allowed to fail.
-    for (const name of ['publish', 'publish with macos']) expect((job(name) as { allow_failure?: boolean }).allow_failure).toBeUndefined();
+    expect(publish.indexOf('cosign verify-blob')).toBeLessThan(publish.indexOf('say "the release, as a draft"'));
+    expect(publish.indexOf('say "sign what was built"')).toBeLessThan(publish.indexOf('say "the release, as a draft"'));
+    expect(publish).toContain('--key "$SIGNER_PUB"');
   });
 
   it('is verified, from the published bytes, by the stranger-facing check', () => {
-    const verifier = read('.gitlab/scripts/verify-published-release.sh');
-    expect(verifier).toContain('IDENTITY="$SERVER/$PROJECT//.gitlab-ci.yml@refs/tags/$TAG"');
-    expect(verifier).toContain('--certificate-oidc-issuer "$SERVER"');
-    expect(scriptOf('qualify the published bytes')).toContain('setup-cosign.sh');
+    const verifier = read('.forgejo/scripts/verify-published-release.sh');
+    expect(verifier).toContain('--key "$SIGNER_PUB"');
+    expect(verifier).not.toContain('certificate-identity');
+    expect(scriptOf(release, 'qualify')).toContain('setup-cosign.sh');
+    expect(scriptOf(qualify, 'published-bytes-and-ubuntu')).toContain('setup-cosign.sh');
+  });
+});
+
+describe('publishing', () => {
+  it('builds a draft, attaches each file once, checks the set, and only then publishes', () => {
+    const order = ['say "the release, as a draft"', 'say "attach every file, once"', 'say "the attachments are exactly the files"', 'say "publish"'];
+    const at = order.map((h) => publish.indexOf(h));
+    for (const [i, a] of at.entries()) expect(a, order[i]).toBeGreaterThan(-1);
+    expect([...at].sort((x, y) => x - y)).toEqual(at);
+    expect(publish).toContain('draft: true');
+    expect(publish).toContain('--data \'{"draft": false}\'');
+  });
+
+  it('refuses a tag that already has a release, rather than adding to it', () => {
+    // Forgejo accepts a second attachment with a name a release already has.
+    expect(publish).toContain('[ "$existing" = 404 ] || { echo "a release for $TAG already exists');
+  });
+
+  it('compares names and sizes both ways, and leaves a mismatch as an unpublished draft', () => {
+    expect(publish).toContain('if ! diff expected.tsv attached.tsv; then');
+    expect(publish).toContain('it stays a draft and nothing is published');
   });
 });
 
@@ -365,25 +402,27 @@ describe('provenance', () => {
  * *published* install on somebody else's machine.
  */
 describe('qualifying a release after it is published', () => {
-  it('starts by itself, in the release pipeline, and again on a qualify tag', () => {
+  it('starts by itself, in the release run, and again on a qualify tag', () => {
     // Not something anybody has to remember. On GitHub a release made with the
     // workflow's own token raised no event, and qualification sat there.
-    expect(job('qualify the published bytes').stage).toBe('qualify');
-    expect(qualifyYml).toContain('$AI17Z_PIPELINE =~ /^(release|qualify)$/');
-    expect(rootYml).toContain('$CI_COMMIT_TAG =~ /^qualify-v[0-9]/');
+    for (const name of ['qualify', 'qualify-ubuntu-arm64', 'qualify-windows']) expect(needsOf(job(release, name))).toContain('publish');
+    expect(qualify.on.push!.tags).toEqual(['qualify-v[0-9]*']);
   });
 
   it('refuses a rehearsal, which published nothing to qualify', () => {
-    expect(qualifyYml).not.toMatch(/AI17Z_PIPELINE[^\n]*rehearsal/);
+    for (const name of ['qualify', 'qualify-ubuntu-arm64', 'qualify-windows']) {
+      expect(job(release, name).if).toBe("${{ !startsWith(github.ref_name, 'rehearsal-') }}");
+    }
   });
 
   it('can change nothing about a release', () => {
     // It reads published bytes and installs them. A check that could edit the
     // release it is checking is one whose report is worth less.
-    for (const text of [qualifyYml, read('.gitlab/scripts/verify-published-release.sh'), windowsQualifier, ...qualifiers]) {
-      expect(text).not.toContain('JOB-TOKEN');
+    for (const text of [qualifyYml, read('.forgejo/scripts/verify-published-release.sh'), windowsQualifier, ...qualifiers]) {
+      expect(text).not.toContain('secrets.');
+      expect(text).not.toContain('RELEASE_TOKEN');
+      expect(text).not.toContain('attachment=@');
       expect(text).not.toContain('--upload-file');
-      expect(text).not.toContain('id_tokens');
     }
   });
 
@@ -391,18 +430,24 @@ describe('qualifying a release after it is published', () => {
     // A qualifier frozen at the release once failed both Macs with no way to
     // correct it but another release. The tooling is this pipeline's; the
     // installers compared are the tag's own.
-    const setup = (job('.qualify').before_script ?? []).join('\n');
-    expect(setup).toContain('git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"');
-    expect(setup).toContain('git archive "$TAG" install.ps1 install-ai17z-ubuntu.sh install-ai17z-macos.sh | tar -x -C tagged');
-    expect(scriptOf('qualify published ubuntu amd64')).toContain('"$TAG" "$CI_PROJECT_DIR/tagged"');
-    expect(scriptOf('qualify published windows')).toContain('-Tagged tagged\\install.ps1');
+    for (const [w, name] of [[release, 'qualify'], [qualify, 'published-bytes-and-ubuntu']] as const) {
+      const text = scriptOf(w, name);
+      expect(text).toContain('git archive "$TAG" install.ps1 install-ai17z-ubuntu.sh install-ai17z-macos.sh | tar -x -C tagged');
+      expect(text).toContain('"$TAG" "$PWD/tagged"');
+    }
+    // The tag itself has to be in the checkout for that: the whole history.
+    for (const name of ['published-bytes-and-ubuntu', 'ubuntu-arm64', 'windows', 'macos']) {
+      expect(JSON.stringify(job(qualify, name).steps), name).toContain('"fetch-depth":0');
+    }
+    expect(scriptOf(release, 'qualify-windows')).toContain('-Tagged tagged\\install.ps1');
+    expect(scriptOf(qualify, 'windows')).toContain('-Tagged tagged\\install.ps1');
   });
 
   it('proves the package from the tag rather than from an API lookup', () => {
     for (const script of qualifiers) {
       // The asset by its exact published address, which contains the tag.
       expect(script).toContain('curl -fsSL -o "$ROOM/$PACKAGE" "$DL/$PACKAGE"');
-      expect(script).toContain('DL="https://gitlab.com/$PROJECT/-/releases/$TAG/downloads"');
+      expect(script).toContain('DL="https://code.ai17z.io/$PROJECT/releases/download/$TAG"');
       // Checked against the hash that same tag published.
       expect(script).toContain('the package hashes $got and SHA256SUMS.txt says');
       // And installed from those bytes through the installer, never a raw
@@ -464,7 +509,7 @@ describe('qualifying a release after it is published', () => {
     // A shared anonymous limit says nothing about the release. Anything else is
     // a finding about what was published. The two need opposite responses: run
     // the job again, or stop the release.
-    expect(windowsQualifier).toContain("not for anything this runner could blame on GitLab");
+    expect(windowsQualifier).toContain("not for anything this runner could blame on AI17Z Code");
     expect(windowsQualifier).toContain('(it printed nothing at all)');
     for (const script of qualifiers) {
       expect(script).toContain('why_it_failed()');
@@ -474,18 +519,15 @@ describe('qualifying a release after it is published', () => {
   });
 
   it('reaches every published platform', () => {
-    expect(jobNames(qualifyYml)).toEqual([
-      'qualify the published bytes',
-      'qualify published ubuntu amd64',
-      'qualify published ubuntu arm64',
-      'qualify published windows',
-      'qualify published macos',
-    ]);
+    expect(Object.keys(qualify.jobs)).toEqual(['published-bytes-and-ubuntu', 'ubuntu-arm64', 'windows', 'macos']);
+    expect(job(qualify, 'ubuntu-arm64')['runs-on']).toBe('ai17z-release-linux-arm64');
+    expect(job(release, 'qualify-ubuntu-arm64')['runs-on']).toBe('ai17z-release-linux-arm64');
+    expect(job(qualify, 'macos').if).toBe("vars.AI17Z_MACOS == '1'");
   });
 
   it('takes the installers off the release rather than out of the checkout', () => {
     for (const script of qualifiers) {
-      expect(script).toContain('/-/releases/');
+      expect(script).toContain('/releases/download/');
       expect(script).toContain('SHA256SUMS.txt');
       expect(script).toContain('byte for byte the script this checkout holds');
     }
@@ -494,13 +536,17 @@ describe('qualifying a release after it is published', () => {
 
 describe('a rehearsal', () => {
   it('is a tag, so a push can start one', () => {
-    expect(rootYml).toContain('$CI_COMMIT_TAG =~ /^rehearsal-v[0-9]/');
-    expect(job('publish').rules?.some((r) => (r.if ?? '').includes('rehearsal'))).toBe(true);
+    expect(release.on.push!.tags).toEqual(['v[0-9]*', 'rehearsal-v[0-9]*']);
   });
 
   it('builds the version its tag names, on every platform', () => {
-    expect(read('.gitlab/scripts/release-version.sh')).toContain('v="${CI_COMMIT_TAG#rehearsal-}"');
-    expect(packageYml).toContain("-replace '^(rehearsal-|qualify-)?v', ''");
+    // One job works the version out and every platform takes it from there,
+    // Windows included, so there is no second implementation to disagree.
+    expect(read('.forgejo/scripts/release-version.sh')).toContain('v="${TAG#rehearsal-}"');
+    expect(scriptOf(release, 'version')).toContain('release-version.sh');
+    for (const name of ['package-ubuntu', 'package-macos', 'package-windows', 'publish']) {
+      expect(scriptOf(release, name), name).toContain('needs.version.outputs.version');
+    }
   });
 
   it('cannot publish, and a release still can', () => {
@@ -508,10 +554,10 @@ describe('a rehearsal', () => {
     expect(publish.match(/"\$API\/releases"/g)).toHaveLength(1);
     const exit = publish.indexOf('if [ -n "$REHEARSAL" ]; then');
     expect(exit).toBeGreaterThan(-1);
-    expect(exit).toBeLessThan(publish.indexOf('say "upload every file to the package registry"'));
-    expect(publish.slice(exit, publish.indexOf('say "upload'))).toContain('exit 0');
-    expect(releaseYml).toContain('bash .gitlab/scripts/publish-release.sh dist "$VERSION" rehearsal');
-    expect(releaseYml).toContain('if [ "$AI17Z_PIPELINE" = rehearsal ]; then');
+    expect(exit).toBeLessThan(publish.indexOf('say "the release, as a draft"'));
+    expect(publish.slice(exit, publish.indexOf('say "the release, as a draft"'))).toContain('exit 0');
+    expect(releaseYml).toContain('bash .forgejo/scripts/publish-release.sh dist "$VERSION" rehearsal');
+    expect(releaseYml).toContain('if [ "${GITHUB_REF_NAME#rehearsal-}" != "$GITHUB_REF_NAME" ]; then');
   });
 
   it('does every step a release does, signing included', () => {
@@ -522,8 +568,9 @@ describe('a rehearsal', () => {
   });
 
   it('leaves something to look at, since nothing is published', () => {
-    expect(job('publish').artifacts?.paths).toEqual(['dist/']);
-    expect(job('publish').artifacts?.when).toBe('always');
+    const kept = (job(release, 'publish').steps ?? []).find((s) => s.with?.name === 'rehearsal-dist')!;
+    expect(kept.with?.path).toBe('dist/');
+    expect(kept.if).toBe("startsWith(github.ref_name, 'rehearsal-')");
     expect(publish.slice(publish.indexOf('if [ -n "$REHEARSAL" ]; then'))).toContain('say-out.sh');
   });
 

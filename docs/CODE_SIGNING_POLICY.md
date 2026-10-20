@@ -47,7 +47,7 @@ that does not need one.
 pasted into Windows Terminal:
 
 ```powershell
-irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex
+irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex
 ```
 
 Nothing is double-clicked, so SmartScreen's reputation check — which is about
@@ -63,9 +63,11 @@ the release's own `SHA256SUMS.txt`, hashes the setup program it downloaded befor
 writing it anywhere, and refuses to go on if the two disagree. The process that
 then runs it hashes the file again. There is no flag to skip either check.
 
-Every release is built by a public GitLab pipeline from a public tag, from a
-lockfile, on a hosted runner — never uploaded from a maintainer's machine — and
-publishes the SHA-256 of every file in it. [SETUP_AUDIT.md](SETUP_AUDIT.md) is
+Every release is built by AI17Z Code's release pipeline from a public tag, from
+a lockfile, on a runner that takes nothing but this repository's tags (never
+uploaded from a maintainer's machine by hand), and publishes the SHA-256 of
+every file in it, each file also signed by AI17Z's release key into Sigstore's
+public transparency log. [SETUP_AUDIT.md](SETUP_AUDIT.md) is
 the full account, including the parts a hash does not cover.
 
 ## The one executable that still exists
@@ -87,14 +89,14 @@ any of it happens rather than after:
 
 | Role | Who |
 | --- | --- |
-| **Authors** — may write code and open merge requests | [@007Ledger](https://gitlab.com/007Ledger) |
-| **Reviewers** — review changes before they reach `main` | [@007Ledger](https://gitlab.com/007Ledger) |
-| **Approvers** — would approve a signing request | [@007Ledger](https://gitlab.com/007Ledger) |
+| **Authors** — may write code and open pull requests | [@ShiftAboveCtrl](https://code.ai17z.io/ShiftAboveCtrl) |
+| **Reviewers** — review changes before they reach `main` | [@ShiftAboveCtrl](https://code.ai17z.io/ShiftAboveCtrl) |
+| **Approvers** — would approve a signing request | [@ShiftAboveCtrl](https://code.ai17z.io/ShiftAboveCtrl) |
 
 Any signing request would be approved **manually**, never by a policy that signs
 on a push, so a compromised workflow could not produce a signed artifact without
 a person approving it. Multi-factor authentication is required for every person
-holding any of those roles, on both GitLab and any signing service, which is the
+holding any of those roles, on both AI17Z Code and any signing service, which is the
 only thing standing between a stolen password and a signed release.
 
 AI17Z is maintained by one person, and this table says so rather than inventing

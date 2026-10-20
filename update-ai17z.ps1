@@ -28,7 +28,7 @@
 .PARAMETER Package
   Update from an AI17Z-App-<version>.zip already on this machine instead of
   downloading one. For a machine with no internet, and for the installation
-  verifier, which must not reach GitLab to prove that updating works.
+  verifier, which must not reach AI17Z Code to prove that updating works.
 
   Only for an installation AI17Z Setup made; a checkout updates from git.
 #>
@@ -201,7 +201,7 @@ if (($installChannel -eq 'BOOTSTRAP') -or ((-not $isCheckout) -and (Test-Path $s
   if (-not (Test-Path $setupScript)) {
     Stop-WithReason 'This installation says it was made by AI17Z Setup, but the setup script is not here.' `
       ("Run the AI17Z install command again and name this installation. It will update this copy in place:`n" +
-       "  `$s = irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1`n" +
+       "  `$s = irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1`n" +
        '  & ([scriptblock]::Create($s)) -Instance ' + $here)
   }
   Write-Step ('Updating ' + $here + ', and nothing else on this machine.')
@@ -235,7 +235,7 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 if (-not $isCheckout) {
   Stop-WithReason 'This folder is not a git checkout, so there is nothing to update from.' `
     ("This copy came from the Windows installer. Take an update by downloading the new one from`n" +
-     '  https://gitlab.com/shiftabovectrl/ai17z/-/releases' + "`n" +
+     '  https://code.ai17z.io/AI17Z/ai17z/releases' + "`n" +
      'and running it over this copy. Your data folder is not touched.')
 }
 

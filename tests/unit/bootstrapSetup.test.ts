@@ -27,9 +27,9 @@ const installer = read('packaging/windows/ai17z.iss');
 const stageZero = read('install.ps1');
 const packager = read('tools/package-windows.mts');
 // The release pipeline: what builds the Windows half, and what publishes.
-const windowsBuild = read('.gitlab/scripts/build-windows-release.ps1');
-const publishScript = read('.gitlab/scripts/publish-release.sh');
-const workflow = [read('.gitlab/ci/package.yml'), read('.gitlab/ci/release.yml'), windowsBuild, publishScript].join('\n');
+const windowsBuild = read('.forgejo/scripts/build-windows-release.ps1');
+const publishScript = read('.forgejo/scripts/publish-release.sh');
+const workflow = [read('.forgejo/workflows/package.yml'), read('.forgejo/workflows/release.yml'), windowsBuild, publishScript].join('\n');
 const audit = read('docs/SETUP_AUDIT.md');
 const updater = read('update-ai17z.ps1');
 
@@ -128,7 +128,7 @@ describe('the setup program is a file somebody can read', () => {
       return;
     }
     expect(manifest).not.toBeNull();
-    expect(manifest!.repository).toBe('shiftabovectrl/ai17z');
+    expect(manifest!.repository).toBe('AI17Z/ai17z');
     expect(manifest!.packages.length).toBeGreaterThan(0);
   });
 });
@@ -136,10 +136,9 @@ describe('the setup program is a file somebody can read', () => {
 describe('where it may go on the network', () => {
   it('starts a request only at a host it declares', () => {
     if (!shell) return;
-    // One host. GitLab answers a release download with one redirect on
-    // gitlab.com itself to the package registry file, measured never leaving
-    // it, so nothing else needs to be reachable.
-    expect(manifest!.allowedHosts).toEqual(['gitlab.com']);
+    // One host. AI17Z Code serves a release file itself, from its own
+    // storage, so nothing else needs to be reachable.
+    expect(manifest!.allowedHosts).toEqual(['code.ai17z.io']);
   });
 
   it('checks every address against that list rather than trusting the caller', () => {
@@ -160,7 +159,7 @@ describe('where it may go on the network', () => {
     const downloads = [...setup.matchAll(/https:\/\/[^\s'")]+/g)].map((match) => match[0]);
     for (const url of downloads) {
       const allowed =
-        url.includes('gitlab.com/') ||
+        url.includes('code.ai17z.io/') ||
         // Vendor pages, opened in a browser when winget is not available. Never
         // fetched.
         url.includes('nodejs.org') ||
@@ -174,7 +173,7 @@ describe('where it may go on the network', () => {
   });
 
   it('will not let a release tag become a filename without checking it', () => {
-    // The tag is the one value here that arrives in a document GitLab served
+    // The tag is the one value here that arrives in a document AI17Z Code served
     // and turns into a local path: `AI17Z-App-<version>.zip`, written under the
     // setup folder. GitHub will not publish a tag with a separator in it today,
     // which is a fact about GitHub rather than a property of this program.
@@ -635,11 +634,11 @@ describe('the audit document describes the program it ships with', () => {
   it('tells people where the only official source is', () => {
     // An unsigned installation has nothing to prove who wrote it, so where it
     // came from is the whole of the answer and both documents have to say it.
-    expect(audit).toContain('https://gitlab.com/shiftabovectrl/ai17z');
+    expect(audit).toContain('https://code.ai17z.io/AI17Z/ai17z');
     expect(audit).toMatch(/only from the official repository/i);
     const readme = read('README.md');
     expect(readme).toMatch(/Install AI17Z only with the command published here/i);
-    expect(readme).toContain('gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1');
+    expect(readme).toContain('code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1');
   });
 
   it('says what the hash does and does not protect against', () => {

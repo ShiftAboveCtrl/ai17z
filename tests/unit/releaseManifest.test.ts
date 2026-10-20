@@ -75,7 +75,7 @@ describe('asset names come from one place', () => {
     // lost one of the four packages would have published a manifest saying that
     // platform was unsupported: true about the directory, and a lie about the
     // release. This is the list it checks against first.
-    // Apple silicon only: GitLab's Macs are Apple silicon, and an Intel package
+    // Apple silicon only: AI17Z's Mac runners are Apple silicon, and an Intel package
     // built on one would be a relabelled architecture.
     expect(expectedAssets(VERSION, 'macos')).toEqual([
       'AI17Z-macos-arm64-9.9.9-beta.1.tar.gz',
