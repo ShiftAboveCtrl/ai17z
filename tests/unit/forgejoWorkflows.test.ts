@@ -135,6 +135,25 @@ describe('who runs what', () => {
     }
   });
 
+  it('nothing on the pull request runner is ever privileged', () => {
+    // A privileged container can reach the machine it runs on, and with it the
+    // runner's own credentials; a runner declares its own labels, so those
+    // credentials could start a runner claiming a release label and be handed
+    // the release key. The pull request machine therefore never runs one.
+    for (const [path, w] of workflows) {
+      for (const [name, job] of Object.entries(w.jobs)) {
+        if (!runnersOf(job).includes('ai17z-ci')) continue;
+        expect(JSON.stringify(job), `${path}: ${name} asks for a privileged container on ai17z-ci`).not.toMatch(/privileged/);
+      }
+    }
+  });
+
+  it('package validation is started by hand, on a release runner', () => {
+    const w = wf('package');
+    expect(triggers(w)).toEqual(['workflow_dispatch']);
+    for (const job of Object.values(w.jobs)) expect(runnersOf(job)).toEqual(['ai17z-release-linux']);
+  });
+
   it('nothing pull_request_target: a pull request never runs with the base repository\'s secrets', () => {
     for (const [path, w] of workflows) expect(triggers(w), path).not.toContain('pull_request_target');
   });
@@ -210,10 +229,8 @@ describe('what the release exists to hold', () => {
   });
 
   it('never cancels a run for main', () => {
-    for (const name of ['check', 'package']) {
-      const c = (wf(name) as unknown as { concurrency: { 'cancel-in-progress': string } }).concurrency;
-      expect(c['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}");
-    }
+    const c = (wf('check') as unknown as { concurrency: { 'cancel-in-progress': string } }).concurrency;
+    expect(c['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}");
   });
 });
 

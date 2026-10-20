@@ -1,78 +1,35 @@
-# Whether every platform still builds, installs and runs, when something that
-# ships has changed. Publishes nothing.
+# Whether the Ubuntu package still builds, installs and runs, on demand.
+# Publishes nothing.
 #
 # For a long time the only way to find that out was to publish a release and
 # see, which is the shape this repository has already paid for six times: a
 # release used as the test, with somebody else's machine as the test bed. The
 # release workflow calls the same scripts, so what this proves is what a
-# release ships. A second set of build steps written just for CI would prove
-# something else that happens to look similar.
+# release ships, and a `rehearsal-v*` tag proves every platform at once.
 #
-# amd64 only. The release contract, which needs every architecture, is proved
-# by the release workflow on the release runners; arm64 has its own runner and
-# a pull request does not get to use it.
-#
-# Untrusted, like check.yml: a pull request's packaging runs on `ai17z-ci`, the
-# disposable machine that holds nothing. Its Docker engine is a service beside
-# the job, inside that machine, never the host's.
+# **Started by hand, on the release runner, never by a pull request.** Proving
+# the installer needs a Docker engine beside the job, which means a privileged
+# container, and a privileged container can reach the machine it runs on. The
+# machine that takes pull requests never runs one: a job there that could read
+# its runner's credentials could register a runner claiming a release label and
+# be handed the release key. So this runs where only trusted code runs, when a
+# maintainer asks.
 
 name: package
 
 on:
-  pull_request:
-    paths:
-      - "packaging/**"
-      - "tools/**"
-      - "packages/shared/src/releaseManifest.ts"
-      - "packages/shared/src/installLayout.ts"
-      - "install-ai17z-*.sh"
-      - "docker-compose.yml"
-      - "docker/**"
-      - ".env.example"
-      - "*-ai17z.sh"
-      - "docs/**"
-      - "README.md"
-      - "CONTRIBUTING.md"
-      - "SECURITY.md"
-      - ".forgejo/workflows/package.yml"
-      - ".forgejo/workflows/release.yml"
-      - ".forgejo/scripts/**"
-      - "package.json"
-      - "package-lock.json"
-  push:
-    branches: [main]
-    # The same list as above. Spelled out twice rather than anchored, because a
-    # YAML anchor is a feature some workflow readers support and some do not.
-    paths:
-      - "packaging/**"
-      - "tools/**"
-      - "packages/shared/src/releaseManifest.ts"
-      - "packages/shared/src/installLayout.ts"
-      - "install-ai17z-*.sh"
-      - "docker-compose.yml"
-      - "docker/**"
-      - ".env.example"
-      - "*-ai17z.sh"
-      - "docs/**"
-      - "README.md"
-      - "CONTRIBUTING.md"
-      - "SECURITY.md"
-      - ".forgejo/workflows/package.yml"
-      - ".forgejo/workflows/release.yml"
-      - ".forgejo/scripts/**"
-      - "package.json"
-      - "package-lock.json"
+  workflow_dispatch:
 
 concurrency:
-  group: package-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: package
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   ubuntu-amd64:
-    runs-on: ai17z-ci
+    runs-on: ai17z-release-linux
     container:
       image: ubuntu:24.04
     # A Docker engine beside the job, because the installer this job also
