@@ -794,6 +794,7 @@ describe('what AI17Z Setup decides about a machine', () => {
     ];
 
     it('retires the other route’s entry for this same directory', () => {
+      if (!shell) return;
       const got = call<string[]>(
         'Select-Ai17zSupersededEntries',
         entries,
@@ -804,6 +805,7 @@ describe('what AI17Z Setup decides about a machine', () => {
     });
 
     it('never touches another installation, another program, or an entry that says nowhere', () => {
+      if (!shell) return;
       const got = call<string[]>(
         'Select-Ai17zSupersededEntries',
         entries,
@@ -820,6 +822,7 @@ describe('what AI17Z Setup decides about a machine', () => {
       // A custom program directory has a leaf that is not the instance name --
       // the same reason Test-Ai17zInstallInfoTrustworthy does not check the
       // folder's name.
+      if (!shell) return;
       const got = call<string[]>(
         'Select-Ai17zSupersededEntries',
         [{ Name: '{X}_AI17Z-main_is1', InstallLocation: 'D:\\somewhere else\\' }],
@@ -834,6 +837,7 @@ describe('what AI17Z Setup decides about a machine', () => {
       // PowerShell's ConvertTo-Json renders an empty collection as an object
       // rather than an empty array. The behaviour under test is that no entry
       // is chosen; the shape of nothing is the serialiser's business.
+      if (!shell) return;
       const got = call<unknown>('Select-Ai17zSupersededEntries', entries, '{X}_AI17Z-main_setup', '');
       const chosen = Array.isArray(got) ? got : Object.keys(got ?? {});
       expect(chosen).toHaveLength(0);
