@@ -864,6 +864,12 @@ export async function wakeAgent(
   } = {},
 ): Promise<WakeOutcome> {
   const now = options.now ?? new Date();
+  // How long this wake took, from the wall clock and nothing else. `now` is
+  // the moment the wake reasons about and can be set, so a duration taken
+  // from it measured the distance to whatever date a caller chose: a test
+  // pinned to a date in September recorded a "duration" of twenty-six days,
+  // which overflowed the integer column the day it passed 2^31 ms.
+  const startedAt = Date.now();
   const wake = await mind.getWake(agentId);
   if (!wake || !wake.enabled) {
     return emptyOutcome(agentId, wake?.autonomy ?? 'OBSERVE', 'Deliberation is switched off.', 'disabled');
@@ -1107,7 +1113,7 @@ export async function wakeAgent(
     retired,
     summary: reason,
     model,
-    durationMs: Date.now() - now.getTime(),
+    durationMs: Date.now() - startedAt,
     why: whyNotReflected,
   });
 

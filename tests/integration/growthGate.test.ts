@@ -144,6 +144,11 @@ describe('deliberation obeys it', () => {
     const fixture = await growingAgent({ quietHoursEnabled: false });
     const outcome = await wakeAgent(fixture.agentId, { now: at(3), mayResearch: false });
     expect(outcome.reason).not.toMatch(/resting/i);
+    // The wake reasoned about a date chosen above; how long it took is still
+    // measured on the wall clock. Taken from the chosen date, it was weeks.
+    const [reflection] = await mind.recentReflections(fixture.agentId, 1);
+    expect(reflection!.durationMs).toBeGreaterThanOrEqual(0);
+    expect(reflection!.durationMs).toBeLessThan(60_000);
   }, 60_000);
 
   it('never stops an agent thinking because growth state could not be read', async () => {

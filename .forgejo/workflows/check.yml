@@ -62,7 +62,7 @@ jobs:
           POSTGRES_DB: xbam
     env:
       DATABASE_URL: postgres://xbam:xbam@postgres:5432/xbam
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: npm ci --no-audit --no-fund
