@@ -317,6 +317,58 @@ describe('what a wallet holds', () => {
   });
 });
 
+describe('who holds a token', () => {
+  const POOL_VAULT = 'Acct1111111111111111111111111111111111111111';
+  const WALLET_ACCT = 'Acct2222222222222222222222222222222222222222';
+  const SMALL_ACCT = 'Acct3333333333333333333333333333333333333333';
+  const POOL_AUTHORITY = '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1';
+  const WHALE = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+  const FRESH = 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH';
+  const owned = (owner: string) => ({ data: { parsed: { info: { owner } } } });
+
+  it('tells a pool from a wallet, gives each share exactly, and says how concentrated it is', async () => {
+    replies.getTokenSupply = ok({ context: { slot: 9 }, value: { amount: '1000000000', decimals: 6 } });
+    replies.getTokenLargestAccounts = ok({
+      context: { slot: 9 },
+      value: [
+        { address: POOL_VAULT, amount: '600000000' },
+        { address: WALLET_ACCT, amount: '125000000' },
+        { address: SMALL_ACCT, amount: '1' },
+        { address: 'AcctEmpty11111111111111111111111111111111111', amount: '0' },
+      ],
+    });
+    replies.getMultipleAccounts = [
+      ok({ context: { slot: 9 }, value: [owned(POOL_AUTHORITY), owned(WHALE), owned(FRESH)] }),
+      // The pool's authority belongs to a program; the whale's key to the System Program; the fresh key holds no SOL.
+      ok({ context: { slot: 9 }, value: [{ owner: '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8' }, { owner: '11111111111111111111111111111111' }, null] }),
+    ];
+    const answer = await run<{
+      holders: { account: string; owner: string | null; sharePct: number | null; kind: string; rendered: string }[];
+      top10Pct: number | null;
+      top10WalletsPct: number | null;
+      observations: string[];
+    }>('solana.read_token_holders', { mint: USDC });
+    expect(answer.holders.map((h) => [h.account, h.kind, h.sharePct])).toEqual([
+      [POOL_VAULT, 'PROGRAM', 60],
+      [WALLET_ACCT, 'WALLET', 12.5],
+      [SMALL_ACCT, 'WALLET', 0],
+    ]);
+    expect(answer.holders[1]!.rendered).toBe('125');
+    expect(answer.top10Pct).toBeCloseTo(72.5, 6);
+    expect(answer.top10WalletsPct).toBeCloseTo(12.5, 6);
+    expect(answer.observations.join(' ')).toMatch(/heuristic/);
+    // Read only: the methods it used are all on the allowlist.
+    // Besides proving the cluster first, as every read does.
+    expect([...new Set(calls.map((c) => c.method))].filter((m) => m !== 'getGenesisHash').sort()).toEqual(['getMultipleAccounts', 'getTokenLargestAccounts', 'getTokenSupply']);
+  });
+
+  it('refuses an answer that is not a list rather than reporting nobody holds it', async () => {
+    replies.getTokenSupply = ok({ context: { slot: 1 }, value: { amount: '10', decimals: 0 } });
+    replies.getTokenLargestAccounts = ok({ context: { slot: 1 }, value: null });
+    await expect(run('solana.read_token_holders', { mint: USDC })).rejects.toThrow(/not a list/);
+  });
+});
+
 describe('an account that is not there', () => {
   it('is an answer, not a failure', async () => {
     replies.getAccountInfo = ok({ context: { slot: 1 }, value: null });
