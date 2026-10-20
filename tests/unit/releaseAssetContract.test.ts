@@ -24,10 +24,10 @@ const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 
 const install = read('install.ps1');
 const setup = read('packaging/windows/Setup-AI17Z.ps1');
-const publishScript = read('.gitlab/scripts/publish-release.sh');
-const windowsBuild = read('.gitlab/scripts/build-windows-release.ps1');
-const packageJobs = read('.gitlab/ci/package.yml');
-const notesScript = read('.gitlab/scripts/release-notes.sh');
+const publishScript = read('.forgejo/scripts/publish-release.sh');
+const windowsBuild = read('.forgejo/scripts/build-windows-release.ps1');
+const packageJobs = read('.forgejo/workflows/release.yml');
+const notesScript = read('.forgejo/scripts/release-notes.sh');
 
 /**
  * A bash array's patterns, as written: `NAME=(a b c)` and any `NAME+=(d)`,
@@ -119,9 +119,9 @@ describe('the release publishes exactly what the installer goes looking for', ()
     // README command points at the copy on `main`. Both are the same file, and
     // the release is where its hash comes from.
     expect(published()).toContain('install.ps1');
-    expect(notesScript).toContain('RAW="$PROJECT_URL/-/raw/main"');
-    expect(notesScript).toContain('irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex');
-    expect(notesScript).toContain('https://gitlab.com/shiftabovectrl/ai17z');
+    expect(notesScript).toContain('RAW="$PROJECT_URL/raw/branch/main"');
+    expect(notesScript).toContain('irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex');
+    expect(notesScript).toContain('https://code.ai17z.io/AI17Z/ai17z');
   });
 });
 
@@ -144,7 +144,7 @@ describe('the release publishes exactly what the installer goes looking for', ()
  * failing test rather than a failed release.
  */
 describe('a published asset is hashed or knowingly exempt', () => {
-  const verifier = read('.gitlab/scripts/verify-published-release.sh');
+  const verifier = read('.forgejo/scripts/verify-published-release.sh');
 
   /** Every pattern the release attaches. */
   const published = ATTACHED;
@@ -196,7 +196,7 @@ describe('a published asset is hashed or knowingly exempt', () => {
    * attestation for exactly the same reason, so the two sets have to match.
    */
   const notAttested = (() => {
-    const at = verifier.indexOf('build provenance, as a stranger would ask');
+    const at = verifier.indexOf('release provenance, as a stranger would ask');
     const loop = verifier.slice(at, verifier.indexOf('\ndone', at));
     const skip = /case "\$name" in\s*\n\s*([^)]+)\) continue ;;/.exec(loop)?.[1] ?? '';
     return skip.split('|').map((entry) => entry.trim()).filter(Boolean);

@@ -2,7 +2,7 @@
 #
 # Installs AI17Z on Ubuntu.
 #
-#   curl -fsSLO https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install-ai17z-ubuntu.sh
+#   curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-ubuntu.sh
 #   less install-ai17z-ubuntu.sh      # read it first. That is why it is short.
 #   bash install-ai17z-ubuntu.sh
 #
@@ -21,15 +21,15 @@
 
 set -euo pipefail
 
-REPOSITORY="shiftabovectrl/ai17z"
-# GitLab's API takes the project path as one encoded segment.
-API="https://gitlab.com/api/v4/projects/${REPOSITORY%%/*}%2F${REPOSITORY#*/}/releases"
-# The page every file of a release is linked at, by its exact name. GitLab
-# answers it with one redirect on gitlab.com itself to the package registry.
-DOWNLOADS="https://gitlab.com/${REPOSITORY}/-/releases"
+REPOSITORY="AI17Z/ai17z"
+# AI17Z Code, AI17Z's own Forgejo. Its API is shaped like GitHub's.
+API="https://code.ai17z.io/api/v1/repos/${REPOSITORY}/releases"
+# Where every file of a release is served, by its exact name, by AI17Z Code
+# itself from its own storage.
+DOWNLOADS="https://code.ai17z.io/${REPOSITORY}/releases"
 # The same list the other installers declare. A request that does not start at
 # one of these is refused rather than followed.
-ALLOWED_HOSTS="gitlab.com"
+ALLOWED_HOSTS="code.ai17z.io"
 # Ubuntu releases where the whole stack is supported: Docker Engine's own list,
 # intersected with what AI17Z needs. Checked rather than assumed.
 SUPPORTED_UBUNTU="22.04 24.04 26.04"
@@ -108,8 +108,8 @@ assert_allowed_url() {
   esac
   case " $ALLOWED_HOSTS " in
     *" $host "*) return 0 ;;
-    *) stop "AI17Z will not download from ${host}." "It only downloads from its own GitLab release." \
-         "Stop, and install AI17Z from https://gitlab.com/${REPOSITORY}" ;;
+    *) stop "AI17Z will not download from ${host}." "It only downloads from its own release on AI17Z Code." \
+         "Stop, and install AI17Z from https://code.ai17z.io/${REPOSITORY}" ;;
   esac
 }
 
@@ -144,7 +144,7 @@ if [ "${ID:-}" != "ubuntu" ]; then
     "This is ${PRETTY_NAME:-${ID:-unknown}}. Ubuntu derivatives often work, but
 AI17Z does not test them and will not claim they are supported." \
     "Install from source instead:
-  https://gitlab.com/${REPOSITORY}#from-source"
+  https://code.ai17z.io/${REPOSITORY}#from-source"
 fi
 
 UBUNTU_VERSION="${VERSION_ID:-}"
@@ -154,7 +154,7 @@ case " $SUPPORTED_UBUNTU " in
        "This is Ubuntu ${UBUNTU_VERSION:-unknown}. The whole stack -- Docker Engine,
 Google Chrome and AI17Z's own runtime -- is only supported together on those." \
        "Upgrade Ubuntu, or install from source:
-  https://gitlab.com/${REPOSITORY}#from-source" ;;
+  https://code.ai17z.io/${REPOSITORY}#from-source" ;;
 esac
 
 case "$(dpkg --print-architecture)" in
@@ -212,36 +212,36 @@ elif [ -n "$RELEASE" ]; then
     v[0-9]*|[0-9]*) ;;
     *) stop "\"$RELEASE\" is not a release version." "Releases are named like v1.0.0 or v1.0.0-beta.1." "" ;;
   esac
-  RELEASE_JSON="$(fetch_stdout "${API}/${RELEASE}")" || stop \
+  RELEASE_JSON="$(fetch_stdout "${API}/tags/${RELEASE}")" || stop \
     "Release ${RELEASE} could not be read." "Nothing on this computer was changed." \
-    "Check the name at https://gitlab.com/${REPOSITORY}/-/releases"
+    "Check the name at https://code.ai17z.io/${REPOSITORY}/releases"
 else
-  # Not permalink/latest: that is GitLab choosing, by redirect, and here the
-  # list is read and the newest taken in the open. AI17Z's pipeline never sets a
-  # release date in the future, so the list has no "upcoming" entry to skip.
+  # Not /releases/latest: that is the server choosing, and here the list is
+  # read and the newest taken in the open. Drafts are never listed to a caller
+  # that is not signed in, so the first entry is a finished release.
   # The advice names no cause, because this cannot know one: `curl -f` collapses
   # every 4xx into one exit code, and the status cannot come back out of the
   # subshell this runs in. It used to say the connection was at fault, which is
   # the single explanation that is definitely wrong when the server is rate limiting.
-  RELEASE_JSON="$(fetch_stdout "${API}?per_page=10&order_by=released_at&sort=desc")" || stop \
+  RELEASE_JSON="$(fetch_stdout "${API}?limit=10")" || stop \
     "AI17Z could not be reached." "Nothing on this computer was changed." \
-    "GitLab did not answer. That can be this connection, or GitLab refusing requests from this address: it limits addresses that are not signed in, which a shared network can reach on its own.
+    "AI17Z Code did not answer. That can be this connection, or AI17Z Code refusing requests from this address: it limits addresses that are not signed in, which a shared network can reach on its own.
 Wait a few minutes and run this again."
 fi
 
 if [ -z "$LOCAL_PACKAGE" ]; then
 # One python-free pass over the JSON. `grep -o` on the fields wanted rather than
 # a parser. The address is composed from the tag rather than read out of the
-# JSON, because GitLab's link `url` percent-encodes the dots in a file name; the
-# JSON is only asked whether the release names this exact file.
+# JSON, so the only host a download can name is the one written here; the JSON
+# is only asked whether the release names this exact file.
 TAG="$(printf '%s' "$RELEASE_JSON" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
-[ -n "$TAG" ] || stop "That release does not exist." "" "See https://gitlab.com/${REPOSITORY}/-/releases"
+[ -n "$TAG" ] || stop "That release does not exist." "" "See https://code.ai17z.io/${REPOSITORY}/releases"
 VERSION="${TAG#v}"
 
 DEB_NAME="ai17z_${VERSION}_${ARCH}.deb"
 DEB_URL=""; SUMS_URL=""
-grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${DEB_NAME}\"" <<<"$RELEASE_JSON" && DEB_URL="${DOWNLOADS}/${TAG}/downloads/${DEB_NAME}"
-grep -q '"name"[[:space:]]*:[[:space:]]*"SHA256SUMS\.txt"' <<<"$RELEASE_JSON" && SUMS_URL="${DOWNLOADS}/${TAG}/downloads/SHA256SUMS.txt"
+grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${DEB_NAME}\"" <<<"$RELEASE_JSON" && DEB_URL="${DOWNLOADS}/download/${TAG}/${DEB_NAME}"
+grep -q '"name"[[:space:]]*:[[:space:]]*"SHA256SUMS\.txt"' <<<"$RELEASE_JSON" && SUMS_URL="${DOWNLOADS}/download/${TAG}/SHA256SUMS.txt"
 
 if [ -z "$DEB_URL" ]; then
   stop "Release ${TAG} does not contain ${DEB_NAME}." \
@@ -249,7 +249,7 @@ if [ -z "$DEB_URL" ]; then
     "AI17Z published Ubuntu packages from the first release that had them.
 If this is an older release, install a newer one:
   bash $0 --release <tag>
-  https://gitlab.com/${REPOSITORY}/-/releases"
+  https://code.ai17z.io/${REPOSITORY}/releases"
 fi
 [ -n "$SUMS_URL" ] || stop "Release ${TAG} publishes no SHA256SUMS.txt." \
   "AI17Z will not install a package it cannot check." ""
@@ -280,7 +280,7 @@ got       ${ACTUAL}
 
 The file has been deleted and nothing was installed." \
     "Do not try again on the same network without thinking about why.
-If it happens twice, stop and report it at https://gitlab.com/${REPOSITORY}/-/issues"
+If it happens twice, stop and report it at https://code.ai17z.io/${REPOSITORY}/issues"
 fi
 if [ -n "$LOCAL_PACKAGE" ]; then
   good "SHA-256 matches what was asked for"

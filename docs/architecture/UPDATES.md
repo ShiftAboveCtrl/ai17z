@@ -12,7 +12,7 @@ published — trades a problem nobody had for one they cannot see coming.
 ## What actually happens
 
 At most once every six hours, and only when something asks, the API reads
-GitLab's public list of releases for this project, keeps the newest one that
+AI17Z Code's public list of releases for this project, keeps the newest one that
 applies, and caches the answer in `app_settings` under `updates.check`. Opening
 a screen reads that cache. Pressing **Check now** is the only thing that forces
 a request.
@@ -211,7 +211,7 @@ functions out of the shipped script itself.
 ## What the check sends
 
 A `User-Agent` of `AI17Z`, and nothing else. No identifier, no version, no
-account, nothing about any agent. GitLab learns what it learns from anybody
+account, nothing about any agent. AI17Z Code learns what it learns from anybody
 opening the releases page. See `docs/PRIVACY.md`.
 
 ## Release notes

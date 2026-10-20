@@ -54,7 +54,7 @@ fi
 
 [ -x "$NODE" ] || {
   echo "  AI17Z's bundled Node runtime is missing from $RUNTIME_ROOT/node." >&2
-  echo "  Install AI17Z again: https://gitlab.com/shiftabovectrl/ai17z" >&2
+  echo "  Install AI17Z again: https://code.ai17z.io/AI17Z/ai17z" >&2
   exit 1
 }
 

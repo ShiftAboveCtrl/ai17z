@@ -3,7 +3,7 @@
  *
  * The shape of this is a deliberate answer to "am I being forced to update?".
  * Nothing here downloads anything, nothing replaces a running installation, and
- * nothing nags. It asks GitLab what has been released, compares that to what is
+ * nothing nags. It asks AI17Z Code what has been released, compares that to what is
  * running, and puts the release notes on a screen. Everything after that is a
  * person clicking something.
  *
@@ -126,7 +126,7 @@ export interface UpdateState {
    * Why the last check did not produce an answer.
    *
    * Kept rather than thrown: an installation with no internet is not broken,
-   * and a screen that says "could not reach GitLab" is more use than one that
+   * and a screen that says "could not reach AI17Z Code" is more use than one that
    * silently shows nothing.
    */
   error: string | null;
@@ -230,19 +230,20 @@ interface ListedRelease {
  * What the releases API is advertising, newest first.
  *
  * Validated field by field rather than trusted, because it is remote data and
- * three fields are wanted. A release whose date is in the future is one GitLab
- * calls upcoming: announced, not yet out. It is skipped, which is the same
- * exclusion a draft had on GitHub.
+ * three fields are wanted. A draft is skipped: Forgejo lists drafts only to
+ * somebody who may write to the repository, which an update check never is,
+ * but a release that says it is unfinished is unfinished whoever asks. So is a
+ * release dated in the future, which is announced and not yet out.
  */
 export function releasesFromApi(body: unknown, now = Date.now()): ListedRelease[] {
   if (!Array.isArray(body)) return [];
   const releases: ListedRelease[] = [];
   for (const item of body.slice(0, RELEASES_READ)) {
     if (!item || typeof item !== 'object') continue;
-    const r = item as { tag_name?: unknown; name?: unknown; released_at?: unknown; upcoming_release?: unknown };
+    const r = item as { tag_name?: unknown; name?: unknown; published_at?: unknown; draft?: unknown };
     if (typeof r.tag_name !== 'string' || !r.tag_name) continue;
-    const released = typeof r.released_at === 'string' ? r.released_at : '';
-    if (r.upcoming_release === true || (released && Date.parse(released) > now)) continue;
+    const released = typeof r.published_at === 'string' ? r.published_at : '';
+    if (r.draft === true || (released && Date.parse(released) > now)) continue;
     releases.push({ tag: r.tag_name, title: typeof r.name === 'string' ? r.name : '', released });
   }
   return releases;
@@ -292,8 +293,9 @@ export async function fetchLatestRelease(current = buildVersion().version): Prom
   const candidates = releasesFromApi(await listed.json())
     .map((entry) => ({ ...entry, version: entry.tag.replace(/^v/, '') }))
     .filter((entry) => entry.version.length > 0)
-    // A tag carrying a prerelease part is a prerelease. GitLab has no flag for
-    // it, so the tag is the only authority there is, as it always was here.
+    // A tag carrying a prerelease part is a prerelease. The tag is the
+    // authority, as it always was here, rather than a flag on the release that
+    // somebody could forget to tick.
     // Somebody on a stable version is never shown a candidate build.
     .filter((entry) => onPrerelease || !entry.version.includes('-'))
     .sort((a, b) => compareVersions(b.version, a.version));
@@ -431,7 +433,7 @@ function updateMethod(): UpdateMethod {
  * What to show. Reads the cache unless it is stale or `refresh` is asked for.
  *
  * A failed check never throws: the answer is the state with `error` filled in,
- * because "we could not reach GitLab" is information and an exception is not.
+ * because "we could not reach AI17Z Code" is information and an exception is not.
  */
 export async function updateState(options: { refresh?: boolean } = {}): Promise<UpdateState> {
   const current = buildVersion().version;

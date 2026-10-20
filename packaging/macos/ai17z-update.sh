@@ -22,8 +22,8 @@ HERE="$(dirname "$APP_ROOT")"
 . "$APP_ROOT/packaging/unix/ai17z-paths.sh"
 ai17z_resolve_paths "$APP_ROOT"
 
-REPOSITORY="shiftabovectrl/ai17z"
-ALLOWED_HOSTS="gitlab.com"
+REPOSITORY="AI17Z/ai17z"
+ALLOWED_HOSTS="code.ai17z.io"
 
 CHECK_ONLY=0; ASSUME_YES=0; WANT_RELEASE=""
 while [ $# -gt 0 ]; do
@@ -69,7 +69,7 @@ printf '\n  %sAI17Z%s  %s\n\n' "$GREEN" "$OFF" "$CURRENT"
 step "Checking for a newer AI17Z"
 # Which release, found without spending the REST budget.
 #
-# `ai17z_latest_release_tag` asks GitLab's releases API, a different host from
+# `ai17z_latest_release_tag` asks AI17Z Code's releases API, a different host from
 # the one an agent watching a GitHub repository spends its budget on, so the
 # two cannot starve each other.
 # Nothing is guessed: an empty answer is reported and the update stops.

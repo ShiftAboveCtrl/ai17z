@@ -9,16 +9,16 @@ const root = resolve(__dirname, '../..');
  * lives, so that a step can be run by hand before a runner is asked.
  */
 const pipelineParts = [
-  '.gitlab/ci/package.yml',
-  '.gitlab/ci/release.yml',
-  '.gitlab/scripts/build-windows-release.ps1',
-  '.gitlab/scripts/publish-release.sh',
-  '.gitlab/scripts/release-notes.sh',
+  '.forgejo/workflows/package.yml',
+  '.forgejo/workflows/release.yml',
+  '.forgejo/scripts/build-windows-release.ps1',
+  '.forgejo/scripts/publish-release.sh',
+  '.forgejo/scripts/release-notes.sh',
 ];
 const part = (path: string) => readFileSync(resolve(root, path), 'utf8');
 const workflow = pipelineParts.map(part).join('\n');
-const publishScript = part('.gitlab/scripts/publish-release.sh');
-const notesScript = part('.gitlab/scripts/release-notes.sh');
+const publishScript = part('.forgejo/scripts/publish-release.sh');
+const notesScript = part('.forgejo/scripts/release-notes.sh');
 const iss = readFileSync(resolve(root, 'packaging/windows/ai17z.iss'), 'utf8');
 const policy = readFileSync(resolve(root, 'docs/CODE_SIGNING_POLICY.md'), 'utf8');
 const readme = readFileSync(resolve(root, 'README.md'), 'utf8');
@@ -58,16 +58,20 @@ describe('the release does not pretend to sign anything', () => {
     // reappearing under another name fails here rather than passing quietly.
     // The platform jobs are named for what they build, and another would have
     // to be added here deliberately.
-    const jobsIn = (path: string) => [...part(path).matchAll(/^([a-z][a-z0-9 -]*):\r?$/gm)].map((match) => match[1]);
-    expect(jobsIn('.gitlab/ci/package.yml')).toEqual([
-      'package ubuntu amd64',
-      'package ubuntu arm64',
-      'ubuntu takes the package',
-      'package macos arm64',
-      'package windows',
-      'contract',
+    const jobsIn = (path: string) => [...part(path).slice(part(path).indexOf('\njobs:')).matchAll(/^ {2}([a-z][a-z0-9-]*):\r?$/gm)].map((match) => match[1]);
+    expect(jobsIn('.forgejo/workflows/package.yml')).toEqual(['ubuntu-amd64']);
+    expect(jobsIn('.forgejo/workflows/release.yml')).toEqual([
+      'version',
+      'check',
+      'package-ubuntu',
+      'ubuntu-takes-the-package',
+      'package-macos',
+      'package-windows',
+      'publish',
+      'qualify',
+      'qualify-ubuntu-arm64',
+      'qualify-windows',
     ]);
-    expect(jobsIn('.gitlab/ci/release.yml')).toEqual(['publish', 'publish with macos']);
   });
 
   it('says unsigned where somebody reading the release page will see it', () => {
@@ -378,11 +382,12 @@ describe('the release notes say what changed', () => {
   });
 
   it('checks out the history the changelog needs', () => {
-    // Only the publishing job needs history. Without GIT_DEPTH 0 there is one
+    // The publishing job needs the history. Without fetch-depth 0 there is one
     // commit and no tags, so the changelog would be empty and nothing would
     // say so.
-    const publish = part('.gitlab/ci/release.yml').slice(part('.gitlab/ci/release.yml').indexOf('.publish:'));
-    expect(publish.slice(0, publish.indexOf('\npublish:'))).toContain('GIT_DEPTH: 0');
+    const release = part('.forgejo/workflows/release.yml');
+    const publish = release.slice(release.indexOf('\n  publish:'), release.indexOf('\n  qualify:'));
+    expect(publish).toContain('fetch-depth: 0');
   });
 
   it('says nothing rather than something wrong when there is no tag', () => {
@@ -520,9 +525,12 @@ describe('what a release is called, in both places that say it', () => {
  */
 describe('the release workflow publishes under the derived name', () => {
   it('carries the name out of the build job', () => {
-    // As a dotenv report, which is how one GitLab job hands a value to another.
-    expect(part('.gitlab/scripts/build-windows-release.ps1')).toContain('"RELEASE_NAME=$name"');
-    expect(part('.gitlab/ci/package.yml')).toContain('dotenv: release.env');
+    // As a file in the Windows job's artifact, read by the publish job and
+    // removed before anything is attached, so it is never itself published.
+    expect(part('.forgejo/scripts/build-windows-release.ps1')).toContain('"RELEASE_NAME=$name"');
+    const release = part('.forgejo/workflows/release.yml');
+    expect(release).toContain('            release.env\n');
+    expect(release).toContain('[ -f dist/release.env ] && . dist/release.env && export RELEASE_NAME && rm -f dist/release.env');
   });
 
   it('reads it from the packager rather than composing it again', () => {

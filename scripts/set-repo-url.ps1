@@ -7,20 +7,22 @@
   two bootstrap scripts: the clone URL, the source zip, and the raw URL of each
   bootstrap script. They are all derivable from one, so this asks for one.
 
-  Run it once, after creating the project on GitLab and before the first push.
-  Safe to run again if you rename or move the project.
+  AI17Z lives on AI17Z Code, its own Forgejo. A fork on any Forgejo (Codeberg,
+  or one of your own) uses the same URL shapes, so any host works here.
+
+  Run it once, after creating the project and before the first push. Safe to
+  run again if you rename or move the project.
 
 .PARAMETER Url
-  The project URL, in any of the forms GitLab shows you:
-    https://gitlab.com/you/ai17z
-    https://gitlab.com/you/ai17z.git
-    git@gitlab.com:you/ai17z.git
+  The project URL, in any of the forms a Forgejo shows you:
+    https://code.example.org/you/ai17z
+    https://code.example.org/you/ai17z.git
 
 .PARAMETER Branch
   The default branch. Defaults to main.
 
 .EXAMPLE
-  .\scripts\set-repo-url.ps1 -Url https://gitlab.com/you/ai17z
+  .\scripts\set-repo-url.ps1 -Url https://codeberg.org/you/ai17z
 #>
 [CmdletBinding()]
 param(
@@ -32,39 +34,35 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-# Accept whichever form was pasted, and reduce it to namespace/project. A GitLab
-# namespace can be a group with subgroups, so everything before the last segment
-# is the namespace.
+# Accept either form that was pasted, and reduce it to host and owner/project.
 $clean = $Url.Trim().TrimEnd('/')
-if ($clean -match '^git@gitlab\.com:(?<path>.+?)(\.git)?$') {
-  $path = $Matches.path
-} elseif ($clean -match '^https?://gitlab\.com/(?<path>[^?#]+?)(\.git)?$') {
+if ($clean -match '^https://(?<host>[A-Za-z0-9.-]+)/(?<path>[^?#]+?)(\.git)?$') {
+  $hostName = $Matches.host
   $path = $Matches.path
 } else {
   Write-Host ''
-  Write-Host "  That does not look like a GitLab project URL: $Url" -ForegroundColor Red
-  Write-Host '  Expected something like https://gitlab.com/you/ai17z' -ForegroundColor Yellow
+  Write-Host "  That does not look like an https project URL: $Url" -ForegroundColor Red
+  Write-Host '  Expected something like https://codeberg.org/you/ai17z' -ForegroundColor Yellow
   Write-Host ''
   exit 1
 }
-if ($path -notmatch '^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$') {
+if ($path -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
   Write-Host ''
-  Write-Host "  $path is not a namespace/project path." -ForegroundColor Red
+  Write-Host "  $path is not an owner/project path." -ForegroundColor Red
   Write-Host ''
   exit 1
 }
-$project = ($path -split '/')[-1]
 
-$cloneUrl = "https://gitlab.com/$path.git"
-$zipUrl = "https://gitlab.com/$path/-/archive/$Branch/$project-$Branch.zip"
-$rawPs1 = "https://gitlab.com/$path/-/raw/$Branch/bootstrap.ps1"
-$rawSh = "https://gitlab.com/$path/-/raw/$Branch/bootstrap.sh"
+$cloneUrl = "https://$hostName/$path.git"
+$zipUrl = "https://$hostName/$path/archive/$Branch.zip"
+$rawPs1 = "https://$hostName/$path/raw/branch/$Branch/bootstrap.ps1"
+$rawSh = "https://$hostName/$path/raw/branch/$Branch/bootstrap.sh"
 
 $replacements = @{
-  'https://gitlab.com/shiftabovectrl/ai17z.git'                          = $cloneUrl
-  'https://gitlab.com/shiftabovectrl/ai17z/-/archive/main/ai17z-main.zip' = $zipUrl
-  'https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.ps1'      = $rawPs1
-  'https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/bootstrap.sh'       = $rawSh
+  'https://code.ai17z.io/AI17Z/ai17z.git'                          = $cloneUrl
+  'https://code.ai17z.io/AI17Z/ai17z/archive/main.zip'             = $zipUrl
+  'https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/bootstrap.ps1' = $rawPs1
+  'https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/bootstrap.sh'  = $rawSh
 }
 
 # Only files that are actually part of the repository, and never node_modules.

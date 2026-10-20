@@ -133,12 +133,11 @@ ai17z_version_is_newer() { # candidate installed
     "$root/packaging/preflight.mts" --newer "$1" "$2" 2>/dev/null) || printf ''
 }
 
-# The newest release's tag, from GitLab's releases API, newest first.
+# The newest release's tag, from AI17Z Code's releases API, newest first.
 #
-# Not permalink/latest, which is GitLab choosing by redirect; the list is read
-# and the first tag taken. It lists prereleases, which every AI17Z release so
-# far is. AI17Z's pipeline never dates a release in the future, so there is no
-# "upcoming" entry to step over.
+# Not /releases/latest, which is the server choosing; the list is read and the
+# first tag taken. It lists prereleases, which every AI17Z release so far is,
+# and never a draft to a caller that is not signed in.
 #
 # This used to read GitHub's releases feed, to keep clear of the REST budget an
 # agent watching a GitHub repository spends. That budget belongs to another host
@@ -149,16 +148,16 @@ ai17z_version_is_newer() { # candidate installed
 ai17z_latest_release_tag() { # repository
   local repository="$1"
   curl -fsSL --proto '=https' --tlsv1.2 --retry 3 \
-    "https://gitlab.com/api/v4/projects/${repository%%/*}%2F${repository#*/}/releases?per_page=10&order_by=released_at&sort=desc" 2>/dev/null \
+    "https://code.ai17z.io/api/v1/repos/${repository}/releases?limit=10" 2>/dev/null \
     | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
 }
 
 # Where one published file of one release lives, addressed by its own tag.
 #
 # Exact tag rather than "latest", so what is fetched is decided before the
-# request. GitLab answers it with one redirect on gitlab.com itself.
+# request. AI17Z Code serves it itself, from its own storage.
 ai17z_release_asset_url() { # repository tag asset
-  printf 'https://gitlab.com/%s/-/releases/%s/downloads/%s' "$1" "$2" "$3"
+  printf 'https://code.ai17z.io/%s/releases/download/%s/%s' "$1" "$2" "$3"
 }
 
 # One value out of the environment file.

@@ -84,7 +84,7 @@ const HOW_TO_UPDATE: Record<UpdateState['method'], { action: string; detail: str
 /**
  * Updates, and the fact that nobody is being made to take one.
  *
- * AI17Z does not replace itself. This asks GitLab what has been released,
+ * AI17Z does not replace itself. This asks AI17Z Code what has been released,
  * shows the notes, and offers a link -- which means an owner can read what
  * changed before deciding, can say "not now" by doing nothing, can say "never
  * this one", and can turn the whole thing off. An installation that updates
@@ -150,7 +150,7 @@ export function UpdatePanel() {
             : state.updateAvailable
               ? `${latest?.name} is available.`
               : state.error
-                ? 'Could not reach GitLab.'
+                ? 'Could not reach AI17Z Code.'
                 : 'This is the newest version.'}
         </span>
         {state.enabled && (
@@ -265,7 +265,7 @@ export function UpdatePanel() {
       <Toggle
         checked={state.enabled}
         onChange={(enabled) => void load(() => put<UpdateState>('/api/updates/enabled', { enabled }), 'enabled')}
-        label="Check GitLab for new versions"
+        label="Check AI17Z Code for new versions"
         description="Once every six hours at most, and only while this screen or the app is open. Off means no request is made at all. Nothing about you or your agents is ever sent."
       />
 

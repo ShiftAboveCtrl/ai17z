@@ -7,7 +7,7 @@ separated and named so nobody mistakes one for the other.
 ## Getting set up
 
 ```bash
-git clone https://gitlab.com/shiftabovectrl/ai17z.git ai17z
+git clone https://code.ai17z.io/AI17Z/ai17z.git ai17z
 cd ai17z
 ./install-ai17z.sh        # or .\install-ai17z.ps1 on Windows
 npm run db:up
@@ -99,7 +99,7 @@ something went wrong once. The short version:
 - Errors carry a class and a human sentence. `500 Internal Server Error` is not
   an acceptable thing for somebody to read.
 
-## Before opening a merge request
+## Before opening a pull request
 
 ```bash
 npm run typecheck && npm test
@@ -107,3 +107,18 @@ npm run typecheck && npm test
 
 CI runs the same, plus the web build and a secret scan, against a real Postgres
 and with no credentials of any kind.
+
+## Where this happens
+
+AI17Z lives on [AI17Z Code](https://code.ai17z.io/AI17Z/ai17z), the project's
+own Forgejo. Reading, cloning and downloading need no account. Opening an issue
+or a pull request does: register there, and a maintainer approves the account
+before it can post, because a public forge with self-service accounts fills
+with spam. Fork the repository and open a pull request from your fork.
+
+The first time a pull request from somebody new runs CI, a maintainer approves
+the run. That is Forgejo's own rule and it is there for a reason worth knowing:
+CI executes the code in the pull request, so it runs on a machine kept for
+exactly that, which holds no secrets and can reach nothing of AI17Z's, and a
+pull request is never given the repository's secrets or a token that can write
+to it.

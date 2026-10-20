@@ -1,0 +1,98 @@
+# Qualify a release that is already published, again, from its published
+# address, as a stranger would. Started by a `qualify-v*` tag naming that
+# release; delete the tag afterwards.
+#
+# Two copies, and the difference is the point. The tooling doing the checking is
+# this run's own commit, which can be newer than the release: once, a bad
+# assertion in a qualifier frozen at the release failed both Macs with no way to
+# correct it but another release. The installers being compared are the release
+# tag's own, in tagged/, because that is a question about the release.
+
+name: qualify
+
+on:
+  push:
+    tags:
+      - "qualify-v[0-9]*"
+
+permissions:
+  contents: read
+
+jobs:
+  published-bytes-and-ubuntu:
+    runs-on: ai17z-release-linux
+    container:
+      image: ubuntu:24.04
+    services:
+      docker:
+        image: docker:27-dind
+        options: --privileged
+        env:
+          DOCKER_TLS_CERTDIR: ""
+    env:
+      DOCKER_HOST: tcp://docker:2375
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - run: |
+          TAG="v$(bash .forgejo/scripts/release-version.sh)"
+          bash .forgejo/scripts/setup-ubuntu-job.sh
+          bash .forgejo/scripts/setup-cosign.sh
+          bash .forgejo/scripts/say-on-fail.sh 'the published release' -- bash .forgejo/scripts/verify-published-release.sh "$TAG"
+          mkdir -p tagged && git archive "$TAG" install.ps1 install-ai17z-ubuntu.sh install-ai17z-macos.sh | tar -x -C tagged
+          bash .forgejo/scripts/say-on-fail.sh 'the published Ubuntu release' -- \
+            bash .forgejo/scripts/as-stranger.sh bash .forgejo/scripts/qualify-published-ubuntu.sh "$TAG" "$PWD/tagged"
+
+  ubuntu-arm64:
+    runs-on: ai17z-release-linux-arm64
+    container:
+      image: ubuntu:24.04
+    services:
+      docker:
+        image: docker:27-dind
+        options: --privileged
+        env:
+          DOCKER_TLS_CERTDIR: ""
+    env:
+      DOCKER_HOST: tcp://docker:2375
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - run: |
+          TAG="v$(bash .forgejo/scripts/release-version.sh)"
+          bash .forgejo/scripts/setup-ubuntu-job.sh
+          mkdir -p tagged && git archive "$TAG" install-ai17z-ubuntu.sh | tar -x -C tagged
+          bash .forgejo/scripts/say-on-fail.sh 'the published Ubuntu release on arm64' -- \
+            bash .forgejo/scripts/as-stranger.sh bash .forgejo/scripts/qualify-published-ubuntu.sh "$TAG" "$PWD/tagged"
+
+  windows:
+    runs-on: ai17z-release-windows
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - shell: powershell
+        run: |
+          $tag = 'v' + (('' + $env:GITHUB_REF_NAME) -replace '^qualify-v', '')
+          New-Item -ItemType Directory -Force -Path tagged | Out-Null
+          cmd /c "git show ${tag}:install.ps1 > tagged\install.ps1"
+          powershell -NoProfile -File .forgejo\scripts\qualify-published-windows.ps1 -Tag $tag -Tagged tagged\install.ps1
+          if ($LASTEXITCODE -ne 0) { throw "the published Windows route failed ($LASTEXITCODE)" }
+
+  macos:
+    if: vars.AI17Z_MACOS == '1'
+    runs-on: ai17z-release-macos-arm64
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - run: |
+          TAG="v$(bash .forgejo/scripts/release-version.sh)"
+          source .forgejo/scripts/setup-macos-job.sh
+          mkdir -p tagged && git archive "$TAG" install-ai17z-macos.sh | tar -x -C tagged
+          bash .forgejo/scripts/say-on-fail.sh 'the published macOS release' -- \
+            bash .forgejo/scripts/qualify-published-macos.sh "$TAG" "$PWD/tagged"

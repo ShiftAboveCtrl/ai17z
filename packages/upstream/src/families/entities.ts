@@ -94,7 +94,7 @@ export interface EntityAnswer {
 export const MAX_STATEMENTS = 80;
 
 const API = 'https://www.wikidata.org/w/api.php';
-const USER_AGENT = 'AI17Z/1.0 (+https://gitlab.com/shiftabovectrl/ai17z) structured-entities';
+const USER_AGENT = 'AI17Z/1.0 (+https://code.ai17z.io/AI17Z/ai17z) structured-entities';
 
 /** `Q42`, `P31` -- anything else is not an id and is refused before a request. */
 export function isEntityId(value: string): boolean {

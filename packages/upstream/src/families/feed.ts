@@ -120,7 +120,7 @@ export const MAX_FEED_BYTES = 2_000_000;
 /** How much of one entry's text may travel. */
 export const MAX_ENTRY_CHARS = 8_000;
 
-const USER_AGENT = 'AI17Z/1.0 (+https://gitlab.com/shiftabovectrl/ai17z) feed-reader';
+const USER_AGENT = 'AI17Z/1.0 (+https://code.ai17z.io/AI17Z/ai17z) feed-reader';
 
 // --- reading the tree ------------------------------------------------------
 //

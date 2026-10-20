@@ -219,11 +219,11 @@ describe('update discovery does not spend the REST budget', () => {
     windows: read('packaging/windows/Setup-AI17Z.ps1'),
   };
 
-  it('discovers a release through the GitLab releases list on every platform', () => {
+  it('discovers a release through the AI17Z Code releases list on every platform', () => {
     // Windows carries the URL itself. The two Unix updaters reach it through
     // the helper they share, which is where a networking rule belongs.
-    expect(updaters.windows).toContain("ProjectApi + '/releases?per_page=20&order_by=released_at&sort=desc'");
-    expect(read('packaging/unix/ai17z-paths.sh')).toContain('https://gitlab.com/api/v4/projects/');
+    expect(updaters.windows).toContain("ProjectApi + '/releases?limit=20'");
+    expect(read('packaging/unix/ai17z-paths.sh')).toContain('https://code.ai17z.io/api/v1/repos/');
     for (const platform of ['ubuntu', 'macos'] as const) {
       expect(updaters[platform]).toContain('ai17z_latest_release_tag');
     }

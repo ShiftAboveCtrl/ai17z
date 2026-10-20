@@ -6,9 +6,9 @@
   This file is the whole installer. There is no compiled logic anywhere else,
   and the recommended way in never downloads an executable at all:
 
-      irm https://gitlab.com/shiftabovectrl/ai17z/-/raw/main/install.ps1 | iex
+      irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex
 
-  That command fetches `install.ps1`, which resolves an exact GitLab release,
+  That command fetches `install.ps1`, which resolves an exact AI17Z Code release,
   reads that release's SHA256SUMS.txt, downloads this file from it as
   Install-AI17Z-<version>.ps1, checks its SHA-256 before writing it anywhere,
   and runs the bytes it checked. Read it before you run it. That is the point
@@ -21,14 +21,14 @@
     2. Makes sure WSL 2 is present, because Docker Desktop runs on it.
     3. Makes sure Docker Desktop is installed AND its engine actually answers.
     4. Makes sure Google Chrome and Node.js are present.
-    5. Downloads one file from AI17Z's own GitLab release, checks its SHA-256,
+    5. Downloads one file from AI17Z's own release on AI17Z Code, checks its SHA-256,
        and extracts it.
     6. Starts AI17Z and checks it really works before saying so.
 
   Everything it installs comes from **winget**, Microsoft's own package manager,
   or from **wsl --install**, Microsoft's own command. It never downloads an
   executable from a URL of its own, and the only thing it fetches directly is
-  AI17Z itself, from AI17Z's GitLab release, verified by hash.
+  AI17Z itself, from AI17Z's release on AI17Z Code, verified by hash.
 
   It changes nothing it does not have to. A dependency that is already present
   and good enough is left alone. Run it twice and the second run installs
@@ -40,7 +40,7 @@
 .PARAMETER Release
   The release tag to install, for example v1.0.0-beta.16. `install.ps1` passes
   the release it resolved and checked this file against, so a run installs the
-  version it was fetched from. Given nothing, this asks GitLab for the newest
+  version it was fetched from. Given nothing, this asks AI17Z Code for the newest
   published release.
 
 .PARAMETER ExpectedSha256
@@ -159,16 +159,14 @@ $ErrorActionPreference = 'Stop'
 
 $script:Ai17zSetup = [ordered]@{
   # Where AI17Z itself comes from. Nothing else is ever downloaded.
-  Repository = 'shiftabovectrl/ai17z'
-  ProjectUrl = 'https://gitlab.com/shiftabovectrl/ai17z'
-  # The API wants the project path as one encoded segment.
-  ProjectApi = 'https://gitlab.com/api/v4/projects/shiftabovectrl%2Fai17z'
-  # The hosts a request may start at. One: GitLab answers a release download
-  # with a single redirect on gitlab.com itself to the package registry file,
-  # measured never leaving the host. The hash, not the hostname, is still what
-  # makes the bytes trustworthy, but a request that does not begin here is
-  # refused outright.
-  AllowedHosts = @('gitlab.com')
+  Repository = 'AI17Z/ai17z'
+  ProjectUrl = 'https://code.ai17z.io/AI17Z/ai17z'
+  ProjectApi = 'https://code.ai17z.io/api/v1/repos/AI17Z/ai17z'
+  # The hosts a request may start at. One: AI17Z Code, AI17Z's own Forgejo,
+  # which serves a release file itself from its own storage. The hash, not the
+  # hostname, is still what makes the bytes trustworthy, but a request that
+  # does not begin here is refused outright.
+  AllowedHosts = @('code.ai17z.io')
   # Windows 10 22H2. Below this, Docker Desktop's own requirements are not met
   # and nothing here can fix that.
   MinimumWindowsBuild = 19045
@@ -1075,7 +1073,7 @@ function Select-Ai17zTarget {
   Whether a release tag is one this program will build a name from.
 
   A tag arrives in one of two ways and neither is trustworthy in the way that
-  matters here: typed by whoever ran this, or read out of a document GitLab
+  matters here: typed by whoever ran this, or read out of a document AI17Z Code
   served. What gets derived from it is a filename -- `AI17Z-App-<version>.zip`
   -- and then a path under the setup folder that file is written to. **A value
   that came off the network has no business becoming a local path.**
@@ -1943,7 +1941,7 @@ function Assert-Ai17zAllowedUrl {
     Stop-Ai17z 'A download was about to be made over plain HTTP.' 'AI17Z Setup only ever downloads over HTTPS.' 'This is a fault in AI17Z Setup. Report it with the log below.'
   }
   if ($script:Ai17zSetup.AllowedHosts -notcontains $uri.Host) {
-    Stop-Ai17z ('AI17Z Setup will not download from ' + $uri.Host + '.') ("It only downloads from AI17Z's own GitLab release.") ('Stop, and download AI17Z from ' + $script:Ai17zSetup.ProjectUrl + '/-/releases instead.')
+    Stop-Ai17z ('AI17Z Setup will not download from ' + $uri.Host + '.') ("It only downloads from AI17Z's own release on AI17Z Code.") ('Stop, and download AI17Z from ' + $script:Ai17zSetup.ProjectUrl + '/releases instead.')
   }
 }
 
@@ -2036,16 +2034,15 @@ function Save-Ai17zDownload {
 <#
   Which release to install.
 
-  GitLab's releases API, newest first. It lists prereleases, and every AI17Z
-  release so far is one; GitLab has no prerelease flag, so the tag is what says
-  which a release is. permalink/latest is not used: it is GitLab choosing, by
-  answering with a redirect, and here the list is read and the choice made in
-  the open. A release GitLab calls upcoming is announced and not out, so it is
-  skipped.
+  AI17Z Code's releases API, newest first. It lists prereleases, and the tag is
+  what says which a release is, never a flag somebody could forget to tick.
+  /releases/latest is not used: it is the server choosing, and here the list is
+  read and the choice made in the open. A draft is never listed to a caller who
+  cannot write to the repository, and one that somehow is gets skipped.
 
   This used to read GitHub's releases feed, to keep clear of the REST budget an
   agent watching a GitHub repository spends. That budget belongs to a different
-  host now, so the two cannot meet.
+  host, so the two cannot meet.
 
   Assets are then composed rather than looked up. Their names are fixed by the
   release, so an address built from the tag needs no request to discover and
@@ -2055,7 +2052,7 @@ function Save-Ai17zDownload {
 function Get-Ai17zAssetsForTag {
   param([string] $Tag)
   $version = $Tag -replace '^v', ''
-  $base = $script:Ai17zSetup.ProjectUrl + '/-/releases/' + $Tag + '/downloads/'
+  $base = $script:Ai17zSetup.ProjectUrl + '/releases/download/' + $Tag + '/'
   $names = @(
     'release-manifest.json',
     'release-notes.md',
@@ -2080,7 +2077,7 @@ function Get-Ai17zRelease {
 
   $chosen = $Tag
   if (-not $chosen) {
-    $list = $script:Ai17zSetup.ProjectApi + '/releases?per_page=20&order_by=released_at&sort=desc'
+    $list = $script:Ai17zSetup.ProjectApi + '/releases?limit=20'
     $answer = Get-Ai17zText $list 'application/json'
     if (-not $answer.Ok) {
       return [pscustomobject]@{ Ok = $false; Status = $answer.Status; Release = $null }
@@ -2092,7 +2089,7 @@ function Get-Ai17zRelease {
     try { $parsed = $answer.Body | ConvertFrom-Json } catch { $parsed = $null }
     $listed = @($parsed)
     foreach ($entry in $listed) {
-      if (-not $entry -or $entry.upcoming_release) { continue }
+      if (-not $entry -or $entry.draft) { continue }
       $candidate = '' + $entry.tag_name
       if (Test-Ai17zReleaseTag $candidate) { $chosen = $candidate; break }
     }
@@ -2103,7 +2100,7 @@ function Get-Ai17zRelease {
   # so the manifest is what says the release is finished. Absent means not
   # ready to install, which is a different answer from not existing, and both
   # are refusals rather than a guess at an older version.
-  $manifestUrl = $script:Ai17zSetup.ProjectUrl + '/-/releases/' + $chosen + '/downloads/release-manifest.json'
+  $manifestUrl = $script:Ai17zSetup.ProjectUrl + '/releases/download/' + $chosen + '/release-manifest.json'
   $probe = Get-Ai17zText $manifestUrl 'application/json'
   if (-not $probe.Ok) {
     return [pscustomobject]@{ Ok = $false; Status = $probe.Status; Release = $null }
@@ -3071,7 +3068,7 @@ if ($WhatIfOnly) {
   } else {
     $preview = Get-Ai17zRelease $Release
     if ($preview.Ok) { $wouldBe = 'would install ' + $preview.Release.tag_name }
-    else { $wouldBe = 'could not reach GitLab to see which version' }
+    else { $wouldBe = 'could not reach AI17Z Code to see which version' }
   }
   Set-Ai17zStep 'app' 'action' $wouldBe
   Set-Ai17zStep 'start' 'action' 'would start it'
@@ -3108,7 +3105,7 @@ if ($LocalPackage) {
       Set-Ai17zStep 'app' 'failed' 'the package did not match its hash'
       Stop-Ai17z 'That package does not match the SHA-256 it was given.' `
         ("expected  " + $ExpectedSha256.Trim().ToLowerInvariant() + "`ngot       " + $actual + "`n`nNothing was installed.") `
-        "Do not install that file. Download AI17Z again from`n  $($script:Ai17zSetup.ProjectUrl)/-/releases"
+        "Do not install that file. Download AI17Z again from`n  $($script:Ai17zSetup.ProjectUrl)/releases"
     }
     Write-Ai17zLog ('local package sha256 ' + $actual + ' matched the hash it was given')
   }
@@ -3129,14 +3126,14 @@ if ($LocalPackage) {
       network was fine.
     #>
     if ([int]$found.Status -eq 429 -or [int]$found.Status -eq 403) {
-      Set-Ai17zStep 'app' 'failed' 'GitLab is rate limiting this network'
+      Set-Ai17zStep 'app' 'failed' 'AI17Z Code is rate limiting this network'
       Stop-Ai17z 'AI17Z could not be downloaded.' `
-        ("GitLab limits how often one network may ask it for a release, and this network has reached that limit.`nYour internet connection is not the problem, and nothing on this PC was changed.") `
+        ("AI17Z Code limits how often one network may ask it for a release, and this network has reached that limit.`nYour internet connection is not the problem, and nothing on this PC was changed.") `
         'Wait a few minutes and run AI17Z Setup again.'
     }
-    Set-Ai17zStep 'app' 'failed' 'could not reach GitLab'
+    Set-Ai17zStep 'app' 'failed' 'could not reach AI17Z Code'
     Stop-Ai17z 'AI17Z could not be downloaded.' `
-      ('GitLab answered ' + $found.Status + '.' + "`nNothing on this PC was changed.") `
+      ('AI17Z Code answered ' + $found.Status + '.' + "`nNothing on this PC was changed.") `
       'Check your internet connection and run AI17Z Setup again.'
   }
   # Not `$release`.
@@ -3153,7 +3150,7 @@ if ($LocalPackage) {
   # against the real API.
   $chosen = $found.Release
   $tag = '' + $chosen.tag_name
-  # The tag GitLab just handed over, before a filename is built from it. This
+  # The tag AI17Z Code just handed over, before a filename is built from it. This
   # is the one place a value off the network turns into a local path, and it is
   # refused rather than sanitised: a tag this does not recognise is a release
   # this program does not understand, not one to guess a name for.
@@ -3161,7 +3158,7 @@ if ($LocalPackage) {
     Set-Ai17zStep 'app' 'failed' 'the release is not named like a release'
     Stop-Ai17z ('That release is called "' + $tag + '", which is not a version number.') `
       'Nothing on this PC was changed. AI17Z will not build a filename out of that.' `
-      ("Install a release by name instead:`n  ... -Release v1.0.0`nand report this at " + $script:Ai17zSetup.ProjectUrl + '/-/issues')
+      ("Install a release by name instead:`n  ... -Release v1.0.0`nand report this at " + $script:Ai17zSetup.ProjectUrl + '/issues')
   }
   $version = $tag -replace '^v', ''
   $assetName = [string]::Format($script:Ai17zAssets.Package, $version)
@@ -3170,7 +3167,7 @@ if ($LocalPackage) {
     Set-Ai17zStep 'app' 'failed' ('release ' + $tag + ' has no package')
     Stop-Ai17z ('Release ' + $tag + ' does not contain ' + $assetName + '.') `
       'Nothing on this PC was changed.' `
-      ("Download AI17Z from`n  " + $script:Ai17zSetup.ProjectUrl + '/-/releases')
+      ("Download AI17Z from`n  " + $script:Ai17zSetup.ProjectUrl + '/releases')
   }
 
   $expected = Resolve-Ai17zExpectedHash $chosen $assetName $ExpectedSha256
@@ -3178,7 +3175,7 @@ if ($LocalPackage) {
     Set-Ai17zStep 'app' 'failed' 'no published hash'
     Stop-Ai17z 'There is no published SHA-256 for this release.' `
       'AI17Z Setup will not install a package it cannot check.' `
-      ("Download AI17Z from`n  " + $script:Ai17zSetup.ProjectUrl + '/-/releases')
+      ("Download AI17Z from`n  " + $script:Ai17zSetup.ProjectUrl + '/releases')
   }
 
   $temporaryZip = Join-Path $script:Ai17zSetupHome $assetName
@@ -3201,7 +3198,7 @@ if ($LocalPackage) {
     # Fail closed, and say what it means rather than offering a way past it.
     Stop-Ai17z 'The download does not match its published SHA-256.' `
       ("expected  " + $expected.Hash + "`ngot       " + $actual + "`n`nThe file has been deleted and nothing was installed.") `
-      "Do not try to install that file. Download AI17Z again from`n  $($script:Ai17zSetup.ProjectUrl)/-/releases`nand if it happens twice, stop and report it."
+      "Do not try to install that file. Download AI17Z again from`n  $($script:Ai17zSetup.ProjectUrl)/releases`nand if it happens twice, stop and report it."
   }
   Write-Ai17zLog ('package sha256 ' + $actual + ' verified against ' + $expected.Source)
   $zipPath = $temporaryZip

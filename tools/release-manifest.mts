@@ -64,7 +64,8 @@ const runUrl = optional('run');
  * Required whenever a platform is left out and has nothing in the directory,
  * because an unsupported platform with no reason reads exactly like a release
  * that lost its packages. The packaging validation run leaves Windows out and
- * says so; the release on GitLab's free tier leaves macOS out and says so.
+ * says so; a release built where no Mac runner is registered leaves macOS out
+ * and says so.
  */
 const notBuiltReason = optional('not-built');
 

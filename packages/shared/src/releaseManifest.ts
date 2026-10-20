@@ -35,9 +35,9 @@ export type Architecture = (typeof ARCHITECTURES)[number];
  * Which architectures each platform is built for: what a release owes, not
  * what an installation may be.
  *
- * macOS ships for Apple silicon only. AI17Z is built where it is published,
- * and GitLab's hosted Macs are Apple silicon; an x64 package from one would be
- * built under Rosetta, and an architecture this repository has not proved on
+ * macOS ships for Apple silicon only. AI17Z is built on real hardware of each
+ * architecture, and the Macs it can be built on are Apple silicon; an x64
+ * package from one would be built under Rosetta, and an architecture this repository has not proved on
  * real hardware is a relabelled one. An Intel Mac already running AI17Z keeps
  * its version and is told why no update is offered. `ARCHITECTURES` keeps x64
  * because those installations still describe themselves with it.
@@ -142,14 +142,20 @@ export const MANIFEST_ASSET = 'release-manifest.json';
 export const NOTES_ASSET = 'release-notes.md';
 
 /**
- * Where AI17Z is published: the project's path on GitLab.
+ * Where AI17Z is published: AI17Z Code, the project's own Forgejo.
+ *
+ * AI17Z owns the host its source and releases live on, so neither GitHub nor
+ * GitLab is needed to read the code, install it, or update it. That is not
+ * hypothetical: GitHub restricted the account in October 2026, and every
+ * install command answered 404 for weeks. A mirror elsewhere is a convenience;
+ * this is the address.
  *
  * One constant, because the TypeScript side has one place to be wrong in. The
  * installers and updaters are shell and PowerShell and cannot import this, so
  * `tests/unit/releaseManifest.test.ts` holds each of their copies against it.
  */
-export const RELEASE_HOST = 'gitlab.com';
-export const RELEASE_PROJECT = 'shiftabovectrl/ai17z';
+export const RELEASE_HOST = 'code.ai17z.io';
+export const RELEASE_PROJECT = 'AI17Z/ai17z';
 
 /** The project's own page. */
 export function projectUrl(project: string = RELEASE_PROJECT): string {
@@ -159,19 +165,14 @@ export function projectUrl(project: string = RELEASE_PROJECT): string {
 /**
  * Where an installation looks to find out what has been released.
  *
- * GitLab's releases API, newest first, which lists prereleases: GitLab has no
- * prerelease flag at all, so whether a release is one is read from its tag,
- * which is what the updater always did. `permalink/latest` is not used, because
- * it answers with a redirect to whatever GitLab considers newest at that
- * moment rather than letting the caller decide.
- *
- * The budget problem that shaped the GitHub version of this does not exist
- * here: an agent watching a repository spends `api.github.com`'s budget, and
- * this is a different host with limits measured in requests a minute, not an
- * hour. An update check and repository watching cannot starve each other.
+ * Forgejo's releases API, newest first. Drafts are never listed to a caller
+ * without write access, which an update check never has, and the prerelease
+ * flag is not trusted on its own: whether a release is a prerelease is read
+ * from its tag, as it always has been here. "latest" is not used, because it
+ * lets the server decide which release a caller gets rather than the caller.
  */
 export function releasesApiUrl(project: string = RELEASE_PROJECT, perPage = 20): string {
-  return `https://${RELEASE_HOST}/api/v4/projects/${encodeURIComponent(project)}/releases?per_page=${perPage}&order_by=released_at&sort=desc`;
+  return `https://${RELEASE_HOST}/api/v1/repos/${project}/releases?limit=${perPage}`;
 }
 
 /**
@@ -179,23 +180,21 @@ export function releasesApiUrl(project: string = RELEASE_PROJECT, perPage = 20):
  *
  * Exact tag rather than "latest", so what is fetched is decided before the
  * request rather than by whatever the server considers newest at that moment.
- * The release links each asset at this `direct_asset_path`, and GitLab answers
- * it with one redirect, on the same host, to the package registry file.
- * Measured on a public project for an 18 MB asset: one 302, both on
- * `gitlab.com`, so the only host a download needs is `gitlab.com`.
+ * Forgejo serves a release attachment at this address itself, from its own
+ * storage, so a download needs no host but `code.ai17z.io`.
  */
 export function releaseAssetUrl(project: string, tag: string, asset: string): string {
-  return `https://${RELEASE_HOST}/${project}/-/releases/${tag}/downloads/${asset}`;
+  return `https://${RELEASE_HOST}/${project}/releases/download/${tag}/${asset}`;
 }
 
 /** A release's own page, for a person to read. */
 export function releasePageUrl(project: string, tag: string): string {
-  return `https://${RELEASE_HOST}/${project}/-/releases/${tag}`;
+  return `https://${RELEASE_HOST}/${project}/releases/tag/${tag}`;
 }
 
 /** A file on the default branch, as raw text: what the install command fetches. */
 export function rawFileUrl(path: string, project: string = RELEASE_PROJECT, branch = 'main'): string {
-  return `https://${RELEASE_HOST}/${project}/-/raw/${branch}/${path}`;
+  return `https://${RELEASE_HOST}/${project}/raw/branch/${branch}/${path}`;
 }
 
 /**
