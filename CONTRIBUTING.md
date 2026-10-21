@@ -111,11 +111,14 @@ and with no credentials of any kind.
 ## Where this happens
 
 AI17Z lives on [AI17Z Code](https://code.ai17z.io/AI17Z/ai17z), the project's
-own Forgejo. Reading, cloning and downloading need no account. Opening an issue
-or a pull request does: register there, and a maintainer approves the account
-before it can post, because a public forge with self-service accounts fills
-with spam. Fork the repository and open a pull request from your fork.
+own Forgejo. Reading, cloning and downloading need no account. Accounts there,
+which issues and pull requests need, are by invitation for now: while there is
+no community to look after, an open sign-up page is mostly a door for spam.
+Nothing else waits on that. Clone it, change it and run it under the MIT
+licence, and a vulnerability is reported privately at
+<https://ai17z.io/security/report>, never in an issue.
 
+With an account, fork the repository and open a pull request from your fork.
 The first time a pull request from somebody new runs CI, a maintainer approves
 the run. That is Forgejo's own rule and it is there for a reason worth knowing:
 CI executes the code in the pull request, so it runs on a machine kept for
