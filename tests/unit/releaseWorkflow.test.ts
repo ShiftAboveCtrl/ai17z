@@ -65,7 +65,7 @@ describe('the release does not pretend to sign anything', () => {
       'check',
       'package-ubuntu',
       'ubuntu-takes-the-package',
-      'package-macos',
+      'package-assembled',
       'package-windows',
       'publish',
       'qualify',

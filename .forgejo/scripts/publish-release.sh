@@ -22,7 +22,7 @@
 #                                   because installations made with it update by
 #                                   running a newer one
 #   ai17z_<version>_<arch>.deb      Ubuntu, amd64 and arm64
-#   AI17Z-macos-arm64-<version>.tar.gz   macOS, Apple silicon, when built
+#   AI17Z-macos-<arch>-<version>.tar.gz  macOS, Apple silicon and Intel
 #   install-ai17z-{macos,ubuntu}.sh the readable installers, from this tag
 #   release-manifest.json           what the release is, for updaters
 #   AI17Z-Setup-Audit-<version>.json   what the setup program declares it may do
@@ -63,6 +63,11 @@ COMMIT="${GITHUB_SHA:-$(git rev-parse HEAD)}"
 SIGNER_PUB="$PROJECT_DIR/.forgejo/cosign.pub"
 # The one sentence a release without macOS carries, in its manifest and notes.
 MACOS_NOT_BUILT="macOS packages are built on a Mac registered with AI17Z Code as a release runner, and none was available for this release, so it has none. A Mac already running AI17Z keeps the version it has."
+# The sentence a release carries for a package the assembled job refused,
+# because it needed a native file no machine of that processor has built and
+# run. The installers and updaters on that machine take the newest release that
+# has one.
+ASSEMBLED_NOT_BUILT="This package needs a native file that no machine of its processor has built and tested yet, so it was not published for this release. Installations on that machine stay on, or install, the newest release that has one."
 
 say() { printf '\n==== %s ====\n' "$1"; }
 
@@ -78,6 +83,14 @@ find . -mindepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
 
 HAVE_MACOS=""
 compgen -G "AI17Z-macos-*.tar.gz" >/dev/null && HAVE_MACOS=1
+# What the assembled job refused, one <platform>:<arch> a line. It is a build
+# record, not something to publish.
+ABSENT=""
+if [ -f absent-packages.txt ]; then
+  ABSENT="$(grep -E '^(macos|ubuntu):(arm64|x64)$' absent-packages.txt | paste -sd, -)"
+  rm -f absent-packages.txt
+fi
+absent_count=0; [ -n "$ABSENT" ] && absent_count="$(printf '%s' "$ABSENT" | tr ',' '\n' | wc -l | tr -d ' ')"
 
 say "checksums"
 # Every installable file, not only the installer.
@@ -105,10 +118,10 @@ for deb in ai17z_*.deb; do bash "$HERE/scan-artifact.sh" "$deb" ubuntu; scanned=
 if [ -n "$HAVE_MACOS" ]; then
   for tarball in AI17Z-macos-*.tar.gz; do bash "$HERE/scan-artifact.sh" "$tarball" macos; scanned=$((scanned + 1)); done
 fi
-# One Windows zip and two Debian packages, and a Mac when there is one. A glob
-# that matched nothing would otherwise be a loop that ran nothing and a step
-# that passed.
-expected=3; [ -n "$HAVE_MACOS" ] && expected=4
+# One Windows zip, two Debian packages and two Mac packages, less any the
+# assembled job refused and said so. A glob that matched nothing would
+# otherwise be a loop that ran nothing and a step that passed.
+expected=$((3 - absent_count)); [ -n "$HAVE_MACOS" ] && expected=$((5 - absent_count))
 echo "scanned $scanned package(s)"
 [ "$scanned" -eq "$expected" ] || { echo "expected $expected packages, scanned $scanned"; exit 1; }
 
@@ -118,7 +131,10 @@ say "the release manifest"
 # @xbam/shared, which is the only place one is composed. A release without macOS
 # says so in its manifest, with the reason, rather than looking like a release
 # that lost a package.
-( cd "$PROJECT_DIR" && if [ -n "$HAVE_MACOS" ]; then
+( cd "$PROJECT_DIR" && if [ -n "$HAVE_MACOS" ] && [ -n "$ABSENT" ]; then
+    npx tsx tools/release-manifest.mts --dist "$DIST" --version "$VERSION" --commit "$COMMIT" ${RUN:+--run "$RUN"} \
+      --absent "$ABSENT" --not-built "$ASSEMBLED_NOT_BUILT"
+  elif [ -n "$HAVE_MACOS" ]; then
     npx tsx tools/release-manifest.mts --dist "$DIST" --version "$VERSION" --commit "$COMMIT" ${RUN:+--run "$RUN"}
   else
     npx tsx tools/release-manifest.mts --dist "$DIST" --version "$VERSION" --commit "$COMMIT" ${RUN:+--run "$RUN"} \
@@ -195,7 +211,7 @@ done
 echo "  every signature verifies against .forgejo/cosign.pub and is in the transparency log"
 
 say "release notes"
-( cd "$PROJECT_DIR" && bash "$HERE/release-notes.sh" "$VERSION" "$DIST/SHA256SUMS.txt" "${HAVE_MACOS:+macos}" ) > release-notes.md
+( cd "$PROJECT_DIR" && ABSENT_PACKAGES="$ABSENT" bash "$HERE/release-notes.sh" "$VERSION" "$DIST/SHA256SUMS.txt" "${HAVE_MACOS:+macos}" ) > release-notes.md
 cat release-notes.md
 
 ASSETS=("${INSTALLABLE[@]}" release-manifest.json "AI17Z-Setup-Audit-$VERSION.json" SHA256SUMS.txt release-notes.md)

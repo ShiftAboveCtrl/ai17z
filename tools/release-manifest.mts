@@ -70,6 +70,36 @@ const runUrl = optional('run');
 const notBuiltReason = optional('not-built');
 
 /**
+ * Packages of a platform that is published, left out one architecture at a
+ * time: `--absent macos:x64,ubuntu:arm64`, with `--not-built` saying why. A
+ * package assembled for a processor AI17Z Code has no runner of is refused
+ * when it needs a native file no machine of that processor has built and run,
+ * and the rest of the release goes out without it rather than waiting.
+ */
+const absentArchs = (optional('absent') ?? '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter((entry) => entry.length > 0)
+  .map((entry) => {
+    const [platform, arch] = entry.split(':');
+    if ((platform !== 'macos' && platform !== 'ubuntu') || !ARCHITECTURES.includes(arch as Architecture)) {
+      console.error(`  --absent: ${entry} is not <macos|ubuntu>:<arch>`);
+      process.exit(2);
+    }
+    return { platform: platform as 'macos' | 'ubuntu', arch: arch as Architecture };
+  });
+if (absentArchs.length > 0 && !notBuiltReason) {
+  console.error('  --absent needs a --not-built reason: a missing package with no reason reads as a lost one.');
+  process.exit(2);
+}
+const isAbsent = (platform: string, name: string): boolean =>
+  absentArchs.some(
+    (entry) =>
+      entry.platform === platform &&
+      name === (platform === 'macos' ? macosPackageAsset(version, entry.arch) : ubuntuPackageAsset(version, entry.arch)),
+  );
+
+/**
  * Which platforms this directory is supposed to be complete for.
  *
  * The release publishes all three at once; the packaging validation workflow
@@ -107,7 +137,9 @@ const owed = [
   // deliberately cannot be installed.
   { platform: 'every platform', name: CHECKSUMS_ASSET },
   ...expected.flatMap((platform) =>
-    expectedAssets(version, platform as (typeof PLATFORMS)[number]).map((name) => ({ platform, name })),
+    expectedAssets(version, platform as (typeof PLATFORMS)[number])
+      .filter((name) => !isAbsent(platform, name))
+      .map((name) => ({ platform, name })),
   ),
 ];
 const leftOut = PLATFORMS.filter((platform) => !expected.includes(platform));
@@ -182,7 +214,9 @@ const manifest: ReleaseManifest = {
     },
     macos: {
       supported: builtFor('macos').length > 0,
-      ...(builtFor('macos').length === 0 && notBuiltReason ? { notBuilt: notBuiltReason } : {}),
+      ...((builtFor('macos').length === 0 || absentArchs.some((entry) => entry.platform === 'macos')) && notBuiltReason
+        ? { notBuilt: notBuiltReason }
+        : {}),
       architectures: builtFor('macos').length > 0 ? builtFor('macos') : ['arm64'],
       methods: ['MACOS_PKG'],
       requirements: {
@@ -195,7 +229,9 @@ const manifest: ReleaseManifest = {
     },
     ubuntu: {
       supported: builtFor('ubuntu').length > 0,
-      ...(builtFor('ubuntu').length === 0 && notBuiltReason ? { notBuilt: notBuiltReason } : {}),
+      ...((builtFor('ubuntu').length === 0 || absentArchs.some((entry) => entry.platform === 'ubuntu')) && notBuiltReason
+        ? { notBuilt: notBuiltReason }
+        : {}),
       architectures: builtFor('ubuntu').length > 0 ? builtFor('ubuntu') : ['x64'],
       methods: ['UBUNTU_DEB'],
       requirements: {

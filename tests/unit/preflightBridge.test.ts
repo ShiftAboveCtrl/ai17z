@@ -164,7 +164,9 @@ describe('the compatibility gate speaks one language', () => {
     const packager = read('tools/package-windows.mts');
     expect(packager).toContain('proving the update compatibility gate answers');
     expect(packager).toContain("proveCompatibilityGate(stageDir, 'windows', version)");
-    expect(read('tools/package-unix.mts')).toContain('proveCompatibilityGate(stage, platform, version)');
+    // With the environment its probes run in: a package for another machine
+    // runs the same gate, with this machine's esbuild of the same version.
+    expect(read('tools/package-unix.mts')).toContain('proveCompatibilityGate(stage, platform, version, await probeEnvironment(stage))');
     // Both halves. An OK-only check passes on a bridge that cannot start.
     expect(packager).toMatch(/startsWith\('OK'\)/);
     expect(packager).toMatch(/startsWith\('NO'\)/);

@@ -197,13 +197,13 @@ describe('an update that cannot run here is refused before anything stops', () =
     expect(verdict.blockers[0]).toContain('Ubuntu 24.04, 26.04');
   });
 
-  it('an Intel Mac when the new release is Apple Silicon only', () => {
+  it('an Intel Mac when the new release has no Intel package', () => {
     const verdict = preflight(manifest(), {
       platform: 'macos', arch: 'x64', osVersion: '14.5', dockerVersion: '27.0.0', chromeMajor: 140,
     });
     expect(verdict.ok).toBe(false);
     // Said as the reason and the reassurance, not as a missing file.
-    expect(verdict.blockers[0]).toContain('Apple silicon only');
+    expect(verdict.blockers[0]).toContain('has no x64 build for macos');
     expect(verdict.blockers[0]).toContain('keeps running');
   });
 

@@ -189,14 +189,30 @@ describe('who runs what', () => {
     expect(step.run).toContain('publish-release.sh');
   });
 
-  it('builds each architecture where it runs', () => {
+  it('builds natively where there is a runner, and assembles and proves the rest', () => {
     const ubuntu = wf('release').jobs['package-ubuntu']!;
-    expect(ubuntu.strategy!.matrix!.include).toEqual([
-      { arch: 'amd64', runner: 'ai17z-release-linux' },
-      { arch: 'arm64', runner: 'ai17z-release-linux-arm64' },
-    ]);
-    expect(wf('release').jobs['package-macos']!['runs-on']).toBe('ai17z-release-macos-arm64');
+    expect(ubuntu.strategy!.matrix!.include).toEqual([{ arch: 'amd64', runner: 'ai17z-release-linux' }]);
     expect(wf('release').jobs['package-windows']!['runs-on']).toBe('ai17z-release-windows');
+    // No Mac and no arm64 Linux runner: those packages are assembled on the
+    // Linux release runner and refused unless their native files are the
+    // natively built reference's, byte for byte.
+    const assembled = wf('release').jobs['package-assembled']!;
+    expect(assembled['runs-on']).toBe('ai17z-release-linux');
+    const runs = (assembled.steps ?? []).map((step) => step.run ?? '').join('\n');
+    expect(runs).toContain('package-assembled.sh');
+    for (const target of ['macos arm64', 'macos x64', 'ubuntu arm64']) expect(runs).toContain(`"${target}"`);
+    expect(read('.forgejo/scripts/package-assembled.sh')).toContain('prove-natives.sh');
+    expect(JSON.stringify(assembled)).not.toMatch(/secrets\./);
+    expect(JSON.stringify(assembled)).not.toContain('--privileged');
+  });
+
+  it('pins every native reference by hash, and names where it came from', () => {
+    const refs = JSON.parse(read('.forgejo/native-references.json')) as Record<string, { release?: string; asset?: string; sha256?: string }>;
+    for (const key of ['macos-arm64', 'macos-x64', 'ubuntu-arm64']) {
+      expect(refs[key]!.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(refs[key]!.release).toMatch(/^v\d/);
+      expect(refs[key]!.asset).toBeTruthy();
+    }
   });
 });
 
@@ -205,12 +221,10 @@ describe('what the release exists to hold', () => {
 
   it('publishes only after the checks and every package, in the same run', () => {
     const needs = needsOf(release.jobs.publish!);
-    for (const required of ['check', 'package-ubuntu', 'package-windows', 'package-macos']) expect(needs).toContain(required);
-    // `always()` so a skipped macOS can be told from a failed one, and then
-    // every result named: without the names, always() would publish over red.
-    const gate = release.jobs.publish!.if!;
-    for (const required of ['check', 'package-ubuntu', 'package-windows']) expect(gate).toContain(`needs.${required}.result == 'success'`);
-    expect(gate).toContain("vars.AI17Z_MACOS != '1' && needs.package-macos.result == 'skipped'");
+    for (const required of ['check', 'package-ubuntu', 'package-windows', 'package-assembled']) expect(needs).toContain(required);
+    // No `if:` at all, so every job it needs has to have succeeded. An
+    // `always()` here would publish over red.
+    expect(release.jobs.publish!.if).toBeUndefined();
   });
 
   it('runs the full check, both secret scans included, before anything is published', () => {
@@ -220,8 +234,21 @@ describe('what the release exists to hold', () => {
     }
   });
 
-  it('leaves macOS out only when told to, and never waits on a Mac that is not there', () => {
-    expect(release.jobs['package-macos']!.if).toBe("vars.AI17Z_MACOS == '1'");
+  it('waits on no runner that is not registered', () => {
+    expect(release.jobs['package-macos']).toBeUndefined();
+    expect(release.jobs['qualify-ubuntu-arm64']!.if).toContain("vars.AI17Z_ARM64_RUNNER == '1'");
+    const labels = Object.values(release.jobs).map((job) => job['runs-on']);
+    expect(labels).not.toContain('ai17z-release-macos-arm64');
+  });
+
+  it('leaves out only a package that needs a native build, and says which', () => {
+    const runs = (release.jobs['package-assembled']!.steps ?? []).map((step) => step.run ?? '').join('\n');
+    // Exit 3 is prove-natives' "needs a native file nobody has built"; every
+    // other failure fails the job.
+    expect(runs).toContain('[ "$code" -eq 3 ]');
+    expect(runs).toContain('absent-packages.txt');
+    expect(read('.forgejo/scripts/prove-natives.sh')).toContain('exit 3');
+    expect(read('.forgejo/scripts/publish-release.sh')).toContain('--absent "$ABSENT"');
   });
 
   it('one release at a time, never cancelled halfway', () => {

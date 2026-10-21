@@ -194,7 +194,12 @@ function probeManifest(version: string, platform: Platform): string {
  * answers. That one fails closed rather than open, so a bridge that cannot
  * answer it refuses every update instead of allowing a bad one.
  */
-export async function proveCompatibilityGate(stageDir: string, platform: Platform, version: string): Promise<void> {
+export async function proveCompatibilityGate(
+  stageDir: string,
+  platform: Platform,
+  version: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
   console.log('  proving the update compatibility gate answers');
   const probePath = join(stageDir, '.preflight-probe.json');
   await writeFile(probePath, probeManifest(version, platform), 'utf8');
@@ -213,7 +218,7 @@ export async function proveCompatibilityGate(stageDir: string, platform: Platfor
     const { stdout } = await run(
       'node',
       [join('node_modules', 'tsx', 'dist', 'cli.mjs'), join('packaging', 'preflight.mts'), probePath, platform, ...args],
-      { cwd: stageDir, maxBuffer: 8 * 1024 * 1024 },
+      { cwd: stageDir, maxBuffer: 8 * 1024 * 1024, env },
     );
     return stdout.trim();
   };
@@ -223,7 +228,7 @@ export async function proveCompatibilityGate(stageDir: string, platform: Platfor
     const { stdout } = await run(
       'node',
       [join('node_modules', 'tsx', 'dist', 'cli.mjs'), join('packaging', 'preflight.mts'), '--newer', ...versions],
-      { cwd: stageDir, maxBuffer: 8 * 1024 * 1024 },
+      { cwd: stageDir, maxBuffer: 8 * 1024 * 1024, env },
     );
     return stdout.trim();
   };

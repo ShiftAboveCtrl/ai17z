@@ -35,15 +35,16 @@ export type Architecture = (typeof ARCHITECTURES)[number];
  * Which architectures each platform is built for: what a release owes, not
  * what an installation may be.
  *
- * macOS ships for Apple silicon only. AI17Z is built on real hardware of each
- * architecture, and the Macs it can be built on are Apple silicon; an x64
- * package from one would be built under Rosetta, and an architecture this repository has not proved on
- * real hardware is a relabelled one. An Intel Mac already running AI17Z keeps
- * its version and is told why no update is offered. `ARCHITECTURES` keeps x64
- * because those installations still describe themselves with it.
+ * Every one of them is proved on its own processor, never relabelled. Where
+ * AI17Z Code has no runner of that processor (Macs of both kinds, arm64
+ * Linux), the package is assembled from npm's and nodejs.org's prebuilt files
+ * for that platform and refused unless every native file in it is byte for
+ * byte one a machine of that platform built and ran, in the reference pinned
+ * in `.forgejo/native-references.json` (`prove-natives.sh`). AI17Z compiles
+ * nothing, which is what makes that comparison complete.
  */
 export const ARCHITECTURES_OF: Record<'macos' | 'ubuntu', readonly Architecture[]> = {
-  macos: ['arm64'],
+  macos: ['arm64', 'x64'],
   ubuntu: ['x64', 'arm64'],
 };
 
@@ -379,11 +380,8 @@ export function preflight(manifest: ReleaseManifest, input: PreflightInput): Pre
     return { ok: false, blockers: [`AI17Z ${manifest.version} does not publish a ${input.platform} build.${why}`], notes };
   }
   if (!platform.architectures.includes(input.arch)) {
-    blockers.push(
-      input.platform === 'macos' && input.arch === 'x64'
-        ? `AI17Z ${manifest.version} is built for Apple silicon only, and this Mac is Intel. The version installed here keeps running.`
-        : `AI17Z ${manifest.version} has no ${input.arch} build for ${input.platform}.`,
-    );
+    const why = platform.notBuilt ? ` ${platform.notBuilt}` : '';
+    blockers.push(`AI17Z ${manifest.version} has no ${input.arch} build for ${input.platform}.${why} The version installed here keeps running.`);
   }
 
   const osRule = platform.requirements.os;

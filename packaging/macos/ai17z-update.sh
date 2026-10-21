@@ -76,7 +76,9 @@ step "Checking for a newer AI17Z"
 if [ -n "$WANT_RELEASE" ]; then
   TAG="$WANT_RELEASE"
 else
-  TAG="$(ai17z_latest_release_tag "$REPOSITORY")"
+  # The newest release with a package for this Mac, which is the newest
+  # release unless one was published without it.
+  TAG="$(ai17z_latest_release_tag "$REPOSITORY" "AI17Z-macos-${ARCH}-<version>.tar.gz")"
 fi
 [ -n "$TAG" ] || oops "AI17Z could not be reached." "Nothing was changed." ""
 [ -n "$TAG" ] || oops "No release was found." "" ""

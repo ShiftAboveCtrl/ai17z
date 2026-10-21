@@ -95,6 +95,7 @@ jobs:
       - run: npx vitest run --reporter=default
       - run: npm run build:web
 
+  # amd64, on the machine it is for. arm64 is in `package-assembled`.
   package-ubuntu:
     needs: version
     strategy:
@@ -102,10 +103,6 @@ jobs:
         include:
           - arch: amd64
             runner: ai17z-release-linux
-          # A machine that is arm64, so the package is proved where it will
-          # run. Never built on amd64 and relabelled.
-          - arch: arm64
-            runner: ai17z-release-linux-arm64
     runs-on: ${{ matrix.runner }}
     container:
       image: ubuntu:24.04
@@ -159,29 +156,68 @@ jobs:
           WANT_VERSION="${{ needs.version.outputs.version }}" bash .forgejo/scripts/say-on-fail.sh "Ubuntu ${{ matrix.release }}" -- \
             bash .forgejo/scripts/prove-ubuntu-release.sh "$PWD/out/ai17z_${{ needs.version.outputs.version }}_amd64.deb"
 
-  # macOS, on Apple silicon only, on a Mac registered as a release runner. While
-  # there is none, `vars.AI17Z_MACOS` stays unset, this job does not run, and the
-  # release says it has no macOS package and why. Setting it to "1" makes macOS
-  # part of every release, and a release then waits for it.
-  package-macos:
-    if: vars.AI17Z_MACOS == '1'
+  # The packages for processors AI17Z Code has no runner of: macOS on Apple
+  # silicon and Intel, and arm64 Ubuntu. Each is assembled here from the
+  # prebuilt files npm and nodejs.org publish for that platform and refused
+  # unless every native file in it is byte for byte one a machine of that
+  # platform built and ran (prove-natives.sh against the references in
+  # .forgejo/native-references.json). AI17Z compiles nothing, which is what
+  # makes that comparison complete.
+  #
+  # A package that needs a native file no such machine has built yet is left
+  # out, named in absent-packages.txt, and the rest of the release goes ahead:
+  # the manifest says why, and installers on that machine take the newest
+  # release that has one. Anything else that fails, fails the job.
+  #
+  # Unprivileged, and no secret is named: it reads a pinned reference and
+  # writes packages.
+  package-assembled:
     needs: version
-    runs-on: ai17z-release-macos-arm64
+    runs-on: ai17z-release-linux
+    container:
+      image: ubuntu:24.04
     timeout-minutes: 120
     steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
       - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: |
-          source .forgejo/scripts/setup-macos-job.sh
+          bash .forgejo/scripts/setup-ubuntu-job.sh
+          apt-get install -y -qq --no-install-recommends lintian file >/dev/null
           npm ci --no-audit --no-fund
-          bash .forgejo/scripts/package-macos.sh "${{ needs.version.outputs.version }}" "$PWD/out"
-          if [ "${GITHUB_REF_NAME#rehearsal-}" != "$GITHUB_REF_NAME" ]; then
-            bash .forgejo/scripts/say-on-fail.sh 'the macOS installer' -- \
-              bash .forgejo/scripts/prove-macos-installer.sh "$PWD/out/AI17Z-macos-arm64-${{ needs.version.outputs.version }}.tar.gz" "${{ needs.version.outputs.version }}"
+      - run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          mkdir -p out
+          : > out/absent-packages.txt
+          for target in "macos arm64" "macos x64" "ubuntu arm64"; do
+            set -- $target
+            echo "::group::$1 $2"
+            if bash .forgejo/scripts/package-assembled.sh "$1" "$2" "$VERSION" "$PWD/out"; then
+              echo "::endgroup::"
+            else
+              code=$?
+              echo "::endgroup::"
+              [ "$code" -eq 3 ] || { echo "the $1 $2 package failed to build ($code)"; exit "$code"; }
+              echo "::warning::$1 $2 needs a native file no machine of that platform has built and tested; it is left out of this release"
+              rm -f "$PWD/out/AI17Z-macos-$2-$VERSION.tar.gz" "$PWD/out/ai17z_${VERSION}_$2.deb"
+              echo "$1:$2" >> out/absent-packages.txt
+            fi
+          done
+          # A Mac package without its other processor would describe a
+          # platform half published; both go, or neither.
+          if grep -q '^macos:' out/absent-packages.txt; then
+            rm -f "$PWD"/out/AI17Z-macos-*.tar.gz
+            grep -q '^macos:arm64$' out/absent-packages.txt || echo 'macos:arm64' >> out/absent-packages.txt
+            grep -q '^macos:x64$' out/absent-packages.txt || echo 'macos:x64' >> out/absent-packages.txt
           fi
+          [ -s out/absent-packages.txt ] || rm -f out/absent-packages.txt
+          ls -l out
       - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         with:
-          name: macos-arm64
-          path: out/AI17Z-macos-*.tar.gz
+          name: assembled
+          path: |
+            out/AI17Z-macos-*.tar.gz
+            out/ai17z_*_arm64.deb
+            out/absent-packages.txt
           retention-days: 14
 
   # Windows, built on the Windows release runner from this commit. Proved before
@@ -210,15 +246,7 @@ jobs:
           retention-days: 14
 
   publish:
-    needs: [version, check, package-ubuntu, package-windows, package-macos]
-    # Waits for macOS only when macOS was asked for. `always()` with the
-    # results named is how a skipped job is told apart from a failed one.
-    if: >-
-      always() &&
-      needs.check.result == 'success' &&
-      needs.package-ubuntu.result == 'success' &&
-      needs.package-windows.result == 'success' &&
-      (needs.package-macos.result == 'success' || (vars.AI17Z_MACOS != '1' && needs.package-macos.result == 'skipped'))
+    needs: [version, check, package-ubuntu, package-windows, package-assembled]
     runs-on: ai17z-release-linux
     container:
       image: ubuntu:24.04
@@ -284,9 +312,11 @@ jobs:
           bash .forgejo/scripts/say-on-fail.sh 'the published Ubuntu release' -- \
             bash .forgejo/scripts/as-stranger.sh bash .forgejo/scripts/qualify-published-ubuntu.sh "$TAG" "$PWD/tagged"
 
-  # The published arm64 package, installed on an arm64 machine.
+  # The published arm64 package, installed on an arm64 machine, when one is
+  # registered (`vars.AI17Z_ARM64_RUNNER`). Without one, the package's native
+  # files are proved by package-assembled and the notes say it was not run.
   qualify-ubuntu-arm64:
-    if: ${{ !startsWith(github.ref_name, 'rehearsal-') }}
+    if: ${{ !startsWith(github.ref_name, 'rehearsal-') && vars.AI17Z_ARM64_RUNNER == '1' }}
     needs: [version, publish]
     runs-on: ai17z-release-linux-arm64
     container:
