@@ -14,7 +14,8 @@ stand behind, and the things it cannot claim are named as such.
 | Does it self-sign and present that as trusted? | **No** |
 | What verifies the package instead? | a SHA-256 published by the release, checked before anything is unpacked |
 | What proves where it came from? | a Sigstore signature by AI17Z's release key, in the public transparency log: release provenance, **not** Apple notarization |
-| Which Macs? | Apple silicon (M1 or newer). There is no Intel package |
+| Which Macs? | Apple silicon (M1 or newer) and Intel, each with its own package |
+| Built on a Mac? | Assembled on Linux from the files a Mac would install, and refused unless every native file is byte for byte one a real Mac built and ran; [how](#how-the-mac-packages-are-made) |
 
 ## Why it is a tarball
 
@@ -73,14 +74,27 @@ provenance. It is **not** Apple notarization, **not** code
 signing, and **not** a claim that any platform vendor has examined AI17Z.
 Verifying it needs `cosign` and is never required to install AI17Z.
 
-## Why Apple silicon only
+## How the Mac packages are made
 
-AI17Z builds each package on the architecture it is for, and proves it there,
-because a package built for one architecture on another installs and then fails
-with "cannot load". AI17Z's Mac release runners are Apple silicon. An Intel
-package built on one would run under Rosetta, which is a relabelled architecture rather
-than a proved one, so there is no Intel package. A Mac already running AI17Z
-keeps the version it has, and its updater says why no newer one is offered.
+AI17Z Code has no Mac. The Mac packages are assembled on its Linux release
+runner from exactly what a Mac would have installed: Node's own build for that
+Mac from nodejs.org, checked against Node's published SHA-256, and the prebuilt
+packages npm publishes for that Mac (esbuild, @napi-rs/canvas, fsevents),
+checked against the lockfile's integrity hashes. AI17Z compiles nothing, so
+there is no step a Mac would have done differently.
+
+That is a claim, so it is compared rather than trusted. Every native file in a
+package (anything whose first bytes say it is executable code, whatever it is
+called) must be byte for byte the file in a reference package that was built on
+a real Mac of that processor and tested there: Apple silicon and Intel, both
+built for v1.0.0-beta.76 on GitHub's hosted Macs and pinned by hash in
+`.forgejo/native-references.json`. One file different, new or missing and the
+package is refused. The release then goes out without Mac packages, says why,
+and a Mac installs or stays on the newest release that has one.
+
+What this does not do is run the new package on a Mac before publishing it.
+Its JavaScript runs during the build, and every native file in it has already
+run on a Mac inside the reference. The release notes say this on every release.
 
 ## Why not notarize
 

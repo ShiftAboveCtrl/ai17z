@@ -75,10 +75,11 @@ describe('asset names come from one place', () => {
     // lost one of the four packages would have published a manifest saying that
     // platform was unsupported: true about the directory, and a lie about the
     // release. This is the list it checks against first.
-    // Apple silicon only: AI17Z's Mac runners are Apple silicon, and an Intel package
-    // built on one would be a relabelled architecture.
+    // Both Macs: each package's native files are proved against one a Mac of
+    // that processor built and ran, so neither is a relabelled architecture.
     expect(expectedAssets(VERSION, 'macos')).toEqual([
       'AI17Z-macos-arm64-9.9.9-beta.1.tar.gz',
+      'AI17Z-macos-x64-9.9.9-beta.1.tar.gz',
       'install-ai17z-macos.sh',
     ]);
     expect(expectedAssets(VERSION, 'ubuntu')).toEqual([
@@ -184,17 +185,19 @@ describe('preflight decides before anything is stopped', () => {
     expect(verdict.blockers[0]).toContain('no arm64 build');
   });
 
-  it('tells an Intel Mac why there is no update, and that what it runs keeps running', () => {
+  it('tells a machine whose package a release lacks why, and that what it runs keeps running', () => {
     const manifest = manifestFixture();
     manifest.platforms.macos!.architectures = ['arm64'];
+    manifest.platforms.macos!.notBuilt = 'This package needs a native file that no machine of its processor has built and tested yet.';
     const intelMac = { platform: 'macos', arch: 'x64', osVersion: '14.5', dockerVersion: '27.0.0', chromeMajor: 140 } as const;
     const verdict = preflight(manifest, intelMac);
     expect(verdict.ok).toBe(false);
-    expect(verdict.blockers[0]).toContain('Apple silicon only');
+    expect(verdict.blockers[0]).toContain('has no x64 build for macos');
+    // The reason the release recorded, rather than one this code guesses.
+    expect(verdict.blockers[0]).toContain('no machine of its processor has built');
     expect(verdict.blockers[0]).toContain('keeps running');
-    // Every architecture still describes an installation, so an Intel record stays readable.
     expect(ARCHITECTURES).toContain('x64');
-    expect(ARCHITECTURES_OF.macos).toEqual(['arm64']);
+    expect(ARCHITECTURES_OF.macos).toEqual(['arm64', 'x64']);
   });
 
   it('refuses a Docker older than the release needs, and says who updates it', () => {

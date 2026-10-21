@@ -1,14 +1,14 @@
 # macOS: what has been tested, and what needs a Mac
 
-AI17Z's macOS package is built and run on a real Apple-silicon Mac registered
-with AI17Z Code as the `ai17z-release-macos-arm64` runner, by the
-`package-macos` job of the release workflow. The package, the runtime, the
-architecture of both binaries, every workspace import, the lifecycle, the
-compatibility gate and the installer are all exercised there. Until such a Mac
-is registered, the repository variable `AI17Z_MACOS` stays unset, the job does
-not run, and a release built without it says it carries no macOS package. There
-is no Intel package: the Mac runners are Apple silicon, and one built under
-Rosetta would be relabelled rather than proved.
+AI17Z's macOS packages, Apple silicon and Intel, are assembled on AI17Z Code's
+Linux release runner by the `package-assembled` job, and refused unless every
+native file in them is byte for byte one a real Mac of that processor built and
+ran (`prove-natives.sh` against `.forgejo/native-references.json`). The
+package's JavaScript, its update compatibility gate and the architecture of its
+binaries are exercised there. Running the finished package on a Mac is not, and
+is what this checklist is for. `package-macos.sh` still builds and runs a
+package natively, on a Mac, which is how a new reference is made when a release
+needs a native file the current one does not have.
 
 What a hosted runner cannot represent is a person at a Mac: the dialogs, the
 downloads, and Docker Desktop's own setup. That is what is left here, and it is
@@ -158,7 +158,7 @@ runners have no Chrome and no screen.
 
 - [ ] the installer refuses, says AI17Z for macOS runs on Apple silicon, and changes nothing
 - [ ] an Intel Mac already running AI17Z is told by its updater why no newer version is offered, and keeps running
-- [ ] A Mac release runner is registered (`AI17Z_MACOS=1`) when the release is built, or the release says it carries no macOS package
+- [ ] The release carries both Mac packages, or says which it left out and why
 
 ## How to record results
 

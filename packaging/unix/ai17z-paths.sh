@@ -145,11 +145,22 @@ ai17z_version_is_newer() { # candidate installed
 #
 # Prints the tag, or nothing. Nothing is a refusal for the caller to report; it
 # is never a reason to guess a version.
-ai17z_latest_release_tag() { # repository
-  local repository="$1"
-  curl -fsSL --proto '=https' --tlsv1.2 --retry 3 \
-    "https://code.ai17z.io/api/v1/repos/${repository}/releases?limit=10" 2>/dev/null \
-    | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
+#
+# Given an asset name with <version> in it, the newest release that publishes
+# that file for its own version. A release can lack one platform's package
+# (one that needed a machine nobody had that day) and the newest release is
+# then the wrong answer for that platform, not a reason to stop: an updater
+# offers the newest it can actually install. Asset names carry the version, so
+# matching the name in the list cannot pick up another release's file.
+ai17z_latest_release_tag() { # repository [asset named with <version>]
+  local repository="$1" template="${2:-}" json tag asset
+  json="$(curl -fsSL --proto '=https' --tlsv1.2 --retry 3 \
+    "https://code.ai17z.io/api/v1/repos/${repository}/releases?limit=10" 2>/dev/null)" || return 0
+  for tag in $(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/'); do
+    if [ -z "$template" ]; then printf '%s\n' "$tag"; return 0; fi
+    asset="${template//<version>/${tag#v}}"
+    if printf '%s' "$json" | grep -qF "\"${asset}\""; then printf '%s\n' "$tag"; return 0; fi
+  done
 }
 
 # Where one published file of one release lives, addressed by its own tag.

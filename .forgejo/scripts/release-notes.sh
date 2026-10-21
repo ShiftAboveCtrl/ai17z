@@ -40,6 +40,24 @@ if [ -z "$MACOS" ]; then
   echo
 fi
 
+# How the packages for processors AI17Z Code has no runner of were made, and
+# which, if any, were refused. Said on every release because "built on a Mac"
+# is what a reader would otherwise assume.
+echo "> **Mac and arm64 Linux packages.** AI17Z Code has no Mac and no arm64 Linux"
+echo "> machine. These packages are assembled on Linux from the prebuilt files npm"
+echo "> and nodejs.org publish for that platform, and refused unless every native"
+echo "> file in them is byte for byte one a machine of that platform built and ran"
+echo "> (\`.forgejo/native-references.json\`). AI17Z compiles nothing, which is what"
+echo "> makes that comparison complete. They have not themselves been run on that"
+echo "> hardware for this release."
+if [ -n "${ABSENT_PACKAGES:-}" ]; then
+  echo ">"
+  echo "> Not published this time, because they need a native file no such machine has"
+  echo "> built and tested yet: \`${ABSENT_PACKAGES}\`. Installations there stay on, or"
+  echo "> install, the newest release that has one."
+fi
+echo
+
 # Headed as Windows, because that is what it is about. The checked-in notes for
 # a release go above this and cover every platform, and a section that opens
 # "Open Windows Terminal" under a heading that says only the version reads like

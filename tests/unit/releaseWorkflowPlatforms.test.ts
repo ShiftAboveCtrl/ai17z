@@ -82,44 +82,45 @@ describe('the release builds every platform from one tag', () => {
       'check',
       'package-ubuntu',
       'ubuntu-takes-the-package',
-      'package-macos',
+      'package-assembled',
       'package-windows',
       'publish',
       'qualify',
       'qualify-ubuntu-arm64',
       'qualify-windows',
     ]);
-    for (const name of ['package-windows', 'package-ubuntu', 'package-macos', 'check']) {
+    for (const name of ['package-windows', 'package-ubuntu', 'package-assembled', 'check']) {
       expect(needsOf(job(release, 'publish'))).toContain(name);
     }
-    // Both Ubuntu architectures are one matrix job, so publish waiting for it
-    // waits for both.
-    expect(job(release, 'package-ubuntu').strategy!.matrix!.include!.map((i) => i.arch)).toEqual(['amd64', 'arm64']);
+    // amd64 natively, and both Macs and arm64 Ubuntu in the one assembled job,
+    // so publish waiting for the two waits for every package.
+    expect(job(release, 'package-ubuntu').strategy!.matrix!.include!.map((i) => i.arch)).toEqual(['amd64']);
   });
 
   it('names the runners exactly, and never by a moving alias', () => {
     // Named exactly rather than through a `latest`, which moves between major
     // versions and between architectures: the opposite of what a job whose
     // whole purpose is to be on a particular architecture wants.
-    expect(job(release, 'package-ubuntu').strategy!.matrix!.include).toEqual([
-      { arch: 'amd64', runner: 'ai17z-release-linux' },
-      { arch: 'arm64', runner: 'ai17z-release-linux-arm64' },
-    ]);
-    expect(job(release, 'package-macos')['runs-on']).toBe('ai17z-release-macos-arm64');
+    expect(job(release, 'package-ubuntu').strategy!.matrix!.include).toEqual([{ arch: 'amd64', runner: 'ai17z-release-linux' }]);
+    expect(job(release, 'package-assembled')['runs-on']).toBe('ai17z-release-linux');
+    expect(job(release, 'package-assembled').container?.image).toBe('ubuntu:24.04');
     expect(job(release, 'package-windows')['runs-on']).toBe('ai17z-release-windows');
     expect(job(release, 'package-ubuntu').container?.image).toBe('ubuntu:24.04');
     expect(job(validation, 'ubuntu-amd64').container?.image).toBe('ubuntu:24.04');
   });
 
-  it('asks for no image that has been retired, and builds no Intel Mac', () => {
+  it('asks for no image that has been retired, and builds both Macs from proved natives', () => {
     // A label that no longer exists does not fail loudly: the job sits waiting
-    // for a runner that will never come. And AI17Z's Mac runners are Apple
-    // silicon, so an x64 macOS job here could only be a relabelled one.
+    // for a runner that will never come.
     for (const text of [packageYml, releaseYml, qualifyYml]) {
       expect(text).not.toMatch(/image:\s*macos-1[1-3]\b|ubuntu:(18|20)\.04/);
-      expect(text).not.toMatch(/macos[^\n]*x64|x86_64[^\n]*macos/i);
     }
-    expect(ARCHITECTURES_OF.macos).toEqual(['arm64']);
+    // Intel is back because nothing about it is relabelled: every native file
+    // in it is byte for byte the one an Intel Mac built and ran for v1.0.0-beta.76.
+    expect(ARCHITECTURES_OF.macos).toEqual(['arm64', 'x64']);
+    const refs = JSON.parse(read('.forgejo/native-references.json')) as Record<string, unknown>;
+    for (const arch of ARCHITECTURES_OF.macos) expect(refs[`macos-${arch}`]).toBeTruthy();
+    expect(refs['ubuntu-arm64']).toBeTruthy();
   });
 
   it('builds through the shared scripts rather than its own copy of the steps', () => {
@@ -128,7 +129,7 @@ describe('the release builds every platform from one tag', () => {
     // a change is what a release ships.
     expect(scriptOf(release, 'package-ubuntu')).toContain('package-ubuntu.sh');
     expect(scriptOf(validation, 'ubuntu-amd64')).toContain('package-ubuntu.sh');
-    expect(scriptOf(release, 'package-macos')).toContain('package-macos.sh');
+    expect(scriptOf(release, 'package-assembled')).toContain('package-assembled.sh');
     // And no pipeline file has grown a second implementation beside them.
     for (const text of [packageYml, releaseYml]) {
       expect(text).not.toContain('build-tarball.sh');
@@ -202,9 +203,9 @@ describe('the release builds every platform from one tag', () => {
       expect(scanning, `the publish job never runs: ${call}`).toContain(call);
     }
     // Counted, because a glob that matched nothing is a loop that runs nothing
-    // and a step that passes. One Windows zip and two Debian packages, and a
-    // Mac when there is one.
-    expect(scanning).toContain('expected=3; [ -n "$HAVE_MACOS" ] && expected=4');
+    // and a step that passes. One Windows zip, two Debian packages and two Mac
+    // packages, less only those the assembled job refused and named.
+    expect(scanning).toContain('expected=$((3 - absent_count)); [ -n "$HAVE_MACOS" ] && expected=$((5 - absent_count))');
     expect(scanning).toContain('[ "$scanned" -eq "$expected" ]');
   });
 
@@ -269,7 +270,7 @@ describe('the release builds every platform from one tag', () => {
     const runsTools: [Workflow, string, string][] = [
       [release, 'package-ubuntu', 'package-ubuntu.sh'],
       [validation, 'ubuntu-amd64', 'package-ubuntu.sh'],
-      [release, 'package-macos', 'package-macos.sh'],
+      [release, 'package-assembled', 'package-assembled.sh'],
       [release, 'publish', 'publish-release.sh'],
     ];
     for (const [w, name, tool] of runsTools) {
@@ -410,9 +411,13 @@ describe('qualifying a release after it is published', () => {
   });
 
   it('refuses a rehearsal, which published nothing to qualify', () => {
-    for (const name of ['qualify', 'qualify-ubuntu-arm64', 'qualify-windows']) {
+    for (const name of ['qualify', 'qualify-windows']) {
       expect(job(release, name).if).toBe("${{ !startsWith(github.ref_name, 'rehearsal-') }}");
     }
+    // And the arm64 one only where an arm64 machine exists to run it.
+    expect(job(release, 'qualify-ubuntu-arm64').if).toBe(
+      "${{ !startsWith(github.ref_name, 'rehearsal-') && vars.AI17Z_ARM64_RUNNER == '1' }}",
+    );
   });
 
   it('can change nothing about a release', () => {
@@ -544,7 +549,7 @@ describe('a rehearsal', () => {
     // Windows included, so there is no second implementation to disagree.
     expect(read('.forgejo/scripts/release-version.sh')).toContain('v="${TAG#rehearsal-}"');
     expect(scriptOf(release, 'version')).toContain('release-version.sh');
-    for (const name of ['package-ubuntu', 'package-macos', 'package-windows', 'publish']) {
+    for (const name of ['package-ubuntu', 'package-assembled', 'package-windows', 'publish']) {
       expect(scriptOf(release, name), name).toContain('needs.version.outputs.version');
     }
   });

@@ -1,0 +1,18 @@
+{
+  "_": "Packages built natively on their own platform and tested there, against which a package assembled elsewhere is proved by prove-natives.sh. Each was built by AI17Z's release pipeline on GitHub's hosted runners (macos-15, macos-15-intel, ubuntu-24.04-arm) for v1.0.0-beta.76 and is attached to that release on AI17Z Code. Replace an entry only with a package built and tested on a machine of that platform.",
+  "macos-arm64": {
+    "release": "v1.0.0-beta.76",
+    "asset": "AI17Z-macos-arm64-1.0.0-beta.76.tar.gz",
+    "sha256": "c40b312b24687a79888ce626771069817647cbe925a786884950fb80ac534789"
+  },
+  "macos-x64": {
+    "release": "v1.0.0-beta.76",
+    "asset": "AI17Z-macos-x64-1.0.0-beta.76.tar.gz",
+    "sha256": "93b48f3b07a4f4d386c75be17055ca94f113ce5a727b628882a306c76d0bd69f"
+  },
+  "ubuntu-arm64": {
+    "release": "v1.0.0-beta.76",
+    "asset": "ai17z_1.0.0-beta.76_arm64.deb",
+    "sha256": "0d3ea631b68669727bc4999684a38d0df6716edfe2be0de4196d8e89a833a1b3"
+  }
+}

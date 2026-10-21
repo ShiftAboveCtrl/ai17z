@@ -144,12 +144,10 @@ fi
 
 case "$(uname -m)" in
   arm64) ARCH=arm64 ;;
-  # Apple silicon only. AI17Z is built on real hardware of each architecture,
-  # and its Macs are Apple silicon; an Intel package from one would be built
-  # under Rosetta, which is a relabelled architecture, not a proved one.
-  x86_64) stop "AI17Z for macOS runs on Apple silicon (M1 or newer)." \
-    "This Mac has an Intel processor, and no Intel package is published." \
-    "Nothing on this Mac was changed." ;;
+  # Intel too. Every native file in an Intel package is byte for byte one an
+  # Intel Mac built and ran (prove-natives.sh), so it is not a relabelled
+  # Apple silicon build.
+  x86_64) ARCH=x64 ;;
   *) stop "AI17Z has no package for this architecture." "uname says $(uname -m)." "" ;;
 esac
 good "macOS ${MACOS_VERSION} ($([ "$ARCH" = arm64 ] && echo "Apple Silicon" || echo "Intel"))"
@@ -192,9 +190,24 @@ else
 Wait a few minutes and run this again."
 fi
 
+# Which release. Asked for by name, that one. Otherwise the newest that
+# publishes WANTED_NAME for its own version: a release can lack one platform's
+# package, and the newest is then the wrong answer for this machine rather than
+# a reason to stop. Asset names carry the version, so matching a name in the
+# list cannot pick up another release's file.
+pick_tag() { # json template
+  local json="$1" template="$2" tag
+  for tag in $(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/'); do
+    if [ -n "$RELEASE" ] || printf '%s' "$json" | grep -qF "\"${template//<version>/${tag#v}}\""; then
+      printf '%s\n' "$tag"; return 0
+    fi
+  done
+}
+
 if [ -z "$LOCAL_PACKAGE" ]; then
-TAG="$(printf '%s' "$RELEASE_JSON" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
-[ -n "$TAG" ] || stop "That release does not exist." "" ""
+TAG="$(pick_tag "$RELEASE_JSON" "AI17Z-macos-${ARCH}-<version>.tar.gz")"
+[ -n "$TAG" ] || stop "No AI17Z release has a package for this Mac yet." "Nothing on this Mac was changed." \
+  "See https://code.ai17z.io/${REPOSITORY}/releases"
 VERSION="${TAG#v}"
 
 TAR_NAME="AI17Z-macos-${ARCH}-${VERSION}.tar.gz"

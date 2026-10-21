@@ -31,7 +31,7 @@ anything and call it trusted.
 | | |
 | --- | --- |
 | macOS | 13 Ventura and newer |
-| Architectures | Apple silicon (arm64) only. Intel Macs: no package; see [MACOS_TRUST.md](MACOS_TRUST.md#why-apple-silicon-only) |
+| Architectures | Apple silicon (arm64) and Intel (x64), one package each; how they are made: [MACOS_TRUST.md](MACOS_TRUST.md#how-the-mac-packages-are-made) |
 
 macOS 13 is **Google's** floor for Chrome, which AI17Z drives — not a number
 AI17Z chose. Docker Desktop separately supports only the current and two

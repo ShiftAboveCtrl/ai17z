@@ -160,10 +160,11 @@ Reading it first is the documented route, not a fallback: macOS warns about long
 commands pasted from web pages, and it is right to. The file is short so that
 looking at it is reasonable.
 
-It resolves the newest release, downloads the package for Apple silicon (M1 or
-newer), built natively and never relabelled, **checks its SHA-256 against the
-hash that release published**, and extracts it into your own Library. There is
-no Intel package; [why](MACOS_TRUST.md#why-apple-silicon-only).
+It resolves the newest release with a package for your Mac (Apple silicon or
+Intel), **checks its SHA-256 against the hash that release published**, and
+extracts it into your own Library. Every native file in it is byte for byte one
+a real Mac of that processor built and ran;
+[how](MACOS_TRUST.md#how-the-mac-packages-are-made).
 
 **No `sudo`, ever, for AI17Z itself.** Everything lives in
 `~/Library/Application Support/AI17Z/`, which is also why updates need no

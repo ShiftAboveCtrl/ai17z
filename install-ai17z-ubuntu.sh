@@ -229,13 +229,28 @@ else
 Wait a few minutes and run this again."
 fi
 
+# Which release. Asked for by name, that one. Otherwise the newest that
+# publishes WANTED_NAME for its own version: a release can lack one platform's
+# package, and the newest is then the wrong answer for this machine rather than
+# a reason to stop. Asset names carry the version, so matching a name in the
+# list cannot pick up another release's file.
+pick_tag() { # json template
+  local json="$1" template="$2" tag
+  for tag in $(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/'); do
+    if [ -n "$RELEASE" ] || printf '%s' "$json" | grep -qF "\"${template//<version>/${tag#v}}\""; then
+      printf '%s\n' "$tag"; return 0
+    fi
+  done
+}
+
 if [ -z "$LOCAL_PACKAGE" ]; then
 # One python-free pass over the JSON. `grep -o` on the fields wanted rather than
 # a parser. The address is composed from the tag rather than read out of the
 # JSON, so the only host a download can name is the one written here; the JSON
 # is only asked whether the release names this exact file.
-TAG="$(printf '%s' "$RELEASE_JSON" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
-[ -n "$TAG" ] || stop "That release does not exist." "" "See https://code.ai17z.io/${REPOSITORY}/releases"
+TAG="$(pick_tag "$RELEASE_JSON" "ai17z_<version>_${ARCH}.deb")"
+[ -n "$TAG" ] || stop "No AI17Z release has a package for this computer yet." "Nothing on this computer was changed." \
+  "See https://code.ai17z.io/${REPOSITORY}/releases"
 VERSION="${TAG#v}"
 
 DEB_NAME="ai17z_${VERSION}_${ARCH}.deb"
