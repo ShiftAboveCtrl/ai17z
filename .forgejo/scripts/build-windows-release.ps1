@@ -114,5 +114,8 @@ if ($productVersion -ne $Version) { throw "Wrong product version: '$productVersi
 
 '--- what the publish job gets'
 Get-ChildItem build\windows -File | Select-Object Name, Length | Format-Table -AutoSize
-# The name crosses to the publish job as a dotenv report.
-"RELEASE_NAME=$name" | Out-File -FilePath 'release.env' -Encoding ascii
+# The name crosses to the publish job, which sources it in bash. So it is
+# quoted (unquoted, "AI17Z Beta 9.6" ran `Beta` as a command) and ends in a
+# bare newline (Out-File's CRLF put a carriage return inside the title).
+if ($name -match "'") { throw "The release name has a quote in it: $name" }
+[IO.File]::WriteAllText((Join-Path (Get-Location) 'release.env'), "RELEASE_NAME='$name'`n", (New-Object Text.ASCIIEncoding))

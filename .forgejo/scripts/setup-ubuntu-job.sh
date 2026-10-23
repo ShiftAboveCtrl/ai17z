@@ -16,7 +16,8 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 # sudo: the proofs act as a separate, ordinary owner account, which is what a
 # real installation has, and switch to it with sudo.
-apt-get install -y -qq --no-install-recommends ca-certificates curl xz-utils git jq sudo file >/dev/null
+# unzip: the publish job's privacy scan unpacks the Windows application zip.
+apt-get install -y -qq --no-install-recommends ca-certificates curl xz-utils git jq sudo file unzip >/dev/null
 
 VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\(v[0-9.]*\)".*/\1/p' packaging/node-runtime.json | head -1)"
 [ -n "$VERSION" ] || { echo "packaging/node-runtime.json names no Node version"; exit 1; }
