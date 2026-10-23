@@ -236,9 +236,11 @@ describe('what the release exists to hold', () => {
 
   it('waits on no runner that is not registered', () => {
     expect(release.jobs['package-macos']).toBeUndefined();
-    expect(release.jobs['qualify-ubuntu-arm64']!.if).toContain("vars.AI17Z_ARM64_RUNNER == '1'");
-    const labels = Object.values(release.jobs).map((job) => job['runs-on']);
-    expect(labels).not.toContain('ai17z-release-macos-arm64');
+    // A job's `if` is judged by the runner that takes it, so a job for a label
+    // nobody registered is never judged and waits for ever: v1.0.0-beta.85's
+    // run never finished. Every release job lands on a runner that exists.
+    const labels = Object.values(release.jobs).flatMap(runnersOf);
+    for (const label of labels) expect(['ai17z-release-linux', 'ai17z-release-windows']).toContain(label);
   });
 
   it('leaves out only a package that needs a native build, and says which', () => {

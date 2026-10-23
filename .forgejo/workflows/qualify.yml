@@ -45,8 +45,9 @@ jobs:
           bash .forgejo/scripts/say-on-fail.sh 'the published Ubuntu release' -- \
             bash .forgejo/scripts/as-stranger.sh bash .forgejo/scripts/qualify-published-ubuntu.sh "$TAG" "$PWD/tagged"
 
-  # Only where an arm64 machine is registered; see qualify-ubuntu-arm64 in
-  # release.yml.
+  # Only where an arm64 machine is registered. This is the one place a published
+  # arm64 package is installed: release.yml has no such job, because a job for a
+  # label no runner has waits for ever and holds every later release.
   ubuntu-arm64:
     if: vars.AI17Z_ARM64_RUNNER == '1'
     runs-on: ai17z-release-linux-arm64

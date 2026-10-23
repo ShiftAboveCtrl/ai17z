@@ -86,7 +86,6 @@ describe('the release builds every platform from one tag', () => {
       'package-windows',
       'publish',
       'qualify',
-      'qualify-ubuntu-arm64',
       'qualify-windows',
     ]);
     for (const name of ['package-windows', 'package-ubuntu', 'package-assembled', 'check']) {
@@ -406,7 +405,7 @@ describe('qualifying a release after it is published', () => {
   it('starts by itself, in the release run, and again on a qualify tag', () => {
     // Not something anybody has to remember. On GitHub a release made with the
     // workflow's own token raised no event, and qualification sat there.
-    for (const name of ['qualify', 'qualify-ubuntu-arm64', 'qualify-windows']) expect(needsOf(job(release, name))).toContain('publish');
+    for (const name of ['qualify', 'qualify-windows']) expect(needsOf(job(release, name))).toContain('publish');
     expect(qualify.on.push!.tags).toEqual(['qualify-v[0-9]*']);
   });
 
@@ -414,10 +413,9 @@ describe('qualifying a release after it is published', () => {
     for (const name of ['qualify', 'qualify-windows']) {
       expect(job(release, name).if).toBe("${{ !startsWith(github.ref_name, 'rehearsal-') }}");
     }
-    // And the arm64 one only where an arm64 machine exists to run it.
-    expect(job(release, 'qualify-ubuntu-arm64').if).toBe(
-      "${{ !startsWith(github.ref_name, 'rehearsal-') && vars.AI17Z_ARM64_RUNNER == '1' }}",
-    );
+    // And none for a runner that may not exist: Forgejo judges `if` on the
+    // runner, so such a job waits for ever and holds the release queue.
+    expect(release.jobs['qualify-ubuntu-arm64']).toBeUndefined();
   });
 
   it('can change nothing about a release', () => {
@@ -526,7 +524,6 @@ describe('qualifying a release after it is published', () => {
   it('reaches every published platform', () => {
     expect(Object.keys(qualify.jobs)).toEqual(['published-bytes-and-ubuntu', 'ubuntu-arm64', 'windows', 'macos']);
     expect(job(qualify, 'ubuntu-arm64')['runs-on']).toBe('ai17z-release-linux-arm64');
-    expect(job(release, 'qualify-ubuntu-arm64')['runs-on']).toBe('ai17z-release-linux-arm64');
     expect(job(qualify, 'macos').if).toBe("vars.AI17Z_MACOS == '1'");
   });
 
