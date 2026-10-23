@@ -526,7 +526,7 @@ describe('the release workflow publishes under the derived name', () => {
   it('carries the name out of the build job', () => {
     // As a file in the Windows job's artifact, read by the publish job and
     // removed before anything is attached, so it is never itself published.
-    expect(part('.forgejo/scripts/build-windows-release.ps1')).toContain('"RELEASE_NAME=$name"');
+    expect(part('.forgejo/scripts/build-windows-release.ps1')).toContain("RELEASE_NAME='$name'");
     const release = part('.forgejo/workflows/release.yml');
     expect(release).toContain('            release.env\n');
     expect(release).toContain('[ -f dist/release.env ] && . dist/release.env && export RELEASE_NAME && rm -f dist/release.env');
@@ -648,5 +648,36 @@ describe('a second installation is a second installation', () => {
     // Without it the script does not compile at all, which is a one-line error
     // at the end of an eight-minute build.
     expect(iss).toMatch(/^UsePreviousLanguage=no/m);
+  });
+});
+
+/**
+ * Three faults the first release built outside a runner found, each in a step
+ * no production run had reached yet. Each would have stopped a real release at
+ * the publish or qualify step, after every package had been built.
+ */
+describe('what crosses between release jobs survives the next one', () => {
+  const windowsBuild = part('.forgejo/scripts/build-windows-release.ps1');
+
+  it('hands the release name over quoted, with a bare newline', () => {
+    // The publish job sources release.env in bash. Unquoted, "AI17Z Beta 9.6"
+    // ran `Beta` as a command; written by Out-File, the CRLF put a carriage
+    // return inside the release title.
+    expect(windowsBuild).toContain("\"RELEASE_NAME='$name'`n\"");
+    expect(windowsBuild).not.toMatch(/Out-File[^\n]*release\.env/);
+  });
+
+  it('gives the publish job unzip, which its privacy scan needs for the application zip', () => {
+    expect(part('.forgejo/scripts/setup-ubuntu-job.sh')).toMatch(/apt-get install[^\n]* unzip/);
+    expect(part('.forgejo/scripts/scan-artifact.sh')).toContain('no unzip to unpack with');
+  });
+
+  it('looks into the owner\'s private directories as the owner', () => {
+    // The qualify job runs the package proof as a stranger, who cannot see into
+    // another user's home: a directory the doctor had just reported writable
+    // read as "not created".
+    const proof = part('.forgejo/scripts/prove-ubuntu-package.sh');
+    expect(proof).toContain('sudo -u owner test -d "$OWNER_HOME/$dir"');
+    expect(proof).not.toContain('if [ -d "$OWNER_HOME/$dir" ]');
   });
 });

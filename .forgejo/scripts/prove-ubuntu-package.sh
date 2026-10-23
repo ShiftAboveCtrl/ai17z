@@ -205,8 +205,11 @@ echo
 echo "### XDG layout, created private, overrides honoured"
 as_owner 'ai17z doctor' > /tmp/doctor.txt 2>&1 || true
 sed 's/^/        /' /tmp/doctor.txt | head -30
+# Looked at as the owner: these are private, and a stranger running this
+# proof cannot see inside somebody else's home, which read as "not created"
+# for a directory the doctor had just reported writable.
 for dir in .config/ai17z .local/share/ai17z .local/state/ai17z; do
-  if [ -d "$OWNER_HOME/$dir" ]; then
+  if sudo -u owner test -d "$OWNER_HOME/$dir"; then
     mode="$(sudo -u owner stat -c '%a' "$OWNER_HOME/$dir")"
     if [ "$mode" = 700 ]; then ok "$dir is 700"; else bad "$dir is $mode"; fi
   else
