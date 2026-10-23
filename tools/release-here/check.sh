@@ -4,7 +4,11 @@ set -euo pipefail
 TAG="${1:?tag}"
 git clone -q https://code.ai17z.io/AI17Z/ai17z.git /src && cd /src && git checkout -q "$TAG"
 echo "checking $TAG at $(git rev-parse HEAD)"
-export AI17Z_MASTER_KEY=dGVzdC1vbmx5LW1hc3Rlci1rZXktMzItYnl0ZXMhISE= PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+# The throwaway key the workflow's check uses, read from the workflow so it is
+# written down in one place.
+test_key="$(sed -n 's/^  AI17Z_MASTER_KEY: //p' .forgejo/workflows/check.yml)"
+[ -n "$test_key" ] || { echo "check.yml names no test master key"; exit 1; }
+export AI17Z_MASTER_KEY="${test_key}" PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 npm ci --no-audit --no-fund
 npm run typecheck
 npm run lint
