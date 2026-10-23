@@ -312,32 +312,12 @@ jobs:
           bash .forgejo/scripts/say-on-fail.sh 'the published Ubuntu release' -- \
             bash .forgejo/scripts/as-stranger.sh bash .forgejo/scripts/qualify-published-ubuntu.sh "$TAG" "$PWD/tagged"
 
-  # The published arm64 package, installed on an arm64 machine, when one is
-  # registered (`vars.AI17Z_ARM64_RUNNER`). Without one, the package's native
-  # files are proved by package-assembled and the notes say it was not run.
-  qualify-ubuntu-arm64:
-    if: ${{ !startsWith(github.ref_name, 'rehearsal-') && vars.AI17Z_ARM64_RUNNER == '1' }}
-    needs: [version, publish]
-    runs-on: ai17z-release-linux-arm64
-    container:
-      image: ubuntu:24.04
-    services:
-      docker:
-        image: docker:27-dind
-        options: --privileged
-        env:
-          DOCKER_TLS_CERTDIR: ""
-    env:
-      DOCKER_HOST: tcp://docker:2375
-    steps:
-      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs >/dev/null
-      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: |
-          TAG="v${{ needs.version.outputs.version }}"
-          bash .forgejo/scripts/setup-ubuntu-job.sh
-          mkdir -p tagged && git archive "$TAG" install-ai17z-ubuntu.sh | tar -x -C tagged
-          bash .forgejo/scripts/say-on-fail.sh 'the published Ubuntu release on arm64' -- \
-            bash .forgejo/scripts/as-stranger.sh bash .forgejo/scripts/qualify-published-ubuntu.sh "$TAG" "$PWD/tagged"
+  # No arm64 qualification here. Forgejo judges a job's `if` on the runner that
+  # takes it, so a job for a label no runner has is never judged: it waited for
+  # ever on v1.0.0-beta.85, the run never finished, and every later release sat
+  # behind it in the `release` concurrency group. An arm64 machine, once there
+  # is one, qualifies a published release through qualify.yml; until then the
+  # package's native files are proved by package-assembled.
 
   qualify-windows:
     if: ${{ !startsWith(github.ref_name, 'rehearsal-') }}

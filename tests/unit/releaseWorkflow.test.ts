@@ -69,7 +69,6 @@ describe('the release does not pretend to sign anything', () => {
       'package-windows',
       'publish',
       'qualify',
-      'qualify-ubuntu-arm64',
       'qualify-windows',
     ]);
   });
