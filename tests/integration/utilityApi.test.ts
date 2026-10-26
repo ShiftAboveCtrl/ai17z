@@ -347,6 +347,7 @@ describe('the bridge to public capabilities', () => {
     };
     const ids = listed.bridge.map((b) => b.id);
     expect(ids).toContain('market.resolve_exact');
+    expect(ids).toContain('market.snapshot');
     expect(ids).toContain('contract.decode_function');
     expect(ids.some((id) => id.startsWith('agent.') || id.startsWith('wallet.') || id.startsWith('x.'))).toBe(false);
     expect(listed.bridge.every((b) => b.input.length > 0 && b.description.length > 0)).toBe(true);
