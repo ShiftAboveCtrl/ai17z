@@ -102,6 +102,9 @@ export const UTILITY_CAPABILITIES = {
 export const UTILITY_BRIDGE: readonly string[] = [
   // Asset identity and markets.
   'market.resolve_exact',
+  // One exact pool's liquidity now: survival is read on the very pool a launch was found in, which the
+  // token's pool list stops listing once it is emptied.
+  'market.snapshot',
   'market.ohlcv',
   'market.new_pools',
   'market.trending',
