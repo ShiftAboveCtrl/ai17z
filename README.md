@@ -8,9 +8,11 @@
 
 The model is replaceable. The agent is durable.
 
-[![CI](https://code.ai17z.io/AI17Z/ai17z/badges/workflows/check.yml/badge.svg?branch=main)](https://code.ai17z.io/AI17Z/ai17z/actions?workflow=check.yml)
-[![Release](https://code.ai17z.io/AI17Z/ai17z/badges/release.svg)](https://code.ai17z.io/AI17Z/ai17z/releases)
+[![Latest release](https://img.shields.io/github/v/release/ShiftAboveCtrl/ai17z?display_name=release&label=latest&color=2ea44f)](https://github.com/ShiftAboveCtrl/ai17z/releases/latest)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Ubuntu-informational)](#install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+**[Download the latest release](https://github.com/ShiftAboveCtrl/ai17z/releases/latest)**
 
 [Install](#install) · [What makes it different](#what-makes-it-different) · [Architecture](#architecture) · [Status](#status) · [Documentation](#documentation)
 
@@ -78,6 +80,20 @@ them needs Git, and the macOS and Ubuntu packages carry their own verified Node
 runtime. All three use Docker for the database. Google Chrome is optional and
 enables browser-backed channels.
 
+| Platform | Recommended | Also in every release |
+| --- | --- | --- |
+| Windows 10 and 11 | The one command below | `AI17Z-Setup-<version>.exe`, the classic installer |
+| macOS 13+, Apple silicon and Intel | [`install-ai17z-macos.sh`](https://github.com/ShiftAboveCtrl/ai17z/releases/latest/download/install-ai17z-macos.sh) | `AI17Z-macos-arm64-<version>.tar.gz`, `AI17Z-macos-x64-<version>.tar.gz` |
+| Ubuntu 22.04+, amd64 and arm64 | [`install-ai17z-ubuntu.sh`](https://github.com/ShiftAboveCtrl/ai17z/releases/latest/download/install-ai17z-ubuntu.sh) | `ai17z_<version>_amd64.deb`, `ai17z_<version>_arm64.deb` |
+
+Every file is listed with its checksum in the release's
+[`SHA256SUMS.txt`](https://github.com/ShiftAboveCtrl/ai17z/releases/latest/download/SHA256SUMS.txt).
+Releases are named `beta-v9.7` and so on; the tag underneath stays strict
+semver (`v1.0.0-beta.87`), because installers and updaters build their download
+addresses from it. [All releases](https://github.com/ShiftAboveCtrl/ai17z/releases)
+are published on GitHub and on [AI17Z Code](https://code.ai17z.io/AI17Z/ai17z/releases),
+with the same files.
+
 ### Windows
 
 Open Windows Terminal and paste:
@@ -91,12 +107,11 @@ missing, installs AI17Z, starts it, verifies it works, and opens it.
 
 ### macOS and Ubuntu
 
-Download the short installer from the
-[latest release](https://code.ai17z.io/AI17Z/ai17z/releases), read it,
+Download the short installer for your system from the table above, read it,
 and run it. Both are plain shell scripts, deliberately short enough to audit.
 
-> **Install AI17Z only with the command published here.** Nowhere else
-> distributes it. The command fetches
+> **Install AI17Z only with the command published here** or from the release
+> pages linked above. Nowhere else distributes it. The command fetches
 > `code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1`, checks the
 > setup script against the release's own `SHA256SUMS.txt` before writing
 > anything, and re-checks it immediately before running it.
@@ -233,21 +248,21 @@ memory.
 
 **Getting it running**
 
-- [Installing and running AI17Z](docs/INSTALL.md) — all three platforms, from source, updating, troubleshooting
-- [Auditing AI17Z Setup](docs/SETUP_AUDIT.md) — every host it may contact and change it may make
+- [Installing and running AI17Z](docs/INSTALL.md): all three platforms, from source, updating, troubleshooting
+- [Auditing AI17Z Setup](docs/SETUP_AUDIT.md): every host it may contact and change it may make
 - [Windows trust and SmartScreen](docs/WINDOWS_TRUST.md) · [Code signing policy](docs/CODE_SIGNING_POLICY.md)
 - [Uninstalling and removing your data](docs/WINDOWS_UNINSTALL.md) · [Privacy](docs/PRIVACY.md)
 - [Local setup](docs/operations/LOCAL_SETUP.md) · [Docker](docs/operations/DOCKER.md) · [Driving a real browser](docs/operations/BROWSER_SESSIONS.md)
 
 **How it works**
 
-- [Engineering notes](docs/ENGINEERING.md) — the invariants, and what broke to produce each one
+- [Engineering notes](docs/ENGINEERING.md): the invariants, and what broke to produce each one
 - [Architecture overview](docs/architecture/OVERVIEW.md) · [Data model](docs/architecture/DATA_MODEL.md) · [Jobs and the runtime](docs/architecture/JOBS.md)
-- [End-to-end data flow](docs/architecture/DATA_FLOW.md) — where each responsibility lives
+- [End-to-end data flow](docs/architecture/DATA_FLOW.md): where each responsibility lives
 - [Memory](docs/architecture/MEMORY.md) · [Channels](docs/architecture/CHANNELS.md) · [Models](docs/architecture/MODELS.md) · [Pipelines](docs/architecture/PIPELINES.md)
-- [The social layer](docs/architecture/SOCIAL.md) — identity, relationships, voice
-- [Persistent autonomous deliberation](docs/architecture/DELIBERATION.md) — what an agent thinks about between the things it is asked
-- [The Response Lab](docs/architecture/RESPONSE_LAB.md) — what an agent would say to a real post, and everything that fed the answer
+- [The social layer](docs/architecture/SOCIAL.md): identity, relationships, voice
+- [Persistent autonomous deliberation](docs/architecture/DELIBERATION.md): what an agent thinks about between the things it is asked
+- [The Response Lab](docs/architecture/RESPONSE_LAB.md): what an agent would say to a real post, and everything that fed the answer
 - [Cadence](docs/architecture/CADENCE.md) · [Capabilities](docs/architecture/CAPABILITIES.md) · [Easy Mode](docs/architecture/EASY_MODE.md)
 - [Connecting an account and security challenges](docs/architecture/SIGN_IN.md) · [Persona sources](docs/architecture/PERSONA_SOURCES.md)
 - [Browser runtime](docs/architecture/X_RUNTIME.md) · [Reading a channel](docs/architecture/X_READING.md) · [Owner notifications](docs/architecture/NOTIFICATIONS.md)
