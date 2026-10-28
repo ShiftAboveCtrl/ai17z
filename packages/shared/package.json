@@ -8,5 +8,5 @@
     "./contracts": "./src/contracts/index.ts",
     "./util": "./src/util.ts"
   },
-  "dependencies": { "zod": "^3.24.1" }
+  "dependencies": { "zod": "^4.6.7" }
 }
