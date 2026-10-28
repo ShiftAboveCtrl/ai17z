@@ -70,11 +70,24 @@ describe('the files Forgejo reads before anything runs', () => {
     ]);
   });
 
-  it('nothing is left behind for another forge to run', () => {
-    // One CI. A mirror that also carried a pipeline would run it there, with
-    // runners and rules nobody here is looking at.
+  it('nothing is left behind for another forge to run but GitHub\'s public check', () => {
+    // Releases have one pipeline. GitHub carries one workflow so the public
+    // repository shows a verdict, and it may only check: it triggers on main
+    // and pull requests, never on a tag, reads the repository and nothing
+    // more, and names no secret. Forgejo ignores .github while .forgejo exists.
     expect(() => readdirSync(resolve(root, '.gitlab'))).toThrow();
-    expect(() => readdirSync(resolve(root, '.github/workflows'))).toThrow();
+    expect(readdirSync(resolve(root, '.github/workflows'))).toEqual(['ci.yml']);
+    const text = read('.github/workflows/ci.yml');
+    const ci = load(text) as Workflow & { permissions?: Record<string, string> };
+    expect(Object.keys(ci.on).sort()).toEqual(['pull_request', 'push']);
+    expect(ci.on.push).toEqual({ branches: ['main'] });
+    expect(ci.permissions).toEqual({ contents: 'read' });
+    expect(text).not.toMatch(SECRET);
+    for (const job of Object.values(ci.jobs)) {
+      for (const step of job.steps ?? []) {
+        if (step.uses) expect(step.uses, `${step.uses} is not pinned to a commit`).toMatch(/@[0-9a-f]{40}$/);
+      }
+    }
   });
 
   it.each(workflowFiles)('%s is one document', (path) => {
