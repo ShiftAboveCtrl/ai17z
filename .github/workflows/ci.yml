@@ -1,0 +1,77 @@
+name: CI
+
+# The same checks as `check` in .forgejo/workflows/check.yml, on GitHub's own
+# runners, so the public repository carries a verdict of its own.
+#
+# Releases are still built, signed and published on AI17Z Code and nowhere
+# else. This workflow builds nothing, publishes nothing and names no secret.
+# Forgejo reads only .forgejo/workflows while that directory exists, so this
+# file never runs there.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A pull request groups by branch, so only its newest push is tested. On main
+  # each commit gets a run of its own and a verdict of its own.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+env:
+  # A throwaway key that decodes to exactly 32 bytes. The real one is never in
+  # the repository and never in CI.
+  AI17Z_MASTER_KEY: dGVzdC1vbmx5LW1hc3Rlci1rZXktMzItYnl0ZXMhISE=
+  DATABASE_URL: postgres://xbam:xbam@localhost:5432/xbam
+  # The tests that drive a synthetic page install their own Chromium below.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  check:
+    name: Typecheck, lint, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    services:
+      postgres:
+        # Pinned to the major version the migrations are written against.
+        # Google's mirror of the official image, because Docker Hub's anonymous
+        # pull limit is shared by every job on GitHub's runner addresses.
+        image: mirror.gcr.io/library/postgres:16-alpine
+        env:
+          POSTGRES_USER: xbam
+          POSTGRES_PASSWORD: xbam
+          POSTGRES_DB: xbam
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U xbam"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Release check
+        run: npm run release:check
+      - name: Install Playwright Chromium
+        run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium
+      - name: Migrate
+        run: npm run migrate
+      - name: Tests
+        run: npx vitest run --reporter=default
+      - name: Build web
+        run: npm run build:web
