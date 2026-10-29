@@ -155,7 +155,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         z.object({
           displayName: z.string().max(200).optional(),
           enabled: z.boolean().optional(),
-          settings: z.record(z.unknown()).optional(),
+          settings: z.record(z.string(), z.unknown()).optional(),
           browser: z
             .object({
               engine: BrowserEngine,

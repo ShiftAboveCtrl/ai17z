@@ -102,7 +102,7 @@ export const OutputPolicy = z.object({
   forbidMentionsOfOthers: z.boolean().default(false),
   stripSurroundingQuotes: z.boolean().default(true),
   /** How much emoji, and which. Enforced by the validator, not suggested. */
-  emoji: EmojiPolicy.default({}),
+  emoji: EmojiPolicy.prefault({}),
   /** Reject output containing any of these (case-insensitive substring match). */
   bannedPhrases: z.array(z.string().max(200)).max(500).default([]),
   /**
@@ -156,7 +156,7 @@ export const RatePolicy = z.object({
       startHour: z.number().int().min(0).max(23).default(8),
       endHour: z.number().int().min(0).max(23).default(23),
     })
-    .default({}),
+    .prefault({}),
 });
 export type RatePolicy = z.infer<typeof RatePolicy>;
 
@@ -222,11 +222,11 @@ export const MemoryPolicy = z.object({
       /** Hard ceiling on the rendered RETRIEVED_MEMORY layer. */
       totalCharBudget: z.number().int().min(200).max(200_000).default(6_000),
     })
-    .default({}),
+    .prefault({}),
   write: z
     .object({
       /** Persist both sides of every exchange as THREAD memory. */
-      thread: z.object({ enabled: z.boolean().default(true) }).default({}),
+      thread: z.object({ enabled: z.boolean().default(true) }).prefault({}),
       user: z
         .object({
           enabled: z.boolean().default(true),
@@ -235,10 +235,10 @@ export const MemoryPolicy = z.object({
           minImportance: z.number().min(0).max(1).default(0.5),
           ttlDays: z.number().int().min(1).max(3_650).nullable().default(null),
         })
-        .default({}),
-      persona: z.object({ enabled: z.boolean().default(false) }).default({}),
+        .prefault({}),
+      persona: z.object({ enabled: z.boolean().default(false) }).prefault({}),
     })
-    .default({}),
+    .prefault({}),
 });
 export type MemoryPolicy = z.infer<typeof MemoryPolicy>;
 
@@ -295,7 +295,7 @@ export const ToolPolicy = z.object({
        */
       xIntelligence: z.boolean().default(false),
     })
-    .default({}),
+    .prefault({}),
 });
 export type ToolPolicy = z.infer<typeof ToolPolicy>;
 
@@ -415,32 +415,32 @@ export const PolicyConfig = z.object({
       /** When true, the pipeline runs end-to-end but never touches the remote. */
       dryRunDefault: z.boolean().default(true),
     })
-    .default({}),
-  identity: IdentityPolicy.default({}),
-  output: OutputPolicy.default({}),
-  content: ContentPolicy.default({}),
-  rate: RatePolicy.default({}),
-  safety: SafetyPolicy.default({}),
-  budget: BudgetPolicy.default({}),
-  memory: MemoryPolicy.default({}),
-  tools: ToolPolicy.default({}),
+    .prefault({}),
+  identity: IdentityPolicy.prefault({}),
+  output: OutputPolicy.prefault({}),
+  content: ContentPolicy.prefault({}),
+  rate: RatePolicy.prefault({}),
+  safety: SafetyPolicy.prefault({}),
+  budget: BudgetPolicy.prefault({}),
+  memory: MemoryPolicy.prefault({}),
+  tools: ToolPolicy.prefault({}),
   /** What the agent looks at besides the text: images, quotes, links. */
-  media: MediaPolicy.default({}),
+  media: MediaPolicy.prefault({}),
   /** How knowing somebody changes the way the agent talks to them. */
-  relationships: RelationshipVoice.default({}),
+  relationships: RelationshipVoice.prefault({}),
   /** Keeping the agent consistent with what it has already said. */
-  stance: StancePolicy.default({}),
+  stance: StancePolicy.prefault({}),
   /** Whether to answer at all, and how much of the incoming tone to take on. */
-  engagement: EngagementPolicy.default({}),
+  engagement: EngagementPolicy.prefault({}),
   /** Speaking first, under a post nobody addressed to the agent. */
-  outreach: OutreachPolicy.default({}),
+  outreach: OutreachPolicy.prefault({}),
   /** What the agent may spend on going looking for people, and when. */
-  growth: GrowthPolicy.default({}),
+  growth: GrowthPolicy.prefault({}),
   /** Helping people with the software this agent runs on. */
-  support: SupportPolicy.default({}),
-  tone: ToneMirroring.default({}),
+  support: SupportPolicy.prefault({}),
+  tone: ToneMirroring.prefault({}),
   /** How the agent's own way of writing is enforced, whatever model wrote it. */
-  voice: VoicePolicy.default({}),
+  voice: VoicePolicy.prefault({}),
   /**
    * How much time a reply may spend on optional model calls.
    *
@@ -449,7 +449,7 @@ export const PolicyConfig = z.object({
    */
   responseSpeed: ResponseSpeed.default('BALANCED'),
   /** Whether the agent learns from outcomes. See LearningPolicy. */
-  learning: LearningPolicy.default({}),
+  learning: LearningPolicy.prefault({}),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 

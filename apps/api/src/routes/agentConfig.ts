@@ -859,7 +859,7 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
         z.object({
           message: z.string().trim().min(1).max(2_000),
           fromHandle: z.string().max(80).nullable().optional(),
-          persona: z.record(z.unknown()).nullable().optional(),
+          persona: z.record(z.string(), z.unknown()).nullable().optional(),
           role: z.string().max(40).optional(),
         }),
         request,
@@ -1232,7 +1232,7 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
       const body = parseBody(
-        z.object({ enabled: z.boolean(), config: z.record(z.unknown()).default({}) }),
+        z.object({ enabled: z.boolean(), config: z.record(z.string(), z.unknown()).prefault({}) }),
         request,
       );
       const key = params(request).key!;

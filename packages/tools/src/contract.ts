@@ -31,7 +31,7 @@ export interface ToolDefinition<TInput = unknown> {
   readonly name: string;
   readonly description: string;
   readonly kind: 'BUILTIN' | 'HTTP' | 'CUSTOM';
-  readonly inputSchema: z.ZodType<TInput, z.ZodTypeDef, unknown>;
+  readonly inputSchema: z.ZodType<TInput, unknown>;
   /**
    * Tools are opt-in per agent. A tool that can reach the network must default
    * to disabled and require explicit configuration before it will run.

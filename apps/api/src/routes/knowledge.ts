@@ -50,8 +50,8 @@ const CreateSource = z.object({
    */
   location: z.string().max(200_000),
   /** Crawl bounds or repository paths, validated against the kind below. */
-  config: z.record(z.string(), z.unknown()).default({}),
-  labels: KnowledgeLabels.default({}),
+  config: z.record(z.string(), z.unknown()).prefault({}),
+  labels: KnowledgeLabels.prefault({}),
   include: z.array(z.string().max(20)).max(20).default([]),
   /**
    * How often to read it again, in minutes. Null means only when asked.

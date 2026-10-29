@@ -92,8 +92,8 @@ export interface Capability<TInput = unknown, TOutput = unknown> {
   readonly unsetPermission?: CapabilityPermission;
   /** OWNER when only the agent's owner may see what it returns. Absent is PUBLIC. */
   readonly audience?: CapabilityAudience;
-  readonly input: z.ZodType<TInput, z.ZodTypeDef, unknown>;
-  readonly output: z.ZodType<TOutput, z.ZodTypeDef, unknown>;
+  readonly input: z.ZodType<TInput, unknown>;
+  readonly output: z.ZodType<TOutput, unknown>;
   /**
    * Whether the model may choose this, as opposed to the runtime driving it.
    *

@@ -255,7 +255,7 @@ export const solanaInspectCapability = defineCapability({
     version: z.enum(['legacy', 'v0']),
     feePayer: z.string().nullable(),
     signaturesRequired: z.number().int(),
-    instructions: z.array(z.object({ program: z.string(), kind: z.string(), args: z.record(z.string()) })),
+    instructions: z.array(z.object({ program: z.string(), kind: z.string(), args: z.record(z.string(), z.string()) })),
     findings: z.array(z.object({ severity: z.enum(['DENY', 'NEEDS_APPROVAL', 'NOTE']), code: z.string(), sentence: z.string() })),
   }),
   modelCallable: true,

@@ -45,7 +45,7 @@ export function capabilityFromTool(
     category: placement.category,
     effect: placement.effect,
     risk: placement.risk,
-    input: tool.inputSchema as z.ZodType<never, z.ZodTypeDef, unknown>,
+    input: tool.inputSchema as z.ZodType<never, unknown>,
     output: ToolShape,
     modelCallable: true,
     timeoutMs: placement.timeoutMs,

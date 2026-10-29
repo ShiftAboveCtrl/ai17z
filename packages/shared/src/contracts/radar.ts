@@ -85,7 +85,7 @@ export const RadarCandidate = z.object({
   occurredAt: z.string().nullable().default(null),
   /** What kind of thing this looked like where it was found. */
   eventType: z.string().max(50).default('MENTION'),
-  raw: z.record(z.unknown()).default({}),
+  raw: z.record(z.string(), z.unknown()).prefault({}),
 });
 export type RadarCandidate = z.infer<typeof RadarCandidate>;
 

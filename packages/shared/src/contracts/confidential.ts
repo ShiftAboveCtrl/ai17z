@@ -117,7 +117,7 @@ export const AzureAttestationClaims = z
      * two-claim example omits it and a policy that omits it is not bound to a
      * runtime.
      */
-    attestedPcrValues: z.record(z.string()).optional(),
+    attestedPcrValues: z.record(z.string(), z.string()).optional(),
     /**
      * `x-ms-azurevm-vmid`: which VM this token came from.
      *

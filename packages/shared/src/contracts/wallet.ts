@@ -199,7 +199,7 @@ export const WalletSimulation = z.object({
    * blockhash window for Solana. Part of the digest, so an approval is for one
    * transaction and not for its type.
    */
-  pinned: z.record(z.string(), z.union([z.string(), z.number()])).default({}),
+  pinned: z.record(z.string(), z.union([z.string(), z.number()])).prefault({}),
 });
 export type WalletSimulation = z.infer<typeof WalletSimulation>;
 

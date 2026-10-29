@@ -62,7 +62,7 @@ export const MediaCandidate = z.object({
   sourceUrl: z.string().max(2_000).nullable().default(null),
   altText: z.string().max(2_000).nullable().default(null),
   /** Anything the platform said about it: duration, dimensions, poll options. */
-  meta: z.record(z.unknown()).default({}),
+  meta: z.record(z.string(), z.unknown()).prefault({}),
 });
 export type MediaCandidate = z.infer<typeof MediaCandidate>;
 

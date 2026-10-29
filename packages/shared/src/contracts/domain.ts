@@ -69,7 +69,7 @@ export const Account = z.object({
   status: AccountStatus,
   enabled: z.boolean(),
   capabilities: z.array(z.string()),
-  settings: z.record(z.unknown()),
+  settings: z.record(z.string(), z.unknown()),
   lastHealthCheckAt: z.string().nullable(),
   lastHealthStatus: z.string().nullable(),
   lastActivityAt: z.string().nullable(),
@@ -89,7 +89,7 @@ export const CreateAccountInput = z.object({
   handle: z.string().trim().min(1).max(120),
   displayName: z.string().trim().max(200).default(''),
   remoteAccountId: z.string().max(200).nullable().default(null),
-  settings: z.record(z.unknown()).default({}),
+  settings: z.record(z.string(), z.unknown()).prefault({}),
   browser: z
     .object({
       mode: BrowserMode.default('MANAGED'),
@@ -152,7 +152,7 @@ export const ModelConfig = z.object({
   provider: ProviderKind,
   providerLabel: z.string(),
   model: z.string(),
-  parameters: z.record(z.unknown()),
+  parameters: z.record(z.string(), z.unknown()),
   /**
    * What the provider said it offers when it was last tested.
    *
@@ -245,7 +245,7 @@ export const SetModelConfigInput = z.object({
   role: ModelRole,
   providerCredentialId: z.string().uuid(),
   model: z.string().trim().min(1).max(200),
-  parameters: ModelParameters.default({}),
+  parameters: ModelParameters.prefault({}),
 });
 export type SetModelConfigInput = z.infer<typeof SetModelConfigInput>;
 
@@ -253,7 +253,7 @@ export const PipelineNode = z.object({
   key: z.string().max(60),
   kind: PipelineNodeKind,
   label: z.string().max(120),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).prefault({}),
   x: z.number().default(0),
   y: z.number().default(0),
 });

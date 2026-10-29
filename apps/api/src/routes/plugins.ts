@@ -177,8 +177,8 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
             */
             config: z
               .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
-              .default({}),
-            secrets: z.record(z.string(), z.string().max(4_000)).default({}),
+              .prefault({}),
+            secrets: z.record(z.string(), z.string().max(4_000)).prefault({}),
           })
           .strict(),
         request,

@@ -37,7 +37,7 @@ export const NormalizedEvent = z.object({
   text: z.string().max(50_000).default(''),
   occurredAt: z.string().nullable().default(null),
   /** Raw adapter payload, kept for replay and forensics. Never trusted as input. */
-  raw: z.record(z.unknown()).default({}),
+  raw: z.record(z.string(), z.unknown()).prefault({}),
 });
 export type NormalizedEvent = z.infer<typeof NormalizedEvent>;
 
@@ -134,7 +134,7 @@ export const ResolvedContext = z.object({
   /** SEMANTIC CONTEXT. Structured branch, for prompts and for the debug view. */
   conversation: ConversationContext.nullable().default(null),
   /** Adapter-specific extras, surfaced in the trace but not in the prompt. */
-  meta: z.record(z.unknown()).default({}),
+  meta: z.record(z.string(), z.unknown()).prefault({}),
 });
 export type ResolvedContext = z.infer<typeof ResolvedContext>;
 
@@ -252,11 +252,11 @@ export const ActionRecord = z.object({
   type: ActionType,
   status: ActionStatus,
   dryRun: z.boolean(),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   targetRef: z.string().nullable(),
   remoteActionId: z.string().nullable(),
   remoteActionUrl: z.string().nullable(),
-  verification: z.record(z.unknown()).nullable(),
+  verification: z.record(z.string(), z.unknown()).nullable(),
   idempotencyKey: z.string(),
   errorClass: ErrorClass.nullable(),
   lastError: z.string().nullable(),
@@ -275,7 +275,7 @@ export const ModelCallRecord = z.object({
   modelRole: z.string().nullable(),
   attempt: z.number().int(),
   status: z.enum(['STARTED', 'COMPLETED', 'FAILED']),
-  parameters: z.record(z.unknown()),
+  parameters: z.record(z.string(), z.unknown()),
   promptLayers: z.array(PromptLayer).nullable(),
   promptText: z.string().nullable(),
   rawOutput: z.string().nullable(),
@@ -298,7 +298,7 @@ export const TraceEvent = z.object({
   type: TraceEventType,
   level: z.enum(['debug', 'info', 'warn', 'error']),
   message: z.string(),
-  data: z.record(z.unknown()),
+  data: z.record(z.string(), z.unknown()),
   at: z.string(),
 });
 export type TraceEvent = z.infer<typeof TraceEvent>;
@@ -340,7 +340,7 @@ export const MemoryRecord = z.object({
    * written and was not on this type, so a memory's provenance existed and
    * nothing that reads memories could see it.
    */
-  origin: z.record(z.unknown()).nullable(),
+  origin: z.record(z.string(), z.unknown()).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastAccessedAt: z.string().nullable(),

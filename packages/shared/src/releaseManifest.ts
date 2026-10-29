@@ -270,7 +270,9 @@ export const releaseManifestSchema = z.object({
    */
   minimumUpdaterSchema: z.number().int().positive(),
   installLayoutSchema: z.number().int().positive(),
-  platforms: z.record(
+  // Partial: a release may leave a platform out, and zod 4 makes an
+  // enum-keyed record require every key.
+  platforms: z.partialRecord(
     z.enum(PLATFORMS),
     z.object({
       supported: z.boolean(),
