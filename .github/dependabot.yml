@@ -11,6 +11,8 @@ updates:
     ignore:
       # zod 4 changes the API every shared contract is written against, so it
       # is a migration rather than a bump, and a pull request for it fails CI.
+      # A version range, because Dependabot applies update-types to version
+      # updates only and still opened a security pull request for zod 4.
       # Remove this once the codebase is on zod 4.
       - dependency-name: zod
-        update-types: ["version-update:semver-major"]
+        versions: [">=4"]
