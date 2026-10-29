@@ -9,6 +9,6 @@
   "dependencies": {
     "@rgrove/parse-xml": "^5.0.0",
     "@xbam/shared": "*",
-    "undici": "7.29.1"
+    "undici": "7.30.1"
   }
 }
