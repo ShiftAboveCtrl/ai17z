@@ -40,7 +40,13 @@ const notesScript = read('.forgejo/scripts/release-notes.sh');
 const workflow = [read('.forgejo/workflows/package.yml'), read('.forgejo/workflows/release.yml'), windowsBuild, publishScript, notesScript].join('\n');
 
 /** The one line a person is asked to paste. Everything else follows from it. */
-const COMMAND = 'irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex';
+const COMMAND = 'irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex';
+/**
+ * The same file from AI17Z Code, for when GitHub itself is down. The first
+ * download is the one thing that cannot fall back, because nothing has run yet
+ * to try elsewhere, so the second command has to be written down beside it.
+ */
+const FALLBACK_COMMAND = 'irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex';
 
 describe('the install command', () => {
   it('is the same line in the README, the file itself, and the release notes', () => {
@@ -49,6 +55,12 @@ describe('the install command', () => {
     expect(readme).toContain(COMMAND);
     expect(install).toContain(COMMAND);
     expect(notesScript).toContain(COMMAND);
+  });
+
+  it('has its AI17Z Code twin written down wherever it is, for when GitHub is down', () => {
+    expect(readme).toContain(FALLBACK_COMMAND);
+    expect(install).toContain(FALLBACK_COMMAND);
+    expect(notesScript).toContain(FALLBACK_COMMAND);
   });
 
   it('fetches the file the command names, from the branch the command names', () => {
@@ -73,8 +85,13 @@ describe('the install command', () => {
     // evidence, and the two different explanations those two situations need.
     // Raising it again wants the same kind of argument -- a budget that moves
     // whenever it is inconvenient is not a budget.
+    //
+    // It went up a second time, from 280 to 380, for GitHub first with AI17Z
+    // Code as the fallback: one attempt per source that says why it failed,
+    // a check on the address a redirect landed on, and the explanation of a
+    // failure from both. That is behaviour, not padding.
     const lines = installCode.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith('#'));
-    expect(lines.length, 'install.ps1 has grown past being readable in one sitting').toBeLessThan(280);
+    expect(lines.length, 'install.ps1 has grown past being readable in one sitting').toBeLessThan(380);
   });
 
   it('is ASCII, like every other PowerShell file here', () => {
@@ -88,10 +105,29 @@ describe('what it will and will not reach', () => {
     expect(install).toContain('function Assert-AllowedUrl');
     expect(install).toMatch(/AllowedHosts -notcontains \$uri\.Host/);
     expect(install).toMatch(/\$uri\.Scheme -ne 'https'/);
-    // One host: AI17Z Code serves a release file itself, from its own storage.
-    expect(install).toContain("$AllowedHosts = @('code.ai17z.io')");
+    // GitHub, the host its downloads redirect to, and AI17Z Code. Nothing
+    // else, and the same list the setup program and RELEASE_SOURCES declare.
+    expect(install).toContain(
+      "$AllowedHosts = @('api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'code.ai17z.io')",
+    );
     expect(install).not.toMatch(/gitlab\.com/);
-    expect(install).not.toMatch(/githubusercontent|api\.github\.com/);
+  });
+
+  it('asks GitHub first and AI17Z Code second, and says when it falls back', () => {
+    const github = install.indexOf("Name = 'GitHub'");
+    const forgejo = install.indexOf("Name = 'AI17Z Code'");
+    expect(github).toBeGreaterThan(0);
+    expect(forgejo).toBeGreaterThan(github);
+    expect(install).toContain('could not provide it (');
+    expect(install).toContain("' from ' + $attempt.Source");
+  });
+
+  it('judges the address a redirect landed on, not only the one it asked', () => {
+    const at = install.indexOf('function Invoke-Allowed');
+    const body = install.slice(at, at + 700);
+    expect(body).toContain('Get-AnsweredUrl');
+    expect(body.indexOf('Assert-AllowedUrl $Url')).toBeLessThan(body.indexOf('Invoke-WebRequest'));
+    expect(body.indexOf('Assert-AllowedUrl $answered')).toBeGreaterThan(body.indexOf('Invoke-WebRequest'));
   });
 
   it('checks the address before every fetch, not after', () => {
@@ -99,13 +135,15 @@ describe('what it will and will not reach', () => {
     // that does not is the one that gets used.
     const fetches = [...install.matchAll(/Invoke-WebRequest[^\n]*/g)].map((match) => match[0]);
     expect(fetches.length, 'nothing fetches anything any more').toBeGreaterThan(0);
-    // Each fetch is preceded by an assertion in its own function.
+    // One function reaches the network, and it checks before and after.
+    expect(fetches.length, 'something other than Invoke-Allowed reaches the network').toBe(1);
+    const at = install.indexOf('function Invoke-Allowed');
+    expect(install.slice(at, at + 700)).toContain('Invoke-WebRequest');
     for (const helper of ['function Get-Text']) {
-      const at = install.indexOf(helper);
-      expect(install.slice(at, at + 400), `${helper} does not check the address`).toContain('Assert-AllowedUrl');
+      const start = install.indexOf(helper);
+      expect(install.slice(start, start + 400), `${helper} does not go through the check`).toContain('Invoke-Allowed');
     }
-    const download = install.indexOf('$setupAsset.browser_download_url');
-    expect(install.slice(Math.max(0, download - 300), download)).toContain('Assert-AllowedUrl');
+    expect(install).toContain('Invoke-Allowed $setupAsset.browser_download_url');
   });
 
   it('downloads no executable at all', () => {
@@ -121,8 +159,8 @@ describe('nothing runs until its hash matches', () => {
     // Hashed in memory, out of the bytes that came back, rather than off a file
     // -- there is no file yet, and that is the point.
     expect(install).toContain('ComputeHash');
-    expect(install).toMatch(/\$actual -ne \$expected/);
-    const at = install.indexOf('$actual -ne $expected');
+    expect(install).toMatch(/\$actual -ne \$result\.Expected/);
+    const at = install.indexOf('$actual -ne $result.Expected');
     const block = install.slice(at, at + 700);
     expect(block).toContain('Stop-Install');
     expect(block).toContain('Nothing was written and nothing was run.');
@@ -131,7 +169,7 @@ describe('nothing runs until its hash matches', () => {
   it('writes the file only after the check', () => {
     // A file that failed the check never reaches the disk, so there is nothing
     // for somebody to run by mistake afterwards.
-    expect(install.indexOf('$actual -ne $expected')).toBeLessThan(install.indexOf('WriteAllBytes'));
+    expect(install.indexOf('$actual -ne $result.Expected')).toBeLessThan(install.indexOf('WriteAllBytes'));
   });
 
   it('refuses a release that publishes no hash for it', () => {
@@ -246,7 +284,7 @@ describe('nothing from the network becomes code or a path', () => {
 
     // And the check happens before the name is built, not after.
     expect(installCode.indexOf('if (-not (Test-ReleaseTag $tag))')).toBeLessThan(
-      installCode.indexOf('$setupName = [string]::Format'),
+      installCode.indexOf('$result.SetupName = [string]::Format'),
     );
   });
 
@@ -349,14 +387,19 @@ describe('a refusal sends somebody to the right place', () => {
    * it. An installer that answers wrong is worse than one that answers nothing.
    */
   it('does not blame the connection for a refusal', () => {
-    const catchBlock = install.slice(
+    // A refusal is recognised where each source is asked, and explained where
+    // every source has failed.
+    const attempt = install.slice(install.indexOf('function Get-FromSource'), install.indexOf('function Get-FailureWords'));
+    expect(attempt).toMatch(/40\[39\]/);
+    expect(attempt).toContain("$result.Kind = 'refused'");
+    const message = install.slice(
       install.indexOf("Stop-Install 'AI17Z could not work out which release to install.'") - 900,
       install.indexOf("Stop-Install 'AI17Z could not work out which release to install.'") + 400,
     );
-    expect(catchBlock).toMatch(/40\[39\]|403/);
-    expect(catchBlock).toMatch(/rate limit/i);
+    expect(message).toContain("$attempt.Kind -eq 'refused'");
+    expect(message).toMatch(/rate limit/i);
     // The connection is still the answer for everything that is not a refusal.
-    expect(catchBlock).toContain('Check your internet connection');
+    expect(message).toContain('Check your internet connection');
   });
 
   it('knows a release that is not there from a network that is not working', () => {
@@ -365,15 +408,13 @@ describe('a refusal sends somebody to the right place', () => {
     // worked out which release perfectly well; that release does not exist, and
     // GitHub said so with a 404. Observed by running the published command on a
     // real machine, which is the only way a message like this is ever read.
-    const catchBlock = install.slice(
-      install.indexOf("} catch {\n  $why = '' + $_.Exception.Message"),
-      install.indexOf("Stop-Install 'AI17Z could not work out which release to install.'"),
-    );
-    expect(catchBlock).toMatch(/404/);
-    expect(catchBlock).toContain('There is no release called');
+    const attempt = install.slice(install.indexOf('function Get-FromSource'), install.indexOf('function Get-FailureWords'));
+    expect(attempt).toMatch(/404/);
     // And only when a release was named: a 404 with none named is a different
     // thing and must not claim the person asked for something that is missing.
-    expect(catchBlock).toContain('if ($Release -and');
+    expect(attempt).toContain("if ($Release -and $why -match '\\(404\\)') { $result.Kind = 'no-such-release' }");
+    const explained = install.slice(install.indexOf("'no-such-release' {"), install.indexOf("'no-release' {", install.indexOf("'no-such-release' {")));
+    expect(explained).toContain('There is no release called');
   });
 
   it('does not point at a file the clean path deletes', () => {
@@ -400,13 +441,13 @@ describe('a refusal sends somebody to the right place', () => {
       ['macOS', read('install-ai17z-macos.sh')],
       ['Ubuntu', read('install-ai17z-ubuntu.sh')],
     ] as const) {
-      const at = script.indexOf('AI17Z could not be reached.');
+      const at = script.indexOf('AI17Z could not be downloaded.');
       expect(at, `${name}: the unreachable refusal is gone`).toBeGreaterThan(-1);
       const refusal = script.slice(at, at + 500);
       expect(refusal, `${name} still blames the connection outright`).not.toMatch(
         /^\s*"Check your internet connection/m,
       );
-      expect(refusal, `${name} does not mention the rate limit`).toMatch(/limits addresses that are not signed in/);
+      expect(refusal, `${name} does not mention the rate limit`).toMatch(/limit addresses that are not signed in/);
       // And it still says nothing was changed, which is the half that matters.
       expect(refusal).toMatch(/was changed/);
     }

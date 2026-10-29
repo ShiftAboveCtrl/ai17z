@@ -133,15 +133,62 @@ ai17z_version_is_newer() { # candidate installed
     "$root/packaging/preflight.mts" --newer "$1" "$2" 2>/dev/null) || printf ''
 }
 
-# The newest release's tag, from AI17Z Code's releases API, newest first.
+# Where a release is fetched from, in order: GitHub, then AI17Z Code.
+#
+# GitHub is the copy people know, and every release is mirrored there with
+# every file an updater fetches. AI17Z Code, AI17Z's own Forgejo, is the source
+# of truth and the fallback: with GitHub unreachable, refusing or behind, every
+# update still completes from there. The same list as RELEASE_SOURCES in
+# packages/shared/src/releaseManifest.ts, held there by
+# tests/unit/releaseSources.test.ts.
+AI17Z_SOURCE_NAMES=("GitHub" "AI17Z Code")
+AI17Z_SOURCE_LISTS=(
+  "https://api.github.com/repos/ShiftAboveCtrl/ai17z/releases?per_page=10"
+  "https://code.ai17z.io/api/v1/repos/AI17Z/ai17z/releases?limit=10"
+)
+AI17Z_SOURCE_DOWNLOADS=(
+  "https://github.com/ShiftAboveCtrl/ai17z/releases/download"
+  "https://code.ai17z.io/AI17Z/ai17z/releases/download"
+)
+# Every host a download may start at or be redirected to. GitHub answers a
+# release download with a redirect to its own storage host, so the host that
+# answered is judged as well as the one asked.
+AI17Z_DOWNLOAD_HOSTS="api.github.com github.com release-assets.githubusercontent.com objects.githubusercontent.com code.ai17z.io"
+
+# Whether an address is HTTPS on a host above. Exact names only: no suffix
+# match, because github.com.example.net ends in nothing this trusts.
+ai17z_url_allowed() { # url
+  local host
+  case "$1" in
+    https://*) host="${1#https://}"; host="${host%%/*}" ;;
+    *) return 1 ;;
+  esac
+  case " $AI17Z_DOWNLOAD_HOSTS " in *" $host "*) return 0 ;; esac
+  return 1
+}
+
+# One file, refused before the request if the address is not allowed and
+# deleted after it if the address that answered is not. `--proto-redir` keeps a
+# redirect on HTTPS too.
+ai17z_fetch() { # destination url
+  local landed
+  ai17z_url_allowed "$2" || return 2
+  landed="$(curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 --max-redirs 5 \
+    -w '%{url_effective}' -o "$1" "$2" 2>/dev/null)" || { rm -f "$1"; return 1; }
+  if [ -n "$landed" ] && ! ai17z_url_allowed "$landed"; then rm -f "$1"; return 2; fi
+}
+
+# The newest release's tag, from the first source whose list answers.
 #
 # Not /releases/latest, which is the server choosing; the list is read and the
 # first tag taken. It lists prereleases, which every AI17Z release so far is,
-# and never a draft to a caller that is not signed in.
+# and never a draft to a caller that is not signed in. GitHub's Latest label
+# decides nothing.
 #
-# This used to read GitHub's releases feed, to keep clear of the REST budget an
-# agent watching a GitHub repository spends. That budget belongs to another host
-# now, so the two cannot meet.
+# GitHub's API allows sixty anonymous requests an hour per address, and an
+# agent watching a GitHub repository from this machine spends from the same
+# allowance. A refusal from GitHub is therefore expected now and then, and it
+# is answered by asking AI17Z Code, never by giving up.
 #
 # Prints the tag, or nothing. Nothing is a refusal for the caller to report; it
 # is never a reason to guess a version.
@@ -152,23 +199,46 @@ ai17z_version_is_newer() { # candidate installed
 # then the wrong answer for that platform, not a reason to stop: an updater
 # offers the newest it can actually install. Asset names carry the version, so
 # matching the name in the list cannot pick up another release's file.
-ai17z_latest_release_tag() { # repository [asset named with <version>]
-  local repository="$1" template="${2:-}" json tag asset
-  json="$(curl -fsSL --proto '=https' --tlsv1.2 --retry 3 \
-    "https://code.ai17z.io/api/v1/repos/${repository}/releases?limit=10" 2>/dev/null)" || return 0
-  for tag in $(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/'); do
-    if [ -z "$template" ]; then printf '%s\n' "$tag"; return 0; fi
-    asset="${template//<version>/${tag#v}}"
-    if printf '%s' "$json" | grep -qF "\"${asset}\""; then printf '%s\n' "$tag"; return 0; fi
+ai17z_latest_release_tag() { # [asset named with <version>]
+  local template="${1:-}" json tag asset index
+  for index in "${!AI17Z_SOURCE_LISTS[@]}"; do
+    json="$(curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 \
+      "${AI17Z_SOURCE_LISTS[$index]}" 2>/dev/null)" || continue
+    for tag in $(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/'); do
+      if [ -z "$template" ]; then printf '%s\n' "$tag"; return 0; fi
+      asset="${template//<version>/${tag#v}}"
+      if printf '%s' "$json" | grep -qF "\"${asset}\""; then printf '%s\n' "$tag"; return 0; fi
+    done
   done
 }
 
-# Where one published file of one release lives, addressed by its own tag.
+# Where one published file of one release lives on one source, by exact tag.
 #
 # Exact tag rather than "latest", so what is fetched is decided before the
-# request. AI17Z Code serves it itself, from its own storage.
-ai17z_release_asset_url() { # repository tag asset
-  printf 'https://code.ai17z.io/%s/releases/download/%s/%s' "$1" "$2" "$3"
+# request.
+ai17z_release_asset_url() { # source-index tag asset
+  printf '%s/%s/%s' "${AI17Z_SOURCE_DOWNLOADS[$1]}" "$2" "$3"
+}
+
+# Several files of one release, all from the first source that has every one.
+#
+# One source serves them all, so a package is always checked against the
+# checksums published beside it, and a failure is never ambiguous about which
+# host was wrong. A source missing any file, or breaking off mid-download, is
+# cleared out and the next one asked. Prints the name of the source that
+# served them; returns 1, having printed nothing, when none could.
+ai17z_fetch_release_files() { # directory tag file...
+  local directory="$1" tag="$2" index name ok
+  shift 2
+  for index in "${!AI17Z_SOURCE_DOWNLOADS[@]}"; do
+    ok=1
+    for name in "$@"; do
+      if ! ai17z_fetch "$directory/$name" "$(ai17z_release_asset_url "$index" "$tag" "$name")"; then ok=0; break; fi
+    done
+    if [ "$ok" = 1 ]; then printf '%s\n' "${AI17Z_SOURCE_NAMES[$index]}"; return 0; fi
+    for name in "$@"; do rm -f "$directory/$name"; done
+  done
+  return 1
 }
 
 # One value out of the environment file.

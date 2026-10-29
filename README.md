@@ -78,23 +78,23 @@ browser-backed channels.
 | Platform | Recommended | Also available in each release |
 | --- | --- | --- |
 | Windows 10 and 11 | The command below | `AI17Z-Setup-<version>.exe` |
-| macOS 13+ (Apple silicon and Intel) | [`install-ai17z-macos.sh`](https://github.com/ShiftAboveCtrl/ai17z/releases/latest/download/install-ai17z-macos.sh) | `AI17Z-macos-arm64-<version>.tar.gz`, `AI17Z-macos-x64-<version>.tar.gz` |
-| Ubuntu 22.04+ (amd64 and arm64) | [`install-ai17z-ubuntu.sh`](https://github.com/ShiftAboveCtrl/ai17z/releases/latest/download/install-ai17z-ubuntu.sh) | `ai17z_<version>_amd64.deb`, `ai17z_<version>_arm64.deb` |
+| macOS 13+ (Apple silicon and Intel) | The command below | `AI17Z-macos-arm64-<version>.tar.gz`, `AI17Z-macos-x64-<version>.tar.gz` |
+| Ubuntu 22.04+ (amd64 and arm64) | The command below | `ai17z_<version>_amd64.deb`, `ai17z_<version>_arm64.deb` |
 
-Checksums for every file are in each release's
-[`SHA256SUMS.txt`](https://github.com/ShiftAboveCtrl/ai17z/releases/latest/download/SHA256SUMS.txt).
-[GitHub releases](https://github.com/ShiftAboveCtrl/ai17z/releases) carry the
-files people download. [AI17Z Code](https://code.ai17z.io/AI17Z/ai17z/releases)
-also carries the files the installers fetch themselves and a signature for
-every file. Release names such as `beta-v9.7` correspond to semver tags such as
-`v1.0.0-beta.87`.
+The installers download from [GitHub releases](https://github.com/ShiftAboveCtrl/ai17z/releases),
+and from [AI17Z Code](https://code.ai17z.io/AI17Z/ai17z/releases), AI17Z's own
+server, when GitHub cannot provide a file. Both carry the same files, and every
+download is checked against the release's
+[`SHA256SUMS.txt`](https://github.com/ShiftAboveCtrl/ai17z/releases/latest/download/SHA256SUMS.txt)
+before it is used. Release names such as `beta-v9.7` correspond to semver tags
+such as `v1.0.0-beta.87`.
 
 ### Windows
 
 Open Windows Terminal and run:
 
 ```powershell
-irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
 ```
 
 The installer checks the system, installs any missing prerequisites, installs
@@ -102,14 +102,34 @@ AI17Z, starts it, confirms it is working and opens it in your browser.
 
 ### macOS and Ubuntu
 
-Download the installer for your system from the table above and run it. Both
-are short shell scripts that can be reviewed before running.
+Open a terminal and run the line for your system. Each downloads a short shell
+script you can read before running it.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh && bash install-ai17z-macos.sh
+```
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-ubuntu.sh && bash install-ai17z-ubuntu.sh
+```
+
+### If GitHub is down
+
+The same installers are on AI17Z Code. Use these instead:
+
+```powershell
+irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex
+```
+
+```bash
+curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-ubuntu.sh && bash install-ai17z-ubuntu.sh
+```
 
 > **Install AI17Z only with the command published here** or from the release
-> pages linked above. Nowhere else distributes it. The command downloads
-> `code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1`, verifies the setup
-> script against the release's `SHA256SUMS.txt` before writing anything, and
-> verifies it again immediately before running it.
+> pages linked above. Nowhere else distributes it. The Windows command downloads
+> `install.ps1` from this repository, verifies the setup script against the
+> release's `SHA256SUMS.txt` before writing anything, and verifies it again
+> immediately before running it.
 >
 > The installer does not disable SmartScreen, Defender, UAC or the PowerShell
 > execution policy. [docs/SETUP_AUDIT.md](docs/SETUP_AUDIT.md) lists every host

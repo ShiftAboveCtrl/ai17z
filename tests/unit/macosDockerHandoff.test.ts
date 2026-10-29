@@ -109,9 +109,17 @@ describe('the Docker Desktop handover on macOS', () => {
     // goes through the same assertion as everything else.
     expect(installer).toMatch(/ALLOWED_HOSTS=.*desktop\.docker\.com/);
     expect(runs).toMatch(/fetch_watched "\$DOCKER_DMG" "\$DOCKER_URL"/);
-    // Every curl in the file is inside a helper that asserts the host first.
+    // Every curl in the file is inside a helper that asserts the host first:
+    // a one-line helper, or `ai17z_fetch`, the release helper shared with
+    // every Unix script, which asserts before the request and again on the
+    // address a redirect landed on.
+    const shared = runs.slice(runs.indexOf('ai17z_fetch() {'), runs.indexOf('\n}\n', runs.indexOf('ai17z_fetch() {')));
+    expect(shared.indexOf('ai17z_url_allowed "$2" || return 2')).toBeGreaterThan(-1);
+    expect(shared.indexOf('ai17z_url_allowed "$2" || return 2')).toBeLessThan(shared.indexOf('curl '));
+    expect(shared).toContain('! ai17z_url_allowed "$landed"');
     for (const line of runs.split(/\r?\n/)) {
       if (!/curl /.test(line)) continue;
+      if (shared.includes(line)) continue;
       expect(line, `a curl outside the allow-list helpers: ${line.trim()}`).toMatch(
         /^(fetch|fetch_watched|fetch_stdout)\(\)/,
       );

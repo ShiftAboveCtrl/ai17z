@@ -265,10 +265,16 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # Publishing is two hosts now, and both are this one step, because the
+      # release credentials are named by exactly one step. AI17Z Code first, as
+      # the source of truth; then GitHub, which installers ask first, from the
+      # same files, checked against the same SHA256SUMS.txt. A release is not
+      # finished until both carry it.
       - env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITHUB_MIRROR_TOKEN: ${{ secrets.GITHUB_MIRROR_TOKEN }}
         run: |
           VERSION="${{ needs.version.outputs.version }}"
           [ -f dist/release.env ] && . dist/release.env && export RELEASE_NAME && rm -f dist/release.env
@@ -276,6 +282,7 @@ jobs:
             bash .forgejo/scripts/publish-release.sh dist "$VERSION" rehearsal
           else
             bash .forgejo/scripts/publish-release.sh dist "$VERSION"
+            bash .forgejo/scripts/mirror-github.sh "v$VERSION" dist
           fi
       - if: startsWith(github.ref_name, 'rehearsal-')
         uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4

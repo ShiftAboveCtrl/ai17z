@@ -56,15 +56,22 @@ let calls: string[] = [];
 const isListing = (url: string) => url.startsWith(`https://code.ai17z.io/api/v1/repos/${REPO}/releases`);
 const listCalls = () => calls.filter(isListing);
 const githubCalls = () => calls.filter((url) => url.includes('github.com'));
+const GITHUB_DOWNLOAD = 'https://github.com/ShiftAboveCtrl/ai17z/releases/download';
+const githubAsset = (tag: string, name: string) => `${GITHUB_DOWNLOAD}/${tag}/${name}`;
+const isGithubListing = (url: string) => url.startsWith('https://api.github.com/repos/ShiftAboveCtrl/ai17z/releases');
 
 /**
  * The world, served the way the update path actually reaches it.
  *
- * Anything asking `api.github.com` is answered 403 on purpose. That is the
- * exhausted anonymous budget an agent watching a GitHub repository produces,
- * and the point of these tests is that the update path never touches GitHub.
+ * GitHub is asked first. Unless a test gives it releases of its own, it
+ * answers 403, which is the exhausted anonymous budget an agent watching a
+ * GitHub repository produces, and the update path must then carry on to AI17Z
+ * Code as if nothing had happened.
  */
-function serve(releases: FakeRelease[] | Error, options: { restStatus?: number } = {}): void {
+function serve(
+  releases: FakeRelease[] | Error,
+  options: { restStatus?: number; github?: FakeRelease[] } = {},
+): void {
   vi.stubGlobal(
     'fetch',
     (async (url: string | URL) => {
@@ -72,6 +79,22 @@ function serve(releases: FakeRelease[] | Error, options: { restStatus?: number }
       calls.push(href);
       if (releases instanceof Error) throw releases;
 
+      if (options.github) {
+        if (isGithubListing(href)) {
+          return new Response(listing(options.github), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        for (const entry of options.github) {
+          if (href === githubAsset(entry.tag, 'release-manifest.json')) {
+            if (entry.manifest === null) return new Response('Not Found', { status: 404 });
+            return new Response(JSON.stringify(entry.manifest), { status: 200 });
+          }
+          if (href === githubAsset(entry.tag, 'release-notes.md')) {
+            if (entry.notes === null) return new Response('Not Found', { status: 404 });
+            return new Response(entry.notes, { status: 200 });
+          }
+        }
+        if (href.startsWith('https://github.com/')) return new Response('Not Found', { status: 404 });
+      }
       if (href.includes('api.github.com')) {
         return new Response('{"message":"API rate limit exceeded"}', { status: options.restStatus ?? 403 });
       }
@@ -167,7 +190,7 @@ describe('finding out whether there is a newer version', () => {
     serve([release('v9.9.9')]);
     await fetchLatestRelease('0.1.0');
     expect(listCalls()).toHaveLength(1);
-    expect(githubCalls()).toHaveLength(0);
+    expect(githubCalls().filter(isGithubListing)).toHaveLength(1);
     // `/releases/latest` is the server deciding what is newest; here the tag does.
     expect(calls.some((url) => url.includes('/releases/latest'))).toBe(false);
   });
@@ -178,9 +201,9 @@ describe('finding out whether there is a newer version', () => {
  *
  * An agent told to watch a repository polls GitHub through the REST API, and
  * the unauthenticated allowance is sixty an hour for the whole address. When
- * AI17Z itself was published there, two installations on one connection
- * exhausted it and the updater went blind. Published on AI17Z Code, the
- * update path asks GitHub nothing, so that budget cannot reach it.
+ * AI17Z itself was published only there, two installations on one connection
+ * exhausted it and the updater went blind. GitHub is asked first again now,
+ * and a refusal from it is answered by AI17Z Code rather than by blindness.
  */
 describe('not being starved by the agent that watches GitHub', () => {
   it('finds the release while the REST budget is exhausted', async () => {
@@ -192,10 +215,47 @@ describe('not being starved by the agent that watches GitHub', () => {
     expect(state.error).toBeNull();
   });
 
-  it('does not send a single request to GitHub doing it', async () => {
+  it('asks GitHub once, and takes the whole answer from AI17Z Code', async () => {
     serve([release('v9.9.9')]);
-    await updateState({ refresh: true });
-    expect(githubCalls()).toEqual([]);
+    const state = await updateState({ refresh: true });
+    expect(githubCalls()).toHaveLength(1);
+    // Links, notes and manifest all from the source that answered, never mixed.
+    expect(state.latest?.url).toMatch(/^https:\/\/code\.ai17z\.io\//);
+    expect(state.latest?.setupUrl).toMatch(/^https:\/\/code\.ai17z\.io\//);
+  });
+});
+
+describe('GitHub first', () => {
+  it('takes the whole answer from GitHub when GitHub has it', async () => {
+    serve([release('v9.9.9')], { github: [release('v9.9.9', { title: 'AI17Z beta-v9.9' })] });
+    const latest = await fetchLatestRelease('9.0.0');
+    expect(latest?.version).toBe('9.9.9');
+    expect(latest?.url).toBe('https://github.com/ShiftAboveCtrl/ai17z/releases/tag/v9.9.9');
+    expect(latest?.setupUrl).toBe(githubAsset('v9.9.9', 'Install-AI17Z-9.9.9.ps1'));
+    expect(latest?.name).toBe('AI17Z beta-v9.9');
+    // AI17Z Code was never needed, so it was never asked.
+    expect(listCalls()).toHaveLength(0);
+  });
+
+  it('falls back when GitHub lists a release whose files are not mirrored yet', async () => {
+    serve([release('v9.9.9')], { github: [release('v9.9.9', { manifest: null })] });
+    const latest = await fetchLatestRelease('9.0.0');
+    expect(latest?.version).toBe('9.9.9');
+    expect(latest?.url).toMatch(/^https:\/\/code\.ai17z\.io\//);
+  });
+
+  it('offers what GitHub has when the mirror is a release behind', async () => {
+    // Safe, and the reason the mirror runs as part of publishing: until it
+    // does, GitHub first means the release before.
+    serve([release('v9.9.9'), release('v9.9.8')], { github: [release('v9.9.8')] });
+    expect((await fetchLatestRelease('9.0.0'))?.version).toBe('9.9.8');
+  });
+
+  it('names what each source said when neither could answer', async () => {
+    vi.stubGlobal('fetch', (async () => new Response('nope', { status: 503 })) as unknown as typeof fetch);
+    const state = await updateState({ refresh: true });
+    expect(state.error).toContain('GitHub:');
+    expect(state.error).toContain('AI17Z Code:');
   });
 
   it('needs no token, and gains no privilege from one', async () => {
@@ -283,9 +343,12 @@ describe('what happens when the release host cannot be reached', () => {
   it('asks a bounded number of times and then stops', async () => {
     serve(new Error('network down'));
     await updateState({ refresh: true });
-    // One attempt per check. A failing network must not turn the update check
-    // into a retry loop against somebody else's server.
-    expect(calls.length).toBeLessThanOrEqual(1);
+    // One attempt per source per check: GitHub once, AI17Z Code once. A failing
+    // network must not turn the update check into a retry loop against
+    // somebody else's server.
+    expect(calls.length).toBeLessThanOrEqual(2);
+    expect(calls.filter(isGithubListing)).toHaveLength(1);
+    expect(listCalls()).toHaveLength(1);
   });
 });
 

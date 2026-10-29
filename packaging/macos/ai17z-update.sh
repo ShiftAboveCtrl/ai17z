@@ -23,7 +23,9 @@ HERE="$(dirname "$APP_ROOT")"
 ai17z_resolve_paths "$APP_ROOT"
 
 REPOSITORY="AI17Z/ai17z"
-ALLOWED_HOSTS="code.ai17z.io"
+# Downloads go through ai17z_fetch_release_files in ai17z-paths.sh, which asks
+# GitHub first and AI17Z Code second and refuses any host it does not declare,
+# before the request and again where the request landed.
 
 CHECK_ONLY=0; ASSUME_YES=0; WANT_RELEASE=""
 while [ $# -gt 0 ]; do
@@ -52,13 +54,6 @@ oops() {
 }
 
 WORK=""; trap '[ -n "$WORK" ] && rm -rf "$WORK"' EXIT INT TERM
-assert_allowed_url() {
-  local host
-  case "$1" in https://*) host="${1#https://}"; host="${host%%/*}" ;; *) oops "HTTPS only." "$1" "" ;; esac
-  case " $ALLOWED_HOSTS " in *" $host "*) ;; *) oops "AI17Z will not download from ${host}." "" "" ;; esac
-}
-fetch() { assert_allowed_url "$2"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$1" "$2"; }
-fetch_stdout() { assert_allowed_url "$1"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 "$1"; }
 
 CURRENT="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$APP_ROOT/BUILD_INFO.json" 2>/dev/null | head -1)"
 [ -n "$CURRENT" ] || oops "Cannot tell which version is installed." "" ""
@@ -78,7 +73,7 @@ if [ -n "$WANT_RELEASE" ]; then
 else
   # The newest release with a package for this Mac, which is the newest
   # release unless one was published without it.
-  TAG="$(ai17z_latest_release_tag "$REPOSITORY" "AI17Z-macos-${ARCH}-<version>.tar.gz")"
+  TAG="$(ai17z_latest_release_tag "AI17Z-macos-${ARCH}-<version>.tar.gz")"
 fi
 [ -n "$TAG" ] || oops "AI17Z could not be reached." "Nothing was changed." ""
 [ -n "$TAG" ] || oops "No release was found." "" ""
@@ -178,14 +173,13 @@ gate_said_nothing() { # why
 
 step "Checking compatibility"
 WORK="$(mktemp -d)"; chmod 700 "$WORK"
-MANIFEST_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" 'release-manifest.json')"
-if [ -n "$MANIFEST_URL" ] && fetch "$WORK/manifest.json" "$MANIFEST_URL"; then
+if ai17z_fetch_release_files "$WORK" "$TAG" release-manifest.json >/dev/null; then
   NODE_BIN="$(ai17z_node)"
   DOCKER_VERSION="$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '')"
   CHROME_APP="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
   CHROME_MAJOR="$("$CHROME_APP" --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo '')"
   VERDICT="$(cd "$APP_ROOT" && "$NODE_BIN" "$APP_ROOT/node_modules/tsx/dist/cli.mjs" \
-    "$APP_ROOT/packaging/preflight.mts" "$WORK/manifest.json" macos "$ARCH" \
+    "$APP_ROOT/packaging/preflight.mts" "$WORK/release-manifest.json" macos "$ARCH" \
     "$(sw_vers -productVersion)" "$DOCKER_VERSION" "$CHROME_MAJOR" 2>/dev/null || echo SKIP)"
   case "$VERDICT" in
     NO*) oops "AI17Z ${VERSION} cannot run on this Mac." "$(printf '%s' "$VERDICT" | tail -n +2)" \
@@ -210,11 +204,12 @@ fi
 
 step "Downloading AI17Z ${VERSION}"
 TAR_NAME="AI17Z-macos-${ARCH}-${VERSION}.tar.gz"
-TAR_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" "$TAR_NAME")"
-SUMS_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" 'SHA256SUMS.txt')"
-[ -n "$TAR_URL" ] || oops "Release ${TAG} has no Mac package for ${ARCH}." "Nothing was changed." ""
-[ -n "$SUMS_URL" ] || oops "Release ${TAG} publishes no SHA256SUMS.txt." "Nothing was changed." ""
-fetch "$WORK/$TAR_NAME" "$TAR_URL"; fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
+# The package and the checksums it is held against, from one source.
+SOURCE="$(ai17z_fetch_release_files "$WORK" "$TAG" "$TAR_NAME" SHA256SUMS.txt)" || oops \
+  "AI17Z ${VERSION} could not be downloaded." \
+  "Neither GitHub nor AI17Z Code could provide ${TAR_NAME} and its SHA256SUMS.txt.
+Nothing was changed. AI17Z ${CURRENT} is still installed." ""
+note "Downloaded from ${SOURCE}"
 
 step "Verifying"
 EXPECTED="$(grep -E "[[:space:]]\*?${TAR_NAME}\$" "$WORK/SHA256SUMS.txt" | awk '{print $1}' | head -1)"

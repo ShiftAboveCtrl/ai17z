@@ -66,11 +66,19 @@ everywhere and enables browser-backed channels.
 Open **Windows Terminal** and paste this:
 
 ```powershell
-irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
 ```
 
 That is the whole installation. It checks what this PC has, installs anything
 missing, installs AI17Z, starts it, checks it actually works, and opens it.
+
+It downloads the release from GitHub, and from AI17Z Code, AI17Z's own server,
+when GitHub cannot provide a file. If GitHub itself is down, the same command
+works from AI17Z Code:
+
+```powershell
+irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex
+```
 
 **Install AI17Z only with the command published here.** Nowhere else distributes
 it.
@@ -104,7 +112,7 @@ The setup program is [`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/
 To see what it would do to this PC without doing any of it:
 
 ```powershell
-& ([scriptblock]::Create((irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1))) -WhatIfOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -WhatIfOnly
 ```
 
 **[How to audit it](SETUP_AUDIT.md)** — every privileged action, every
@@ -118,7 +126,7 @@ different databases, different signed-in accounts. They share nothing, and
 **updating one leaves the others exactly as they are.**
 
 ```powershell
-$s = irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1
+$s = irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1
 & ([scriptblock]::Create($s)) -List                 # what is installed
 & ([scriptblock]::Create($s)) -NewInstance          # install another
 & ([scriptblock]::Create($s)) -Instance AI17Z-test  # update that one
@@ -151,7 +159,7 @@ such. You do not need it.
 ## macOS
 
 ```bash
-curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-macos.sh
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh
 less install-ai17z-macos.sh
 bash install-ai17z-macos.sh
 ```
@@ -191,7 +199,7 @@ Also: [Installing on macOS](MACOS_INSTALL.md) ·
 ## Ubuntu
 
 ```bash
-curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-ubuntu.sh
+curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-ubuntu.sh
 less install-ai17z-ubuntu.sh
 bash install-ai17z-ubuntu.sh
 ```

@@ -18,7 +18,9 @@ APP_ROOT="${AI17Z_APP_ROOT:-/usr/lib/ai17z/app}"
 ai17z_resolve_paths "$APP_ROOT"
 
 REPOSITORY="AI17Z/ai17z"
-ALLOWED_HOSTS="code.ai17z.io"
+# Downloads go through ai17z_fetch_release_files in ai17z-paths.sh, which asks
+# GitHub first and AI17Z Code second and refuses any host it does not declare,
+# before the request and again where the request landed.
 
 CHECK_ONLY=0; ASSUME_YES=0; WANT_RELEASE=""
 while [ $# -gt 0 ]; do
@@ -51,15 +53,6 @@ oops() {
 
 WORK=""; trap '[ -n "$WORK" ] && rm -rf "$WORK"' EXIT INT TERM
 
-assert_allowed_url() {
-  local host
-  case "$1" in https://*) host="${1#https://}"; host="${host%%/*}" ;;
-    *) oops "AI17Z only downloads over HTTPS." "$1" "" ;; esac
-  case " $ALLOWED_HOSTS " in *" $host "*) ;;
-    *) oops "AI17Z will not download from ${host}." "" "" ;; esac
-}
-fetch() { assert_allowed_url "$2"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$1" "$2"; }
-fetch_stdout() { assert_allowed_url "$1"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 "$1"; }
 
 CURRENT="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$APP_ROOT/BUILD_INFO.json" 2>/dev/null | head -1)"
 [ -n "$CURRENT" ] || oops "Cannot tell which version is installed." "$APP_ROOT/BUILD_INFO.json is missing or unreadable." ""
@@ -71,21 +64,20 @@ printf '\n  %sAI17Z%s  %s\n\n' "$GREEN" "$OFF" "$CURRENT"
 # 1. Which release
 # ---------------------------------------------------------------------------
 step "Checking for a newer AI17Z"
-# Which release, found without spending the REST budget.
-#
-# `ai17z_latest_release_tag` asks AI17Z Code's releases API, a different host from
-# the one an agent watching a GitHub repository spends its budget on, so the
-# two cannot starve each other.
+# Which release. `ai17z_latest_release_tag` asks GitHub's releases list, and
+# AI17Z Code's when GitHub refuses or does not answer: GitHub's anonymous
+# allowance is shared with any agent here watching a GitHub repository, so a
+# refusal is expected now and then and is never the end of the question.
 # Nothing is guessed: an empty answer is reported and the update stops.
 if [ -n "$WANT_RELEASE" ]; then
   TAG="$WANT_RELEASE"
 else
   # The newest release with a package for this processor, which is the
   # newest release unless one was published without it.
-  TAG="$(ai17z_latest_release_tag "$REPOSITORY" "ai17z_<version>_${ARCH}.deb")"
+  TAG="$(ai17z_latest_release_tag "ai17z_<version>_${ARCH}.deb")"
 fi
 [ -n "$TAG" ] || oops "AI17Z could not be reached." \
-  "Nothing was changed." "Check your internet connection and try again."
+  "Neither GitHub nor AI17Z Code answered. Nothing was changed." "Check your internet connection and try again."
 VERSION="${TAG#v}"
 
 if [ "$VERSION" = "$CURRENT" ]; then
@@ -192,31 +184,26 @@ gate_said_nothing() { # why
 }
 
 step "Checking compatibility"
-MANIFEST_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" 'release-manifest.json')"
-if [ -n "$MANIFEST_URL" ]; then
-  WORK="$(mktemp -d)"; chmod 700 "$WORK"
-  if fetch "$WORK/manifest.json" "$MANIFEST_URL"; then
-    NODE_BIN="$(ai17z_node)"
-    DOCKER_VERSION="$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '')"
-    CHROME_MAJOR="$(google-chrome --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo '')"
-    UBUNTU_VERSION="$(. /etc/os-release && echo "${VERSION_ID:-}")"
-    # Through the bundled tsx, against the shared decision in @xbam/shared, so
-    # three platforms cannot drift apart about what "compatible" means.
-    VERDICT="$(cd "$APP_ROOT" && "$NODE_BIN" "$APP_ROOT/node_modules/tsx/dist/cli.mjs" \
-      "$APP_ROOT/packaging/preflight.mts" \
-      "$WORK/manifest.json" ubuntu "$([ "$ARCH" = amd64 ] && echo x64 || echo arm64)" \
-      "$UBUNTU_VERSION" "$DOCKER_VERSION" "$CHROME_MAJOR" 2>/dev/null || echo SKIP)"
-    case "$VERDICT" in
-      NO*) oops "AI17Z ${VERSION} cannot run on this machine." \
-             "$(printf '%s' "$VERDICT" | tail -n +2)" \
-             "Nothing was changed. AI17Z ${CURRENT} is still installed and still running." ;;
-      OK*) good "This machine meets what ${VERSION} needs"
-           printf '%s' "$VERDICT" | tail -n +2 | while IFS= read -r l; do [ -n "$l" ] && note "$l"; done ;;
-      *)   gate_said_nothing unreadable ;;
-    esac
-  else
-    gate_said_nothing no-manifest
-  fi
+WORK="$(mktemp -d)"; chmod 700 "$WORK"
+if ai17z_fetch_release_files "$WORK" "$TAG" release-manifest.json >/dev/null; then
+  NODE_BIN="$(ai17z_node)"
+  DOCKER_VERSION="$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '')"
+  CHROME_MAJOR="$(google-chrome --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo '')"
+  UBUNTU_VERSION="$(. /etc/os-release && echo "${VERSION_ID:-}")"
+  # Through the bundled tsx, against the shared decision in @xbam/shared, so
+  # three platforms cannot drift apart about what "compatible" means.
+  VERDICT="$(cd "$APP_ROOT" && "$NODE_BIN" "$APP_ROOT/node_modules/tsx/dist/cli.mjs" \
+    "$APP_ROOT/packaging/preflight.mts" \
+    "$WORK/release-manifest.json" ubuntu "$([ "$ARCH" = amd64 ] && echo x64 || echo arm64)" \
+    "$UBUNTU_VERSION" "$DOCKER_VERSION" "$CHROME_MAJOR" 2>/dev/null || echo SKIP)"
+  case "$VERDICT" in
+    NO*) oops "AI17Z ${VERSION} cannot run on this machine." \
+           "$(printf '%s' "$VERDICT" | tail -n +2)" \
+           "Nothing was changed. AI17Z ${CURRENT} is still installed and still running." ;;
+    OK*) good "This machine meets what ${VERSION} needs"
+         printf '%s' "$VERDICT" | tail -n +2 | while IFS= read -r l; do [ -n "$l" ] && note "$l"; done ;;
+    *)   gate_said_nothing unreadable ;;
+  esac
 else
   gate_said_nothing no-manifest
 fi
@@ -239,15 +226,13 @@ fi
 step "Downloading AI17Z ${VERSION}"
 [ -n "$WORK" ] || { WORK="$(mktemp -d)"; chmod 700 "$WORK"; }
 DEB_NAME="ai17z_${VERSION}_${ARCH}.deb"
-DEB_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" "$DEB_NAME")"
-SUMS_URL="$(ai17z_release_asset_url "$REPOSITORY" "$TAG" 'SHA256SUMS.txt')"
-[ -n "$DEB_URL" ] || oops "Release ${TAG} has no package for ${ARCH}." \
-  "Nothing was changed. AI17Z ${CURRENT} is still installed." ""
-[ -n "$SUMS_URL" ] || oops "Release ${TAG} publishes no SHA256SUMS.txt." \
-  "AI17Z will not install a package it cannot check. Nothing was changed." ""
-
-fetch "$WORK/$DEB_NAME" "$DEB_URL"
-fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
+# The package and the checksums it is held against, from one source.
+SOURCE="$(ai17z_fetch_release_files "$WORK" "$TAG" "$DEB_NAME" SHA256SUMS.txt)" || oops \
+  "AI17Z ${VERSION} could not be downloaded." \
+  "Neither GitHub nor AI17Z Code could provide ${DEB_NAME} and its SHA256SUMS.txt.
+Nothing was changed. AI17Z ${CURRENT} is still installed." \
+  "Check your internet connection and try again."
+note "Downloaded from ${SOURCE}"
 
 step "Verifying"
 EXPECTED="$(grep -E "[[:space:]]\*?${DEB_NAME}\$" "$WORK/SHA256SUMS.txt" | awk '{print $1}' | head -1)"

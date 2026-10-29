@@ -3,8 +3,8 @@
  *
  * The shape of this is a deliberate answer to "am I being forced to update?".
  * Nothing here downloads anything, nothing replaces a running installation, and
- * nothing nags. It asks AI17Z Code what has been released, compares that to what is
- * running, and puts the release notes on a screen. Everything after that is a
+ * nothing nags. It asks GitHub what has been released, and AI17Z Code when GitHub
+ * cannot answer, compares that to what is running, and puts the release notes on a screen. Everything after that is a
  * person clicking something.
  *
  * Three properties worth stating plainly, because an update mechanism that has
@@ -37,15 +37,14 @@ import {
   createLogger,
   errorMessage,
   nowIso,
+  forgejoSource,
+  GITHUB_SOURCE,
   RELEASE_PROJECT,
-  releaseAssetUrl,
   releaseName,
-  releasePageUrl,
-  releasesApiUrl,
   windowsInstallerAsset,
   windowsSetupAsset,
 } from '@xbam/shared';
-import type { InstallMethod } from '@xbam/shared';
+import type { InstallMethod, ReleaseSource } from '@xbam/shared';
 
 const log = createLogger('updates');
 
@@ -67,6 +66,11 @@ const SKIPPED_KEY = 'updates.skipped';
 const ENABLED_KEY = 'updates.enabled';
 
 const REPOSITORY = process.env.AI17Z_UPDATE_REPO ?? RELEASE_PROJECT;
+
+/** GitHub first, AI17Z Code when GitHub cannot answer. See `RELEASE_SOURCES`. */
+function releaseSources(): ReleaseSource[] {
+  return [GITHUB_SOURCE, forgejoSource(REPOSITORY)];
+}
 
 export interface ReleaseInfo {
   /** The version, with no leading v: `0.1.1`, `0.2.0-rc.1`. */
@@ -270,7 +274,34 @@ async function get(url: string, accept: string): Promise<Response> {
 }
 
 /**
- * The newest release this installation would accept.
+ * The newest release this installation would accept, from the first source
+ * that can say.
+ *
+ * GitHub is asked first and AI17Z Code second. A source that does not answer,
+ * refuses, or lists a release whose manifest is missing or disagrees with its
+ * tag hands the question to the next one, and the whole answer (list,
+ * manifest, notes, links) comes from that one source. A source that answers
+ * "nothing newer" is an answer, not a failure.
+ *
+ * Only when every source has failed is this an error, and the message names
+ * what each one said, because "GitHub refused and AI17Z Code was unreachable"
+ * sends somebody somewhere different from either half alone.
+ */
+export async function fetchLatestRelease(current = buildVersion().version): Promise<ReleaseInfo | null> {
+  const failures: string[] = [];
+  for (const source of releaseSources()) {
+    try {
+      return await latestFrom(source, current);
+    } catch (error) {
+      failures.push(`${source.name}: ${errorMessage(error)}`);
+      log.warn('update source did not answer, trying the next', { source: source.name, error: errorMessage(error) });
+    }
+  }
+  throw new Error(failures.join(' '));
+}
+
+/**
+ * The newest release one source would offer this installation.
  *
  * Three steps, and each one refuses rather than guesses:
  *
@@ -283,8 +314,8 @@ async function get(url: string, accept: string): Promise<Response> {
  * is listed the moment it is created, and its assets are linked after; a
  * manifest that is not there yet means the packages are not there either.
  */
-export async function fetchLatestRelease(current = buildVersion().version): Promise<ReleaseInfo | null> {
-  const listed = await get(releasesApiUrl(REPOSITORY), 'application/json');
+async function latestFrom(source: ReleaseSource, current: string): Promise<ReleaseInfo | null> {
+  const listed = await get(source.releasesApi(), 'application/json');
   if (!listed.ok) {
     throw new Error(`The releases list answered ${listed.status} ${listed.statusText}`.trim());
   }
@@ -295,7 +326,8 @@ export async function fetchLatestRelease(current = buildVersion().version): Prom
     .filter((entry) => entry.version.length > 0)
     // A tag carrying a prerelease part is a prerelease. The tag is the
     // authority, as it always was here, rather than a flag on the release that
-    // somebody could forget to tick.
+    // somebody could forget to tick. GitHub marks the newest beta Latest, and
+    // that label decides nothing here.
     // Somebody on a stable version is never shown a candidate build.
     .filter((entry) => onPrerelease || !entry.version.includes('-'))
     .sort((a, b) => compareVersions(b.version, a.version));
@@ -303,10 +335,7 @@ export async function fetchLatestRelease(current = buildVersion().version): Prom
   const newest = candidates[0];
   if (!newest) return null;
 
-  const manifest = await get(
-    releaseAssetUrl(REPOSITORY, newest.tag, MANIFEST_ASSET),
-    'application/json',
-  );
+  const manifest = await get(source.assetUrl(newest.tag, MANIFEST_ASSET), 'application/json');
   if (!manifest.ok) {
     throw new Error(
       `${newest.tag} is published but its ${MANIFEST_ASSET} is not, so the packages for it are not ready to install yet.`,
@@ -327,7 +356,8 @@ export async function fetchLatestRelease(current = buildVersion().version): Prom
   // A release's title defaults to its tag, and a heading that reads
   // `v1.0.0-beta.2` above the notes tells somebody nothing they did not get
   // from the number beside it. A title that is only the tag is treated as no
-  // title and rendered; a title somebody actually wrote is left alone.
+  // title and rendered; a title somebody actually wrote is left alone. The
+  // GitHub mirror titles a release `AI17Z beta-v9.7`, which is written.
   const named = releaseName(version);
   const written = newest.title.trim();
   const name = written && written !== newest.tag && written !== version ? written : named.title;
@@ -338,13 +368,13 @@ export async function fetchLatestRelease(current = buildVersion().version): Prom
     name,
     label: named.short,
     channel: named.channel,
-    notes: await fetchNotes(newest.tag),
-    url: releasePageUrl(REPOSITORY, newest.tag),
+    notes: await fetchNotes(source, newest.tag),
+    url: source.pageUrl(newest.tag),
     // Composed rather than looked up. `releaseManifest.ts` is the one place
     // that spells an asset name, so asking it costs no request and cannot
     // disagree with what the release actually published.
-    installerUrl: releaseAssetUrl(REPOSITORY, newest.tag, windowsInstallerAsset(version)),
-    setupUrl: releaseAssetUrl(REPOSITORY, newest.tag, windowsSetupAsset(version)),
+    installerUrl: source.assetUrl(newest.tag, windowsInstallerAsset(version)),
+    setupUrl: source.assetUrl(newest.tag, windowsSetupAsset(version)),
     publishedAt: newest.released || nowIso(),
     prerelease: version.includes('-'),
   };
@@ -361,9 +391,9 @@ export async function fetchLatestRelease(current = buildVersion().version): Prom
  * already says so in a sentence. Notes are worth reading and are not worth
  * failing an update check over, so this is the one step here that shrugs.
  */
-async function fetchNotes(tag: string): Promise<string> {
+async function fetchNotes(source: ReleaseSource, tag: string): Promise<string> {
   try {
-    const response = await get(releaseAssetUrl(REPOSITORY, tag, NOTES_ASSET), 'text/plain');
+    const response = await get(source.assetUrl(tag, NOTES_ASSET), 'text/plain');
     if (!response.ok) return '';
     return (await response.text()).trim();
   } catch {

@@ -212,50 +212,57 @@ describe('the updaters ask for that decision rather than making it', () => {
  * These hold the property in the three scripts that actually update a machine,
  * because none of them can import the TypeScript that states it.
  */
-describe('update discovery does not spend the REST budget', () => {
+describe('update discovery asks GitHub first and never stops at its refusal', () => {
   const updaters = {
     ubuntu: read('packaging/ubuntu/ai17z-update.sh'),
     macos: read('packaging/macos/ai17z-update.sh'),
     windows: read('packaging/windows/Setup-AI17Z.ps1'),
   };
+  const shared = read('packaging/unix/ai17z-paths.sh');
 
-  it('discovers a release through the AI17Z Code releases list on every platform', () => {
-    // Windows carries the URL itself. The two Unix updaters reach it through
+  it('lists releases from GitHub, then AI17Z Code, on every platform', () => {
+    // Windows carries the list itself. The two Unix updaters reach it through
     // the helper they share, which is where a networking rule belongs.
-    expect(updaters.windows).toContain("ProjectApi + '/releases?limit=20'");
-    expect(read('packaging/unix/ai17z-paths.sh')).toContain('https://code.ai17z.io/api/v1/repos/');
+    const githubList = updaters.windows.indexOf('https://api.github.com/repos/ShiftAboveCtrl/ai17z/releases?per_page=20');
+    const forgejoList = updaters.windows.indexOf('https://code.ai17z.io/api/v1/repos/AI17Z/ai17z/releases?limit=20');
+    expect(githubList).toBeGreaterThan(0);
+    expect(forgejoList).toBeGreaterThan(githubList);
+    expect(shared.indexOf('https://api.github.com/repos/ShiftAboveCtrl/ai17z/releases?per_page=10')).toBeLessThan(
+      shared.indexOf('https://code.ai17z.io/api/v1/repos/AI17Z/ai17z/releases?limit=10'),
+    );
     for (const platform of ['ubuntu', 'macos'] as const) {
       expect(updaters[platform]).toContain('ai17z_latest_release_tag');
     }
   });
 
-  it.each(Object.entries(updaters))('%s asks api.github.com for nothing at all', (_name, script) => {
-    // An allowed-hosts list may still name the API, and so may the comment
-    // explaining why this no longer calls it. What must not exist is a request
-    // built against it, which is what spends the budget, and a line that builds
-    // one carries the scheme as well as the host.
-    const requests = script
-      .split('\n')
-      .filter((line) => line.includes('api.github.com') && line.includes('http'))
-      .filter((line) => !line.includes('ALLOWED_HOSTS') && !line.includes('AllowedHosts'));
-    expect(requests).toEqual([]);
+  it('treats a source that does not answer as a reason to ask the next one', () => {
+    // GitHub's anonymous allowance is sixty requests an hour per address, and
+    // an agent here watching a GitHub repository spends from the same one. A
+    // refusal is therefore ordinary, and stopping at it would turn the budget
+    // an agent spent into an update that cannot happen.
+    const latest = shared.slice(shared.indexOf('ai17z_latest_release_tag() {'), shared.indexOf('ai17z_release_asset_url() {'));
+    expect(latest).toMatch(/2>\/dev\/null\)" \|\| continue/);
+    const files = shared.slice(shared.indexOf('ai17z_fetch_release_files() {'));
+    expect(files).toContain('for index in "${!AI17Z_SOURCE_DOWNLOADS[@]}"');
+    expect(updaters.windows).toContain("Write-Ai17zLog ($source.Name + ' could not provide the release: '");
   });
 
   it.each(Object.entries(updaters))('%s still checks what it downloaded', (_name, script) => {
-    // Discovery moving off the API changes where the answer comes from and
-    // nothing about whether the bytes are checked before they are installed.
+    // Where the answer comes from changes nothing about whether the bytes are
+    // checked before they are installed.
     expect(script).toContain('SHA256SUMS.txt');
   });
 
   it('the Unix updaters share one implementation of it', () => {
     // Two copies of a networking rule is how both platforms came to have the
     // same version-comparison fault. The helper lives beside that one.
-    const shared = read('packaging/unix/ai17z-paths.sh');
     expect(shared).toContain('ai17z_latest_release_tag');
-    expect(shared).toContain('ai17z_release_asset_url');
+    expect(shared).toContain('ai17z_fetch_release_files');
     for (const platform of ['ubuntu', 'macos'] as const) {
       expect(updaters[platform]).toContain('ai17z_latest_release_tag');
-      expect(updaters[platform]).toContain('ai17z_release_asset_url');
+      expect(updaters[platform]).toContain('ai17z_fetch_release_files');
+      // The package and its checksums in one call, so one host serves both.
+      expect(updaters[platform]).toMatch(/ai17z_fetch_release_files "\$WORK" "\$TAG" "\$(DEB|TAR)_NAME" SHA256SUMS\.txt/);
     }
   });
 

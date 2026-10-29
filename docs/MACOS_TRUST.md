@@ -136,9 +136,11 @@ With `cosign`, the provenance as well:
 ```bash
 cosign verify-blob AI17Z-macos-arm64-<version>.tar.gz \
   --bundle AI17Z-macos-arm64-<version>.tar.gz.sigstore.json \
-  --certificate-identity "https://code.ai17z.io/AI17Z/ai17z//.gitlab-ci.yml@refs/tags/v<version>" \
-  --certificate-oidc-issuer https://gitlab.com
+  --key cosign.pub
 ```
+
+`cosign.pub` is AI17Z's release key, [`.forgejo/cosign.pub`](https://github.com/ShiftAboveCtrl/ai17z/blob/main/.forgejo/cosign.pub)
+in this repository. Releases are signed with that key, not with a CI identity.
 
 ## Reporting a problem
 

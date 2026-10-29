@@ -198,6 +198,77 @@ export function rawFileUrl(path: string, project: string = RELEASE_PROJECT, bran
   return `https://${RELEASE_HOST}/${project}/raw/branch/${branch}/${path}`;
 }
 
+// ---------------------------------------------------------------------------
+// Where a release is fetched from, in order
+// ---------------------------------------------------------------------------
+
+/**
+ * The GitHub copy of the project, which is where people look first.
+ *
+ * Every release is mirrored there with every file an installer fetches, and
+ * the installers and updaters ask it first. AI17Z Code stays the source of
+ * truth and the fallback: an installation never needs GitHub, and with GitHub
+ * unreachable every install and update still completes from AI17Z Code. That
+ * is the October 2026 lesson kept rather than undone.
+ */
+export const GITHUB_PROJECT = 'ShiftAboveCtrl/ai17z';
+
+/** One place a release can be fetched from. */
+export interface ReleaseSource {
+  /** What a person is told: `GitHub`, `AI17Z Code`. */
+  name: string;
+  /** Releases, newest first, drafts never listed to an anonymous caller. */
+  releasesApi: (perPage?: number) => string;
+  /** One published file of one release, by exact tag. */
+  assetUrl: (tag: string, asset: string) => string;
+  /** The release's own page, for a person to read. */
+  pageUrl: (tag: string) => string;
+}
+
+export const GITHUB_SOURCE: ReleaseSource = {
+  name: 'GitHub',
+  releasesApi: (perPage = 20) => `https://api.github.com/repos/${GITHUB_PROJECT}/releases?per_page=${perPage}`,
+  assetUrl: (tag, asset) => `https://github.com/${GITHUB_PROJECT}/releases/download/${tag}/${asset}`,
+  pageUrl: (tag) => `https://github.com/${GITHUB_PROJECT}/releases/tag/${tag}`,
+};
+
+/** AI17Z Code, for a project other than the default only in tests. */
+export function forgejoSource(project: string = RELEASE_PROJECT): ReleaseSource {
+  return {
+    name: 'AI17Z Code',
+    releasesApi: (perPage = 20) => releasesApiUrl(project, perPage),
+    assetUrl: (tag, asset) => releaseAssetUrl(project, tag, asset),
+    pageUrl: (tag) => releasePageUrl(project, tag),
+  };
+}
+
+/**
+ * The order every installer and updater asks in: GitHub, then AI17Z Code.
+ *
+ * One source serves a whole run. A package from one host checked against
+ * checksums from the other would work, and would make every failure ambiguous
+ * about which host was wrong. The shell and PowerShell copies of this list
+ * are held against it by `tests/unit/releaseSources.test.ts`.
+ */
+export const RELEASE_SOURCES: readonly ReleaseSource[] = [GITHUB_SOURCE, forgejoSource()];
+
+/**
+ * Every host a download may start at or be redirected to, and nothing else.
+ *
+ * GitHub serves a release file by redirecting to its own storage host, so the
+ * allowlist is judged on the address that answered as well as the one asked.
+ * `objects.githubusercontent.com` is where those redirects pointed before
+ * `release-assets.githubusercontent.com` (measured on 2026-10-28), and is kept
+ * so a change back on GitHub's side is not an outage on ours.
+ */
+export const DOWNLOAD_HOSTS: readonly string[] = [
+  'api.github.com',
+  'github.com',
+  'release-assets.githubusercontent.com',
+  'objects.githubusercontent.com',
+  RELEASE_HOST,
+];
+
 /**
  * Every package a platform must publish, by name.
  *

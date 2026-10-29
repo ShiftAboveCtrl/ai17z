@@ -198,8 +198,13 @@ describe('who runs what', () => {
     expect(holders).toHaveLength(1);
     const publish = wf('release').jobs.publish!;
     const step = publish.steps!.find((s) => SECRET.test(JSON.stringify(s)))!;
-    expect(Object.keys(step.env ?? {}).sort()).toEqual(['COSIGN_PASSWORD', 'COSIGN_PRIVATE_KEY', 'RELEASE_TOKEN']);
+    // The GitHub mirror is part of publishing, and its token lives in the same
+    // step for the same reason the others do.
+    expect(Object.keys(step.env ?? {}).sort()).toEqual(['COSIGN_PASSWORD', 'COSIGN_PRIVATE_KEY', 'GITHUB_MIRROR_TOKEN', 'RELEASE_TOKEN']);
     expect(step.run).toContain('publish-release.sh');
+    // After AI17Z Code has it, and never for a rehearsal, which publishes nothing.
+    expect(step.run!.indexOf('mirror-github.sh')).toBeGreaterThan(step.run!.lastIndexOf('publish-release.sh'));
+    expect(step.run!.indexOf('mirror-github.sh')).toBeGreaterThan(step.run!.indexOf('else'));
   });
 
   it('builds natively where there is a runner, and assembles and proves the rest', () => {
