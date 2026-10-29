@@ -2,7 +2,7 @@
 #
 # Installs AI17Z on macOS.
 #
-#   curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-macos.sh
+#   curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-macos.sh
 #   less install-ai17z-macos.sh      # read it first. That is why it is short.
 #   bash install-ai17z-macos.sh
 #
@@ -22,12 +22,52 @@
 set -euo pipefail
 
 REPOSITORY="AI17Z/ai17z"
-# AI17Z Code, AI17Z's own Forgejo. Its API is shaped like GitHub's.
-API="https://code.ai17z.io/api/v1/repos/${REPOSITORY}/releases"
-# Where every file of a release is served, by its exact name, by AI17Z Code
-# itself from its own storage.
-DOWNLOADS="https://code.ai17z.io/${REPOSITORY}/releases"
-ALLOWED_HOSTS="code.ai17z.io desktop.docker.com"
+# Where a release is fetched from, in order: GitHub, then AI17Z Code.
+#
+# GitHub is the copy people know, and every release is mirrored there with
+# every file an updater fetches. AI17Z Code, AI17Z's own Forgejo, is the source
+# of truth and the fallback: with GitHub unreachable, refusing or behind, every
+# update still completes from there. The same list as RELEASE_SOURCES in
+# packages/shared/src/releaseManifest.ts, held there by
+# tests/unit/releaseSources.test.ts.
+AI17Z_SOURCE_NAMES=("GitHub" "AI17Z Code")
+AI17Z_SOURCE_LISTS=(
+  "https://api.github.com/repos/ShiftAboveCtrl/ai17z/releases?per_page=10"
+  "https://code.ai17z.io/api/v1/repos/AI17Z/ai17z/releases?limit=10"
+)
+AI17Z_SOURCE_DOWNLOADS=(
+  "https://github.com/ShiftAboveCtrl/ai17z/releases/download"
+  "https://code.ai17z.io/AI17Z/ai17z/releases/download"
+)
+# Every host a download may start at or be redirected to. GitHub answers a
+# release download with a redirect to its own storage host, so the host that
+# answered is judged as well as the one asked.
+AI17Z_DOWNLOAD_HOSTS="api.github.com github.com release-assets.githubusercontent.com objects.githubusercontent.com code.ai17z.io"
+
+# Whether an address is HTTPS on a host above. Exact names only: no suffix
+# match, because github.com.example.net ends in nothing this trusts.
+ai17z_url_allowed() { # url
+  local host
+  case "$1" in
+    https://*) host="${1#https://}"; host="${host%%/*}" ;;
+    *) return 1 ;;
+  esac
+  case " $AI17Z_DOWNLOAD_HOSTS " in *" $host "*) return 0 ;; esac
+  return 1
+}
+
+# One file, refused before the request if the address is not allowed and
+# deleted after it if the address that answered is not. `--proto-redir` keeps a
+# redirect on HTTPS too.
+ai17z_fetch() { # destination url
+  local landed
+  ai17z_url_allowed "$2" || return 2
+  landed="$(curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 --max-redirs 5 \
+    -w '%{url_effective}' -o "$1" "$2" 2>/dev/null)" || { rm -f "$1"; return 1; }
+  if [ -n "$landed" ] && ! ai17z_url_allowed "$landed"; then rm -f "$1"; return 2; fi
+}
+
+ALLOWED_HOSTS="$AI17Z_DOWNLOAD_HOSTS desktop.docker.com"
 # desktop.docker.com is Docker's own, and the only host here that is not
 # AI17Z's release. It is in the list rather than reached around it: the
 # Docker download used a bare curl, so the declared list was not the whole
@@ -111,11 +151,9 @@ assert_allowed_url() {
   case " $ALLOWED_HOSTS " in *" $host "*) ;;
     *) stop "AI17Z will not download from ${host}." "It only downloads from its own release on AI17Z Code." "" ;; esac
 }
-fetch() { assert_allowed_url "$2"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$1" "$2"; }
 # The same, with a progress bar. Docker Desktop is several hundred megabytes
 # and a silent terminal for four minutes reads as a hang.
 fetch_watched() { assert_allowed_url "$2"; curl -fL --proto '=https' --tlsv1.2 --retry 3 --progress-bar -o "$1" "$2"; }
-fetch_stdout() { assert_allowed_url "$1"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 "$1"; }
 
 printf '\n  %sAI17Z%s\n\n' "$GREEN" "$OFF"
 
@@ -179,15 +217,6 @@ if [ -n "$LOCAL_PACKAGE" ]; then
   good "AI17Z ${VERSION}"
 elif [ -n "$RELEASE" ]; then
   case "$RELEASE" in v[0-9]*|[0-9]*) ;; *) stop "\"$RELEASE\" is not a release version." "" "" ;; esac
-  RELEASE_JSON="$(fetch_stdout "${API}/tags/${RELEASE}")" || stop "Release ${RELEASE} could not be read." "" ""
-else
-  # The advice names no cause, because this cannot know one: `curl -f` collapses
-  # every 4xx into one exit code, and the status cannot come back out of the
-  # subshell this runs in. It used to say the connection was at fault, which is
-  # the single explanation that is definitely wrong when the server is rate limiting.
-  RELEASE_JSON="$(fetch_stdout "${API}?limit=10")" || stop "AI17Z could not be reached." \
-    "Nothing on this Mac was changed." "AI17Z Code did not answer. That can be this connection, or AI17Z Code refusing requests from this address: it limits addresses that are not signed in, which a shared network can reach on its own.
-Wait a few minutes and run this again."
 fi
 
 # Which release. Asked for by name, that one. Otherwise the newest that
@@ -204,43 +233,66 @@ pick_tag() { # json template
   done
 }
 
-if [ -z "$LOCAL_PACKAGE" ]; then
-TAG="$(pick_tag "$RELEASE_JSON" "AI17Z-macos-${ARCH}-<version>.tar.gz")"
-[ -n "$TAG" ] || stop "No AI17Z release has a package for this Mac yet." "Nothing on this Mac was changed." \
-  "See https://code.ai17z.io/${REPOSITORY}/releases"
-VERSION="${TAG#v}"
-
-TAR_NAME="AI17Z-macos-${ARCH}-${VERSION}.tar.gz"
-# Composed from the tag rather than read out of the JSON, so the only host a
-# download can name is the one written here; the JSON is only asked whether the
-# release names this exact file.
-TAR_URL=""; SUMS_URL=""
-grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${TAR_NAME}\"" <<<"$RELEASE_JSON" && TAR_URL="${DOWNLOADS}/download/${TAG}/${TAR_NAME}"
-grep -q '"name"[[:space:]]*:[[:space:]]*"SHA256SUMS\.txt"' <<<"$RELEASE_JSON" && SUMS_URL="${DOWNLOADS}/download/${TAG}/SHA256SUMS.txt"
-[ -n "$TAR_URL" ] || stop "Release ${TAG} does not contain ${TAR_NAME}." \
-  "Nothing on this Mac was changed." \
-  "AI17Z published Mac packages from the first release that had them.
-Install a newer one, or see https://code.ai17z.io/${REPOSITORY}/releases"
-[ -n "$SUMS_URL" ] || stop "Release ${TAG} publishes no SHA256SUMS.txt." \
-  "AI17Z will not unpack something it cannot check." ""
-good "AI17Z ${VERSION}"
-
-# ---------------------------------------------------------------------------
-# 3. Download and check before anything is unpacked
-# ---------------------------------------------------------------------------
-step "Downloading and checking"
-if [ -z "$LOCAL_PACKAGE" ]; then
-  # Named, because this is the one moment the choice between Apple Silicon and
-  # Intel is visible, and somebody reading the output should be able to see
-  # which one was made rather than infer it afterwards.
+# One attempt at one source: which release, its package and the checksums it
+# is held against, all from the same host. A source that cannot provide any of
+# that says why in REASON and the next one is asked. No hash is judged here;
+# that happens once, below, whichever source served the bytes.
+try_source() { # index
+  local list="${AI17Z_SOURCE_LISTS[$1]}" downloads="${AI17Z_SOURCE_DOWNLOADS[$1]}" url
+  # Asked for by name, that release. Otherwise the list, read in the open
+  # rather than /releases/latest, which is the server choosing. Drafts are
+  # never listed to a caller that is not signed in.
+  if [ -n "$RELEASE" ]; then url="${list%%\?*}/tags/${RELEASE}"; else url="$list"; fi
+  rm -f "$WORK/release.json"
+  ai17z_fetch "$WORK/release.json" "$url" || { REASON="it did not answer, or refused the request"; return 1; }
+  RELEASE_JSON="$(cat "$WORK/release.json")"
+  # One python-free pass over the JSON. `grep -o` on the fields wanted rather
+  # than a parser. The address is composed from the tag rather than read out of
+  # the JSON, so the only hosts a download can name are the ones written above;
+  # the JSON is only asked whether the release names this exact file.
+  TAG="$(pick_tag "$RELEASE_JSON" "AI17Z-macos-${ARCH}-<version>.tar.gz")"
+  [ -n "$TAG" ] || { REASON="no release there has a package for this Mac"; return 1; }
+  VERSION="${TAG#v}"
+  TAR_NAME="AI17Z-macos-${ARCH}-${VERSION}.tar.gz"
+  grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${TAR_NAME}\"" <<<"$RELEASE_JSON" || { REASON="${TAG} there has no ${TAR_NAME}"; return 1; }
+  grep -q '"name"[[:space:]]*:[[:space:]]*"SHA256SUMS\.txt"' <<<"$RELEASE_JSON" || { REASON="${TAG} there publishes no SHA256SUMS.txt"; return 1; }
+  # Named, because this is the one moment the choice between Apple
+  # Silicon and Intel is visible, and somebody reading the output should be
+  # able to see which one was made rather than infer it afterwards.
   note "$TAR_NAME"
-  fetch "$WORK/$TAR_NAME" "$TAR_URL"
-  fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
+  if ! ai17z_fetch "$WORK/$TAR_NAME" "${downloads}/${TAG}/${TAR_NAME}" || ! ai17z_fetch "$WORK/SHA256SUMS.txt" "${downloads}/${TAG}/SHA256SUMS.txt"; then
+    rm -f "$WORK/$TAR_NAME" "$WORK/SHA256SUMS.txt"; REASON="a download did not finish"; return 1
+  fi
+  EXPECTED="$(grep -E "[[:space:]]\*?${TAR_NAME}\$" "$WORK/SHA256SUMS.txt" | awk '{print $1}' | head -1)"
+  [ -n "$EXPECTED" ] || { REASON="${TAG} there publishes no hash for ${TAR_NAME}"; return 1; }
+}
+
+if [ -z "$LOCAL_PACKAGE" ]; then
+  SOURCE=""; REASON=""
+  for SOURCE_INDEX in "${!AI17Z_SOURCE_LISTS[@]}"; do
+    if try_source "$SOURCE_INDEX"; then SOURCE="${AI17Z_SOURCE_NAMES[$SOURCE_INDEX]}"; break; fi
+    note "${AI17Z_SOURCE_NAMES[$SOURCE_INDEX]} could not provide it: ${REASON}."
+  done
+  if [ -z "$SOURCE" ]; then
+    [ -z "$RELEASE" ] || stop "Release ${RELEASE} could not be installed." \
+      "Neither GitHub nor AI17Z Code could provide it. Nothing on this Mac was changed." \
+      "Check the name at https://code.ai17z.io/${REPOSITORY}/releases"
+    # The advice names no cause, because this cannot know one: `curl -f`
+    # collapses every 4xx into one exit code. Saying the connection was at
+    # fault is the single explanation that is definitely wrong when a server is
+    # rate limiting.
+    stop "AI17Z could not be downloaded." \
+      "Neither GitHub nor AI17Z Code could provide it. Nothing on this Mac was changed." \
+      "That can be this connection, or both refusing requests from this address: they limit addresses that are not signed in, which a shared network can reach on its own.
+Wait a few minutes and run this again, or see https://code.ai17z.io/${REPOSITORY}/releases"
+  fi
+  good "AI17Z ${VERSION}, from ${SOURCE}"
 fi
 
-EXPECTED="$(grep -E "[[:space:]]\*?${TAR_NAME}\$" "$WORK/SHA256SUMS.txt" | awk '{print $1}' | head -1)"
-[ -n "$EXPECTED" ] || stop "Release ${TAG} publishes no hash for ${TAR_NAME}." "" ""
-fi
+# ---------------------------------------------------------------------------
+# 3. Check before anything is unpacked
+# ---------------------------------------------------------------------------
+step "Checking the package"
 
 # One check, whichever route the bytes arrived by. A local file is not trusted
 # more than a downloaded one -- it is only a file whose hash the caller already

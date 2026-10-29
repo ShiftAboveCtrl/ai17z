@@ -2,7 +2,7 @@
 #
 # Installs AI17Z on Ubuntu.
 #
-#   curl -fsSLO https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install-ai17z-ubuntu.sh
+#   curl -fsSLO https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install-ai17z-ubuntu.sh
 #   less install-ai17z-ubuntu.sh      # read it first. That is why it is short.
 #   bash install-ai17z-ubuntu.sh
 #
@@ -22,14 +22,51 @@
 set -euo pipefail
 
 REPOSITORY="AI17Z/ai17z"
-# AI17Z Code, AI17Z's own Forgejo. Its API is shaped like GitHub's.
-API="https://code.ai17z.io/api/v1/repos/${REPOSITORY}/releases"
-# Where every file of a release is served, by its exact name, by AI17Z Code
-# itself from its own storage.
-DOWNLOADS="https://code.ai17z.io/${REPOSITORY}/releases"
-# The same list the other installers declare. A request that does not start at
-# one of these is refused rather than followed.
-ALLOWED_HOSTS="code.ai17z.io"
+# Where a release is fetched from, in order: GitHub, then AI17Z Code.
+#
+# GitHub is the copy people know, and every release is mirrored there with
+# every file an updater fetches. AI17Z Code, AI17Z's own Forgejo, is the source
+# of truth and the fallback: with GitHub unreachable, refusing or behind, every
+# update still completes from there. The same list as RELEASE_SOURCES in
+# packages/shared/src/releaseManifest.ts, held there by
+# tests/unit/releaseSources.test.ts.
+AI17Z_SOURCE_NAMES=("GitHub" "AI17Z Code")
+AI17Z_SOURCE_LISTS=(
+  "https://api.github.com/repos/ShiftAboveCtrl/ai17z/releases?per_page=10"
+  "https://code.ai17z.io/api/v1/repos/AI17Z/ai17z/releases?limit=10"
+)
+AI17Z_SOURCE_DOWNLOADS=(
+  "https://github.com/ShiftAboveCtrl/ai17z/releases/download"
+  "https://code.ai17z.io/AI17Z/ai17z/releases/download"
+)
+# Every host a download may start at or be redirected to. GitHub answers a
+# release download with a redirect to its own storage host, so the host that
+# answered is judged as well as the one asked.
+AI17Z_DOWNLOAD_HOSTS="api.github.com github.com release-assets.githubusercontent.com objects.githubusercontent.com code.ai17z.io"
+
+# Whether an address is HTTPS on a host above. Exact names only: no suffix
+# match, because github.com.example.net ends in nothing this trusts.
+ai17z_url_allowed() { # url
+  local host
+  case "$1" in
+    https://*) host="${1#https://}"; host="${host%%/*}" ;;
+    *) return 1 ;;
+  esac
+  case " $AI17Z_DOWNLOAD_HOSTS " in *" $host "*) return 0 ;; esac
+  return 1
+}
+
+# One file, refused before the request if the address is not allowed and
+# deleted after it if the address that answered is not. `--proto-redir` keeps a
+# redirect on HTTPS too.
+ai17z_fetch() { # destination url
+  local landed
+  ai17z_url_allowed "$2" || return 2
+  landed="$(curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 --max-redirs 5 \
+    -w '%{url_effective}' -o "$1" "$2" 2>/dev/null)" || { rm -f "$1"; return 1; }
+  if [ -n "$landed" ] && ! ai17z_url_allowed "$landed"; then rm -f "$1"; return 2; fi
+}
+
 # Ubuntu releases where the whole stack is supported: Docker Engine's own list,
 # intersected with what AI17Z needs. Checked rather than assumed.
 SUPPORTED_UBUNTU="22.04 24.04 26.04"
@@ -100,21 +137,6 @@ WORK=""
 cleanup() { [ -n "$WORK" ] && rm -rf "$WORK"; }
 trap cleanup EXIT INT TERM
 
-assert_allowed_url() {
-  local host
-  case "$1" in
-    https://*) host="${1#https://}"; host="${host%%/*}" ;;
-    *) stop "AI17Z only downloads over HTTPS." "This address is not: $1" "Report this." ;;
-  esac
-  case " $ALLOWED_HOSTS " in
-    *" $host "*) return 0 ;;
-    *) stop "AI17Z will not download from ${host}." "It only downloads from its own release on AI17Z Code." \
-         "Stop, and install AI17Z from https://code.ai17z.io/${REPOSITORY}" ;;
-  esac
-}
-
-fetch() { assert_allowed_url "$2"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$1" "$2"; }
-fetch_stdout() { assert_allowed_url "$1"; curl -fsSL --proto '=https' --tlsv1.2 --retry 3 "$1"; }
 
 printf '\n  %sAI17Z%s\n\n' "$GREEN" "$OFF"
 
@@ -212,21 +234,6 @@ elif [ -n "$RELEASE" ]; then
     v[0-9]*|[0-9]*) ;;
     *) stop "\"$RELEASE\" is not a release version." "Releases are named like v1.0.0 or v1.0.0-beta.1." "" ;;
   esac
-  RELEASE_JSON="$(fetch_stdout "${API}/tags/${RELEASE}")" || stop \
-    "Release ${RELEASE} could not be read." "Nothing on this computer was changed." \
-    "Check the name at https://code.ai17z.io/${REPOSITORY}/releases"
-else
-  # Not /releases/latest: that is the server choosing, and here the list is
-  # read and the newest taken in the open. Drafts are never listed to a caller
-  # that is not signed in, so the first entry is a finished release.
-  # The advice names no cause, because this cannot know one: `curl -f` collapses
-  # every 4xx into one exit code, and the status cannot come back out of the
-  # subshell this runs in. It used to say the connection was at fault, which is
-  # the single explanation that is definitely wrong when the server is rate limiting.
-  RELEASE_JSON="$(fetch_stdout "${API}?limit=10")" || stop \
-    "AI17Z could not be reached." "Nothing on this computer was changed." \
-    "AI17Z Code did not answer. That can be this connection, or AI17Z Code refusing requests from this address: it limits addresses that are not signed in, which a shared network can reach on its own.
-Wait a few minutes and run this again."
 fi
 
 # Which release. Asked for by name, that one. Otherwise the newest that
@@ -243,47 +250,62 @@ pick_tag() { # json template
   done
 }
 
-if [ -z "$LOCAL_PACKAGE" ]; then
-# One python-free pass over the JSON. `grep -o` on the fields wanted rather than
-# a parser. The address is composed from the tag rather than read out of the
-# JSON, so the only host a download can name is the one written here; the JSON
-# is only asked whether the release names this exact file.
-TAG="$(pick_tag "$RELEASE_JSON" "ai17z_<version>_${ARCH}.deb")"
-[ -n "$TAG" ] || stop "No AI17Z release has a package for this computer yet." "Nothing on this computer was changed." \
-  "See https://code.ai17z.io/${REPOSITORY}/releases"
-VERSION="${TAG#v}"
-
-DEB_NAME="ai17z_${VERSION}_${ARCH}.deb"
-DEB_URL=""; SUMS_URL=""
-grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${DEB_NAME}\"" <<<"$RELEASE_JSON" && DEB_URL="${DOWNLOADS}/download/${TAG}/${DEB_NAME}"
-grep -q '"name"[[:space:]]*:[[:space:]]*"SHA256SUMS\.txt"' <<<"$RELEASE_JSON" && SUMS_URL="${DOWNLOADS}/download/${TAG}/SHA256SUMS.txt"
-
-if [ -z "$DEB_URL" ]; then
-  stop "Release ${TAG} does not contain ${DEB_NAME}." \
-    "Nothing on this computer was changed." \
-    "AI17Z published Ubuntu packages from the first release that had them.
-If this is an older release, install a newer one:
-  bash $0 --release <tag>
-  https://code.ai17z.io/${REPOSITORY}/releases"
-fi
-[ -n "$SUMS_URL" ] || stop "Release ${TAG} publishes no SHA256SUMS.txt." \
-  "AI17Z will not install a package it cannot check." ""
-good "AI17Z ${VERSION}"
-fi
-
-# ---------------------------------------------------------------------------
-# 3. Download, and check before anything is installed
-# ---------------------------------------------------------------------------
-step "Downloading and checking the package"
-
-if [ -z "$LOCAL_PACKAGE" ]; then
-  fetch "$WORK/$DEB_NAME" "$DEB_URL"
-  fetch "$WORK/SHA256SUMS.txt" "$SUMS_URL"
-
+# One attempt at one source: which release, its package and the checksums it
+# is held against, all from the same host. A source that cannot provide any of
+# that says why in REASON and the next one is asked. No hash is judged here;
+# that happens once, below, whichever source served the bytes.
+try_source() { # index
+  local list="${AI17Z_SOURCE_LISTS[$1]}" downloads="${AI17Z_SOURCE_DOWNLOADS[$1]}" url
+  # Asked for by name, that release. Otherwise the list, read in the open
+  # rather than /releases/latest, which is the server choosing. Drafts are
+  # never listed to a caller that is not signed in.
+  if [ -n "$RELEASE" ]; then url="${list%%\?*}/tags/${RELEASE}"; else url="$list"; fi
+  rm -f "$WORK/release.json"
+  ai17z_fetch "$WORK/release.json" "$url" || { REASON="it did not answer, or refused the request"; return 1; }
+  RELEASE_JSON="$(cat "$WORK/release.json")"
+  # One python-free pass over the JSON. `grep -o` on the fields wanted rather
+  # than a parser. The address is composed from the tag rather than read out of
+  # the JSON, so the only hosts a download can name are the ones written above;
+  # the JSON is only asked whether the release names this exact file.
+  TAG="$(pick_tag "$RELEASE_JSON" "ai17z_<version>_${ARCH}.deb")"
+  [ -n "$TAG" ] || { REASON="no release there has a package for this computer"; return 1; }
+  VERSION="${TAG#v}"
+  DEB_NAME="ai17z_${VERSION}_${ARCH}.deb"
+  grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${DEB_NAME}\"" <<<"$RELEASE_JSON" || { REASON="${TAG} there has no ${DEB_NAME}"; return 1; }
+  grep -q '"name"[[:space:]]*:[[:space:]]*"SHA256SUMS\.txt"' <<<"$RELEASE_JSON" || { REASON="${TAG} there publishes no SHA256SUMS.txt"; return 1; }
+  if ! ai17z_fetch "$WORK/$DEB_NAME" "${downloads}/${TAG}/${DEB_NAME}" || ! ai17z_fetch "$WORK/SHA256SUMS.txt" "${downloads}/${TAG}/SHA256SUMS.txt"; then
+    rm -f "$WORK/$DEB_NAME" "$WORK/SHA256SUMS.txt"; REASON="a download did not finish"; return 1
+  fi
   EXPECTED="$(grep -E "[[:space:]]\*?${DEB_NAME}\$" "$WORK/SHA256SUMS.txt" | awk '{print $1}' | head -1)"
-  [ -n "$EXPECTED" ] || stop "Release ${TAG} publishes no hash for ${DEB_NAME}." \
-    "AI17Z will not install a package it cannot check." ""
+  [ -n "$EXPECTED" ] || { REASON="${TAG} there publishes no hash for ${DEB_NAME}"; return 1; }
+}
+
+if [ -z "$LOCAL_PACKAGE" ]; then
+  SOURCE=""; REASON=""
+  for SOURCE_INDEX in "${!AI17Z_SOURCE_LISTS[@]}"; do
+    if try_source "$SOURCE_INDEX"; then SOURCE="${AI17Z_SOURCE_NAMES[$SOURCE_INDEX]}"; break; fi
+    note "${AI17Z_SOURCE_NAMES[$SOURCE_INDEX]} could not provide it: ${REASON}."
+  done
+  if [ -z "$SOURCE" ]; then
+    [ -z "$RELEASE" ] || stop "Release ${RELEASE} could not be installed." \
+      "Neither GitHub nor AI17Z Code could provide it. Nothing on this computer was changed." \
+      "Check the name at https://code.ai17z.io/${REPOSITORY}/releases"
+    # The advice names no cause, because this cannot know one: `curl -f`
+    # collapses every 4xx into one exit code. Saying the connection was at
+    # fault is the single explanation that is definitely wrong when a server is
+    # rate limiting.
+    stop "AI17Z could not be downloaded." \
+      "Neither GitHub nor AI17Z Code could provide it. Nothing on this computer was changed." \
+      "That can be this connection, or both refusing requests from this address: they limit addresses that are not signed in, which a shared network can reach on its own.
+Wait a few minutes and run this again, or see https://code.ai17z.io/${REPOSITORY}/releases"
+  fi
+  good "AI17Z ${VERSION}, from ${SOURCE}"
 fi
+
+# ---------------------------------------------------------------------------
+# 3. Check before anything is installed
+# ---------------------------------------------------------------------------
+step "Checking the package"
 
 # One check, whichever route the bytes arrived by.
 ACTUAL="$(sha256sum "$WORK/$DEB_NAME" | awk '{print $1}')"

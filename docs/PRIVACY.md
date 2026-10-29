@@ -42,12 +42,13 @@ needs to do its job, and the Activity screen shows what was sent and when.
 
 There is one request AI17Z makes that you did not configure, and this is it:
 
-- **The update check.** At most once every six hours, AI17Z asks AI17Z Code's public
-  API which versions of AI17Z have been released. The request carries a
-  `User-Agent` of `AI17Z` and nothing else -- no identifier, no version, no
+- **The update check.** At most once every six hours, AI17Z asks GitHub's public
+  API which versions of AI17Z have been released, and asks AI17Z Code, AI17Z's
+  own server, only when GitHub does not answer. The request carries a
+  `User-Agent` of `AI17Z` and nothing else: no identifier, no version, no
   agent, no account, nothing about you. It is an ordinary anonymous read of a
-  public page, and AI17Z Code learns from it exactly what it learns from anybody
-  visiting the releases page: that some address asked.
+  public page, and GitHub (or AI17Z Code) learns from it exactly what it learns
+  from anybody visiting the releases page: that some address asked.
 
   Nothing is downloaded and nothing is installed. The answer becomes a line on
   the Version panel in Settings, with the release notes, a link, and two ways to
@@ -64,9 +65,11 @@ There is one request AI17Z makes that you did not configure, and this is it:
 AI17Z Setup runs once, before there is an AI17Z to have a privacy policy. What it
 sends is the same nothing:
 
-- It asks **AI17Z Code** which release to install and downloads two files from that
-  release — the application, and the list of hashes to check it against. Ordinary
-  anonymous reads of public URLs, with a `User-Agent` of `AI17Z-Setup`.
+- It asks **GitHub** which release to install and downloads two files from that
+  release: the application, and the list of hashes to check it against. If
+  GitHub cannot provide them it asks **AI17Z Code**, AI17Z's own server, for the
+  same two. Ordinary anonymous reads of public URLs, with a `User-Agent` of
+  `AI17Z-Setup`.
 - It asks **winget**, Microsoft's package manager, to install anything missing.
   Those downloads are between winget and the vendors, exactly as if you had run
   `winget install` yourself.

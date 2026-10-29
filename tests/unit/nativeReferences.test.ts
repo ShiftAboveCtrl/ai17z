@@ -103,7 +103,7 @@ writeFileSync(join(room, 'releases.json'), releases);
 describe.skipIf(!hasBash)('the newest release this machine can install', () => {
   const helper = posix(join(root, 'packaging/unix/ai17z-paths.sh'));
   const ask = (template: string) =>
-    bash(`curl() { cat releases.json; }; . "${helper}" >/dev/null 2>&1; ai17z_latest_release_tag AI17Z/ai17z ${template}`);
+    bash(`curl() { cat releases.json; }; . "${helper}" >/dev/null 2>&1; ai17z_latest_release_tag ${template}`);
 
   it('is the newest release when nothing narrower is asked', () => {
     expect(ask('').stdout.trim()).toBe('v1.0.0-beta.86');

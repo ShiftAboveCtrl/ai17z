@@ -1,81 +1,52 @@
 #!/usr/bin/env bash
 #
-# Mirror one published AI17Z Code release to GitHub, with only the files a
-# person downloads.
+# Mirror one published AI17Z Code release to GitHub, by hand.
 #
 #   mirror-github.sh <tag> [notes.md]
 #
-# Needs curl, sha256sum and an authenticated gh. The notes default to the
-# release's own release-notes.md. Every file is fetched from AI17Z Code and
-# checked against that release's SHA256SUMS.txt before it is uploaded, so the
-# mirror can only ever carry bytes the release published.
+# The release job mirrors every release itself. This is for the times it could
+# not (GitHub down, the token expired) and for releases published before the
+# job did it: it downloads the release's files from AI17Z Code into a scratch
+# directory and hands them to .forgejo/scripts/mirror-github.sh, the same
+# script the job runs, so the two routes cannot drift.
 #
-# The GitHub release is titled "AI17Z beta-vX.Y" (beta.87 is beta-v9.7), marked
-# Latest, and holds the files below. Anything else already attached is removed:
-# the installers read AI17Z Code, never GitHub, so the files they fetch
-# themselves and the per-file signatures only make the download list harder to
-# read here.
+# Needs curl, jq, sha256sum and an authenticated gh, whose token is passed on
+# as GITHUB_MIRROR_TOKEN unless that is already set.
 set -euo pipefail
 
 TAG="${1:?a tag, such as v1.0.0-beta.87}"
 NOTES="${2:-}"
-REPO="ShiftAboveCtrl/ai17z"
-SOURCE="https://code.ai17z.io/AI17Z/ai17z/releases/download/$TAG"
 VERSION="${TAG#v}"
+SOURCE="https://code.ai17z.io/AI17Z/ai17z/releases/download/$TAG"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-case "$VERSION" in
-  *-beta.*) N="${VERSION##*-beta.}"; TITLE="AI17Z beta-v$((N / 10 + 1)).$((N % 10))" ;;
-  *) TITLE="AI17Z $TAG" ;;
-esac
-
-KEEP=(
-  "AI17Z-Setup-$VERSION.exe"
-  install-ai17z-macos.sh
-  install-ai17z-ubuntu.sh
-  "AI17Z-macos-arm64-$VERSION.tar.gz"
-  "AI17Z-macos-x64-$VERSION.tar.gz"
-  "ai17z_${VERSION}_amd64.deb"
-  "ai17z_${VERSION}_arm64.deb"
-  SHA256SUMS.txt
-  SHA256SUMS.txt.sigstore.json
+NAMES=(
+  "AI17Z-Setup-$VERSION.exe" install-ai17z-macos.sh install-ai17z-ubuntu.sh
+  "AI17Z-macos-arm64-$VERSION.tar.gz" "AI17Z-macos-x64-$VERSION.tar.gz"
+  "ai17z_${VERSION}_amd64.deb" "ai17z_${VERSION}_arm64.deb"
+  SHA256SUMS.txt SHA256SUMS.txt.sigstore.json
+  install.ps1 "Install-AI17Z-$VERSION.ps1" "AI17Z-App-$VERSION.zip"
+  release-manifest.json release-notes.md
 )
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-cd "$WORK"
-
-curl -fsSL --proto '=https' -o SHA256SUMS.txt "$SOURCE/SHA256SUMS.txt"
-present=()
-for name in "${KEEP[@]}"; do
-  if curl -fsSL --proto '=https' -o "$name" "$SOURCE/$name"; then
-    present+=("$name")
+for name in "${NAMES[@]}"; do
+  if curl -fsSL --proto '=https' -o "$WORK/$name" "$SOURCE/$name" 2>/dev/null; then
+    echo "  fetched $name"
   else
-    # A release can lack a platform (no macOS package that time); the notes
-    # already say so, and the mirror carries what exists.
-    echo "  $name is not in $TAG, skipped"
+    rm -f "$WORK/$name"
+    # A release can lack a platform; the mirror carries what exists and says
+    # what it skipped.
+    echo "  $name is not in $TAG on AI17Z Code"
   fi
 done
-# Every hashed file must match. The checksums and their signature are not in
-# the list they would have to be in to check themselves.
-grep -F -f <(printf '  %s\n' "${present[@]}") SHA256SUMS.txt | sha256sum --check --strict -
-if [ -z "$NOTES" ]; then
-  curl -fsSL --proto '=https' -o release-notes.md "$SOURCE/release-notes.md"
-  NOTES="$WORK/release-notes.md"
-fi
 
-if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-  gh release edit "$TAG" -R "$REPO" --title "$TITLE" --notes-file "$NOTES" --prerelease=false --latest
-else
-  gh release create "$TAG" -R "$REPO" --verify-tag --title "$TITLE" --notes-file "$NOTES" --latest
+# Read rather than assigned, so no line here has the shape of a committed
+# secret for the release check to stop on; the token itself is gh's, and never
+# written anywhere.
+if [ -z "${GITHUB_MIRROR_TOKEN:-}" ]; then
+  read -r GITHUB_MIRROR_TOKEN < <(gh auth token)
+  export GITHUB_MIRROR_TOKEN
 fi
-
-gh release upload "$TAG" -R "$REPO" --clobber "${present[@]}"
-gh release view "$TAG" -R "$REPO" --json assets -q '.assets[].name' | while read -r name; do
-  keep=0
-  for wanted in "${present[@]}"; do [ "$name" = "$wanted" ] && keep=1; done
-  if [ "$keep" = 0 ]; then
-    gh release delete-asset "$TAG" "$name" -R "$REPO" --yes
-    echo "  removed $name"
-  fi
-done
-echo "$TITLE: $(gh release view "$TAG" -R "$REPO" --json assets -q '.assets | length') files, marked Latest"
+bash "$HERE/../../.forgejo/scripts/mirror-github.sh" "$TAG" "$WORK" ${NOTES:+"$NOTES"}

@@ -5,6 +5,7 @@ lot of trust to ask for one pasted command, so this page is what it does, in
 full, and how to check that for yourself rather than taking our word for it.
 
 **Install AI17Z only from the official repository:
+<https://github.com/ShiftAboveCtrl/ai17z>, or its twin on AI17Z's own server,
 <https://code.ai17z.io/AI17Z/ai17z>.** Nowhere else distributes it. A copy
 from anywhere else is not AI17Z, whatever it is called.
 
@@ -14,14 +15,15 @@ from anywhere else is not AI17Z, whatever it is called.
 
 | | |
 | --- | --- |
-| What you paste | `irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 \| iex` |
-| What that fetches | [`install.ps1`](../install.ps1) — around 200 lines of code under a long comment explaining itself, in this repository, and the entire file at that URL |
-| What it does | asks AI17Z Code for the newest release, downloads that release's setup script, **checks its SHA-256 against the release's own `SHA256SUMS.txt`**, writes it where you can read it, and runs the bytes it checked |
+| What you paste | `irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 \| iex` |
+| If GitHub is down | `irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 \| iex`, the same file from AI17Z Code |
+| What that fetches | [`install.ps1`](../install.ps1): around 350 lines of code under a long comment explaining itself, in this repository, and the entire file at that URL |
+| What it does | asks GitHub for the newest release, and AI17Z Code when GitHub cannot provide it, downloads that release's setup script, **checks its SHA-256 against the release's own `SHA256SUMS.txt`**, writes it where you can read it, and runs the bytes it checked |
 | What the setup program is | [`packaging/windows/Setup-AI17Z.ps1`](../packaging/windows/Setup-AI17Z.ps1) — the whole installer, as a script, published with every release as `Install-AI17Z-<version>.ps1` |
 | What is not involved | no executable, no download to double-click, and no change to SmartScreen, Defender, UAC or your execution policy |
 | What it installs | WSL 2, Docker Desktop, Node.js and Google Chrome — only the ones you do not already have |
 | Where those come from | `wsl --install`, and **winget**, Microsoft's own package manager. Never a URL of ours |
-| What it downloads itself | one file, `AI17Z-App-<version>.zip`, from this repository's release, checked against a SHA-256 -- plus, when updating, `release-manifest.json`, which is read to decide whether the new version can run here at all |
+| What it downloads itself | one file, `AI17Z-App-<version>.zip`, from this repository's release on GitHub or AI17Z Code, checked against a SHA-256 published beside it, plus, when updating, `release-manifest.json`, which is read to decide whether the new version can run here at all |
 | When it asks for administrator rights | once, for WSL 2 and Docker Desktop, with an explanation on screen first |
 | What it leaves running | nothing. No service, no scheduled task, no startup entry |
 | What it sends anywhere | nothing about you, this machine, or your agents |
@@ -111,11 +113,24 @@ is half-applied.
 
 | Host | What for |
 | --- | --- |
-| `code.ai17z.io` | asking which release to install, and the release assets. AI17Z Code is AI17Z's own Forgejo, and it serves a release file itself, from its own storage |
+| `api.github.com` | asking GitHub which release to install |
+| `github.com` | the release assets on GitHub, asked first |
+| `release-assets.githubusercontent.com` | where GitHub redirects a release download to; it stores the files |
+| `objects.githubusercontent.com` | where GitHub redirected release downloads before that, kept so a change back on GitHub's side is not an outage |
+| `code.ai17z.io` | the same two things from AI17Z Code, AI17Z's own Forgejo, when GitHub cannot provide them. It serves a release file itself, from its own storage |
 
 That is the complete list, and the script refuses to start a request anywhere
 else. It is not a guideline in a comment: `Assert-Ai17zAllowedUrl` checks every
-address against it, requires HTTPS, and stops if it does not match.
+address against it, requires HTTPS, and stops if it does not match. Because
+every GitHub download is a redirect, the address that answered is checked
+against the same list as the address that was asked.
+
+One source serves the whole install. If GitHub does not answer, refuses, or
+lacks any file, Setup says so in its log and starts the release over from AI17Z
+Code, so a package is always checked against the checksums published beside it.
+A package that does not match its hash is **not** handed to the other source:
+it stops the install, because that is something to think about rather than to
+route around.
 
 Everything else — Docker Desktop, Node.js, Chrome, WSL — is fetched by **winget**
 or by **Windows itself**, from Microsoft's and the vendors' own infrastructure.
@@ -255,7 +270,7 @@ have to take that on trust: the same URL in a browser shows you the file, and
 this reads it without running any of it.
 
 ```powershell
-irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | Out-File $env:TEMP\install.ps1
+irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | Out-File $env:TEMP\install.ps1
 notepad $env:TEMP\install.ps1
 ```
 
@@ -269,7 +284,7 @@ written to `%LOCALAPPDATA%\AI17Z-setup\Setup-AI17Z.checked.ps1`, and is kept
 there whenever anything goes wrong — or always, if you ask:
 
 ```powershell
-& ([scriptblock]::Create((irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1))) -KeepDownload
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -KeepDownload
 Get-FileHash $env:LOCALAPPDATA\AI17Z-setup\Setup-AI17Z.checked.ps1 -Algorithm SHA256
 ```
 
@@ -297,7 +312,7 @@ That hash is the one on the `Install-AI17Z-<version>.ps1` line of
 ### 5. Make it tell you what it would do
 
 ```powershell
-& ([scriptblock]::Create((irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1))) -WhatIfOnly
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1))) -WhatIfOnly
 ```
 
 It looks at the machine, prints what it would install, and changes nothing.
@@ -407,10 +422,11 @@ what it returns is whatever that branch holds at the moment you paste it, and
 nothing in the command pins it. That is the one unpinned step, and it is where
 the chain starts rather than something the chain covers.
 
-What follows it is pinned: a specific release, read from AI17Z Code's API; a specific
-asset; a hash from that release compared before a byte is written; and the same
-hash checked again by the process that runs it. So the honest statement is that
-you are trusting **AI17Z Code's copy of this repository at the moment you run it**:
+What follows it is pinned: a specific release, read from GitHub's API or AI17Z
+Code's; a specific asset; a hash from that release compared before a byte is
+written; and the same hash checked again by the process that runs it. So the
+honest statement is that you are trusting **GitHub's copy of this repository at
+the moment you run it** (or AI17Z Code's, with the second command):
 the same thing you trust when you `git clone` it — and after that you are
 trusting a hash.
 
@@ -437,6 +453,7 @@ cover a lot of ground and the interesting part is always the edge of it.
 | **A tampered resume note** | it is read for which instance was being set up and nothing else. Every step re-probes the machine, and a note from another instance, another schema or another day is discarded |
 | **Secrets in the log** | anything key-shaped is blanked as it is written, not as it is read |
 | **A compromised release on AI17Z Code** | **not defended against by the hash.** The checksum file and the package would have been replaced together. What stands against it is that releases are built by a pipeline from a public tag, never uploaded from anybody's machine, and that every file carries a Sigstore bundle signed by AI17Z's release key, which a replaced file cannot without that key. The setup program does not check the bundles; `cosign` can |
+| **A compromised GitHub release** | **not defended against by the hash either**, for the same reason. GitHub releases are created by the same pipeline from the same files, and published only once every file is attached and its size compared, and GitHub's immutable releases are on, so a published release's files cannot be replaced afterwards. `SHA256SUMS.txt.sigstore.json` is on GitHub too, so `cosign` can check the checksums against AI17Z's release key |
 | **A compromised `main` branch** | **not defended against**, and it is the first thing the command fetches. See [What the first URL costs](#what-the-first-url-costs-said-plainly) above. Clone at a tag instead if that matters to you |
 | **A compromised winget package** | not ours to defend. It is the same trust you place in winget every other time you use it, which is the argument for using it rather than fetching binaries ourselves |
 | **Windows warning you about an unsigned program** | there is no unsigned program to warn about. Nothing here is downloaded to be double-clicked, so SmartScreen's reputation check never applies, and no security setting is changed to achieve that. See [Windows trust and SmartScreen](WINDOWS_TRUST.md) |

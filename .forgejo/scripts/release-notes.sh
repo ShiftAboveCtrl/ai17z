@@ -19,6 +19,10 @@ SUMS="${2:?the SHA256SUMS.txt of the release}"
 MACOS="${3:-}"
 PROJECT_URL="https://code.ai17z.io/AI17Z/ai17z"
 RAW="$PROJECT_URL/raw/branch/main"
+# The commands people copy fetch from GitHub; the same files on AI17Z Code are
+# the fallback for when GitHub is down. The installers then fetch the release
+# from GitHub first and AI17Z Code second either way.
+GITHUB_RAW="https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main"
 BLOB="$PROJECT_URL/src/branch/main"
 TAG="${RELEASE_TAG:-}"
 if [ -z "$TAG" ] && [ "${GITHUB_REF_TYPE:-}" = tag ]; then TAG="${GITHUB_REF_NAME:-}"; fi
@@ -34,25 +38,36 @@ echo '```powershell'
 # The literal command, the same string as the README and install.ps1's own
 # help: a difference between them is a command that works in one place and
 # not another, and tests/unit/installCommand.test.ts holds the three.
-echo 'irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex'
+echo 'irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex'
 echo '```'
 echo
 if [ -n "$MACOS" ]; then
   echo "**macOS 13 or newer** (Apple silicon and Intel): open Terminal and paste:"
   echo
   echo '```bash'
-  echo "curl -fsSLO $RAW/install-ai17z-macos.sh && bash install-ai17z-macos.sh"
+  echo "curl -fsSLO $GITHUB_RAW/install-ai17z-macos.sh && bash install-ai17z-macos.sh"
   echo '```'
   echo
 fi
 echo "**Ubuntu 22.04 or newer** (amd64 and arm64): open a terminal and paste:"
 echo
 echo '```bash'
+echo "curl -fsSLO $GITHUB_RAW/install-ai17z-ubuntu.sh && bash install-ai17z-ubuntu.sh"
+echo '```'
+echo
+echo "If GitHub is down, the same installers are on AI17Z Code, AI17Z's own server:"
+echo
+echo '```powershell'
+echo 'irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex'
+echo '```'
+echo
+echo '```bash'
 echo "curl -fsSLO $RAW/install-ai17z-ubuntu.sh && bash install-ai17z-ubuntu.sh"
 echo '```'
 echo
 echo "The installer checks your system, offers to install anything missing, then"
-echo "installs AI17Z and starts it. Every download is checked against this"
+echo "installs AI17Z and starts it. It downloads from GitHub, or from AI17Z Code when"
+echo "GitHub cannot provide a file, and checks every download against this"
 echo "release's \`SHA256SUMS.txt\` before it is used. AI17Z needs Docker, and"
 echo "Google Chrome for browser features. On Windows the installer also sets up"
 echo "WSL 2 and **Node.js 22 or newer** through Microsoft's own tools, and opens"
@@ -115,11 +130,14 @@ echo "| \`AI17Z-macos-arm64-$VERSION.tar.gz\`, \`AI17Z-macos-x64-$VERSION.tar.gz
 echo "| \`ai17z_${VERSION}_amd64.deb\`, \`ai17z_${VERSION}_arm64.deb\` | Ubuntu packages |"
 echo "| \`SHA256SUMS.txt\` | SHA-256 of every file |"
 echo "| \`SHA256SUMS.txt.sigstore.json\` | Signature of \`SHA256SUMS.txt\`, verifiable against [\`.forgejo/cosign.pub\`]($BLOB/.forgejo/cosign.pub) |"
+echo "| \`install.ps1\` | Used by the installer: the file behind the Windows command |"
+echo "| \`Install-AI17Z-$VERSION.ps1\` | Used by the installer: the Windows setup program it checks and runs |"
+echo "| \`AI17Z-App-$VERSION.zip\` | Used by the installer: the application the Windows setup program installs |"
+echo "| \`release-manifest.json\` | Used by the installer: what this release is and what it needs, read before an update |"
+echo "| \`release-notes.md\` | Used by the app: these notes, shown on its update screen |"
 echo
-echo "The files the Windows command fetches itself (\`install.ps1\`,"
-echo "\`Install-AI17Z-$VERSION.ps1\`, \`AI17Z-App-$VERSION.zip\`,"
-echo "\`AI17Z-Setup-Audit-$VERSION.json\`, \`release-manifest.json\`) and a signature"
-echo "for every file are published on [AI17Z Code]($PROJECT_URL/releases/tag/v$VERSION)."
+echo "The setup audit (\`AI17Z-Setup-Audit-$VERSION.json\`) and a signature for every"
+echo "file are published on [AI17Z Code]($PROJECT_URL/releases/tag/v$VERSION)."
 echo
 echo "The macOS and arm64 Ubuntu packages are assembled on Linux and accepted only"
 echo "when every native file in them is byte for byte one a machine of that platform"

@@ -42,6 +42,7 @@ const updater = read('update-ai17z.ps1');
 interface Manifest {
   repository: string;
   allowedHosts: string[];
+  sources: Array<{ name: string; releases: string; downloads: string }>;
   minimumWindowsBuild: number;
   minimumNodeMajor: number;
   packages: { key: string; id: string; name: string; why: string; page: string }[];
@@ -136,19 +137,37 @@ describe('the setup program is a file somebody can read', () => {
 describe('where it may go on the network', () => {
   it('starts a request only at a host it declares', () => {
     if (!shell) return;
-    // One host. AI17Z Code serves a release file itself, from its own
-    // storage, so nothing else needs to be reachable.
-    expect(manifest!.allowedHosts).toEqual(['code.ai17z.io']);
+    // GitHub, the storage host its downloads redirect to, and AI17Z Code.
+    expect(manifest!.allowedHosts).toEqual([
+      'api.github.com',
+      'github.com',
+      'release-assets.githubusercontent.com',
+      'objects.githubusercontent.com',
+      'code.ai17z.io',
+    ]);
+  });
+
+  it('asks GitHub first and AI17Z Code second', () => {
+    if (!shell) return;
+    expect(manifest!.sources.map((source) => source.name)).toEqual(['GitHub', 'AI17Z Code']);
+    for (const source of manifest!.sources) {
+      for (const url of [source.releases, source.downloads]) {
+        expect(manifest!.allowedHosts, `${url} is not on a declared host`).toContain(new URL(url).host);
+      }
+    }
   });
 
   it('checks every address against that list rather than trusting the caller', () => {
     expect(setup).toContain('function Assert-Ai17zAllowedUrl');
-    expect(setup).toMatch(/AllowedHosts -notcontains \$uri\.Host/);
+    expect(setup).toContain('Test-Ai17zHostAllowed $uri.Host');
+    expect(setup).toMatch(/AllowedHosts -contains \$HostName\.ToLowerInvariant\(\)/);
     // HTTPS, and a refusal rather than a downgrade.
     expect(setup).toMatch(/\$uri\.Scheme -ne 'https'/);
     for (const call of ['Get-Ai17zText', 'Save-Ai17zDownload']) {
       const body = setup.slice(setup.indexOf(`function ${call} {`), setup.indexOf(`function ${call} {`) + 900);
       expect(body, `${call} does not check the address`).toContain('Assert-Ai17zAllowedUrl');
+      // And where a redirect landed, because every GitHub download is one.
+      expect(body, `${call} does not check where a redirect landed`).toContain('Assert-Ai17zAnsweredFrom $response');
     }
   });
 
@@ -160,6 +179,9 @@ describe('where it may go on the network', () => {
     for (const url of downloads) {
       const allowed =
         url.includes('code.ai17z.io/') ||
+        // AI17Z's own GitHub copy: its releases list and release files.
+        url.startsWith('https://api.github.com/repos/ShiftAboveCtrl/ai17z/') ||
+        url.startsWith('https://github.com/ShiftAboveCtrl/ai17z/') ||
         // Vendor pages, opened in a browser when winget is not available. Never
         // fetched.
         url.includes('nodejs.org') ||
@@ -638,6 +660,7 @@ describe('the audit document describes the program it ships with', () => {
     expect(audit).toMatch(/only from the official repository/i);
     const readme = read('README.md');
     expect(readme).toMatch(/Install AI17Z only with the command published here/i);
+    expect(readme).toContain('raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1');
     expect(readme).toContain('code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1');
   });
 

@@ -5,7 +5,15 @@
 .DESCRIPTION
   This is the file behind the command on the AI17Z README:
 
+      irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex
+
+  The same file is on AI17Z Code, AI17Z's own server, for when GitHub is
+  down:
+
       irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 | iex
+
+  Either way, the release itself is fetched from GitHub first and from AI17Z
+  Code when GitHub cannot provide it, and checked the same way.
 
   It is deliberately small, and deliberately not the installer. All it does is
   work out which AI17Z release to install, fetch that release's setup program,
@@ -64,7 +72,7 @@
 
   If you would rather look first -- and that is a reasonable thing to want:
 
-      irm https://code.ai17z.io/AI17Z/ai17z/raw/branch/main/install.ps1 -OutFile install.ps1
+      irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 -OutFile install.ps1
       notepad install.ps1
 
   See docs/SETUP_AUDIT.md for everything the setup program can change, and how
@@ -126,11 +134,21 @@ $ErrorActionPreference = 'Stop'
 # rather than followed.
 # ---------------------------------------------------------------------------
 $Project = 'AI17Z/ai17z'
+# Where somebody is sent to read about a release. AI17Z Code, because it is
+# the one host that is always there: GitHub restricted this account once.
 $ProjectUrl = 'https://code.ai17z.io/' + $Project
-$ProjectApi = 'https://code.ai17z.io/api/v1/repos/' + $Project
-# One host. AI17Z Code is AI17Z's own Forgejo, and it serves a release file
-# itself from its own storage, so nothing here ever leaves code.ai17z.io.
-$AllowedHosts = @('code.ai17z.io')
+# Where a release is fetched from, in order. GitHub first, because that is the
+# copy people know; AI17Z Code when GitHub does not answer, refuses, or lacks a
+# file. One source serves the whole run. The same list as RELEASE_SOURCES in
+# packages/shared/src/releaseManifest.ts, held there by a test.
+$Sources = @(
+  [pscustomobject]@{ Name = 'GitHub';     Api = 'https://api.github.com/repos/ShiftAboveCtrl/ai17z'; ListQuery = '?per_page=20' },
+  [pscustomobject]@{ Name = 'AI17Z Code'; Api = 'https://code.ai17z.io/api/v1/repos/AI17Z/ai17z';    ListQuery = '?limit=20' }
+)
+# Every host a request may start at or be redirected to. GitHub answers a
+# release download with a redirect to its own storage host, so the host that
+# answered is checked as well as the one asked.
+$AllowedHosts = @('api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'code.ai17z.io')
 $SetupAssetPattern = 'Install-AI17Z-{0}.ps1'
 $ChecksumAsset = 'SHA256SUMS.txt'
 
@@ -215,15 +233,35 @@ function Assert-AllowedUrl {
     Stop-Install 'A download was about to be made over plain HTTP.' 'AI17Z only ever downloads over HTTPS.' 'Report this.'
   }
   if ($AllowedHosts -notcontains $uri.Host) {
-    Stop-Install ('AI17Z will not download from ' + $uri.Host + '.') 'It only downloads from its own release on AI17Z Code.' `
+    Stop-Install ('AI17Z will not download from ' + $uri.Host + '.') 'It only downloads its own releases, from GitHub or AI17Z Code.' `
       ('Stop, and install AI17Z from ' + $ProjectUrl)
   }
 }
 
+# The address that actually answered, after any redirect. Windows PowerShell
+# keeps it on the underlying HttpWebResponse; PowerShell 7 on the request.
+function Get-AnsweredUrl {
+  param($Response)
+  $base = $Response.BaseResponse
+  if ($base -and $base.PSObject.Properties['ResponseUri'] -and $base.ResponseUri) { return '' + $base.ResponseUri.AbsoluteUri }
+  if ($base -and $base.PSObject.Properties['RequestMessage'] -and $base.RequestMessage) { return '' + $base.RequestMessage.RequestUri.AbsoluteUri }
+  return ''
+}
+
+function Invoke-Allowed {
+  param([string] $Url, [hashtable] $Headers)
+  Assert-AllowedUrl $Url
+  $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -Headers $Headers -MaximumRedirection 5
+  # Judged again where it landed: an allow-list checked only on the first
+  # address says nothing about a redirect.
+  $answered = Get-AnsweredUrl $response
+  if ($answered) { Assert-AllowedUrl $answered }
+  return $response
+}
+
 function Get-Text {
   param([string] $Url, [string] $Accept = 'application/json')
-  Assert-AllowedUrl $Url
-  $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -Headers @{ 'Accept' = $Accept; 'User-Agent' = 'AI17Z-Install' }
+  $response = Invoke-Allowed $Url @{ 'Accept' = $Accept; 'User-Agent' = 'AI17Z-Install' }
   # Windows PowerShell decides the shape of .Content from the response's content
   # type, not from anything asked for here: a string for text, bytes for
   # anything it thinks is binary. Assuming either one is how this failed the
@@ -262,7 +300,7 @@ if ((Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and -not $IsWi
 }
 
 # TLS 1.2 at the least. Windows PowerShell defaults to whatever was current when
-# it shipped, and AI17Z Code does not accept that.
+# it shipped, and neither GitHub nor AI17Z Code accepts that.
 try {
   $protocols = [Net.SecurityProtocolType]::Tls12
   try { $protocols = $protocols -bor [Net.SecurityProtocolType]::Tls13 } catch { }
@@ -283,154 +321,225 @@ if ($Release -and -not (Test-ReleaseTag $Release)) {
     ('Pick one from ' + $ProjectUrl + '/releases and pass it to -Release.')
 }
 
-$base = $ProjectApi + '/releases'
-# Deliberately not named after what it holds.
+# One attempt at one source: which release, its checksums, and the checked
+# setup program, all from the same host.
 #
-# PowerShell variable names are case-insensitive, so a lower-case one here would
-# be the -Release parameter -- which is [string], so assigning a release object
-# to it converts the object to a string without complaining, and every field
-# read afterwards is empty. It fails as a wrong answer rather than as an error.
-$chosen = $null
-$all = @()
-try {
-  if ($Release) {
-    $chosen = Get-Text ($base + '/tags/' + $Release) | ConvertFrom-Json
-    # The list as well, but only to answer "was there one that would have
-    # worked" if the named release turns out not to carry what this needs.
-    # Advice is not worth failing an install over, so this one is allowed to
-    # come back empty.
-    try {
-      $fetched = Get-Text ($base + '?limit=20') | ConvertFrom-Json
-      $all = @($fetched)
-    } catch { $all = @() }
-  } else {
-    # Not /releases/latest: that is the server choosing, and here the list is
-    # read and the choice made in the open.
-    #
-    # Assigned first and wrapped second, never `@(... | ConvertFrom-Json)`:
-    # Windows PowerShell hands an array down the pipeline as one object, so
-    # wrapping in the same statement produces a one-element array containing
-    # the array -- and every release then reads as a single release with
-    # twenty of everything.
-    $fetched = Get-Text ($base + '?limit=20') | ConvertFrom-Json
-    $all = @($fetched)
-    $chosen = @($all | Where-Object { -not $_.draft } | Select-Object -First 1)[0]
+# A source that cannot provide any of that says why and hands the run to the
+# next one. Two answers are not handed on, because neither is an outage: a tag
+# that is not a version number, and bytes that do not match their published
+# hash. Both stop everything, exactly as they did with one source.
+function Get-FromSource {
+  param($Source)
+  $result = [pscustomobject]@{
+    Ok = $false; Source = $Source.Name; Kind = ''; Why = ''; Tag = ''; Version = ''; SetupName = ''
+    All = @(); Expected = ''; Bytes = $null
   }
-} catch {
-  $why = '' + $_.Exception.Message
-  # A named release that is not there. Asked for `-Release v0.0.0-nope`, this
-  # used to say it could not work out which release to install and then send
-  # somebody to check their internet connection. It worked out which release
-  # perfectly well; that release does not exist.
-  if ($Release -and $why -match '\(404\)') {
-    Stop-Install ('There is no release called "' + $Release + '".') `
-      'Nothing on this PC was changed.' `
-      ('Pick one from ' + $ProjectUrl + '/releases, or leave -Release off to take the newest.')
-  }
-  # What to go and look at, decided by what actually happened.
+  $base = $Source.Api + '/releases'
+  # Deliberately not named after what it holds.
   #
-  # This used to say "check your internet connection" whatever the answer was,
-  # and a refusal from the server is the one case where the connection is
-  # provably fine: a shared office, a university or a cloud box can reach an
-  # anonymous rate limit without anybody doing anything unusual.
-  $advice = 'Check your internet connection and run the command again.'
-  if ($why -match '\(40[39]\)' -or $why -match '\(429\)') {
-    $advice = 'AI17Z Code refused the request. That is usually a rate limit for addresses that are not signed in, which a shared network can reach on its own. Wait a few minutes and run the command again.'
+  # PowerShell variable names are case-insensitive, so a lower-case one here
+  # would be the -Release parameter -- which is [string], so assigning a
+  # release object to it converts the object to a string without complaining,
+  # and every field read afterwards is empty. It fails as a wrong answer rather
+  # than as an error.
+  $chosen = $null
+  try {
+    if ($Release) {
+      $chosen = Get-Text ($base + '/tags/' + $Release) | ConvertFrom-Json
+      # The list as well, but only to answer "was there one that would have
+      # worked" if the named release turns out not to carry what this needs.
+      # Advice is not worth failing an install over, so this one is allowed to
+      # come back empty.
+      try {
+        $fetched = Get-Text ($base + $Source.ListQuery) | ConvertFrom-Json
+        $result.All = @($fetched)
+      } catch { $result.All = @() }
+    } else {
+      # Not /releases/latest: that is the server choosing, and here the list
+      # is read and the choice made in the open. GitHub's Latest label decides
+      # nothing.
+      #
+      # Assigned first and wrapped second, never `@(... | ConvertFrom-Json)`:
+      # Windows PowerShell hands an array down the pipeline as one object, so
+      # wrapping in the same statement produces a one-element array containing
+      # the array -- and every release then reads as a single release with
+      # twenty of everything.
+      $fetched = Get-Text ($base + $Source.ListQuery) | ConvertFrom-Json
+      $result.All = @($fetched)
+      $chosen = @($result.All | Where-Object { -not $_.draft } | Select-Object -First 1)[0]
+    }
+  } catch {
+    if ($_.TargetObject -eq $StopSentinel) { throw }
+    $why = '' + $_.Exception.Message
+    $result.Why = $why
+    $result.Kind = 'unreachable'
+    # A named release that is not there.
+    if ($Release -and $why -match '\(404\)') { $result.Kind = 'no-such-release' }
+    # A refusal is the one case where the connection is provably fine: a
+    # shared office, a university or a cloud box can reach an anonymous rate
+    # limit without anybody doing anything unusual.
+    elseif ($why -match '\(40[39]\)' -or $why -match '\(429\)') { $result.Kind = 'refused' }
+    return $result
   }
-  Stop-Install 'AI17Z could not work out which release to install.' `
-    ("Nothing on this PC was changed.`n" + $why) `
-    $advice
-}
-if (-not $chosen) {
-  Stop-Install 'That release does not exist.' '' ('Look at ' + $ProjectUrl + '/releases and pass -Release <tag>.')
-}
+  if (-not $chosen) { $result.Kind = 'no-release'; return $result }
 
-$tag = '' + $chosen.tag_name
-# The tag AI17Z Code just handed over, before an asset name is built from it.
-# Refused rather than sanitised: a release named something this does not
-# recognise is a release this does not understand, not one to guess at.
-if (-not (Test-ReleaseTag $tag)) {
-  Stop-Install ('The newest release is called "' + $tag + '", which is not a version number.') `
-    'Nothing was written and nothing was run.' `
-    ('Install a release by name with -Release <tag>, and report this at ' + $ProjectUrl + '/issues')
-}
-$version = $tag -replace '^v', ''
-$setupName = [string]::Format($SetupAssetPattern, $version)
-
-$setupAsset = $null
-$sumsAsset = $null
-foreach ($asset in @($chosen.assets)) {
-  if ($asset.name -ieq $setupName) { $setupAsset = $asset }
-  if ($asset.name -ieq $ChecksumAsset) { $sumsAsset = $asset }
-}
-if (-not $setupAsset) {
-  # Two different situations wearing the same shape, and telling somebody the
-  # wrong one sends them looking for a release that does not exist.
-  $compatible = @(Get-CompatibleTags $all | Where-Object { $_ -ine $tag })
-  $advice = ''
-  if ($compatible.Count -gt 0) {
-    $advice = 'Install the newest one that does with:' + "`n  -Release " + $compatible[0]
+  $tag = '' + $chosen.tag_name
+  # The tag a server just handed over, before an asset name is built from it.
+  # Refused rather than sanitised: a release named something this does not
+  # recognise is a release this does not understand, not one to guess at.
+  if (-not (Test-ReleaseTag $tag)) {
+    Stop-Install ('The newest release on ' + $Source.Name + ' is called "' + $tag + '", which is not a version number.') `
+      'Nothing was written and nothing was run.' `
+      ('Install a release by name with -Release <tag>, and report this at ' + $ProjectUrl + '/issues')
   }
-  if ($Release) {
-    # Somebody named this release. It exists; it just predates the command.
-    if (-not $advice) { $advice = 'See ' + $ProjectUrl + '/releases' }
-    Stop-Install ('Release ' + $tag + ' cannot be installed with this command.') `
-      ("It does not contain " + $setupName + ", which is the setup program this`ncommand checks and runs." +
-       "`n`nReleases from before the terminal install command carry an installer on`ntheir own page instead." +
-       "`n`nNothing on this PC was changed.") `
-      $advice
+  $result.Tag = $tag
+  $result.Version = $tag -replace '^v', ''
+  $result.SetupName = [string]::Format($SetupAssetPattern, $result.Version)
+
+  $setupAsset = $null
+  $sumsAsset = $null
+  foreach ($asset in @($chosen.assets)) {
+    if ($asset.name -ieq $result.SetupName) { $setupAsset = $asset }
+    if ($asset.name -ieq $ChecksumAsset) { $sumsAsset = $asset }
   }
-  # No release was named, so this is the newest there is. Nothing newer exists
-  # to suggest, and saying "try an earlier one" would be worse than saying
-  # nothing: every earlier one fails here for the same reason.
-  if (-not $advice) {
-    $advice = 'Watch ' + $ProjectUrl + '/releases'
+  if (-not $setupAsset) { $result.Kind = 'no-setup'; return $result }
+  if (-not $sumsAsset) { $result.Kind = 'no-sums'; return $result }
+
+  try {
+    foreach ($line in ((Get-Text $sumsAsset.browser_download_url 'text/plain') -split "`r?`n")) {
+      $match = [regex]::Match($line.Trim(), '^([0-9a-fA-F]{64})\s+\*?(.+)$')
+      if ($match.Success -and ($match.Groups[2].Value.Trim() -ieq $result.SetupName)) {
+        $result.Expected = $match.Groups[1].Value.ToLowerInvariant()
+      }
+    }
+  } catch {
+    if ($_.TargetObject -eq $StopSentinel) { throw }
+    $result.Kind = 'download'; $result.Why = '' + $_.Exception.Message; return $result
   }
-  Stop-Install 'AI17Z Setup is newer than the latest published release.' `
-    ("The latest release is " + $tag + ", which does not contain the new terminal`nsetup package (" + $setupName + ")." +
-     "`n`nNothing on this PC was changed." +
-     "`n`nA compatible AI17Z release has not been published yet.") `
-    $advice
+  if (-not $result.Expected) { $result.Kind = 'no-hash'; return $result }
+
+  try {
+    $response = Invoke-Allowed $setupAsset.browser_download_url @{ 'User-Agent' = 'AI17Z-Install' }
+  } catch {
+    if ($_.TargetObject -eq $StopSentinel) { throw }
+    $result.Kind = 'download'; $result.Why = '' + $_.Exception.Message; return $result
+  }
+  $bytes = $response.Content
+  if ($bytes -isnot [byte[]]) { $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$bytes) }
+
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { $actual = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+  if ($actual -ne $result.Expected) {
+    # Fail closed, and do not offer a way past it. Not handed to the next
+    # source either: a file that does not match what its own release
+    # published is something to think about, not to route around.
+    Stop-Install 'The setup program does not match its published SHA-256.' `
+      ("expected  " + $result.Expected + "`ngot       " + $actual + "`nfrom      " + $Source.Name + "`n`nNothing was written and nothing was run.") `
+      ("Do not try again on the same network without thinking about why.`nIf it happens twice, stop and report it at " + $ProjectUrl + '/issues')
+  }
+  $result.Bytes = $bytes
+  $result.Ok = $true
+  return $result
 }
-if (-not $sumsAsset) {
-  Stop-Install ('Release ' + $tag + ' publishes no SHA256SUMS.txt.') `
-    'AI17Z will not run a setup program it cannot check.' `
-    ('See ' + $ProjectUrl + '/releases')
-}
 
-# ---------------------------------------------------------------------------
-# The setup program, checked before a line of it runs
-# ---------------------------------------------------------------------------
-
-Write-Line ('Fetching AI17Z Setup ' + $version + '...') 'DarkGray'
-
-$expected = ''
-foreach ($line in ((Get-Text $sumsAsset.browser_download_url 'text/plain') -split "`r?`n")) {
-  $match = [regex]::Match($line.Trim(), '^([0-9a-fA-F]{64})\s+\*?(.+)$')
-  if ($match.Success -and ($match.Groups[2].Value.Trim() -ieq $setupName)) {
-    $expected = $match.Groups[1].Value.ToLowerInvariant()
+# What one failed attempt is called on screen, in a few words.
+function Get-FailureWords {
+  param($Attempt)
+  switch ($Attempt.Kind) {
+    'no-such-release' { return 'it has no release called ' + $Release }
+    'refused'         { return 'it refused the request' }
+    'no-release'      { return 'it lists no release' }
+    'no-setup'        { return $Attempt.Tag + ' there has no ' + $Attempt.SetupName }
+    'no-sums'         { return $Attempt.Tag + ' there publishes no SHA256SUMS.txt' }
+    'no-hash'         { return $Attempt.Tag + ' there publishes no hash for ' + $Attempt.SetupName }
+    'download'        { return 'a download did not finish' }
+    default           { return 'it did not answer' }
   }
 }
-if (-not $expected) {
-  Stop-Install ('Release ' + $tag + ' does not publish a hash for ' + $setupName + '.') `
-    'AI17Z will not run a setup program it cannot check.' `
-    ('See ' + $ProjectUrl + '/releases')
+
+$attempt = $null
+for ($i = 0; $i -lt $Sources.Count; $i++) {
+  $attempt = Get-FromSource $Sources[$i]
+  if ($attempt.Ok) { break }
+  if ($i + 1 -lt $Sources.Count) {
+    Write-Line ($Sources[$i].Name + ' could not provide it (' + (Get-FailureWords $attempt) + '). Trying ' + $Sources[$i + 1].Name + '...') 'DarkGray'
+  }
 }
 
-Assert-AllowedUrl $setupAsset.browser_download_url
-$response = Invoke-WebRequest -Uri $setupAsset.browser_download_url -UseBasicParsing -Headers @{ 'User-Agent' = 'AI17Z-Install' }
-$bytes = $response.Content
-if ($bytes -isnot [byte[]]) { $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$bytes) }
-
-$sha = [System.Security.Cryptography.SHA256]::Create()
-try { $actual = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant() } finally { $sha.Dispose() }
-
-if ($actual -ne $expected) {
-  # Fail closed, and do not offer a way past it.
-  Stop-Install 'The setup program does not match its published SHA-256.' `
-    ("expected  " + $expected + "`ngot       " + $actual + "`n`nNothing was written and nothing was run.") `
-    ("Do not try again on the same network without thinking about why.`nIf it happens twice, stop and report it at " + $ProjectUrl + '/issues')
+if (-not $attempt.Ok) {
+  # Every source failed. The last one is AI17Z Code, the source of truth, so
+  # its answer is the one explained. GitHub's half is in the line above.
+  $tag = $attempt.Tag
+  $setupName = $attempt.SetupName
+  switch ($attempt.Kind) {
+    'no-such-release' {
+      # It worked out which release to install perfectly well; that release
+      # does not exist.
+      Stop-Install ('There is no release called "' + $Release + '".') `
+        'Nothing on this PC was changed.' `
+        ('Pick one from ' + $ProjectUrl + '/releases, or leave -Release off to take the newest.')
+    }
+    'no-release' {
+      Stop-Install 'That release does not exist.' '' ('Look at ' + $ProjectUrl + '/releases and pass -Release <tag>.')
+    }
+    'no-setup' {
+      # Two different situations wearing the same shape, and telling somebody
+      # the wrong one sends them looking for a release that does not exist.
+      $compatible = @(Get-CompatibleTags $attempt.All | Where-Object { $_ -ine $tag })
+      $advice = ''
+      if ($compatible.Count -gt 0) {
+        $advice = 'Install the newest one that does with:' + "`n  -Release " + $compatible[0]
+      }
+      if ($Release) {
+        # Somebody named this release. It exists; it just predates the command.
+        if (-not $advice) { $advice = 'See ' + $ProjectUrl + '/releases' }
+        Stop-Install ('Release ' + $tag + ' cannot be installed with this command.') `
+          ("It does not contain " + $setupName + ", which is the setup program this`ncommand checks and runs." +
+           "`n`nReleases from before the terminal install command carry an installer on`ntheir own page instead." +
+           "`n`nNothing on this PC was changed.") `
+          $advice
+      }
+      # No release was named, so this is the newest there is. Nothing newer
+      # exists to suggest, and saying "try an earlier one" would be worse than
+      # saying nothing: every earlier one fails here for the same reason.
+      if (-not $advice) { $advice = 'Watch ' + $ProjectUrl + '/releases' }
+      Stop-Install 'AI17Z Setup is newer than the latest published release.' `
+        ("The latest release is " + $tag + ", which does not contain the new terminal`nsetup package (" + $setupName + ")." +
+         "`n`nNothing on this PC was changed." +
+         "`n`nA compatible AI17Z release has not been published yet.") `
+        $advice
+    }
+    'no-sums' {
+      Stop-Install ('Release ' + $tag + ' publishes no SHA256SUMS.txt.') `
+        'AI17Z will not run a setup program it cannot check.' `
+        ('See ' + $ProjectUrl + '/releases')
+    }
+    'no-hash' {
+      Stop-Install ('Release ' + $tag + ' does not publish a hash for ' + $setupName + '.') `
+        'AI17Z will not run a setup program it cannot check.' `
+        ('See ' + $ProjectUrl + '/releases')
+    }
+    default {
+      # What to go and look at, decided by what actually happened. A refusal
+      # from both is almost always a rate limit for addresses that are not
+      # signed in, which a shared network can reach on its own.
+      $advice = 'Check your internet connection and run the command again.'
+      if ($attempt.Kind -eq 'refused') {
+        $advice = 'GitHub and AI17Z Code both refused the request. That is usually a rate limit for addresses that are not signed in, which a shared network can reach on its own. Wait a few minutes and run the command again.'
+      }
+      Stop-Install 'AI17Z could not work out which release to install.' `
+        ("Neither GitHub nor AI17Z Code could provide it. Nothing on this PC was changed.`n" + $attempt.Why) `
+        $advice
+    }
+  }
 }
+
+$tag = $attempt.Tag
+$version = $attempt.Version
+$setupName = $attempt.SetupName
+$expected = $attempt.Expected
+$bytes = $attempt.Bytes
+Write-Line ('Fetched AI17Z Setup ' + $version + ' from ' + $attempt.Source + '.') 'DarkGray'
 
 # Written where the setup program keeps its own log, so everything setup owns is
 # in one folder somebody can read and delete. Written *after* the check, so a
@@ -491,6 +600,9 @@ if ($Instance -and ($Instance -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$')) {
 $env:AI17Z_SETUP_FILE = $setupPath
 $env:AI17Z_SETUP_SHA256 = $expected
 $env:AI17Z_SETUP_RELEASE = $tag
+# A fixed word, never text off the network: setup starts where this succeeded,
+# so one install fetches its files from one host.
+$env:AI17Z_SETUP_SOURCE = if ($attempt.Source -eq 'GitHub') { 'github' } else { 'forgejo' }
 if ($Instance) { $env:AI17Z_SETUP_INSTANCE = $Instance }
 if ($Update) { $env:AI17Z_SETUP_UPDATE = '1' }
 if ($NewInstance) { $env:AI17Z_SETUP_NEW_INSTANCE = '1' }
@@ -529,7 +641,7 @@ if ($null -eq $code) { $code = 1 }
 if (-not $KeepDownload -and $code -eq 0) {
   Remove-Item -LiteralPath $setupPath -Force -ErrorAction SilentlyContinue
 }
-foreach ($name in @('AI17Z_SETUP_FILE', 'AI17Z_SETUP_SHA256', 'AI17Z_SETUP_RELEASE', 'AI17Z_SETUP_INSTANCE',
+foreach ($name in @('AI17Z_SETUP_FILE', 'AI17Z_SETUP_SHA256', 'AI17Z_SETUP_RELEASE', 'AI17Z_SETUP_SOURCE', 'AI17Z_SETUP_INSTANCE',
     'AI17Z_SETUP_UPDATE', 'AI17Z_SETUP_NEW_INSTANCE', 'AI17Z_SETUP_LIST', 'AI17Z_SETUP_WHATIF', 'AI17Z_SETUP_DETAILS')) {
   Remove-Item -Path ('Env:' + $name) -ErrorAction SilentlyContinue
 }

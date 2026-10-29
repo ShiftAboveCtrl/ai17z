@@ -162,11 +162,20 @@ $script:Ai17zSetup = [ordered]@{
   Repository = 'AI17Z/ai17z'
   ProjectUrl = 'https://code.ai17z.io/AI17Z/ai17z'
   ProjectApi = 'https://code.ai17z.io/api/v1/repos/AI17Z/ai17z'
-  # The hosts a request may start at. One: AI17Z Code, AI17Z's own Forgejo,
-  # which serves a release file itself from its own storage. The hash, not the
+  # Where a release is fetched from, in order: GitHub, then AI17Z Code, AI17Z's
+  # own Forgejo. One source serves a whole run, so a package is always checked
+  # against the checksums published beside it. The same list as
+  # RELEASE_SOURCES in packages/shared/src/releaseManifest.ts.
+  Sources = @(
+    [ordered]@{ Key = 'github';  Name = 'GitHub';     Releases = 'https://api.github.com/repos/ShiftAboveCtrl/ai17z/releases?per_page=20'; Downloads = 'https://github.com/ShiftAboveCtrl/ai17z/releases/download/' },
+    [ordered]@{ Key = 'forgejo'; Name = 'AI17Z Code'; Releases = 'https://code.ai17z.io/api/v1/repos/AI17Z/ai17z/releases?limit=20';    Downloads = 'https://code.ai17z.io/AI17Z/ai17z/releases/download/' }
+  )
+  # The hosts a request may start at or be redirected to. GitHub answers a
+  # release download with a redirect to its own storage host, so the host
+  # that answered is judged as well as the one asked. The hash, not the
   # hostname, is still what makes the bytes trustworthy, but a request that
-  # does not begin here is refused outright.
-  AllowedHosts = @('code.ai17z.io')
+  # does not begin and end here is refused outright.
+  AllowedHosts = @('api.github.com', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'code.ai17z.io')
   # Windows 10 22H2. Below this, Docker Desktop's own requirements are not met
   # and nothing here can fix that.
   MinimumWindowsBuild = 19045
@@ -1347,6 +1356,27 @@ function Test-Ai17zShouldClaimPrimary {
   return $true
 }
 
+# Pure, and above -LoadOnly, so the tests can ask them directly.
+# Whether a host is one this may talk to. Exact names only: no suffix match,
+# because `github.com.example.net` ends in nothing this trusts.
+function Test-Ai17zHostAllowed {
+  param([string] $HostName)
+  if (-not $HostName) { return $false }
+  return [bool]($script:Ai17zSetup.AllowedHosts -contains $HostName.ToLowerInvariant())
+}
+
+# The sources to ask, in order. The one the install command already succeeded
+# with goes first, so a single install is served by a single host; the rest
+# follow in their declared order.
+function Get-Ai17zSourceOrder {
+  param([string] $Preferred = '')
+  $all = @($script:Ai17zSetup.Sources)
+  $first = @($all | Where-Object { $_.Key -eq $Preferred })
+  $rest = @($all | Where-Object { $_.Key -ne $Preferred })
+  if ($first.Count -eq 0) { return $all }
+  return @($first + $rest)
+}
+
 if ($LoadOnly) { return }
 
 # ---------------------------------------------------------------------------
@@ -1731,6 +1761,7 @@ if ($Manifest) {
     script = 'packaging/windows/Setup-AI17Z.ps1'
     repository = $script:Ai17zSetup.Repository
     allowedHosts = $script:Ai17zSetup.AllowedHosts
+    sources = @($script:Ai17zSetup.Sources | ForEach-Object { [ordered]@{ name = $_.Name; releases = $_.Releases; downloads = $_.Downloads } })
     minimumWindowsBuild = $script:Ai17zSetup.MinimumWindowsBuild
     minimumNodeMajor = $script:Ai17zSetup.MinimumNodeMajor
     packages = @($script:Ai17zSetup.Packages.Keys | ForEach-Object {
@@ -1764,6 +1795,10 @@ if ($Manifest) {
 $InstanceNameWasGiven = $PSBoundParameters.ContainsKey('InstanceName')
 if (-not $SelfPath -and $env:AI17Z_SETUP_FILE) { $SelfPath = $env:AI17Z_SETUP_FILE }
 if (-not $Release -and $env:AI17Z_SETUP_RELEASE) { $Release = $env:AI17Z_SETUP_RELEASE }
+# Which source the install command succeeded with, so this run starts there.
+# Only a known word is honoured; anything else is ignored rather than trusted.
+$script:Ai17zPreferredSource = ''
+if ($env:AI17Z_SETUP_SOURCE -eq 'github' -or $env:AI17Z_SETUP_SOURCE -eq 'forgejo') { $script:Ai17zPreferredSource = $env:AI17Z_SETUP_SOURCE }
 if (-not $InstanceNameWasGiven -and $env:AI17Z_SETUP_INSTANCE) { $InstanceName = $env:AI17Z_SETUP_INSTANCE; $InstanceNameWasGiven = $true }
 if (-not $Update -and $env:AI17Z_SETUP_UPDATE) { $Update = [switch]$true }
 if (-not $NewInstance -and $env:AI17Z_SETUP_NEW_INSTANCE) { $NewInstance = [switch]$true }
@@ -1940,9 +1975,17 @@ function Assert-Ai17zAllowedUrl {
   if ($uri.Scheme -ne 'https') {
     Stop-Ai17z 'A download was about to be made over plain HTTP.' 'AI17Z Setup only ever downloads over HTTPS.' 'This is a fault in AI17Z Setup. Report it with the log below.'
   }
-  if ($script:Ai17zSetup.AllowedHosts -notcontains $uri.Host) {
-    Stop-Ai17z ('AI17Z Setup will not download from ' + $uri.Host + '.') ("It only downloads from AI17Z's own release on AI17Z Code.") ('Stop, and download AI17Z from ' + $script:Ai17zSetup.ProjectUrl + '/releases instead.')
+  if (-not (Test-Ai17zHostAllowed $uri.Host)) {
+    Stop-Ai17z ('AI17Z Setup will not download from ' + $uri.Host + '.') ("It only downloads AI17Z's own releases, from GitHub or AI17Z Code.") ('Stop, and download AI17Z from ' + $script:Ai17zSetup.ProjectUrl + '/releases instead.')
   }
+}
+
+# Where a response actually came from, after HttpClient followed any redirect.
+function Assert-Ai17zAnsweredFrom {
+  param($Response)
+  $answered = $null
+  try { $answered = $Response.RequestMessage.RequestUri } catch { $answered = $null }
+  if ($answered) { Assert-Ai17zAllowedUrl ('' + $answered.AbsoluteUri) }
 }
 
 function Get-Ai17zHttpClient {
@@ -1970,6 +2013,7 @@ function Get-Ai17zText {
     $client.DefaultRequestHeaders.Accept.Clear()
     $client.DefaultRequestHeaders.Accept.ParseAdd($Accept)
     $response = $client.GetAsync($Url).GetAwaiter().GetResult()
+    Assert-Ai17zAnsweredFrom $response
     if (-not $response.IsSuccessStatusCode) {
       return [pscustomobject]@{ Ok = $false; Status = [int]$response.StatusCode; Body = '' }
     }
@@ -1995,6 +2039,7 @@ function Save-Ai17zDownload {
   $file = $null
   try {
     $response = $client.GetAsync($Url, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+    Assert-Ai17zAnsweredFrom $response
     if (-not $response.IsSuccessStatusCode) {
       throw ('the download answered ' + [int]$response.StatusCode + ' ' + $response.ReasonPhrase)
     }
@@ -2032,17 +2077,15 @@ function Save-Ai17zDownload {
 }
 
 <#
-  Which release to install.
+  Which release to install, from one source.
 
-  AI17Z Code's releases API, newest first. It lists prereleases, and the tag is
-  what says which a release is, never a flag somebody could forget to tick.
-  /releases/latest is not used: it is the server choosing, and here the list is
-  read and the choice made in the open. A draft is never listed to a caller who
-  cannot write to the repository, and one that somehow is gets skipped.
-
-  This used to read GitHub's releases feed, to keep clear of the REST budget an
-  agent watching a GitHub repository spends. That budget belongs to a different
-  host, so the two cannot meet.
+  A releases API, newest first: GitHub's or AI17Z Code's, which answer in the
+  same shape. It lists prereleases, and the tag is what says which a release
+  is, never a flag somebody could forget to tick, and never GitHub's Latest
+  label. /releases/latest is not used: it is the server choosing, and here the
+  list is read and the choice made in the open. A draft is never listed to a
+  caller who cannot write to the repository, and one that somehow is gets
+  skipped.
 
   Assets are then composed rather than looked up. Their names are fixed by the
   release, so an address built from the tag needs no request to discover and
@@ -2050,9 +2093,9 @@ function Save-Ai17zDownload {
   still settled by fetching it, and by the checksum afterwards.
 #>
 function Get-Ai17zAssetsForTag {
-  param([string] $Tag)
+  param([string] $Tag, $Source)
   $version = $Tag -replace '^v', ''
-  $base = $script:Ai17zSetup.ProjectUrl + '/releases/download/' + $Tag + '/'
+  $base = $Source.Downloads + $Tag + '/'
   $names = @(
     'release-manifest.json',
     'release-notes.md',
@@ -2067,7 +2110,7 @@ function Get-Ai17zAssetsForTag {
 }
 
 function Get-Ai17zRelease {
-  param([string] $Tag)
+  param([string] $Tag, $Source)
   # A tag goes into a URL path, so it is checked before it is concatenated into
   # one. `Assert-Ai17zAllowedUrl` checks the host; it cannot tell that the path
   # underneath it is the one that was meant.
@@ -2077,10 +2120,12 @@ function Get-Ai17zRelease {
 
   $chosen = $Tag
   if (-not $chosen) {
-    $list = $script:Ai17zSetup.ProjectApi + '/releases?limit=20'
-    $answer = Get-Ai17zText $list 'application/json'
+    $answer = $null
+    try { $answer = Get-Ai17zText $Source.Releases 'application/json' } catch {
+      return [pscustomobject]@{ Ok = $false; Status = 0; Release = $null; Why = ('' + $_.Exception.Message) }
+    }
     if (-not $answer.Ok) {
-      return [pscustomobject]@{ Ok = $false; Status = $answer.Status; Release = $null }
+      return [pscustomobject]@{ Ok = $false; Status = $answer.Status; Release = $null; Why = '' }
     }
     # Assigned first and wrapped second: Windows PowerShell hands an array down
     # the pipeline as one object, so wrapping in the same statement makes a
@@ -2093,24 +2138,28 @@ function Get-Ai17zRelease {
       $candidate = '' + $entry.tag_name
       if (Test-Ai17zReleaseTag $candidate) { $chosen = $candidate; break }
     }
-    if (-not $chosen) { return [pscustomobject]@{ Ok = $false; Status = 404; Release = $null } }
+    if (-not $chosen) { return [pscustomobject]@{ Ok = $false; Status = 404; Release = $null; Why = '' } }
   }
 
   # A release is listed when it is created and its packages are linked after,
   # so the manifest is what says the release is finished. Absent means not
   # ready to install, which is a different answer from not existing, and both
   # are refusals rather than a guess at an older version.
-  $manifestUrl = $script:Ai17zSetup.ProjectUrl + '/releases/download/' + $chosen + '/release-manifest.json'
-  $probe = Get-Ai17zText $manifestUrl 'application/json'
+  $manifestUrl = $Source.Downloads + $chosen + '/release-manifest.json'
+  $probe = $null
+  try { $probe = Get-Ai17zText $manifestUrl 'application/json' } catch {
+    return [pscustomobject]@{ Ok = $false; Status = 0; Release = $null; Why = ('' + $_.Exception.Message) }
+  }
   if (-not $probe.Ok) {
-    return [pscustomobject]@{ Ok = $false; Status = $probe.Status; Release = $null }
+    return [pscustomobject]@{ Ok = $false; Status = $probe.Status; Release = $null; Why = '' }
   }
 
   $release = [pscustomobject]@{
     tag_name = $chosen
-    assets   = (Get-Ai17zAssetsForTag $chosen)
+    source   = $Source.Name
+    assets   = (Get-Ai17zAssetsForTag $chosen $Source)
   }
-  return [pscustomobject]@{ Ok = $true; Status = 200; Release = $release }
+  return [pscustomobject]@{ Ok = $true; Status = 200; Release = $release; Why = '' }
 }
 
 function Find-Ai17zAsset {
@@ -3111,8 +3160,116 @@ if ($LocalPackage) {
   }
   Set-Ai17zStep 'app' 'active' 'using the package on disk'
 } else {
-  $found = Get-Ai17zRelease $tag
-  if (-not $found.Ok) {
+  # Each source in turn, the one the install command used first. A source that
+  # does not answer, refuses, lacks a file or breaks off mid-download hands the
+  # whole run to the next one, so the package and the checksums it is held
+  # against always come from the same host. Two things are never handed on: a
+  # tag that is not a version number, and a package that does not match its
+  # published hash. Both stop, exactly as they did with one source.
+  $sources = @(Get-Ai17zSourceOrder $script:Ai17zPreferredSource)
+  $chosen = $null
+  $lastStatus = 0
+  $lastWhy = ''
+  $lastSource = ''
+  $missing = ''
+  for ($index = 0; $index -lt $sources.Count; $index++) {
+    $source = $sources[$index]
+    $lastSource = $source.Name
+    $found = Get-Ai17zRelease $tag $source
+    if (-not $found.Ok) {
+      $lastStatus = [int]$found.Status
+      $lastWhy = $found.Why
+      Write-Ai17zLog ($source.Name + ' could not provide the release: ' + $found.Status + ' ' + $found.Why)
+      continue
+    }
+    # Not `$release`.
+    #
+    # PowerShell variable names are case-insensitive, so `$release` *is* the
+    # `-Release` parameter -- which is declared `[string]`, so assigning a release
+    # object to it silently converts the object to a string. Every field read
+    # afterwards is then empty, and this fails as a wrong answer rather than as an
+    # error: the tag becomes '', the asset name becomes `AI17Z-App-.zip`, and the
+    # message blames the release for not containing a file nobody ever published.
+    #
+    # Every phase of the install verifier uses `-LocalPackage`, which takes the
+    # branch above this one, so nothing exercised this until the command was run
+    # against the real API.
+    $candidate = $found.Release
+    $candidateTag = '' + $candidate.tag_name
+    # The tag a server just handed over, before a filename is built from it. This
+    # is the one place a value off the network turns into a local path, and it is
+    # refused rather than sanitised: a tag this does not recognise is a release
+    # this program does not understand, not one to guess a name for.
+    if (-not (Test-Ai17zReleaseTag $candidateTag)) {
+      Set-Ai17zStep 'app' 'failed' 'the release is not named like a release'
+      Stop-Ai17z ('That release is called "' + $candidateTag + '", which is not a version number.') `
+        'Nothing on this PC was changed. AI17Z will not build a filename out of that.' `
+        ("Install a release by name instead:`n  ... -Release v1.0.0`nand report this at " + $script:Ai17zSetup.ProjectUrl + '/issues')
+    }
+    $candidateVersion = $candidateTag -replace '^v', ''
+    $assetName = [string]::Format($script:Ai17zAssets.Package, $candidateVersion)
+    $asset = Find-Ai17zAsset $candidate $assetName
+    if (-not $asset) { $missing = 'package'; continue }
+
+    $expected = Resolve-Ai17zExpectedHash $candidate $assetName $ExpectedSha256
+    if (-not $expected.Hash) {
+      $missing = 'hash'
+      Write-Ai17zLog ($source.Name + ' publishes no SHA-256 for ' + $assetName)
+      continue
+    }
+
+    $temporaryZip = Join-Path $script:Ai17zSetupHome $assetName
+    Set-Ai17zStep 'app' 'active' ('downloading from ' + $source.Name)
+    try {
+      Save-Ai17zDownload $asset.download_url $temporaryZip 'app' | Out-Null
+    } catch {
+      Remove-Item -LiteralPath $temporaryZip -Force -ErrorAction SilentlyContinue
+      $lastStatus = 0
+      $lastWhy = '' + $_.Exception.Message
+      $missing = 'download'
+      Write-Ai17zLog ($source.Name + ' download did not finish: ' + $lastWhy)
+      continue
+    }
+
+    Set-Ai17zStep 'app' 'active' 'checking the download'
+    $actual = (Get-FileHash -LiteralPath $temporaryZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $expected.Hash) {
+      Remove-Item -LiteralPath $temporaryZip -Force -ErrorAction SilentlyContinue
+      Set-Ai17zStep 'app' 'failed' 'the download did not match its hash'
+      # Fail closed, and say what it means rather than offering a way past it.
+      # Not handed to the next source: bytes that do not match what their own
+      # release published are something to think about, not to route around.
+      Stop-Ai17z 'The download does not match its published SHA-256.' `
+        ("expected  " + $expected.Hash + "`ngot       " + $actual + "`nfrom      " + $source.Name + "`n`nThe file has been deleted and nothing was installed.") `
+        "Do not try to install that file. Download AI17Z again from`n  $($script:Ai17zSetup.ProjectUrl)/releases`nand if it happens twice, stop and report it."
+    }
+    Write-Ai17zLog ('package sha256 ' + $actual + ' verified against ' + $expected.Source + ' on ' + $source.Name)
+    $chosen = $candidate
+    $tag = $candidateTag
+    $version = $candidateVersion
+    $zipPath = $temporaryZip
+    break
+  }
+
+  if (-not $chosen) {
+    if ($missing -eq 'package') {
+      Set-Ai17zStep 'app' 'failed' ('release ' + $tag + ' has no package')
+      Stop-Ai17z ('Release ' + $tag + ' does not contain the AI17Z package on GitHub or AI17Z Code.') `
+        'Nothing on this PC was changed.' `
+        ("Download AI17Z from`n  " + $script:Ai17zSetup.ProjectUrl + '/releases')
+    }
+    if ($missing -eq 'hash') {
+      Set-Ai17zStep 'app' 'failed' 'no published hash'
+      Stop-Ai17z 'There is no published SHA-256 for this release.' `
+        'AI17Z Setup will not install a package it cannot check.' `
+        ("Download AI17Z from`n  " + $script:Ai17zSetup.ProjectUrl + '/releases')
+    }
+    if ($missing -eq 'download') {
+      Set-Ai17zStep 'app' 'failed' 'the download did not finish'
+      Stop-Ai17z 'AI17Z could not be downloaded.' `
+        ('Nothing on this PC was changed.' + "`n" + $lastWhy) `
+        'Check your internet connection and run AI17Z Setup again.'
+    }
     <#
       A 429 (or a 403) is the server rate limiting the address, not a broken
       connection.
@@ -3125,83 +3282,18 @@ if ($LocalPackage) {
       install, and the message said the network was unreachable while the
       network was fine.
     #>
-    if ([int]$found.Status -eq 429 -or [int]$found.Status -eq 403) {
-      Set-Ai17zStep 'app' 'failed' 'AI17Z Code is rate limiting this network'
+    if ($lastStatus -eq 429 -or $lastStatus -eq 403) {
+      Set-Ai17zStep 'app' 'failed' ($lastSource + ' is rate limiting this network')
       Stop-Ai17z 'AI17Z could not be downloaded.' `
-        ("AI17Z Code limits how often one network may ask it for a release, and this network has reached that limit.`nYour internet connection is not the problem, and nothing on this PC was changed.") `
+        ("GitHub and AI17Z Code limit how often one network may ask them for a release, and this network has reached that limit.`nYour internet connection is not the problem, and nothing on this PC was changed.") `
         'Wait a few minutes and run AI17Z Setup again.'
     }
-    Set-Ai17zStep 'app' 'failed' 'could not reach AI17Z Code'
+    Set-Ai17zStep 'app' 'failed' 'could not reach GitHub or AI17Z Code'
+    $answered = if ($lastStatus) { $lastSource + ' answered ' + $lastStatus + '.' } else { $lastSource + ' did not answer. ' + $lastWhy }
     Stop-Ai17z 'AI17Z could not be downloaded.' `
-      ('AI17Z Code answered ' + $found.Status + '.' + "`nNothing on this PC was changed.") `
+      ($answered + "`nNothing on this PC was changed.") `
       'Check your internet connection and run AI17Z Setup again.'
   }
-  # Not `$release`.
-  #
-  # PowerShell variable names are case-insensitive, so `$release` *is* the
-  # `-Release` parameter -- which is declared `[string]`, so assigning a release
-  # object to it silently converts the object to a string. Every field read
-  # afterwards is then empty, and this fails as a wrong answer rather than as an
-  # error: the tag becomes '', the asset name becomes `AI17Z-App-.zip`, and the
-  # message blames the release for not containing a file nobody ever published.
-  #
-  # Every phase of the install verifier uses `-LocalPackage`, which takes the
-  # branch above this one, so nothing exercised this until the command was run
-  # against the real API.
-  $chosen = $found.Release
-  $tag = '' + $chosen.tag_name
-  # The tag AI17Z Code just handed over, before a filename is built from it. This
-  # is the one place a value off the network turns into a local path, and it is
-  # refused rather than sanitised: a tag this does not recognise is a release
-  # this program does not understand, not one to guess a name for.
-  if (-not (Test-Ai17zReleaseTag $tag)) {
-    Set-Ai17zStep 'app' 'failed' 'the release is not named like a release'
-    Stop-Ai17z ('That release is called "' + $tag + '", which is not a version number.') `
-      'Nothing on this PC was changed. AI17Z will not build a filename out of that.' `
-      ("Install a release by name instead:`n  ... -Release v1.0.0`nand report this at " + $script:Ai17zSetup.ProjectUrl + '/issues')
-  }
-  $version = $tag -replace '^v', ''
-  $assetName = [string]::Format($script:Ai17zAssets.Package, $version)
-  $asset = Find-Ai17zAsset $chosen $assetName
-  if (-not $asset) {
-    Set-Ai17zStep 'app' 'failed' ('release ' + $tag + ' has no package')
-    Stop-Ai17z ('Release ' + $tag + ' does not contain ' + $assetName + '.') `
-      'Nothing on this PC was changed.' `
-      ("Download AI17Z from`n  " + $script:Ai17zSetup.ProjectUrl + '/releases')
-  }
-
-  $expected = Resolve-Ai17zExpectedHash $chosen $assetName $ExpectedSha256
-  if (-not $expected.Hash) {
-    Set-Ai17zStep 'app' 'failed' 'no published hash'
-    Stop-Ai17z 'There is no published SHA-256 for this release.' `
-      'AI17Z Setup will not install a package it cannot check.' `
-      ("Download AI17Z from`n  " + $script:Ai17zSetup.ProjectUrl + '/releases')
-  }
-
-  $temporaryZip = Join-Path $script:Ai17zSetupHome $assetName
-  Set-Ai17zStep 'app' 'active' 'downloading'
-  try {
-    Save-Ai17zDownload $asset.download_url $temporaryZip 'app' | Out-Null
-  } catch {
-    Remove-Item -LiteralPath $temporaryZip -Force -ErrorAction SilentlyContinue
-    Set-Ai17zStep 'app' 'failed' 'the download did not finish'
-    Stop-Ai17z 'AI17Z could not be downloaded.' `
-      ('Nothing on this PC was changed.' + "`n" + $_.Exception.Message) `
-      'Check your internet connection and run AI17Z Setup again.'
-  }
-
-  Set-Ai17zStep 'app' 'active' 'checking the download'
-  $actual = (Get-FileHash -LiteralPath $temporaryZip -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($actual -ne $expected.Hash) {
-    Remove-Item -LiteralPath $temporaryZip -Force -ErrorAction SilentlyContinue
-    Set-Ai17zStep 'app' 'failed' 'the download did not match its hash'
-    # Fail closed, and say what it means rather than offering a way past it.
-    Stop-Ai17z 'The download does not match its published SHA-256.' `
-      ("expected  " + $expected.Hash + "`ngot       " + $actual + "`n`nThe file has been deleted and nothing was installed.") `
-      "Do not try to install that file. Download AI17Z again from`n  $($script:Ai17zSetup.ProjectUrl)/releases`nand if it happens twice, stop and report it."
-  }
-  Write-Ai17zLog ('package sha256 ' + $actual + ' verified against ' + $expected.Source)
-  $zipPath = $temporaryZip
 }
 
 Set-Ai17zStep 'app' 'active' 'installing'

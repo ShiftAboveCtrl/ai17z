@@ -27,9 +27,11 @@
 
 set -euo pipefail
 
-# Replaced when the repository is published.
-REPO_URL="https://code.ai17z.io/AI17Z/ai17z.git"
-ZIP_URL="https://code.ai17z.io/AI17Z/ai17z/archive/main.zip"
+# GitHub first, then AI17Z Code, AI17Z's own server, which has the same
+# history: the order every installer uses, so GitHub being down is never the
+# end of an install.
+REPO_URLS=("https://github.com/ShiftAboveCtrl/ai17z.git" "https://code.ai17z.io/AI17Z/ai17z.git")
+ZIP_URLS=("https://github.com/ShiftAboveCtrl/ai17z/archive/refs/heads/main.zip" "https://code.ai17z.io/AI17Z/ai17z/archive/main.zip")
 
 GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
 step() { echo "  ${CYAN}$1${OFF}"; }
@@ -65,18 +67,27 @@ fi
 # pull updates with one command later.
 if command -v git >/dev/null 2>&1; then
   step "Cloning into $dir..."
-  if [ -n "$ref" ]; then
-    git clone --quiet --branch "$ref" "$REPO_URL" "$dir" || stop_with_reason "The clone failed." "Check the URL above and your connection."
-  else
-    git clone --quiet "$REPO_URL" "$dir" || stop_with_reason "The clone failed." "Check the URL above and your connection."
-  fi
+  cloned=0
+  for url in "${REPO_URLS[@]}"; do
+    if [ -n "$ref" ]; then set -- --branch "$ref"; else set --; fi
+    if git clone --quiet "$@" "$url" "$dir"; then cloned=1; break; fi
+    # A half-made clone would make the next attempt refuse the directory.
+    rm -rf "$dir"
+    echo "  ${YELLOW}Could not clone from ${url}; trying the next copy.${OFF}"
+  done
+  [ "$cloned" = 1 ] || stop_with_reason "The clone failed from GitHub and from AI17Z Code." "Check your connection and run this again."
 else
   step "Git is not installed, downloading a zip instead..."
   command -v curl >/dev/null 2>&1 || stop_with_reason "Neither git nor curl is installed." "Install either one, then run this again."
   command -v unzip >/dev/null 2>&1 || stop_with_reason "unzip is not installed." "Install git or unzip, then run this again."
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
-  curl -fsSL "$ZIP_URL" -o "$tmp/ai17z.zip" || stop_with_reason "The download failed." "Check the URL above and your connection."
+  fetched=0
+  for url in "${ZIP_URLS[@]}"; do
+    if curl -fsSL --proto '=https' "$url" -o "$tmp/ai17z.zip"; then fetched=1; break; fi
+    echo "  ${YELLOW}Could not download ${url}; trying the next copy.${OFF}"
+  done
+  [ "$fetched" = 1 ] || stop_with_reason "The download failed from GitHub and from AI17Z Code." "Check your connection and run this again."
   unzip -q "$tmp/ai17z.zip" -d "$tmp/unpacked"
   # The archive wraps the tree in one folder named after the project.
   inner="$(find "$tmp/unpacked" -mindepth 1 -maxdepth 1 -type d | head -1)"

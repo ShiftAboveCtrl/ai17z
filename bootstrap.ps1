@@ -40,10 +40,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Replaced when the repository is published. Both point at the same repository:
-# the first is what git clones, the second is what a browser downloads.
-$RepoUrl = 'https://code.ai17z.io/AI17Z/ai17z.git'
-$ZipUrl  = 'https://code.ai17z.io/AI17Z/ai17z/archive/main.zip'
+# GitHub first, then AI17Z Code, AI17Z's own server, which has the same
+# history: the order every installer uses, so GitHub being down is never the
+# end of an install. Each pair is what git clones and what a browser downloads.
+$RepoUrls = @('https://github.com/ShiftAboveCtrl/ai17z.git', 'https://code.ai17z.io/AI17Z/ai17z.git')
+$ZipUrls  = @('https://github.com/ShiftAboveCtrl/ai17z/archive/refs/heads/main.zip', 'https://code.ai17z.io/AI17Z/ai17z/archive/main.zip')
 
 function Write-Step($Message) { Write-Host "  $Message" -ForegroundColor Cyan }
 function Write-Done($Message) { Write-Host "  $Message" -ForegroundColor Green }
@@ -99,15 +100,27 @@ if ($inSync) {
 # pull updates with one command later.
 if (Get-Command git -ErrorAction SilentlyContinue) {
   Write-Step "Cloning into $Directory..."
-  if ($Ref) { git clone --quiet --branch $Ref $RepoUrl $Directory }
-  else { git clone --quiet $RepoUrl $Directory }
-  if ($LASTEXITCODE -ne 0) { Stop-WithReason 'The clone failed.' 'Check the URL above and your connection.' }
+  $cloned = $false
+  foreach ($url in $RepoUrls) {
+    if ($Ref) { git clone --quiet --branch $Ref $url $Directory }
+    else { git clone --quiet $url $Directory }
+    if ($LASTEXITCODE -eq 0) { $cloned = $true; break }
+    # A half-made clone would make the next attempt refuse the directory.
+    Remove-Item -LiteralPath $Directory -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  Could not clone from $url; trying the next copy." -ForegroundColor Yellow
+  }
+  if (-not $cloned) { Stop-WithReason 'The clone failed from GitHub and from AI17Z Code.' 'Check your connection and run this again.' }
 } else {
   Write-Step 'Git is not installed, downloading a zip instead...'
   $zip = Join-Path ([System.IO.Path]::GetTempPath()) "ai17z-$([guid]::NewGuid()).zip"
   $unpack = Join-Path ([System.IO.Path]::GetTempPath()) "ai17z-$([guid]::NewGuid())"
   try {
-    Invoke-WebRequest -Uri $ZipUrl -OutFile $zip -UseBasicParsing
+    $fetched = $false
+    foreach ($url in $ZipUrls) {
+      try { Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing; $fetched = $true; break }
+      catch { Write-Host "  Could not download $url; trying the next copy." -ForegroundColor Yellow }
+    }
+    if (-not $fetched) { Stop-WithReason 'The download failed from GitHub and from AI17Z Code.' 'Check your connection and run this again.' }
     Expand-Archive -Path $zip -DestinationPath $unpack -Force
     # The archive wraps the tree in one folder named after the project.
     $inner = Get-ChildItem -Directory $unpack | Select-Object -First 1

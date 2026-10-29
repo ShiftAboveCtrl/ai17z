@@ -295,9 +295,11 @@ And the provenance, which needs `cosign` and is never required to install:
 ```bash
 cosign verify-blob AI17Z-macos-arm64-1.0.0-beta.84.tar.gz \
   --bundle AI17Z-macos-arm64-1.0.0-beta.84.tar.gz.sigstore.json \
-  --certificate-identity "https://code.ai17z.io/AI17Z/ai17z//.gitlab-ci.yml@refs/tags/v1.0.0-beta.84" \
-  --certificate-oidc-issuer https://gitlab.com
+  --key cosign.pub
 ```
+
+`cosign.pub` is AI17Z's release key, [`.forgejo/cosign.pub`](https://github.com/ShiftAboveCtrl/ai17z/blob/main/.forgejo/cosign.pub)
+in this repository. Releases are signed with that key, not with a CI identity.
 
 *Expected:* the hashes agree, and the attestation verifies against this
 project's release pipeline. That is build provenance -- **not** Apple
