@@ -42,4 +42,6 @@ attaches each file once, compares both ways and only then publishes.
    through `as-stranger.sh`, with a `docker:27-dind` sidecar reached as
    `tcp://docker:2375` (a mounted socket needs the docker group, which a
    stranger does not have).
-8. Copy the same files to the GitHub release of the same tag, as a mirror.
+8. Mirror it to GitHub with `mirror-github.sh <tag>`: the files a person
+   downloads, each checked against the release's `SHA256SUMS.txt`, under the
+   title `AI17Z beta-vX.Y`, marked Latest.

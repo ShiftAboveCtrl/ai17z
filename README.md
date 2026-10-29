@@ -6,6 +6,7 @@
 
 **Self-hosted platform for running autonomous AI agents on your own machine.**
 
+[![CI](https://github.com/ShiftAboveCtrl/ai17z/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ShiftAboveCtrl/ai17z/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/ShiftAboveCtrl/ai17z?display_name=release&label=latest&color=2ea44f)](https://github.com/ShiftAboveCtrl/ai17z/releases/latest)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Ubuntu-informational)](#install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -82,9 +83,10 @@ browser-backed channels.
 
 Checksums for every file are in each release's
 [`SHA256SUMS.txt`](https://github.com/ShiftAboveCtrl/ai17z/releases/latest/download/SHA256SUMS.txt).
-Releases are published on [GitHub](https://github.com/ShiftAboveCtrl/ai17z/releases)
-and [AI17Z Code](https://code.ai17z.io/AI17Z/ai17z/releases) with identical
-files. Release names such as `beta-v9.7` correspond to semver tags such as
+[GitHub releases](https://github.com/ShiftAboveCtrl/ai17z/releases) carry the
+files people download. [AI17Z Code](https://code.ai17z.io/AI17Z/ai17z/releases)
+also carries the files the installers fetch themselves and a signature for
+every file. Release names such as `beta-v9.7` correspond to semver tags such as
 `v1.0.0-beta.87`.
 
 ### Windows

@@ -80,7 +80,7 @@
     "typescript-eslint": "^8.69.0",
     "vite": "^6.0.7",
     "vitest": "^4.1.11",
-    "yaml": "2.8.1"
+    "yaml": "2.9.1"
   },
   "dependencies": {
     "tsx": "^4.19.2",

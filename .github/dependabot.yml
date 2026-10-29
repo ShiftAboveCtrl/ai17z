@@ -1,0 +1,16 @@
+version: 2
+
+# Security updates only: a limit of zero stops routine version bumps, and
+# Dependabot still opens a pull request for every advisory.
+updates:
+  - package-ecosystem: npm
+    directories: ["/", "/apps/*", "/packages/*"]
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      # zod 4 changes the API every shared contract is written against, so it
+      # is a migration rather than a bump, and a pull request for it fails CI.
+      # Remove this once the codebase is on zod 4.
+      - dependency-name: zod
+        update-types: ["version-update:semver-major"]
