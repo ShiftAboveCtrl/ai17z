@@ -7,7 +7,7 @@ import { users as usersRepo, type UserRow } from '@xbam/database';
 const log = createLogger('api');
 
 /** A field name a person would recognise, from a Zod path. */
-function fieldLabel(path: (string | number)[]): string {
+function fieldLabel(path: readonly PropertyKey[]): string {
   const name = path.filter((p) => typeof p === 'string').join(' ') || 'A field';
   return name
     .replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -25,7 +25,7 @@ function describeIssues(issues: z.ZodIssue[]): string {
   const first = issues[0];
   if (!first) return 'That could not be saved.';
 
-  if (first.code === 'too_big' && typeof first.maximum === 'number' && first.type === 'string') {
+  if (first.code === 'too_big' && typeof first.maximum === 'number' && first.origin === 'string') {
     const received = (first as { received?: unknown }).received;
     const actual = typeof received === 'number' ? received : null;
     const over = actual !== null ? actual - first.maximum : null;
@@ -34,6 +34,12 @@ function describeIssues(issues: z.ZodIssue[]): string {
       (actual !== null ? `It is ${actual.toLocaleString()} characters and the most allowed is ${first.maximum.toLocaleString()}. ` : `The most allowed is ${first.maximum.toLocaleString()}. `) +
       (over !== null && over > 0 ? `Remove at least ${over.toLocaleString()}.` : '')
     ).trim();
+  }
+
+  // zod 3 said "Required" here and zod 4 says "Invalid input: expected string,
+  // received undefined", which is accurate and reads like a stack trace.
+  if (first.code === 'invalid_type' && (first as { missing?: boolean }).missing) {
+    return `${fieldLabel(first.path)} is required.`;
   }
 
   if (first.code === 'too_small' && first.minimum === 1) {
@@ -83,7 +89,7 @@ export function fail(reply: FastifyReply, error: unknown): FastifyReply {
         // personality and pressed save learns nothing from it, and has no way
         // to find out which of eleven fields was too long or by how much.
         message: describeIssues(error.issues),
-        details: error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+        details: error.issues.map((i) => ({ path: i.path.map(String).join('.'), message: i.message })),
       },
     });
   }
@@ -115,24 +121,24 @@ export function parseBody<S extends ZodTypeAny>(schema: S, request: FastifyReque
   // Zod says what the maximum was but not what was sent, and "too long" without
   // a number is not something anybody can act on. The value is right here, so
   // the actual length is measured and carried on the issue.
-  throw withActualSizes(result.error, input);
+  throw withWhatWasSent(result.error, input);
 }
 
-/** Records how long each offending string actually was. */
-function withActualSizes(error: z.ZodError, input: unknown): z.ZodError {
+/** Records how long each offending string actually was, and which fields were absent. */
+function withWhatWasSent(error: z.ZodError, input: unknown): z.ZodError {
   for (const issue of error.issues) {
-    if (issue.code !== 'too_big') continue;
     const value = valueAt(input, issue.path);
-    if (typeof value === 'string') (issue as { received?: number }).received = value.length;
+    if (issue.code === 'too_big' && typeof value === 'string') (issue as { received?: number }).received = value.length;
+    if (issue.code === 'invalid_type' && value === undefined) (issue as { missing?: boolean }).missing = true;
   }
   return error;
 }
 
-function valueAt(input: unknown, path: (string | number)[]): unknown {
+function valueAt(input: unknown, path: readonly PropertyKey[]): unknown {
   let current: unknown = input;
   for (const key of path) {
     if (current === null || typeof current !== 'object') return undefined;
-    current = (current as Record<string | number, unknown>)[key];
+    current = (current as Record<PropertyKey, unknown>)[key];
   }
   return current;
 }

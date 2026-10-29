@@ -183,7 +183,9 @@ export async function registerInboxRoutes(app: FastifyInstance): Promise<void> {
       const body = parseBody(
         z.object({
           enabled: z.boolean().optional(),
-          categories: z.record(z.enum(TELEGRAM_CATEGORIES), z.boolean()).optional(),
+          // Partial: zod 4 makes an enum-keyed record require every key, and
+          // the settings screen sends only the categories that changed.
+          categories: z.partialRecord(z.enum(TELEGRAM_CATEGORIES), z.boolean()).optional(),
           minSeverity: z.enum(['INFO', 'WARNING', 'CRITICAL']).optional(),
           // A ceiling rather than a schedule, and zero means none. Twelve hours
           // is as sparse as it can be and still catch an overnight stop.

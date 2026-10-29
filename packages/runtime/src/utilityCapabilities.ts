@@ -215,7 +215,7 @@ export const UtilityRequest = z
     capability: z.string().min(1).max(64),
     /** Opaque, stable per caller. This runtime never learns who it is. */
     caller: z.string().min(8).max(128),
-    input: z.record(z.unknown()),
+    input: z.record(z.string(), z.unknown()),
   })
   .strict();
 export type UtilityRequest = z.infer<typeof UtilityRequest>;
@@ -288,7 +288,7 @@ export type BacktestInput = z.infer<typeof BacktestInput>;
 export const CapabilityInvokeInput = z
   .object({
     id: z.string().min(3).max(64),
-    input: z.record(z.unknown()),
+    input: z.record(z.string(), z.unknown()),
   })
   .strict();
 

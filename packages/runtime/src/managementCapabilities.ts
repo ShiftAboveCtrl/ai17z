@@ -110,7 +110,7 @@ const changeSetting = defineCapability({
   audience: 'OWNER',
   input: z.object({
     kind: z.enum(CHANGE_KINDS as [ChangeKindId, ...ChangeKindId[]]),
-    value: z.union([z.record(z.string(), z.unknown()), z.string(), z.number(), z.array(z.string())]).default({}),
+    value: z.union([z.record(z.string(), z.unknown()), z.string(), z.number(), z.array(z.string())]).prefault({}),
   }),
   output: Outcome,
   modelCallable: true,

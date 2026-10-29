@@ -92,10 +92,10 @@ export const CapacityCadence = z.object({
 export type CapacityCadence = z.infer<typeof CapacityCadence>;
 
 export const CadenceConfig = z.object({
-  polling: PollingCadence.default({}),
-  acting: ActingCadence.default({}),
-  quietHours: QuietHours.default({}),
-  capacity: CapacityCadence.default({}),
+  polling: PollingCadence.prefault({}),
+  acting: ActingCadence.prefault({}),
+  quietHours: QuietHours.prefault({}),
+  capacity: CapacityCadence.prefault({}),
 });
 export type CadenceConfig = z.infer<typeof CadenceConfig>;
 

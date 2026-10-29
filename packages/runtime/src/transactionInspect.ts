@@ -245,7 +245,7 @@ export const transactionInspectCapability = defineCapability({
     selector: z.string().nullable(),
     to: z.string(),
     value: z.string(),
-    args: z.record(z.union([z.string(), z.boolean()])),
+    args: z.record(z.string(), z.union([z.string(), z.boolean()])),
     findings: z.array(z.object({ severity: z.enum(['DENY', 'NEEDS_APPROVAL', 'NOTE']), code: z.string(), sentence: z.string() })),
   }),
   modelCallable: true,

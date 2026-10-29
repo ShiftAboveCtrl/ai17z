@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import { z } from 'zod';
 
 /**
  * What a capability's argument looks like, in one line the model can copy.
@@ -8,43 +8,42 @@ import type { z } from 'zod';
  * writes the wrong thing; a model shown `{"handle": string}` writes that. The
  * real schema is still what validates, so being approximate here costs nothing
  * -- a wrong guess is refused with the exact field that was wrong.
+ *
+ * Classes rather than the internal definition: zod 3 named each kind in
+ * `_def.typeName` and zod 4 dropped it, which left this describing every
+ * argument as `value` while compiling cleanly.
  */
-export function zodToDescription(schema: z.ZodTypeAny, depth = 0): string {
-  const def = schema._def as { typeName?: string } | undefined;
-  const name = def?.typeName;
-
-  if (name === 'ZodOptional' || name === 'ZodNullable') {
-    return `${zodToDescription((schema as z.ZodOptional<z.ZodTypeAny>).unwrap(), depth)}?`;
+export function zodToDescription(schema: z.ZodType, depth = 0): string {
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
+    return `${zodToDescription(schema.unwrap() as z.ZodType, depth)}?`;
   }
-  if (name === 'ZodDefault') {
-    const inner = (schema as z.ZodDefault<z.ZodTypeAny>)._def.innerType;
-    return `${zodToDescription(inner, depth)}?`;
+  if (schema instanceof z.ZodDefault) {
+    return `${zodToDescription(schema.unwrap() as z.ZodType, depth)}?`;
   }
-  if (name === 'ZodString') return 'string';
-  if (name === 'ZodNumber') return 'number';
-  if (name === 'ZodBoolean') return 'boolean';
-  if (name === 'ZodEnum') {
-    const values = (schema as z.ZodEnum<[string, ...string[]]>)._def.values;
-    return values.map((v) => JSON.stringify(v)).join(' | ');
+  if (schema instanceof z.ZodString) return 'string';
+  if (schema instanceof z.ZodNumber) return 'number';
+  if (schema instanceof z.ZodBoolean) return 'boolean';
+  if (schema instanceof z.ZodEnum) {
+    return schema.options.map((v) => JSON.stringify(v)).join(' | ');
   }
-  if (name === 'ZodLiteral') return JSON.stringify((schema as z.ZodLiteral<unknown>)._def.value);
-  if (name === 'ZodArray') {
-    return `${zodToDescription((schema as z.ZodArray<z.ZodTypeAny>)._def.type, depth + 1)}[]`;
+  if (schema instanceof z.ZodLiteral) {
+    return [...schema.values].map((v) => JSON.stringify(v)).join(' | ');
   }
-  if (name === 'ZodObject') {
+  if (schema instanceof z.ZodArray) {
+    return `${zodToDescription(schema.element as z.ZodType, depth + 1)}[]`;
+  }
+  if (schema instanceof z.ZodObject) {
     // Two levels is the useful depth. Below that the description is longer than
     // the thing it describes, and a capability whose argument nests three deep
     // is a capability that should take two arguments.
     if (depth >= 2) return 'object';
-    const shape = (schema as z.ZodObject<z.ZodRawShape>).shape;
-    const fields = Object.entries(shape).map(
-      ([key, value]) => `"${key}": ${zodToDescription(value as z.ZodTypeAny, depth + 1)}`,
+    const fields = Object.entries(schema.shape as Record<string, z.ZodType>).map(
+      ([key, value]) => `"${key}": ${zodToDescription(value, depth + 1)}`,
     );
     return `{${fields.join(', ')}}`;
   }
-  if (name === 'ZodUnion') {
-    const options = (schema as z.ZodUnion<[z.ZodTypeAny, ...z.ZodTypeAny[]]>)._def.options;
-    return options.map((o: z.ZodTypeAny) => zodToDescription(o, depth)).join(' | ');
+  if (schema instanceof z.ZodUnion) {
+    return (schema.options as readonly z.ZodType[]).map((o) => zodToDescription(o, depth)).join(' | ');
   }
   return 'value';
 }

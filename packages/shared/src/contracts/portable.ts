@@ -57,7 +57,7 @@ export const PortablePlugin = z
     version: z.string().max(40).default(''),
     /** Where the copy this agent used came from, so a note can say where. */
     source: z.enum(['LOCAL', 'AI17Z_REGISTRY']).default('LOCAL'),
-    config: z.record(z.unknown()).default({}),
+    config: z.record(z.string(), z.unknown()).prefault({}),
   })
   .strict();
 export type PortablePlugin = z.infer<typeof PortablePlugin>;
@@ -91,7 +91,7 @@ export const PortableModelRole = z.object({
   role: z.string().max(40),
   provider: z.string().max(40),
   model: z.string().max(200),
-  parameters: z.record(z.unknown()).default({}),
+  parameters: z.record(z.string(), z.unknown()).prefault({}),
 });
 export type PortableModelRole = z.infer<typeof PortableModelRole>;
 
@@ -105,7 +105,7 @@ export const PortableTool = z.object({
    * there, because a tool's config is a free-form document and somebody will
    * eventually put a token in one.
    */
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).prefault({}),
 });
 export type PortableTool = z.infer<typeof PortableTool>;
 
@@ -136,7 +136,7 @@ export const PortableCapability = z.object({
    * tool's is, so the same rule applies: anything key-shaped is removed on the
    * way out rather than trusted not to be there.
    */
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).prefault({}),
 });
 export type PortableCapability = z.infer<typeof PortableCapability>;
 
@@ -158,7 +158,7 @@ export const PortableAgent = z
     policy: PolicyConfig,
 
     /** How often it may act, and when it may not. */
-    cadence: z.record(z.unknown()).nullable().default(null),
+    cadence: z.record(z.string(), z.unknown()).nullable().default(null),
     /** Whether it posts of its own accord, and how often. */
     posting: z
       .object({

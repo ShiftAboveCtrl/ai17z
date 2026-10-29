@@ -164,7 +164,7 @@ export const ResearchObservation = z.object({
   content: z.string().max(40_000),
   language: z.string().max(12).nullable().default(null),
   /** Anything provenance needs that the columns above do not hold. Never secrets. */
-  meta: z.record(z.string(), z.unknown()).default({}),
+  meta: z.record(z.string(), z.unknown()).prefault({}),
 });
 export type ResearchObservation = z.infer<typeof ResearchObservation>;
 

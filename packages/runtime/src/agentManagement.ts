@@ -60,7 +60,7 @@ interface ChangeKind<TInput, TValue> {
   subsystem: AgentChangeSubsystem;
   /** For the model: what this changes, in the owner's words. */
   describe: string;
-  input: z.ZodType<TInput, z.ZodTypeDef, unknown>;
+  input: z.ZodType<TInput, unknown>;
   read(agentId: string): Promise<TValue>;
   next(before: TValue, input: TInput): TValue;
   risk(before: TValue, after: TValue): Exclude<AgentChangeRisk, 'NEVER'>;

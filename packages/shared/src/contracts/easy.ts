@@ -175,7 +175,7 @@ export type EasyCharacter = z.infer<typeof EasyCharacter>;
 export const EasyReplies = z.object({
   audience: EasyAudience.default('EXCEPT_SPAM'),
   selectivity: EasySelectivity.default('BALANCED'),
-  filters: EasyFilters.default({}),
+  filters: EasyFilters.prefault({}),
   /** Only consulted when audience is ALLOWLIST. */
   allowlist: z.array(z.string().max(120)).max(500).default([]),
 });
@@ -223,12 +223,12 @@ export type EasyLanguage = z.infer<typeof EasyLanguage>;
 
 export const EasySetup = z.object({
   character: EasyCharacter,
-  emoji: EasyEmoji.default({}),
+  emoji: EasyEmoji.prefault({}),
   language: EasyLanguage.default('MIRROR'),
   /** Only read when `language` is CUSTOM. */
   languageDetail: z.string().max(200).default(''),
-  replies: EasyReplies.default({}),
-  posting: EasyPosting.default({}),
+  replies: EasyReplies.prefault({}),
+  posting: EasyPosting.prefault({}),
   operation: EasyOperation.default('REVIEW_FIRST'),
 });
 export type EasySetup = z.infer<typeof EasySetup>;

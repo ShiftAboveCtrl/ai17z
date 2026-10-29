@@ -314,7 +314,7 @@ export const coordinationCapability = defineCapability({
   description:
     'In a set of public posts you supply: the same wording from several authors, several authors posting it within a minute, and amplification concentrated in a few accounts. Signals with the posts behind them, never an accusation.',
   input: z.object({ posts: Posts }).strict(),
-  output: z.object({ signals: z.array(z.record(z.unknown())), caveat: z.string() }),
+  output: z.object({ signals: z.array(z.record(z.string(), z.unknown())), caveat: z.string() }),
   async run(input) {
     return coordinationSignals(input.posts) as never;
   },
@@ -339,7 +339,7 @@ export const relationshipCapability = defineCapability({
   name: 'Who interacts with whom',
   description: 'In a set of public posts you supply: replies, mentions, quotes and reposts between authors, with counts, first and last seen, and the posts behind each.',
   input: z.object({ posts: Posts }).strict(),
-  output: z.object({ nodes: z.array(z.string()), edges: z.array(z.record(z.unknown())) }),
+  output: z.object({ nodes: z.array(z.string()), edges: z.array(z.record(z.string(), z.unknown())) }),
   async run(input) {
     return relationshipGraph(input.posts) as never;
   },
