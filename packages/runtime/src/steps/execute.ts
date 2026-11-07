@@ -48,6 +48,7 @@ import { recordPublished } from '../experimentRuns';
 import type { JobBundle } from '../loadJob';
 
 import { checkActionRate } from '../policyGate';
+import { checkDevUpdateAtSend } from '../devUpdateGuard';
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
@@ -244,6 +245,20 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     targetRef,
   });
 
+  // A development update is checked again on the text actually about to go
+  // out, and against its project as it is now. Inside the account lease, so
+  // its ceiling and spacing cannot be raced by another send on this account.
+  await checkDevUpdateAtSend({
+    raw: bundle.event.payload,
+    jobId: job.id,
+    agentId: bundle.agent.id,
+    accountId: job.accountId,
+    dryRun: job.dryRun,
+    text: output,
+    policy,
+    operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
+  });
+
   if (!job.dryRun) {
     // The final say on whether this action is permitted. Ingest checked the same
     // grant, but a permission revoked in between must stop the job here, and a
@@ -341,6 +356,68 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
 
   const action = claim.action;
   const adapter = getChannelAdapter(job.channel);
+
+  /*
+    A development update that was attempted before is sent again only when the
+    remote positively says it never arrived.
+
+    The ordinary path retries a FAILED action blindly and treats a read-back
+    that throws as "not done". For a reply that is a judgement call; for a post
+    the owner reviewed, posting it twice in public is the worse error, and a
+    send that timed out locally after X accepted it looks exactly like a
+    failure. So for these, unknown means stop, with a reason a person can act on.
+  */
+  const devUpdate = (bundle.event.payload as { origin?: unknown } | null)?.origin === 'dev_update';
+  if (devUpdate && !job.dryRun && (claim.retakenFromStale || claim.retakenFromFailed)) {
+    // What the earlier attempt actually sent, which is what might be on the
+    // account. The job's text may have been edited since; looking for the new
+    // wording would miss a post that went out under the old one.
+    const attempted = action.payload as { text?: unknown; targetRef?: unknown };
+    const attemptedText = typeof attempted.text === 'string' ? attempted.text : output;
+    const attemptedTarget = typeof attempted.targetRef === 'string' ? attempted.targetRef : targetRef;
+    const already = adapter.wasAlreadyDone
+      ? await adapter
+          .wasAlreadyDone(await adapterContext(bundle), {
+            type: job.actionType,
+            targetRef: attemptedTarget,
+            text: attemptedText,
+            idempotencyKey: job.idempotencyKey,
+            dryRun: false,
+          })
+          .catch(() => null)
+      : null;
+    if (already?.done) {
+      // The earlier attempt is what was published, and it stays the record.
+      await actionsRepo.completeAction(action.id, {
+        status: 'EXECUTED',
+        remoteActionId: already.remoteActionId,
+        remoteActionUrl: already.remoteActionUrl,
+        contentSignature: signatureRef ? contentSignature(signatureRef, attemptedText) : null,
+      });
+      await jobsRepo.updateJob(job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
+      await observability.emitTrace({
+        jobId: job.id,
+        agentId: bundle.agent.id,
+        type: 'ACTION_SKIPPED_DUPLICATE',
+        level: 'warn',
+        message: already.detail,
+        data: { actionId: action.id, remoteActionId: already.remoteActionId, recovered: true },
+      });
+      return;
+    }
+    // Only a read-back that proves absence allows a second attempt. An empty
+    // scan, a lagging timeline or a read that failed are all "unknown".
+    if (!already || already.done !== false || already.conclusive !== true) {
+      const message =
+        'An earlier attempt to post this development update may or may not have reached the account, and that could not be confirmed. It was not sent again. Check the account before resubmitting.';
+      await actionsRepo.completeAction(action.id, { status: 'FAILED', errorClass: 'PERMANENT', lastError: message });
+      throw PipelineError.permanent('dev_update_send_unknown', message);
+    }
+    // Proven absent: the row now describes the attempt about to be made.
+    if (attemptedText !== output || attemptedTarget !== targetRef) {
+      await actionsRepo.setActionPayload(action.id, { text: output, targetRef });
+    }
+  }
 
   // An action recovered from a worker that died mid-flight. It may have died
   // before X saw the reply or after, and only X knows which — so ask, rather

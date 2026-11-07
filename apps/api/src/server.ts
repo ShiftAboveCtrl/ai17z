@@ -37,6 +37,7 @@ import { mindRoutes } from './routes/mind';
 import { experimentRoutes } from './routes/experiments';
 import { hostingRoutes } from './routes/hosting';
 import { utilityRoutes } from './routes/utility';
+import { devUpdateRoutes } from './routes/devUpdates';
 
 const log = createLogger('api');
 
@@ -116,6 +117,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(peopleRoutes);
   await app.register(mindRoutes);
   await app.register(experimentRoutes);
+  await app.register(devUpdateRoutes);
 
   app.addHook('onResponse', async (request, reply) => {
     if (reply.statusCode >= 500) {

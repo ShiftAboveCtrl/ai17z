@@ -103,6 +103,19 @@ export const mockAdapter: ChannelAdapter = {
   },
 
   async verifyAction(_ctx: ChannelContext, request: ActionRequest): Promise<VerificationResult> {
+    // A post has no target to verify. The mock lists POST as a capability, and
+    // refusing every post for lacking a target meant no post could ever be
+    // driven to completion on the one channel tests are allowed to use.
+    if (!request.targetRef && request.type === 'POST') {
+      return {
+        verified: true,
+        detail: 'A post has no target; nothing to verify.',
+        targetRef: null,
+        targetUrl: null,
+        targetAuthorHandle: null,
+        evidence: { mock: true, post: true },
+      };
+    }
     if (!request.targetRef) {
       return {
         verified: false,

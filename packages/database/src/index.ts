@@ -46,6 +46,7 @@ export * as media from './repositories/media';
 export * as deliberation from './repositories/deliberation';
 export * as relationships from './repositories/relationships';
 export * as repoSources from './repositories/repoSources';
+export * as devUpdates from './repositories/devUpdates';
 export * as engagements from './repositories/engagements';
 export * as xAccountObservations from './repositories/xAccountObservations';
 export * as stances from './repositories/stances';
@@ -69,6 +70,7 @@ export type { ResearchRunRow, ResearchObjectRow, RunEvidence, SourceHealthRow } 
 export type { UserRow, IssuedSession } from './repositories/users';
 export type { AgentStats, PolicyVersionRow, CreateAgentRecord } from './repositories/agents';
 export type { AgentAccountRow } from './repositories/accounts';
+export type { DevUpdateProjectRow, DevUpdateRow, DevUpdateEvidence, DevUpdateStatus, DevUpdateKind, DevUpdateMode } from './repositories/devUpdates';
 export type { CredentialPresence, StoredLogin } from './repositories/accountCredentials';
 export type { MentionRow, MentionState, MentionFilter } from './repositories/mentions';
 export type { NotificationRecord, NotificationSeverity } from './repositories/notifications';

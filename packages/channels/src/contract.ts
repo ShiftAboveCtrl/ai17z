@@ -194,7 +194,19 @@ export interface ChannelAdapter {
    * it may have died before X saw it or after, and only the remote knows.
    * Without this, recovery is a duplicate-post machine.
    */
-  wasAlreadyDone?(ctx: ChannelContext, request: ActionRequest): Promise<{ done: boolean; remoteActionId: string | null; remoteActionUrl: string | null; detail: string }>;
+  wasAlreadyDone?(ctx: ChannelContext, request: ActionRequest): Promise<{
+    done: boolean;
+    remoteActionId: string | null;
+    remoteActionUrl: string | null;
+    detail: string;
+    /**
+     * Set only when `done: false` is proof, not an absence of evidence: the
+     * remote was read completely and the action is not there. A scan that
+     * failed to read, or a timeline that may simply lag, leaves this unset.
+     * Paths that must never send twice resend only on a conclusive answer.
+     */
+    conclusive?: boolean;
+  }>;
 
   observeAuth?(ctx: ChannelContext): Promise<AuthObservation>;
   /**

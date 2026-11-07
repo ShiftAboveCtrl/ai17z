@@ -1,5 +1,5 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { runDueFollowUps, runDuePosts } from '@xbam/runtime';
+import { runDevUpdates, runDueFollowUps, runDuePosts } from '@xbam/runtime';
 import { startLoop } from './loop';
 
 const log = createLogger('posting');
@@ -52,6 +52,19 @@ export class PostScheduler {
         // answer to "why has it not posted", and it should not take a database
         // query to find out.
         log.info(result.posted ? 'post queued' : 'nothing to post', { reason: result.reason, jobId: result.jobId });
+      }
+
+      // Development updates a project handed over. Same tick, same reasoning:
+      // a ceiling and a spacing decide when one may go, and the pipeline
+      // decides whether it can.
+      const updates = await runDevUpdates(this.perTick);
+      for (const result of updates.dispatched) {
+        log.info(result.dispatched ? 'development update dispatched' : 'development update waiting', {
+          projectId: result.projectId,
+          updateId: result.updateId,
+          jobId: result.jobId,
+          reason: result.reason,
+        });
       }
     } catch (error) {
       log.warn('post scheduler tick failed', { message: errorMessage(error) });

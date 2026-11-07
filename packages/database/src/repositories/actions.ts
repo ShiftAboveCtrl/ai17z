@@ -21,7 +21,13 @@ export interface ClaimActionInput {
 }
 
 export type ClaimActionResult =
-  | { outcome: 'CLAIMED'; action: ActionRecord; retakenFromStale?: boolean }
+  | {
+      outcome: 'CLAIMED';
+      action: ActionRecord;
+      retakenFromStale?: boolean;
+      /** A previous attempt under this key ended FAILED or PENDING and was taken back. */
+      retakenFromFailed?: boolean;
+    }
   | { outcome: 'ALREADY_EXECUTED'; action: ActionRecord }
   | { outcome: 'IN_PROGRESS'; action: ActionRecord };
 
@@ -78,7 +84,7 @@ export async function claimAction(input: ClaimActionInput): Promise<ClaimActionR
         `UPDATE actions SET status = 'EXECUTING', last_error = NULL, error_class = NULL WHERE id = $1 RETURNING ${COLUMNS}`,
         [action.id],
       );
-      return { outcome: 'CLAIMED', action: mapRow<ActionRecord>(retaken) as ActionRecord };
+      return { outcome: 'CLAIMED', action: mapRow<ActionRecord>(retaken) as ActionRecord, retakenFromFailed: true };
     }
 
     // An action left EXECUTING by a worker that died. Nothing recovered these,
@@ -210,6 +216,20 @@ export async function decideApproval(input: {
   );
   if (!row) throw new NotFoundError('Pending approval');
   return mapRow<Approval>(row) as Approval;
+}
+
+/**
+ * Rewrites what an action row says it is about to send.
+ *
+ * Only for a claimed action whose earlier attempt was proved never to have
+ * arrived, immediately before the new attempt, so the row describes what
+ * actually goes out rather than the wording of the attempt that did not.
+ */
+export async function setActionPayload(id: string, payload: Record<string, unknown>): Promise<void> {
+  await query(`UPDATE actions SET payload = $2::jsonb, updated_at = now() WHERE id = $1 AND status = 'EXECUTING'`, [
+    id,
+    JSON.stringify(payload),
+  ]);
 }
 
 export async function getApproval(jobId: string): Promise<Approval | null> {

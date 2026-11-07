@@ -47,6 +47,8 @@
     "owner:password": "tsx tools/owner-password.mts",
     "worker:supervised": "tsx scripts/supervise-worker.mts",
     "release:check": "tsx tools/release-check.mts",
+    "dev-updates": "tsx tools/dev-updates.mts",
+    "dev-updates:mcp": "node tools/dev-updates-mcp.mjs",
     "mutation:check": "tsx tools/mutation-check.mts",
     "phase1:barrier": "tsx tools/phase1-barrier.mts",
     "lint": "eslint .",

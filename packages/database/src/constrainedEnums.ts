@@ -57,6 +57,7 @@ import {
 import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
 import { ENGAGEMENT_KINDS, ENGAGEMENT_STATUSES } from './repositories/engagements';
 import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
+import { DEV_UPDATE_KINDS, DEV_UPDATE_MODES, DEV_UPDATE_STATUSES } from './repositories/devUpdates';
 import { KNOWLEDGE_DOC_KINDS, KNOWLEDGE_SOURCE_KINDS } from './repositories/knowledge';
 import { SPAM_DECIDERS, SPAM_VERDICT_VALUES } from './repositories/spam';
 import { AGENT_CHANGE_RISKS, AGENT_CHANGE_STATUSES, AGENT_CHANGE_SUBSYSTEMS } from './repositories/agentChanges';
@@ -260,6 +261,24 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
     column: 'kind',
     values: REPO_EVENT_KINDS,
     note: 'What a watched repository did. Owned by the repository-watch repository.',
+  },
+  {
+    table: 'dev_update_projects',
+    column: 'mode',
+    values: DEV_UPDATE_MODES,
+    note: 'Whether a project waits for its owner. Owned by the dev updates repository.',
+  },
+  {
+    table: 'dev_updates',
+    column: 'kind',
+    values: DEV_UPDATE_KINDS,
+    note: 'What sort of thing shipped. Owned by the dev updates repository.',
+  },
+  {
+    table: 'dev_updates',
+    column: 'status',
+    values: DEV_UPDATE_STATUSES,
+    note: 'Where a development update is, from submission to a published post.',
   },
   {
     table: 'repo_sources',

@@ -72,6 +72,34 @@ function monitorRole(kind: string): TabRole {
   return kind === 'notifications' ? 'NOTIFICATIONS' : 'MENTIONS';
 }
 
+/**
+ * What a look at X for an earlier attempt can honestly say.
+ *
+ * Finding it is proof. Not finding it never is: `findOwnReply` reads a page
+ * whose article count and reload both swallow failures as "nothing here", and
+ * a profile timeline lags behind a post X has already accepted. So absence is
+ * reported without `conclusive`, and anything that must never send twice reads
+ * it as unknown. Ordinary recovery still reads `done: false` as before.
+ */
+export function readBackVerdict(found: { statusId: string; url: string | null } | null, statusId: string | null) {
+  if (!found) {
+    return {
+      done: false,
+      remoteActionId: null,
+      remoteActionUrl: null,
+      detail: `Nothing matching this text was seen on ${statusId ? `status ${statusId}` : 'the timeline'}.`,
+      conclusive: false,
+    };
+  }
+  return {
+    done: true,
+    remoteActionId: found.statusId,
+    remoteActionUrl: found.url,
+    detail: `This was already sent as ${found.statusId}; the previous attempt succeeded before it was recorded.`,
+    conclusive: true,
+  };
+}
+
 export const xAdapter: ChannelAdapter = {
   id: 'x',
   displayName: 'X',
@@ -631,21 +659,7 @@ export const xAdapter: ChannelAdapter = {
       if (!where) return { done: false, remoteActionId: null, remoteActionUrl: null, detail: 'No target to check.' };
 
       await goto(page, where);
-      const found = await findOwnReply(page, request.text, me);
-      if (!found) {
-        return {
-          done: false,
-          remoteActionId: null,
-          remoteActionUrl: null,
-          detail: `Nothing matching this text is on ${statusId ? `status ${statusId}` : 'the timeline'}, so it was not sent.`,
-        };
-      }
-      return {
-        done: true,
-        remoteActionId: found.statusId,
-        remoteActionUrl: found.url,
-        detail: `This was already sent as ${found.statusId}; the previous attempt succeeded before it was recorded.`,
-      };
+      return readBackVerdict(await findOwnReply(page, request.text, me), statusId);
     });
   },
 
