@@ -15,8 +15,8 @@ import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import { checkRelease, type FileToCheck } from './releaseCheck';
-import { IdentifierListError, loadPrivateIdentifiers, type PrivateIdentifiers } from './privateIdentifiers';
+import { checkRelease, pathAlias, type FileToCheck } from './releaseCheck';
+import { findPrivateIdentifiersInBytes, IdentifierListError, loadPrivateIdentifiers, type PrivateIdentifiers } from './privateIdentifiers';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -91,6 +91,22 @@ try {
 }
 
 const findings = checkRelease(files, paths, identifiers);
+
+// The files the text rules skip (binary, too big) still publish their bytes, so
+// the private identifiers are looked for in them too: a name inside an image's
+// metadata, or text saved as UTF-16 without a BOM, reads as binary.
+if (identifiers.rules.length > 0) {
+  const read = new Set(files.map((f) => f.path));
+  for (const path of paths) {
+    if (read.has(path)) continue;
+    try {
+      findings.push(...findPrivateIdentifiersInBytes(path, readFileSync(join(root, path)), identifiers, pathAlias(paths, path)));
+    } catch {
+      // Unreadable here (a submodule, a deleted file still in the index) is
+      // the path rules' business; its name was already checked.
+    }
+  }
+}
 
 process.stdout.write(`\nRelease check: ${files.length} tracked files\n`);
 process.stdout.write(

@@ -16,20 +16,31 @@
 # no secret, because a pull request is somebody else's code and could print it,
 # and a printed list of somebody's identifiers is the leak itself.
 #
-# No secret is not a failure, because a fork or a fresh mirror has none, but it
-# is said loudly enough that nobody mistakes it for a pass.
+# No secret is a refusal. This runs only on release runners, only from a tag,
+# so a missing secret there is a misconfiguration, not a contributor without
+# one, and a release that went out unchecked is exactly the failure this exists
+# to stop. A fork or a fresh mirror that genuinely has no list says so out
+# loud, with the repository variable PRIVATE_IDENTIFIERS_SKIP set to
+# `no-private-identifiers-here`; any other value is ignored.
 set -uo pipefail
 
 DIST="${1:?the directory of finished release files}"
 
 if [ -z "${PRIVATE_IDENTIFIERS:-}" ]; then
-  echo "################################################################"
-  echo "# PRIVATE IDENTIFIER SCAN SKIPPED"
-  echo "# The PRIVATE_IDENTIFIERS secret is not set on this repository,"
-  echo "# so nothing here checked this release for the maintainer's"
-  echo "# usernames, hostnames or addresses. Set it to turn this on."
-  echo "################################################################"
-  exit 0
+  if [ "${PRIVATE_IDENTIFIERS_SKIP:-}" = "no-private-identifiers-here" ]; then
+    echo "################################################################"
+    echo "# PRIVATE IDENTIFIER SCAN SKIPPED, BY CHOICE"
+    echo "# PRIVATE_IDENTIFIERS_SKIP says this repository has no private"
+    echo "# identifier list, so nothing here checked this release for a"
+    echo "# maintainer's usernames, hostnames or addresses."
+    echo "################################################################"
+    exit 0
+  fi
+  echo "REFUSED: the PRIVATE_IDENTIFIERS secret is not set, so this release"
+  echo "cannot be checked for the maintainer's private identifiers. Set the"
+  echo "secret, or set the variable PRIVATE_IDENTIFIERS_SKIP to"
+  echo "no-private-identifiers-here if this repository has no list."
+  exit 1
 fi
 
 problems=0
@@ -49,7 +60,8 @@ for file in "$DIST"/*; do
   mkdir -p "$into"
   case "$file" in
     *.zip) unzip -q "$file" -d "$into" ;;
-    *.deb) dpkg-deb -x "$file" "$into" ;;
+    # The control files too: a maintainer line is published with the package.
+    *.deb) dpkg-deb -x "$file" "$into" && dpkg-deb -e "$file" "$into/DEBIAN" ;;
     *.tar.gz|*.tgz) tar -xzf "$file" -C "$into" ;;
     *) cp "$file" "$into/" ;;
   esac || { echo "  could not unpack $(basename "$file")"; problems=$((problems + 1)); continue; }

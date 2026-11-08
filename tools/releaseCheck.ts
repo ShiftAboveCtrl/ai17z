@@ -15,7 +15,7 @@
  * nothing about the next commit.
  */
 
-import { findPrivateIdentifiers, type PrivateIdentifiers } from './privateIdentifiers';
+import { findPrivateIdentifiers, redactFinding, type PrivateIdentifiers } from './privateIdentifiers';
 
 export interface Finding {
   file: string;
@@ -267,9 +267,16 @@ export function findFilesThatShouldNotBeTracked(paths: string[]): Finding[] {
   return findings;
 }
 
+/** What a tracked path is called when the path itself must not be printed. */
+export const pathAlias = (paths: string[], path: string) => `tracked path #${paths.indexOf(path) + 1}`;
+
 /**
  * Everything, over a set of tracked files. `identifiers` is the maintainer's
  * private list (see privateIdentifiers.ts); without one those rules find nothing.
+ *
+ * With one, every finding from every rule is redacted on the way out: the other
+ * rules quote the file and what they matched, and a path or a home folder they
+ * quote is exactly what must not appear in a log.
  */
 export function checkRelease(
   files: FileToCheck[],
@@ -277,14 +284,15 @@ export function checkRelease(
   identifiers: Pick<PrivateIdentifiers, 'rules' | 'allow'> = { rules: [], allow: [] },
 ): Finding[] {
   const tracked = new Set(files.map((f) => f.path));
-  return [
-    ...files.flatMap((f) => findPrivateIdentifiers(f, identifiers)),
+  const findings = [
+    ...files.flatMap((f) => findPrivateIdentifiers(f, identifiers, pathAlias(paths, f.path))),
     // A file too big or too binary to read still publishes its name.
-    ...paths.filter((p) => !tracked.has(p)).flatMap((p) => findPrivateIdentifiers({ path: p, content: '' }, identifiers)),
+    ...paths.filter((p) => !tracked.has(p)).flatMap((p) => findPrivateIdentifiers({ path: p, content: '' }, identifiers, pathAlias(paths, p))),
     ...findFilesThatShouldNotBeTracked(paths),
     ...files.flatMap(findSecrets),
     ...files.flatMap(findPersonalDetails),
     ...files.flatMap(findEncodingProblems),
     ...files.flatMap(findPrivateSource),
   ];
+  return findings.map((f) => redactFinding(f, identifiers, pathAlias(paths, f.file)));
 }

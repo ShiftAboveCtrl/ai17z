@@ -9,15 +9,26 @@
  * privateIdentifiers.ts), for the bytes that are about to be attached to a
  * release rather than the files git tracks. Dependencies are not searched, for
  * the reason scan-artifact.sh gives: they are their maintainers' files.
+ * Symbolic links are not followed; where they point is scanned instead, since
+ * a link target is published with the link.
+ *
+ * A path that itself carries an identifier is printed as `file #n`, never as
+ * itself, and nothing ever prints a match.
  *
  * Exit 0 clean, 1 findings, 2 the list is missing or broken. Missing is a
  * refusal here, unlike in the release check: this is only run where a list is
  * expected, so its absence means the scan proved nothing.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
-import { findPrivateIdentifiers, IdentifierListError, loadPrivateIdentifiers, type PrivateIdentifiers } from './privateIdentifiers';
+import {
+  findPrivateIdentifiers,
+  findPrivateIdentifiersInBytes,
+  IdentifierListError,
+  loadPrivateIdentifiers,
+  type PrivateIdentifiers,
+} from './privateIdentifiers';
 import type { Finding } from './releaseCheck';
 
 const targets = process.argv.slice(2);
@@ -53,15 +64,19 @@ const findings: Finding[] = [];
 let scanned = 0;
 
 function scanFile(absolute: string, shown: string) {
-  const bytes = readFileSync(absolute);
   scanned++;
-  // A binary is searched as latin1 so every byte stays one character and a
-  // name embedded in it is still found; its line number means nothing.
-  const binary = bytes.subarray(0, 8192).includes(0);
-  const content = bytes.toString(binary ? 'latin1' : 'utf8');
-  for (const f of findPrivateIdentifiers({ path: shown, content }, list)) {
-    findings.push(binary ? { ...f, line: 0 } : f);
+  const alias = `file #${scanned}`;
+  const stat = lstatSync(absolute);
+  if (stat.isSymbolicLink()) {
+    findings.push(...findPrivateIdentifiers({ path: shown, content: readlinkSync(absolute) }, list, alias).map((f) => ({ ...f, line: 0 })));
+    return;
   }
+  if (!stat.isFile()) return;
+  const bytes = readFileSync(absolute);
+  const binary = bytes.subarray(0, 8192).includes(0) || (bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff);
+  findings.push(
+    ...(binary ? findPrivateIdentifiersInBytes(shown, bytes, list, alias) : findPrivateIdentifiers({ path: shown, content: bytes.toString('utf8') }, list, alias)),
+  );
 }
 
 function walk(root: string, dir: string) {
@@ -69,12 +84,12 @@ function walk(root: string, dir: string) {
     if (entry.name === 'node_modules' || entry.name === '.git') continue;
     const absolute = join(dir, entry.name);
     if (entry.isDirectory()) walk(root, absolute);
-    else if (entry.isFile()) scanFile(absolute, relative(root, absolute).replace(/\\/g, '/'));
+    else scanFile(absolute, relative(root, absolute).replace(/\\/g, '/'));
   }
 }
 
 for (const target of targets) {
-  if (statSync(target).isDirectory()) walk(target, target);
+  if (lstatSync(target).isDirectory()) walk(target, target);
   else scanFile(target, target.replace(/\\/g, '/').split('/').pop()!);
 }
 

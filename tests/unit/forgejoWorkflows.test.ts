@@ -208,8 +208,12 @@ describe('who runs what', () => {
       'COSIGN_PRIVATE_KEY',
       'GITHUB_MIRROR_TOKEN',
       'PRIVATE_IDENTIFIERS',
+      'PRIVATE_IDENTIFIERS_SKIP',
       'RELEASE_TOKEN',
     ]);
+    // The opt-out is a plain variable, never a secret, so it is visible to
+    // anybody reading the repository's settings.
+    expect(step.env!.PRIVATE_IDENTIFIERS_SKIP).toBe('${{ vars.PRIVATE_IDENTIFIERS_SKIP }}');
     expect(step.run).toContain('publish-release.sh');
     // Checked before anything is attached to a release on either host, and a
     // refusal stops the step.

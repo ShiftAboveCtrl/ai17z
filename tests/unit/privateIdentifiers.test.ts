@@ -5,8 +5,10 @@ import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   findPrivateIdentifiers,
+  findPrivateIdentifiersInBytes,
   IdentifierListError,
   loadPrivateIdentifiers,
+  parseAllowList,
   parseIdentifierList,
   toRegExp,
 } from '../../tools/privateIdentifiers';
@@ -19,26 +21,39 @@ import { checkRelease } from '../../tools/releaseCheck';
  *
  * Every identifier here is invented. `zorblaxquin` stands for a username and
  * `quillbox-node` for a machine; neither names anybody. A real one in this file
- * would publish exactly what the file exists to stop.
+ * would publish exactly what the file exists to stop. Anything a maintainer's
+ * own gate would flag (a home path) is assembled at run time for the same
+ * reason.
  */
 
 const root = resolve(__dirname, '../..');
 const NAME = 'zorblax' + 'quin';
 const HOST = 'quillbox' + '-node';
+const home = (who: string) => ['C:', 'Users', who].join('/');
 const LIST = [
   '# invented',
   `username\t(?i)${NAME}`,
   `hostname\t\\b${HOST}\\b`,
-  'allow\t(?i)\\b[a-z]:/+users/+someone\\b',
+  'home-path\t(?i)\\b[a-z]:/+users/+[a-z0-9._-]+',
+  'allow:home-path\t(?i)\\b[a-z]:/+users/+someone(?![a-z0-9._-])',
+  'identity\tSomebody <somebody@example.invalid>',
 ].join('\n');
 const list = parseIdentifierList(LIST, 'test');
 const file = (path: string, content: string) => ({ path, content });
+const leaks = (value: unknown) => new RegExp(`${NAME}|${HOST}`, 'i').test(JSON.stringify(value));
 
 describe('the list format, shared with the Python history scan', () => {
-  it('reads classes, a leading (?i) and inline allow rules', () => {
-    expect(list.rules.map((r) => r.name)).toEqual(['username', 'hostname']);
+  it('reads classes, a leading (?i), scoped allow entries and identities', () => {
+    expect(list.rules.map((r) => r.name)).toEqual(['username', 'hostname', 'home-path']);
     expect(list.rules[0]!.pattern.flags).toContain('i');
-    expect(list.allow).toHaveLength(1);
+    expect([...list.allow[0]!.classes]).toEqual(['home-path']);
+    expect(list.identities).toEqual(['Somebody <somebody@example.invalid>']);
+  });
+
+  it('refuses an allow entry that names no class, so nothing can excuse everything', () => {
+    expect(() => parseIdentifierList('username\tx\nallow\t.*', 'l')).toThrow(IdentifierListError);
+    expect(() => parseAllowList('.*', 'l')).toThrow(IdentifierListError);
+    expect([...parseAllowList('lan-ip,tailscale-ip\tx', 'l')[0]!.classes]).toEqual(['lan-ip', 'tailscale-ip']);
   });
 
   it('refuses syntax only Python reads, rather than reading it differently', () => {
@@ -48,10 +63,9 @@ describe('the list format, shared with the Python history scan', () => {
   });
 
   it('refuses a malformed line without repeating the rule', () => {
-    const secret = `no-tab-${NAME}`;
     let message = '';
     try {
-      parseIdentifierList(secret, 'list');
+      parseIdentifierList(`no-tab-${NAME}`, 'list');
     } catch (error) {
       message = (error as Error).message;
     }
@@ -68,11 +82,16 @@ describe('finding one', () => {
       [2, 'username, not shown'],
       [2, 'hostname, not shown'],
     ]);
-    expect(JSON.stringify(found)).not.toMatch(new RegExp(`${NAME}|${HOST}`, 'i'));
+    expect(leaks(found)).toBe(false);
   });
 
-  it('reads the path as well as the contents', () => {
-    expect(findPrivateIdentifiers(file(`notes/${NAME}.txt`, 'clean'), list).map((f) => f.line)).toEqual([0]);
+  it('reads the path, and never prints a path that is itself an identifier', () => {
+    const found = findPrivateIdentifiers(file(`notes/dir_${NAME}/n.txt`, `again ${NAME}`), list, 'tracked path #7');
+    expect(found.map((f) => [f.file, f.line])).toEqual([
+      ['tracked path #7', 0],
+      ['tracked path #7', 1],
+    ]);
+    expect(leaks(found)).toBe(false);
   });
 
   it('is not excused by the fixture marker, which only ever describes invented data', () => {
@@ -80,68 +99,87 @@ describe('finding one', () => {
     expect(findPrivateIdentifiers(file('t.ts', `/** ${marker} */\nconst p = '${NAME}';`), list)).toHaveLength(1);
   });
 
-  it('is excused only where an allow match on the same line covers it', () => {
-    const covered = parseIdentifierList(`home\t(?i)c:/+users/+[a-z]+\nallow\t(?i)c:/+users/+someone\\b`, 'l');
-    expect(findPrivateIdentifiers(file('a', 'C:/Users/someone/x'), covered)).toEqual([]);
+  it('is excused only by an allow entry for its own class that covers it on the same line', () => {
+    expect(findPrivateIdentifiers(file('a', `${home('someone')}/x`), list)).toEqual([]);
     // The placeholder on the line does not buy the real path beside it a pass.
-    // Assembled, so this file is not itself a home path to a maintainer's gate.
-    const another = ['C:', 'Users', 'other'].join('/');
-    expect(findPrivateIdentifiers(file('a', `C:/Users/someone and ${another}`), covered)).toHaveLength(1);
+    expect(findPrivateIdentifiers(file('a', `${home('someone')} and ${home('other')}`), list)).toHaveLength(1);
+    // A home-path allow cannot excuse a username, even one inside the placeholder's own path.
+    expect(findPrivateIdentifiers(file('a', `${home('someone')}/${NAME}`), list).map((f) => f.evidence)).toEqual(['username, not shown']);
+    // And a placeholder's tail is exact.
+    expect(findPrivateIdentifiers(file('a', `${home('someone2')}/x`), list)).toHaveLength(1);
   });
 
-  it('runs inside the release check, and only when a list was given', () => {
+  it('stays linear on a long line full of excused hits', () => {
+    const line = `${home('someone')} `.repeat(20000);
+    const started = Date.now();
+    expect(findPrivateIdentifiers(file('min.js', line), list)).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it('reads bytes: UTF-16 without a BOM, and strings inside a binary', () => {
+    const utf16 = Buffer.from(`made by ${NAME}`, 'utf16le');
+    expect(findPrivateIdentifiersInBytes('a.txt', utf16, list).map((f) => [f.line, f.evidence])).toEqual([[0, 'username, not shown']]);
+    const binary = Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.from(`host=${HOST}`), Buffer.from([0, 0])]);
+    expect(findPrivateIdentifiersInBytes('a.png', binary, list).map((f) => f.evidence)).toEqual(['hostname, not shown']);
+  });
+
+  it('runs inside the release check, only when a list was given, and redacts every rule', () => {
     const files = [file('README.md', `ssh ${HOST}`)];
     expect(checkRelease(files, ['README.md']).some((f) => f.problem.includes('private identifier'))).toBe(false);
     const found = checkRelease(files, ['README.md', `assets/${NAME}.png`], list).filter((f) => f.problem.includes('private identifier'));
-    // The image was never read as text, and its name is still published.
+    // The image was never read as text, and its name is still checked, and not printed.
     expect(found.map((f) => [f.file, f.line])).toEqual([
       ['README.md', 1],
-      [`assets/${NAME}.png`, 0],
+      ['tracked path #2', 0],
     ]);
+    // The ordinary home-folder rule quotes the folder; with a list, the quote is withheld.
+    const quoted = checkRelease([file('docs/setup.md', `cd ${home(NAME)}/x`)], ['docs/setup.md'], list);
+    expect(quoted.length).toBeGreaterThan(1);
+    expect(leaks(quoted)).toBe(false);
   });
 });
 
 describe('where the list comes from', () => {
   const files: Record<string, string> = {
     '/home/someone/.config/private-identifiers/identifiers.txt': `username\t${NAME}`,
-    '/home/someone/.config/private-identifiers/allow.txt': 'placeholder',
+    '/home/someone/.config/private-identifiers/allow.txt': 'username\tplaceholder',
     '/elsewhere/list.txt': `hostname\t${HOST}`,
   };
   const read = (path: string) => files[path];
-  const home = '/home/someone';
+  const homeDir = '/home/someone';
 
   it('takes the content first, then a named file, then the default place', () => {
-    expect(loadPrivateIdentifiers({ env: { PRIVATE_IDENTIFIERS: `x\ty`, PRIVATE_IDENTIFIERS_FILE: '/elsewhere/list.txt' }, home, read }).source).toBe(
+    expect(loadPrivateIdentifiers({ env: { PRIVATE_IDENTIFIERS: `x\ty`, PRIVATE_IDENTIFIERS_FILE: '/elsewhere/list.txt' }, home: homeDir, read }).source).toBe(
       'from $PRIVATE_IDENTIFIERS',
     );
-    expect(loadPrivateIdentifiers({ env: { PRIVATE_IDENTIFIERS_FILE: '/elsewhere/list.txt' }, home, read }).rules[0]!.name).toBe('hostname');
-    const fromDefault = loadPrivateIdentifiers({ env: {}, home, read });
+    expect(loadPrivateIdentifiers({ env: { PRIVATE_IDENTIFIERS_FILE: '/elsewhere/list.txt' }, home: homeDir, read }).rules[0]!.name).toBe('hostname');
+    const fromDefault = loadPrivateIdentifiers({ env: {}, home: homeDir, read });
     expect(fromDefault.rules[0]!.name).toBe('username');
     expect(fromDefault.allow).toHaveLength(1);
   });
 
   it('says plainly when there is none, and names no path when there is', () => {
-    const none = loadPrivateIdentifiers({ env: {}, home: '/nobody', read });
-    expect(none).toEqual({ rules: [], allow: [], source: 'none configured' });
-    expect(loadPrivateIdentifiers({ env: {}, home, read }).source).not.toContain(home);
+    expect(loadPrivateIdentifiers({ env: {}, home: '/nobody', read })).toEqual({ rules: [], allow: [], identities: [], source: 'none configured' });
+    expect(loadPrivateIdentifiers({ env: {}, home: homeDir, read }).source).not.toContain(homeDir);
   });
 
-  it('refuses a named file it cannot read, and a list of only allow rules', () => {
-    expect(() => loadPrivateIdentifiers({ env: { PRIVATE_IDENTIFIERS_FILE: '/missing' }, home, read })).toThrow(IdentifierListError);
-    expect(() => loadPrivateIdentifiers({ env: { PRIVATE_IDENTIFIERS: 'allow\tx' }, home, read })).toThrow(IdentifierListError);
+  it('refuses a named file it cannot read, and a list of only allow entries', () => {
+    expect(() => loadPrivateIdentifiers({ env: { PRIVATE_IDENTIFIERS_FILE: '/missing' }, home: homeDir, read })).toThrow(IdentifierListError);
+    expect(() => loadPrivateIdentifiers({ env: { PRIVATE_IDENTIFIERS: 'allow:username\tx' }, home: homeDir, read })).toThrow(IdentifierListError);
   });
 });
 
-/** A Python 3, asked to run, because on Windows `python3` is often a stub that prints an error. */
-function findPython(): string | undefined {
-  for (const candidate of ['python3', 'python']) {
-    const probe = spawnSync(candidate, ['-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'], { encoding: 'utf8' });
-    if (probe.status === 0) return candidate;
+/** An interpreter, asked to run, because on Windows `python3` is often a stub that prints an error. */
+function find(candidates: string[], probe: string[]): string | undefined {
+  for (const candidate of candidates) {
+    if (spawnSync(candidate, probe, { encoding: 'utf8' }).status === 0) return candidate;
   }
   return undefined;
 }
-const python = findPython();
+const python = find(['python3', 'python'], ['-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)']);
+const bash = find(['bash'], ['-c', 'exit 0']);
 if (!python) console.warn('privateIdentifiers.test: no Python 3, so the history scan tests below are SKIPPED, which is not a pass');
+if (!bash) console.warn('privateIdentifiers.test: no bash, so the release step tests below are SKIPPED, which is not a pass');
 
 describe('the history scan reads the same list', () => {
   const room = mkdtempSync(join(tmpdir(), 'private-ids-'));
@@ -163,27 +201,53 @@ describe('the history scan reads the same list', () => {
       env: { ...process.env, PRIVATE_IDENTIFIERS: '', PRIVATE_IDENTIFIERS_FILE: '', HOME: emptyHome, USERPROFILE: emptyHome, ...env },
     });
 
-  it.skipIf(!python)('finds an identifier in a file, a fixture, a path, a message and an author', () => {
+  it.skipIf(!python)('finds an identifier in a file, a fixture, a path, a message, an author and UTF-16', () => {
     git('init', '-q');
     const marker = ['@release', 'check', 'fixtures'].join('-');
     writeFileSync(join(repo, 'fixture.ts'), `/** ${marker} */\nconst who = '${NAME}';\n`);
-    writeFileSync(join(repo, `${HOST}.txt`), 'clean\n');
+    mkdirSync(join(repo, `dir-${HOST}`));
+    // A hyphen, not an underscore: `\b` sees `_` as part of the word.
+    writeFileSync(join(repo, `dir-${HOST}`, 'n.txt'), 'clean\n');
+    writeFileSync(join(repo, 'wide.txt'), Buffer.from(`by ${NAME}`, 'utf16le'));
     git('add', '.');
     git('commit', '-q', '-m', `built on ${HOST}`);
     git('-c', `user.email=${NAME}@example.invalid`, 'commit', '-q', '--allow-empty', '-m', 'second');
     const result = scan({ PRIVATE_IDENTIFIERS: LIST });
     expect(result.status).toBe(1);
-    expect(result.stdout).toContain('private identifiers: 2 rules from $PRIVATE_IDENTIFIERS');
+    expect(result.stdout).toContain('private identifiers: 3 rules from $PRIVATE_IDENTIFIERS');
     expect(result.stdout).toMatch(/username in fixture\.ts/);
+    expect(result.stdout).toMatch(/username in wide\.txt/);
     expect(result.stdout).toMatch(/hostname in a path name/);
     expect(result.stdout).toMatch(/hostname in message of/);
     expect(result.stdout).toMatch(/username in the author or committer of/);
-    expect(result.stdout).not.toMatch(new RegExp(`${NAME}|${HOST}`, 'i'));
+    expect(leaks(result.stdout)).toBe(false);
   });
 
-  it.skipIf(!python)('says it skipped when there is no list, and finds nothing private', () => {
+  it.skipIf(!python)('with a list, refuses AI attribution and a foreign identity, and leaves people and prose alone', () => {
+    const before = scan({ PRIVATE_IDENTIFIERS: LIST }).stdout;
+    expect(before).not.toMatch(/ai-attribution in/);
+    git('commit', '-q', '--allow-empty', '-m', 'prose', '-m', 'Output generated by the llm router is now cached.', '-m', 'Co-authored-by: Jane Talbot <jane@example.invalid>');
+    expect(scan({ PRIVATE_IDENTIFIERS: LIST }).stdout).not.toMatch(/ai-attribution in/);
+    // Assembled, so the release check's own email rule does not flag this file.
+    git('commit', '-q', '--allow-empty', '-m', 'tool', '-m', `Co-authored-by: Claude <${['noreply', 'anthropic.com'].join('@')}>`);
+    const after = scan({ PRIVATE_IDENTIFIERS: LIST });
+    expect(after.stdout).toMatch(/ai-attribution in message of/);
+    // The second commit's author was the invented username, which is not the listed identity.
+    expect(after.stdout).toMatch(/foreign-identity in the author, committer or tagger of/);
+    expect(scan({ PRIVATE_IDENTIFIERS: LIST.replace(/^identity.*$/m, '') }).stdout).toContain('foreign-identity: SKIPPED');
+  });
+
+  it.skipIf(!python)('never prints a tag name that is itself an identifier', () => {
+    git('tag', '-a', `v-${NAME}`, '-m', 'a tag');
+    const result = scan({ PRIVATE_IDENTIFIERS: LIST });
+    expect(result.stdout).toMatch(/username in a tag name \(tag #\d+\)/);
+    expect(leaks(result.stdout)).toBe(false);
+  });
+
+  it.skipIf(!python)('says it skipped when there is no list, and runs no policy', () => {
     const result = scan({});
     expect(result.stdout).toContain('private identifiers: SKIPPED, none configured');
+    expect(result.stdout).not.toMatch(/ai-attribution in|foreign-identity in/);
     expect(result.status).toBe(0);
   });
 
@@ -191,5 +255,33 @@ describe('the history scan reads the same list', () => {
     const result = scan({ PRIVATE_IDENTIFIERS: `username\t(${NAME}` });
     expect(result.status).toBe(2);
     expect(result.stdout).not.toContain(NAME);
+  });
+});
+
+describe('the release step', () => {
+  const run = (env: Record<string, string>) => {
+    const dist = mkdtempSync(join(tmpdir(), 'private-ids-dist-'));
+    try {
+      return spawnSync(bash!, [resolve(root, '.forgejo/scripts/private-identifiers.sh'), dist], {
+        encoding: 'utf8',
+        cwd: root,
+        env: { ...process.env, PRIVATE_IDENTIFIERS: '', PRIVATE_IDENTIFIERS_SKIP: '', ...env },
+      });
+    } finally {
+      rmSync(dist, { recursive: true, force: true });
+    }
+  };
+
+  it.skipIf(!bash)('refuses a release when the secret is missing', () => {
+    const result = run({});
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('REFUSED: the PRIVATE_IDENTIFIERS secret is not set');
+  });
+
+  it.skipIf(!bash)('goes ahead without one only when told, in exactly those words', () => {
+    expect(run({ PRIVATE_IDENTIFIERS_SKIP: 'yes' }).status).toBe(1);
+    const skipped = run({ PRIVATE_IDENTIFIERS_SKIP: 'no-private-identifiers-here' });
+    expect(skipped.status).toBe(0);
+    expect(skipped.stdout).toContain('SKIPPED, BY CHOICE');
   });
 });
