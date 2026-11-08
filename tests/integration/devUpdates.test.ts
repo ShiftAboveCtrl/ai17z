@@ -341,6 +341,24 @@ describe('draft mode, end to end on the mock channel', () => {
     expect(done.status).toBe('REHEARSED');
     expect(done.url).toBeNull();
     expect((await actions.listJobActions(done.jobId)).every((a) => a.dryRun)).toBe(true);
+    expect(done.reason, 'names the switch that held it').toMatch(/because this project rehearses/);
+  });
+
+  it("names the agent's own dry-run default when that, not the project, held the post", async () => {
+    // A new agent's policy rehearses by default, so turning the project's
+    // rehearsal off is not enough on its own and the owner has to be told why.
+    const ctx = await setup({ policy: { automation: { mode: 'AUTONOMOUS', dryRunDefault: true } } as Partial<PolicyConfig> });
+    const { token } = await createProject(ctx, { rehearse: false });
+    const update = await submitOk(token);
+    await approve(ctx, update.id);
+    await runDevUpdates(5);
+    await drainAgentJobs(ctx.agentId);
+    await reconcileDevUpdates(10);
+    const done = await ownerUpdate(ctx, update.id);
+    expect(done.status).toBe('REHEARSED');
+    expect(done.reason).toMatch(/agent's own policy/);
+    expect(done.reason).not.toMatch(/this project rehearses/);
+    expect((await actions.listJobActions(done.jobId)).every((a) => a.dryRun)).toBe(true);
   });
 });
 

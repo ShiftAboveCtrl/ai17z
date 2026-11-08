@@ -78,6 +78,21 @@ const MAX_OPEN_UPDATES = 10;
 
 const SENDER_TOKEN_PREFIX = 'ai17z_dus_';
 
+/*
+  Two switches can make a hand-over a rehearsal, and an owner who turned off
+  the one they know about has to be told when the other one held it. A new
+  agent's policy rehearses by default, so `--rehearse false` alone leaves a
+  fresh mapping rehearsing, and "turn rehearsal off" is no help to somebody who
+  just did.
+*/
+const REHEARSAL_BY_PROJECT = 'Handed to the agent as a rehearsal because this project rehearses: it will be checked end to end and not published.';
+const REHEARSAL_BY_AGENT =
+  "Handed to the agent as a rehearsal because the agent's own policy runs everything as a dry run by default: it will be checked end to end and not published.";
+const REHEARSED_BY_PROJECT =
+  'Rehearsed: checked end to end and not published, because this project rehearses. Turn rehearsal off for the project to publish.';
+const REHEARSED_BY_AGENT =
+  "Rehearsed: checked end to end and not published, because the agent's own policy runs everything as a dry run by default. Turn off dry run by default in the agent's automation settings to publish.";
+
 export const DevUpdateProjectInput = z.object({
   projectKey: z
     .string()
@@ -900,7 +915,9 @@ async function dispatchProject(projectId: string): Promise<DispatchResult | null
       );
     }
     const reason = dryRun
-      ? 'Handed to the agent as a rehearsal: it will be checked end to end and not published.'
+      ? project.rehearse
+        ? REHEARSAL_BY_PROJECT
+        : REHEARSAL_BY_AGENT
       : approved
         ? 'Handed to the agent to post.'
         : "Handed to the agent, which asks before posting. Waiting at the agent's approval gate.";
@@ -984,11 +1001,12 @@ export async function reconcileOne(row: DevUpdateRow): Promise<DevUpdateRow> {
       }
       return settle('SKIPPED', 'Nothing new was posted: this exact text had already gone out from this account.');
     }
-    case 'DRY_RUN_COMPLETED':
-      return settle(
-        'REHEARSED',
-        'Rehearsed: checked end to end and not published, because this project or agent rehearses. Turn rehearsal off to publish.',
-      );
+    case 'DRY_RUN_COMPLETED': {
+      // Said at hand-over, because the project's flag may have moved since and
+      // the owner needs to be told the switch that actually held this one.
+      const handedOver = [...row.history].reverse().find((entry) => entry.status === 'DISPATCHED');
+      return settle('REHEARSED', handedOver?.reason === REHEARSAL_BY_AGENT ? REHEARSED_BY_AGENT : REHEARSED_BY_PROJECT);
+    }
     case 'PERMANENT_FAILURE':
       return settle('FAILED', `The post failed and will not be retried: ${job.lastError ?? 'no reason was recorded.'}`);
     case 'CANCELLED': {

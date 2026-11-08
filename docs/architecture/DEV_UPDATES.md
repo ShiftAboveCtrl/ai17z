@@ -216,6 +216,12 @@ first one.
    `npm run dev-updates -- set <projectId> --rehearse false`. To let updates go
    out without review: `--mode AUTO`. Both are owner only.
 
+   Two switches can hold a post, and both have to be off. A new agent's own
+   policy runs everything as a dry run by default (Automation, "dry run by
+   default"), so a fresh mapping keeps rehearsing after `--rehearse false`.
+   The update says which switch held it: "because this project rehearses" or
+   "because the agent's own policy runs everything as a dry run by default".
+
 ## MCP tools
 
 | Tool | What it does |
@@ -242,10 +248,52 @@ npm run dev-updates -- approve <updateId>
 npm run dev-updates -- show <updateId>     # status REHEARSED, nothing published
 ```
 
-Turning rehearsal off on a mock account then shows `PUBLISHED` with a
-`mock://message/...` link. Nothing in this flow, and no test, touches X.
+Turning rehearsal off on a mock account (and the agent's dry run by default, see
+Setting it up) then shows `PUBLISHED` with a `mock://message/...` link. Nothing
+in this flow, and no test, touches X.
 `tests/integration/devUpdates.test.ts` drives the same path through the HTTP
 API on the mock channel.
+
+## Verified end to end
+
+Run against a scratch stack (API and worker from this repository, its own
+database, a `mock` account), with the MCP server driven over stdio exactly as
+Claude Code drives it. The commands that worked, in order:
+
+```bash
+# 1. owner: sign in, create the agent, a mock account, link it with POST
+POST /api/bootstrap/owner, POST /api/auth/login, POST /api/agents,
+POST /api/accounts {"channel":"mock","handle":"..."},
+POST /api/agents/<agentId>/accounts {"accountId":"...","actionType":"POST"}
+PATCH /api/agents/<agentId> {"state":"ACTIVE"}        # a draft agent posts nothing
+
+# 2. map the project and get the sender token
+npm run dev-updates -- create --key demo --name Demo --agent <agentId> --account <accountId>
+
+# 3. the assistant shares work (MCP: initialize, tools/list, tools/call share_dev_update)
+#    -> PENDING_REVIEW; dev_update_rules, list_dev_updates, dev_update_status all answer
+
+# 4. owner reviews; the worker rehearses within a posting tick
+npm run dev-updates -- list --status PENDING_REVIEW
+npm run dev-updates -- approve <updateId>          # REHEARSED, one DRY_RUN action
+npm run dev-updates -- reject <updateId> --note "not now"
+
+# 5. publish for real (both switches, see Setting it up)
+npm run dev-updates -- set <projectId> --rehearse false --cap 6
+PUT /api/agents/<agentId>/policy                    # automation.dryRunDefault = false
+npm run dev-updates -- approve <updateId>          # PUBLISHED, mock://message/...
+```
+
+Observed: a sender token gets a 401 on every owner route and an owner session
+gets a 401 on every sender route; a secret-shaped string, a private address,
+code, an assistant credit and a security fix were each refused with a reason
+code and stored nowhere (the audit rows hold codes and field names only);
+spacing held an approved update ("the next may go in 4 hours"), and with spacing
+clear the daily ceiling still held it; a rejected update lost its words and was
+recognised as a duplicate when offered again; a published update reached the
+mock adapter once, and a job resumed after a simulated crash did not reach it
+again (a send that died mid-flight ended FAILED with an explanation instead of
+being retried).
 
 ## HTTP
 
