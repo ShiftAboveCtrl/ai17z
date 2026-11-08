@@ -103,12 +103,15 @@ export function NewProject({
       // The reducer decides whether the token is shown; a stale answer is
       // kept as an orphan without it.
       dispatch({ type: 'succeeded', generation: asked, project: result.project, token: result.senderToken });
-      // Cleared whether or not the answer is current: the project exists either
-      // way, and a form still holding its name only invites "already exists".
-      setName('');
-      setKey('');
-      setKeyTouched(false);
-      setTried(false);
+      // Cleared only for the dialog that asked. A late answer belongs to a
+      // dialog already closed, whose form was reset then, and clearing now
+      // would erase what the owner is typing into the one open since.
+      if (current) {
+        setName('');
+        setKey('');
+        setKeyTouched(false);
+        setTried(false);
+      }
       onCreated(result.project, current);
     } catch (error) {
       dispatch({ type: 'failed', generation: asked });

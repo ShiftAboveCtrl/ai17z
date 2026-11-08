@@ -282,7 +282,7 @@ export function agentPublishingFor(
   return { dryRunDefault: automation.dryRunDefault, automationMode: automation.mode };
 }
 
-export type PublishingHeldBy = 'PROJECT_PAUSED' | 'PROJECT_REHEARSES' | 'AGENT_DRY_RUN' | 'AGENT_AUTOMATION' | null;
+export type PublishingHeldBy = 'PROJECT_PAUSED' | 'PROJECT_REHEARSES' | 'AGENT_DRY_RUN' | 'AGENT_AUTOMATION' | 'AGENT_GATE' | null;
 
 export interface PublishingState {
   /** A word or two for the header. */
@@ -304,7 +304,7 @@ export interface PublishingState {
  * policy has been read, nothing is claimed.
  */
 export function publishingState(
-  project: Pick<DevUpdateProject, 'enabled' | 'rehearse'>,
+  project: Pick<DevUpdateProject, 'enabled' | 'rehearse'> & Partial<Pick<DevUpdateProject, 'mode'>>,
   agent: AgentPublishing | null,
   /** Why the agent's settings could not be read, when they could not. */
   agentError: string | null = null,
@@ -345,6 +345,18 @@ export function publishingState(
       tone: 'wait',
       heldBy: 'AGENT_AUTOMATION',
       sentence: `The agent's automation is ${agent.automationMode.toLowerCase().replace(/_/g, ' ')}, so nothing is posted. Change it in the agent's policies.`,
+    };
+  }
+  // Auto mode is the owner's standing approval only as far as the agent's own
+  // policy allows: the dispatcher approves an update nobody decided on only
+  // for an AUTONOMOUS agent, and anything else waits at the agent's gate,
+  // which is not this screen's "Waiting for you" list.
+  if (project.mode === 'AUTO' && agent.automationMode !== 'AUTONOMOUS') {
+    return {
+      words: "Waiting at the agent's gate",
+      tone: 'wait',
+      heldBy: 'AGENT_GATE',
+      sentence: `The agent's automation is ${agent.automationMode.toLowerCase().replace(/_/g, ' ')}, so an update this project approves on its own still waits for somebody to approve it in the agent's review queue. Updates you approve here are published.`,
     };
   }
   return { words: 'Posting for real', tone: 'live', heldBy: null, sentence: 'Approved updates are published on the account.' };

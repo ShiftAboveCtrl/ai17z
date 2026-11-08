@@ -43,6 +43,8 @@ export function Rules({
   // dry runs everything is a promise the dispatcher will not keep.
   const afterRehearsalOff = publishingState({ ...project, rehearse: false }, agentPublishing);
   const agentHolds = afterRehearsalOff.heldBy === 'AGENT_DRY_RUN' || afterRehearsalOff.heldBy === 'AGENT_AUTOMATION';
+  // What switching to auto would mean, judged as auto rather than as the mode it is now.
+  const autoState = publishingState({ ...project, mode: 'AUTO' }, agentPublishing);
   const policiesLink = (
     <Link to={`/agents/${project.agentId}#policies`} className="text-bone underline decoration-bone-dim underline-offset-4 hover:decoration-bone">
       Open the agent's policies
@@ -176,14 +178,24 @@ export function Rules({
           <p className="text-sm leading-relaxed text-bone-dim">
             {confirm?.mode === 'AUTO'
               ? `Updates that pass every safety check will be approved without you, and ${
-                  publishingState(project, agentPublishing).heldBy === null ? `posted on ${where}` : 'rehearsed or held as they are now'
-                } within the ceiling and spacing. Anything the agent's own rules flag still waits for you.`
+                  autoState.heldBy === null
+                    ? `posted on ${where}`
+                    : autoState.heldBy === 'AGENT_GATE'
+                      ? "handed to the agent, where each one still waits in the agent's review queue"
+                      : 'rehearsed or held as they are now'
+                } within the ceiling and spacing. Anything the agent's own rules flag still waits for you.${
+                  autoState.heldBy === 'AGENT_GATE' ? ` ${autoState.sentence}` : ''
+                }`
               : agentHolds
                 ? `This project will stop rehearsing, but nothing reaches ${where} yet. ${afterRehearsalOff.sentence}`
                 : agentPublishing === null
                   ? `This project will stop rehearsing. The agent's own settings have not been read yet, so whether ${where} sees the posts depends on them too.`
                   : `Approved updates will be published on ${where}, where anyone can see them. ${
-                      project.mode === 'AUTO' ? 'This project posts on its own, so that includes updates you have not read.' : 'Only updates you approve are posted.'
+                      afterRehearsalOff.heldBy === 'AGENT_GATE'
+                        ? afterRehearsalOff.sentence
+                        : project.mode === 'AUTO'
+                          ? 'This project posts on its own, so that includes updates you have not read.'
+                          : 'Only updates you approve are posted.'
                     }`}
           </p>
           {confirm?.mode !== 'AUTO' && agentHolds && <p className="text-sm">{policiesLink}</p>}

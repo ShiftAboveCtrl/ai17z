@@ -289,7 +289,7 @@ function ProjectWorkspace({
   const agentPublishing: AgentPublishing | null = agentPublishingFor(agentDetail.data, project.agentId);
   const publishing = publishingState(project, agentPublishing, agentPublishing ? null : agentDetail.error);
   const rehearsing = publishing.heldBy === 'PROJECT_REHEARSES' || publishing.heldBy === 'AGENT_DRY_RUN';
-  const heldByAgent = publishing.heldBy === 'AGENT_DRY_RUN' || publishing.heldBy === 'AGENT_AUTOMATION';
+  const heldByAgent = publishing.heldBy === 'AGENT_DRY_RUN' || publishing.heldBy === 'AGENT_AUTOMATION' || publishing.heldBy === 'AGENT_GATE';
 
   const items = updates.data?.items ?? [];
   const pending = (pendingResource.data?.items ?? []).slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt));

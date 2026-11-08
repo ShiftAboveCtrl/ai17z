@@ -59,9 +59,15 @@ export function TokenReveal({
 
       <div className="space-y-2">
         <p className="eyebrow text-bone-dim">Connect your coding assistant</p>
-        {!connection ? (
+        {!connection && !connectionError ? (
+          // Still asking: not a failure, and saying it was one tells the owner
+          // to give up on a command that is a moment away.
+          <p className="break-words text-sm text-bone-dim" role="status">
+            Asking this installation where its MCP server is, to prepare the command.
+          </p>
+        ) : !connection ? (
           <p className="break-words text-sm text-signal-fail" role="alert">
-            The command could not be prepared: {connectionError ?? 'this installation did not answer.'}
+            The command could not be prepared: {connectionError}
           </p>
         ) : state.problem ? (
           <p className="break-words text-sm text-signal-fail" role="alert">
@@ -98,7 +104,7 @@ export function TokenReveal({
             )}
             {state.command ? (
               <>
-                <p className="text-[13px] text-bone-dim">Run this in a terminal, in the folder of the project. It is the command for Claude Code.</p>
+                <p className="text-[13px] text-bone-dim">Run this in a terminal, in the folder of the project. It is the command for your coding assistant.</p>
                 <pre className="whitespace-pre-wrap break-all rounded-lg border border-ink-line bg-ink px-3.5 py-3 font-mono text-[12px] leading-relaxed text-bone [font-variant-ligatures:none]">
                   {state.command}
                 </pre>

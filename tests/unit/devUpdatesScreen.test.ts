@@ -124,6 +124,21 @@ describe('which switch holds publishing', () => {
     const real = publishingState({ enabled: true, rehearse: false }, live);
     expect([real.heldBy, real.words]).toEqual([null, 'Posting for real']);
   });
+
+  it('never says posting for real for an auto project whose agent asks before acting', () => {
+    // The dispatcher approves an update nobody decided on only for an
+    // AUTONOMOUS agent; under any other mode it waits at the agent's gate.
+    for (const automationMode of ['MANUAL_ONLY', 'REVIEW_BEFORE_ACTION']) {
+      const state = publishingState({ enabled: true, rehearse: false, mode: 'AUTO' }, { dryRunDefault: false, automationMode });
+      expect(state.heldBy).toBe('AGENT_GATE');
+      expect(state.words).not.toBe('Posting for real');
+    }
+    // An owner approval is the decision the gate asks for, so a draft project publishes.
+    const drafts = publishingState({ enabled: true, rehearse: false, mode: 'DRAFT' }, { dryRunDefault: false, automationMode: 'REVIEW_BEFORE_ACTION' });
+    expect(drafts.heldBy).toBeNull();
+    const autonomous = publishingState({ enabled: true, rehearse: false, mode: 'AUTO' }, live);
+    expect(autonomous.heldBy).toBeNull();
+  });
 });
 
 describe('a command is offered only when it can work', () => {
@@ -387,5 +402,14 @@ describe("the agent's switches are this agent's", () => {
     expect(failed.words).toBe('Unknown');
     expect(failed.sentence).toContain('The API is not reachable.');
     expect(publishingState({ enabled: true, rehearse: false }, null).words).toBe('Checking');
+  });
+});
+
+describe('the screen says coding assistant', () => {
+  it('names Claude Code only inside the command itself', () => {
+    // Copy addresses whatever assistant the owner uses; the command line is
+    // the one place a specific client is named, because it runs that client.
+    const prose = readFileSync(resolve(__dirname, '../../apps/web/src/routes/devUpdates/TokenReveal.tsx'), 'utf8');
+    expect(prose).not.toMatch(/Claude Code/);
   });
 });
