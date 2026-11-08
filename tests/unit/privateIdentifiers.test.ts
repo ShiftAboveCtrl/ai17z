@@ -312,44 +312,120 @@ describe('the history scan reads the same list, through the gate\'s own scanner'
 });
 
 describe('the release step', () => {
-  const run = (env: Record<string, string>, files: Record<string, (path: string) => void> = {}, at = root) => {
-    const dist = mkdtempSync(join(tmpdir(), 'private-ids-dist-'));
+  /** A disposable git repository holding the release scripts, so a tag can carry (or not carry) the opt-out file. */
+  function releaseRepo(withOptOut: 'none' | 'tagged' | 'untracked'): string {
+    const repo = mkdtempSync(join(tmpdir(), 'private-ids-repo-'));
+    mkdirSync(join(repo, '.forgejo', 'scripts'), { recursive: true });
+    for (const f of ['private-identifiers.sh', 'privacy_scan.py', 'history-scan.py']) {
+      writeFileSync(join(repo, '.forgejo', 'scripts', f), readFileSync(resolve(root, '.forgejo/scripts', f)));
+    }
+    const g = (...args: string[]) =>
+      spawnSync('git', ['-C', repo, '-c', 'user.name=S', '-c', 'user.email=s@example.invalid', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8' });
+    g('init', '-q');
+    if (withOptOut === 'tagged') writeFileSync(join(repo, '.forgejo', 'private-identifiers-optional'), 'this fork has no list\n');
+    g('add', '.');
+    g('commit', '-q', '-m', 'release scripts');
+    g('tag', 'v9.9.9');
+    if (withOptOut === 'untracked') writeFileSync(join(repo, '.forgejo', 'private-identifiers-optional'), 'added after the tag\n');
+    return repo;
+  }
+  const run = (env: Record<string, string>, args: string[], at = root) => {
+    const bin = mkdtempSync(join(tmpdir(), 'private-ids-bin-'));
     try {
-      for (const [name, write] of Object.entries(files)) write(join(dist, name));
-      return spawnSync(bash!, [join(at, '.forgejo/scripts/private-identifiers.sh'), dist], {
+      return spawnSync(bash!, [join(at, '.forgejo/scripts/private-identifiers.sh'), ...args], {
         encoding: 'utf8',
         cwd: at,
-        env: { ...process.env, PRIVATE_IDENTIFIERS: '', ...python3Shim(join(dist, '..', `${join(dist).split(/[\\/]/).pop()}-bin`)), ...env },
+        env: { ...process.env, PRIVATE_IDENTIFIERS: '', GITHUB_REF_NAME: '', ...python3Shim(bin), ...env },
       });
     } finally {
-      rmSync(dist, { recursive: true, force: true });
+      rmSync(bin, { recursive: true, force: true });
     }
+  };
+  const dist = (files: Record<string, (path: string) => void>) => {
+    const dir = mkdtempSync(join(tmpdir(), 'private-ids-dist-'));
+    for (const [name, write] of Object.entries(files)) {
+      mkdirSync(join(dir, name, '..'), { recursive: true });
+      write(join(dir, name));
+    }
+    return dir;
   };
 
   it.skipIf(!bash)('refuses a release when the secret is missing', () => {
-    const result = run({});
+    const result = run({}, ['files', __filename]);
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('REFUSED: the PRIVATE_IDENTIFIERS secret is not set');
   });
 
-  it.skipIf(!bash)('goes ahead without one only when the repository itself commits the opt-out file', () => {
-    // A variable cannot do it any more, whatever its value.
-    expect(run({ PRIVATE_IDENTIFIERS_SKIP: 'no-private-identifiers-here' }).status).toBe(1);
-    const copy = mkdtempSync(join(tmpdir(), 'private-ids-repo-'));
+  it.skipIf(!bash)('takes the opt-out only from the tag being released', () => {
+    // A variable cannot do it, whatever its value.
+    expect(run({ PRIVATE_IDENTIFIERS_SKIP: 'no-private-identifiers-here' }, ['history']).status).toBe(1);
+    const tagged = releaseRepo('tagged');
+    const untracked = releaseRepo('untracked');
     try {
-      mkdirSync(join(copy, '.forgejo', 'scripts'), { recursive: true });
-      writeFileSync(join(copy, '.forgejo', 'scripts', 'private-identifiers.sh'), readFileSync(resolve(root, '.forgejo/scripts/private-identifiers.sh')));
-      writeFileSync(join(copy, '.forgejo', 'private-identifiers-optional'), 'this fork has no list\n');
-      const skipped = run({}, {}, copy);
+      const skipped = run({ GITHUB_REF_NAME: 'v9.9.9' }, ['history'], tagged);
       expect(skipped.status).toBe(0);
       expect(skipped.stdout).toContain('SKIPPED, BY CHOICE');
+      // The same file in the working directory, but not in the tag, counts for nothing.
+      expect(run({ GITHUB_REF_NAME: 'v9.9.9' }, ['history'], untracked).status).toBe(1);
+      // Nor does a tagged opt-out when no tag is being released.
+      expect(run({}, ['history'], tagged).status).toBe(1);
     } finally {
-      rmSync(copy, { recursive: true, force: true });
+      rmSync(tagged, { recursive: true, force: true });
+      rmSync(untracked, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!bash || !python)('reads only the secret: no variable, home directory or file in the repository can excuse a hit', () => {
+    const repo = releaseRepo('none');
+    const room = mkdtempSync(join(tmpdir(), 'private-ids-env-'));
+    try {
+      // A list and an allow file that would excuse everything, offered every way there is.
+      writeFileSync(join(room, 'harmless.txt'), 'username\tnothing-here\n');
+      writeFileSync(join(room, 'allow-all.txt'), 'username,hostname,home-path\t.*\n');
+      mkdirSync(join(room, '.config', 'private-identifiers'), { recursive: true });
+      writeFileSync(join(room, '.config', 'private-identifiers', 'allow.txt'), 'username,hostname,home-path\t.*\n');
+      mkdirSync(join(repo, '.forgejo', 'ai', 'private'), { recursive: true });
+      writeFileSync(join(repo, '.forgejo', 'ai', 'private', 'allow.txt'), 'username,hostname,home-path\t.*\n');
+      const target = join(room, 'leak.txt');
+      writeFileSync(target, `built by ${NAME}\n`);
+      const result = run(
+        {
+          PRIVATE_IDENTIFIERS: LIST,
+          PRIVATE_IDENTIFIERS_FILE: join(room, 'harmless.txt'),
+          PRIVATE_IDENTIFIERS_ALLOW_FILE: join(room, 'allow-all.txt'),
+          PRIVACY_SCAN_MAX_UNPACKED: '1',
+          HOME: room,
+          USERPROFILE: room,
+        },
+        ['files', target],
+        repo,
+      );
+      expect(result.status).toBe(1);
+      expect(result.stdout).toMatch(/leak\.txt:1: username/);
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(room, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!bash || !python)('scans every file it is given, a directory recursively, and refuses a missing one', () => {
+    const dir = dist({ 'build/windows/inner.txt': (p) => writeFileSync(p, `by ${NAME}\n`), 'top.txt': (p) => writeFileSync(p, 'clean\n') });
+    try {
+      const nested = run({ PRIVATE_IDENTIFIERS: LIST }, ['files', join(dir, 'top.txt'), join(dir, 'build')]);
+      expect(nested.status).toBe(1);
+      expect(nested.stdout).toMatch(/windows\/inner\.txt:1: username/);
+      const missing = run({ PRIVATE_IDENTIFIERS: LIST }, ['files', join(dir, 'top.txt'), join(dir, 'not-there.zip')]);
+      expect(missing.status).toBe(1);
+      expect(missing.stdout).toContain('a file to be published is missing');
+      expect(run({ PRIVATE_IDENTIFIERS: LIST }, ['files', join(dir, 'top.txt')]).status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
   it.skipIf(!bash || !python)('opens nested archives and their metadata, and still reads node_modules', () => {
-    const nested = [
+    const nestedZip = [
       'import io, sys, tarfile, zipfile',
       'b = io.BytesIO(); t = tarfile.open(fileobj=b, mode="w:gz")',
       'i = tarfile.TarInfo("ok.txt"); data = b"clean"; i.size = len(data); i.uname = sys.argv[2]; t.addfile(i, io.BytesIO(data)); t.close()',
@@ -361,17 +437,76 @@ describe('the release step', () => {
       // A third-party example path is not a finding; a name from the list is.
       'z.writestr("app/node_modules/dep/README.md", "see " + sys.argv[3]); z.writestr("app/node_modules/dep/built.js", "// " + sys.argv[2]); z.close()',
     ].join('\n');
-    const result = run(
-      { PRIVATE_IDENTIFIERS: LIST },
-      {
-        'AI17Z-App-1.zip': (p) => pythonWrites(nested, p, NAME),
-        'AI17Z-App-2.zip': (p) => pythonWrites(modules, p, NAME, `${home('jdoe')}/x`),
-      },
-    );
-    expect(result.status).toBe(1);
-    expect(result.stdout).toMatch(/AI17Z-App-1\.zip!app\/inner\.tgz![^:\n]*: username/);
-    expect(result.stdout).toMatch(/node_modules\/dep\/built\.js:1: username/);
-    expect(result.stdout).not.toMatch(/README\.md[^\n]*home-path/);
+    const dir = dist({
+      'AI17Z-App-1.zip': (p) => pythonWrites(nestedZip, p, NAME),
+      'AI17Z-App-2.zip': (p) => pythonWrites(modules, p, NAME, `${home('jdoe')}/x`),
+    });
+    try {
+      const result = run({ PRIVATE_IDENTIFIERS: LIST }, ['files', join(dir, 'AI17Z-App-1.zip'), join(dir, 'AI17Z-App-2.zip')]);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toMatch(/AI17Z-App-1\.zip!app\/inner\.tgz![^:\n]*: username/);
+      expect(result.stdout).toMatch(/node_modules\/dep\/built\.js:1: username/);
+      expect(result.stdout).not.toMatch(/README\.md[^\n]*home-path/);
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('round 3: shapes that are refused, and reads that are wider', () => {
+  const room = mkdtempSync(join(tmpdir(), 'private-ids-r3-'));
+  const repo = join(room, 'repo');
+  const emptyHome = join(room, 'home');
+  mkdirSync(repo);
+  mkdirSync(emptyHome);
+  afterAll(() => rmSync(room, { recursive: true, force: true }));
+  const git = (...args: string[]) =>
+    spawnSync('git', ['-C', repo, '-c', 'user.name=Somebody', '-c', 'user.email=somebody@example.invalid', '-c', 'core.hooksPath=', ...args], {
+      encoding: 'utf8',
+    });
+  const scan = (args: string[], env: Record<string, string>) =>
+    spawnSync(python!, [resolve(root, '.forgejo/scripts/history-scan.py'), ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, PRIVATE_IDENTIFIERS: '', PRIVATE_IDENTIFIERS_FILE: '', HOME: emptyHome, USERPROFILE: emptyHome, ...env },
+    });
+
+  it.skipIf(!python)('never prints a tag name in a built-in finding', () => {
+    git('init', '-q');
+    git('commit', '-q', '--allow-empty', '-m', 'one');
+    // A token shape the built-in rules know, assembled so this file is not one.
+    git('tag', '-a', `v-${NAME}`, '-m', `token ${'ghp_' + 'A'.repeat(35)}`);
+    const result = scan([repo], {});
+    expect(result.stdout).toMatch(/github-token in message of tag [0-9a-f]{20,}/);
     expect(leaks(result.stdout)).toBe(false);
+  });
+
+  it.skipIf(!python)('refuses a commit whose message is in another encoding, under --ci', () => {
+    const tree = git('rev-parse', 'HEAD^{tree}').stdout.trim();
+    const parent = git('rev-parse', 'HEAD').stdout.trim();
+    const who = 'Somebody <somebody@example.invalid> 1700000000 +0000';
+    const raw = join(room, 'enc.txt');
+    pythonWrites(
+      'import sys; head = "tree %s\\nparent %s\\nauthor %s\\ncommitter %s\\nencoding IBM037\\n\\n" % tuple(sys.argv[2:6]); open(sys.argv[1], "wb").write(head.encode() + ("built on " + sys.argv[6]).encode("cp037"))',
+      raw, tree, parent, who, who, NAME,
+    );
+    const sha = git('hash-object', '-t', 'commit', '-w', '--literally', raw).stdout.trim();
+    git('update-ref', 'refs/heads/enc', sha);
+    const result = scan(['--ci', repo], { PRIVATE_IDENTIFIERS: LIST });
+    expect(result.stdout).toMatch(/commit [0-9a-f]+: non-utf8-encoding/);
+    expect(result.status).toBe(1);
+    // --ci takes nothing but the repository, and no list is a refusal there.
+    expect(scan(['--ci', repo], {}).status).toBe(2);
+  });
+
+  it('reads bytes past the first 8 KB, and after NFKC with invisible characters removed', () => {
+    const late = Buffer.concat([Buffer.alloc(12000, 97), Buffer.from([0]), Buffer.from(NAME, 'utf16le')]);
+    expect(findPrivateIdentifiersInBytes('a.bin', late, list).map((f) => f.evidence)).toEqual(['username, not shown']);
+    const fullwidth = [...NAME].map((c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0)).join('');
+    const zeroWidth = NAME.slice(0, 4) + String.fromCharCode(0x200b) + NAME.slice(4);
+    for (const text of [fullwidth, zeroWidth]) {
+      expect(findPrivateIdentifiers(file('a.txt', `by ${text}`), list).map((f) => f.evidence)).toEqual(['username, not shown']);
+      expect(findPrivateIdentifiersInBytes('a.txt', Buffer.from(`by ${text}`, 'utf8'), list)).toHaveLength(1);
+    }
   });
 });

@@ -164,6 +164,36 @@ export function loadPrivateIdentifiers({ env, home, read }: IdentifierSources): 
  * quadratic, and a long minified line of excused hits took minutes.
  */
 export function privateHitsInLine(text: string, list: RuleSet): string[] {
+  const found = hitsIn(text, list);
+  // A second read after NFKC with invisible characters removed, so a
+  // fullwidth or zero-width-split identifier reads as itself.
+  const folded = normaliseText(text);
+  if (folded !== text) for (const name of hitsIn(folded, list)) if (!found.includes(name)) found.push(name);
+  return found;
+}
+
+/**
+ * Characters that render as nothing: zero-width spaces and joiners, bidi
+ * controls, the soft hyphen, variation selectors, fillers. Built from code points
+ * so this file stays ASCII; the same set as privacy_scan.py.
+ */
+const INVISIBLE = new RegExp(
+  `[${[
+    [0x00ad, 0x00ad], [0x034f, 0x034f], [0x061c, 0x061c], [0x115f, 0x1160], [0x17b4, 0x17b5],
+    [0x180b, 0x180f], [0x200b, 0x200f], [0x202a, 0x202e], [0x2060, 0x2064], [0x2066, 0x206f],
+    [0x3164, 0x3164], [0xfe00, 0xfe0f], [0xfeff, 0xfeff], [0xffa0, 0xffa0],
+  ]
+    .map(([a, b]) => `\\u{${a!.toString(16)}}-\\u{${b!.toString(16)}}`)
+    .join('')}]`,
+  'gu',
+);
+
+/** NFKC, then every invisible character removed. */
+export function normaliseText(text: string): string {
+  return text.normalize('NFKC').replace(INVISIBLE, '');
+}
+
+function hitsIn(text: string, list: RuleSet): string[] {
   const found: string[] = [];
   for (const { name, pattern } of list.rules) {
     let spans: { starts: number[]; ends: number[] } | undefined;
@@ -227,8 +257,11 @@ export function findPrivateIdentifiers(file: FileToCheck, list: RuleSet, alias =
 export function findPrivateIdentifiersInBytes(path: string, bytes: Uint8Array, list: RuleSet, alias?: string): Finding[] {
   if (list.rules.length === 0) return [];
   const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const views = [buf.toString('latin1')];
-  if (buf.subarray(0, 8192).includes(0)) views.push(Buffer.from(buf.filter((b) => b !== 0)).toString('latin1'));
+  // latin1 keeps every byte one character; utf8 lets NFKC see real characters.
+  const views = [buf.toString('latin1'), buf.toString('utf8')];
+  // A zero byte anywhere, not only in the first 8 KB: a text header in front
+  // of UTF-16 used to hide everything behind it.
+  if (buf.includes(0)) views.push(Buffer.from(buf.filter((b) => b !== 0)).toString('latin1'));
   if ((buf[0] === 0xff && buf[1] === 0xfe) || (buf[0] === 0xfe && buf[1] === 0xff)) {
     views.push(buf[0] === 0xff ? buf.subarray(2).toString('utf16le') : Buffer.from(buf.subarray(2)).swap16().toString('utf16le'));
   }

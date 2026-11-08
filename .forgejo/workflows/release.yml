@@ -286,7 +286,7 @@ jobs:
           GITHUB_MIRROR_TOKEN: ${{ secrets.GITHUB_MIRROR_TOKEN }}
           PRIVATE_IDENTIFIERS: ${{ secrets.PRIVATE_IDENTIFIERS }}
         run: |
-          bash .forgejo/scripts/private-identifiers.sh dist || exit 1
+          bash .forgejo/scripts/private-identifiers.sh history || exit 1
           VERSION="${{ needs.version.outputs.version }}"
           [ -f dist/release.env ] && . dist/release.env && export RELEASE_NAME && rm -f dist/release.env
           if [ "${GITHUB_REF_NAME#rehearsal-}" != "$GITHUB_REF_NAME" ]; then

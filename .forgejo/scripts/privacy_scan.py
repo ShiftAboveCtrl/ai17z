@@ -37,6 +37,17 @@ Options (before the mode)
   --lenient DIR=CLASS[,CLASS]   (repeatable) under a path segment DIR (e.g.
                                 node_modules), do not apply those classes;
                                 for third-party trees and generic rules only
+  --ci                          the list is $PRIVATE_IDENTIFIERS and nothing
+                                else: every other variable, file and default
+                                directory is ignored (release checks)
+
+Refused outright as unusual shapes, never read and judged: a commit or tag
+header git does not write itself (unusual-header), a message encoding other
+than UTF-8 (non-utf8-encoding). Every git call runs with replacement objects
+off (GIT_NO_REPLACE_OBJECTS=1, GIT_REPLACE_REF_BASE and GIT_GRAFT_FILE unset).
+Every text is read twice: as it is, and after NFKC with invisible characters
+removed. Encodings of an identifier (base64, hex, split across lines) are out
+of scope.
 
 List format (identifiers.txt):  <class><TAB><regex>
   allow:<class>[,<class>...]<TAB><regex>   excuse hits of those classes only
@@ -77,9 +88,50 @@ MAX_ARCHIVE_DEPTH = 4
 CHUNK = 1024 * 1024
 
 
+# --ci: the list comes from $PRIVATE_IDENTIFIERS and nothing else. No file, no
+# default directory (in a repository the script-relative one is a path any pull
+# request could add), no allow file and no budget from the environment.
+CI_MODE = False
+
+
+def git_env():
+    """The environment every git call runs in.
+
+    Replacement refs change what a reader sees and not what a push sends, so a
+    replaced commit read the replacement while the original went out. They are
+    switched off, along with the variable that moves where they are looked for.
+    """
+    env = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1")
+    env.pop("GIT_REPLACE_REF_BASE", None)
+    env.pop("GIT_GRAFT_FILE", None)
+    return env
+
+
+# Characters that render as nothing (zero-width, joiners, bidi controls, soft
+# hyphen, variation selectors). Removed, after NFKC folds fullwidth and other
+# compatibility forms, for a second read of every text.
+_INVISIBLE_RANGES = [
+    (0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5),
+    (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064), (0x2066, 0x206F),
+    (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0),
+]
+# Built from code points so this file stays ASCII and nothing in it is invisible.
+INVISIBLE = re.compile("[" + "".join(re.escape(chr(a)) + "-" + re.escape(chr(b)) for a, b in _INVISIBLE_RANGES) + "]")
+
+
+def normalised(body):
+    """body as NFKC with invisible characters removed, or None if that changes nothing."""
+    import unicodedata
+    text = body.decode("utf-8", "ignore")
+    folded = INVISIBLE.sub("", unicodedata.normalize("NFKC", text)).encode("utf-8")
+    return None if folded == body else folded
+
+
 def max_unpacked():
     """2 GiB, or a smaller budget from the environment (a larger one is ignored)."""
     default = 2 * 1024 * 1024 * 1024
+    if CI_MODE:
+        return default
     try:
         asked = int(os.environ.get("PRIVACY_SCAN_MAX_UNPACKED", "") or default)
     except ValueError:
@@ -117,24 +169,62 @@ AI_FOOTER = re.compile(
 
 def is_ai_trailer_value(value):
     name, _, rest = value.partition(b"<")
-    if AI_NAME.search(name) or AI_EMAIL.search(rest):
+    local = rest.split(b"@", 1)[0]
+    # The address's local part counts as a name: "<claude@...>" with no name.
+    if AI_NAME.search(name) or AI_NAME.search(local) or AI_EMAIL.search(rest):
         return True
-    return bool(AI_NAME_WEAK.search(name) and BOT_EMAIL.search(rest))
+    return bool(AI_NAME_WEAK.search(name + b" " + local) and BOT_EMAIL.search(rest))
 
 
 def attribution_lines(msg):
-    """Spans (start, end) of every line in msg that is AI attribution."""
+    """Spans (start, end) of every line in msg that is AI attribution.
+
+    A trailer folds: a line starting with whitespace continues the one above,
+    exactly as `git interpret-trailers` reads it, so the key and the name may sit
+    on different lines. The whole folded trailer is one span.
+    """
     spans = []
-    pos = 0
-    for line in msg.split(b"\n"):
-        end = pos + len(line)
-        m = TRAILER_KEYS.match(line)
-        if m and is_ai_trailer_value(m.group("value")):
-            spans.append((pos, end))
-        pos = end + 1
+    lines = msg.split(b"\n")
+    starts, pos = [], 0
+    for line in lines:
+        starts.append(pos)
+        pos += len(line) + 1
+    i = 0
+    while i < len(lines):
+        m = TRAILER_KEYS.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        j = i + 1
+        value = m.group("value")
+        while j < len(lines) and lines[j][:1] in (b" ", b"\t") and lines[j].strip():
+            value += b" " + lines[j].strip()
+            j += 1
+        if is_ai_trailer_value(value):
+            spans.append((starts[i], starts[j - 1] + len(lines[j - 1])))
+        i = j
     for m in AI_FOOTER.finditer(msg):
         spans.append((m.start(), m.end()))
     return sorted(set(spans))
+
+
+def git_trailer_attribution(msg):
+    """True if `git interpret-trailers --parse` finds an AI trailer in msg.
+
+    The second opinion, from git itself, over whatever it counts as a trailer
+    block (folding, separators, case). Only asked when the message could hold a
+    folded line, because it costs a process per commit.
+    """
+    if not re.search(rb"(?m)^[ \t]+\S", msg):
+        return False
+    p = subprocess.run(["git", "interpret-trailers", "--parse"], input=msg, capture_output=True, env=git_env())
+    if p.returncode != 0:
+        raise ScanError("git interpret-trailers failed")
+    for line in p.stdout.split(b"\n"):
+        m = TRAILER_KEYS.match(line)
+        if m and is_ai_trailer_value(m.group("value")):
+            return True
+    return False
 
 
 class ScanError(Exception):
@@ -201,6 +291,15 @@ def read(path):
 
 
 def resolve(opts):
+    if CI_MODE:
+        # Only the secret: no file, no default directory, no allow file.
+        text = os.environ.get("PRIVATE_IDENTIFIERS", "")
+        if not text.strip():
+            raise ScanError("no identifiers list found: --ci reads $PRIVATE_IDENTIFIERS and nothing else")
+        rules, allow, identities = parse_list(text, "$PRIVATE_IDENTIFIERS")
+        if not rules:
+            raise ScanError("$PRIVATE_IDENTIFIERS: no identifier rules")
+        return rules, allow, identities
     pfile = opts.get("patterns")
     if pfile:
         if not os.path.isfile(pfile):
@@ -306,6 +405,9 @@ class Scanner:
         if isinstance(raw, str):
             raw = raw.encode("utf-8", "surrogateescape")
         hits = self.find(raw)
+        folded = normalised(raw)
+        if folded is not None:
+            hits += self.find(folded)
         for cls, _ in hits:
             self.add(label, cls)
         return bool(hits)
@@ -350,6 +452,10 @@ class Scanner:
             # UTF-16 without a BOM, and strings inside a binary, read as text
             # once the zero bytes between their characters are gone.
             views.append(body.replace(b"\x00", b""))
+        # Every view again after NFKC with invisible characters removed, so a
+        # fullwidth or zero-width-split identifier reads as itself. The whole
+        # blob, not a prefix.
+        views += [f for f in (normalised(v) for v in list(views)) if f is not None]
         for view in views:
             for cls, ln in self.find(view):
                 if binary or not line_numbers:
@@ -359,11 +465,14 @@ class Scanner:
                 else:
                     self.add(f"{label}:{ln}", cls)
 
+    # The headers git itself writes. Anything else is refused rather than read:
+    # the gate cannot promise to understand a shape it has not seen.
+    COMMIT_HEADERS = {b"tree", b"parent", b"author", b"committer", b"gpgsig", b"gpgsig-sha256", b"mergetag", b"encoding"}
+    TAG_HEADERS = {b"object", b"type", b"tag", b"tagger", b"gpgsig", b"gpgsig-sha256"}
+
     def git_object(self, kind, oid, raw, label):
-        """A commit or tag: identity, attribution, identifiers in its text and headers."""
+        """A commit or tag: shape, identity, attribution, and identifiers in every byte."""
         head, _, msg = raw.partition(b"\n\n")
-        # A signature is base64 and says nothing; it could only produce noise.
-        msg = re.sub(rb"(?s)-----BEGIN (PGP|SSH) SIGNATURE-----.*?-----END (PGP|SSH) SIGNATURE-----\n?", b"", msg)
         fields = []
         for line in head.split(b"\n"):
             if line.startswith(b" ") and fields:
@@ -371,25 +480,35 @@ class Scanner:
             else:
                 key, _, value = line.partition(b" ")
                 fields.append((key, value))
+        allowed = self.COMMIT_HEADERS if kind == b"commit" else self.TAG_HEADERS
+        # Shape first, whatever the checks: an unusual object is refused outright.
+        if any(k not in allowed for k, _ in fields):
+            self.add(f"{label}", "unusual-header")
+        for k, v in fields:
+            # A message in another encoding (IBM037, UTF-16) reads as noise here
+            # and as words to anybody whose git decodes it.
+            if k == b"encoding" and v.strip().lower() not in (b"utf-8", b"utf8"):
+                self.add(f"{label}", "non-utf8-encoding")
         people = [(k, v) for k, v in fields if k in (b"author", b"committer", b"tagger")]
         if "policy" in self.checks:
             for role, rest in people:
                 ident = rest.rsplit(b" ", 2)[0] if rest.count(b" ") >= 2 else rest
                 if self.identities and ident.strip() not in self.identities:
                     self.add(f"{label} {role.decode()}", "foreign-identity")
-            if attribution_lines(msg):
+            if attribution_lines(msg) or git_trailer_attribution(msg):
                 self.add(f"{label} message", "ai-attribution")
         if "identifiers" in self.checks:
+            # Every byte of the object as it is sent: header keys and values,
+            # gpgsig and mergetag blocks, and a signature inside the message.
+            # Nothing is stripped first, because a signature block is exactly
+            # where a stripped region could hide a name.
+            self.text(f"{label} raw", raw, line_numbers=False)
             self.text(f"{label} people", b"\n".join(k + b" " + v for k, v in people), line_numbers=False)
             self.text(f"{label} message", msg)
             for k, v in fields:
                 if k == b"tag":
                     # A tag's own name is published with it.
                     self.names(v, f"{label} name")
-                elif k not in (b"tree", b"parent", b"object", b"type", b"author", b"committer", b"tagger",
-                               b"gpgsig", b"gpgsig-sha256", b"mergetag", b"encoding", b""):
-                    # Any other header (extra headers git keeps) is published too.
-                    self.text(f"{label} header", v, line_numbers=False)
         # A merged signed tag travels inside the commit, tagger and message
         # included, and is judged exactly like a tag.
         for i, (k, v) in enumerate((f for f in fields if f[0] == b"mergetag"), 1):
@@ -602,11 +721,19 @@ def archive_kind(data):
         return "ar"
     if len(data) > 262 and data[257:262] == b"ustar":
         return "tar"
+    # A zip is found from its end, so one behind a prefix (a self-extracting
+    # .exe, a polyglot) is still a zip and is opened like one.
+    if len(data) >= 22 and b"PK\x05\x06" in data[-65557:]:
+        try:
+            if zipfile.is_zipfile(io.BytesIO(data)):
+                return "zip"
+        except (OSError, ValueError):
+            pass  # not readable as a zip after all; scanned as bytes
     return None
 
 
 def git(repo, *args):
-    p = subprocess.run(["git", "-C", repo, *args], capture_output=True)
+    p = subprocess.run(["git", "-C", repo, *args], capture_output=True, env=git_env())
     if p.returncode != 0:
         # git's own words can contain a path or a ref name, so not repeated.
         raise ScanError(f"git {args[0]} failed (exit {p.returncode})")
@@ -618,7 +745,7 @@ def batch(repo, ids):
     if not ids:
         return
     proc = subprocess.Popen(["git", "-C", repo, "cat-file", "--batch"],
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=git_env())
 
     def feed():
         # Written from a thread: writing everything before reading fills the
@@ -676,7 +803,7 @@ def scan_objects(sc, repo, revargs):
     for a in revargs:
         if a.startswith("-") or a.startswith("^") or ".." in a:
             continue
-        p = subprocess.run(["git", "-C", repo, "cat-file", "-t", a], capture_output=True)
+        p = subprocess.run(["git", "-C", repo, "cat-file", "-t", a], capture_output=True, env=git_env())
         if p.returncode == 0 and p.stdout.strip() == b"tag":
             oid = git(repo, "rev-parse", a).strip()
             if oid not in labels:
@@ -811,8 +938,14 @@ def main(argv):
                 opts["lenient"].setdefault(d, set()).update(c.strip() for c in classes.split(",") if c.strip())
             else:
                 opts[flag[2:]] = value
+        elif flag == "--ci":
+            global CI_MODE
+            CI_MODE = True
         else:
             raise ScanError("unknown option (see --help)")
+    if CI_MODE and (opts.get("patterns") or opts.get("allow") or opts.get("identity") or opts["lenient"]
+                    and set(opts["lenient"]) != {"node_modules"}):
+        raise ScanError("--ci takes its list from $PRIVATE_IDENTIFIERS only")
     if not argv:
         print(__doc__)
         return 2

@@ -3,7 +3,11 @@
 Scans every blob reachable from any ref, every commit message and every tag
 message, and prints locations and pattern names, never a matched value.
 
-    python3 .forgejo/scripts/history-scan.py <repo> [extra-patterns.tsv]
+    python3 .forgejo/scripts/history-scan.py [--ci] <repo> [extra-patterns.tsv]
+
+--ci is the release check: the list is $PRIVATE_IDENTIFIERS and nothing else
+(no file, no default directory, no allow file, no environment budget), and no
+list is a refusal rather than a skip.
 
 `secret-scan.sh` asks the same question of the tree; this asks it of every
 commit behind it, because removing a secret from the tree does not remove it
@@ -146,8 +150,10 @@ def builtin_scan(repo, findings, safe):
     # scan that stopped early and would otherwise read as clean.
     if proc.wait() != 0 or seen != len(paths):
         raise Stop("git cat-file did not hand over every object")
+    # A tag is named by its object id here, never by its name: a tag name is
+    # chosen by whoever made it and can be exactly what must not be printed.
     messages = git(repo, "log", "--all", "--format=%H%n%B%n%x00") + git(
-        repo, "for-each-ref", "refs/tags", "--format=%(refname)%n%(contents)%n%00"
+        repo, "for-each-ref", "refs/tags", "--format=tag %(objectname)%n%(contents)%n%00"
     )
     for chunk in messages.split(b"\x00"):
         head = chunk.strip().split(b"\n", 1)[0].decode("utf-8", "replace")
@@ -157,11 +163,23 @@ def builtin_scan(repo, findings, safe):
     return blobs
 
 
-def load_list():
+def load_list(ci, extra):
     """(scanner module, Scanner, status line), or (module, None, SKIPPED line) when no list is configured."""
     ps = load_privacy_scan()
-    opts = {"patterns": sys.argv[2]} if len(sys.argv) > 2 else {}
-    if len(sys.argv) > 2:
+    ps.CI_MODE = ci
+    opts = {"patterns": extra} if extra else {}
+    if ci:
+        # The release check: $PRIVATE_IDENTIFIERS and nothing else, and no list
+        # is a refusal, not a skip.
+        source = "from $PRIVATE_IDENTIFIERS only (--ci)"
+        try:
+            rules, allow, identities = ps.resolve({})
+        except ps.ScanError as e:
+            raise Stop(f"private identifiers: {e}")
+        status = f"private identifiers: {len(rules)} rules {source}; policy: ai-attribution"
+        status += ", foreign-identity" if identities else "\n  foreign-identity: SKIPPED, the list names no identity"
+        return ps, ps.Scanner(rules, allow, identities, {"identifiers", "policy"}), status
+    if extra:
         source = "from the file given"
     elif os.environ.get("PRIVATE_IDENTIFIERS", "").strip():
         source = "from $PRIVATE_IDENTIFIERS"
@@ -193,9 +211,21 @@ def private_scan(ps, sc, repo, findings):
 
 
 def main():
-    repo = sys.argv[1]
+    args = sys.argv[1:]
+    ci = bool(args) and args[0] == "--ci"
+    if ci:
+        args = args[1:]
+        if len(args) != 1:
+            raise Stop("--ci takes the repository and nothing else")
+    if not args:
+        raise Stop("usage: history-scan.py [--ci] <repo> [extra-patterns.tsv]")
+    repo = args[0]
+    # Objects as they are stored and sent, never as a replacement shows them.
+    os.environ["GIT_NO_REPLACE_OBJECTS"] = "1"
+    os.environ.pop("GIT_REPLACE_REF_BASE", None)
+    os.environ.pop("GIT_GRAFT_FILE", None)
     findings = []
-    ps, sc, status = load_list()
+    ps, sc, status = load_list(ci, args[1] if len(args) > 1 else None)
 
     def safe(path, oid):
         if sc is None:

@@ -96,7 +96,11 @@ const findings = checkRelease(files, paths, identifiers);
 // the private identifiers are looked for in them too: a name inside an image's
 // metadata, or text saved as UTF-16 without a BOM, reads as binary.
 if (identifiers.rules.length > 0) {
-  const read = new Set(files.map((f) => f.path));
+  // A file read as text because its first 8 KB had no zero byte can still hold
+  // UTF-16 or binary data after that, which the text rules read as noise; its
+  // bytes are read as well.
+  const NUL = String.fromCharCode(0);
+  const read = new Set(files.filter((f) => !f.content.includes(NUL)).map((f) => f.path));
   for (const path of paths) {
     if (read.has(path)) continue;
     try {

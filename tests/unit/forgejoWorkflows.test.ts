@@ -221,8 +221,17 @@ describe('who runs what', () => {
     expect(step.run).toContain('publish-release.sh');
     // Checked before anything is attached to a release on either host, and a
     // refusal stops the step.
-    expect(step.run).toContain('private-identifiers.sh dist || exit 1');
+    expect(step.run).toContain('private-identifiers.sh history || exit 1');
     expect(step.run!.indexOf('private-identifiers.sh')).toBeLessThan(step.run!.indexOf('publish-release.sh'));
+    // The files are checked inside publish-release.sh, on exactly the list it
+    // attaches, after the flatten and after every generated file exists, and
+    // before the rehearsal branch and the first upload.
+    const publishScript = read('.forgejo/scripts/publish-release.sh');
+    const scanAt = publishScript.indexOf('private-identifiers.sh" files "${ASSETS[@]}" || exit 1');
+    expect(scanAt).toBeGreaterThan(publishScript.indexOf('find . -mindepth 2 -type f -exec cp -n'));
+    expect(scanAt).toBeGreaterThan(publishScript.lastIndexOf('ASSETS+=('));
+    expect(scanAt).toBeLessThan(publishScript.indexOf('if [ -n "$REHEARSAL" ]'));
+    expect(scanAt).toBeLessThan(publishScript.indexOf('for name in "${ASSETS[@]}"'));
     // After AI17Z Code has it, and never for a rehearsal, which publishes nothing.
     expect(step.run!.indexOf('mirror-github.sh')).toBeGreaterThan(step.run!.lastIndexOf('publish-release.sh'));
     expect(step.run!.indexOf('mirror-github.sh')).toBeGreaterThan(step.run!.indexOf('else'));

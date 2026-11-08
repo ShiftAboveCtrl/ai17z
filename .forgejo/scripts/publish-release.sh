@@ -219,6 +219,12 @@ cp "$PROJECT_DIR/docs/RELEASE_VALIDATION_REPORT.md" RELEASE_VALIDATION_REPORT.md
 ASSETS+=(RELEASE_VALIDATION_REPORT.md)
 for subject in "${SUBJECTS[@]}"; do ASSETS+=("$subject.sigstore.json"); done
 
+say "no private identifier in anything attached"
+# Exactly the list attached below, after the flatten and after every generated
+# file (manifest, notes, sums, signatures) exists: scanning the downloaded
+# directory instead missed files in subdirectories and the files made here.
+bash "$HERE/private-identifiers.sh" files "${ASSETS[@]}" || exit 1
+
 if [ -n "$REHEARSAL" ]; then
   # A rehearsal gets everything except the release. The finished directory is
   # kept as the job's artifacts, so what would have been published can be
