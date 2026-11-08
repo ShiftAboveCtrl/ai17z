@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { Capability, PipelineEdge, PipelineNode } from '@xbam/shared/contracts';
 import { PolicyConfig } from '@xbam/shared/contracts';
@@ -318,6 +321,40 @@ export async function revokeSenderToken(ownerId: string, projectId: string) {
   const row = await repo.setSenderToken(project.id, null, null);
   await ops.audit({ actorUserId: ownerId, action: 'dev_updates.token_revoked', entityType: 'dev_update_project', entityId: row.id });
   return projectView(row);
+}
+
+// ── Connecting a coding assistant ───────────────────────────────────────────
+
+/** The name the MCP server is registered under, so every copy of the command agrees. */
+export const DEV_UPDATES_MCP_NAME = 'ai17z-dev-updates';
+
+/**
+ * Where this installation's MCP server file is, for a command an owner can paste.
+ *
+ * A browser cannot know where AI17Z is installed, and a command with a
+ * placeholder in it is a command that fails on first paste. The file ships
+ * beside the runtime (`tools/` is in every package), so the path is derived
+ * from this module, never stored, and checked to exist. Inside a container it
+ * is the container's path, which means nothing on the machine Claude Code runs
+ * on, so it is not offered.
+ */
+export function devUpdateConnection(): { serverName: string; mcpServerPath: string | null; reason: string | null } {
+  const path = resolvePath(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tools', 'dev-updates-mcp.mjs');
+  if (existsSync('/.dockerenv')) {
+    return {
+      serverName: DEV_UPDATES_MCP_NAME,
+      mcpServerPath: null,
+      reason: 'This AI17Z runs in a container, so its copy of the MCP server is not on your machine. Use tools/dev-updates-mcp.mjs from a copy of AI17Z on the machine where Claude Code runs.',
+    };
+  }
+  if (!existsSync(path)) {
+    return {
+      serverName: DEV_UPDATES_MCP_NAME,
+      mcpServerPath: null,
+      reason: 'The MCP server file is missing from this installation. Reinstall or update AI17Z to restore tools/dev-updates-mcp.mjs.',
+    };
+  }
+  return { serverName: DEV_UPDATES_MCP_NAME, mcpServerPath: path, reason: null };
 }
 
 export async function listDevUpdateProjects(ownerId: string) {
