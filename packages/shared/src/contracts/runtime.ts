@@ -347,3 +347,17 @@ export const MemoryRecord = z.object({
   expiresAt: z.string().nullable(),
 });
 export type MemoryRecord = z.infer<typeof MemoryRecord>;
+
+/** Owner read model, assembled from existing provenance and retrieval rows. */
+export const InspectableMemory = MemoryRecord.extend({
+  reason: z.string().nullable(),
+  reasonJobId: z.string().uuid().nullable(),
+  evidence: z.array(z.object({
+    kind: z.string(),
+    id: z.string(),
+    label: z.string(),
+    text: z.string().nullable(),
+    url: z.string().nullable(),
+  })),
+});
+export type InspectableMemory = z.infer<typeof InspectableMemory>;

@@ -160,6 +160,7 @@ function mentions(asked: Set<string>, hint: string): boolean {
 const SELF_CHANGE = new Set(['agent.change_setting', 'agent.undo_change', 'agent.cannot_change']);
 
 export function familyOf(capabilityId: string): string {
+  if (capabilityId === 'agent.memory') return 'memory';
   if (SELF_CHANGE.has(capabilityId)) return 'self';
   const dot = capabilityId.indexOf('.');
   return dot === -1 ? capabilityId : capabilityId.slice(0, dot);

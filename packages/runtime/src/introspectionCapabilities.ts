@@ -33,11 +33,12 @@ import {
   deliberation as deliberationRepo,
   introspection,
   knowledge as knowledgeRepo,
+  memories as memoriesRepo,
   relationships as relationshipsRepo,
   stances as stancesRepo,
 } from '@xbam/database';
 import { defineCapability, registerCapability, collectDiagnostics, type AnyCapability } from '@xbam/tools';
-import type { ComponentHealth } from '@xbam/shared/contracts';
+import { InspectableMemory, MEMORY_SCOPES, type ComponentHealth } from '@xbam/shared/contracts';
 import { explainRehearsal } from './rehearse';
 import { describeLearning } from './learning';
 
@@ -775,7 +776,31 @@ const recentChanges = defineCapability({
   },
 });
 
+const memory = defineCapability({
+  id: 'agent.memory',
+  name: 'What it remembers and why',
+  description: 'What do you remember about a subject and why? Search this agent memory by text and scope, with recorded retrieval reasons and source evidence. Use when asked what you remember, recall, forgot or were told. Missing evidence is not recorded; never invent it.',
+  category: 'ANALYTICS',
+  effect: 'READ',
+  risk: 'LOW',
+  audience: 'OWNER',
+  input: z.object({
+    search: z.string().trim().max(200).optional(),
+    scopes: z.array(z.enum(MEMORY_SCOPES)).optional(),
+    limit: z.number().int().min(1).max(50).default(20),
+    offset: z.number().int().min(0).default(0),
+  }),
+  output: z.object({ items: z.array(InspectableMemory), total: z.number(), detail: z.string() }),
+  modelCallable: true,
+  timeoutMs: 10_000,
+  async run(input, ctx) {
+    const page = await memoriesRepo.inspectMemories({ ...input, agentId: ctx.agentId });
+    return { ...page, detail: 'Reasons are the latest recorded pipeline retrieval reasons, not inferred explanations. Null means no retrieval reason was recorded. Sources and origin are recorded evidence. This search does not change retrieval or pin anything.' };
+  },
+});
+
 export const INTROSPECTION_CAPABILITIES = [
+  memory,
   selfState,
   healthReport,
   recentActivity,

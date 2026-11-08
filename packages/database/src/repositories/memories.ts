@@ -1,5 +1,5 @@
-import type { MemoryRecord, MemoryScope, MemoryType, RetrievedMemory } from '@xbam/shared/contracts';
-import { NotFoundError, sha256Hex } from '@xbam/shared';
+import type { InspectableMemory, MemoryRecord, MemoryScope, MemoryType, RetrievedMemory } from '@xbam/shared/contracts';
+import { ForbiddenError, NotFoundError, sha256Hex } from '@xbam/shared';
 import { query, queryOne, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
@@ -76,6 +76,16 @@ export interface WriteMemoryResult {
 
 /** Idempotent write: identical content in the same bucket updates rather than duplicates. */
 export async function writeMemory(input: WriteMemoryInput, executor?: Tx): Promise<WriteMemoryResult> {
+  if (input.pinned) throw new ForbiddenError('Only an owner can pin a memory.');
+  return insertMemory(input, executor);
+}
+
+/** Called only after the API has authenticated ownership. */
+export async function writeOwnerMemory(input: WriteMemoryInput): Promise<WriteMemoryResult> {
+  return insertMemory(input);
+}
+
+async function insertMemory(input: WriteMemoryInput, executor?: Tx): Promise<WriteMemoryResult> {
   const scopeKey = scopeKeyFor(input);
   const contentHash = memoryContentHash(input.content);
   const params = [
@@ -122,6 +132,15 @@ export async function getMemory(id: string): Promise<MemoryRecord | null> {
 }
 
 export async function updateMemory(
+  id: string,
+  patch: Partial<{ content: string; summary: string | null; importance: number; pinned: boolean; expiresAt: string | null }>,
+): Promise<MemoryRecord> {
+  if (patch.pinned !== undefined) throw new ForbiddenError('Only an owner can pin or unpin a memory.');
+  return updateOwnerMemory(id, patch);
+}
+
+/** Called only after the API has authenticated ownership. */
+export async function updateOwnerMemory(
   id: string,
   patch: Partial<{ content: string; summary: string | null; importance: number; pinned: boolean; expiresAt: string | null }>,
 ): Promise<MemoryRecord> {
@@ -192,11 +211,49 @@ export async function searchMemories(
   params.push(filters.limit ?? 50, filters.offset ?? 0);
   const rows = await query(
     `SELECT ${COLUMNS} FROM memories ${where}
-      ORDER BY pinned DESC, created_at DESC
+      ORDER BY pinned DESC, created_at DESC, id DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
   return { items: mapRows<MemoryRecord>(rows), total: totalRow?.count ?? 0 };
+}
+
+/** No new memory store: provenance is joined only for the selected page. */
+export async function inspectMemories(filters: MemorySearchFilters): Promise<{ items: InspectableMemory[]; total: number }> {
+  const page = await searchMemories(filters);
+  if (!page.items.length) return { items: [], total: page.total };
+  const details = mapRows<{ id: string; reason: string | null; reasonJobId: string | null; evidence: InspectableMemory['evidence'] }>(await query(
+    `SELECT m.id, r.reason, r.job_id AS reason_job_id,
+            coalesce(evidence.items, '[]'::jsonb) AS evidence
+       FROM memories m
+       LEFT JOIN LATERAL (
+         SELECT mr.reason, mr.job_id FROM memory_retrievals mr
+         JOIN jobs j ON j.id = mr.job_id AND j.agent_id = m.agent_id
+         WHERE mr.memory_id = m.id ORDER BY mr.created_at DESC, mr.id DESC LIMIT 1
+       ) r ON true
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(jsonb_build_object('kind', s.kind, 'id', s.id, 'label', s.label, 'text', s.text, 'url', s.url)) AS items
+         FROM (
+           SELECT 'EVENT' AS kind, e.id::text, coalesce(e.remote_author_handle, e.channel) AS label, e.text, e.remote_url AS url
+             FROM events e WHERE e.id = m.source_event_id
+           UNION ALL
+           SELECT 'JOB', j.id::text, 'Source job', null, null FROM jobs j
+             WHERE j.id = m.source_job_id AND j.agent_id = m.agent_id
+           UNION ALL
+           SELECT 'CHAT', cs.id::text, coalesce(nullif(c.title, ''), 'Saved owner chat'), coalesce(cm.content, cs.content), null
+             FROM chat_saves cs LEFT JOIN chat_conversations c ON c.id = cs.conversation_id
+             LEFT JOIN chat_messages cm ON cm.id = cs.message_id
+             WHERE (cs.memory_id = m.id OR cs.knowledge_source_id = m.knowledge_source_id) AND cs.agent_id = m.agent_id
+           UNION ALL
+           SELECT 'KNOWLEDGE', k.id::text, k.name, null, null FROM knowledge_sources k
+             WHERE k.id = m.knowledge_source_id AND k.agent_id = m.agent_id
+         ) s
+       ) evidence ON true
+      WHERE m.agent_id = $1 AND m.id = ANY($2::uuid[])`,
+    [filters.agentId, page.items.map((m) => m.id)],
+  ));
+  const byId = new Map(details.map((d) => [d.id, d]));
+  return { total: page.total, items: page.items.map((m) => ({ ...m, reason: null, reasonJobId: null, evidence: [], ...byId.get(m.id) })) };
 }
 
 export interface ScopedQuery {
