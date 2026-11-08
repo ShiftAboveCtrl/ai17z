@@ -50,7 +50,7 @@ export function Explain({
         aria-controls={id}
         aria-label={open ? `Hide the explanation of ${label}` : `What is ${label}?`}
         className={`inline-flex items-center gap-1 self-start rounded text-[11px] transition-colors ${
-          open ? 'text-bone-dim' : 'text-bone-faint hover:text-bone-dim'
+          open ? 'text-bone' : 'text-bone-dim hover:text-bone'
         }`}
       >
         <HelpCircle className="h-3.5 w-3.5" aria-hidden />
