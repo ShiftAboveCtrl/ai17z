@@ -119,6 +119,8 @@ never outlives the link it was made for.
 
 ## Linking
 
+The Plugins screen's Studio tab explains the benefit before linking. With no registry configured, **Link to ai17z.io** sets the public registry address and starts the existing flow. With a configured Studio, **Link to Studio** uses that address. **Open Studio to approve** carries the code in its URL, so the owner only signs in, checks the code and approves. The code remains visible for approval on another device. Return to the local tab for automatic completion; Studio's completion page links to the account dashboard. Control, live view and takeover still start off.
+
 RFC 8628 device authorization, with the public key registered in the first
 step:
 

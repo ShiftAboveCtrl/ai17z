@@ -6,7 +6,7 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['tests/**/*.test.ts', 'packages/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'packages/**/*.test.ts', 'apps/web/src/**/*.test.tsx'],
     exclude: ['**/node_modules/**', 'tests/e2e/**'],
     testTimeout: 30_000,
     hookTimeout: 60_000,
@@ -40,6 +40,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@app': r('./apps/web/src'),
       // Longest first: these are matched in order, so a bare '@xbam/shared'
       // above a subpath would swallow it.
       '@xbam/shared/contracts': r('./packages/shared/src/contracts/index.ts'),

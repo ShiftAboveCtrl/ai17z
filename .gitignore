@@ -66,3 +66,6 @@ internal/
 
 # Python bytecode from the packaging scripts.
 __pycache__/
+
+# Local visual verification captures.
+.screenshots/

@@ -436,6 +436,10 @@ function LinkSection({ status, onChanged }: { status: StudioStatus; onChanged: (
     setBusy(true);
     setProblem(null);
     try {
+      if (path === '/api/studio/link' && status.state === 'NOT_CONFIGURED') {
+        const configured = await put<{ ok?: boolean; why?: string }>('/api/plugins/registry', { url: 'https://ai17z.io' });
+        if (configured.ok === false) throw new Error(configured.why ?? 'The Studio address could not be saved.');
+      }
       const answer = await post<{ ok?: boolean; why?: string; studioTold?: boolean }>(path, body);
       if (answer.ok === false) setProblem(answer.why ?? 'That did not work.');
       else if (answer.studioTold === false) setProblem(`Disconnected here. Studio could not be told${answer.why ? `: ${answer.why}` : ''}. Revoke it on Studio too.`);
@@ -450,18 +454,20 @@ function LinkSection({ status, onChanged }: { status: StudioStatus; onChanged: (
   return (
     <section className="rounded-lg border border-ink-line bg-ink-panel p-4">
       <h2 className="text-sm font-medium text-bone">AI17Z Studio</h2>
+      <p className="mt-1 text-sm text-bone">
+        Link this installation for browser control, live view and your Studio plugins, with each permission kept off until you enable it.
+      </p>
       {status.state === 'NOT_CONFIGURED' ? (
-        <p className="mt-1 text-xs text-bone-faint">
-          Set the Studio address under Settings first. It is the same address as the Plugin registry, and it has to be
-          https.
+        <p className="mt-1 text-sm text-bone-dim">
+          Link to the public Studio at ai17z.io. This also sets your Plugin registry address. You can choose another Studio under Settings.
         </p>
       ) : null}
-      {status.state === 'NOT_LINKED' || status.state === 'REVOKED' ? (
+      {status.state === 'NOT_CONFIGURED' || status.state === 'NOT_LINKED' || status.state === 'REVOKED' ? (
         <div className="mt-2 space-y-3">
           <p className="text-xs text-bone-faint">
             {status.state === 'REVOKED'
               ? 'Studio says this installation is no longer linked. Marketplace Plugins have stopped; everything else is unaffected.'
-              : `Not linked to ${status.origin}. Link it to use Plugins you have on your Studio account.`}
+              : status.origin ? `Not linked to ${status.origin}.` : 'No Studio account is linked yet.'}
           </p>
           {status.canRelink ? (
             <label className="flex items-center gap-2 text-xs text-bone">
@@ -473,24 +479,25 @@ function LinkSection({ status, onChanged }: { status: StudioStatus; onChanged: (
             type="button"
             disabled={busy}
             onClick={() => void act('/api/studio/link', { replacePrevious: status.canRelink && replace })}
-            className="inline-flex items-center gap-1.5 rounded border border-ink-line px-3 py-1 text-xs text-bone hover:bg-ink-deep disabled:opacity-50"
+            className="inline-flex min-h-12 items-center gap-1.5 rounded border border-ink-line px-3 py-2 text-sm text-bone hover:bg-ink-deep disabled:opacity-50"
           >
-            <Link2 size={13} aria-hidden="true" /> Link to Studio
+            <Link2 size={13} aria-hidden="true" /> {status.state === 'NOT_CONFIGURED' ? 'Link to ai17z.io' : 'Link to Studio'}
           </button>
         </div>
       ) : null}
       {waiting && status.pending ? (
         <div className="mt-3 space-y-3">
-          <p className="text-xs text-bone-faint">Open Studio, sign in, and enter this code. Only enter it on your own account.</p>
+          <p className="text-sm text-bone-dim">The code is filled in for you when you open Studio below. Sign in to your own account, check this code and approve.</p>
           <p className="font-mono text-2xl tracking-[0.2em] text-bone">{status.pending.userCode}</p>
           <a
             href={status.pending.verificationUriComplete}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 break-all text-xs text-bone underline underline-offset-2"
+            className="inline-flex min-h-12 items-center gap-1.5 text-sm text-bone underline underline-offset-2"
           >
-            {status.pending.verificationUri} <ExternalLink size={12} aria-hidden="true" />
+            Open Studio to approve <ExternalLink size={12} aria-hidden="true" />
           </a>
+          <p className="break-words text-sm text-bone-dim">Return to this tab after approving. Linking finishes here automatically within a few seconds. On another device, open {status.pending.verificationUri} and enter the code above.</p>
           <Working
             label="Waiting for you to approve it on Studio"
             seconds={elapsed}
