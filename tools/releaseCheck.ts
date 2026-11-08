@@ -15,6 +15,8 @@
  * nothing about the next commit.
  */
 
+import { findPrivateIdentifiers, type PrivateIdentifiers } from './privateIdentifiers';
+
 export interface Finding {
   file: string;
   line: number;
@@ -265,9 +267,20 @@ export function findFilesThatShouldNotBeTracked(paths: string[]): Finding[] {
   return findings;
 }
 
-/** Everything, over a set of tracked files. */
-export function checkRelease(files: FileToCheck[], paths: string[]): Finding[] {
+/**
+ * Everything, over a set of tracked files. `identifiers` is the maintainer's
+ * private list (see privateIdentifiers.ts); without one those rules find nothing.
+ */
+export function checkRelease(
+  files: FileToCheck[],
+  paths: string[],
+  identifiers: Pick<PrivateIdentifiers, 'rules' | 'allow'> = { rules: [], allow: [] },
+): Finding[] {
+  const tracked = new Set(files.map((f) => f.path));
   return [
+    ...files.flatMap((f) => findPrivateIdentifiers(f, identifiers)),
+    // A file too big or too binary to read still publishes its name.
+    ...paths.filter((p) => !tracked.has(p)).flatMap((p) => findPrivateIdentifiers({ path: p, content: '' }, identifiers)),
     ...findFilesThatShouldNotBeTracked(paths),
     ...files.flatMap(findSecrets),
     ...files.flatMap(findPersonalDetails),

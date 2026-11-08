@@ -200,8 +200,21 @@ describe('who runs what', () => {
     const step = publish.steps!.find((s) => SECRET.test(JSON.stringify(s)))!;
     // The GitHub mirror is part of publishing, and its token lives in the same
     // step for the same reason the others do.
-    expect(Object.keys(step.env ?? {}).sort()).toEqual(['COSIGN_PASSWORD', 'COSIGN_PRIVATE_KEY', 'GITHUB_MIRROR_TOKEN', 'RELEASE_TOKEN']);
+    // The maintainer's private identifier list is a secret for the same reason
+    // and lives in the same step: anywhere a pull request can reach, it could
+    // be printed, and a printed list of somebody's identifiers is the leak.
+    expect(Object.keys(step.env ?? {}).sort()).toEqual([
+      'COSIGN_PASSWORD',
+      'COSIGN_PRIVATE_KEY',
+      'GITHUB_MIRROR_TOKEN',
+      'PRIVATE_IDENTIFIERS',
+      'RELEASE_TOKEN',
+    ]);
     expect(step.run).toContain('publish-release.sh');
+    // Checked before anything is attached to a release on either host, and a
+    // refusal stops the step.
+    expect(step.run).toContain('private-identifiers.sh dist || exit 1');
+    expect(step.run!.indexOf('private-identifiers.sh')).toBeLessThan(step.run!.indexOf('publish-release.sh'));
     // After AI17Z Code has it, and never for a rehearsal, which publishes nothing.
     expect(step.run!.indexOf('mirror-github.sh')).toBeGreaterThan(step.run!.lastIndexOf('publish-release.sh'));
     expect(step.run!.indexOf('mirror-github.sh')).toBeGreaterThan(step.run!.indexOf('else'));

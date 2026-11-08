@@ -14,7 +14,9 @@ import { execFileSync } from 'node:child_process';
 import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import { checkRelease, type FileToCheck } from './releaseCheck';
+import { IdentifierListError, loadPrivateIdentifiers, type PrivateIdentifiers } from './privateIdentifiers';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -64,9 +66,38 @@ for (const path of paths) {
   }
 }
 
-const findings = checkRelease(files, paths);
+// The maintainer's private identifiers, from outside the repository. A list
+// that is set and broken stops the check: a scan that did not run proves
+// nothing, and reporting it clean would be the worst possible answer.
+let identifiers: PrivateIdentifiers;
+try {
+  identifiers = loadPrivateIdentifiers({
+    env: process.env,
+    home: homedir().replace(/\\/g, '/'),
+    read: (path) => {
+      try {
+        return readFileSync(path, 'utf8');
+      } catch {
+        // Unreadable is answered as absent; the loader decides whether absent
+        // is allowed for the source it was asked about.
+        return undefined;
+      }
+    },
+  });
+} catch (error) {
+  const reason = error instanceof IdentifierListError ? error.message : 'the list could not be read';
+  process.stderr.write(`\nRelease check: private identifiers: ${reason}. Refusing to report clean.\n\n`);
+  process.exit(2);
+}
 
-process.stdout.write(`\nRelease check: ${files.length} tracked files\n\n`);
+const findings = checkRelease(files, paths, identifiers);
+
+process.stdout.write(`\nRelease check: ${files.length} tracked files\n`);
+process.stdout.write(
+  identifiers.rules.length > 0
+    ? `  private identifiers: ${identifiers.rules.length} rules ${identifiers.source}\n\n`
+    : '  private identifiers: SKIPPED, none configured (PRIVATE_IDENTIFIERS, PRIVATE_IDENTIFIERS_FILE or ~/.config/private-identifiers)\n\n',
+);
 
 if (findings.length === 0) {
   process.stdout.write('  Nothing found. This is safe to publish as far as this can tell.\n\n');
