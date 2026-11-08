@@ -805,10 +805,25 @@ def scan_objects(sc, repo, revargs):
             continue
         p = subprocess.run(["git", "-C", repo, "cat-file", "-t", a], capture_output=True, env=git_env())
         if p.returncode == 0 and p.stdout.strip() == b"tag":
-            oid = git(repo, "rev-parse", a).strip()
-            if oid not in labels:
-                order.append(oid)
-                labels[oid] = f"tag {oid[:10].decode()}"
+            # A tag may point at another tag; every object in the chain is
+            # transferred, so every one is scanned, not only the outermost.
+            oid = git(repo, "rev-parse", a + "^{tag}").strip()
+            for _ in range(64):
+                if oid not in labels:
+                    order.append(oid)
+                    labels[oid] = f"tag {oid[:10].decode()}"
+                body = git(repo, "cat-file", "tag", oid.decode())
+                target, kind = None, None
+                for hl in body.split(b"\n\n", 1)[0].split(b"\n"):
+                    if hl.startswith(b"object "):
+                        target = hl[7:].strip()
+                    elif hl.startswith(b"type "):
+                        kind = hl[5:].strip()
+                if kind != b"tag" or not target:
+                    break
+                oid = target
+            else:
+                raise ScanError("tag chain too deep")
     commits = 0
     for oid, kind, body in batch(repo, order):
         if kind == b"blob":
