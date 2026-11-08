@@ -80,7 +80,7 @@ export async function writeMemory(input: WriteMemoryInput, executor?: Tx): Promi
   return insertMemory(input, executor);
 }
 
-/** Called only after the API has authenticated ownership. */
+/** For authenticated owner actions and the owner-run legacy importer. */
 export async function writeOwnerMemory(input: WriteMemoryInput): Promise<WriteMemoryResult> {
   return insertMemory(input);
 }

@@ -22,6 +22,15 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('button', { name: 'Unpin memory', exact: true })).toHaveCount(1);
     await page.getByRole('button', { name: 'Unpin memory', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Unpin memory', exact: true })).toHaveCount(0);
+    const cancelled = page.waitForEvent('dialog');
+    const cancelClick = page.getByRole('button', { name: 'Delete memory' }).first().click();
+    const dialog = await cancelled;
+    expect(dialog.type()).toBe('confirm');
+    expect(dialog.message()).toContain('permanently');
+    await dialog.dismiss();
+    await cancelClick;
+    await expect(page.getByText('Heron launches Friday.')).toBeVisible();
+    page.on('dialog', (confirmation) => confirmation.accept());
     await page.evaluate(() => fetch('/api/agents/test/memories/fail-next'));
     await page.getByRole('button', { name: 'Delete memory' }).first().click();
     await expect(page.getByRole('alert')).toContainText('Memory service unavailable');
@@ -42,6 +51,7 @@ for (const width of [1440, 390]) {
 }
 
 test('retries a failed read and returns to the preceding page after deleting the final page', async ({ page }) => {
+  page.on('dialog', (dialog) => dialog.accept());
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await expect(page.getByText('Launch discussion')).toBeVisible();

@@ -21,6 +21,28 @@ async function auth(email: string) {
 }
 
 describe('inspectable memory', () => {
+  it('bounds capability content and chat and event evidence while REST preserves full text', async () => {
+    const f = await createFixture();
+    const longText = 'Heron '.repeat(400) + 'launch';
+    const conversation = await chat.createConversation({ ownerId: f.ownerId, kind: 'AGENT', title: 'Launch', agentIds: [f.agentId] });
+    const { message } = await chat.postOwnerMessage({ conversationId: conversation.id, content: longText, answerers: [] });
+    await saveFromChat({ ownerId: f.ownerId, conversationId: conversation.id, messageId: message.id, content: longText, agentIds: [f.agentId], target: 'MEMORY' });
+    await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent(longText) });
+    const [event] = await query<{ id: string }>('SELECT id FROM events WHERE text = $1', [longText]);
+    await memories.writeMemory({ agentId: f.agentId, scope: 'USER', memoryType: 'FACT', content: 'Short fact', sourceEventId: event!.id });
+    await memories.writeMemory({ agentId: f.agentId, scope: 'KNOWLEDGE', memoryType: 'FACT', content: 'Brief' });
+    const result = await invokeCapability({ call: { id: 'agent.memory', input: {} }, context: { agentId: f.agentId, jobId: null, accountId: null, config: {}, logger: console as never, audience: 'OWNER' }, permission: { stored: null, paused: false } });
+    expect(result.outcome).toBe('SUCCEEDED');
+    const output = result.output as { truncated: boolean; items: { content: string; truncated: boolean; evidence: { kind: string; text: string | null; truncated: boolean }[] }[] };
+    expect(output.truncated).toBe(true);
+    expect(output.items.find((m) => m.content.startsWith('Heron'))).toMatchObject({ content: longText.slice(0, 1000), truncated: true, evidence: [expect.objectContaining({ kind: 'CHAT', text: longText.slice(0, 1000), truncated: true })] });
+    expect(output.items.find((m) => m.content === 'Short fact')).toMatchObject({ truncated: true, evidence: [expect.objectContaining({ kind: 'EVENT', text: longText.slice(0, 1000), truncated: true })] });
+    expect(output.items.find((m) => m.content === 'Brief')).toMatchObject({ truncated: false });
+    const page = data<{ items: { content: string; evidence: { text: string | null }[] }[] }>(await app.inject({ url: `/api/agents/${f.agentId}/memories`, headers: await auth(f.ownerEmail) }));
+    expect(page.items.find((m) => m.content === longText)?.evidence[0]?.text).toBe(longText);
+    expect(page.items.find((m) => m.content === 'Short fact')?.evidence[0]?.text).toBe(longText);
+  });
+
   it('returns selected memories with recorded reasons and event evidence only to the owner', async () => {
     const f = await createFixture();
     await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('Remember that my favorite number is 41.') });

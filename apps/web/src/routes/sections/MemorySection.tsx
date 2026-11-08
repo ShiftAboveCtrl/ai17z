@@ -74,6 +74,7 @@ export function MemorySection({
   };
 
   const changeMemory = async (memory: InspectableMemory, remove: boolean) => {
+    if (remove && !window.confirm('Delete this memory permanently? This cannot be undone.')) return;
     setBusy(true);
     setError(null);
     try {

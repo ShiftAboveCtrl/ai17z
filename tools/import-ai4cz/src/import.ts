@@ -151,7 +151,8 @@ export async function importAi4cz(options: ImportOptions): Promise<ImportReport>
 
     // ── Style corpus ─────────────────────────────────────────────────────────
     for (const line of reader.styleLines()) {
-      const written = await memoriesRepo.writeMemory({
+      // The owner explicitly selected this corpus by running the importer.
+      const written = await memoriesRepo.writeOwnerMemory({
         agentId: agent.id,
         scope: 'KNOWLEDGE',
         memoryType: 'STYLE_EXAMPLE',

@@ -776,6 +776,13 @@ const recentChanges = defineCapability({
   },
 });
 
+// Model tool results need excerpts even when the owner stored a whole document.
+const MEMORY_EXCERPT_LENGTH = 1000;
+const MemoryExcerpt = InspectableMemory.extend({
+  truncated: z.boolean(),
+  evidence: z.array(InspectableMemory.shape.evidence.element.extend({ truncated: z.boolean() })),
+});
+
 const memory = defineCapability({
   id: 'agent.memory',
   name: 'What it remembers and why',
@@ -790,12 +797,26 @@ const memory = defineCapability({
     limit: z.number().int().min(1).max(50).default(20),
     offset: z.number().int().min(0).default(0),
   }),
-  output: z.object({ items: z.array(InspectableMemory), total: z.number(), detail: z.string() }),
+  output: z.object({ items: z.array(MemoryExcerpt), total: z.number(), truncated: z.boolean(), detail: z.string() }),
   modelCallable: true,
   timeoutMs: 10_000,
   async run(input, ctx) {
     const page = await memoriesRepo.inspectMemories({ ...input, agentId: ctx.agentId });
-    return { ...page, detail: 'Reasons are the latest recorded pipeline retrieval reasons, not inferred explanations. Null means no retrieval reason was recorded. Sources and origin are recorded evidence. This search does not change retrieval or pin anything.' };
+    const items = page.items.map((item) => {
+      const evidence = item.evidence.map((source) => ({
+        ...source,
+        text: source.text?.slice(0, MEMORY_EXCERPT_LENGTH) ?? null,
+        truncated: (source.text?.length ?? 0) > MEMORY_EXCERPT_LENGTH,
+      }));
+      return {
+        ...item,
+        content: item.content.slice(0, MEMORY_EXCERPT_LENGTH),
+        summary: item.summary?.slice(0, MEMORY_EXCERPT_LENGTH) ?? null,
+        evidence,
+        truncated: item.content.length > MEMORY_EXCERPT_LENGTH || (item.summary?.length ?? 0) > MEMORY_EXCERPT_LENGTH || evidence.some((source) => source.truncated),
+      };
+    });
+    return { items, total: page.total, truncated: items.some((item) => item.truncated), detail: `Content, summaries and source text are limited to ${MEMORY_EXCERPT_LENGTH} characters each. Truncated flags mark shortened text; the owner memory API retains the full text. Reasons are the latest recorded pipeline retrieval reasons, not inferred explanations. Null means no retrieval reason was recorded. Sources and origin are recorded evidence. This search does not change retrieval or pin anything.` };
   },
 });
 
