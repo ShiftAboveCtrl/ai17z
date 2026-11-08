@@ -5,7 +5,7 @@
 #   setup-cosign.sh
 #
 # Pinned by version and by the SHA-256 that sigstore publishes for it, in
-# .forgejo/cosign.json. A signing tool fetched unchecked is a hole in exactly the
+# ci/cosign.json. A signing tool fetched unchecked is a hole in exactly the
 # place the signature is meant to close.
 set -euo pipefail
 

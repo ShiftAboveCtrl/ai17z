@@ -34,10 +34,10 @@ const setup = read('packaging/windows/Setup-AI17Z.ps1');
 const readme = read('README.md');
 // The release pipeline: what builds the Windows half, what publishes, and what
 // the notes say.
-const windowsBuild = read('.forgejo/scripts/build-windows-release.ps1');
-const publishScript = read('.forgejo/scripts/publish-release.sh');
-const notesScript = read('.forgejo/scripts/release-notes.sh');
-const workflow = [read('.forgejo/workflows/package.yml'), read('.forgejo/workflows/release.yml'), windowsBuild, publishScript, notesScript].join('\n');
+const windowsBuild = read('ci/scripts/build-windows-release.ps1');
+const publishScript = read('ci/scripts/publish-release.sh');
+const notesScript = read('ci/scripts/release-notes.sh');
+const workflow = [read('.github/workflows/release.yml'), windowsBuild, publishScript, notesScript].join('\n');
 
 /** The one line a person is asked to paste. Everything else follows from it. */
 const COMMAND = 'irm https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main/install.ps1 | iex';

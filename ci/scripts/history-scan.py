@@ -3,7 +3,7 @@
 Scans every blob reachable from any ref, every commit message and every tag
 message, and prints locations and pattern names, never a matched value.
 
-    python3 .forgejo/scripts/history-scan.py [--ci] <repo> [extra-patterns.tsv]
+    python3 ci/scripts/history-scan.py [--ci] <repo> [extra-patterns.tsv]
 
 --ci is the release check: the list is $PRIVATE_IDENTIFIERS and nothing else
 (no file, no default directory, no allow file, no environment budget), and no
@@ -16,7 +16,7 @@ and must not be listed publicly either, such as a maintainer's own paths: the
 release step passes one from outside the repository.
 
 Synthetic fixtures that match are excused by blob id in
-.forgejo/history-scan-allow.txt, which can only ever excuse those exact bytes.
+ci/history-scan-allow.txt, which can only ever excuse those exact bytes.
 
 The maintainer's private identifiers are checked by privacy_scan.py beside this
 file, which is the same scanner as the maintainer's pre-push gate, so the two
@@ -79,7 +79,7 @@ class Stop(Exception):
 
 def load_privacy_scan():
     # By path, not import: `python3 -I` does not put this directory on sys.path.
-    # No __pycache__ beside it: a stray directory in .forgejo/scripts is
+    # No __pycache__ beside it: a stray directory in ci/scripts is
     # something every workflow test then has to explain.
     sys.dont_write_bytecode = True
     spec =importlib.util.spec_from_file_location("privacy_scan", os.path.join(HERE, "privacy_scan.py"))
@@ -102,7 +102,7 @@ def builtin_scan(repo, findings, safe):
     the maintainer's list says the path carries an identifier.
     """
     allow = set()
-    allow_file = os.path.join(repo, ".forgejo", "history-scan-allow.txt")
+    allow_file = os.path.join(repo, "ci", "history-scan-allow.txt")
     if os.path.exists(allow_file):
         for line in open(allow_file, encoding="utf-8"):
             line = line.strip()

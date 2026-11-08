@@ -131,8 +131,8 @@ row "Install" "PASS" "$_install_method"
 # package's owner has `ai17z`, and has no `./install-ai17z.sh` to run.
 if [ -f "$AI17Z_APP_DIR/BUILD_INFO.json" ]; then
   PACKAGED=1
-  # Both, because they answer different questions. "AI17Z Beta 3.0" is what
-  # somebody recognises; `1.0.0-beta.20` is what they quote in a bug report and
+  # Both, because they answer different questions. "AI17Z Beta 0.89" is what
+  # somebody recognises; `1.0.0-beta.89` is what they quote in a bug report and
   # what every comparison actually runs on. Read out of BUILD_INFO.json, which
   # the packager writes from releaseName() -- the grammar is not reimplemented
   # here, and a copy that predates the `name` field falls back to the number.

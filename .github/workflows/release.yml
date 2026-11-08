@@ -1,0 +1,187 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]*', 'rehearsal-v[0-9]*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - id: v
+        shell: bash
+        run: |
+          VERSION="$(bash ci/scripts/release-version.sh)"
+          FILE="$(node -p "require('./package.json').version")"
+          [ "$VERSION" = "$FILE" ] || { echo 'Tag and package.json disagree'; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  check:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
+  package-ubuntu:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build and prove native Ubuntu package
+        shell: bash
+        run: |
+          sudo bash ci/scripts/setup-ubuntu-job.sh
+          export PATH="/usr/local/bin:$PATH"
+          npm ci --no-audit --no-fund
+          bash ci/scripts/package-ubuntu.sh "${{ needs.version.outputs.version }}" "${{ matrix.arch }}" "$PWD/out"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ubuntu-${{ matrix.arch }}
+          path: out/ai17z_*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  package-macos:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build and prove native macOS package
+        shell: bash
+        run: |
+          source ci/scripts/setup-macos-job.sh
+          npm ci --no-audit --no-fund
+          bash ci/scripts/package-macos.sh "${{ needs.version.outputs.version }}" "$PWD/out" "${{ matrix.arch }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-${{ matrix.arch }}
+          path: out/AI17Z-macos-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  package-windows:
+    needs: version
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build native Windows package and installer
+        shell: powershell
+        run: |
+          . .\ci\scripts\setup-windows-job.ps1
+          . .\ci\scripts\build-windows-release.ps1 -Version '${{ needs.version.outputs.version }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows
+          path: |
+            build/windows/AI17Z-Setup-*.exe
+            build/windows/Install-AI17Z-*.ps1
+            build/windows/install.ps1
+            build/windows/AI17Z-App-*.zip
+            build/windows/setup-declaration.json
+            release.env
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [version, check, package-ubuntu, package-macos, package-windows]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare publisher
+        shell: bash
+        run: |
+          sudo bash ci/scripts/setup-ubuntu-job.sh
+          export PATH="/usr/local/bin:$PATH"
+          sudo apt-get install -y python3 zstd innoextract
+          sudo bash ci/scripts/setup-cosign.sh
+          npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Privacy scan, sign, draft, compare and publish
+        shell: bash
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          PRIVATE_IDENTIFIERS: ${{ secrets.PRIVATE_IDENTIFIERS }}
+          RELEASE_TOKEN: ${{ github.token }}
+        run: |
+          export PATH="/usr/local/bin:$PATH"
+          bash ci/scripts/private-identifiers.sh history || exit 1
+          VERSION="${{ needs.version.outputs.version }}"
+          [ -f dist/release.env ] && . dist/release.env && export RELEASE_NAME && rm -f dist/release.env
+          if [[ "$GITHUB_REF_NAME" == rehearsal-* ]]; then
+            bash ci/scripts/publish-release.sh dist "$VERSION" rehearsal
+          else
+            bash ci/scripts/publish-release.sh dist "$VERSION"
+          fi
+      - if: startsWith(github.ref_name, 'rehearsal-')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rehearsal-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  qualify:
+    if: ${{ !startsWith(github.ref_name, 'rehearsal-') }}
+    needs: [version, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify published hashes, manifest and signatures
+        shell: bash
+        run: |
+          sudo bash ci/scripts/setup-ubuntu-job.sh
+          export PATH="/usr/local/bin:$PATH"
+          sudo bash ci/scripts/setup-cosign.sh
+          bash ci/scripts/verify-published-release.sh "v${{ needs.version.outputs.version }}"

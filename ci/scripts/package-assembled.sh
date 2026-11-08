@@ -9,7 +9,7 @@
 # packages (`--target-arch`), the platform's own Node is fetched from nodejs.org
 # and checked against its published SHA-256, and then the package is refused
 # unless every native file in it is byte-identical to the natively built and
-# tested reference pinned in .forgejo/native-references.json.
+# tested reference pinned in ci/native-references.json.
 #
 # What this does not do is run the package on its platform. Its JavaScript ran
 # here (the stager's transform and update gate), and every native file it has
@@ -33,9 +33,9 @@ esac
 mkdir -p "$OUT" "$TMP"
 
 echo "--- the reference this package is proved against"
-REF_RELEASE="$(node -p "require('./.forgejo/native-references.json')['$KEY'].release")"
-REF_ASSET="$(node -p "require('./.forgejo/native-references.json')['$KEY'].asset")"
-REF_SHA="$(node -p "require('./.forgejo/native-references.json')['$KEY'].sha256")"
+REF_RELEASE="$(node -p "require('./ci/native-references.json')['$KEY'].release")"
+REF_ASSET="$(node -p "require('./ci/native-references.json')['$KEY'].asset")"
+REF_SHA="$(node -p "require('./ci/native-references.json')['$KEY'].sha256")"
 # The forge this job runs on, so a rehearsal against a test forge reads that
 # forge's copy. The hash is what makes any copy acceptable.
 FORGE="${GITHUB_SERVER_URL:-https://code.ai17z.io}/${GITHUB_REPOSITORY:-AI17Z/ai17z}"

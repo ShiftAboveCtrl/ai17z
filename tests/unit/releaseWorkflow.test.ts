@@ -9,16 +9,15 @@ const root = resolve(__dirname, '../..');
  * lives, so that a step can be run by hand before a runner is asked.
  */
 const pipelineParts = [
-  '.forgejo/workflows/package.yml',
-  '.forgejo/workflows/release.yml',
-  '.forgejo/scripts/build-windows-release.ps1',
-  '.forgejo/scripts/publish-release.sh',
-  '.forgejo/scripts/release-notes.sh',
+  '.github/workflows/release.yml',
+  'ci/scripts/build-windows-release.ps1',
+  'ci/scripts/publish-release.sh',
+  'ci/scripts/release-notes.sh',
 ];
 const part = (path: string) => readFileSync(resolve(root, path), 'utf8');
 const workflow = pipelineParts.map(part).join('\n');
-const publishScript = part('.forgejo/scripts/publish-release.sh');
-const notesScript = part('.forgejo/scripts/release-notes.sh');
+const publishScript = part('ci/scripts/publish-release.sh');
+const notesScript = part('ci/scripts/release-notes.sh');
 const iss = readFileSync(resolve(root, 'packaging/windows/ai17z.iss'), 'utf8');
 const policy = readFileSync(resolve(root, 'docs/CODE_SIGNING_POLICY.md'), 'utf8');
 const readme = readFileSync(resolve(root, 'README.md'), 'utf8');
@@ -59,17 +58,14 @@ describe('the release does not pretend to sign anything', () => {
     // The platform jobs are named for what they build, and another would have
     // to be added here deliberately.
     const jobsIn = (path: string) => [...part(path).slice(part(path).indexOf('\njobs:')).matchAll(/^ {2}([a-z][a-z0-9-]*):\r?$/gm)].map((match) => match[1]);
-    expect(jobsIn('.forgejo/workflows/package.yml')).toEqual(['ubuntu-amd64']);
-    expect(jobsIn('.forgejo/workflows/release.yml')).toEqual([
+    expect(jobsIn('.github/workflows/release.yml')).toEqual([
       'version',
       'check',
       'package-ubuntu',
-      'ubuntu-takes-the-package',
-      'package-assembled',
+      'package-macos',
       'package-windows',
       'publish',
       'qualify',
-      'qualify-windows',
     ]);
   });
 
@@ -384,7 +380,7 @@ describe('the release notes say what changed', () => {
     // The publishing job needs the history. Without fetch-depth 0 there is one
     // commit and no tags, so the changelog would be empty and nothing would
     // say so.
-    const release = part('.forgejo/workflows/release.yml');
+    const release = part('.github/workflows/release.yml');
     const publish = release.slice(release.indexOf('\n  publish:'), release.indexOf('\n  qualify:'));
     expect(publish).toContain('fetch-depth: 0');
   });
@@ -500,6 +496,14 @@ describe('what a release is called, in both places that say it', () => {
     }
   });
 
+  it('renders the owner-approved beta label and keeps RC and stable grammar', () => {
+    expect(iss).toContain('#define BetaHundredths PreCountNumber % 100');
+    expect(iss).toContain('Str(PreCountNumber / 100)');
+    expect(iss).toContain('(BetaHundredths < 10 ? "0" : "")');
+    expect(version).toContain('Math.floor(safe / 100)');
+    expect(iss).toContain('ChannelWord + " " + NumericVersion + IterationSuffix');
+  });
+
   it('drops the iteration for the first of a cycle on both sides', () => {
     // "AI17Z Beta 1.0.0 (1)" in one place and "AI17Z Beta 1.0.0" in the other
     // is exactly the disagreement that reads as two builds.
@@ -526,8 +530,8 @@ describe('the release workflow publishes under the derived name', () => {
   it('carries the name out of the build job', () => {
     // As a file in the Windows job's artifact, read by the publish job and
     // removed before anything is attached, so it is never itself published.
-    expect(part('.forgejo/scripts/build-windows-release.ps1')).toContain("RELEASE_NAME='$name'");
-    const release = part('.forgejo/workflows/release.yml');
+    expect(part('ci/scripts/build-windows-release.ps1')).toContain("RELEASE_NAME='$name'");
+    const release = part('.github/workflows/release.yml');
     expect(release).toContain('            release.env\n');
     expect(release).toContain('[ -f dist/release.env ] && . dist/release.env && export RELEASE_NAME && rm -f dist/release.env');
   });
@@ -540,7 +544,8 @@ describe('the release workflow publishes under the derived name', () => {
   });
 
   it('uses it when publishing', () => {
-    expect(publishScript).toContain('NAME="${RELEASE_NAME:-AI17Z $VERSION}"');
+    expect(publishScript).toContain('NAME="$TITLE"');
+    expect(publishScript).toContain('tools/release-name.mts "$VERSION" page');
     expect(publishScript).toContain('name: $name');
   });
 
@@ -657,7 +662,7 @@ describe('a second installation is a second installation', () => {
  * the publish or qualify step, after every package had been built.
  */
 describe('what crosses between release jobs survives the next one', () => {
-  const windowsBuild = part('.forgejo/scripts/build-windows-release.ps1');
+  const windowsBuild = part('ci/scripts/build-windows-release.ps1');
 
   it('hands the release name over quoted, with a bare newline', () => {
     // The publish job sources release.env in bash. Unquoted, "AI17Z Beta 9.6"
@@ -668,15 +673,15 @@ describe('what crosses between release jobs survives the next one', () => {
   });
 
   it('gives the publish job unzip, which its privacy scan needs for the application zip', () => {
-    expect(part('.forgejo/scripts/setup-ubuntu-job.sh')).toMatch(/apt-get install[^\n]* unzip/);
-    expect(part('.forgejo/scripts/scan-artifact.sh')).toContain('no unzip to unpack with');
+    expect(part('ci/scripts/setup-ubuntu-job.sh')).toMatch(/apt-get install[^\n]* unzip/);
+    expect(part('ci/scripts/scan-artifact.sh')).toContain('no unzip to unpack with');
   });
 
   it('looks into the owner\'s private directories as the owner', () => {
     // The qualify job runs the package proof as a stranger, who cannot see into
     // another user's home: a directory the doctor had just reported writable
     // read as "not created".
-    const proof = part('.forgejo/scripts/prove-ubuntu-package.sh');
+    const proof = part('ci/scripts/prove-ubuntu-package.sh');
     expect(proof).toContain('sudo -u owner test -d "$OWNER_HOME/$dir"');
     expect(proof).not.toContain('if [ -d "$OWNER_HOME/$dir" ]');
   });

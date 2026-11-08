@@ -5,12 +5,12 @@
 #
 #   verify-published-release.sh <tag>
 #
-# Nothing here reads a build output or a job artifact. It asks AI17Z Code what
-# the release has, downloads all of it as somebody who is not signed in, hashes
+# Nothing here reads a build output or a job artifact. It asks the release host
+# (GitHub, or AI17Z Code with AI17Z_RELEASE_SOURCE=aicode) what the release has, downloads all of it as somebody who is not signed in, hashes
 # every file against the release's own SHA256SUMS.txt, reads
 # release-manifest.json back and checks it against the files that actually
 # arrived, and verifies each file's Sigstore bundle against AI17Z's release key,
-# the public half of which is .forgejo/cosign.pub in this repository.
+# the public half of which is ci/cosign.pub in this repository.
 #
 # That last check is here because the equivalent was once wrong. The attestation
 # step of the GitHub release named paths belonging to a different job, failed,
@@ -21,10 +21,10 @@ set -uo pipefail
 
 TAG="${1:?a tag, such as v1.0.0-beta.85}"
 VERSION="${TAG#v}"
-PROJECT="${GITHUB_REPOSITORY:-AI17Z/ai17z}"
-SERVER="https://code.ai17z.io"
-API="$SERVER/api/v1/repos/$PROJECT"
-DL="$SERVER/$PROJECT/releases/download/$TAG"
+. "$(dirname "${BASH_SOURCE[0]}")/release-source.sh" || exit 2
+API="$RELEASE_API"
+DL="$RELEASE_DOWNLOAD/$TAG"
+echo "checking $TAG as published on $RELEASE_SOURCE_NAME"
 # Who may have signed: AI17Z's release key, from this checkout.
 SIGNER_PUB="${SIGNER_PUB:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/cosign.pub}"
 COSIGN="${COSIGN:-cosign}"
@@ -62,7 +62,7 @@ if [ -n "$name" ] && [ "$name" != "$TAG" ]; then ok "it has a name of its own: $
 # Every file must be served at the address the installers compose, and a name
 # must appear once: Forgejo accepts a second attachment under a name a release
 # already has, and two files under one name is two answers to one download.
-indirect="$(jq -r --arg tag "$TAG" '.assets[] | select((.browser_download_url // "") | endswith("/releases/download/\($tag)/\(.name)") | not) | .name' release.json)"
+indirect="$(jq -r --arg dl "$DL" '.assets[] | select(.browser_download_url != ($dl + "/" + .name)) | .name' release.json)"
 if [ -z "$indirect" ]; then ok "every file is served at its own name"; else bad "served somewhere else: $(echo $indirect)"; fi
 dupes="$(jq -r '.assets[].name' release.json | sort | uniq -d)"
 if [ -z "$dupes" ]; then ok "no name is attached twice"; else bad "attached more than once: $(echo $dupes)"; fi

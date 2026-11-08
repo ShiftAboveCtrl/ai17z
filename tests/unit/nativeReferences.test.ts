@@ -35,7 +35,7 @@ function tarball(name: string, files: Record<string, Buffer | string>): string {
 }
 
 const prove = (candidate: string, reference: string) =>
-  bash(`bash "${posix(join(root, '.forgejo/scripts/prove-natives.sh'))}" ${candidate} ${reference}`);
+  bash(`bash "${posix(join(root, 'ci/scripts/prove-natives.sh'))}" ${candidate} ${reference}`);
 
 const native = (tag: string) => Buffer.concat([MACHO, Buffer.from(tag)]);
 const reference = {
@@ -77,8 +77,8 @@ describe.skipIf(!hasBash)('prove-natives.sh', () => {
   });
 
   it('pins the references it is given by hash', () => {
-    const refs = JSON.parse(readFileSync(join(root, '.forgejo/native-references.json'), 'utf8')) as Record<string, { sha256: string }>;
-    const job = readFileSync(join(root, '.forgejo/scripts/package-assembled.sh'), 'utf8');
+    const refs = JSON.parse(readFileSync(join(root, 'ci/native-references.json'), 'utf8')) as Record<string, { sha256: string }>;
+    const job = readFileSync(join(root, 'ci/scripts/package-assembled.sh'), 'utf8');
     expect(Object.keys(refs).filter((key) => key !== '_').sort()).toEqual(['macos-arm64', 'macos-x64', 'ubuntu-arm64']);
     expect(job).toContain('[ "$got" = "$REF_SHA" ]');
   });

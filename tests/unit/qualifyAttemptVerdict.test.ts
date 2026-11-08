@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest';
  * runner: these cases run the real shell function with canned inputs, so every
  * branch is exercised on every suite run without a network.
  */
-const script = resolve(__dirname, '../../.forgejo/scripts/qualify-attempt-verdict.sh');
+const script = resolve(__dirname, '../../ci/scripts/qualify-attempt-verdict.sh');
 
 /** Runs the real function under bash, exactly as the qualifiers call it. */
 function verdict(code: number, text: string): string {
@@ -93,7 +93,7 @@ describe('reading one install attempt', () => {
 describe('the qualifiers use this and do not rewrite it', () => {
   it('is sourced rather than copied into each script', () => {
     for (const file of ['qualify-published-macos.sh', 'qualify-published-ubuntu.sh']) {
-      const source = readFileSync(resolve(__dirname, '../../.forgejo/scripts', file), 'utf8');
+      const source = readFileSync(resolve(__dirname, '../../ci/scripts', file), 'utf8');
       expect(source, `${file} does not source the shared verdict`).toContain('qualify-attempt-verdict.sh');
     }
   });

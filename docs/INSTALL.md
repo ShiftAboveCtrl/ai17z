@@ -185,8 +185,7 @@ is written out in full, including which prompts are Docker's or Google's rather
 than AI17Z's.
 
 **Every macOS package is built and run on a real Apple-silicon Mac before it is
-released**, including the installer, on a Mac registered with AI17Z Code as a
-release runner. Until one is, a release says it carries no macOS package rather
+released**, including the installer, on a native GitHub Actions Mac runner. Until one is, a release says it carries no macOS package rather
 than shipping one nothing ran.
 What a hosted machine cannot represent is a person at one: Gatekeeper's dialogs,
 a downloaded file's quarantine, and Docker Desktop's own setup. Those are listed

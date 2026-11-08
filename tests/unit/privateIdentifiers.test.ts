@@ -214,7 +214,7 @@ describe('the history scan reads the same list, through the gate\'s own scanner'
       encoding: 'utf8',
     });
   const scan = (env: Record<string, string>, at = repo) =>
-    spawnSync(python!, [resolve(root, '.forgejo/scripts/history-scan.py'), at], {
+    spawnSync(python!, [resolve(root, 'ci/scripts/history-scan.py'), at], {
       encoding: 'utf8',
       // An empty home on both platforms, so the maintainer's own list on the
       // machine running this never joins in.
@@ -315,24 +315,24 @@ describe('the release step', () => {
   /** A disposable git repository holding the release scripts, so a tag can carry (or not carry) the opt-out file. */
   function releaseRepo(withOptOut: 'none' | 'tagged' | 'untracked'): string {
     const repo = mkdtempSync(join(tmpdir(), 'private-ids-repo-'));
-    mkdirSync(join(repo, '.forgejo', 'scripts'), { recursive: true });
+    mkdirSync(join(repo, 'ci', 'scripts'), { recursive: true });
     for (const f of ['private-identifiers.sh', 'privacy_scan.py', 'history-scan.py']) {
-      writeFileSync(join(repo, '.forgejo', 'scripts', f), readFileSync(resolve(root, '.forgejo/scripts', f)));
+      writeFileSync(join(repo, 'ci', 'scripts', f), readFileSync(resolve(root, 'ci/scripts', f)));
     }
     const g = (...args: string[]) =>
       spawnSync('git', ['-C', repo, '-c', 'user.name=S', '-c', 'user.email=s@example.invalid', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8' });
     g('init', '-q');
-    if (withOptOut === 'tagged') writeFileSync(join(repo, '.forgejo', 'private-identifiers-optional'), 'this fork has no list\n');
+    if (withOptOut === 'tagged') writeFileSync(join(repo, 'ci', 'private-identifiers-optional'), 'this fork has no list\n');
     g('add', '.');
     g('commit', '-q', '-m', 'release scripts');
     g('tag', 'v9.9.9');
-    if (withOptOut === 'untracked') writeFileSync(join(repo, '.forgejo', 'private-identifiers-optional'), 'added after the tag\n');
+    if (withOptOut === 'untracked') writeFileSync(join(repo, 'ci', 'private-identifiers-optional'), 'added after the tag\n');
     return repo;
   }
   const run = (env: Record<string, string>, args: string[], at = root) => {
     const bin = mkdtempSync(join(tmpdir(), 'private-ids-bin-'));
     try {
-      return spawnSync(bash!, [join(at, '.forgejo/scripts/private-identifiers.sh'), ...args], {
+      return spawnSync(bash!, [join(at, 'ci/scripts/private-identifiers.sh'), ...args], {
         encoding: 'utf8',
         cwd: at,
         env: { ...process.env, PRIVATE_IDENTIFIERS: '', GITHUB_REF_NAME: '', ...python3Shim(bin), ...env },
@@ -384,8 +384,8 @@ describe('the release step', () => {
       writeFileSync(join(room, 'allow-all.txt'), 'username,hostname,home-path\t.*\n');
       mkdirSync(join(room, '.config', 'private-identifiers'), { recursive: true });
       writeFileSync(join(room, '.config', 'private-identifiers', 'allow.txt'), 'username,hostname,home-path\t.*\n');
-      mkdirSync(join(repo, '.forgejo', 'ai', 'private'), { recursive: true });
-      writeFileSync(join(repo, '.forgejo', 'ai', 'private', 'allow.txt'), 'username,hostname,home-path\t.*\n');
+      mkdirSync(join(repo, 'ci', 'ai', 'private'), { recursive: true });
+      writeFileSync(join(repo, 'ci', 'ai', 'private', 'allow.txt'), 'username,hostname,home-path\t.*\n');
       const target = join(room, 'leak.txt');
       writeFileSync(target, `built by ${NAME}\n`);
       const result = run(
@@ -466,7 +466,7 @@ describe('round 3: shapes that are refused, and reads that are wider', () => {
       encoding: 'utf8',
     });
   const scan = (args: string[], env: Record<string, string>) =>
-    spawnSync(python!, [resolve(root, '.forgejo/scripts/history-scan.py'), ...args], {
+    spawnSync(python!, [resolve(root, 'ci/scripts/history-scan.py'), ...args], {
       encoding: 'utf8',
       env: { ...process.env, PRIVATE_IDENTIFIERS: '', PRIVATE_IDENTIFIERS_FILE: '', HOME: emptyHome, USERPROFILE: emptyHome, ...env },
     });

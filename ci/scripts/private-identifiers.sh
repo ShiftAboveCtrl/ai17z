@@ -31,7 +31,7 @@
 #
 # No secret is a refusal. This runs only on release runners, only from a tag,
 # so a missing secret there is a misconfiguration. A fork or a mirror that has
-# no list says so by committing .forgejo/private-identifiers-optional, and it
+# no list says so by committing ci/private-identifiers-optional, and it
 # counts only when the tag being released carries it: a file left in the
 # working directory, or added by a later step, does not. Never a variable,
 # because Forgejo merges organisation and user variables into a repository's.
@@ -48,10 +48,10 @@ if [ -z "${PRIVATE_IDENTIFIERS:-}" ]; then
   # rewrite "<ref>:<path>" as a Windows path and the check would never find the
   # file, on a maintainer's machine only. It changes nothing on Linux.
   if [ -n "$TAG" ] && ( cd "$ROOT" && MSYS_NO_PATHCONV=1 \
-       git cat-file -e "refs/tags/$TAG:.forgejo/private-identifiers-optional" 2>/dev/null ); then
+       git cat-file -e "refs/tags/$TAG:ci/private-identifiers-optional" 2>/dev/null ); then
     echo "################################################################"
     echo "# PRIVATE IDENTIFIER SCAN SKIPPED, BY CHOICE"
-    echo "# The tag being released carries .forgejo/private-identifiers-optional,"
+    echo "# The tag being released carries ci/private-identifiers-optional,"
     echo "# so nothing here checked this release for a maintainer's usernames,"
     echo "# hostnames or addresses."
     echo "################################################################"
@@ -59,7 +59,7 @@ if [ -z "${PRIVATE_IDENTIFIERS:-}" ]; then
   fi
   echo "REFUSED: the PRIVATE_IDENTIFIERS secret is not set, so this release"
   echo "cannot be checked for the maintainer's private identifiers. Set the"
-  echo "secret, or commit .forgejo/private-identifiers-optional to the tag if"
+  echo "secret, or commit ci/private-identifiers-optional to the tag if"
   echo "this repository has no list."
   exit 1
 fi

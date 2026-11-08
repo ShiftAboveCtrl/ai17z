@@ -4,6 +4,11 @@
 #
 #   publish-release.sh <dist> <version> [rehearsal]
 #
+# PUBLISH_TO says where: `github` (the default, and where every release is
+# published) or `aicode` (AI17Z Code, used by the documented emergency
+# native build procedure when GitHub is unavailable). Everything up to the upload is the
+# same for both, so a release built on either host is the same release.
+#
 # Run by the `publish` job, in a pipeline started by a `v*` tag (a release) or a
 # `rehearsal-v*` tag (everything except the release). Every step a release takes
 # is taken by a rehearsal too, signing included, and only the last two, the
@@ -37,12 +42,13 @@
 # "has a vendor vouched for it", and the documentation says so in those words.
 # See docs/WINDOWS_TRUST.md.
 #
-# Published to AI17Z Code, the project's own Forgejo, as a release whose files
-# are attached to it. The release is created as a draft, which nobody without
-# write access can see; every file is attached once; the list of attachments is
-# checked against the list of files; and only then is the draft published. A
-# release that already exists is refused rather than added to, because Forgejo
-# accepts a second attachment with a name the release already has.
+# Published as a release whose files are attached to it. The release is created
+# as a draft, which nobody without write access can see; every file is attached
+# once; the list of attachments is checked against the list of files both ways;
+# and only then is the draft published. A release that already exists is
+# refused rather than added to: Forgejo accepts a second attachment with a name
+# a release already has, and GitHub's immutable releases cannot be changed once
+# published, so a draft is the only state a release can be completed in.
 set -euo pipefail
 
 DIST="$(cd "${1:?the directory the build artifacts are in}" && pwd)"
@@ -53,16 +59,36 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # because everything after the first `cd` below runs inside the release directory.
 PROJECT_DIR="${GITHUB_WORKSPACE:-$(cd "$HERE/../.." && pwd)}"
 TAG="v${VERSION}"
-# Forgejo Actions sets the GITHUB_* names for compatibility; outside a runner
-# these default to AI17Z Code itself.
-SERVER="${GITHUB_SERVER_URL:-https://code.ai17z.io}"
-PROJECT="${GITHUB_REPOSITORY:-AI17Z/ai17z}"
-API="$SERVER/api/v1/repos/$PROJECT"
-RUN="${GITHUB_RUN_NUMBER:+$SERVER/$PROJECT/actions/runs/$GITHUB_RUN_NUMBER}"
+PUBLISH_TO="${PUBLISH_TO:-github}"
+# Where the release goes and the addresses its own documents quote. Both hosts
+# set the GITHUB_* names for a run; the project is fixed here rather than read
+# from them, because the two repositories have different names and a release's
+# audit document must name the one it was published on.
+case "$PUBLISH_TO" in
+  github)
+    SERVER="https://github.com"
+    PROJECT="ShiftAboveCtrl/ai17z"
+    API="https://api.github.com/repos/$PROJECT"
+    RAW="https://raw.githubusercontent.com/$PROJECT/main"
+    DOCS="$SERVER/$PROJECT/blob/main"
+    # GitHub addresses a run by its id; the number is only a counter.
+    RUN="${GITHUB_RUN_ID:+$SERVER/$PROJECT/actions/runs/$GITHUB_RUN_ID}"
+    ;;
+  aicode)
+    SERVER="https://code.ai17z.io"
+    PROJECT="AI17Z/ai17z"
+    API="$SERVER/api/v1/repos/$PROJECT"
+    RAW="$SERVER/$PROJECT/raw/branch/main"
+    DOCS="$SERVER/$PROJECT/src/branch/main"
+    # Forgejo addresses a run by its number.
+    RUN="${GITHUB_RUN_NUMBER:+$SERVER/$PROJECT/actions/runs/$GITHUB_RUN_NUMBER}"
+    ;;
+  *) echo "PUBLISH_TO is '$PUBLISH_TO'; it must be github or aicode"; exit 2 ;;
+esac
 COMMIT="${GITHUB_SHA:-$(git rev-parse HEAD)}"
-SIGNER_PUB="$PROJECT_DIR/.forgejo/cosign.pub"
+SIGNER_PUB="$PROJECT_DIR/ci/cosign.pub"
 # The one sentence a release without macOS carries, in its manifest and notes.
-MACOS_NOT_BUILT="macOS packages are built on a Mac registered with AI17Z Code as a release runner, and none was available for this release, so it has none. A Mac already running AI17Z keeps the version it has."
+MACOS_NOT_BUILT="macOS packages are built on a Mac release runner, and none was available for this release, so it has none. A Mac already running AI17Z keeps the version it has."
 # The sentence a release carries for a package the assembled job refused,
 # because it needed a native file no machine of that processor has built and
 # run. The installers and updaters on that machine take the newest release that
@@ -155,7 +181,7 @@ jq -n \
   --arg tag "$TAG" \
   --arg commit "$COMMIT" \
   --arg run "$RUN" \
-  --arg project "$SERVER/$PROJECT" \
+  --arg raw "$RAW"   --arg docs "$DOCS" \
   --argjson signed false \
   '{
     schema: 1,
@@ -165,16 +191,16 @@ jq -n \
     verify: [
       "Get-FileHash $env:LOCALAPPDATA\\AI17Z-setup\\Setup-AI17Z.checked.ps1 -Algorithm SHA256",
       "Get-FileHash .\\Install-AI17Z-\($version).ps1 -Algorithm SHA256",
-      "& ([scriptblock]::Create((irm \($project)/raw/branch/main/install.ps1))) -WhatIfOnly"
+      "& ([scriptblock]::Create((irm \($raw)/install.ps1))) -WhatIfOnly"
     ],
-    documentation: "\($project)/src/branch/main/docs/SETUP_AUDIT.md"
+    documentation: "\($docs)/docs/SETUP_AUDIT.md"
   }' > "AI17Z-Setup-Audit-$VERSION.json"
 # The declaration was an input, not an asset.
 rm -f setup-declaration.json
 cat "AI17Z-Setup-Audit-$VERSION.json"
 
 say "sign what was built"
-# Signed with AI17Z's release key, whose public half is .forgejo/cosign.pub in
+# Signed with AI17Z's release key, whose public half is ci/cosign.pub in
 # this repository, and every signature recorded in Sigstore's public
 # transparency log: a bundle per file saying these exact bytes were signed by
 # that key, and when. Verifiable by anybody with cosign and that public key, and
@@ -182,9 +208,10 @@ say "sign what was built"
 #
 # Keyed, not keyless. Keyless signing binds a signature to a pipeline's own
 # identity, which needs an identity provider the public Sigstore instance
-# trusts; it trusts GitHub's and GitLab's and not a self-hosted Forgejo's. The
-# key lives only in this repository's Actions secrets, which no workflow run
-# from a fork is ever given.
+# trusts; it trusts GitHub's and not a self-hosted Forgejo's, and a release
+# built manually for AI17Z Code during recovery has to verify against the same
+# key as one built on GitHub. GitHub supplies the key only to its publish step;
+# emergency operators obtain it from the protected disaster recovery store.
 #
 # It is **not** Apple notarization and **not** Debian archive signing, and the
 # documentation says so in those words.
@@ -208,7 +235,7 @@ for subject in "${SUBJECTS[@]}"; do
   cosign verify-blob "$subject" --bundle "$subject.sigstore.json" --key "$SIGNER_PUB" >/dev/null 2>&1 \
     || { echo "  $subject does not verify against $SIGNER_PUB"; exit 1; }
 done
-echo "  every signature verifies against .forgejo/cosign.pub and is in the transparency log"
+echo "  every signature verifies against ci/cosign.pub and is in the transparency log"
 
 say "release notes"
 ( cd "$PROJECT_DIR" && ABSENT_PACKAGES="$ABSENT" bash "$HERE/release-notes.sh" "$VERSION" "$DIST/SHA256SUMS.txt" "${HAVE_MACOS:+macos}" ) > release-notes.md
@@ -224,6 +251,21 @@ say "no private identifier in anything attached"
 # file (manifest, notes, sums, signatures) exists: scanning the downloaded
 # directory instead missed files in subdirectories and the files made here.
 bash "$HERE/private-identifiers.sh" files "${ASSETS[@]}" || exit 1
+
+say "what the release is called"
+# `Beta 0.89` for v1.0.0-beta.89. One
+# implementation, releaseName() in packages/shared/src/version.ts, asked here
+# rather than spelled again. The Windows job prints the full name it built the
+# installer under; the two must agree, or Add/Remove Programs and the releases
+# page would name one build two ways.
+TITLE="$(cd "$PROJECT_DIR" && npx tsx tools/release-name.mts "$VERSION" page)"
+FULL="$(cd "$PROJECT_DIR" && npx tsx tools/release-name.mts "$VERSION" title)"
+[ -n "$TITLE" ] || { echo "releaseName() gave no name for $VERSION"; exit 1; }
+if [ -n "${RELEASE_NAME:-}" ] && [ "$RELEASE_NAME" != "$FULL" ]; then
+  echo "the Windows installer was built as '$RELEASE_NAME' and this release is '$FULL'"; exit 1
+fi
+
+echo "  $TITLE ($FULL)"
 
 if [ -n "$REHEARSAL" ]; then
   # A rehearsal gets everything except the release. The finished directory is
@@ -245,7 +287,15 @@ if [ -n "$REHEARSAL" ]; then
         "  \(.key): supported=\(.value.supported) arch=\(.value.architectures | join(","))\(if .value.notBuilt then "  (\(.value.notBuilt))" else "" end)"),
       "  artifacts: \(.artifacts | length)"
     ' release-manifest.json
+    echo
+    echo "title: $TITLE"
   } | bash "$HERE/say-out.sh" "Rehearsal of $VERSION"
+  exit 0
+fi
+
+if [ "$PUBLISH_TO" = github ]; then
+  RELEASE_TOKEN="${RELEASE_TOKEN:-}" bash "$HERE/publish-github.sh" "$TAG" "$TITLE" "$COMMIT" release-notes.md "${ASSETS[@]}"
+  rm -f attached.tsv expected.tsv
   exit 0
 fi
 
@@ -258,7 +308,7 @@ say "the release, as a draft"
 auth=(-H "Authorization: token $RELEASE_TOKEN")
 existing="$(curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "$API/releases/tags/$TAG")"
 [ "$existing" = 404 ] || { echo "a release for $TAG already exists (HTTP $existing); refusing to add to it"; exit 1; }
-NAME="${RELEASE_NAME:-AI17Z $VERSION}"
+NAME="$TITLE"
 prerelease=false; case "$VERSION" in *-*) prerelease=true ;; esac
 jq -n --arg tag "$TAG" --arg name "$NAME" --arg target "$COMMIT" --rawfile notes release-notes.md --argjson pre "$prerelease" \
   '{tag_name: $tag, target_commitish: $target, name: $name, body: $notes, draft: true, prerelease: $pre}' > release-request.json

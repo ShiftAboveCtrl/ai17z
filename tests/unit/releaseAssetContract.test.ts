@@ -24,10 +24,10 @@ const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 
 const install = read('install.ps1');
 const setup = read('packaging/windows/Setup-AI17Z.ps1');
-const publishScript = read('.forgejo/scripts/publish-release.sh');
-const windowsBuild = read('.forgejo/scripts/build-windows-release.ps1');
-const packageJobs = read('.forgejo/workflows/release.yml');
-const notesScript = read('.forgejo/scripts/release-notes.sh');
+const publishScript = read('ci/scripts/publish-release.sh');
+const windowsBuild = read('ci/scripts/build-windows-release.ps1');
+const packageJobs = read('.github/workflows/release.yml');
+const notesScript = read('ci/scripts/release-notes.sh');
 
 /**
  * A bash array's patterns, as written: `NAME=(a b c)` and any `NAME+=(d)`,
@@ -144,7 +144,7 @@ describe('the release publishes exactly what the installer goes looking for', ()
  * failing test rather than a failed release.
  */
 describe('a published asset is hashed or knowingly exempt', () => {
-  const verifier = read('.forgejo/scripts/verify-published-release.sh');
+  const verifier = read('ci/scripts/verify-published-release.sh');
 
   /** Every pattern the release attaches. */
   const published = ATTACHED;

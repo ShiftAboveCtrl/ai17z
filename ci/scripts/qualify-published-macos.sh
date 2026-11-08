@@ -30,8 +30,10 @@ set -uo pipefail
 
 TAG="${1:?a tag, such as v1.0.0-beta.17}"
 VERSION="${TAG#v}"
-PROJECT="${GITHUB_REPOSITORY:-AI17Z/ai17z}"
-DL="https://code.ai17z.io/$PROJECT/releases/download/$TAG"
+# GitHub unless AI17Z_RELEASE_SOURCE says otherwise. The installer under test
+# asks GitHub first and AI17Z Code second whichever host this checks.
+. "$(dirname "${BASH_SOURCE[0]}")/release-source.sh" || exit 2
+DL="$RELEASE_DOWNLOAD/$TAG"
 
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Where the tag's copy of the installer is. The same checkout unless the
@@ -55,7 +57,7 @@ says() { if printf '%s' "$2" | grep -qi -- "$3"; then ok "$1"; else
 # further worth asking.
 #
 # Everything after the install asks the installed copy about itself, so there
-# has to be one. Without a way to stop, a runner that could not reach AI17Z Code
+# has to be one. Without a way to stop, a runner that could not reach the release host
 # reported fourteen failures: no launcher, no BUILD_INFO.json, node is not a
 # Mach-O, no esbuild, tsx cannot transform, three directories missing. Every one
 # is the same fact said again, and the one that mattered was above them.
@@ -131,7 +133,7 @@ echo "  docker is stubbed at the vendor boundary: $(command -v docker)"
 
 echo
 echo "### installing $TAG from the network, as published"
-# AI17Z Code may limit how often an address that is not signed in may ask its API,
+# A release host may limit how often an address that is not signed in may ask its API,
 # and a hosted runner shares its address with whoever else is on that machine.
 # The published installer is unauthenticated by design -- that is what a
 # stranger runs, and giving it a token here would be testing something nobody
@@ -158,13 +160,13 @@ echo "### installing $TAG from the network, as published"
 # Either way this fails.
 why_it_failed() {
   if printf '%s' "$2" | grep -qE '403|429|rate limit|could not be read|could not be reached'; then
-    printf 'this runner could not reach the AI17Z Code API after a retry (the second attempt exited %s). That is the anonymous rate limit on an address it shares, not something about the release.' "$1"
+    printf 'this runner could not reach the release API after a retry (the second attempt exited %s). That is the anonymous rate limit on an address it shares, not something about the release.' "$1"
   else
     printf 'the published installer failed twice, a minute apart, exiting %s the second time. Everything else in this run reached the same release from the same URLs, so this is a finding about what was published rather than about this runner.' "$1"
   fi
 }
 wait_for_the_ceiling() {
-  # AI17Z Code may limit anonymous API callers per minute rather than per hour, and
+  # A release host may limit anonymous API callers per minute rather than per hour, and
   # says nothing ahead of time about when a limit clears: it only sends
   # RateLimit-Reset on the refusal itself, which the installer does not keep.
   # So this waits one window and tries once more. Bounded, and still exactly
@@ -186,7 +188,7 @@ install_once() {
 # tag-specific downloads and nothing else.
 #
 # It used to be answered by running the published installer, which resolves the
-# release through AI17Z Code's API without a token because that is what a
+# release through the host's API without a token because that is what a
 # stranger runs. That made package correctness depend on an anonymous budget
 # shared with whoever else was on the runner, and twice in three releases it
 # came back 403 and the owner had to press re-run on a release that was fine.

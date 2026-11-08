@@ -2,7 +2,7 @@
 #
 # Make a macOS release job able to build and prove AI17Z.
 #
-#   source .forgejo/scripts/setup-macos-job.sh
+#   source ci/scripts/setup-macos-job.sh
 #
 # Sourced, so PATH carries into the job's later lines. The Node every package
 # carries, from nodejs.org, checked against its published SHASUMS256.txt before
@@ -13,8 +13,12 @@ set -eo pipefail
 
 _version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\(v[0-9.]*\)".*/\1/p' packaging/node-runtime.json | head -1)"
 [ -n "$_version" ] || { echo "packaging/node-runtime.json names no Node version"; return 1; }
-[ "$(uname -m)" = arm64 ] || { echo "this job builds for Apple silicon and the runner is $(uname -m)"; return 1; }
-_name="node-${_version}-darwin-arm64.tar.gz"
+case "$(uname -m)" in
+  arm64) _arch=arm64 ;;
+  x86_64) _arch=x64 ;;
+  *) echo "no Node for a Mac that is $(uname -m)"; return 1 ;;
+esac
+_name="node-${_version}-darwin-${_arch}.tar.gz"
 _work="$(mktemp -d)"
 curl -fsSL --proto '=https' --tlsv1.2 -o "$_work/$_name" "https://nodejs.org/dist/${_version}/${_name}"
 curl -fsSL --proto '=https' --tlsv1.2 -o "$_work/SHASUMS256.txt" "https://nodejs.org/dist/${_version}/SHASUMS256.txt"

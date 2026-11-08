@@ -232,7 +232,7 @@ cosign verify-blob ai17z_1.0.0-beta.84_amd64.deb \
   --key cosign.pub
 ```
 
-`cosign.pub` is AI17Z's release key, [`.forgejo/cosign.pub`](https://github.com/ShiftAboveCtrl/ai17z/blob/main/.forgejo/cosign.pub)
+`cosign.pub` is AI17Z's release key, [`ci/cosign.pub`](https://github.com/ShiftAboveCtrl/ai17z/blob/main/ci/cosign.pub)
 in this repository. Releases are signed with that key, not with a CI identity.
 
 *Expected:* the hashes agree, and the attestation verifies against this

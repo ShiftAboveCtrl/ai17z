@@ -35,13 +35,10 @@ export type Architecture = (typeof ARCHITECTURES)[number];
  * Which architectures each platform is built for: what a release owes, not
  * what an installation may be.
  *
- * Every one of them is proved on its own processor, never relabelled. Where
- * AI17Z Code has no runner of that processor (Macs of both kinds, arm64
- * Linux), the package is assembled from npm's and nodejs.org's prebuilt files
- * for that platform and refused unless every native file in it is byte for
- * byte one a machine of that platform built and ran, in the reference pinned
- * in `.forgejo/native-references.json` (`prove-natives.sh`). AI17Z compiles
- * nothing, which is what makes that comparison complete.
+ * GitHub builds each package on its own processor. Emergency backup builds
+ * also use native machines. The retained assembled-package tools require
+ * pinned native reference files from `ci/native-references.json`; they cannot
+ * replace native builds when those reference releases are unavailable.
  */
 export const ARCHITECTURES_OF: Record<'macos' | 'ubuntu', readonly Architecture[]> = {
   macos: ['arm64', 'x64'],
@@ -143,13 +140,9 @@ export const MANIFEST_ASSET = 'release-manifest.json';
 export const NOTES_ASSET = 'release-notes.md';
 
 /**
- * Where AI17Z is published: AI17Z Code, the project's own Forgejo.
- *
- * AI17Z owns the host its source and releases live on, so neither GitHub nor
- * GitLab is needed to read the code, install it, or update it. That is not
- * hypothetical: GitHub restricted the account in October 2026, and every
- * install command answered 404 for weeks. A mirror elsewhere is a convenience;
- * this is the address.
+ * AI17Z Code, the backup Forgejo host. These helpers retain its URL grammar
+ * for fallback downloads and legacy callers. RELEASE_SOURCES below defines
+ * primary-first selection; it is the source list new callers should use.
  *
  * One constant, because the TypeScript side has one place to be wrong in. The
  * installers and updaters are shell and PowerShell and cannot import this, so
@@ -203,13 +196,9 @@ export function rawFileUrl(path: string, project: string = RELEASE_PROJECT, bran
 // ---------------------------------------------------------------------------
 
 /**
- * The GitHub copy of the project, which is where people look first.
- *
- * Every release is mirrored there with every file an installer fetches, and
- * the installers and updaters ask it first. AI17Z Code stays the source of
- * truth and the fallback: an installation never needs GitHub, and with GitHub
- * unreachable every install and update still completes from AI17Z Code. That
- * is the October 2026 lesson kept rather than undone.
+ * The primary repository and release builder. AI17Z Code pulls its code and
+ * copies every release asset independently. Both hosts serve the same bytes;
+ * installers can use the backup when GitHub is unavailable.
  */
 export const GITHUB_PROJECT = 'ShiftAboveCtrl/ai17z';
 

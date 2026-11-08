@@ -23,7 +23,7 @@ RAW="$PROJECT_URL/raw/branch/main"
 # the fallback for when GitHub is down. The installers then fetch the release
 # from GitHub first and AI17Z Code second either way.
 GITHUB_RAW="https://raw.githubusercontent.com/ShiftAboveCtrl/ai17z/main"
-BLOB="$PROJECT_URL/src/branch/main"
+BLOB="https://github.com/ShiftAboveCtrl/ai17z/blob/main"
 TAG="${RELEASE_TAG:-}"
 if [ -z "$TAG" ] && [ "${GITHUB_REF_TYPE:-}" = tag ]; then TAG="${GITHUB_REF_NAME:-}"; fi
 NOTES="docs/release-notes/$VERSION.md"
@@ -129,7 +129,7 @@ echo "| \`install-ai17z-ubuntu.sh\` | Ubuntu installer script, the same file the
 echo "| \`AI17Z-macos-arm64-$VERSION.tar.gz\`, \`AI17Z-macos-x64-$VERSION.tar.gz\` | macOS application, Apple silicon and Intel |"
 echo "| \`ai17z_${VERSION}_amd64.deb\`, \`ai17z_${VERSION}_arm64.deb\` | Ubuntu packages |"
 echo "| \`SHA256SUMS.txt\` | SHA-256 of every file |"
-echo "| \`SHA256SUMS.txt.sigstore.json\` | Signature of \`SHA256SUMS.txt\`, verifiable against [\`.forgejo/cosign.pub\`]($BLOB/.forgejo/cosign.pub) |"
+echo "| \`SHA256SUMS.txt.sigstore.json\` | Signature of \`SHA256SUMS.txt\`, verifiable against [\`ci/cosign.pub\`]($BLOB/ci/cosign.pub) |"
 echo "| \`install.ps1\` | Used by the installer: the file behind the Windows command |"
 echo "| \`Install-AI17Z-$VERSION.ps1\` | Used by the installer: the Windows setup program it checks and runs |"
 echo "| \`AI17Z-App-$VERSION.zip\` | Used by the installer: the application the Windows setup program installs |"
@@ -141,7 +141,7 @@ echo "file are published on [AI17Z Code]($PROJECT_URL/releases/tag/v$VERSION)."
 echo
 echo "The macOS and arm64 Ubuntu packages are assembled on Linux and accepted only"
 echo "when every native file in them is byte for byte one a machine of that platform"
-echo "built and ran ([\`.forgejo/native-references.json\`]($BLOB/.forgejo/native-references.json))."
+echo "built and ran ([\`ci/native-references.json\`]($BLOB/ci/native-references.json))."
 echo
 echo "</details>"
 echo

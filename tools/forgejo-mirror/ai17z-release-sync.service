@@ -1,0 +1,17 @@
+[Unit]
+Description=Verify and copy AI17Z GitHub releases to AI17Z Code
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ai17z-mirror
+WorkingDirectory=/opt/ai17z-mirror
+EnvironmentFile=/etc/ai17z-mirror.env
+ExecStart=/usr/bin/python3 -I tools/forgejo-mirror/sync-releases.py
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+TimeoutStartSec=2h

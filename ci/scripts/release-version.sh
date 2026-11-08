@@ -10,7 +10,7 @@
 # job that names a package has to name it the same way.
 #
 # The tag comes from RELEASE_TAG when a caller names one, and otherwise from the
-# ref this Forgejo Actions run was started by, when that ref is a tag.
+# ref this Actions run was started by, when that ref is a tag.
 set -euo pipefail
 
 TAG="${RELEASE_TAG:-}"
@@ -22,7 +22,16 @@ if [ -n "$TAG" ]; then
 else
   v="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -1)"
 fi
-case "$v" in
-  [0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$v" ;;
-  *) echo "no version could be determined (tag '${TAG}')" >&2; exit 1 ;;
-esac
+# A broad v* trigger is only routing. Validate before a version crosses jobs.
+if [[ ! "$v" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+  echo 'the release tag is not strict semver' >&2; exit 1
+fi
+if [[ "$v" == *-* ]]; then
+  IFS='.' read -r -a identifiers <<< "${v#*-}"
+  for identifier in "${identifiers[@]}"; do
+    if [[ "$identifier" =~ ^0[0-9]+$ ]]; then
+      echo 'numeric prerelease identifiers cannot have leading zeroes' >&2; exit 1
+    fi
+  done
+fi
+printf '%s\n' "$v"

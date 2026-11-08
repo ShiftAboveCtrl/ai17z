@@ -3,7 +3,7 @@
 AI17Z's macOS packages, Apple silicon and Intel, are assembled on AI17Z Code's
 Linux release runner by the `package-assembled` job, and refused unless every
 native file in them is byte for byte one a real Mac of that processor built and
-ran (`prove-natives.sh` against `.forgejo/native-references.json`). The
+ran (`prove-natives.sh` against `ci/native-references.json`). The
 package's JavaScript, its update compatibility gate and the architecture of its
 binaries are exercised there. Running the finished package on a Mac is not, and
 is what this checklist is for. `package-macos.sh` still builds and runs a
@@ -18,7 +18,7 @@ Nothing below is a promise about behaviour that has not been observed.
 
 ## Proved on a real Mac, on every push
 
-`.forgejo/scripts/prove-macos-package.sh` and `prove-macos-installer.sh`, run by
+`ci/scripts/prove-macos-package.sh` and `prove-macos-installer.sh`, run by
 the `package macos arm64` job.
 
 - the bundled Node starts and reports `darwin` and the right architecture
@@ -298,7 +298,7 @@ cosign verify-blob AI17Z-macos-arm64-1.0.0-beta.84.tar.gz \
   --key cosign.pub
 ```
 
-`cosign.pub` is AI17Z's release key, [`.forgejo/cosign.pub`](https://github.com/ShiftAboveCtrl/ai17z/blob/main/.forgejo/cosign.pub)
+`cosign.pub` is AI17Z's release key, [`ci/cosign.pub`](https://github.com/ShiftAboveCtrl/ai17z/blob/main/ci/cosign.pub)
 in this repository. Releases are signed with that key, not with a CI identity.
 
 *Expected:* the hashes agree, and the attestation verifies against this

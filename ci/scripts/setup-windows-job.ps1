@@ -1,6 +1,6 @@
 # Make a Windows release job able to build the Windows release.
 #
-#   . .\.forgejo\scripts\setup-windows-job.ps1
+#   . .\ci\scripts\setup-windows-job.ps1
 #
 # Dot-sourced, not run as a child: a job's script lines share one
 # PowerShell session, so PATH and $iscc set here are there for the steps after.

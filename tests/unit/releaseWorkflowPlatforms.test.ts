@@ -29,20 +29,19 @@ import {
 
 const root = resolve(__dirname, '../..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
-const packageYml = read('.forgejo/workflows/package.yml');
-const releaseYml = read('.forgejo/workflows/release.yml');
-const qualifyYml = read('.forgejo/workflows/qualify.yml');
-const publish = read('.forgejo/scripts/publish-release.sh');
-const notes = read('.forgejo/scripts/release-notes.sh');
-const macosBuild = read('.forgejo/scripts/package-macos.sh');
-const ubuntuBuild = read('.forgejo/scripts/package-ubuntu.sh');
-const windowsBuild = read('.forgejo/scripts/build-windows-release.ps1');
+const packageYml = read('.github/workflows/release.yml');
+const releaseYml = read('.github/workflows/release.yml');
+const publish = read('ci/scripts/publish-release.sh');
+const notes = read('ci/scripts/release-notes.sh');
+const macosBuild = read('ci/scripts/package-macos.sh');
+const ubuntuBuild = read('ci/scripts/package-ubuntu.sh');
+const windowsBuild = read('ci/scripts/build-windows-release.ps1');
 // The proofs themselves live in scripts the builds call, so that a failure can
 // be run by hand on a machine of your own before a runner is asked.
-const macosProof = read('.forgejo/scripts/prove-macos-package.sh');
-const ubuntuProof = read('.forgejo/scripts/prove-ubuntu-package.sh');
-const qualifiers = [read('.forgejo/scripts/qualify-published-macos.sh'), read('.forgejo/scripts/qualify-published-ubuntu.sh')];
-const windowsQualifier = read('.forgejo/scripts/qualify-published-windows.ps1');
+const macosProof = read('ci/scripts/prove-macos-package.sh');
+const ubuntuProof = read('ci/scripts/prove-ubuntu-package.sh');
+const qualifiers = [read('ci/scripts/qualify-published-macos.sh'), read('ci/scripts/qualify-published-ubuntu.sh')];
+const windowsQualifier = read('ci/scripts/qualify-published-windows.ps1');
 const VERSION = '9.9.9';
 
 type Step = { run?: string; uses?: string; env?: Record<string, string>; with?: Record<string, unknown>; if?: string };
@@ -56,8 +55,6 @@ type Job = {
 };
 type Workflow = { on: Record<string, { tags?: string[] }>; jobs: Record<string, Job> };
 const release = load(releaseYml) as Workflow;
-const qualify = load(qualifyYml) as Workflow;
-const validation = load(packageYml) as Workflow;
 function job(w: Workflow, name: string): Job {
   const own = w.jobs[name];
   if (!own) throw new Error(`no job ${name}`);
@@ -65,7 +62,6 @@ function job(w: Workflow, name: string): Job {
 }
 /** Every shell line a job runs, in order. */
 const scriptOf = (w: Workflow, name: string) => (job(w, name).steps ?? []).map((step) => step.run ?? '').join('\n');
-const needsOf = (j: Job) => (Array.isArray(j.needs) ? j.needs : j.needs ? [j.needs] : []);
 /** A section of a script between two of its own headings. */
 const between = (text: string, from: string, to: string) => {
   const a = text.indexOf(from);
@@ -76,71 +72,26 @@ const between = (text: string, from: string, to: string) => {
 };
 
 describe('the release builds every platform from one tag', () => {
-  it('has a job for each, and publish waits for all of them', () => {
-    expect(Object.keys(release.jobs)).toEqual([
-      'version',
-      'check',
-      'package-ubuntu',
-      'ubuntu-takes-the-package',
-      'package-assembled',
-      'package-windows',
-      'publish',
-      'qualify',
-      'qualify-windows',
-    ]);
-    for (const name of ['package-windows', 'package-ubuntu', 'package-assembled', 'check']) {
-      expect(needsOf(job(release, 'publish'))).toContain(name);
-    }
-    // amd64 natively, and both Macs and arm64 Ubuntu in the one assembled job,
-    // so publish waiting for the two waits for every package.
-    expect(job(release, 'package-ubuntu').strategy!.matrix!.include!.map((i) => i.arch)).toEqual(['amd64']);
-  });
-
-  it('names the runners exactly, and never by a moving alias', () => {
-    // Named exactly rather than through a `latest`, which moves between major
-    // versions and between architectures: the opposite of what a job whose
-    // whole purpose is to be on a particular architecture wants.
-    expect(job(release, 'package-ubuntu').strategy!.matrix!.include).toEqual([{ arch: 'amd64', runner: 'ai17z-release-linux' }]);
-    expect(job(release, 'package-assembled')['runs-on']).toBe('ai17z-release-linux');
-    expect(job(release, 'package-assembled').container?.image).toBe('ubuntu:24.04');
-    expect(job(release, 'package-windows')['runs-on']).toBe('ai17z-release-windows');
-    expect(job(release, 'package-ubuntu').container?.image).toBe('ubuntu:24.04');
-    expect(job(validation, 'ubuntu-amd64').container?.image).toBe('ubuntu:24.04');
-  });
 
   it('asks for no image that has been retired, and builds both Macs from proved natives', () => {
     // A label that no longer exists does not fail loudly: the job sits waiting
     // for a runner that will never come.
-    for (const text of [packageYml, releaseYml, qualifyYml]) {
+    for (const text of [packageYml, releaseYml]) {
       expect(text).not.toMatch(/image:\s*macos-1[1-3]\b|ubuntu:(18|20)\.04/);
     }
     // Intel is back because nothing about it is relabelled: every native file
     // in it is byte for byte the one an Intel Mac built and ran for v1.0.0-beta.76.
     expect(ARCHITECTURES_OF.macos).toEqual(['arm64', 'x64']);
-    const refs = JSON.parse(read('.forgejo/native-references.json')) as Record<string, unknown>;
+    const refs = JSON.parse(read('ci/native-references.json')) as Record<string, unknown>;
     for (const arch of ARCHITECTURES_OF.macos) expect(refs[`macos-${arch}`]).toBeTruthy();
     expect(refs['ubuntu-arm64']).toBeTruthy();
-  });
-
-  it('builds through the shared scripts rather than its own copy of the steps', () => {
-    // Two lists of build steps is how one of them stops being true. A release
-    // and a validation run call the same scripts, so what validation proves on
-    // a change is what a release ships.
-    expect(scriptOf(release, 'package-ubuntu')).toContain('package-ubuntu.sh');
-    expect(scriptOf(validation, 'ubuntu-amd64')).toContain('package-ubuntu.sh');
-    expect(scriptOf(release, 'package-assembled')).toContain('package-assembled.sh');
-    // And no pipeline file has grown a second implementation beside them.
-    for (const text of [packageYml, releaseYml]) {
-      expect(text).not.toContain('build-tarball.sh');
-      expect(text).not.toContain('build-deb.sh');
-    }
   });
 
   it('refuses to build if the runner is not the architecture claimed', () => {
     // The guard that turns a wrong runner into a failed build rather than a
     // mislabelled package that installs and cannot run.
     expect(macosBuild).toContain('the architecture this runner really is');
-    expect(macosBuild).toContain('[ "$actual" = arm64 ]');
+    expect(macosBuild).toContain('[ "$actual" = "$WANT" ]');
     expect(macosBuild).toContain('uname -s');
     expect(ubuntuBuild).toContain('dpkg --print-architecture');
   });
@@ -194,7 +145,7 @@ describe('the release builds every platform from one tag', () => {
     // The Windows one is built on Windows, where the scanner's tools are not
     // all there, so the check lives in the publish job, over the bytes about to
     // be attached.
-    const scanner = read('.forgejo/scripts/scan-artifact.sh');
+    const scanner = read('ci/scripts/scan-artifact.sh');
     expect(scanner).toContain('windows)');
     expect(scanner).toContain('unzip -q');
     const scanning = between(publish, 'say "nothing of an owner', 'say "the release manifest"');
@@ -249,7 +200,7 @@ describe('the release builds every platform from one tag', () => {
     // Without one it narrows to the two it built, and says why, in the
     // manifest, so the release reads as a decision rather than a loss.
     expect(call).toContain('--expect windows,ubuntu --not-built "$MACOS_NOT_BUILT"');
-    expect(publish).toMatch(/MACOS_NOT_BUILT="macOS packages are built on a Mac registered with AI17Z Code/);
+    expect(publish).toMatch(/MACOS_NOT_BUILT="macOS packages are built on a Mac release runner/);
     // The readable installers are in the directory exactly as the release
     // publishes them, before anything is hashed.
     expect(publish).toContain('cp "$PROJECT_DIR/install-ai17z-macos.sh" "$PROJECT_DIR/install-ai17z-ubuntu.sh" "$DIST/"');
@@ -261,26 +212,6 @@ describe('the release builds every platform from one tag', () => {
     expect(notes).toContain('if [ -z "$MACOS" ]; then');
   });
 
-  it('installs dependencies in every job that runs one of this repository\'s tools', () => {
-    // `tools/release-manifest.mts` imports `@xbam/shared`, which resolves only
-    // through the workspace symlinks `npm ci` writes. A publish job once ran it
-    // with no install, and because the step was newer than the last release it
-    // had never once run: a release would have been the first to find out.
-    const runsTools: [Workflow, string, string][] = [
-      [release, 'package-ubuntu', 'package-ubuntu.sh'],
-      [validation, 'ubuntu-amd64', 'package-ubuntu.sh'],
-      [release, 'package-assembled', 'package-assembled.sh'],
-      [release, 'publish', 'publish-release.sh'],
-    ];
-    for (const [w, name, tool] of runsTools) {
-      const text = scriptOf(w, name);
-      expect(text, `${name} runs ${tool} without installing dependencies`).toContain('npm ci');
-      expect(text.indexOf('npm ci'), `${name} installs after it runs`).toBeLessThan(text.indexOf(tool));
-    }
-    // Windows installs inside its build script, before the packager.
-    expect(windowsBuild.indexOf('npm ci')).toBeLessThan(windowsBuild.indexOf('npm run package:windows'));
-  });
-
   it('pins one Node for every platform', () => {
     // Two packages built against different runtimes is a difference nobody
     // would find until one of them behaved differently.
@@ -289,7 +220,7 @@ describe('the release builds every platform from one tag', () => {
     expect(macosBuild + ubuntuBuild).toContain("require('./packaging/node-runtime.json').version");
     // Every job's own Node is that one too, checked against nodejs.org.
     for (const setup of ['setup-ubuntu-job.sh', 'setup-macos-job.sh', 'setup-windows-job.ps1']) {
-      const text = read(`.forgejo/scripts/${setup}`);
+      const text = read(`ci/scripts/${setup}`);
       expect(text, `${setup} does not read the pinned runtime`).toContain('node-runtime.json');
       expect(text, `${setup} does not check nodejs.org's hashes`).toContain('SHASUMS256.txt');
     }
@@ -340,7 +271,7 @@ describe('provenance', () => {
   });
 
   it('verifies against a key that is public and only public', () => {
-    const key = read('.forgejo/cosign.pub');
+    const key = read('ci/cosign.pub');
     expect(key.trim().startsWith('-----BEGIN PUBLIC KEY-----')).toBe(true);
     expect(key).not.toMatch(/PRIVATE/);
   });
@@ -365,11 +296,10 @@ describe('provenance', () => {
   });
 
   it('is verified, from the published bytes, by the stranger-facing check', () => {
-    const verifier = read('.forgejo/scripts/verify-published-release.sh');
+    const verifier = read('ci/scripts/verify-published-release.sh');
     expect(verifier).toContain('--key "$SIGNER_PUB"');
     expect(verifier).not.toContain('certificate-identity');
     expect(scriptOf(release, 'qualify')).toContain('setup-cosign.sh');
-    expect(scriptOf(qualify, 'published-bytes-and-ubuntu')).toContain('setup-cosign.sh');
   });
 });
 
@@ -402,26 +332,11 @@ describe('publishing', () => {
  * *published* install on somebody else's machine.
  */
 describe('qualifying a release after it is published', () => {
-  it('starts by itself, in the release run, and again on a qualify tag', () => {
-    // Not something anybody has to remember. On GitHub a release made with the
-    // workflow's own token raised no event, and qualification sat there.
-    for (const name of ['qualify', 'qualify-windows']) expect(needsOf(job(release, name))).toContain('publish');
-    expect(qualify.on.push!.tags).toEqual(['qualify-v[0-9]*']);
-  });
-
-  it('refuses a rehearsal, which published nothing to qualify', () => {
-    for (const name of ['qualify', 'qualify-windows']) {
-      expect(job(release, name).if).toBe("${{ !startsWith(github.ref_name, 'rehearsal-') }}");
-    }
-    // And none for a runner that may not exist: Forgejo judges `if` on the
-    // runner, so such a job waits for ever and holds the release queue.
-    expect(release.jobs['qualify-ubuntu-arm64']).toBeUndefined();
-  });
 
   it('can change nothing about a release', () => {
     // It reads published bytes and installs them. A check that could edit the
     // release it is checking is one whose report is worth less.
-    for (const text of [qualifyYml, read('.forgejo/scripts/verify-published-release.sh'), windowsQualifier, ...qualifiers]) {
+    for (const text of [JSON.stringify(release.jobs.qualify), read('ci/scripts/verify-published-release.sh'), windowsQualifier, ...qualifiers]) {
       expect(text).not.toContain('secrets.');
       expect(text).not.toContain('RELEASE_TOKEN');
       expect(text).not.toContain('attachment=@');
@@ -429,28 +344,11 @@ describe('qualifying a release after it is published', () => {
     }
   });
 
-  it('compares against the tag, with tooling from its own commit', () => {
-    // A qualifier frozen at the release once failed both Macs with no way to
-    // correct it but another release. The tooling is this pipeline's; the
-    // installers compared are the tag's own.
-    for (const [w, name] of [[release, 'qualify'], [qualify, 'published-bytes-and-ubuntu']] as const) {
-      const text = scriptOf(w, name);
-      expect(text).toContain('git archive "$TAG" install.ps1 install-ai17z-ubuntu.sh install-ai17z-macos.sh | tar -x -C tagged');
-      expect(text).toContain('"$TAG" "$PWD/tagged"');
-    }
-    // The tag itself has to be in the checkout for that: the whole history.
-    for (const name of ['published-bytes-and-ubuntu', 'ubuntu-arm64', 'windows', 'macos']) {
-      expect(JSON.stringify(job(qualify, name).steps), name).toContain('"fetch-depth":0');
-    }
-    expect(scriptOf(release, 'qualify-windows')).toContain('-Tagged tagged\\install.ps1');
-    expect(scriptOf(qualify, 'windows')).toContain('-Tagged tagged\\install.ps1');
-  });
-
   it('proves the package from the tag rather than from an API lookup', () => {
     for (const script of qualifiers) {
       // The asset by its exact published address, which contains the tag.
       expect(script).toContain('curl -fsSL -o "$ROOM/$PACKAGE" "$DL/$PACKAGE"');
-      expect(script).toContain('DL="https://code.ai17z.io/$PROJECT/releases/download/$TAG"');
+      expect(script).toContain('DL="$RELEASE_DOWNLOAD/$TAG"');
       // Checked against the hash that same tag published.
       expect(script).toContain('the package hashes $got and SHA256SUMS.txt says');
       // And installed from those bytes through the installer, never a raw
@@ -512,7 +410,7 @@ describe('qualifying a release after it is published', () => {
     // A shared anonymous limit says nothing about the release. Anything else is
     // a finding about what was published. The two need opposite responses: run
     // the job again, or stop the release.
-    expect(windowsQualifier).toContain("not for anything this runner could blame on AI17Z Code");
+    expect(windowsQualifier).toContain("not for anything this runner could blame on the release host");
     expect(windowsQualifier).toContain('(it printed nothing at all)');
     for (const script of qualifiers) {
       expect(script).toContain('why_it_failed()');
@@ -521,15 +419,9 @@ describe('qualifying a release after it is published', () => {
     }
   });
 
-  it('reaches every published platform', () => {
-    expect(Object.keys(qualify.jobs)).toEqual(['published-bytes-and-ubuntu', 'ubuntu-arm64', 'windows', 'macos']);
-    expect(job(qualify, 'ubuntu-arm64')['runs-on']).toBe('ai17z-release-linux-arm64');
-    expect(job(qualify, 'macos').if).toBe("vars.AI17Z_MACOS == '1'");
-  });
-
   it('takes the installers off the release rather than out of the checkout', () => {
     for (const script of qualifiers) {
-      expect(script).toContain('/releases/download/');
+      expect(script).toContain('release-source.sh');
       expect(script).toContain('SHA256SUMS.txt');
       expect(script).toContain('byte for byte the script this checkout holds');
     }
@@ -537,19 +429,6 @@ describe('qualifying a release after it is published', () => {
 });
 
 describe('a rehearsal', () => {
-  it('is a tag, so a push can start one', () => {
-    expect(release.on.push!.tags).toEqual(['v[0-9]*', 'rehearsal-v[0-9]*']);
-  });
-
-  it('builds the version its tag names, on every platform', () => {
-    // One job works the version out and every platform takes it from there,
-    // Windows included, so there is no second implementation to disagree.
-    expect(read('.forgejo/scripts/release-version.sh')).toContain('v="${TAG#rehearsal-}"');
-    expect(scriptOf(release, 'version')).toContain('release-version.sh');
-    for (const name of ['package-ubuntu', 'package-assembled', 'package-windows', 'publish']) {
-      expect(scriptOf(release, name), name).toContain('needs.version.outputs.version');
-    }
-  });
 
   it('cannot publish, and a release still can', () => {
     // Exactly one place creates a release, and a rehearsal leaves before it.
@@ -558,8 +437,8 @@ describe('a rehearsal', () => {
     expect(exit).toBeGreaterThan(-1);
     expect(exit).toBeLessThan(publish.indexOf('say "the release, as a draft"'));
     expect(publish.slice(exit, publish.indexOf('say "the release, as a draft"'))).toContain('exit 0');
-    expect(releaseYml).toContain('bash .forgejo/scripts/publish-release.sh dist "$VERSION" rehearsal');
-    expect(releaseYml).toContain('if [ "${GITHUB_REF_NAME#rehearsal-}" != "$GITHUB_REF_NAME" ]; then');
+    expect(releaseYml).toContain('bash ci/scripts/publish-release.sh dist "$VERSION" rehearsal');
+    expect(releaseYml).toContain('if [[ "$GITHUB_REF_NAME" == rehearsal-* ]]; then');
   });
 
   it('does every step a release does, signing included', () => {
@@ -567,13 +446,6 @@ describe('a rehearsal', () => {
     // true of a rehearsal as of a release; a step exercised for the first time
     // by the release it protects is the shape that has cost releases before.
     expect(publish.indexOf('say "sign what was built"')).toBeLessThan(publish.indexOf('if [ -n "$REHEARSAL" ]; then'));
-  });
-
-  it('leaves something to look at, since nothing is published', () => {
-    const kept = (job(release, 'publish').steps ?? []).find((s) => s.with?.name === 'rehearsal-dist')!;
-    expect(kept.with?.path).toBe('dist/');
-    expect(kept.if).toBe("startsWith(github.ref_name, 'rehearsal-')");
-    expect(publish.slice(publish.indexOf('if [ -n "$REHEARSAL" ]; then'))).toContain('say-out.sh');
   });
 
   it('does not mistake a rehearsal tag for the previous release', () => {

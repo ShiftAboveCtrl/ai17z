@@ -67,7 +67,7 @@ the chain would notice.
 anybody's machine, and that every published file is one you can read.
 
 **Sigstore provenance** signs every published file with AI17Z's release key,
-whose public half is `.forgejo/cosign.pub` in this repository: a bundle beside
+whose public half is `ci/cosign.pub` in this repository: a bundle beside
 each file, named `<file>.sigstore.json`, saying these exact bytes were signed
 by that key, and recorded in Sigstore's public transparency log. That is release
 provenance. It is **not** Apple notarization, **not** code
@@ -88,7 +88,7 @@ package (anything whose first bytes say it is executable code, whatever it is
 called) must be byte for byte the file in a reference package that was built on
 a real Mac of that processor and tested there: Apple silicon and Intel, both
 built for v1.0.0-beta.76 on GitHub's hosted Macs and pinned by hash in
-`.forgejo/native-references.json`. One file different, new or missing and the
+`ci/native-references.json`. One file different, new or missing and the
 package is refused. The release then goes out without Mac packages, says why,
 and a Mac installs or stays on the newest release that has one.
 
@@ -139,7 +139,7 @@ cosign verify-blob AI17Z-macos-arm64-<version>.tar.gz \
   --key cosign.pub
 ```
 
-`cosign.pub` is AI17Z's release key, [`.forgejo/cosign.pub`](https://github.com/ShiftAboveCtrl/ai17z/blob/main/.forgejo/cosign.pub)
+`cosign.pub` is AI17Z's release key, [`ci/cosign.pub`](https://github.com/ShiftAboveCtrl/ai17z/blob/main/ci/cosign.pub)
 in this repository. Releases are signed with that key, not with a CI identity.
 
 ## Reporting a problem

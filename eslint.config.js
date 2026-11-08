@@ -40,6 +40,9 @@ export default tseslint.config(
       // diagnostic scripts held here produces failures that mean nothing and
       // hide the ones that do.
       'var/**',
+      // Local tooling may hold independent checkouts with their own rules.
+      '.claude/**',
+      '.cofounder/**',
     ],
   },
 

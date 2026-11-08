@@ -1,13 +1,13 @@
 # Build the Windows half of a release.
 #
-#   . .\.forgejo\scripts\build-windows-release.ps1 -Version 1.2.3
+#   . .\ci\scripts\build-windows-release.ps1 -Version 1.2.3
 #
 # Run by the `package windows` job after setup-windows-job.ps1, which put Node
 # on PATH and found Inno Setup's compiler as $iscc. Writes everything the
 # publish job attaches into build\windows, and release.env, which carries the
 # release's name to the publish job.
 #
-# Built on AI17Z Code's Windows release runner from the tagged commit, where the
+# Built on GitHub's native Windows release runner from the tagged commit, where the
 # log of what happened is part of the release. Nothing is built by hand on a
 # maintainer's machine and uploaded.
 #

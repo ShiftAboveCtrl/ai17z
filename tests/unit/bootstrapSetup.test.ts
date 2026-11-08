@@ -27,9 +27,9 @@ const installer = read('packaging/windows/ai17z.iss');
 const stageZero = read('install.ps1');
 const packager = read('tools/package-windows.mts');
 // The release pipeline: what builds the Windows half, and what publishes.
-const windowsBuild = read('.forgejo/scripts/build-windows-release.ps1');
-const publishScript = read('.forgejo/scripts/publish-release.sh');
-const workflow = [read('.forgejo/workflows/package.yml'), read('.forgejo/workflows/release.yml'), windowsBuild, publishScript].join('\n');
+const windowsBuild = read('ci/scripts/build-windows-release.ps1');
+const publishScript = read('ci/scripts/publish-release.sh');
+const workflow = [read('.github/workflows/release.yml'), windowsBuild, publishScript].join('\n');
 const audit = read('docs/SETUP_AUDIT.md');
 const updater = read('update-ai17z.ps1');
 

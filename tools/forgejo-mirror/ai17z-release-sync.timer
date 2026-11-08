@@ -1,0 +1,10 @@
+[Unit]
+Description=Keep the AI17Z Code release backup current
+
+[Timer]
+OnBootSec=5m
+OnUnitInactiveSec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

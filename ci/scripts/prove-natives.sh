@@ -7,7 +7,7 @@
 #
 # Both are the same kind of package: two macOS tarballs, or two .deb files.
 # The reference is a package that was built natively and tested on its own
-# platform, pinned by hash in .forgejo/native-references.json.
+# platform, pinned by hash in ci/native-references.json.
 #
 # Why this is enough to ship a package assembled somewhere else. AI17Z compiles
 # nothing: its native files are Node, from nodejs.org, and prebuilt packages

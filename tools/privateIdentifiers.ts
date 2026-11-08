@@ -4,7 +4,7 @@
  * private network. The list lives outside the repository, because a list of
  * them in a public file is the leak it exists to prevent.
  *
- * One format, shared with `.forgejo/scripts/history-scan.py` and with the
+ * One format, shared with `ci/scripts/history-scan.py` and with the
  * maintainer's own pre-push gate. One rule per line, `#` for comments:
  *
  *   <class><TAB><regex>                       a rule
