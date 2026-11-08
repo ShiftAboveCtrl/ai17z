@@ -1,7 +1,15 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { patch } from '@app/lib/api';
 import { ChoiceGroup, ChoiceOption, Field, Modal, SavedTick, Toggle } from '@app/components/ui';
-import { DAILY_CAP_CHOICES, SPACING_CHOICES, spacingWords, type DevUpdateProject } from '@app/lib/devUpdates';
+import {
+  DAILY_CAP_CHOICES,
+  SPACING_CHOICES,
+  publishingState,
+  spacingWords,
+  type AgentPublishing,
+  type DevUpdateProject,
+} from '@app/lib/devUpdates';
 import { ProblemList, problemOf } from './parts';
 
 type Patch = Partial<Pick<DevUpdateProject, 'mode' | 'enabled' | 'dailyCap' | 'minSpacingMinutes' | 'rehearse'>>;
@@ -13,12 +21,33 @@ type Patch = Partial<Pick<DevUpdateProject, 'mode' | 'enabled' | 'dailyCap' | 'm
  * that let something reach the public without another look, auto mode and
  * rehearsal off, ask first, naming the account it will appear on.
  */
-export function Rules({ project, handle, onChanged }: { project: DevUpdateProject; handle: string | null; onChanged: () => void }) {
+export function Rules({
+  project,
+  handle,
+  agentPublishing,
+  onChanged,
+}: {
+  project: DevUpdateProject;
+  handle: string | null;
+  /** The agent's own switches, or null while they are being read. */
+  agentPublishing: AgentPublishing | null;
+  onChanged: () => void;
+}) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [problem, setProblem] = useState<string[] | null>(null);
   const [confirm, setConfirm] = useState<Patch | null>(null);
   const where = handle ? `@${handle}` : 'the account';
+  // What would still hold publishing once this project's own switch is off.
+  // The confirmation names it, because "publish for real" over an agent that
+  // dry runs everything is a promise the dispatcher will not keep.
+  const afterRehearsalOff = publishingState({ ...project, rehearse: false }, agentPublishing);
+  const agentHolds = afterRehearsalOff.heldBy === 'AGENT_DRY_RUN' || afterRehearsalOff.heldBy === 'AGENT_AUTOMATION';
+  const policiesLink = (
+    <Link to={`/agents/${project.agentId}#policies`} className="text-bone underline decoration-bone-dim underline-offset-4 hover:decoration-bone">
+      Open the agent's policies
+    </Link>
+  );
 
   const save = async (change: Patch) => {
     setConfirm(null);
@@ -86,7 +115,11 @@ export function Rules({ project, handle, onChanged }: { project: DevUpdateProjec
             checked={project.rehearse}
             disabled={saving}
             label="Rehearse instead of posting"
-            description={`Approved updates go through every check and stop before ${where}. Nothing is published while this is on.`}
+            description={
+              project.rehearse || !agentHolds
+                ? `Approved updates go through every check and stop before ${where}. Nothing is published while this is on.`
+                : `Off for this project, but still held by the agent: ${afterRehearsalOff.sentence}`
+            }
             onChange={(value) => (value ? void save({ rehearse: true }) : setConfirm({ rehearse: false }))}
           />
         </div>
@@ -137,20 +170,29 @@ export function Rules({ project, handle, onChanged }: { project: DevUpdateProjec
       <Modal
         open={confirm !== null}
         onClose={() => setConfirm(null)}
-        title={confirm?.mode === 'AUTO' ? 'Let updates post without asking?' : 'Publish for real?'}
+        title={confirm?.mode === 'AUTO' ? 'Let updates post without asking?' : agentHolds ? 'Stop rehearsing this project?' : 'Publish for real?'}
       >
         <div className="space-y-5">
           <p className="text-sm leading-relaxed text-bone-dim">
             {confirm?.mode === 'AUTO'
-              ? `Updates that pass every safety check will be approved without you, and ${project.rehearse ? 'rehearsed' : `posted on ${where}`} within the ceiling and spacing. Anything the agent's own rules flag still waits for you.`
-              : `Approved updates will be published on ${where}, where anyone can see them. ${project.mode === 'AUTO' ? 'This project posts on its own, so that includes updates you have not read.' : 'Only updates you approve are posted.'} If the agent's own policy runs everything as a dry run, updates still rehearse, and the log says which switch held them.`}
+              ? `Updates that pass every safety check will be approved without you, and ${
+                  publishingState(project, agentPublishing).heldBy === null ? `posted on ${where}` : 'rehearsed or held as they are now'
+                } within the ceiling and spacing. Anything the agent's own rules flag still waits for you.`
+              : agentHolds
+                ? `This project will stop rehearsing, but nothing reaches ${where} yet. ${afterRehearsalOff.sentence}`
+                : agentPublishing === null
+                  ? `This project will stop rehearsing. The agent's own settings have not been read yet, so whether ${where} sees the posts depends on them too.`
+                  : `Approved updates will be published on ${where}, where anyone can see them. ${
+                      project.mode === 'AUTO' ? 'This project posts on its own, so that includes updates you have not read.' : 'Only updates you approve are posted.'
+                    }`}
           </p>
+          {confirm?.mode !== 'AUTO' && agentHolds && <p className="text-sm">{policiesLink}</p>}
           <div className="flex flex-wrap justify-end gap-2">
             <button type="button" className="btn-quiet" onClick={() => setConfirm(null)}>
               Not yet
             </button>
             <button type="button" className="btn-primary" onClick={() => confirm && void save(confirm)}>
-              {confirm?.mode === 'AUTO' ? 'Post on its own' : 'Publish for real'}
+              {confirm?.mode === 'AUTO' ? 'Post on its own' : agentHolds ? 'Turn project rehearsal off' : 'Publish for real'}
             </button>
           </div>
         </div>

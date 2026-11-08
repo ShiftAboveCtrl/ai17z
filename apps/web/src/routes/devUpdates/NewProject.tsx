@@ -4,8 +4,9 @@ import { post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AgentListItem } from '@app/lib/types';
 import { ChoiceGroup, ChoiceOption, Field, Modal } from '@app/components/ui';
-import { KEY_PATTERN, accountChoices, suggestKey, type DevUpdateProject } from '@app/lib/devUpdates';
+import { KEY_PATTERN, accountChoices, suggestKey, type DevUpdateConnection, type DevUpdateProject } from '@app/lib/devUpdates';
 import { ProblemList, problemOf } from './parts';
+import { TokenReveal } from './TokenReveal';
 
 interface Capabilities {
   grants: Record<string, string[]>;
@@ -23,14 +24,25 @@ interface Capabilities {
 export function NewProject({
   open,
   agents,
+  connection,
+  connectionError,
   onClose,
   onCreated,
 }: {
   open: boolean;
   agents: AgentListItem[];
+  connection: DevUpdateConnection | null;
+  connectionError: string | null;
   onClose: () => void;
-  onCreated: (result: { project: DevUpdateProject; senderToken: string }) => void;
+  onCreated: (project: DevUpdateProject) => void;
 }) {
+  // The new project's token, for the reveal and nothing else. Cleared however
+  // the dialog closes, so it is never shown twice and never outlives it.
+  const [created, setCreated] = useState<{ project: DevUpdateProject; senderToken: string } | null>(null);
+  const close = () => {
+    setCreated(null);
+    onClose();
+  };
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [keyTouched, setKeyTouched] = useState(false);
@@ -73,7 +85,8 @@ export function NewProject({
       setKey('');
       setKeyTouched(false);
       setTried(false);
-      onCreated(result);
+      setCreated(result);
+      onCreated(result.project);
     } catch (error) {
       setProblem(problemOf(error, 'The project could not be created.'));
     } finally {
@@ -82,7 +95,18 @@ export function NewProject({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="New project">
+    <Modal open={open} onClose={close} title={created ? 'Project created' : 'New project'}>
+      {created ? (
+        <TokenReveal
+          token={created.senderToken}
+          projectKey={created.project.projectKey}
+          projectName={created.project.displayName}
+          connection={connection}
+          connectionError={connectionError}
+          onDone={close}
+          doneLabel="I have copied it, close"
+        />
+      ) : (
       <form
         className="space-y-6"
         onSubmit={(event) => {
@@ -226,7 +250,7 @@ export function NewProject({
         <ProblemList lines={problem} />
 
         <div className="flex flex-wrap justify-end gap-2">
-          <button type="button" className="btn-quiet" onClick={onClose}>
+          <button type="button" className="btn-quiet" onClick={close}>
             Cancel
           </button>
           <button type="submit" className="btn-primary" disabled={busy || agents.length === 0}>
@@ -234,6 +258,7 @@ export function NewProject({
           </button>
         </div>
       </form>
+      )}
     </Modal>
   );
 }

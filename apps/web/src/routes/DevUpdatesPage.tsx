@@ -1,13 +1,22 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
-import { usePolling, useResource } from '@app/lib/hooks';
-import type { AgentListItem } from '@app/lib/types';
+import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
+import type { AgentDetail, AgentListItem } from '@app/lib/types';
 import { EmptyState, RetryablePanel, Tabs, Working } from '@app/components/ui';
 import { Explain } from '@app/components/Explain';
 import { AnimatedText } from '@app/components/motion';
-import type { DevUpdate, DevUpdateConnection, DevUpdateProject, RefusalRecord } from '@app/lib/devUpdates';
-
+import {
+  LOG_LIMIT,
+  REFUSAL_LIMIT,
+  logTruncation,
+  publishingState,
+  type AgentPublishing,
+  type DevUpdate,
+  type DevUpdateConnection,
+  type DevUpdateProject,
+  type RefusalRecord,
+} from '@app/lib/devUpdates';
 import { NewProject } from './devUpdates/NewProject';
 import { Connect } from './devUpdates/Connect';
 import { Rules } from './devUpdates/Rules';
@@ -16,65 +25,41 @@ import { Log } from './devUpdates/Log';
 
 type Tab = 'review' | 'log' | 'rules' | 'connect';
 
+const PAGE = 'mx-auto w-full max-w-5xl space-y-8 px-5 pb-24 pt-32 sm:px-10 sm:pt-28';
+const SLOW = 'The API is slow to answer. Nothing has failed yet; you can leave this page and come back.';
+
 /**
  * Development updates, for an owner.
  *
  * A coding assistant hands over what it finished; this is where the owner
  * decides what of it reaches their account. Until now the only way in was a
  * CLI, so the people most likely to want it (somebody building in public with
- * Claude Code) were the least likely to find it.
+ * a coding assistant) were the least likely to find it.
  *
  * One screen over the routes that already exist. It holds no rules of its
  * own: every decision is the server's, made through the same guard the CLI and
  * the MCP server go through.
+ *
+ * The page knows which projects exist. Everything about one project lives in
+ * `ProjectWorkspace`, mounted afresh for each project (`key={project.id}`), so
+ * switching project cannot leave the last one's drafts on screen under the new
+ * one's account, with buttons that would still decide the old ones.
  */
 export function DevUpdatesPage() {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const projects = useResource<{ items: DevUpdateProject[] }>('/api/dev-updates/projects');
   const agents = useResource<{ items: AgentListItem[] }>('/api/agents');
   const connection = useResource<DevUpdateConnection>('/api/dev-updates/connection');
   const [creating, setCreating] = useState(false);
-  const [tab, setTab] = useState<Tab>('review');
-  // The token exists here, in memory, until the owner hides it or leaves the
-  // page. Keyed by project so it is never shown under the wrong one.
-  const [fresh, setFresh] = useState<{ projectId: string; token: string } | null>(null);
-  const [waited, setWaited] = useState(0);
+
+  const firstLoad = projects.loading && !projects.data;
+  const waited = useElapsed(firstLoad);
 
   const list = projects.data?.items ?? [];
   const selectedId = params.get('project');
   const project = list.find((p) => p.id === selectedId) ?? list[0] ?? null;
-
-  const updates = useResource<{ items: DevUpdate[] }>(project ? `/api/dev-updates/updates?projectId=${project.id}&limit=200` : null);
-  const audit = useResource<{ items: RefusalRecord[] }>(project ? '/api/audit?action=dev_updates.refused&limit=200' : null);
-  usePolling(
-    () => {
-      updates.reload();
-      audit.reload();
-      projects.reload();
-    },
-    20_000,
-    Boolean(project),
-  );
-
-  // How long the first load has taken, for Working.
-  const firstLoad = projects.loading && !projects.data;
-  useEffect(() => {
-    if (!firstLoad) return;
-    setWaited(0);
-    const timer = window.setInterval(() => setWaited((s) => s + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, [firstLoad]);
-
   const agentList = agents.data?.items ?? [];
-  const agent = project ? (agentList.find((a) => a.id === project.agentId) ?? null) : null;
-  const handle = project ? (agentList.flatMap((a) => a.accounts).find((a) => a.accountId === project.accountId)?.handle ?? null) : null;
-
-  const items = updates.data?.items ?? [];
-  const pending = items.filter((u) => u.status === 'PENDING_REVIEW').sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const refusals = useMemo(
-    () => (audit.data?.items ?? []).filter((r) => project && r.entityId === project.id),
-    [audit.data, project],
-  );
 
   const select = (id: string) => {
     const next = new URLSearchParams(params);
@@ -84,10 +69,7 @@ export function DevUpdatesPage() {
 
   const header = (
     <div className="space-y-3">
-      <p className="eyebrow text-bone-dim">
-        Development updates
-        {project && updates.data ? ` · ${pending.length} waiting for you` : ''}
-      </p>
+      <p className="eyebrow text-bone-dim">Development updates</p>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <AnimatedText as="h1" text="Post what you ship" className="monument text-[11vw] leading-[0.95] sm:text-[4.4vw] lg:text-[3.2rem]" />
         {list.length > 0 && (
@@ -101,9 +83,9 @@ export function DevUpdatesPage() {
           <strong>Your coding assistant tells one of your agents what it just finished, and the agent posts about it.</strong>
         </p>
         <p>
-          You connect Claude Code to a project with a token. When something is done, it sends what changed, why it matters
-          and the evidence. Anything that looks like a secret, private, security related or unreleased is refused before it
-          is stored.
+          You connect your coding assistant to a project with a token. When something is done, it sends what changed, why
+          it matters and the evidence. Anything that looks like a secret, private, security related or unreleased is
+          refused before it is stored.
         </p>
         <p>
           By default every draft waits here for you, and nothing is really posted until you turn rehearsal off. If you
@@ -121,29 +103,34 @@ export function DevUpdatesPage() {
     <NewProject
       open={creating}
       agents={agentList}
+      connection={connection.data}
+      connectionError={connection.error}
       onClose={() => setCreating(false)}
-      onCreated={(result) => {
-        setCreating(false);
-        setFresh({ projectId: result.project.id, token: result.senderToken });
-        setTab('connect');
+      onCreated={(created) => {
         projects.reload();
-        select(result.project.id);
+        select(created.id);
       }}
     />
   );
 
   if (firstLoad) {
     return (
-      <div className="mx-auto w-full max-w-5xl space-y-8 px-5 pb-24 pt-32 sm:px-10 sm:pt-28">
+      <div className={PAGE}>
         {header}
-        <Working label="Reading your projects" seconds={waited} slowHint="The API is slow to answer. Nothing has failed yet." />
+        <Working
+          label="Reading your projects"
+          seconds={waited}
+          slowHint={SLOW}
+          onCancel={() => navigate('/')}
+          cancelLabel="Leave this page"
+        />
       </div>
     );
   }
 
   if (projects.error) {
     return (
-      <div className="mx-auto w-full max-w-5xl space-y-8 px-5 pb-24 pt-32 sm:px-10 sm:pt-28">
+      <div className={PAGE}>
         {header}
         <RetryablePanel title="Your projects could not be loaded." detail={projects.error} onRetry={projects.reload} />
       </div>
@@ -152,12 +139,12 @@ export function DevUpdatesPage() {
 
   if (!project) {
     return (
-      <div className="mx-auto w-full max-w-5xl space-y-8 px-5 pb-24 pt-32 sm:px-10 sm:pt-28">
+      <div className={PAGE}>
         {header}
         <ol className="grid gap-3 sm:grid-cols-3">
           {[
             ['Connect', 'Create a project, choose the agent and the account it posts through, and paste one command into your terminal.'],
-            ['Share', 'When Claude Code finishes something public, it sends what changed and why. Secrets and private work are refused.'],
+            ['Share', 'When your coding assistant finishes something public, it sends what changed and why. Secrets and private work are refused.'],
             ['Decide', 'You read each post here and approve, edit or reject it. Nothing is published until you say so.'],
           ].map(([title, line], i) => (
             <li key={title} className="panel p-4 sm:p-5">
@@ -192,14 +179,8 @@ export function DevUpdatesPage() {
     );
   }
 
-  const status = !project.enabled
-    ? { tone: 'text-signal-wait', words: 'Paused' }
-    : project.rehearse
-      ? { tone: 'text-signal-calm', words: 'Rehearsing' }
-      : { tone: 'text-signal-live', words: 'Posting for real' };
-
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-8 px-5 pb-24 pt-32 sm:px-10 sm:pt-28">
+    <div className={PAGE}>
       {header}
 
       {list.length > 1 && (
@@ -224,105 +205,204 @@ export function DevUpdatesPage() {
         </nav>
       )}
 
-      <section aria-labelledby="project-name" className="space-y-6">
-        <div className="panel p-4 sm:p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0 space-y-1">
-              <h2 id="project-name" className="break-words text-xl font-light text-bone">
-                {project.displayName}
-              </h2>
-              <p className="break-words text-[13px] text-bone-dim">
-                <span className="font-mono text-bone-dim">{project.projectKey}</span> · posts as{' '}
-                {agent ? (
-                  <Link to={`/agents/${agent.id}`} className="text-bone underline decoration-bone-dim underline-offset-4 hover:decoration-bone">
-                    {agent.name}
-                  </Link>
-                ) : (
-                  'an agent you no longer have'
-                )}{' '}
-                through <span className="font-mono text-bone">{handle ? `@${handle}` : 'an account that is gone'}</span>
-              </p>
-            </div>
-            <dl className="grid shrink-0 grid-cols-3 gap-x-5 gap-y-1 text-left sm:text-right">
-              <div>
-                <dt className="eyebrow text-bone-dim">State</dt>
-                <dd className={`mt-1 text-sm ${status.tone}`}>{status.words}</dd>
-              </div>
-              <div>
-                <dt className="eyebrow text-bone-dim">Decides</dt>
-                <dd className="mt-1 text-sm text-bone">{project.mode === 'AUTO' ? 'On its own' : 'You'}</dd>
-              </div>
-              <div>
-                <dt className="eyebrow text-bone-dim">Token</dt>
-                <dd className={`mt-1 text-sm ${project.senderToken.active ? 'text-bone' : 'text-signal-wait'}`}>
-                  {project.senderToken.active ? 'Active' : 'None'}
-                </dd>
-              </div>
-            </dl>
+      <ProjectWorkspace
+        key={project.id}
+        project={project}
+        agents={agentList}
+        connection={connection.data}
+        connectionError={connection.error}
+        onProjectChanged={projects.reload}
+      />
+
+      {newProject}
+    </div>
+  );
+}
+
+/**
+ * One project: its header, drafts, log, rules and token.
+ *
+ * Mounted with `key={project.id}`. Every resource and every piece of state in
+ * here (a draft half edited, a reason half typed, a freshly issued token) is
+ * thrown away when the owner switches project, rather than carried across and
+ * shown beside the wrong account until the next request lands.
+ */
+function ProjectWorkspace({
+  project,
+  agents,
+  connection,
+  connectionError,
+  onProjectChanged,
+}: {
+  project: DevUpdateProject;
+  agents: AgentListItem[];
+  connection: DevUpdateConnection | null;
+  connectionError: string | null;
+  onProjectChanged: () => void;
+}) {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<Tab>('review');
+  const base = `/api/dev-updates/updates?projectId=${project.id}`;
+  const updates = useResource<{ items: DevUpdate[] }>(`${base}&limit=${LOG_LIMIT}`);
+  // Asked for on their own, with the status filter, so a draft is never missing
+  // from the queue because two hundred newer updates pushed it off the log.
+  const pendingResource = useResource<{ items: DevUpdate[] }>(`${base}&status=PENDING_REVIEW&limit=${LOG_LIMIT}`);
+  const audit = useResource<{ items: RefusalRecord[] }>(`/api/audit?action=dev_updates.refused&limit=${REFUSAL_LIMIT}`);
+  const agentDetail = useResource<AgentDetail>(`/api/agents/${project.agentId}`);
+
+  usePolling(
+    () => {
+      updates.reload();
+      pendingResource.reload();
+      audit.reload();
+      agentDetail.reload();
+      onProjectChanged();
+    },
+    20_000,
+    true,
+  );
+
+  const forTab = tab === 'review' ? pendingResource : updates;
+  const waiting = (tab === 'review' || tab === 'log') && forTab.loading && !forTab.data;
+  const waited = useElapsed(waiting);
+
+  const agent = agents.find((a) => a.id === project.agentId) ?? null;
+  const handle = agents.flatMap((a) => a.accounts).find((a) => a.accountId === project.accountId)?.handle ?? null;
+  const agentPolicy = agentDetail.data?.policy?.config.automation ?? null;
+  const agentPublishing: AgentPublishing | null = agentPolicy
+    ? { dryRunDefault: agentPolicy.dryRunDefault, automationMode: agentPolicy.mode }
+    : null;
+  const publishing = publishingState(project, agentPublishing);
+  const rehearsing = publishing.heldBy === 'PROJECT_REHEARSES' || publishing.heldBy === 'AGENT_DRY_RUN';
+  const heldByAgent = publishing.heldBy === 'AGENT_DRY_RUN' || publishing.heldBy === 'AGENT_AUTOMATION';
+
+  const items = updates.data?.items ?? [];
+  const pending = (pendingResource.data?.items ?? []).slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const auditRows = useMemo(() => audit.data?.items ?? [], [audit.data]);
+  const refusals = useMemo(() => auditRows.filter((r) => r.entityId === project.id), [auditRows, project.id]);
+  const truncated = logTruncation(items.length, auditRows.length);
+
+  const tone =
+    publishing.tone === 'live'
+      ? 'text-signal-live'
+      : publishing.tone === 'wait'
+        ? 'text-signal-wait'
+        : publishing.tone === 'calm'
+          ? 'text-signal-calm'
+          : 'text-bone-dim';
+
+  return (
+    <section aria-labelledby="project-name" className="space-y-6">
+      <div className="panel p-4 sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <h2 id="project-name" className="break-words text-xl font-light text-bone">
+              {project.displayName}
+            </h2>
+            <p className="break-words text-[13px] text-bone-dim">
+              <span className="font-mono text-bone-dim">{project.projectKey}</span> · posts as{' '}
+              {agent ? (
+                <Link to={`/agents/${agent.id}`} className="text-bone underline decoration-bone-dim underline-offset-4 hover:decoration-bone">
+                  {agent.name}
+                </Link>
+              ) : (
+                'an agent you no longer have'
+              )}{' '}
+              through <span className="font-mono text-bone">{handle ? `@${handle}` : 'an account that is gone'}</span>
+            </p>
           </div>
+          <dl className="grid shrink-0 grid-cols-3 gap-x-5 gap-y-1 text-left sm:text-right">
+            <div>
+              <dt className="eyebrow text-bone-dim">State</dt>
+              <dd className={`mt-1 text-sm ${tone}`}>{publishing.words}</dd>
+            </div>
+            <div>
+              <dt className="eyebrow text-bone-dim">Decides</dt>
+              <dd className="mt-1 text-sm text-bone">{project.mode === 'AUTO' ? 'On its own' : 'You'}</dd>
+            </div>
+            <div>
+              <dt className="eyebrow text-bone-dim">Token</dt>
+              <dd className={`mt-1 text-sm ${project.senderToken.active ? 'text-bone' : 'text-signal-wait'}`}>
+                {project.senderToken.active ? 'Active' : 'None'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+        <div className="mt-4 space-y-2 border-t border-ink-line pt-4 text-[13px] leading-relaxed text-bone-dim">
+          <p className="break-words">
+            {publishing.sentence}{' '}
+            {heldByAgent && (
+              <Link to={`/agents/${project.agentId}#policies`} className="text-bone underline decoration-bone-dim underline-offset-4 hover:decoration-bone">
+                Open {agent?.name ?? 'the agent'}'s policies
+              </Link>
+            )}
+          </p>
+          {agentDetail.error && <p className="break-words text-signal-wait">The agent's own settings could not be read: {agentDetail.error}</p>}
           {project.lastDispatchReason && (
-            <p className="mt-4 break-words border-t border-ink-line pt-4 text-[13px] leading-relaxed text-bone-dim">
+            <p className="break-words">
               <span className="text-bone-dim">Latest from the queue: </span>
               {project.lastDispatchReason}
             </p>
           )}
         </div>
+      </div>
 
-        <Tabs<Tab>
-          idBase="dev-updates"
-          label="Project"
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { id: 'review', label: 'Waiting for you', count: updates.data ? pending.length : undefined },
-            { id: 'log', label: 'Log', count: updates.data ? items.length + refusals.length : undefined },
-            { id: 'rules', label: 'Rules' },
-            { id: 'connect', label: 'Connect' },
-          ]}
-        />
+      <Tabs<Tab>
+        idBase="dev-updates"
+        label="Project"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'review', label: 'Waiting for you', count: pendingResource.data ? pending.length : undefined },
+          { id: 'log', label: 'Log', count: updates.data ? items.length + refusals.length : undefined },
+          { id: 'rules', label: 'Rules' },
+          { id: 'connect', label: 'Connect' },
+        ]}
+      />
 
-        <div role="tabpanel" id={`dev-updates-panel-${tab}`} aria-labelledby={`dev-updates-tab-${tab}`} tabIndex={0} className="focus-visible:outline-offset-8">
-          {(tab === 'review' || tab === 'log') && updates.loading && !updates.data ? (
-            <Working label="Reading this project's updates" seconds={0} />
-          ) : (tab === 'review' || tab === 'log') && updates.error ? (
-            <RetryablePanel title="This project's updates could not be loaded." detail={updates.error} onRetry={updates.reload} />
-          ) : tab === 'review' ? (
-            <Review
-              updates={pending}
-              agent={agent}
-              handle={handle}
-              rehearse={project.rehearse}
-              onDecided={() => {
-                updates.reload();
-                projects.reload();
-              }}
-            />
-          ) : tab === 'log' ? (
-            <>
-              {audit.error && (
-                <div className="mb-4">
-                  <RetryablePanel title="Refusals could not be read, so they are missing below." detail={audit.error} onRetry={audit.reload} />
-                </div>
-              )}
-              <Log updates={items} refusals={refusals} />
-            </>
-          ) : tab === 'rules' ? (
-            <Rules project={project} handle={handle} onChanged={projects.reload} />
-          ) : (
-            <Connect
-              project={project}
-              connection={connection.data}
-              connectionError={connection.error}
-              freshToken={fresh?.projectId === project.id ? fresh.token : null}
-              onIssued={(token) => setFresh({ projectId: project.id, token })}
-              onForget={() => setFresh(null)}
-              onChanged={projects.reload}
-            />
-          )}
-        </div>
-      </section>
-
-      {newProject}
-    </div>
+      <div role="tabpanel" id={`dev-updates-panel-${tab}`} aria-labelledby={`dev-updates-tab-${tab}`} tabIndex={0} className="focus-visible:outline-offset-8">
+        {waiting ? (
+          <Working
+            label={tab === 'review' ? 'Reading the drafts waiting for you' : "Reading this project's updates"}
+            seconds={waited}
+            slowHint={SLOW}
+            onCancel={() => navigate('/')}
+            cancelLabel="Leave this page"
+          />
+        ) : (tab === 'review' || tab === 'log') && forTab.error ? (
+          <RetryablePanel
+            title={tab === 'review' ? 'The drafts waiting for you could not be loaded.' : "This project's updates could not be loaded."}
+            detail={forTab.error}
+            onRetry={forTab.reload}
+          />
+        ) : tab === 'review' ? (
+          <Review
+            updates={pending}
+            agent={agent}
+            handle={handle}
+            rehearse={rehearsing}
+            onDecided={() => {
+              pendingResource.reload();
+              updates.reload();
+              onProjectChanged();
+            }}
+          />
+        ) : tab === 'log' ? (
+          <>
+            {audit.error && (
+              <div className="mb-4">
+                <RetryablePanel title="Refusals could not be read, so they are missing below." detail={audit.error} onRetry={audit.reload} />
+              </div>
+            )}
+            <Log updates={items} refusals={refusals} />
+            {truncated && <p className="mt-4 break-words text-xs leading-relaxed text-bone-dim">{truncated}</p>}
+          </>
+        ) : tab === 'rules' ? (
+          <Rules project={project} handle={handle} agentPublishing={agentPublishing} onChanged={onProjectChanged} />
+        ) : (
+          <Connect project={project} connection={connection} connectionError={connectionError} onChanged={onProjectChanged} />
+        )}
+      </div>
+    </section>
   );
 }

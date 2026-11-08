@@ -2,36 +2,31 @@ import { useState } from 'react';
 import { KeyRound, ShieldOff } from 'lucide-react';
 import { del, post } from '@app/lib/api';
 import { timeAgo } from '@app/lib/format';
-import { transportBase } from '@app/lib/transport';
 import { Modal } from '@app/components/ui';
-import { apiUrlFrom, mcpAddCommand, type DevUpdateConnection, type DevUpdateProject } from '@app/lib/devUpdates';
-import { CopyButton, ProblemList, problemOf } from './parts';
+import type { DevUpdateConnection, DevUpdateProject } from '@app/lib/devUpdates';
+import { ProblemList, problemOf } from './parts';
+import { TokenReveal } from './TokenReveal';
 
 /**
- * The sender token, and the one command that hands it to Claude Code.
+ * The sender token: issue, replace, revoke, and show a new one once.
  *
- * The token exists in the browser only in component state, for as long as this
- * screen is open and the owner has not said they are done with it: never in
- * localStorage, never in a URL, never in a log. The server keeps only its hash,
- * so once it is hidden it is gone, and the answer to a lost token is a new one.
+ * A token issued here lives in this component's state and nowhere else, and
+ * only until it is hidden. Leaving this tab or switching project unmounts the
+ * component, and the token goes with it: it does not come back when the owner
+ * returns. Nothing above this component ever holds it.
  */
 export function Connect({
   project,
   connection,
   connectionError,
-  freshToken,
-  onIssued,
-  onForget,
   onChanged,
 }: {
   project: DevUpdateProject;
   connection: DevUpdateConnection | null;
   connectionError: string | null;
-  freshToken: string | null;
-  onIssued: (token: string) => void;
-  onForget: () => void;
   onChanged: () => void;
 }) {
+  const [fresh, setFresh] = useState<string | null>(null);
   const [busy, setBusy] = useState<'issue' | 'revoke' | null>(null);
   const [problem, setProblem] = useState<string[] | null>(null);
   const [confirm, setConfirm] = useState<'replace' | 'revoke' | null>(null);
@@ -43,7 +38,7 @@ export function Connect({
     setProblem(null);
     try {
       const result = await post<{ senderToken: string }>(`/api/dev-updates/projects/${project.id}/sender-token`);
-      onIssued(result.senderToken);
+      setFresh(result.senderToken);
       onChanged();
     } catch (error) {
       setProblem(problemOf(error, 'A new token could not be issued.'));
@@ -58,7 +53,7 @@ export function Connect({
     setProblem(null);
     try {
       await del(`/api/dev-updates/projects/${project.id}/sender-token`);
-      onForget();
+      setFresh(null);
       onChanged();
     } catch (error) {
       setProblem(problemOf(error, 'The token could not be revoked.'));
@@ -67,71 +62,17 @@ export function Connect({
     }
   };
 
-  const apiUrl = apiUrlFrom(transportBase(), window.location.origin);
-  const serverPath = connection?.mcpServerPath ?? null;
-  const command =
-    freshToken && connection
-      ? mcpAddCommand({
-          serverName: connection.serverName,
-          apiUrl,
-          token: freshToken,
-          projectKey: project.projectKey,
-          serverPath: serverPath ?? '<path to tools/dev-updates-mcp.mjs>',
-        })
-      : null;
-
   return (
     <div className="space-y-6">
-      {freshToken ? (
-        <section
-          aria-labelledby="token-reveal"
-          className="space-y-5 rounded-xl border border-signal-calm/40 bg-signal-calm/[0.05] p-4 sm:p-5"
-        >
-          <div className="space-y-1.5">
-            <h3 id="token-reveal" className="flex items-center gap-2 text-[15px] font-medium text-bone">
-              <KeyRound className="h-4 w-4 text-signal-calm" aria-hidden /> Copy this now. It is shown once.
-            </h3>
-            <p className="text-[13px] leading-relaxed text-bone-dim">
-              AI17Z keeps only a fingerprint of it, so if you lose it you issue a new one. Anyone holding it can send
-              updates for {project.displayName}, but cannot approve or post anything.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <p className="eyebrow text-bone-dim">Run this where you use Claude Code</p>
-            {command ? (
-              <pre className="whitespace-pre-wrap break-all rounded-lg border border-ink-line bg-ink px-3.5 py-3 font-mono text-[12px] leading-relaxed text-bone [font-variant-ligatures:none]">
-                {command}
-              </pre>
-            ) : (
-              <p className="break-words text-sm text-signal-fail" role="alert">
-                The command could not be prepared: {connectionError ?? 'this installation did not answer.'}
-              </p>
-            )}
-            <div className="flex flex-wrap items-center gap-3">
-              {command && <CopyButton value={command} label="Copy command" />}
-            </div>
-            {connection?.reason && <p className="break-words text-xs leading-relaxed text-signal-wait">{connection.reason}</p>}
-            <p className="text-xs leading-relaxed text-bone-dim">
-              Run it inside the project folder. Local scope keeps the token in your own Claude Code settings, out of the
-              repository. Then ask Claude Code to share an update when something is finished.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <p className="eyebrow text-bone-dim">The token on its own</p>
-            <code className="block break-all rounded-lg border border-ink-line bg-ink px-3.5 py-3 font-mono text-[12px] text-bone [font-variant-ligatures:none]">
-              {freshToken}
-            </code>
-            <CopyButton value={freshToken} label="Copy token" />
-          </div>
-
-          <div className="flex justify-end">
-            <button type="button" className="btn-ghost" onClick={onForget}>
-              I have copied it, hide it
-            </button>
-          </div>
-        </section>
+      {fresh ? (
+        <TokenReveal
+          token={fresh}
+          projectKey={project.projectKey}
+          projectName={project.displayName}
+          connection={connection}
+          connectionError={connectionError}
+          onDone={() => setFresh(null)}
+        />
       ) : null}
 
       <section aria-labelledby="token-state" className="panel space-y-4 p-4 sm:p-5">
@@ -181,7 +122,7 @@ export function Connect({
           <p className="text-sm leading-relaxed text-bone-dim">
             {confirm === 'revoke'
               ? 'The token stops working at once. Your coding assistant will not be able to send updates until you issue a new one. Updates already sent stay where they are.'
-              : 'The current token stops working at once, and you will need to give Claude Code the new one. Updates already sent stay where they are.'}
+              : 'The current token stops working at once, and you will need to give your coding assistant the new one. Updates already sent stay where they are.'}
           </p>
           <div className="flex flex-wrap justify-end gap-2">
             <button type="button" className="btn-quiet" onClick={() => setConfirm(null)}>

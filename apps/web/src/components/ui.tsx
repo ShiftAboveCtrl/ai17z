@@ -633,7 +633,7 @@ export function Tabs<T extends string>({
     refs.current[tab.id]?.focus();
   };
   return (
-    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className="scroll-x -mx-1 flex gap-1 border-b border-ink-line px-1">
+    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className="scroll-x -mx-1 flex gap-1 overflow-y-hidden border-b border-ink-line px-1">
       {tabs.map((tab) => {
         const selected = tab.id === value;
         return (

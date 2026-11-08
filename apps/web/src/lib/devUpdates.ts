@@ -250,3 +250,121 @@ export function mcpAddCommand(input: { serverName: string; apiUrl: string; token
     `"${input.serverPath}"`,
   ].join(' ');
 }
+
+// ── Whether this project really publishes ──────────────────────────────────
+
+/** What the agent's own policy says, as far as this screen needs it. Null while unknown. */
+export interface AgentPublishing {
+  dryRunDefault: boolean;
+  automationMode: string;
+}
+
+export type PublishingHeldBy = 'PROJECT_PAUSED' | 'PROJECT_REHEARSES' | 'AGENT_DRY_RUN' | 'AGENT_AUTOMATION' | null;
+
+export interface PublishingState {
+  /** A word or two for the header. */
+  words: string;
+  tone: 'live' | 'wait' | 'calm' | 'unknown';
+  heldBy: PublishingHeldBy;
+  /** One sentence naming the switch that holds publishing, or saying nothing does. */
+  sentence: string;
+}
+
+/**
+ * Which switch, if any, stops an approved update reaching the account.
+ *
+ * There are two rehearsal switches and the dispatcher honours both: the
+ * project's own, and the agent's "dry run by default", which a new agent has
+ * on. A header that read only the project's flag said "posting for real" over
+ * a project whose every update was rehearsing. The order is the order an owner
+ * would fix them in: this project first, then the agent. Until the agent's
+ * policy has been read, nothing is claimed.
+ */
+export function publishingState(
+  project: Pick<DevUpdateProject, 'enabled' | 'rehearse'>,
+  agent: AgentPublishing | null,
+): PublishingState {
+  if (!project.enabled) {
+    return { words: 'Paused', tone: 'wait', heldBy: 'PROJECT_PAUSED', sentence: 'This project is paused, so nothing is handed to the agent.' };
+  }
+  if (project.rehearse) {
+    return {
+      words: 'Rehearsing',
+      tone: 'calm',
+      heldBy: 'PROJECT_REHEARSES',
+      sentence: "This project rehearses: approved updates are checked end to end and not published.",
+    };
+  }
+  if (!agent) return { words: 'Checking', tone: 'unknown', heldBy: null, sentence: "Reading the agent's own settings." };
+  if (agent.dryRunDefault) {
+    return {
+      words: 'Rehearsing',
+      tone: 'calm',
+      heldBy: 'AGENT_DRY_RUN',
+      sentence: "The agent's own policy runs everything as a dry run, so updates still rehearse. Turn off Dry run by default in the agent's policies to publish.",
+    };
+  }
+  if (agent.automationMode === 'OFF' || agent.automationMode === 'MONITOR_ONLY') {
+    return {
+      words: 'Held by the agent',
+      tone: 'wait',
+      heldBy: 'AGENT_AUTOMATION',
+      sentence: `The agent's automation is ${agent.automationMode.toLowerCase().replace(/_/g, ' ')}, so nothing is posted. Change it in the agent's policies.`,
+    };
+  }
+  return { words: 'Posting for real', tone: 'live', heldBy: null, sentence: 'Approved updates are published on the account.' };
+}
+
+// ── The command, only when it can work ─────────────────────────────────────
+
+export const MCP_SERVER_FILE = 'dev-updates-mcp.mjs';
+
+/**
+ * The command to offer, or why there is none yet.
+ *
+ * A command with a placeholder in it is a command that fails when pasted, and
+ * a copy button says it is ready. So when the installation cannot say where
+ * its MCP server is (a container, a missing file), the owner is asked for the
+ * path on their own machine first, and no command exists until they give one.
+ */
+export function commandState(input: {
+  connection: DevUpdateConnection | null;
+  localPath: string;
+  apiUrl: string;
+  token: string;
+  projectKey: string;
+}): { command: string | null; needsLocalPath: boolean; pathProblem: string | null } {
+  if (!input.connection) return { command: null, needsLocalPath: false, pathProblem: null };
+  const known = input.connection.mcpServerPath;
+  const typed = input.localPath.trim().replace(/^"(.*)"$/, '$1');
+  const path = known ?? typed;
+  const needsLocalPath = known === null;
+  if (!path) return { command: null, needsLocalPath, pathProblem: null };
+  // Absolute, because Claude Code starts the server from wherever it happens
+  // to be running, and a relative path works from one folder only.
+  const absolute = /^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(path);
+  if (!absolute || !path.replace(/\\/g, '/').endsWith(`/${MCP_SERVER_FILE}`)) {
+    return { command: null, needsLocalPath, pathProblem: `Give the full path to ${MCP_SERVER_FILE} on your machine, from the drive or root to the file name.` };
+  }
+  if (path.includes('"')) return { command: null, needsLocalPath, pathProblem: 'The path cannot contain a quotation mark.' };
+  return {
+    command: mcpAddCommand({ serverName: input.connection.serverName, apiUrl: input.apiUrl, token: input.token, projectKey: input.projectKey, serverPath: path }),
+    needsLocalPath,
+    pathProblem: null,
+  };
+}
+
+// ── What the log leaves out ────────────────────────────────────────────────
+
+export const LOG_LIMIT = 200;
+export const REFUSAL_LIMIT = 200;
+
+/** Said under the log when a list came back full, so a missing old entry is not a mystery. */
+export function logTruncation(updates: number, auditRows: number): string | null {
+  const parts: string[] = [];
+  if (updates >= LOG_LIMIT) parts.push(`This shows the newest ${LOG_LIMIT} updates; older ones are kept but not listed here.`);
+  if (auditRows >= REFUSAL_LIMIT) {
+    parts.push(`Refusals come from the newest ${REFUSAL_LIMIT} refusal records on this installation, so older ones are not listed.`);
+  }
+  return parts.length > 0 ? parts.join(' ') : null;
+}
