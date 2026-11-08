@@ -338,16 +338,28 @@ export const DEV_UPDATES_MCP_NAME = 'ai17z-dev-updates';
  * is the container's path, which means nothing on the machine Claude Code runs
  * on, so it is not offered.
  */
-export function devUpdateConnection(): { serverName: string; mcpServerPath: string | null; reason: string | null } {
+export interface ConnectionProbe {
+  /** Whether this process runs inside a container. */
+  inContainer: () => boolean;
+  exists: (path: string) => boolean;
+}
+
+const HOST_PROBE: ConnectionProbe = { inContainer: () => existsSync('/.dockerenv'), exists: existsSync };
+
+export function devUpdateConnection(probe: ConnectionProbe = HOST_PROBE): {
+  serverName: string;
+  mcpServerPath: string | null;
+  reason: string | null;
+} {
   const path = resolvePath(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tools', 'dev-updates-mcp.mjs');
-  if (existsSync('/.dockerenv')) {
+  if (probe.inContainer()) {
     return {
       serverName: DEV_UPDATES_MCP_NAME,
       mcpServerPath: null,
-      reason: 'This AI17Z runs in a container, so its copy of the MCP server is not on your machine. Use tools/dev-updates-mcp.mjs from a copy of AI17Z on the machine where Claude Code runs.',
+      reason: 'This AI17Z runs in a container, so its copy of the MCP server is not on your machine. Use tools/dev-updates-mcp.mjs from a copy of AI17Z on the machine where your coding assistant runs.',
     };
   }
-  if (!existsSync(path)) {
+  if (!probe.exists(path)) {
     return {
       serverName: DEV_UPDATES_MCP_NAME,
       mcpServerPath: null,

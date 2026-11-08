@@ -6,7 +6,7 @@ import { DEFAULT_POLICY, type PolicyConfig } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
 import { accountLease, accounts, actions, agents, capabilities, jobs, query } from '@xbam/database';
 import { mockAdapter } from '@xbam/channels';
-import { approveJob, dispatchDevUpdates, reconcileDevUpdates, runDevUpdates } from '@xbam/runtime';
+import { approveJob, devUpdateConnection, dispatchDevUpdates, reconcileDevUpdates, runDevUpdates } from '@xbam/runtime';
 import { buildServer } from '../../apps/api/src/server';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -243,6 +243,20 @@ describe('two credentials that cannot stand in for each other', () => {
     expect(data.mcpServerPath).toMatch(/[\\/]tools[\\/]dev-updates-mcp\.mjs$/);
     expect(existsSync(data.mcpServerPath)).toBe(true);
     expect(isAbsolute(data.mcpServerPath)).toBe(true);
+  });
+
+  it('offers no path from inside a container, because it would mean nothing on the owner machine', () => {
+    const inside = devUpdateConnection({ inContainer: () => true, exists: () => true });
+    expect(inside.mcpServerPath).toBeNull();
+    expect(inside.reason).toMatch(/container/);
+    expect(inside.serverName).toBe('ai17z-dev-updates');
+  });
+
+  it('offers no path when the MCP server file is missing, and says how to get it back', () => {
+    const missing = devUpdateConnection({ inContainer: () => false, exists: () => false });
+    expect(missing.mcpServerPath).toBeNull();
+    expect(missing.reason).toMatch(/missing/);
+    expect(missing.reason).toMatch(/dev-updates-mcp\.mjs/);
   });
 
   it('stops honouring a token once it is rotated or revoked', async () => {
