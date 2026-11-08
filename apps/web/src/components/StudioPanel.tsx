@@ -414,7 +414,8 @@ function LiveViewSection() {
   );
 }
 
-function LinkSection({ status, onChanged }: { status: StudioStatus; onChanged: () => void }) {
+/** Exported so the link click can be tested without a DOM. */
+export function LinkSection({ status, onChanged }: { status: StudioStatus; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [replace, setReplace] = useState(true);
