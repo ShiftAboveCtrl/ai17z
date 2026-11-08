@@ -10,9 +10,8 @@ import {
   accountChoices,
   creationReducer,
   suggestKey,
-  type DevUpdateConnection,
-  type DevUpdateProject,
 } from '@app/lib/devUpdates';
+import type { DevUpdateConnection, DevUpdateProject } from '@app/lib/devUpdates';
 import { ProblemList, problemOf } from './parts';
 import { TokenReveal } from './TokenReveal';
 
@@ -54,6 +53,10 @@ export function NewProject({
   // await, can tell whether it is still current without reading stale state.
   const [creation, dispatch] = useReducer(creationReducer, INITIAL_CREATION);
   const generation = useRef(INITIAL_CREATION.generation);
+  const requestClose = () => {
+    if (creation.revealed && !window.confirm('Have you copied the token? Closing hides it, and it cannot be shown again.')) return;
+    close();
+  };
   const close = () => {
     generation.current += 1;
     dispatch({ type: 'close' });
@@ -120,7 +123,7 @@ export function NewProject({
   };
 
   return (
-    <Modal open={open} onClose={close} title={created ? 'Project created' : 'New project'}>
+    <Modal open={open} onClose={requestClose} title={created ? 'Project created' : 'New project'}>
       {created ? (
         <TokenReveal
           token={created.token}
