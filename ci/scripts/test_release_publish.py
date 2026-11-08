@@ -110,6 +110,22 @@ class Publishing(unittest.TestCase):
         self.assertTrue(api.draft_exists("v1.0.0-beta.89"))
         self.assertFalse(api.draft_exists("v1.0.0-beta.91"))
 
+    def test_forgejo_attachments_are_fetched_once(self):
+        # Forgejo ignores paging on this endpoint and returns the whole list
+        # for every page asked for.
+        everything = [{"name": f"file-{n}", "size": n, "id": n} for n in range(30)]
+        calls = []
+        api = MODULE.Api("aicode", "offline")
+        api.request = lambda path, *rest: calls.append(path) or list(everything)
+        self.assertEqual(api.assets({"id": 4}), everything)
+        self.assertEqual(len(calls), 1)
+
+    def test_github_attachments_are_paged_until_empty(self):
+        pages = {1: [{"name": "a"}], 2: [{"name": "b"}], 3: []}
+        api = MODULE.Api("github", "offline")
+        api.request = lambda path, *rest: pages[int(re.search(r"[?&]page=(\d+)", path).group(1))]
+        self.assertEqual([row["name"] for row in api.assets({"id": 4})], ["a", "b"])
+
     def test_digest_is_chunked_and_needs_no_python_311(self):
         big = self.directory / "big.bin"
         big.write_bytes(b"x" * (3 * 1024 * 1024 + 5))

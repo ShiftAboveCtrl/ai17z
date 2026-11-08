@@ -133,6 +133,14 @@ class Api:
             json.load(response)
 
     def assets(self, release):
+        if self.host != "github":
+            # Forgejo's attachment list ignores paging and answers every page
+            # with the whole list, so it is asked once. Paging it would fetch
+            # the same rows a hundred times and then refuse the release.
+            rows = self.request(f"/releases/{release['id']}/assets")
+            if len(rows) > 1000:
+                raise ValueError("too many release assets")
+            return rows
         result = []
         for page in range(1, 101):
             rows = self.request(f"/releases/{release['id']}/assets?per_page=100&limit=100&page={page}")

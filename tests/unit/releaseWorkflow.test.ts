@@ -744,7 +744,7 @@ describe('the publishing shell trusts nothing another job wrote', () => {
     const dir = room();
     try {
       const git = (...args: string[]) =>
-        spawnSync('git', ['-C', dir, '-c', 'user.name=S', '-c', 'user.email=s@example.invalid', '-c', 'core.hooksPath=', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+        spawnSync('git', ['-C', dir, '-c', 'user.name=ShiftAboveCtrl', '-c', 'user.email=290837309+ShiftAboveCtrl@users.noreply.github.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
       git('init', '-q', '-b', 'main');
       git('commit', '-q', '--allow-empty', '-m', 'on main');
       const onMain = git('rev-parse', 'HEAD').stdout.trim();
