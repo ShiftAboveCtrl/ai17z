@@ -63,11 +63,19 @@ export function TokenReveal({
           <p className="break-words text-sm text-signal-fail" role="alert">
             The command could not be prepared: {connectionError ?? 'this installation did not answer.'}
           </p>
+        ) : state.problem ? (
+          <p className="break-words text-sm text-signal-fail" role="alert">
+            {state.problem}
+          </p>
         ) : (
           <>
             {state.needsLocalPath && (
               <div className="space-y-2 rounded-lg border border-signal-wait/30 bg-signal-wait/[0.04] px-3.5 py-3">
-                <p className="break-words text-[13px] leading-relaxed text-bone-dim">{connection.reason}</p>
+                <p className="break-words text-[13px] leading-relaxed text-bone-dim">
+                  {state.installPathUnsafe
+                    ? 'This installation keeps its MCP server at a path with characters a terminal could treat as part of a command, so it is not put into one.'
+                    : connection.reason}
+                </p>
                 <label htmlFor={pathId} className="block text-[13px] text-bone">
                   Where is {MCP_SERVER_FILE} on the machine you code on?
                 </label>

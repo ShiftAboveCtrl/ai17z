@@ -8,11 +8,17 @@ import {
   STATUS_WORDS,
   LOG_LIMIT,
   REFUSAL_LIMIT,
+  INITIAL_CREATION,
   accountChoices,
+  agentPublishingFor,
   apiUrlFrom,
+  checkServerPath,
   commandState,
+  creationReducer,
   logTruncation,
   publishingState,
+  type CreationState,
+  type DevUpdateProject,
   mcpAddCommand,
   refusalSentences,
   spacingWords,
@@ -121,7 +127,7 @@ describe('which switch holds publishing', () => {
 });
 
 describe('a command is offered only when it can work', () => {
-  const base = { apiUrl: 'http://localhost:5173', token: 'ai17z_dus_abc', projectKey: 'my-app' };
+  const base = { apiUrl: 'http://localhost:5173', token: `ai17z_dus_${'c'.repeat(32)}`, projectKey: 'my-app' };
   const container = { serverName: 'ai17z-dev-updates', mcpServerPath: null, reason: 'This AI17Z runs in a container.' };
 
   it('offers no command with a placeholder path from a container install', () => {
@@ -193,13 +199,193 @@ describe('nothing from one project survives switching to another', () => {
     expect(connect).not.toMatch(/freshToken|onIssued/);
     const create = read('apps/web/src/routes/devUpdates/NewProject.tsx');
     // However the dialog closes, the token goes.
-    expect(create).toMatch(/const close = \(\) => \{\s*setCreated\(null\);/);
+    // Every close starts a new generation, which is what drops the token
+    // (see creationReducer), and every way of closing goes through it.
+    expect(create).toMatch(/const close = \(\) => \{\s*generation\.current \+= 1;\s*dispatch\(\{ type: 'close' \}\);/);
     expect(create).toMatch(/onClose=\{close\}/);
+    expect(create).not.toMatch(/useState<\{ project: DevUpdateProject; senderToken/);
   });
 
   it('counts real seconds while it waits, and offers a way out', () => {
     expect(page).not.toMatch(/seconds=\{0\}/);
     expect(page.match(/useElapsed\(/g)?.length).toBeGreaterThanOrEqual(2);
     expect(page.match(/onCancel=/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('keeps the new project dialog in one place, so the first project does not remount it', () => {
+    // Review round 2: creating the first project moved the page from the empty
+    // state to the project view, the dialog sat in a different place in each,
+    // and React mounted a new one, dropping the token it had just received.
+    const shell = page.slice(page.indexOf('export function DevUpdatesPage'), page.indexOf('function ProjectWorkspace'));
+    expect(shell.match(/<NewProject\b/g)).toHaveLength(1);
+    expect(shell.match(/\{newProject\}/g)).toHaveLength(1);
+    expect(shell.match(/\breturn \(/g)).toHaveLength(1);
+    expect(shell).toMatch(/<div className=\{PAGE\}>\s*\{header\}\s*\{body\}\s*<\/div>\s*\{newProject\}/);
+  });
+});
+
+const project = (id: string): DevUpdateProject => ({
+  id,
+  projectKey: `key-${id}`,
+  displayName: `Project ${id}`,
+  agentId: 'agent',
+  accountId: 'account',
+  mode: 'DRAFT',
+  enabled: true,
+  dailyCap: 2,
+  minSpacingMinutes: 240,
+  rehearse: true,
+  senderToken: { active: true, hint: 'abcd', issuedAt: null },
+  lastDispatchReason: null,
+  createdAt: '',
+  updatedAt: '',
+});
+
+describe('the token from creating a project is shown once, to the dialog that asked', () => {
+  const TOKEN = `ai17z_dus_${'b'.repeat(24)}`;
+  const run = (events: Parameters<typeof creationReducer>[1][]): CreationState => events.reduce(creationReducer, INITIAL_CREATION);
+
+  it('reveals the token when the answer comes back to the same dialog', () => {
+    const state = run([{ type: 'submit' }, { type: 'succeeded', generation: 0, project: project('a'), token: TOKEN }]);
+    expect(state.revealed?.token).toBe(TOKEN);
+    expect(state.pending).toBeNull();
+    expect(state.orphan).toBeNull();
+  });
+
+  it('never keeps or reveals a token whose answer arrives after the dialog closed', () => {
+    // Review round 2: closing while creation was pending let the late answer
+    // store the token, and opening the dialog again showed it.
+    const late = run([{ type: 'submit' }, { type: 'close' }, { type: 'succeeded', generation: 0, project: project('a'), token: TOKEN }]);
+    expect(late.revealed).toBeNull();
+    expect(JSON.stringify(late)).not.toContain(TOKEN);
+    // The project exists on the server, so the owner is told about it.
+    expect(late.orphan?.id).toBe('a');
+    expect(run([{ type: 'submit' }, { type: 'close' }, { type: 'succeeded', generation: 0, project: project('a'), token: TOKEN }, { type: 'dismissOrphan' }]).orphan).toBeNull();
+  });
+
+  it('does not let a late answer or failure disturb the next attempt', () => {
+    const second = run([
+      { type: 'submit' },
+      { type: 'close' },
+      { type: 'submit' },
+      { type: 'failed', generation: 0 },
+      { type: 'succeeded', generation: 0, project: project('old'), token: TOKEN },
+    ]);
+    expect(second.pending).toBe(1);
+    expect(second.revealed).toBeNull();
+    const shown = creationReducer(second, { type: 'succeeded', generation: 1, project: project('new'), token: `${TOKEN}b` });
+    expect(shown.revealed?.project.id).toBe('new');
+    expect(shown.orphan?.id).toBe('old');
+  });
+
+  it('forgets a revealed token as soon as the dialog closes', () => {
+    const closed = run([{ type: 'submit' }, { type: 'succeeded', generation: 0, project: project('a'), token: TOKEN }, { type: 'close' }]);
+    expect(closed.revealed).toBeNull();
+    expect(JSON.stringify(closed)).not.toContain(TOKEN);
+  });
+});
+
+describe('nothing pasted into a terminal can be expanded by it', () => {
+  // Built here so no token-shaped literal sits in a tracked file.
+  const ok = { apiUrl: 'http://127.0.0.1:8787', token: `ai17z_dus_${'a1_-'.repeat(11)}`, projectKey: 'my-app' };
+  const asking = { serverName: 'ai17z-dev-updates', mcpServerPath: null, reason: 'Inside a container.' };
+  const known = (mcpServerPath: string) => ({ serverName: 'ai17z-dev-updates', mcpServerPath, reason: null });
+
+  // Review round 2: these all expand inside double quotes in at least one of
+  // bash, zsh, PowerShell or cmd.
+  const hostile = [
+    'C:\\AI17Z\\$(Remove-Item x)\\dev-updates-mcp.mjs',
+    '/opt/$(touch pwned)/dev-updates-mcp.mjs',
+    '/opt/`id`/dev-updates-mcp.mjs',
+    'C:\\%USERPROFILE%\\tools\\dev-updates-mcp.mjs',
+    'C:\\!PATH!\\tools\\dev-updates-mcp.mjs',
+    '/opt/a;rm -rf b/dev-updates-mcp.mjs',
+    'C:\\a & calc\\dev-updates-mcp.mjs',
+    '/opt/a|nc host 1/dev-updates-mcp.mjs',
+    '/opt/a\nrm b/dev-updates-mcp.mjs',
+    '/opt/$HOME/dev-updates-mcp.mjs',
+    '/opt/a"b/dev-updates-mcp.mjs',
+    "/opt/a'b/dev-updates-mcp.mjs",
+    '/opt/a>b/dev-updates-mcp.mjs',
+    'C:\\a^b\\dev-updates-mcp.mjs',
+    '~/ai17z/tools/dev-updates-mcp.mjs',
+  ];
+
+  it.each(hostile)('refuses the path %j with a sentence and offers no command', (path) => {
+    expect(checkServerPath(path)).not.toBe('ok');
+    const state = commandState({ ...ok, connection: asking, localPath: path });
+    expect(state.command).toBeNull();
+    expect(state.pathProblem).toMatch(/\.$/);
+  });
+
+  it.each(hostile)('does not paste an installation path %j either, and asks instead', (path) => {
+    const state = commandState({ ...ok, connection: known(path), localPath: '' });
+    expect(state.command).toBeNull();
+    expect(state.installPathUnsafe).toBe(true);
+    expect(state.needsLocalPath).toBe(true);
+  });
+
+  it('accepts ordinary paths, including spaces, round brackets and letters in any script', () => {
+    for (const path of [
+      'C:\\Program Files (x86)\\AI17Z\\tools\\dev-updates-mcp.mjs',
+      'C:/Users/someone/AI17Z/tools/dev-updates-mcp.mjs',
+      'D:\\Développement\\ai17z\\tools\\dev-updates-mcp.mjs',
+      '/home/someone/ai17z/tools/dev-updates-mcp.mjs',
+    ]) {
+      expect(checkServerPath(path), path).toBe('ok');
+      expect(commandState({ ...ok, connection: known(path), localPath: '' }).command, path).toContain(`-- node "${path}"`);
+    }
+  });
+
+  it.each([
+    ['an API address with a command in it', { apiUrl: 'http://localhost:8787/$(id)' }],
+    ['an API address with an ampersand', { apiUrl: 'http://localhost:8787/a&calc' }],
+    ['an API address with a query', { apiUrl: 'http://localhost:8787/?a=1' }],
+    ['an API address with backticks', { apiUrl: 'http://`id`.example.invalid' }],
+    ['an IPv6 address, whose brackets are a glob', { apiUrl: 'http://[::1]:8787' }],
+    ['an API address with a tilde', { apiUrl: 'http://localhost:8787/~x' }],
+    ['an API address that is not http', { apiUrl: 'file:///etc/passwd' }],
+    ['a project key with a semicolon', { projectKey: 'a;id' }],
+    ['a project key with a command', { projectKey: '$(id)' }],
+    ['a token with a command', { token: 'ai17z_dus_$(id)aaaaaaaaaaaaaaaa' }],
+    ['a token with a newline', { token: 'ai17z_dus_aaaaaaaaaaaaaaaa\nid' }],
+    ['a token with a percent sign', { token: 'ai17z_dus_%PATH%aaaaaaaaaaaaaaaa' }],
+  ])('refuses %s', (_label, change) => {
+    const state = commandState({ ...ok, ...change, connection: known('/opt/ai17z/tools/dev-updates-mcp.mjs'), localPath: '' });
+    expect(state.command).toBeNull();
+    expect(state.problem).toMatch(/\.$/);
+  });
+
+  it('refuses a server name a shell would read', () => {
+    const state = commandState({ ...ok, connection: { serverName: 'x;id', mcpServerPath: '/opt/ai17z/tools/dev-updates-mcp.mjs', reason: null }, localPath: '' });
+    expect(state.command).toBeNull();
+    expect(state.problem).toBeTruthy();
+  });
+});
+
+describe("the agent's switches are this agent's", () => {
+  const detail = (id: string, config: unknown) => ({ agent: { id }, policy: config === null ? null : { config } });
+
+  it('ignores a detail that belongs to the agent the project used to map to', () => {
+    // Review round 2: after remapping, the previous agent's policy stayed on
+    // screen while the new one loaded, or for ever if that request failed.
+    expect(agentPublishingFor(detail('old-agent', { automation: { dryRunDefault: false, mode: 'AUTONOMOUS' } }), 'new-agent')).toBeNull();
+    expect(agentPublishingFor(null, 'new-agent')).toBeNull();
+  });
+
+  it("reads a matching agent's switches, and the schema defaults when it has no policy", () => {
+    expect(agentPublishingFor(detail('a', { automation: { dryRunDefault: false, mode: 'AUTONOMOUS' } }), 'a')).toEqual({
+      dryRunDefault: false,
+      automationMode: 'AUTONOMOUS',
+    });
+    // The dispatcher parses a missing policy with the same defaults: dry run on.
+    expect(agentPublishingFor(detail('a', null), 'a')?.dryRunDefault).toBe(true);
+  });
+
+  it('says the state is unknown, not checking, when the read failed', () => {
+    const failed = publishingState({ enabled: true, rehearse: false }, null, 'The API is not reachable.');
+    expect(failed.words).toBe('Unknown');
+    expect(failed.sentence).toContain('The API is not reachable.');
+    expect(publishingState({ enabled: true, rehearse: false }, null).words).toBe('Checking');
   });
 });

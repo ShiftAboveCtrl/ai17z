@@ -1,10 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useReducer, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import type { AgentListItem } from '@app/lib/types';
 import { ChoiceGroup, ChoiceOption, Field, Modal } from '@app/components/ui';
-import { KEY_PATTERN, accountChoices, suggestKey, type DevUpdateConnection, type DevUpdateProject } from '@app/lib/devUpdates';
+import {
+  INITIAL_CREATION,
+  KEY_PATTERN,
+  accountChoices,
+  creationReducer,
+  suggestKey,
+  type DevUpdateConnection,
+  type DevUpdateProject,
+} from '@app/lib/devUpdates';
 import { ProblemList, problemOf } from './parts';
 import { TokenReveal } from './TokenReveal';
 
@@ -28,27 +36,36 @@ export function NewProject({
   connectionError,
   onClose,
   onCreated,
+  onOpenConnect,
 }: {
   open: boolean;
   agents: AgentListItem[];
   connection: DevUpdateConnection | null;
   connectionError: string | null;
   onClose: () => void;
-  onCreated: (project: DevUpdateProject) => void;
+  /** `current` is false for a project whose response arrived after the dialog closed. */
+  onCreated: (project: DevUpdateProject, current: boolean) => void;
+  /** Opens a project on its Connect tab, where a lost token is replaced. */
+  onOpenConnect: (projectId: string) => void;
 }) {
-  // The new project's token, for the reveal and nothing else. Cleared however
-  // the dialog closes, so it is never shown twice and never outlives it.
-  const [created, setCreated] = useState<{ project: DevUpdateProject; senderToken: string } | null>(null);
+  // See creationReducer: the token exists here only for the generation that
+  // asked for it, and every close starts a new one. The ref moves in step with
+  // the reducer's own generation so the response handler, which runs after an
+  // await, can tell whether it is still current without reading stale state.
+  const [creation, dispatch] = useReducer(creationReducer, INITIAL_CREATION);
+  const generation = useRef(INITIAL_CREATION.generation);
   const close = () => {
-    setCreated(null);
+    generation.current += 1;
+    dispatch({ type: 'close' });
     onClose();
   };
+  const created = creation.revealed;
+  const busy = creation.pending !== null;
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [keyTouched, setKeyTouched] = useState(false);
   const [agentId, setAgentId] = useState<string>(agents[0]?.id ?? '');
   const [accountId, setAccountId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string[] | null>(null);
   const [tried, setTried] = useState(false);
 
@@ -72,8 +89,9 @@ export function NewProject({
   const submit = async () => {
     setTried(true);
     setProblem(null);
-    if (!name.trim() || !KEY_PATTERN.test(effectiveKey) || !agent || !chosen) return;
-    setBusy(true);
+    if (busy || !name.trim() || !KEY_PATTERN.test(effectiveKey) || !agent || !chosen) return;
+    const asked = generation.current;
+    dispatch({ type: 'submit' });
     try {
       const result = await post<{ project: DevUpdateProject; senderToken: string }>('/api/dev-updates/projects', {
         projectKey: effectiveKey,
@@ -81,16 +99,20 @@ export function NewProject({
         agentId: agent.id,
         accountId: chosen.accountId,
       });
+      const current = asked === generation.current;
+      // The reducer decides whether the token is shown; a stale answer is
+      // kept as an orphan without it.
+      dispatch({ type: 'succeeded', generation: asked, project: result.project, token: result.senderToken });
+      // Cleared whether or not the answer is current: the project exists either
+      // way, and a form still holding its name only invites "already exists".
       setName('');
       setKey('');
       setKeyTouched(false);
       setTried(false);
-      setCreated(result);
-      onCreated(result.project);
+      onCreated(result.project, current);
     } catch (error) {
-      setProblem(problemOf(error, 'The project could not be created.'));
-    } finally {
-      setBusy(false);
+      dispatch({ type: 'failed', generation: asked });
+      if (asked === generation.current) setProblem(problemOf(error, 'The project could not be created.'));
     }
   };
 
@@ -98,7 +120,7 @@ export function NewProject({
     <Modal open={open} onClose={close} title={created ? 'Project created' : 'New project'}>
       {created ? (
         <TokenReveal
-          token={created.senderToken}
+          token={created.token}
           projectKey={created.project.projectKey}
           projectName={created.project.displayName}
           connection={connection}
@@ -114,6 +136,32 @@ export function NewProject({
           void submit();
         }}
       >
+        {creation.orphan && (
+          <div role="status" className="space-y-3 rounded-lg border border-signal-wait/40 bg-signal-wait/[0.05] px-3.5 py-3">
+            <p className="break-words text-[13px] leading-relaxed text-bone">
+              {creation.orphan.displayName} was created after this dialog closed, so its token was never shown. AI17Z keeps
+              only a fingerprint of it and cannot show it now. A token is active for it: replace it on the project's Connect
+              tab to get a new one and the command to paste.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-ghost min-h-[40px] px-3 py-2 text-xs"
+                onClick={() => {
+                  const id = creation.orphan!.id;
+                  dispatch({ type: 'dismissOrphan' });
+                  close();
+                  onOpenConnect(id);
+                }}
+              >
+                Open its Connect tab
+              </button>
+              <button type="button" className="btn-quiet min-h-[40px] px-3 py-2 text-xs" onClick={() => dispatch({ type: 'dismissOrphan' })}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
         <Field label="Project name" hint="How you refer to it. Used in posts the agent writes for you." error={nameError}>
           <input
             className="field"

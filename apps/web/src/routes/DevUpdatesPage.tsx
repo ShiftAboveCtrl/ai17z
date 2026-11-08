@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
@@ -9,6 +9,7 @@ import { AnimatedText } from '@app/components/motion';
 import {
   LOG_LIMIT,
   REFUSAL_LIMIT,
+  agentPublishingFor,
   logTruncation,
   publishingState,
   type AgentPublishing,
@@ -24,6 +25,7 @@ import { Review } from './devUpdates/Review';
 import { Log } from './devUpdates/Log';
 
 type Tab = 'review' | 'log' | 'rules' | 'connect';
+const TABS: readonly Tab[] = ['review', 'log', 'rules', 'connect'];
 
 const PAGE = 'mx-auto w-full max-w-5xl space-y-8 px-5 pb-24 pt-32 sm:px-10 sm:pt-28';
 const SLOW = 'The API is slow to answer. Nothing has failed yet; you can leave this page and come back.';
@@ -61,9 +63,12 @@ export function DevUpdatesPage() {
   const project = list.find((p) => p.id === selectedId) ?? list[0] ?? null;
   const agentList = agents.data?.items ?? [];
 
-  const select = (id: string) => {
+  /** Chooses a project, on a given tab or on its first. */
+  const select = (id: string, tab?: Tab) => {
     const next = new URLSearchParams(params);
     next.set('project', id);
+    if (tab) next.set('tab', tab);
+    else next.delete('tab');
     setParams(next, { replace: true });
   };
 
@@ -106,41 +111,37 @@ export function DevUpdatesPage() {
       connection={connection.data}
       connectionError={connection.error}
       onClose={() => setCreating(false)}
-      onCreated={(created) => {
+      onCreated={(created, current) => {
         projects.reload();
-        select(created.id);
+        // A project whose answer came after the dialog closed is listed, but
+        // the page does not jump to it under the owner's feet.
+        if (current) select(created.id);
+      }}
+      onOpenConnect={(id) => {
+        projects.reload();
+        select(id, 'connect');
       }}
     />
   );
 
+  /*
+    One return, with the dialog outside every branch.
+
+    Each state used to return its own tree, with the dialog inside it. Creating
+    the first project moves the page from the empty state to the project view,
+    and React, finding the dialog somewhere else in the tree, mounted a new
+    one: the token it had just been handed went with the old one. Here the
+    branches change only `body`, and the dialog keeps its place for the life
+    of the page.
+  */
+  let body: ReactNode;
   if (firstLoad) {
-    return (
-      <div className={PAGE}>
-        {header}
-        <Working
-          label="Reading your projects"
-          seconds={waited}
-          slowHint={SLOW}
-          onCancel={() => navigate('/')}
-          cancelLabel="Leave this page"
-        />
-      </div>
-    );
-  }
-
-  if (projects.error) {
-    return (
-      <div className={PAGE}>
-        {header}
-        <RetryablePanel title="Your projects could not be loaded." detail={projects.error} onRetry={projects.reload} />
-      </div>
-    );
-  }
-
-  if (!project) {
-    return (
-      <div className={PAGE}>
-        {header}
+    body = <Working label="Reading your projects" seconds={waited} slowHint={SLOW} onCancel={() => navigate('/')} cancelLabel="Leave this page" />;
+  } else if (projects.error) {
+    body = <RetryablePanel title="Your projects could not be loaded." detail={projects.error} onRetry={projects.reload} />;
+  } else if (!project) {
+    body = (
+      <>
         <ol className="grid gap-3 sm:grid-cols-3">
           {[
             ['Connect', 'Create a project, choose the agent and the account it posts through, and paste one command into your terminal.'],
@@ -174,15 +175,11 @@ export function DevUpdatesPage() {
           }
         />
         {agents.error && <RetryablePanel title="Your agents could not be loaded." detail={agents.error} onRetry={agents.reload} />}
-        {newProject}
-      </div>
+      </>
     );
-  }
-
-  return (
-    <div className={PAGE}>
-      {header}
-
+  } else {
+    body = (
+      <>
       {list.length > 1 && (
         <nav aria-label="Projects" className="scroll-x -mx-4 px-4 sm:mx-0 sm:px-0">
           <ul className="flex gap-2">
@@ -213,9 +210,18 @@ export function DevUpdatesPage() {
         connectionError={connection.error}
         onProjectChanged={projects.reload}
       />
+      </>
+    );
+  }
 
+  return (
+    <>
+      <div className={PAGE}>
+        {header}
+        {body}
+      </div>
       {newProject}
-    </div>
+    </>
   );
 }
 
@@ -241,7 +247,17 @@ function ProjectWorkspace({
   onProjectChanged: () => void;
 }) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>('review');
+  // In the address rather than in state, so "open its Connect tab" reaches a
+  // workspace that is already on screen, and a reload stays where it was.
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('tab');
+  const tab: Tab = TABS.includes(asked as Tab) ? (asked as Tab) : 'review';
+  const setTab = (next: Tab) => {
+    const updated = new URLSearchParams(params);
+    if (next === 'review') updated.delete('tab');
+    else updated.set('tab', next);
+    setParams(updated, { replace: true });
+  };
   const base = `/api/dev-updates/updates?projectId=${project.id}`;
   const updates = useResource<{ items: DevUpdate[] }>(`${base}&limit=${LOG_LIMIT}`);
   // Asked for on their own, with the status filter, so a draft is never missing
@@ -268,11 +284,10 @@ function ProjectWorkspace({
 
   const agent = agents.find((a) => a.id === project.agentId) ?? null;
   const handle = agents.flatMap((a) => a.accounts).find((a) => a.accountId === project.accountId)?.handle ?? null;
-  const agentPolicy = agentDetail.data?.policy?.config.automation ?? null;
-  const agentPublishing: AgentPublishing | null = agentPolicy
-    ? { dryRunDefault: agentPolicy.dryRunDefault, automationMode: agentPolicy.mode }
-    : null;
-  const publishing = publishingState(project, agentPublishing);
+  // Only the agent this project maps to now. After a rewiring the detail on
+  // screen can still be the previous agent's, and its switches are not these.
+  const agentPublishing: AgentPublishing | null = agentPublishingFor(agentDetail.data, project.agentId);
+  const publishing = publishingState(project, agentPublishing, agentPublishing ? null : agentDetail.error);
   const rehearsing = publishing.heldBy === 'PROJECT_REHEARSES' || publishing.heldBy === 'AGENT_DRY_RUN';
   const heldByAgent = publishing.heldBy === 'AGENT_DRY_RUN' || publishing.heldBy === 'AGENT_AUTOMATION';
 
@@ -337,7 +352,9 @@ function ProjectWorkspace({
               </Link>
             )}
           </p>
-          {agentDetail.error && <p className="break-words text-signal-wait">The agent's own settings could not be read: {agentDetail.error}</p>}
+          {agentDetail.error && agentPublishing && (
+            <p className="break-words text-signal-wait">The agent's settings could not be read again just now: {agentDetail.error}</p>
+          )}
           {project.lastDispatchReason && (
             <p className="break-words">
               <span className="text-bone-dim">Latest from the queue: </span>

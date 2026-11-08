@@ -7,6 +7,8 @@
  * exact command an owner pastes into a terminal.
  */
 
+import { PolicyConfig } from '@xbam/shared/contracts';
+
 export type DevUpdateStatus =
   | 'PENDING_REVIEW'
   | 'APPROVED'
@@ -259,6 +261,27 @@ export interface AgentPublishing {
   automationMode: string;
 }
 
+/**
+ * The agent's switches, from an agent detail, only if it is the agent this
+ * project maps to now.
+ *
+ * A project can be rewired to another agent. The detail on screen can then
+ * still be the previous agent's, while the new one loads or for ever if that
+ * request fails, and its dry run setting would be reported for an agent that
+ * no longer posts here. A detail for any other agent reads as not known yet.
+ *
+ * An agent with no stored policy is read through the same schema the
+ * dispatcher uses, so its defaults (dry run on) are what this reports.
+ */
+export function agentPublishingFor(
+  detail: { agent: { id: string }; policy: { config: unknown } | null } | null,
+  agentId: string,
+): AgentPublishing | null {
+  if (!detail || detail.agent.id !== agentId) return null;
+  const automation = PolicyConfig.parse(detail.policy?.config ?? {}).automation;
+  return { dryRunDefault: automation.dryRunDefault, automationMode: automation.mode };
+}
+
 export type PublishingHeldBy = 'PROJECT_PAUSED' | 'PROJECT_REHEARSES' | 'AGENT_DRY_RUN' | 'AGENT_AUTOMATION' | null;
 
 export interface PublishingState {
@@ -283,6 +306,8 @@ export interface PublishingState {
 export function publishingState(
   project: Pick<DevUpdateProject, 'enabled' | 'rehearse'>,
   agent: AgentPublishing | null,
+  /** Why the agent's settings could not be read, when they could not. */
+  agentError: string | null = null,
 ): PublishingState {
   if (!project.enabled) {
     return { words: 'Paused', tone: 'wait', heldBy: 'PROJECT_PAUSED', sentence: 'This project is paused, so nothing is handed to the agent.' };
@@ -295,7 +320,17 @@ export function publishingState(
       sentence: "This project rehearses: approved updates are checked end to end and not published.",
     };
   }
-  if (!agent) return { words: 'Checking', tone: 'unknown', heldBy: null, sentence: "Reading the agent's own settings." };
+  if (!agent && agentError) {
+    return {
+      words: 'Unknown',
+      tone: 'unknown',
+      heldBy: null,
+      sentence: `The agent's own settings could not be read, so whether updates are published is not known: ${agentError}`,
+    };
+  }
+  if (!agent) {
+    return { words: 'Checking', tone: 'unknown', heldBy: null, sentence: "Still reading the agent's own settings; nothing is claimed until they are known." };
+  }
   if (agent.dryRunDefault) {
     return {
       words: 'Rehearsing',
@@ -319,6 +354,45 @@ export function publishingState(
 
 export const MCP_SERVER_FILE = 'dev-updates-mcp.mjs';
 
+/*
+  Every value that goes into the pasted command is checked against an
+  allowlist, because the command is run by a shell the owner chose and three
+  of them read it differently. Inside double quotes bash and zsh still expand
+  `$(...)`, backticks and `$VAR`, PowerShell expands `$(...)` and `$var`, and
+  cmd expands `%VAR%` and, with delayed expansion, `!VAR!`. Escaping for one
+  shell is wrong for the others, so nothing that any of them treats specially
+  is let in at all: a value either consists of plain characters or there is
+  no command, and the owner is told which value and why.
+*/
+
+/** A path segment: letters and digits in any script, space, dot, dash, underscore, round brackets. */
+const SAFE_SEGMENT = String.raw`[\p{L}\p{N} ._()-]+`;
+const SAFE_WINDOWS_PATH = new RegExp(String.raw`^[A-Za-z]:[\\/](?:${SAFE_SEGMENT}[\\/])*dev-updates-mcp\.mjs$`, 'u');
+const SAFE_POSIX_PATH = new RegExp(String.raw`^/(?:${SAFE_SEGMENT}/)*dev-updates-mcp\.mjs$`, 'u');
+/** The characters a safe path may contain at all, so a refusal can say which kind of problem it is. */
+const SAFE_PATH_CHARS = /^[\p{L}\p{N} ._():\\/-]*$/u;
+
+/**
+ * An http address with nothing a shell expands: no `~`, no glob characters,
+ * no brackets (so an IPv6 literal is refused rather than quoted), no query.
+ */
+const SAFE_API_URL = /^https?:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?(?:\/[A-Za-z0-9._/-]*)?$/;
+const SAFE_TOKEN = /^ai17z_dus_[A-Za-z0-9_-]{16,128}$/;
+const SAFE_SERVER_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+export type PathVerdict = 'ok' | 'empty' | 'unsafe' | 'shape';
+
+/** Whether a path may be pasted into a terminal command as it is. */
+export function checkServerPath(path: string): PathVerdict {
+  if (!path) return 'empty';
+  if (!SAFE_PATH_CHARS.test(path)) return 'unsafe';
+  return SAFE_WINDOWS_PATH.test(path) || SAFE_POSIX_PATH.test(path) ? 'ok' : 'shape';
+}
+
+const PATH_UNSAFE_SENTENCE =
+  'That path has characters a terminal could treat as part of a command. Use a path of letters, digits, spaces, dots, dashes, underscores and round brackets only.';
+const PATH_SHAPE_SENTENCE = `Give the full path to ${MCP_SERVER_FILE} on your machine, starting with a drive letter such as C:\\ or with /, and ending in the file name.`;
+
 /**
  * The command to offer, or why there is none yet.
  *
@@ -333,25 +407,101 @@ export function commandState(input: {
   apiUrl: string;
   token: string;
   projectKey: string;
-}): { command: string | null; needsLocalPath: boolean; pathProblem: string | null } {
-  if (!input.connection) return { command: null, needsLocalPath: false, pathProblem: null };
-  const known = input.connection.mcpServerPath;
-  const typed = input.localPath.trim().replace(/^"(.*)"$/, '$1');
-  const path = known ?? typed;
-  const needsLocalPath = known === null;
-  if (!path) return { command: null, needsLocalPath, pathProblem: null };
-  // Absolute, because Claude Code starts the server from wherever it happens
-  // to be running, and a relative path works from one folder only.
-  const absolute = /^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(path);
-  if (!absolute || !path.replace(/\\/g, '/').endsWith(`/${MCP_SERVER_FILE}`)) {
-    return { command: null, needsLocalPath, pathProblem: `Give the full path to ${MCP_SERVER_FILE} on your machine, from the drive or root to the file name.` };
+}): {
+  command: string | null;
+  needsLocalPath: boolean;
+  /** The installation knows its path, but it cannot be pasted safely, so the owner is asked instead. */
+  installPathUnsafe: boolean;
+  pathProblem: string | null;
+  /** A value other than the path that cannot go into a command. */
+  problem: string | null;
+} {
+  const none = { command: null, needsLocalPath: false, installPathUnsafe: false, pathProblem: null, problem: null };
+  if (!input.connection) return none;
+  if (!SAFE_SERVER_NAME.test(input.connection.serverName)) {
+    return { ...none, problem: 'This installation named its MCP server in a way that cannot be pasted safely, so no command is offered.' };
   }
-  if (path.includes('"')) return { command: null, needsLocalPath, pathProblem: 'The path cannot contain a quotation mark.' };
+  if (!SAFE_API_URL.test(input.apiUrl)) {
+    return {
+      ...none,
+      problem: `AI17Z is open at an address (${input.apiUrl}) that cannot be pasted into a terminal safely. Open it by a host name or IPv4 address, without a query, to get a command.`,
+    };
+  }
+  if (!KEY_PATTERN.test(input.projectKey)) return { ...none, problem: 'The project key cannot be pasted into a terminal safely, so no command is offered.' };
+  if (!SAFE_TOKEN.test(input.token)) return { ...none, problem: 'The token is not in the expected form, so no command is offered. Issue a new one.' };
+
+  const known = input.connection.mcpServerPath;
+  const installPathUnsafe = known !== null && checkServerPath(known) !== 'ok';
+  const needsLocalPath = known === null || installPathUnsafe;
+  // One pair of surrounding quotes is forgiven, because "Copy as path" on
+  // Windows adds them. Anything else is judged as typed.
+  const typed = input.localPath.trim().replace(/^"(.*)"$|^'(.*)'$/, '$1$2');
+  const path = needsLocalPath ? typed : known!;
+  const verdict = checkServerPath(path);
+  const base = { ...none, needsLocalPath, installPathUnsafe };
+  if (verdict === 'empty') return base;
+  if (verdict === 'unsafe') return { ...base, pathProblem: PATH_UNSAFE_SENTENCE };
+  // Absolute, because the coding assistant starts the server from wherever it
+  // happens to be running, and a relative path works from one folder only.
+  if (verdict === 'shape') return { ...base, pathProblem: PATH_SHAPE_SENTENCE };
   return {
+    ...base,
     command: mcpAddCommand({ serverName: input.connection.serverName, apiUrl: input.apiUrl, token: input.token, projectKey: input.projectKey, serverPath: path }),
-    needsLocalPath,
-    pathProblem: null,
   };
+}
+
+// ── Creating a project, and the one moment its token exists ────────────────
+
+/**
+ * The new project dialog, as a state machine.
+ *
+ * Creating a project issues its sender token in the same response, and that
+ * response is the only time the token exists outside the server. Two things
+ * went wrong with it before this was a machine of its own: the dialog was
+ * remounted on the first project and lost a token it had just been handed,
+ * and a response arriving after the dialog closed was still revealed when it
+ * opened again.
+ *
+ * Every close starts a new generation. A response is shown only if it belongs
+ * to the generation it was asked in; a later one is recorded as an orphan:
+ * the project exists, because the server made it, but its token is dropped
+ * and never shown. On reopening, the owner is told so, and pointed at the
+ * project's Connect tab to issue a replacement.
+ */
+export interface CreationState {
+  generation: number;
+  /** The generation a request is in flight for, if one is. */
+  pending: number | null;
+  revealed: { project: DevUpdateProject; token: string } | null;
+  orphan: DevUpdateProject | null;
+}
+
+export type CreationEvent =
+  | { type: 'submit' }
+  | { type: 'succeeded'; generation: number; project: DevUpdateProject; token: string }
+  | { type: 'failed'; generation: number }
+  | { type: 'close' }
+  | { type: 'dismissOrphan' };
+
+export const INITIAL_CREATION: CreationState = { generation: 0, pending: null, revealed: null, orphan: null };
+
+export function creationReducer(state: CreationState, event: CreationEvent): CreationState {
+  switch (event.type) {
+    case 'submit':
+      return { ...state, pending: state.generation };
+    case 'succeeded':
+      if (event.generation === state.generation) {
+        return { ...state, pending: null, revealed: { project: event.project, token: event.token } };
+      }
+      // Asked for in a dialog that has since closed. The token goes nowhere.
+      return { ...state, orphan: event.project };
+    case 'failed':
+      return event.generation === state.generation ? { ...state, pending: null } : state;
+    case 'close':
+      return { ...state, generation: state.generation + 1, pending: null, revealed: null };
+    case 'dismissOrphan':
+      return { ...state, orphan: null };
+  }
 }
 
 // ── What the log leaves out ────────────────────────────────────────────────
