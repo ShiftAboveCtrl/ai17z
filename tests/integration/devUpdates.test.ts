@@ -1,10 +1,12 @@
+import { existsSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_POLICY, type PolicyConfig } from '@xbam/shared/contracts';
 import { PipelineError } from '@xbam/shared';
 import { accountLease, accounts, actions, agents, capabilities, jobs, query } from '@xbam/database';
 import { mockAdapter } from '@xbam/channels';
-import { approveJob, dispatchDevUpdates, reconcileDevUpdates, runDevUpdates } from '@xbam/runtime';
+import { approveJob, devUpdateConnection, dispatchDevUpdates, reconcileDevUpdates, runDevUpdates } from '@xbam/runtime';
 import { buildServer } from '../../apps/api/src/server';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
@@ -183,6 +185,7 @@ describe('two credentials that cannot stand in for each other', () => {
     const update = await submitOk(token);
 
     for (const [method, url] of [
+      ['GET', '/api/dev-updates/connection'],
       ['GET', '/api/dev-updates/projects'],
       ['PATCH', `/api/dev-updates/projects/${project.id}`],
       ['POST', `/api/dev-updates/projects/${project.id}/sender-token`],
@@ -223,6 +226,37 @@ describe('two credentials that cannot stand in for each other', () => {
     const ownerPeek = await app.inject({ method: 'GET', url: `/api/dev-updates/updates/${updateB.id}`, headers: a.owner });
     expect(ownerPeek.statusCode).toBe(403);
     expect((await approve(a, updateB.id)).statusCode).toBe(403);
+  });
+
+  it('tells the owner where this installation keeps its MCP server, and nobody else', async () => {
+    const ctx = await setup();
+    const anonymous = await app.inject({ method: 'GET', url: '/api/dev-updates/connection' });
+    expect(anonymous.statusCode).toBe(401);
+
+    const r = await app.inject({ method: 'GET', url: '/api/dev-updates/connection', headers: ctx.owner });
+    expect(r.statusCode, r.body).toBe(200);
+    const data = (r.json() as Json).data;
+    expect(data.serverName).toBe('ai17z-dev-updates');
+    // On a checkout or a native install the file is there and the path is
+    // absolute, so the pasted command works from any directory.
+    expect(data.reason).toBeNull();
+    expect(data.mcpServerPath).toMatch(/[\\/]tools[\\/]dev-updates-mcp\.mjs$/);
+    expect(existsSync(data.mcpServerPath)).toBe(true);
+    expect(isAbsolute(data.mcpServerPath)).toBe(true);
+  });
+
+  it('offers no path from inside a container, because it would mean nothing on the owner machine', () => {
+    const inside = devUpdateConnection({ inContainer: () => true, exists: () => true });
+    expect(inside.mcpServerPath).toBeNull();
+    expect(inside.reason).toMatch(/container/);
+    expect(inside.serverName).toBe('ai17z-dev-updates');
+  });
+
+  it('offers no path when the MCP server file is missing, and says how to get it back', () => {
+    const missing = devUpdateConnection({ inContainer: () => false, exists: () => false });
+    expect(missing.mcpServerPath).toBeNull();
+    expect(missing.reason).toMatch(/missing/);
+    expect(missing.reason).toMatch(/dev-updates-mcp\.mjs/);
   });
 
   it('stops honouring a token once it is rotated or revoked', async () => {
@@ -270,6 +304,23 @@ describe('what never gets stored', () => {
     expect(r.statusCode, r.body).toBe(422);
     expect((r.json() as Json).error.details.refusals.map((x: Json) => x.code)).toContain(code);
     expect(await query('SELECT 1 FROM dev_updates')).toHaveLength(0);
+  });
+
+  it('lets the owner read a refusal on the audit log as codes and fields, never the words', async () => {
+    const ctx = await setup();
+    const { project, token } = await createProject(ctx);
+    const r = await submit(token, facts({ why: 'Shows up on http://localhost:8787 for everyone on the box now.' }));
+    expect(r.statusCode).toBe(422);
+
+    // The screen's log reads refusals from here, so its shape is pinned.
+    const audit = await app.inject({ method: 'GET', url: '/api/audit?action=dev_updates.refused', headers: ctx.owner });
+    expect(audit.statusCode, audit.body).toBe(200);
+    const items = (audit.json() as Json).data.items as Json[];
+    const row = items.find((i) => i.entityId === project.id);
+    expect(row, audit.body).toBeDefined();
+    expect(row!.data.codes).toContain('PRIVATE_LOCATION');
+    expect(row!.data.fields).toContain('why');
+    expect(audit.body).not.toContain('localhost:8787');
   });
 
   it('forgets the words of a rejected update but still recognises it', async () => {

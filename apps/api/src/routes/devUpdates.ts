@@ -5,6 +5,7 @@ import {
   approveDevUpdate,
   authenticateSender,
   createDevUpdateProject,
+  devUpdateConnection,
   getDevUpdateProject,
   getOwnerUpdate,
   getSenderUpdate,
@@ -82,6 +83,16 @@ export async function devUpdateRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // ── Owner ─────────────────────────────────────────────────────────────────
+  // What the owner needs to paste a working MCP command: where this
+  // installation's server file is. Owner only: a sender already has a server.
+  app.get(
+    '/api/dev-updates/connection',
+    handler(async (request) => {
+      await requireUser(request);
+      return devUpdateConnection();
+    }),
+  );
+
   app.get(
     '/api/dev-updates/projects',
     handler(async (request) => {

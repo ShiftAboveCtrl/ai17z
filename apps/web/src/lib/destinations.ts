@@ -32,6 +32,15 @@ const GLOBAL: Destination[] = [
   { id: 'plugins', title: 'Plugins', where: 'What agents may use', href: '/plugins', words: ['plugins', 'capabilities', 'tools', 'toolspace', 'permissions', 'integrations'] },
   { id: 'health', title: 'Health', where: 'Is everything working', href: '/health', words: ['health', 'status', 'broken', 'diagnostics', 'working'] },
   { id: 'hosting', title: 'Hosted runtimes', where: 'Running AI17Z somewhere else', href: '/hosting', words: ['hosting', 'hosted', 'host', 'cloud', 'runtime', 'runtimes', 'tenant', 'tenants', 'server', 'remote', 'always on', 'capacity'] },
+  {
+    id: 'dev-updates',
+    title: 'Development updates',
+    where: 'Post what you build',
+    href: '/dev-updates',
+    // Nobody looks for "development updates": they look for the assistant
+    // they use, or for what they want to happen on their account.
+    words: ['dev updates', 'development updates', 'coding assistant', 'claude code', 'post progress', 'build in public', 'devlog', 'shipped', 'mcp', 'sender token'],
+  },
   { id: 'providers', title: 'Model providers', where: 'Settings', href: '/settings#providers', words: ['providers', 'models', 'api key', 'openai', 'anthropic', 'openrouter', 'llm'] },
   { id: 'accounts', title: 'Accounts and sessions', where: 'Settings', href: '/settings#accounts', words: ['accounts', 'x account', 'sign in', 'login', 'session', 'connect'] },
   { id: 'browser', title: 'Browser', where: 'Settings', href: '/settings#browser', words: ['browser', 'chrome', 'edge', 'chromium', 'profile'] },

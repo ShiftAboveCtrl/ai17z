@@ -76,7 +76,7 @@ export function EmptyState({
   return (
     <div className="rounded-xl border border-dashed border-ink-line px-6 py-14 text-center">
       <p className="text-lg font-light text-bone-dim">{title}</p>
-      {detail && <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-bone-faint">{detail}</p>}
+      {detail && <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-bone-dim">{detail}</p>}
       {action && <div className="mt-6 flex justify-center">{action}</div>}
     </div>
   );
@@ -151,7 +151,7 @@ export function Field({
       <label
         id={labelId}
         htmlFor={controlId}
-        className="block font-mono text-[10px] uppercase tracking-[0.2em] text-bone-faint"
+        className="block font-mono text-[10px] uppercase tracking-[0.2em] text-bone-dim"
       >
         {label}
       </label>
@@ -169,7 +169,7 @@ export function Field({
         </div>
       )}
       {hint && !error && (
-        <p id={hintId} className="text-xs leading-relaxed text-bone-faint">
+        <p id={hintId} className="text-xs leading-relaxed text-bone-dim">
           {hint}
         </p>
       )}
@@ -217,7 +217,7 @@ export function Toggle({
       </span>
       <span className="min-w-0">
         <span className="block text-sm text-bone">{label}</span>
-        {description && <span className="mt-0.5 block text-xs leading-relaxed text-bone-faint">{description}</span>}
+        {description && <span className="mt-0.5 block text-xs leading-relaxed text-bone-dim">{description}</span>}
       </span>
     </button>
   );
@@ -383,10 +383,10 @@ export function Working({
           <Spinner className="h-3.5 w-3.5" />
           {label}
         </span>
-        <span className="font-mono text-[10px] tabular-nums text-bone-faint">{seconds}s</span>
+        <span className="font-mono text-[10px] tabular-nums text-bone-dim">{seconds}s</span>
       </div>
       {seconds >= slowAfter && (
-        <p className="text-xs leading-relaxed text-bone-faint">
+        <p className="text-xs leading-relaxed text-bone-dim">
           {slowHint ?? 'Still going. Nothing has failed; it is just slow.'}
         </p>
       )}
@@ -582,11 +582,90 @@ export function ChoiceOption({
           'disabled:cursor-not-allowed disabled:opacity-40',
           selected
             ? 'border-bone-dim bg-white/[0.06] text-bone'
-            : 'border-ink-line text-bone-faint hover:border-bone-faint hover:text-bone-dim',
+            : 'border-ink-line text-bone-dim hover:border-bone-faint hover:text-bone',
         ].join(' ')
       }
     >
       {children}
     </button>
+  );
+}
+
+export interface TabDef<T extends string> {
+  id: T;
+  label: string;
+  count?: number;
+}
+
+/**
+ * Tabs that behave like tabs: one stop in the tab order, arrows between them.
+ *
+ * Here rather than beside the one screen that first needed them, because
+ * moving focus is something this file does on everybody's behalf: the arrow
+ * keys move it on a keypress, never from an effect, exactly as in
+ * {@link ChoiceGroup}.
+ */
+export function Tabs<T extends string>({
+  tabs,
+  value,
+  onChange,
+  idBase,
+  label,
+}: {
+  tabs: TabDef<T>[];
+  value: T;
+  onChange: (id: T) => void;
+  idBase: string;
+  label: string;
+}) {
+  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    const at = tabs.findIndex((t) => t.id === value);
+    let next = -1;
+    if (event.key === 'ArrowRight') next = (at + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') next = (at - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabs.length - 1;
+    if (next < 0) return;
+    event.preventDefault();
+    const tab = tabs[next]!;
+    onChange(tab.id);
+    refs.current[tab.id]?.focus();
+  };
+  return (
+    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className="scroll-x -mx-1 flex gap-1 overflow-y-hidden border-b border-ink-line px-1">
+      {tabs.map((tab) => {
+        const selected = tab.id === value;
+        return (
+          <button
+            key={tab.id}
+            ref={(el) => {
+              refs.current[tab.id] = el;
+            }}
+            type="button"
+            role="tab"
+            id={`${idBase}-tab-${tab.id}`}
+            aria-selected={selected}
+            aria-controls={`${idBase}-panel-${tab.id}`}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(tab.id)}
+            className={`relative -mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-3 text-[13px] transition-colors ${
+              selected ? 'border-signal-calm text-bone' : 'border-transparent text-bone-dim hover:text-bone'
+            }`}
+          >
+            {tab.label}
+            {tab.count !== undefined && (
+              <span
+                className={`ml-2 rounded-full px-1.5 py-0.5 font-mono text-[10px] tabular-nums ${
+                  selected ? 'bg-signal-calm/15 text-bone' : 'bg-white/[0.04] text-bone-dim'
+                }`}
+              >
+                {tab.count}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
