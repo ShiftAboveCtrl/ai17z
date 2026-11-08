@@ -61,7 +61,7 @@ jobs:
           export PATH="/usr/local/bin:$PATH"
           npm ci --no-audit --no-fund
           bash ci/scripts/package-ubuntu.sh "${{ needs.version.outputs.version }}" "${{ matrix.arch }}" "$PWD/out"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ubuntu-${{ matrix.arch }}
           path: out/ai17z_*.deb
@@ -90,7 +90,7 @@ jobs:
           source ci/scripts/setup-macos-job.sh
           npm ci --no-audit --no-fund
           bash ci/scripts/package-macos.sh "${{ needs.version.outputs.version }}" "$PWD/out" "${{ matrix.arch }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-${{ matrix.arch }}
           path: out/AI17Z-macos-*.tar.gz
@@ -110,7 +110,7 @@ jobs:
         run: |
           . .\ci\scripts\setup-windows-job.ps1
           . .\ci\scripts\build-windows-release.ps1 -Version '${{ needs.version.outputs.version }}'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
           path: |
@@ -167,7 +167,7 @@ jobs:
             bash ci/scripts/publish-release.sh dist "$VERSION"
           fi
       - if: startsWith(github.ref_name, 'rehearsal-')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rehearsal-dist
           path: dist/
