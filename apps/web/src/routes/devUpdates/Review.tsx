@@ -1,9 +1,10 @@
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { Check, PencilLine, X } from 'lucide-react';
 import { post } from '@app/lib/api';
 import { timeAgo } from '@app/lib/format';
 import { EmptyState } from '@app/components/ui';
-import { KIND_WORDS, POST_MAX_CHARS, type DevUpdate } from '@app/lib/devUpdates';
+import { KIND_WORDS, POST_MAX_CHARS } from '@app/lib/devUpdates';
+import type { DevUpdate, PublishingState } from '@app/lib/devUpdates';
 import { CharMeter, PostPreview, ProblemList, problemOf } from './parts';
 
 type Agent = { id: string; name: string; avatarUrl?: string | null } | null;
@@ -21,12 +22,14 @@ export function Review({
   agent,
   handle,
   rehearse,
+  publishing,
   onDecided,
 }: {
   updates: DevUpdate[];
   agent: Agent;
   handle: string | null;
   rehearse: boolean;
+  publishing: PublishingState;
   onDecided: () => void;
 }) {
   if (updates.length === 0) {
@@ -41,7 +44,7 @@ export function Review({
     <ol className="space-y-5">
       {updates.map((update) => (
         <li key={update.id}>
-          <Draft update={update} agent={agent} handle={handle} rehearse={rehearse} onDecided={onDecided} />
+          <Draft update={update} agent={agent} handle={handle} rehearse={rehearse} publishing={publishing} onDecided={onDecided} />
         </li>
       ))}
     </ol>
@@ -53,24 +56,31 @@ function Draft({
   agent,
   handle,
   rehearse,
+  publishing,
   onDecided,
 }: {
   update: DevUpdate;
   agent: Agent;
   handle: string | null;
   rehearse: boolean;
+  publishing: PublishingState;
   onDecided: () => void;
 }) {
   const [mode, setMode] = useState<'read' | 'edit' | 'reject'>('read');
   const [text, setText] = useState(update.post);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [decided, setDecided] = useState<'approve' | 'reject' | null>(null);
+  // State alone cannot stop two events before React commits the next render.
+  // Keep the lock after success until the refreshed queue removes this draft.
+  const decisionStarted = useRef(false);
   const [problem, setProblem] = useState<string[] | null>(null);
   const headingId = useId();
   const editId = useId();
   const noteId = useId();
 
   const decide = async (what: 'approve' | 'reject') => {
+    if (decisionStarted.current || update.status !== 'PENDING_REVIEW') return;
     setProblem(null);
     if (what === 'reject' && !note.trim()) {
       setProblem(['Say why, in a few words. It is kept with the update so you and your assistant can see it later.']);
@@ -82,18 +92,23 @@ function Draft({
         : mode === 'edit' && text.trim() !== update.post
           ? { editedText: text.trim() }
           : {};
+    decisionStarted.current = true;
     setBusy(true);
     try {
       await post(`/api/dev-updates/updates/${update.id}/${what}`, body);
-      onDecided();
     } catch (error) {
+      decisionStarted.current = false;
       setProblem(problemOf(error, what === 'approve' ? 'It could not be approved.' : 'It could not be rejected.'));
+      return;
     } finally {
       setBusy(false);
     }
+    setDecided(what);
+    onDecided();
   };
 
   const tooLong = text.trim().length > POST_MAX_CHARS;
+  const disabled = busy || decided !== null || update.status !== 'PENDING_REVIEW';
 
   return (
     <article aria-labelledby={headingId} className="panel overflow-hidden">
@@ -153,6 +168,7 @@ function Draft({
                   value={text}
                   maxLength={400}
                   autoFocus
+                  disabled={disabled}
                   onChange={(e) => setText(e.target.value)}
                 />
                 <div className="flex justify-end">
@@ -174,6 +190,7 @@ function Draft({
                 maxLength={500}
                 autoFocus
                 placeholder="Not announced yet"
+                disabled={disabled}
                 onChange={(e) => setNote(e.target.value)}
               />
               <p className="text-xs leading-relaxed text-bone-dim">
@@ -187,24 +204,24 @@ function Draft({
           <div className="flex flex-wrap gap-2">
             {mode === 'reject' ? (
               <>
-                <button type="button" className="btn-danger" disabled={busy} onClick={() => void decide('reject')}>
-                  <X className="h-4 w-4" aria-hidden /> {busy ? 'Rejecting…' : 'Reject it'}
+                <button type="button" className="btn-danger" disabled={disabled} onClick={() => void decide('reject')}>
+                  <X className="h-4 w-4" aria-hidden /> {decided === 'reject' ? 'Rejected' : busy ? 'Rejecting…' : 'Reject it'}
                 </button>
-                <button type="button" className="btn-quiet" disabled={busy} onClick={() => { setMode('read'); setProblem(null); }}>
+                <button type="button" className="btn-quiet" disabled={disabled} onClick={() => { setMode('read'); setProblem(null); }}>
                   Back
                 </button>
               </>
             ) : (
               <>
-                <button type="button" className="btn-primary" disabled={busy || (mode === 'edit' && (tooLong || !text.trim()))} onClick={() => void decide('approve')}>
+                <button type="button" className="btn-primary" disabled={disabled || (mode === 'edit' && (tooLong || !text.trim()))} onClick={() => void decide('approve')}>
                   <Check className="h-4 w-4" aria-hidden />
-                  {busy ? 'Approving…' : mode === 'edit' ? 'Approve my version' : 'Approve'}
+                  {decided === 'approve' ? 'Approved' : busy ? 'Approving…' : mode === 'edit' ? 'Approve my version' : 'Approve'}
                 </button>
                 {mode === 'edit' ? (
                   <button
                     type="button"
                     className="btn-quiet"
-                    disabled={busy}
+                    disabled={disabled}
                     onClick={() => {
                       setMode('read');
                       setText(update.post);
@@ -214,12 +231,12 @@ function Draft({
                     Discard my edit
                   </button>
                 ) : (
-                  <button type="button" className="btn-ghost" disabled={busy} onClick={() => setMode('edit')}>
+                  <button type="button" className="btn-ghost" disabled={disabled} onClick={() => setMode('edit')}>
                     <PencilLine className="h-4 w-4" aria-hidden /> Edit
                   </button>
                 )}
                 {mode === 'read' && (
-                  <button type="button" className="btn-quiet sm:ml-auto" disabled={busy} onClick={() => setMode('reject')}>
+                  <button type="button" className="btn-quiet sm:ml-auto" disabled={disabled} onClick={() => setMode('reject')}>
                     Reject
                   </button>
                 )}
@@ -227,9 +244,9 @@ function Draft({
             )}
           </div>
           <p className="text-xs leading-relaxed text-bone-dim">
-            {rehearse
-              ? 'This project rehearses, so approving checks it end to end without publishing it.'
-              : `Approving queues it for ${handle ? `@${handle}` : 'the account'}, within the daily ceiling and spacing.`}
+            {publishing.tone === 'live'
+              ? `Approving queues it for ${handle ? `@${handle}` : 'the account'}, within the daily ceiling and spacing.`
+              : `Approving records your decision. ${publishing.sentence}`}
           </p>
         </div>
       </div>

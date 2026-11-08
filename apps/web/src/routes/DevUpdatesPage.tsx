@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
@@ -12,12 +13,8 @@ import {
   agentPublishingFor,
   logTruncation,
   publishingState,
-  type AgentPublishing,
-  type DevUpdate,
-  type DevUpdateConnection,
-  type DevUpdateProject,
-  type RefusalRecord,
 } from '@app/lib/devUpdates';
+import type { AgentPublishing, DevUpdate, DevUpdateConnection, DevUpdateProject, RefusalRecord } from '@app/lib/devUpdates';
 import { NewProject } from './devUpdates/NewProject';
 import { Connect } from './devUpdates/Connect';
 import { Rules } from './devUpdates/Rules';
@@ -49,6 +46,8 @@ const SLOW = 'The API is slow to answer. Nothing has failed yet; you can leave t
  */
 export function DevUpdatesPage() {
   const [params, setParams] = useSearchParams();
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
   const navigate = useNavigate();
   const projects = useResource<{ items: DevUpdateProject[] }>('/api/dev-updates/projects');
   const agents = useResource<{ items: AgentListItem[] }>('/api/agents');
@@ -65,7 +64,7 @@ export function DevUpdatesPage() {
 
   /** Chooses a project, on a given tab or on its first. */
   const select = (id: string, tab?: Tab) => {
-    const next = new URLSearchParams(params);
+    const next = new URLSearchParams(paramsRef.current);
     next.set('project', id);
     if (tab) next.set('tab', tab);
     else next.delete('tab');
@@ -137,7 +136,7 @@ export function DevUpdatesPage() {
   let body: ReactNode;
   if (firstLoad) {
     body = <Working label="Reading your projects" seconds={waited} slowHint={SLOW} onCancel={() => navigate('/')} cancelLabel="Leave this page" />;
-  } else if (projects.error) {
+  } else if (projects.error && !projects.data) {
     body = <RetryablePanel title="Your projects could not be loaded." detail={projects.error} onRetry={projects.reload} />;
   } else if (!project) {
     body = (
@@ -218,6 +217,9 @@ export function DevUpdatesPage() {
     <>
       <div className={PAGE}>
         {header}
+        {projects.error && projects.data && (
+          <RetryablePanel title="Showing the last loaded projects. They could not be refreshed." detail={projects.error} onRetry={projects.reload} />
+        )}
         {body}
       </div>
       {newProject}
@@ -288,6 +290,9 @@ function ProjectWorkspace({
   // screen can still be the previous agent's, and its switches are not these.
   const agentPublishing: AgentPublishing | null = agentPublishingFor(agentDetail.data, project.agentId);
   const publishing = publishingState(project, agentPublishing, agentPublishing ? null : agentDetail.error);
+  // An owner decision bypasses the automatic approval gate, but still obeys
+  // pauses, rehearsal and the agent's publishing switches.
+  const approvalPublishing = publishingState({ ...project, mode: 'DRAFT' }, agentPublishing, agentPublishing ? null : agentDetail.error);
   const rehearsing = publishing.heldBy === 'PROJECT_REHEARSES' || publishing.heldBy === 'AGENT_DRY_RUN';
   const heldByAgent = publishing.heldBy === 'AGENT_DRY_RUN' || publishing.heldBy === 'AGENT_AUTOMATION' || publishing.heldBy === 'AGENT_GATE';
 
@@ -378,6 +383,11 @@ function ProjectWorkspace({
       />
 
       <div role="tabpanel" id={`dev-updates-panel-${tab}`} aria-labelledby={`dev-updates-tab-${tab}`} tabIndex={0} className="focus-visible:outline-offset-8">
+        {(tab === 'review' || tab === 'log') && forTab.error && forTab.data && (
+          <div className="mb-4">
+            <RetryablePanel title={tab === 'review' ? 'Showing the last loaded drafts. They could not be refreshed.' : 'Showing the last loaded updates. They could not be refreshed.'} detail={forTab.error} onRetry={forTab.reload} />
+          </div>
+        )}
         {waiting ? (
           <Working
             label={tab === 'review' ? 'Reading the drafts waiting for you' : "Reading this project's updates"}
@@ -386,7 +396,7 @@ function ProjectWorkspace({
             onCancel={() => navigate('/')}
             cancelLabel="Leave this page"
           />
-        ) : (tab === 'review' || tab === 'log') && forTab.error ? (
+        ) : (tab === 'review' || tab === 'log') && forTab.error && !forTab.data ? (
           <RetryablePanel
             title={tab === 'review' ? 'The drafts waiting for you could not be loaded.' : "This project's updates could not be loaded."}
             detail={forTab.error}
@@ -398,6 +408,7 @@ function ProjectWorkspace({
             agent={agent}
             handle={handle}
             rehearse={rehearsing}
+            publishing={approvalPublishing}
             onDecided={() => {
               pendingResource.reload();
               updates.reload();
@@ -408,7 +419,7 @@ function ProjectWorkspace({
           <>
             {audit.error && (
               <div className="mb-4">
-                <RetryablePanel title="Refusals could not be read, so they are missing below." detail={audit.error} onRetry={audit.reload} />
+                <RetryablePanel title={audit.data ? 'Showing the last loaded refusals. They could not be refreshed.' : 'Refusals could not be read, so they are missing below.'} detail={audit.error} onRetry={audit.reload} />
               </div>
             )}
             <Log updates={items} refusals={refusals} />

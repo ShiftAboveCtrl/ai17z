@@ -217,7 +217,7 @@ describe('nothing from one project survives switching to another', () => {
     // Every close starts a new generation, which is what drops the token
     // (see creationReducer), and every way of closing goes through it.
     expect(create).toMatch(/const close = \(\) => \{\s*generation\.current \+= 1;\s*dispatch\(\{ type: 'close' \}\);/);
-    expect(create).toMatch(/onClose=\{close\}/);
+    expect(create).toMatch(/onClose=\{requestClose\}/);
     expect(create).not.toMatch(/useState<\{ project: DevUpdateProject; senderToken/);
   });
 
@@ -235,7 +235,7 @@ describe('nothing from one project survives switching to another', () => {
     expect(shell.match(/<NewProject\b/g)).toHaveLength(1);
     expect(shell.match(/\{newProject\}/g)).toHaveLength(1);
     expect(shell.match(/\breturn \(/g)).toHaveLength(1);
-    expect(shell).toMatch(/<div className=\{PAGE\}>\s*\{header\}\s*\{body\}\s*<\/div>\s*\{newProject\}/);
+    expect(shell).toMatch(/\{body\}\s*<\/div>\s*\{newProject\}/);
   });
 });
 
