@@ -208,12 +208,16 @@ describe('who runs what', () => {
       'COSIGN_PRIVATE_KEY',
       'GITHUB_MIRROR_TOKEN',
       'PRIVATE_IDENTIFIERS',
-      'PRIVATE_IDENTIFIERS_SKIP',
       'RELEASE_TOKEN',
     ]);
-    // The opt-out is a plain variable, never a secret, so it is visible to
-    // anybody reading the repository's settings.
-    expect(step.env!.PRIVATE_IDENTIFIERS_SKIP).toBe('${{ vars.PRIVATE_IDENTIFIERS_SKIP }}');
+    // No variable can switch the check off: Forgejo merges organisation and
+    // user variables into a repository's, so one could be set from outside.
+    expect(JSON.stringify(step)).not.toMatch(/\bvars\./);
+    // And this repository has a list, so it does not carry the opt-out file.
+    expect(() => read('.forgejo/private-identifiers-optional')).toThrow();
+    // The tools that open a .deb's data and the Windows installer are installed in the job.
+    const setup = (publish.steps ?? []).map((s) => s.run ?? '').join('\n');
+    for (const tool of ['python3', 'zstd', 'innoextract']) expect(setup).toContain(tool);
     expect(step.run).toContain('publish-release.sh');
     // Checked before anything is attached to a release on either host, and a
     // refusal stops the step.

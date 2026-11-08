@@ -252,8 +252,9 @@ jobs:
       image: ubuntu:24.04
     timeout-minutes: 60
     steps:
-      # python3 for the private identifier scan of the history, in the publish step.
-      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs python3 >/dev/null
+      # For the private identifier scan in the publish step: python3 runs it,
+      # zstd opens a .deb's data member, innoextract opens the Windows installer.
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates nodejs python3 zstd innoextract >/dev/null
       # The whole history, so the release notes can say what changed.
       - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -275,15 +276,15 @@ jobs:
       # The maintainer's private identifiers are checked first, here and not
       # in `check`: this is the one step allowed to name a secret, and it is
       # the last moment before anything is public. Without the secret the
-      # release is refused, unless the repository variable
-      # PRIVATE_IDENTIFIERS_SKIP says this repository has no list.
+      # release is refused, unless the repository itself commits
+      # .forgejo/private-identifiers-optional (never a variable: Forgejo merges
+      # organisation and user variables into a repository's).
       - env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           GITHUB_MIRROR_TOKEN: ${{ secrets.GITHUB_MIRROR_TOKEN }}
           PRIVATE_IDENTIFIERS: ${{ secrets.PRIVATE_IDENTIFIERS }}
-          PRIVATE_IDENTIFIERS_SKIP: ${{ vars.PRIVATE_IDENTIFIERS_SKIP }}
         run: |
           bash .forgejo/scripts/private-identifiers.sh dist || exit 1
           VERSION="${{ needs.version.outputs.version }}"
