@@ -143,7 +143,7 @@ export function Rules({ project, handle, onChanged }: { project: DevUpdateProjec
           <p className="text-sm leading-relaxed text-bone-dim">
             {confirm?.mode === 'AUTO'
               ? `Updates that pass every safety check will be approved without you, and ${project.rehearse ? 'rehearsed' : `posted on ${where}`} within the ceiling and spacing. Anything the agent's own rules flag still waits for you.`
-              : `Approved updates will be published on ${where}, where anyone can see them. ${project.mode === 'AUTO' ? 'This project posts on its own, so that includes updates you have not read.' : 'Only updates you approve are posted.'}`}
+              : `Approved updates will be published on ${where}, where anyone can see them. ${project.mode === 'AUTO' ? 'This project posts on its own, so that includes updates you have not read.' : 'Only updates you approve are posted.'} If the agent's own policy runs everything as a dry run, updates still rehearse, and the log says which switch held them.`}
           </p>
           <div className="flex flex-wrap justify-end gap-2">
             <button type="button" className="btn-quiet" onClick={() => setConfirm(null)}>

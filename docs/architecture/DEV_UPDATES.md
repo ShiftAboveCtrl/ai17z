@@ -7,8 +7,20 @@ public facts through an MCP tool, the owner decides whether they become a post
 (or lets them through on their own, within a ceiling), and the post goes out
 through the same action boundary as everything else the agent publishes.
 
-There is no web screen for this yet. The MCP server, the HTTP API and the owner
-CLI are the whole flow.
+An owner runs it from the **Development updates** screen (`/dev-updates`, or
+search for "dev updates", "Claude Code" or "build in public"): create a
+project, issue the sender token and copy a ready `claude mcp add` command,
+set the rules, review drafts and read the log. The screen is a view over the
+owner routes below and decides nothing itself. The CLI does the same things
+from a terminal.
+
+The token is shown once and kept only in the page's memory until the owner
+hides it: never in local storage, a URL or a log. The command uses the API
+address the browser reached and the MCP server path the installation reports
+(`GET /api/dev-updates/connection`); inside a container that path is not
+offered, because it would mean nothing on the owner's machine. Refusals in
+the log come from the audit log and carry the reason and the field, never the
+words.
 
 ## What it will not do
 
@@ -306,6 +318,7 @@ Sender, with `Authorization: Bearer <sender token>`:
 
 Owner, with a session:
 
+- `GET /api/dev-updates/connection` (where this installation keeps the MCP server)
 - `GET|POST /api/dev-updates/projects`, `GET|PATCH /api/dev-updates/projects/:id`
 - `POST|DELETE /api/dev-updates/projects/:id/sender-token`
 - `GET /api/dev-updates/updates?projectId=&status=&limit=`, `GET /api/dev-updates/updates/:id`
