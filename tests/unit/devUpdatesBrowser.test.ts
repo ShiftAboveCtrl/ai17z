@@ -83,7 +83,8 @@ describe('development updates browser regressions', () => {
         await pending;
         await success(route, {});
       });
-      await page.goto(`${origin}__test`);
+      // Vite compiles the fixture on first navigation, which can exceed five seconds.
+      await page.goto(`${origin}__test`, { timeout: 30_000 });
       if (decision === 'reject') {
         await page.getByRole('button', { name: 'Reject', exact: true }).click();
         await page.getByRole('textbox', { name: 'Why not' }).fill('Not announced yet.');
