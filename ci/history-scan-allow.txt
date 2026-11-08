@@ -16,3 +16,5 @@
 3e3041b5498ba79e5733cc8ea3f8eb6159f76d0b tests/integration/telegramCommands.test.ts: the same placeholder, an earlier revision
 5212ced405d8623058cd5bd98ede0e5992daf3ef tests/integration/telegramCommands.test.ts: the same placeholder, an earlier revision
 d57a3cb6a630bd313674097558630ddea09b5105 tests/integration/telegramNotify.test.ts: bot token 123456789:AA... placeholder
+2cc8ead7e5259702b6ef7bc21f17ced180bca97b tests/unit/devUpdateSafety.test.ts: AWS's own documented example key, written to prove the redactor catches the shape
+e76a2fbbbc5f4fc70f127efa88e7464e0e2ef68b tests/unit/devUpdateSafety.test.ts: the same documented example key, the current revision
