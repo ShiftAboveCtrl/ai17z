@@ -76,7 +76,7 @@ describe('private places never pass', () => {
     'see http://localhost:8787/api/jobs',
     'deployed to https://build.internal/status',
     'logs at 10.0.4.12',
-    'C:\\Users\\owner\\project\\notes.txt',
+    'C:\\Users\\someone\\project\\notes.txt',
     'lives in /home/someone/ai17z/storage',
     'mail me at owner@example.org',
     'https://user:pass@example.org/owner/repo',
