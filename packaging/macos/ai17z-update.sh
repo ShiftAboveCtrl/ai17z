@@ -22,7 +22,6 @@ HERE="$(dirname "$APP_ROOT")"
 . "$APP_ROOT/packaging/unix/ai17z-paths.sh"
 ai17z_resolve_paths "$APP_ROOT"
 
-REPOSITORY="AI17Z/ai17z"
 # Downloads go through ai17z_fetch_release_files in ai17z-paths.sh, which asks
 # GitHub first and AI17Z Code second and refuses any host it does not declare,
 # before the request and again where the request landed.

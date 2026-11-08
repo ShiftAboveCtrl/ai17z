@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 
 SPEC = importlib.util.spec_from_file_location("release_publish", Path(__file__).with_name("release_publish.py"))
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -19,14 +20,19 @@ if SPEC.loader:
 
 
 class FakeApi:
-    def __init__(self, corrupt=False, existing=None):
+    def __init__(self, corrupt=False, existing=None, drafts=()):
         self.corrupt = corrupt
         self.release = existing
+        self.drafts = list(drafts)
         self.files = {}
         self.published = False
 
     def by_tag(self, tag):
-        return self.release
+        # As on both hosts: asking by tag never returns a draft.
+        return None if self.release and self.release.get("draft") else self.release
+
+    def draft_exists(self, tag):
+        return any(row["draft"] and row["tag_name"] == tag for row in self.drafts)
 
     def create(self, data):
         self.release = dict(data, id=1, assets=[])
@@ -83,6 +89,32 @@ class Publishing(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already exists"):
             self.publish(api)
         self.assertEqual(api.files, {})
+
+    def test_a_draft_left_for_the_tag_is_refused_before_anything_is_created(self):
+        api = FakeApi(drafts=[{"id": 7, "tag_name": "v1.0.0-beta.89", "draft": True}])
+        with self.assertRaisesRegex(ValueError, "draft release already exists"):
+            self.publish(api)
+        self.assertIsNone(api.release)
+        self.assertEqual(api.files, {})
+
+    def test_a_draft_for_another_tag_does_not_block(self):
+        api = FakeApi(drafts=[{"id": 7, "tag_name": "v1.0.0-beta.88", "draft": True}])
+        self.publish(api)
+        self.assertTrue(api.published)
+
+    def test_listing_finds_drafts_across_short_pages(self):
+        # Forgejo returns fewer rows than asked for; the draft is on page two.
+        pages = {1: [{"tag_name": "v1.0.0-beta.90", "draft": False}], 2: [{"tag_name": "v1.0.0-beta.89", "draft": True}], 3: []}
+        api = MODULE.Api("github", "offline")
+        api.request = lambda path, *rest: pages[int(re.search(r"[?&]page=(\d+)", path).group(1))]
+        self.assertTrue(api.draft_exists("v1.0.0-beta.89"))
+        self.assertFalse(api.draft_exists("v1.0.0-beta.91"))
+
+    def test_digest_is_chunked_and_needs_no_python_311(self):
+        big = self.directory / "big.bin"
+        big.write_bytes(b"x" * (3 * 1024 * 1024 + 5))
+        with unittest.mock.patch.object(MODULE.hashlib, "file_digest", None, create=True):
+            self.assertEqual(MODULE.file_digest(big), hashlib.sha256(big.read_bytes()).hexdigest())
 
     def test_duplicate_names_refused_before_creating_draft(self):
         api = FakeApi()

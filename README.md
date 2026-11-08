@@ -204,10 +204,13 @@ AI17Z is in **beta** and under active development.
 | Hosted runtimes | In development ([details](docs/architecture/HOSTING.md)) |
 | Trading | In development, no live funds ([details](docs/architecture/TRADING.md)) |
 
-Every release must pass the full test suite, typecheck, lint, a production web
-build, a dependency audit, ShellCheck, database migrations from empty and from
-the previous release, a privacy and secret scan, and a clean install and
-upgrade test that confirms no data is lost.
+Every pull request and every release runs the same checks on GitHub Actions:
+typecheck, lint, an audit of production dependencies, ShellCheck on every shell
+script, the release and privacy checks, database migrations from empty, the
+unit and integration suites against Postgres, a history scan, and a production
+web build. A release also builds each platform's package on a machine of that
+platform and proves it runs before anything is published. Before a version is
+tagged, a clean install and upgrade test on Windows confirms no data is lost.
 
 ---
 
@@ -217,9 +220,15 @@ upgrade test that confirms no data is lost.
 - **Encrypted keys.** Provider API keys are encrypted with AES-256-GCM under a
   master key that stays on your machine, and never appear in API responses,
   logs or traces.
-- **Your choice of services.** The only outside services contacted are the
-  model providers and channels you configure. [docs/PRIVACY.md](docs/PRIVACY.md)
-  lists them.
+- **Your choice of services.** AI17Z talks to what you configure: model
+  providers, X through your own Chrome, web search and DexScreener when an
+  agent looks something up, and Telegram if you connect a bot for
+  notifications. Each is off until you set it up.
+- **One request you did not configure.** At most every six hours AI17Z asks
+  GitHub's public releases API, or AI17Z Code when GitHub does not answer,
+  which versions exist. It carries no identifier, installs nothing, and the
+  Version panel in Settings switches it off. [docs/PRIVACY.md](docs/PRIVACY.md)
+  lists every service in full.
 
 ---
 

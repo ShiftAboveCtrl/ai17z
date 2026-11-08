@@ -61,10 +61,20 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
+      - name: Dependency audit
+        # Production dependencies only, and only what is rated high or worse:
+        # a moderate advisory in a test tool is not a reason to block a merge.
+        run: npm audit --omit=dev --audit-level=high
+      - name: ShellCheck
+        # Every tracked shell script, at warning level. The runner image ships
+        # ShellCheck; it is installed from Ubuntu's archive only if it ever stops.
+        run: |
+          command -v shellcheck >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck; }
+          git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
       - name: Release check
         run: npm run release:check
       - name: Install Playwright Chromium
-        run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium
+        run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD="" npx playwright install --with-deps chromium
       - name: Migrate
         run: npm run migrate
       - name: Unit tests

@@ -9,7 +9,8 @@ bash ci/scripts/setup-ubuntu-job.sh
 bash ci/scripts/setup-cosign.sh
 npm ci --no-audit --no-fund
 rm -rf dist && cp -r /in dist
-[ -f dist/release.env ] && . dist/release.env && export RELEASE_NAME && rm -f dist/release.env
+# Read as text, never sourced, exactly as the release workflow does.
+if [ -f dist/release.env ]; then RELEASE_NAME="$(bash ci/scripts/read-release-name.sh dist/release.env)"; export RELEASE_NAME; fi
 # Read from files mounted for this run only; never written into the image.
 key_text="$(cat /keys/key)"; key_pass="$(cat /keys/password)"
 export COSIGN_PRIVATE_KEY="${key_text}" COSIGN_PASSWORD="${key_pass}"

@@ -39,8 +39,13 @@ def strict_tag(tag):
 
 
 def file_digest(path):
+    # A chunked loop rather than hashlib.file_digest, which exists only from
+    # Python 3.11: the backup server runs whatever python3 its distribution has.
+    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def verify_sums(directory):
@@ -91,6 +96,23 @@ class Api:
                 return None
             raise
 
+    def releases(self):
+        # Every release this token can see, drafts included. Paged until a page
+        # comes back empty, because Forgejo caps a page below what was asked
+        # for, and stopping on a short page would stop after its first one.
+        result = []
+        for page in range(1, 101):
+            rows = self.request(f"/releases?per_page=100&limit=100&page={page}")
+            if not rows:
+                return result
+            result.extend(rows)
+        raise ValueError("too many releases")
+
+    def draft_exists(self, tag):
+        # Asking by tag never returns a draft, on either host, so a draft left
+        # by an interrupted run is invisible there and is found by listing.
+        return any(row.get("draft") and row.get("tag_name") == tag for row in self.releases())
+
     def create(self, data):
         return self.request("/releases", "POST", data)
 
@@ -114,9 +136,9 @@ class Api:
         result = []
         for page in range(1, 101):
             rows = self.request(f"/releases/{release['id']}/assets?per_page=100&limit=100&page={page}")
-            result.extend(rows)
-            if len(rows) < 100:
+            if not rows:
                 return result
+            result.extend(rows)
         raise ValueError("too many release assets")
 
     def download(self, asset, path=None):
@@ -173,6 +195,8 @@ def publish(api, tag, title, commit, notes, files):
         raise ValueError("release asset is not a regular file")
     if api.by_tag(tag) is not None:
         raise ValueError("release already exists; refusing to modify it")
+    if api.draft_exists(tag):
+        raise ValueError("a draft release already exists for this tag; inspect it and remove it by hand before retrying")
     prerelease = "-" in tag
     release = api.create(dict(tag_name=tag, name=title, target_commitish=commit, body=notes, draft=True, prerelease=prerelease))
     for path in files:

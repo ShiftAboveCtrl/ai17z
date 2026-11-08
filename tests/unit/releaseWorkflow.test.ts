@@ -1,5 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(__dirname, '../..');
@@ -533,7 +535,12 @@ describe('the release workflow publishes under the derived name', () => {
     expect(part('ci/scripts/build-windows-release.ps1')).toContain("RELEASE_NAME='$name'");
     const release = part('.github/workflows/release.yml');
     expect(release).toContain('            release.env\n');
-    expect(release).toContain('[ -f dist/release.env ] && . dist/release.env && export RELEASE_NAME && rm -f dist/release.env');
+    // Read as text by a script, never sourced: the publishing shell holds the
+    // release key, its password and the private identifier list.
+    expect(release).toContain('RELEASE_NAME="$(bash ci/scripts/read-release-name.sh dist/release.env)" || exit 1');
+    for (const path of ['.github/workflows/release.yml', 'tools/release-here/publish.sh']) {
+      expect(part(path), path).not.toMatch(/(^|[\s;&])(\.|source)\s+[^\n]*release\.env/m);
+    }
   });
 
   it('reads it from the packager rather than composing it again', () => {
@@ -684,5 +691,90 @@ describe('what crosses between release jobs survives the next one', () => {
     const proof = part('ci/scripts/prove-ubuntu-package.sh');
     expect(proof).toContain('sudo -u owner test -d "$OWNER_HOME/$dir"');
     expect(proof).not.toContain('if [ -d "$OWNER_HOME/$dir" ]');
+  });
+});
+
+/**
+ * What the release workflow will and will not trust, run rather than read.
+ */
+describe('the publishing shell trusts nothing another job wrote', () => {
+  const bash = (args: string[], cwd?: string) => spawnSync('bash', args, { encoding: 'utf8', cwd });
+  const room = () => mkdtempSync(join(tmpdir(), 'ai17z-release-'));
+  const reader = resolve(root, 'ci/scripts/read-release-name.sh');
+
+  it('reads the name the Windows job wrote and removes the file', () => {
+    const dir = room();
+    try {
+      const file = join(dir, 'release.env');
+      writeFileSync(file, "RELEASE_NAME='AI17Z Beta 0.89'\n");
+      const result = bash([reader, file]);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe('AI17Z Beta 0.89\n');
+      expect(existsSync(file)).toBe(false);
+      writeFileSync(file, "RELEASE_NAME='AI17Z Release Candidate 1.0.0 (2)'\n");
+      expect(bash([reader, file]).stdout).toBe('AI17Z Release Candidate 1.0.0 (2)\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["RELEASE_NAME='AI17Z Beta 0.89'; touch pwned\n", 'a command after the name'],
+    ["RELEASE_NAME='AI17Z Beta 0.89'\ntouch pwned\n", 'a second line'],
+    ["RELEASE_NAME='AI17Z $(touch pwned)'\n", 'a command substitution'],
+    ["RELEASE_NAME=AI17Z Beta 0.89\n", 'an unquoted value'],
+    ["COSIGN_PASSWORD='x'\n", 'another variable'],
+    ["RELEASE_NAME='Beta 0.89'\n", 'a name without the product'],
+  ])('refuses %j (%s), runs none of it, and removes it', (content) => {
+    const dir = room();
+    try {
+      const file = join(dir, 'release.env');
+      writeFileSync(file, content);
+      const result = bash([reader, file], dir);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe('');
+      expect(existsSync(join(dir, 'pwned'))).toBe(false);
+      expect(existsSync(file)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('releases a v* tag only from a commit on main, and lets a rehearsal come from anywhere', () => {
+    const dir = room();
+    try {
+      const git = (...args: string[]) =>
+        spawnSync('git', ['-C', dir, '-c', 'user.name=S', '-c', 'user.email=s@example.invalid', '-c', 'core.hooksPath=', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+      git('init', '-q', '-b', 'main');
+      git('commit', '-q', '--allow-empty', '-m', 'on main');
+      const onMain = git('rev-parse', 'HEAD').stdout.trim();
+      git('checkout', '-q', '-b', 'side');
+      git('commit', '-q', '--allow-empty', '-m', 'only on a side branch');
+      const offMain = git('rev-parse', 'HEAD').stdout.trim();
+      const check = (tag: string, commit: string) => bash([resolve(root, 'ci/scripts/tag-on-main.sh'), tag, commit, 'main'], dir);
+      expect(check('v1.0.0-beta.89', onMain).status).toBe(0);
+      const refused = check('v1.0.0-beta.89', offMain);
+      expect(refused.status).not.toBe(0);
+      expect(refused.stderr).toContain('not on main');
+      expect(check('rehearsal-v1.0.0-beta.89', offMain).status).toBe(0);
+      expect(bash([resolve(root, 'ci/scripts/tag-on-main.sh'), 'v1.0.0', onMain, 'no-such-ref'], dir).status).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('checks the tag in the first job, against the whole history', () => {
+    const release = part('.github/workflows/release.yml');
+    const version = release.slice(release.indexOf('  version:'), release.indexOf('  check:'));
+    expect(version).toContain('fetch-depth: 0');
+    expect(version).toContain('bash ci/scripts/tag-on-main.sh "$GITHUB_REF_NAME" "$GITHUB_SHA" origin/main');
+  });
+
+  it('says which release every pinned action commit is', () => {
+    for (const path of ['.github/workflows/release.yml', '.github/workflows/ci.yml']) {
+      for (const line of part(path).split('\n')) {
+        if (/uses:\s*[\w.-]+\/[\w.-]+@/.test(line)) expect(line, `${path}: ${line.trim()}`).toMatch(/@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+      }
+    }
   });
 });

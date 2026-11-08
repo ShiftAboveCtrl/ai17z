@@ -15,7 +15,7 @@ npm run lint
 npm run release:check
 bash ci/scripts/secret-scan.sh
 python3 ci/scripts/history-scan.py .
-PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= npx playwright install --with-deps chromium
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD="" npx playwright install --with-deps chromium
 bash ci/scripts/setup-pwsh.sh
 npm run migrate
 npx vitest run --reporter=default

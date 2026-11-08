@@ -35,7 +35,7 @@ default exists.
 
 It cannot be rotated. If it is lost, every stored provider credential becomes
 unreadable and has to be entered again. AI17Z will not silently generate a
-replacement when one is missing — it refuses to start that path, because a
+replacement when one is missing: it refuses to start that path, because a
 silent regeneration looks like everything is fine right up until a provider call
 fails for a reason nobody can trace. **Back up `.env`.**
 
@@ -56,8 +56,8 @@ The redactor blanks anything key-shaped before it reaches a log.
 
 The runtime is local. The model is not, unless you choose a local one.
 
-A configured remote provider — OpenAI, Anthropic, OpenRouter, DeepSeek, or any
-OpenAI-compatible endpoint — receives the context AI17Z sends it: the incoming
+A configured remote provider (OpenAI, Anthropic, OpenRouter, DeepSeek, or any
+OpenAI-compatible endpoint) receives the context AI17Z sends it: the incoming
 post, the conversation around it, the memories retrieved for that reply, and the
 persona. That is how it answers. Ollama runs on your machine and sends nothing
 anywhere.
@@ -86,7 +86,7 @@ You may optionally store a username and password on an account so that AI17Z can
 sign in again after a session lapses. It is off unless you fill it in. What you
 store is sealed with AES-256-GCM under your installation's master key, exactly
 like a provider API key, and can be read only by the worker that drives the
-browser — never from an API response, a log line, an audit record, or a trace.
+browser, never from an API response, a log line, an audit record, or a trace.
 Clearing the session, disconnecting, or deleting the account deletes it.
 
 It does not get you past a challenge. An account with two-factor authentication

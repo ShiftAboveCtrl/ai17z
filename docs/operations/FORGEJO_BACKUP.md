@@ -52,10 +52,19 @@ stops the sync for operator inspection. Nothing deletes or replaces a release.
 Old releases before Beta 0.89 are refused.
 
 Install the supplied service and timer after creating the unprivileged
-`ai17z-mirror` service account and trusted checkout. Put `FORGEJO_TOKEN` in
-`/etc/ai17z-mirror.env`, readable only by root, and optionally set a read-only
-`GITHUB_READ_TOKEN` to increase the source API limit. These credentials never
-belong in GitHub's release workflow.
+`ai17z-mirror` service account and trusted checkout. Put both credentials in
+`/etc/ai17z-mirror.env`, readable only by root:
+
+| Variable | What it is |
+| --- | --- |
+| `FORGEJO_TOKEN` | AI17Z Code token with repository write on `AI17Z/ai17z` |
+| `GITHUB_READ_TOKEN` | **Required.** A fine-grained GitHub token with read-only Contents on `ShiftAboveCtrl/ai17z`. GitHub allows sixty anonymous API requests an hour per address and one release is dozens of downloads, so the sync refuses to start without it. |
+
+Neither credential belongs in GitHub's release workflow. The server also needs
+`cosign` on `PATH` (or named by `COSIGN`), the version pinned in
+`ci/cosign.json`: every asset that has a `.sigstore.json` bundle is verified
+against `ci/cosign.pub` before anything is copied, and an asset that does not
+verify stops the run before a draft exists.
 
 ```bash
 sudo install -m 0644 tools/forgejo-mirror/ai17z-release-sync.service /etc/systemd/system/
@@ -66,8 +75,15 @@ sudo systemctl start ai17z-release-sync.service
 sudo journalctl -u ai17z-release-sync.service --no-pager
 ```
 
-The timer runs ten minutes after the preceding run ends, so copies do not
-overlap. A missing tag is retried on the next run after the pull mirror catches
+The timer runs an hour after the preceding run ends, so copies do not
+overlap. Each release that was copied or verified is recorded in
+`/var/lib/ai17z-mirror/verified.json` with what GitHub listed for it (release
+id, name, notes, prerelease flag, and every asset's name, size and id). A run
+asks GitHub for one list of releases and downloads only a release that is new
+or whose listing changed; nothing is recorded for a run that failed. Run
+`sync-releases.py --force` (for instance weekly, or after any change on the
+server) to download and verify everything again, which also catches a backup
+asset changed on AI17Z Code after it was recorded. A missing tag is retried on the next run after the pull mirror catches
 up. Alert on service failures and compare the newest release on both hosts.
 GitHub publication and backup synchronization are separate operations; a
 published release can take one mirror interval to appear on AI17Z Code.

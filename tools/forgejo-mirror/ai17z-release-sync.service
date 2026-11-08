@@ -14,4 +14,8 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 UMask=0077
+# /var/lib/ai17z-mirror: the record of releases already verified, the one
+# place ProtectSystem=strict leaves writable.
+StateDirectory=ai17z-mirror
+StateDirectoryMode=0700
 TimeoutStartSec=2h
