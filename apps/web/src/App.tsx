@@ -24,6 +24,7 @@ const SettingsPage = lazy(() => import('@app/routes/SettingsPage').then((m) => (
 const HealthPage = lazy(() => import('@app/routes/HealthPage').then((m) => ({ default: m.HealthPage })));
 const PluginsPage = lazy(() => import('@app/routes/PluginsPage').then((m) => ({ default: m.PluginsPage })));
 const HostingPage = lazy(() => import('@app/routes/HostingPage').then((m) => ({ default: m.HostingPage })));
+const DevUpdatesPage = lazy(() => import('@app/routes/DevUpdatesPage').then((m) => ({ default: m.DevUpdatesPage })));
 
 export function App() {
   const { user, loading, error } = useSession();
@@ -85,6 +86,7 @@ export function App() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/health" element={<HealthPage />} />
             <Route path="/hosting" element={<HostingPage />} />
+            <Route path="/dev-updates" element={<DevUpdatesPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

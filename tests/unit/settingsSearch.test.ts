@@ -24,6 +24,11 @@ describe('settings search finds where things live', () => {
     ['browser', 'Browser', '/settings#browser'],
     ['policies', 'Policies', '/agents/a1#policies'],
     ['persona source', 'Identity and persona sources', '/agents/a1#identity'],
+    ['dev updates', 'Development updates', '/dev-updates'],
+    ['coding assistant', 'Development updates', '/dev-updates'],
+    ['Claude Code', 'Development updates', '/dev-updates'],
+    ['post progress', 'Development updates', '/dev-updates'],
+    ['build in public', 'Development updates', '/dev-updates'],
   ])('"%s" finds %s', (query, title, href) => {
     const found = searchDestinations(query, all);
     const hit = found.find((d) => d.title === title);
