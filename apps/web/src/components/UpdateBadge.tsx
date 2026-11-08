@@ -44,7 +44,7 @@ export function UpdateBadge() {
     >
       <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden />
       {/*
-        The label, not the tag. `Beta 3.1` is shorter than `v1.0.0-beta.21` and
+        The label, not the tag. `Beta 0.89` is shorter than `v1.0.0-beta.89` and
         says the thing somebody wants from a badge -- which one is out -- while
         the tag says only that a number went up. The full version is on the
         screen this links to, beside the name, for anybody writing a bug report.

@@ -4,12 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { betaLabelFor, compareVersions, releaseName } from '@xbam/shared';
 
 /**
- * What a beta is called, now that there have been twenty of them.
+ * What a beta is called.
  *
  * `AI17Z Beta 1.0.0 (20)` had stopped saying anything. The `1.0.0` is identical
  * on every beta, so it carries no information and pushes the part that does to
- * the end, in brackets, where it reads as a build number. The owner asked for
- * the shape people already know: Beta 1.0 through Beta 1.9, then Beta 2.0.
+ * the end, in brackets, where it reads as a build number. Ten to a row came
+ * next and had beta.89 reading as Beta 9.9. The owner asked for a short name
+ * that reads straight off the tag: beta.89 is Beta 0.89, beta.100 is Beta 1.00.
  *
  * The whole safety of this rests on one property, which the tests below spend
  * most of their time on: **the tag does not change.** `1.0.0-beta.21` stays
@@ -28,34 +29,35 @@ import { betaLabelFor, compareVersions, releaseName } from '@xbam/shared';
 const root = resolve(__dirname, '../..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 
-describe('the beta label counts the way people do', () => {
-  it('puts ten in a row before carrying', () => {
+describe('the beta label reads straight off the tag', () => {
+  it('writes the beta number as hundredths', () => {
     // The sequence the owner asked for, written out rather than generated, so
     // a change to the arithmetic has to disagree with the list itself.
     const wanted: Record<number, string> = {
-      1: '1.1',
-      2: '1.2',
-      9: '1.9',
-      10: '2.0',
-      11: '2.1',
-      19: '2.9',
-      20: '3.0',
-      21: '3.1',
-      29: '3.9',
-      30: '4.0',
-      100: '11.0',
+      1: '0.01',
+      2: '0.02',
+      9: '0.09',
+      10: '0.10',
+      11: '0.11',
+      20: '0.20',
+      88: '0.88',
+      89: '0.89',
+      99: '0.99',
+      100: '1.00',
+      101: '1.01',
+      123: '1.23',
+      250: '2.50',
     };
     for (const [iteration, label] of Object.entries(wanted)) {
       expect(betaLabelFor(Number(iteration)), `beta.${iteration}`).toBe(label);
     }
   });
 
-  it('never shows a minor digit outside 0 through 9', () => {
+  it('always has exactly two digits after the point, and reads back as the tag', () => {
     for (let iteration = 1; iteration <= 250; iteration += 1) {
-      const [major, minor] = betaLabelFor(iteration).split('.');
-      expect(Number(minor), `beta.${iteration}`).toBeGreaterThanOrEqual(0);
-      expect(Number(minor), `beta.${iteration}`).toBeLessThanOrEqual(9);
-      expect(Number(major), `beta.${iteration}`).toBeGreaterThanOrEqual(1);
+      const label = betaLabelFor(iteration);
+      expect(label, `beta.${iteration}`).toMatch(/^\d+\.\d{2}$/);
+      expect(Number(label.replace('.', '')), `beta.${iteration}`).toBe(iteration);
     }
   });
 
@@ -66,7 +68,7 @@ describe('the beta label counts the way people do', () => {
     let previous = -Infinity;
     for (let iteration = 1; iteration <= 250; iteration += 1) {
       const [major, minor] = betaLabelFor(iteration).split('.').map(Number);
-      const rank = (major ?? 0) * 10 + (minor ?? 0);
+      const rank = (major ?? 0) * 100 + (minor ?? 0);
       expect(rank, `beta.${iteration} ranks below beta.${iteration - 1}`).toBeGreaterThan(previous);
       previous = rank;
     }
@@ -74,10 +76,11 @@ describe('the beta label counts the way people do', () => {
 
   it('is what this release and the next one are called', () => {
     // The two the owner named. Written as the exact strings a person sees.
-    expect(releaseName('1.0.0-beta.20').title).toBe('AI17Z Beta 3.0');
-    expect(releaseName('1.0.0-beta.21').title).toBe('AI17Z Beta 3.1');
-    expect(releaseName('1.0.0-beta.20').short).toBe('Beta 3.0');
-    expect(releaseName('1.0.0-beta.20').betaLabel).toBe('3.0');
+    expect(releaseName('1.0.0-beta.89').title).toBe('AI17Z Beta 0.89');
+    expect(releaseName('1.0.0-beta.89').short).toBe('Beta 0.89');
+    expect(releaseName('1.0.0-beta.89').betaLabel).toBe('0.89');
+    expect(releaseName('v1.0.0-beta.100').title).toBe('AI17Z Beta 1.00');
+    expect(releaseName('1.0.0-beta.90').short).toBe('Beta 0.90');
   });
 
   it('keeps the machine number beside the label rather than instead of it', () => {
@@ -130,9 +133,10 @@ describe('the installer says the same thing as the application', () => {
     // each other here. Add/Remove Programs and the version screen are read side
     // by side, and disagreeing looks like two builds installed at once.
     expect(iss).toContain('#define PreCountNumber PreCount == "" ? 0 : Int(PreCount)');
-    expect(iss).toContain('Str((PreCountNumber / 10) + 1) + "." + Str(PreCountNumber % 10)');
-    expect(version).toContain('Math.floor(safe / 10) + 1');
-    expect(version).toContain('safe % 10');
+    expect(iss).toContain('#define BetaHundredths PreCountNumber % 100');
+    expect(iss).toContain('Str(PreCountNumber / 100) + "." + (BetaHundredths < 10 ? "0" : "") + Str(BetaHundredths)');
+    expect(version).toContain('Math.floor(safe / 100)');
+    expect(version).toContain("String(safe % 100).padStart(2, '0')");
   });
 
   it('applies it to betas only, on both sides', () => {

@@ -440,8 +440,8 @@ describe('what a release is called on the screen', () => {
     const state = await updateState({ refresh: true });
     expect(state.currentName).toMatch(/^AI17Z /);
     // The name is a rendering of the number and the two cannot disagree. For a
-    // beta the link is the iteration rather than the core: `1.0.0-beta.20` is
-    // "Beta 3.0", and the 20 is what the 3.0 is made of. Asserted by deriving
+    // beta the link is the iteration rather than the core: `1.0.0-beta.89` is
+    // "Beta 0.89", and the 89 is what the 0.89 is made of. Asserted by deriving
     // it the same way rather than by repeating the arithmetic here.
     const iteration = Number(/-beta\.(\d+)/.exec(state.current)?.[1] ?? 0);
     if (iteration > 0) {
@@ -459,7 +459,7 @@ describe('what a release is called on the screen', () => {
     // The beta label counts betas and says nothing about the core version, so
     // `9.9.9-beta.2` reads the same as `1.0.0-beta.2` would. That is what a
     // flat counter means and it is deliberate.
-    expect(state.latest?.name).toBe('AI17Z Beta 1.2');
+    expect(state.latest?.name).toBe('AI17Z Beta 0.02');
     expect(state.latest?.channel).toBe('Beta');
     expect(state.latest?.version).toBe('9.9.9-beta.2');
   });

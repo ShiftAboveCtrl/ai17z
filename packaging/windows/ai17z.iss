@@ -21,7 +21,7 @@
 
 #define AppName "AI17Z"
 #define AppPublisher "AI17Z"
-#define AppUrl "https://code.ai17z.io/AI17Z/ai17z"
+#define AppUrl "https://github.com/ShiftAboveCtrl/ai17z"
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
@@ -56,20 +56,21 @@
 ; The first beta is just "Beta"; only a second one has to say which.
 #define IterationSuffix (PreCount != "" && PreCount != "1") ? " (" + PreCount + ")" : ""
 ;
-; A beta says which beta, in the two digits people use: Beta 1.0 through
-; Beta 1.9, then Beta 2.0. Ten to a row, counting from the tag's own number, so
-; beta.20 is Beta 3.0 and beta.21 is Beta 3.1.
+; A beta says which beta, as hundredths of the tag's own number: beta.1 is
+; Beta 0.01, beta.89 is Beta 0.89 and beta.100 is Beta 1.00. Always two digits
+; after the point, so the labels line up and sort.
 ;
 ; The same arithmetic as betaLabelFor() in packages/shared/src/version.ts, and
 ; it must move with it -- these two are read side by side, one in the Windows
 ; uninstall list and one on AI17Z's version screen, and disagreeing looks like
 ; two builds installed at once.
 ;
-; AppVersion is untouched. The tag stays 1.0.0-beta.21, because that is what
+; AppVersion is untouched. The tag stays 1.0.0-beta.89, because that is what
 ; VersionInfoVersion, the updater comparison and the download filename are all
 ; built on. This is a rendering and nothing parses it back.
 #define PreCountNumber PreCount == "" ? 0 : Int(PreCount)
-#define BetaLabel Str((PreCountNumber / 10) + 1) + "." + Str(PreCountNumber % 10)
+#define BetaHundredths PreCountNumber % 100
+#define BetaLabel Str(PreCountNumber / 100) + "." + (BetaHundredths < 10 ? "0" : "") + Str(BetaHundredths)
 #define ReleaseVersionOnly ChannelWord == "" ? \
   NumericVersion : \
   (LowerCase(PreWord) == "beta" ? "Beta " + BetaLabel : ChannelWord + " " + NumericVersion + IterationSuffix)

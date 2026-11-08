@@ -141,7 +141,7 @@ export function describeVersion(build: BuildVersion = buildVersion()): string {
  * What a release is called, as opposed to what it is numbered.
  *
  * `v0.1.0-rc.8` is correct, sortable, and says nothing to the person who
- * downloaded it. "AI17Z Beta 3.1" says which product, how finished it is, and
+ * downloaded it. "AI17Z Beta 0.89" says which product, how finished it is, and
  * which one it is -- in that order, because that is the order somebody looking
  * at a list of downloads cares about.
  *
@@ -153,7 +153,7 @@ export function describeVersion(build: BuildVersion = buildVersion()): string {
  *
  * Two grammars, because the channels are asking different questions:
  *
- *   **A beta is counted**, ten to a row -- Beta 1.0 to Beta 1.9, then Beta 2.0.
+ *   **A beta is counted**, in hundredths of its tag: beta.89 is Beta 0.89.
  *   The `1.0.0` was identical on all twenty of them and said nothing; which
  *   beta it is, is the whole of what somebody wants. `betaLabelFor` below.
  *
@@ -163,9 +163,9 @@ export function describeVersion(build: BuildVersion = buildVersion()): string {
  *   than "AI17Z Release Candidate 1.0.0" and every cycle starts with one.
  */
 export interface ReleaseName {
-  /** The whole thing: `AI17Z Beta 3.1`. */
+  /** The whole thing: `AI17Z Beta 0.89`. */
   title: string;
-  /** Without the product: `Beta 3.1`. For a badge with no room. */
+  /** Without the product: `Beta 0.89`. For a badge with no room. */
   short: string;
   /** `Beta`, `Release Candidate`, `Alpha`, or null for a finished release. */
   channel: string | null;
@@ -174,7 +174,7 @@ export interface ReleaseName {
   /** Which beta, which candidate. 1 when the tag does not say. */
   iteration: number;
   /**
-   * The beta's own two digits, `3.1`, or null for anything that is not a beta.
+   * The beta's own number as a decimal, `0.89`, or null for anything that is not a beta.
    *
    * Exposed because a diagnostics screen shows this beside the machine version
    * and should not have to take it apart from `short` to do it.
@@ -183,13 +183,17 @@ export interface ReleaseName {
 }
 
 /**
- * Which beta this is, in the two digits people actually use.
+ * Which beta this is, as a short decimal: `beta.89` is Beta 0.89.
  *
  * Twenty betas in, `Beta 1.0.0 (20)` had stopped telling anybody anything: the
  * `1.0.0` is the same on every one of them, and `(20)` reads as a build number
- * rather than as progress. The owner asked for the familiar shape instead --
- * Beta 1.0 through Beta 1.9, then Beta 2.0 -- so the twentieth iteration is
- * Beta 3.0 and the next is Beta 3.1.
+ * rather than as progress. The first answer was ten to a row (Beta 1.0 to
+ * Beta 1.9, then Beta 2.0), which by the eighty-ninth beta read as Beta 9.9 and
+ * made the hundredth look like a major release. The owner asked for something
+ * shorter and closer to the tag, so the beta's own number is written as
+ * hundredths: beta.1 is Beta 0.01, beta.89 is Beta 0.89 and beta.100 is
+ * Beta 1.00. Reading the label back gives the tag's number, which the old
+ * grammar never did.
  *
  * The tag does not change. `1.0.0-beta.21` stays exactly that: semver
  * precedence, the prerelease filter, the Debian version, the four-digit
@@ -203,11 +207,11 @@ export interface ReleaseName {
  * and every installation in the field would have refused the upgrade as older.
  */
 export function betaLabelFor(iteration: number): string {
-  // Ten to a row, counting from the tag's own number: beta.1 is Beta 1.1,
-  // beta.10 is Beta 2.0, beta.20 is Beta 3.0. The tags are 1-based, which is
-  // what puts the first of each ten at `.0`.
+  // Hundredths of the tag's own number, always two digits after the point so
+  // the labels sort and line up: beta.1 is 0.01, beta.89 is 0.89, beta.100 is
+  // 1.00 and beta.123 is 1.23.
   const safe = Number.isFinite(iteration) && iteration > 0 ? Math.floor(iteration) : 0;
-  return `${Math.floor(safe / 10) + 1}.${safe % 10}`;
+  return `${Math.floor(safe / 100)}.${String(safe % 100).padStart(2, '0')}`;
 }
 
 /**

@@ -77,10 +77,10 @@ export interface ReleaseInfo {
   version: string;
   /** What the tag is called, which is what a URL needs. */
   tag: string;
-  /** The readable name: `AI17Z Beta 3.1`. */
+  /** The readable name: `AI17Z Beta 0.89`. */
   name: string;
   /**
-   * The same thing without the product: `Beta 3.1`.
+   * The same thing without the product: `Beta 0.89`.
    *
    * For a badge with no room for `AI17Z`. Derived here with `channel` and for
    * the same reason: the version grammar has one implementation and the browser
@@ -115,9 +115,9 @@ export interface ReleaseInfo {
 export interface UpdateState {
   /** What is running here. */
   current: string;
-  /** What that is called: `AI17Z Beta 3.1`. The number is still `current`. */
+  /** What that is called: `AI17Z Beta 0.89`. The number is still `current`. */
   currentName: string;
-  /** The short form of that: `Beta 3.1`. The number is still `current`. */
+  /** The short form of that: `Beta 0.89`. The number is still `current`. */
   currentLabel: string;
   latest: ReleaseInfo | null;
   /** Newer than this installation, and not one the owner has skipped. */
