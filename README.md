@@ -7,11 +7,14 @@
 **Self-hosted platform for running autonomous AI agents on your own machine.**
 
 [![CI](https://github.com/ShiftAboveCtrl/ai17z/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ShiftAboveCtrl/ai17z/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/ShiftAboveCtrl/ai17z?display_name=release&label=latest&color=2ea44f)](https://github.com/ShiftAboveCtrl/ai17z/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/ShiftAboveCtrl/ai17z?display_name=release&include_prereleases&label=latest&color=2ea44f)](https://github.com/ShiftAboveCtrl/ai17z/releases)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Ubuntu-informational)](#install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**[Download the latest release](https://github.com/ShiftAboveCtrl/ai17z/releases/latest)**
+**[Download AI17Z](https://github.com/ShiftAboveCtrl/ai17z/releases)**
+
+If AI17Z helps you, [star the repository](https://github.com/ShiftAboveCtrl/ai17z)
+to follow its progress and help others find it.
 
 [Overview](#overview) · [Features](#features) · [Install](#install) · [Architecture](#architecture) · [Status](#status) · [Documentation](#documentation)
 
@@ -29,8 +32,9 @@ time without losing any of it.
 
 Agents connect to channels such as X through a real Google Chrome session,
 decide whether and how to respond, and record why. Everything runs locally:
-the database, the browser profile, provider keys and agent memory never leave
-the machine.
+the database, browser profiles and stored credentials stay on your machine.
+When you choose a remote model provider, it receives the context needed for
+each request. You control the provider and each agent's permissions.
 
 ---
 
@@ -85,9 +89,9 @@ The installers download from [GitHub releases](https://github.com/ShiftAboveCtrl
 and from [AI17Z Code](https://code.ai17z.io/AI17Z/ai17z/releases), AI17Z's own
 server, when GitHub cannot provide a file. Both carry the same files, and every
 download is checked against the release's
-[`SHA256SUMS.txt`](https://github.com/ShiftAboveCtrl/ai17z/releases/latest/download/SHA256SUMS.txt)
-before it is used. Release names such as `beta-v9.7` correspond to semver tags
-such as `v1.0.0-beta.87`.
+[`SHA256SUMS.txt`](https://github.com/ShiftAboveCtrl/ai17z/releases)
+before it is used. **Beta 0.89** is tagged `v1.0.0-beta.89`; Beta 1.00 is
+`v1.0.0-beta.100`. Tags stay strict semver.
 
 ### Windows
 
@@ -238,7 +242,7 @@ upgrade test that confirms no data is lost.
 - [Sign-in and security challenges](docs/architecture/SIGN_IN.md) · [Persona sources](docs/architecture/PERSONA_SOURCES.md)
 - [Browser runtime](docs/architecture/X_RUNTIME.md) · [Reading channels](docs/architecture/X_READING.md) · [Notifications](docs/architecture/NOTIFICATIONS.md)
 - [Agent packages](docs/architecture/AGENT_PACKAGES.md) · [Security](docs/architecture/SECURITY.md) · [Updates](docs/architecture/UPDATES.md)
-- [Engineering notes](docs/ENGINEERING.md)
+- [Engineering notes](docs/ENGINEERING.md) · [Releasing](docs/RELEASING.md) · [Backup mirror](docs/operations/FORGEJO_BACKUP.md)
 
 ---
 

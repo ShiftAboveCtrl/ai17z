@@ -1,0 +1,7 @@
+# Release and security changes are reviewed by the maintainer.
+* @ShiftAboveCtrl
+/.github/ @ShiftAboveCtrl
+/ci/ @ShiftAboveCtrl
+/packaging/ @ShiftAboveCtrl
+/packages/runtime/src/updates.ts @ShiftAboveCtrl
+/SECURITY.md @ShiftAboveCtrl

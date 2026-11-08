@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/ShiftAboveCtrl/ai17z/security/advisories/new
+    about: Keep credentials, browser sessions and exploit details out of public issues.
+  - name: Installation guide
+    url: https://github.com/ShiftAboveCtrl/ai17z/blob/main/docs/INSTALL.md
+    about: Setup, updates and platform requirements.

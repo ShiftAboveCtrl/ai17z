@@ -36,7 +36,7 @@ invariants in this repository got written. Personal escalation is not.
 AI17Z runs autonomous agents that act on real services. Using it to harass
 people, impersonate someone, evade a platform's security controls, or operate
 at a scale a service has asked you not to is outside what this community
-supports, and issues or merge requests in aid of that will be closed.
+supports, and issues or pull requests in aid of that will be closed.
 
 The software is MIT-licensed and you may do as you like with it. This document
 is about the project's own spaces.

@@ -671,3 +671,17 @@ the first post under **the same event id**, which is where duplicate suppression
 actually lives: `events (channel, account, remote_event_id)` is unique, and
 several radar monitors seeing one post is the case it exists for. A first
 attempt with a fresh id proves nothing, because nothing is meant to stop that.
+
+## Source and release hosts
+
+GitHub is the primary repository, CI service and release builder. AI17Z Code is
+its pull mirror and release backup. The shared source list, its installer
+copies and fallback tests are in `releaseManifest.ts` and
+`tests/unit/releaseSources.test.ts`. A checksum mismatch always stops an update.
+Read [RELEASING.md](RELEASING.md) before tagging and
+[FORGEJO_BACKUP.md](operations/FORGEJO_BACKUP.md) before changing mirroring.
+
+Tags remain strict semver. A beta title renders its iteration as hundredths:
+`v1.0.0-beta.89` is **Beta 0.89**, `v1.0.0-beta.100` is **Beta 1.00**. The app
+and Inno installer prefix AI17Z. `releaseName()` and the ISPP copy are checked
+together; labels are never parsed as version numbers.

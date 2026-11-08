@@ -1,0 +1,23 @@
+name: Feature request
+description: Describe the task you want an agent or owner to accomplish.
+title: 'Feature: '
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the workflow and where AI17Z falls short today.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Desired behavior
+      description: Explain the outcome, permissions and owner controls it needs.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

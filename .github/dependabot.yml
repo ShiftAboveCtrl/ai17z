@@ -1,8 +1,13 @@
 version: 2
 
-# Security updates only: a limit of zero stops routine version bumps, and
-# Dependabot still opens a pull request for every advisory.
+# Actions receive weekly pin updates. npm keeps security updates only; a zero
+# limit disables routine version bumps while advisory fixes remain enabled.
 updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
   - package-ecosystem: npm
     directories: ["/", "/apps/*", "/packages/*"]
     schedule:

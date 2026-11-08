@@ -6,11 +6,14 @@ this is what it does with it.
 
 ## Reporting something
 
-[Report it privately at ai17z.io/security/report](https://ai17z.io/security/report),
-not as an issue: issues on AI17Z Code are public, and it has no private ones.
-Only the maintainers can read what you send there. Include what you did, what
-happened, and what you expected. If you are not sure whether something counts,
-report it anyway.
+[Report a vulnerability privately on GitHub](https://github.com/ShiftAboveCtrl/ai17z/security/advisories/new).
+Use the repository's Security tab and choose **Report a vulnerability**. If
+GitHub is unavailable, use [the private report form](https://ai17z.io/security/report).
+Include affected versions, reproduction steps, impact and a minimal sanitized
+proof. Leave real credentials, sessions, private addresses and personal paths
+out of attachments. Maintainers acknowledge reports and coordinate a fix and
+disclosure with the reporter. The latest release receives security fixes;
+older betas should upgrade before retesting.
 
 Please do not open a public issue for anything that would let somebody else read
 another person's credentials, drive their browser, or act on their accounts.

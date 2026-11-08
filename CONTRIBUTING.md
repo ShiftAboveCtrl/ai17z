@@ -7,7 +7,7 @@ separated and named so nobody mistakes one for the other.
 ## Getting set up
 
 ```bash
-git clone https://code.ai17z.io/AI17Z/ai17z.git ai17z
+git clone https://github.com/ShiftAboveCtrl/ai17z.git ai17z
 cd ai17z
 ./install-ai17z.sh        # or .\install-ai17z.ps1 on Windows
 npm run db:up
@@ -31,6 +31,7 @@ npm run dev:worker        # jobs, channel polling, browser tasks
 ## Running the tests
 
 ```bash
+npm run lint
 npm run typecheck
 npm test                  # unit and integration; integration needs Postgres
 npx playwright test       # end to end, against a running stack
@@ -102,7 +103,7 @@ something went wrong once. The short version:
 ## Before opening a pull request
 
 ```bash
-npm run typecheck && npm test
+npm run lint && npm run typecheck && npm test && npm run release:check
 ```
 
 CI runs the same, plus the web build and a secret scan, against a real Postgres
@@ -110,18 +111,24 @@ and with no credentials of any kind.
 
 ## Where this happens
 
-AI17Z lives on [AI17Z Code](https://code.ai17z.io/AI17Z/ai17z), the project's
-own Forgejo. Reading, cloning and downloading need no account. Accounts there,
-which issues and pull requests need, are by invitation for now: while there is
-no community to look after, an open sign-up page is mostly a door for spam.
-Nothing else waits on that. Clone it, change it and run it under the MIT
-licence, and a vulnerability is reported privately at
-<https://ai17z.io/security/report>, never in an issue.
+AI17Z development happens on [GitHub](https://github.com/ShiftAboveCtrl/ai17z).
+Fork the repository and open a pull request against `main`. A maintainer may
+need to approve CI for a first-time contributor. GitHub-hosted PR jobs use
+read-only tokens and name no release secrets.
 
-With an account, fork the repository and open a pull request from your fork.
-The first time a pull request from somebody new runs CI, a maintainer approves
-the run. That is Forgejo's own rule and it is there for a reason worth knowing:
-CI executes the code in the pull request, so it runs on a machine kept for
-exactly that, which holds no secrets and can reach nothing of AI17Z's, and a
-pull request is never given the repository's secrets or a token that can write
-to it.
+[AI17Z Code](https://code.ai17z.io/AI17Z/ai17z) is a public backup of the code
+and release files. Read, clone or install from it when GitHub is unavailable.
+Report vulnerabilities through the private channels in [SECURITY.md](SECURITY.md).
+
+## Pull requests
+
+Open an issue for substantial behavior changes, then send a focused pull request
+against `main`. Explain the user-visible result, the tests you ran and any
+platform you could not verify. Maintainers squash changes using the PR title.
+Use a clear title such as `Fix update checks when the primary host is unavailable`.
+
+GitHub Actions runs lint, typecheck, unit and integration tests with disposable
+Postgres, release checks and a web build. Forks need no secrets. Keep real
+credentials, personal paths, hostnames and private addresses out of fixtures,
+logs, screenshots and commit metadata. Use `example.invalid` and invented data.
+Report security findings through [SECURITY.md](SECURITY.md).
