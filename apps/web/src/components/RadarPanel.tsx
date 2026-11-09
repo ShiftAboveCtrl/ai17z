@@ -272,7 +272,7 @@ export function RadarSourceItem({
       </p>
       <PaceLine kind={source.kind} configured={source.config.intervalSeconds} />
       {source.config.mayTrigger === false && (
-        <p className="mt-1 text-[11px] text-bone-faint">Context only — this never creates a reply.</p>
+        <p className="mt-1 text-[11px] text-bone-faint">Context only. This never creates a reply.</p>
       )}
       {source.lastError && (
         <p className="mt-1 break-words text-xs leading-relaxed text-signal-fail">{source.lastError}</p>
