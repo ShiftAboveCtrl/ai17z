@@ -1,4 +1,5 @@
 import type { RadarSourceConfig, RadarSourceKind, RadarStatus } from '@xbam/shared/contracts';
+import { signalWatchKey } from '@xbam/shared';
 import { mapRow, mapRows } from '../mapper';
 import { query, queryOne } from '../pool';
 
@@ -70,7 +71,18 @@ export async function upsertSource(input: {
       JSON.stringify(input.config ?? {}),
     ],
   );
-  return mapRow<RadarSourceRow>(row) as RadarSourceRow;
+  const source = mapRow<RadarSourceRow>(row) as RadarSourceRow;
+  // A pin removed from a market source leaves its baseline behind, so re-adding
+  // the same pin later would resume from a stale state. The watch list is saved
+  // whole rather than merged, so anything not in the new set can be dropped now.
+  if (input.kind === 'market_signal' && Array.isArray(input.config?.watches)) {
+    const keys = input.config.watches.map(signalWatchKey);
+    await query(
+      `DELETE FROM signal_baselines WHERE source_id = $1 AND NOT (watch_key = ANY($2::text[]))`,
+      [source.id, keys],
+    );
+  }
+  return source;
 }
 
 export async function deleteSource(id: string): Promise<void> {

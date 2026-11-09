@@ -118,22 +118,36 @@ export async function counts(agentId: string): Promise<Record<string, number>> {
  * Claimed by moving it to drafting in the same statement, so two scheduled
  * posts cannot pick up the same thought.
  */
-export async function claimBestIdea(agentId: string): Promise<IdeaRow | null> {
+export async function claimBestIdea(agentId: string, accountId: string | null = null): Promise<IdeaRow | null> {
   return mapRow<IdeaRow>(
     await queryOne(
       `UPDATE content_ideas SET status = 'drafting', updated_at = now()
         WHERE id = (
-          SELECT id FROM content_ideas
-           WHERE agent_id = $1 AND status = 'unused'
+          SELECT i.id FROM content_ideas i
+           WHERE i.agent_id = $1 AND i.status = 'unused'
+             -- A signal idea belongs to the account whose radar source saw it.
+             -- Claiming it for a different account of the same agent hands one
+             -- account's observation to another, and refusing it afterwards only
+             -- returns it to the queue to be claimed and refused again, which
+             -- starves the account it does belong to. Skipping it here keeps it
+             -- reachable by the right account. Without an account to compare, a
+             -- signal idea is left alone rather than handed out blind.
+             AND (i.source <> 'market_signal' OR (
+               $2::text IS NOT NULL AND EXISTS (
+                 SELECT 1 FROM signal_candidates sc
+                 JOIN radar_sources s ON s.id = sc.source_id
+                 WHERE sc.idea_id = i.id AND s.account_id = $2::uuid
+               )
+             ))
            -- Newest first among equals. The old ordering was created_at
            -- ascending, so an agent worked through its backlog oldest thought
            -- first and the very first thing it ever posted was the stalest
            -- thing it had.
-           ORDER BY (${EFFECTIVE_SCORE}) DESC, created_at DESC
+           ORDER BY (${EFFECTIVE_SCORE}) DESC, i.created_at DESC
            LIMIT 1 FOR UPDATE SKIP LOCKED
         )
         RETURNING *`,
-      [agentId],
+      [agentId, accountId ?? null],
     ),
   );
 }

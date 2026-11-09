@@ -1,4 +1,4 @@
-import { sha256Hex, errorMessage } from '@xbam/shared';
+import { signalWatchKey, errorMessage } from '@xbam/shared';
 import { SignalUniverse, type SignalObservation, type SignalState, type SignalWatch } from '@xbam/shared/contracts';
 import { query, radar, withTransaction, type RadarSourceRow } from '@xbam/database';
 import { ask, GECKO_FAMILY, SOLANA_FAMILY, exactInteger, isAddress, isSignature, type GeckoQuery, type GeckoResult, type SolanaQuery, type SolanaResult } from '@xbam/upstream';
@@ -6,9 +6,6 @@ import { unpromptedSubject, reticenceReason } from './reticence';
 import { readPromo } from './promo';
 
 export const SIGNAL_MAX_AGE_MS = 5 * 60_000;
-export function signalWatchKey(watch: SignalWatch): string {
-  return sha256Hex(`${watch.chain}:${watch.address}:${watch.predicate}:${watch.threshold ?? ''}`);
-}
 
 export function signalPublicationRefusal(text: string): string | null {
   // A mint ending in `pump` is an identity, never promotional language.
@@ -65,7 +62,7 @@ export async function readSignalWatch(watch: SignalWatch): Promise<SignalObserva
     const rows = answer.value.result;
     if (!Array.isArray(rows)) throw new Error('Transaction list unavailable.');
     const valid = rows.slice(0, 20).map(record).find(row => row.err === null && typeof row.signature === 'string' && isSignature(row.signature));
-    return { value: valid ? String(valid.signature) : rows.length === 0 ? '' : null, source: answer.provenance.upstreamId, observedAt: answer.provenance.fetchedAt, definition: 'Most recent finalized successful transaction mentioning this address, within the latest 20 signatures. Not proof of a transfer, its direction, value or wallet ownership.' };
+    return { value: valid ? String(valid.signature) : '', source: answer.provenance.upstreamId, observedAt: answer.provenance.fetchedAt, definition: 'Most recent finalized successful transaction mentioning this address, within the latest 20 signatures. Not proof of a transfer, its direction, value or wallet ownership.' };
   }
   if (watch.predicate === 'concentration_above') {
     const supply = await solana('getTokenSupply', watch.address);
@@ -132,8 +129,9 @@ export async function pollSignalSource(source: RadarSourceRow, reader = readSign
       if (!current?.enabled || !config?.watches?.some(w => signalWatchKey(w) === key)) return;
       const row = await tx.one('SELECT state FROM signal_baselines WHERE source_id = $1 AND watch_key = $2', [source.id, key]);
       const evaluation = evaluateSignal(watch, (row?.state as SignalState | null) ?? null, read);
-      const reason = watch.chain !== 'solana' ? read.definition : read.value === null ? `${evaluation.reason} ${read.definition}` : evaluation.reason;
-      if (read.value === null || /stale|unavailable/i.test(reason)) gaps++;
+      const unsupported = watch.chain !== 'solana';
+      const reason = unsupported ? read.definition : read.value === null ? `${evaluation.reason} ${read.definition}` : evaluation.reason;
+      if (!unsupported && (read.value === null || /stale|unavailable/i.test(reason))) gaps++;
       reasons.push(reason);
       await tx.query(`INSERT INTO signal_baselines(source_id, watch_key, watch, state, last_read, reason) VALUES ($1,$2,$3,$4,$5,$6)
         ON CONFLICT(source_id,watch_key) DO UPDATE SET state = excluded.state, last_read = excluded.last_read, reason = excluded.reason, updated_at = now()`, [source.id, key, watch, evaluation.state, read, reason]);

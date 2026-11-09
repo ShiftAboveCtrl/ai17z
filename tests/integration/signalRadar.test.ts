@@ -80,7 +80,7 @@ describe('durable market signal radar', () => {
     expect((await radar.getSource(source.id))?.idleReason).toMatch(/bitcoin.*unsupported/i);
   });
   it('AC3 and AC5 overlapping polls and a restarted sampler produce one evidence-backed idea per crossing', async () => {
-    const { source, agentId } = await setup();
+    const { source, agentId, accountId } = await setup();
     await pollSignalSource(source, async () => observation(200));
     expect(await content.listIdeas(agentId)).toHaveLength(0);
     const after = observation(50);
@@ -89,7 +89,7 @@ describe('durable market signal radar', () => {
     const ideas = await content.listIdeas(agentId);
     expect(ideas).toHaveLength(1);
     expect(ideas[0]?.source).toBe('market_signal');
-    const brief = await nextPost(agentId);
+    const brief = await nextPost(agentId, accountId);
     expect(brief?.brief).toContain('200');
     expect(brief?.brief).toContain('50');
     expect(brief?.brief).toContain('fixture');
@@ -199,5 +199,45 @@ describe('durable market signal radar', () => {
     bundle.policy.rate.workingHours = { enabled: true, timezone: 'UTC', startHour: hour, endHour: hour };
     await expect(stepExecute(bundle)).rejects.toThrow(/Outside configured working hours/);
     expect(await query('SELECT * FROM actions')).toHaveLength(0);
+  });
+  it('does not hand a sibling account a signal idea bound to another account', async () => {
+    const f = await setup();
+    const sibling = await accounts.createAccount({ ownerId: f.ownerId, channel: 'mock', handle: 'signal-sibling' });
+    await accounts.updateAccount(sibling.id, { enabled: true, status: 'CONNECTED' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: sibling.id });
+    await capabilities.grant(f.agentId, sibling.id, 'POST');
+    await pollSignalSource(f.source, async () => observation(200));
+    await pollSignalSource(f.source, async () => observation(50));
+    expect(await content.listIdeas(f.agentId)).toHaveLength(1);
+    // The sibling's claim skips the idea rather than claiming and refusing it.
+    expect(await nextPost(f.agentId, sibling.id)).toBeNull();
+    expect((await content.listIdeas(f.agentId))[0]?.status).toBe('unused');
+    // The account the idea belongs to still reaches it.
+    expect((await nextPost(f.agentId, f.accountId))?.brief).toContain('200');
+  });
+  it('reports an unsupported chain as configuration state rather than a coverage gap', async () => {
+    const { source } = await setup([{ ...watch, chain: 'bitcoin' }]);
+    await pollSignalSource(source, async () => { throw new Error('must not read'); });
+    const after = await radar.getSource(source.id);
+    expect(after?.idleReason).toMatch(/unsupported chain/i);
+    expect(after?.lastError).toBeNull();
+    expect(after?.status).toBe('HEALTHY');
+  });
+  it('drops a removed pin baseline so re-adding re-baselines', async () => {
+    const { source, accountId } = await setup();
+    await pollSignalSource(source, async () => observation(200));
+    expect(await query('SELECT * FROM signal_baselines')).toHaveLength(1);
+    await radar.upsertSource({ accountId, kind: 'market_signal', config: { watches: [{ chain: 'solana', address, predicate: 'wallet_transaction' as const }] } });
+    expect(await query('SELECT * FROM signal_baselines')).toHaveLength(0);
+  });
+  it('reads signatures that all failed as no successful transaction', async () => {
+    const spy = vi.spyOn(upstream, 'ask').mockResolvedValue({
+      value: { result: [{ err: { InstructionError: [0, 'Custom'] }, signature: 'failed' }, { err: 'failed', signature: 'also failed' }] },
+      provenance: { upstreamId: 'rpc-fixture', fetchedAt: new Date().toISOString() },
+    } as never);
+    try {
+      const read = await readSignalWatch({ ...watch, predicate: 'wallet_transaction' });
+      expect(read.value).toBe('');
+    } finally { spy.mockRestore(); }
   });
 });

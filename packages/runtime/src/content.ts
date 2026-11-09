@@ -145,11 +145,11 @@ export interface ContentBrief {
  * nothing rather than invent something. An agent with nothing to say saying
  * nothing is the correct behaviour.
  */
-export async function nextPost(agentId: string): Promise<ContentBrief | null> {
-  const idea = await contentRepo.claimBestIdea(agentId);
+export async function nextPost(agentId: string, accountId: string | null = null): Promise<ContentBrief | null> {
+  const idea = await contentRepo.claimBestIdea(agentId, accountId);
   if (!idea) return null;
   if (idea.source === 'market_signal') {
-    const refusal = await signalIdeaRefusal(idea.id, undefined, { agentId });
+    const refusal = await signalIdeaRefusal(idea.id, undefined, { accountId, agentId });
     if (refusal) {
       await contentRepo.discardIdea(agentId, idea.id, refusal);
       return null;

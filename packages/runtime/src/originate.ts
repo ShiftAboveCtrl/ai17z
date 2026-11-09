@@ -2,7 +2,6 @@ import type { ActionType } from '@xbam/shared/contracts';
 import { createLogger, sha256Hex } from '@xbam/shared';
 import {
   accounts as accountsRepo,
-  capabilities as capabilitiesRepo,
   agents as agentsRepo,
   content as contentRepo,
   events as eventsRepo,
@@ -14,7 +13,6 @@ import {
 } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { nextPost, releaseIdea } from './content';
-import { signalIdeaRefusal } from './signalRadar';
 
 const log = createLogger('originate');
 
@@ -63,22 +61,12 @@ export async function originatePost(input: {
     return { posted: false, reason: 'No account is connected for this agent to post through.', jobId: null };
   }
 
-  // The backlog decides whether there is a post, not the clock.
-  const brief = await nextPost(agent.id);
+  // The backlog decides whether there is a post, not the clock. The claim and
+  // the signal refusal share one account scope inside nextPost, so a signal
+  // idea bound to another account is never taken and never released back.
+  const brief = await nextPost(agent.id, input.accountId);
   if (!brief) {
     return { posted: false, reason: 'Nothing in the idea backlog was worth posting.', jobId: null };
-  }
-  if (brief.idea.source === 'market_signal') {
-    const grants = await capabilitiesRepo.grantsFor(agent.id, input.accountId);
-    if (!grants.has('READ') || !grants.has('POST')) {
-      await releaseIdea(agent.id, brief.idea.id);
-      return { posted: false, reason: 'READ and POST grants are required before originating a signal post.', jobId: null };
-    }
-    const refusal = await signalIdeaRefusal(brief.idea.id, undefined, { accountId: input.accountId, agentId: agent.id });
-    if (refusal) {
-      await releaseIdea(agent.id, brief.idea.id);
-      return { posted: false, reason: refusal, jobId: null };
-    }
   }
 
   const template = await promptsRepo.getActiveTemplate('reply.default');
