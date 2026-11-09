@@ -445,7 +445,7 @@ export async function paperFillsOf(agentId: string): Promise<PaperFillRow[]> {
     await query(
       `SELECT id, side, asset_in, asset_out, postcondition, created_at, updated_at FROM trade_intents
          WHERE agent_id = $1 AND mode = 'PAPER' AND status = 'PAPER_FILLED'
-         ORDER BY created_at ASC`,
+         ORDER BY updated_at ASC`,
       [agentId],
     ),
   );

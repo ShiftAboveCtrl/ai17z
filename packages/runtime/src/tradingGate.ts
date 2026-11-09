@@ -1,7 +1,8 @@
 import { trading } from '@xbam/database';
 import type { TradeIntentRow, TradeMandateRow } from '@xbam/database';
-import { TradeIntent, TradeMandate, type MarketSnapshot, type TradePauseScope } from '@xbam/shared/contracts';
+import { assetKey, TradeIntent, TradeMandate, type MarketSnapshot, type TradePauseScope } from '@xbam/shared/contracts';
 import { judgeTrade, type RiskVerdict } from './tradingRisk';
+import { paperPositions } from './paperPositions';
 
 /**
  * The gate, asked about a trade that is already written down.
@@ -106,7 +107,7 @@ export async function judgeTradeInput(q: StoredTradeQuestion) {
       walletId: q.intentRow.walletId,
       runtimeId: q.runtimeId ?? null,
     }) as Promise<TradePauseScope[]>,
-    trading.exposureOf(q.intentRow.agentId, startOfDay(now)),
+    intent.mode === 'PAPER' ? paperExposure(q.intentRow, startOfDay(now)) : trading.exposureOf(q.intentRow.agentId, startOfDay(now)),
   ]);
   // The intent being judged is not exposure it has already taken, so its own
   // row is removed from the totals before its size is tested against them.
@@ -142,6 +143,20 @@ export async function judgeTradeInput(q: StoredTradeQuestion) {
     pausedScopes,
     simulated: q.simulated ?? q.intentRow.simulation !== null,
     now,
+  };
+}
+
+/** Paper has its own spend and holdings, in this trade's quote units. Never add live money to it. */
+async function paperExposure(intent: TradeIntentRow, since: Date) {
+  const quote = assetKey(intent.side === 'BUY' ? intent.assetIn : intent.assetOut);
+  const fills = await trading.paperFillsOf(intent.agentId);
+  const spent = fills.filter((f) => f.side === 'BUY' && assetKey(f.assetIn) === quote && Date.parse(f.recordedAt) >= since.getTime())
+    .reduce((total, f) => total + BigInt(f.inBase), 0n);
+  const positions = paperPositions(fills).filter((p) => assetKey(p.quote) === quote && BigInt(p.quantityBase) > 0n);
+  return {
+    spentTodayBase: spent.toString(),
+    openExposureBase: positions.reduce((total, p) => total + BigInt(p.costBase), 0n).toString(),
+    openPositions: positions.length,
   };
 }
 
