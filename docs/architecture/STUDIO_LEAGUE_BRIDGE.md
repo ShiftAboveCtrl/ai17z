@@ -172,9 +172,13 @@ entry PENDING and it is tried again under the same key, with a wait of a tenth o
 the time already waited, between one minute and fifteen minutes. Elapsed time
 never ends an entry: a Studio outage of any length leaves it pending. It ends
 only when Studio says no, or when the season's `entry_closes_at` passes without
-Studio having taken it (REFUSED, "Entry closed before Studio took this one"). An
-entry Studio holds whose mandate could never be written is ENDED once the season
-is over.
+Studio having taken it (REFUSED, "Entry closed before Studio took this one"). The
+lock governs when Studio takes an entry, not when the local mandate is written:
+an entry Studio accepted before the lock may still have its mandate written after
+it, until the season ends. Nothing is backfilled, because only trades filled under
+the mandate are reported, so a late mandate means fewer fills and never earlier
+ones. An entry Studio holds whose mandate could never be written is ENDED once
+the season is over.
 
 ### 3. Report fills
 
