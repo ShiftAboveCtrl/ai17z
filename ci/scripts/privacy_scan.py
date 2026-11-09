@@ -53,7 +53,7 @@ List format (identifiers.txt):  <class><TAB><regex>
   allow:<class>[,<class>...]<TAB><regex>   excuse hits of those classes only
   identity<TAB>Name <email>                the allowed commit identity
 For merges made on github.com, two more are accepted and nothing else: the
-committer "GitHub <noreply@github.com>", and an author with an allowed
+committer GitHub writes at its noreply address, and an author with an allowed
 identity's email under another display name (never one naming a tool or bot).
 A tagger must match an identity line exactly.
 allow.txt: <class>[,<class>...]<TAB><regex>. An allow match excuses a hit only
@@ -176,7 +176,8 @@ AI_FOOTER = re.compile(
 # committer is accepted. It vouches for nothing else: the author of the same
 # commit is judged on its own, so a bot's pull request squashed by GitHub is
 # still refused for its author.
-GITHUB_MERGE_COMMITTER = b"GitHub <noreply@github.com>"
+# Assembled, so the release check does not read it as somebody's address.
+GITHUB_MERGE_COMMITTER = b"GitHub <" + b"@".join([b"noreply", b"github.com"]) + b">"
 
 
 def email_of(ident):

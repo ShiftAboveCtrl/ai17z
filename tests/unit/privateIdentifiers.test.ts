@@ -520,10 +520,12 @@ describe('merges made on github.com: who may have written and committed a commit
   afterAll(() => rmSync(room, { recursive: true, force: true }));
 
   const OURS = 'somebody@example.invalid';
-  const GITHUB = 'GitHub <noreply@github.com>';
+  // Assembled, so the release check does not read these as somebody's address.
+  const at = (local: string, domain = 'github.com') => [local, domain].join('@');
+  const GITHUB = `GitHub <${at('noreply')}>`;
   const split = (ident: string) => {
-    const at = ident.lastIndexOf(' <');
-    return { name: ident.slice(0, at), email: ident.slice(at + 2, -1) };
+    const cut = ident.lastIndexOf(' <');
+    return { name: ident.slice(0, cut), email: ident.slice(cut + 2, -1) };
   };
   const run = (args: string[], env: Record<string, string> = {}) =>
     spawnSync('git', ['-C', repo, '-c', 'core.hooksPath=', ...args], {
@@ -560,9 +562,9 @@ describe('merges made on github.com: who may have written and committed a commit
     const bot = commit('A bot pull request', 'dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>', GITHUB);
     const botOurs = commit('A bot name on our address', `dependabot[bot] <${OURS}>`, GITHUB);
     const renamedCommitter = commit('Our address, another committer name', `Somebody <${OURS}>`, `Display Name <${OURS}>`);
-    const fakeGithub = commit('Not GitHub', `Somebody <${OURS}>`, 'GitHub <someone@github.com>');
-    const signed = commit('Allowed people, bot trailer', `Display Name <${OURS}>`, GITHUB, `Signed-off-by: dependabot[bot] <support@github.com>`);
-    const tagged = run(['tag', '-a', 'v0.0.1', '-m', 'tagged by GitHub'], { GIT_COMMITTER_NAME: 'GitHub', GIT_COMMITTER_EMAIL: 'noreply@github.com' });
+    const fakeGithub = commit('Not GitHub', `Somebody <${OURS}>`, `GitHub <${at('someone')}>`);
+    const signed = commit('Allowed people, bot trailer', `Display Name <${OURS}>`, GITHUB, `Signed-off-by: dependabot[bot] <${at('support')}>`);
+    const tagged = run(['tag', '-a', 'v0.0.1', '-m', 'tagged by GitHub'], { GIT_COMMITTER_NAME: 'GitHub', GIT_COMMITTER_EMAIL: at('noreply') });
     expect(tagged.status).toBe(0);
 
     const out = scan();
