@@ -219,3 +219,4 @@ export * from './socialTests';
 export * from './publicSelf';
 export * from './devUpdates';
 export * from './devUpdateSafety';
+export * from './signalRadar';

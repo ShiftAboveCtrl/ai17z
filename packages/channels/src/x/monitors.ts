@@ -427,7 +427,7 @@ const withCursor = (candidates: RadarCandidate[]): RadarPollResult => ({
   error: null,
 });
 
-export const X_MONITORS: Record<RadarSourceKind, XMonitor> = {
+export const X_MONITORS: Record<Exclude<RadarSourceKind, 'market_signal'>, XMonitor> = {
   /** The platform's own notifications. One source, never the whole truth. */
   notifications: guarded('notifications', async (ctx) => {
     await goto(ctx.page, X_URLS.mentions);

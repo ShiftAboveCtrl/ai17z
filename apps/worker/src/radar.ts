@@ -21,6 +21,7 @@ import {
   rankDiscovered,
   rankPeople,
   reconcileCandidates,
+  pollSignalSource,
   type DiscoveryPlan,
 } from '@xbam/runtime';
 import { describeBrowserError } from '@xbam/browser';
@@ -132,7 +133,7 @@ export class SocialRadar {
         .catch(() => undefined);
       // A page that never came back is pressure on the account, not only on
       // this source: the next source on the same browser meets the same X.
-      await noteXFailure(source.accountId, capacityClassForSource(source.kind), overdueMessage);
+      if (source.kind !== 'market_signal') await noteXFailure(source.accountId, capacityClassForSource(source.kind), overdueMessage);
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -147,6 +148,10 @@ export class SocialRadar {
    * radar.
    */
   protected async pollOne(source: RadarSourceRow): Promise<void> {
+    if (source.kind === 'market_signal') {
+      await pollSignalSource(source);
+      return;
+    }
     const account = await accountsRepo.getAccount(source.accountId);
     if (!account || !isChannelImplemented(account.channel)) return;
 

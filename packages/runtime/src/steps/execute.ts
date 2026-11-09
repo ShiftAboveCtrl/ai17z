@@ -49,6 +49,7 @@ import type { JobBundle } from '../loadJob';
 
 import { checkActionRate } from '../policyGate';
 import { checkDevUpdateAtSend } from '../devUpdateGuard';
+import { signalIdeaRefusal } from '../signalRadar';
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
@@ -210,6 +211,11 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   const { job, policy } = bundle;
   const output = job.validatedOutput;
   if (!output) throw PipelineError.retryable('output_missing', 'Execution ran before validation produced output.');
+  const signal = bundle.event.payload as { ideaSource?: string; ideaId?: string };
+  if (signal.ideaSource === 'market_signal') {
+    const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
+    if (refusal) throw PipelineError.permanent('signal_publication_refused', refusal);
+  }
 
   const context = job.resolvedContext;
   const targetRef = context?.targetRef ?? null;

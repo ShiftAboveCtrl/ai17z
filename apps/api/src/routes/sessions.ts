@@ -7,12 +7,13 @@ import {
   browserTasks,
   ops,
   radar as radarRepo,
+  signals,
   workers as workersRepo,
   type UserRow,
 } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { DEFAULT_X_RADAR } from '@xbam/runtime';
-import { RadarSourceConfig, RadarSourceKind, RADAR_KINDS_NEEDING_TARGET } from '@xbam/shared/contracts';
+import { RadarSourceConfig, RadarSourceKind, RADAR_KINDS_NEEDING_TARGET, SignalUniverse } from '@xbam/shared/contracts';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAccount(accountId: string, user: UserRow) {
@@ -250,8 +251,9 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       const account = await ownedAccount(params(request).id!, user);
       const adapter = getChannelAdapter(account.channel);
       return {
-        supported: adapter.radarSourceKinds ?? [],
+        supported: [...(adapter.radarSourceKinds ?? []), 'market_signal'],
         sources: await radarRepo.listSources(account.id),
+        signals: await signals.forAccount(account.id),
       };
     }),
   );
@@ -267,14 +269,21 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
           target: z.string().max(300).nullable().default(null),
           label: z.string().max(120).default(''),
           enabled: z.boolean().default(true),
-          config: RadarSourceConfig.partial().prefault({}),
+          config: RadarSourceConfig.partial().extend({ mayTrigger: z.boolean().optional() }).prefault({}),
         }),
         request,
       );
 
       const adapter = getChannelAdapter(account.channel);
-      if (!(adapter.radarSourceKinds ?? []).includes(body.kind)) {
+      if (body.kind !== 'market_signal' && !(adapter.radarSourceKinds ?? []).includes(body.kind)) {
         throw new BadRequestError(`The ${adapter.displayName} channel has no ${body.kind} monitor.`);
+      }
+      if (body.kind === 'market_signal') {
+        const universe = SignalUniverse.safeParse(body.config.watches);
+        if (!universe.success) throw new BadRequestError(universe.error.issues.map(i => i.message).join(' '));
+        body.target = null;
+        body.config.mayTrigger ??= false;
+        body.config.intervalSeconds = Math.max(300, body.config.intervalSeconds ?? 300);
       }
       if (RADAR_KINDS_NEEDING_TARGET.includes(body.kind) && !body.target?.trim()) {
         throw new BadRequestError(

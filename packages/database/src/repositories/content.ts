@@ -167,6 +167,11 @@ export async function resolveIdea(
   return rows.length > 0;
 }
 
+/** A refused signal remains inspectable with the reason it left the backlog. */
+export async function discardIdea(agentId: string, id: string, reason: string): Promise<void> {
+  await query("UPDATE content_ideas SET status='discarded', last_error=$3, updated_at=now() WHERE agent_id=$1 AND id=$2", [agentId, id, reason.slice(0, 1000)]);
+}
+
 /**
  * Whatever identifies the same thought however it was typed.
  *

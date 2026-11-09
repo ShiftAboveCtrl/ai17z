@@ -1,4 +1,5 @@
 export * from './pool';
+export * as signals from './repositories/signals';
 export * from './mapper';
 export * from './migrator';
 // Which columns are constrained to a fixed vocabulary, and what it is.
