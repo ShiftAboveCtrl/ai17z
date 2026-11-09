@@ -317,6 +317,15 @@ export const blueskyAdapter: ChannelAdapter = {
           resuming = false;
           restarted = true;
           cursor = undefined;
+          // The refusal was a call to Bluesky like any other: it is charged, and
+          // starting again is one more read, so the budget is asked first. When
+          // it says no the stale continuation is still dropped (`restarted`),
+          // and the next poll starts from the newest.
+          await options.onRead?.();
+          if (options.canReadAnother && !(await options.canReadAnother().catch(() => true))) {
+            stoppedForBudget = true;
+            break;
+          }
           continue;
         }
         throw classifyBlueskyError(error, 'reading notifications');
@@ -333,7 +342,7 @@ export const blueskyAdapter: ChannelAdapter = {
 
     // With no mark there is no history to catch up on, so one page is the whole
     // read and a new link does not ingest what came before it.
-    const complete = mark === null || metKnown || !cursor;
+    const complete = !stoppedForBudget && (mark === null || metKnown || !cursor);
     options.report?.({ complete, resume: complete ? null : (cursor ?? null), restarted });
     if (!complete) {
       ctx.logger.warn(

@@ -4,10 +4,12 @@ import { accountCredentials, accounts as accountsRepo, query, withTransaction } 
 import {
   BLUESKY_RESUME_KEY,
   BLUESKY_SESSION_GENERATION_KEY,
+  BLUESKY_VERSION_KEY,
   BLUESKY_WATERMARK_KEY,
   blueskyAdapter,
   blueskyNotificationsResume,
   blueskyNotificationsSeenThrough,
+  blueskyNotificationsVersionOf,
   blueskyServiceTargetFor,
   forgetBlueskySession,
   type ChannelContext,
@@ -186,6 +188,16 @@ export function describeBlueskyFailure(error: unknown): string {
  * settings as they are now, so a reconnect or another poll writing at the same
  * moment is not overwritten.
  *
+ * **Compare and set.** `startedAtVersion` is the version of the notification
+ * state the poll read when it began. The row lock serialises writers but does not
+ * say whose continuation this is: a newer poll can have stored `throughAt = 400`
+ * and a cursor, and an older one that completes afterwards would inherit that,
+ * move the mark to 400 and clear the cursor with everything between unread. So the
+ * write applies only if the version is still the one the poll started from. A poll
+ * that lost the race writes nothing (its events were ingested and the unique index
+ * makes that harmless) and returns false; the state it did not touch is whatever
+ * the newer poll left, and the next poll resumes from it.
+ *
  * - **Complete** (the poll reached the mark, or the history ran out): the mark
  *   moves to the newest event of the burst, forward only, and the continuation is
  *   cleared.
@@ -198,8 +210,9 @@ export function describeBlueskyFailure(error: unknown): string {
 export async function advanceNotificationWatermark(
   accountId: string,
   events: ReadonlyArray<{ raw: Record<string, unknown> }>,
-  progress?: IngestProgress,
-): Promise<void> {
+  progress: IngestProgress | undefined,
+  startedAtVersion: number,
+): Promise<boolean> {
   let newest = 0;
   for (const event of events) {
     const at = typeof event.raw.indexedAt === 'string' ? Date.parse(event.raw.indexedAt) : NaN;
@@ -207,12 +220,15 @@ export async function advanceNotificationWatermark(
   }
   const time = (value: string | null | undefined) => (value ? Date.parse(value) : 0) || 0;
 
-  await withTransaction(async (tx) => {
+  return withTransaction(async (tx) => {
     const row = await tx.one<{ settings: Record<string, unknown> | null }>(
       'SELECT settings FROM accounts WHERE id = $1 FOR UPDATE',
       [accountId],
     );
-    if (!row) return;
+    if (!row) return false;
+    // Somebody else wrote the state since this poll read it. What this poll
+    // knows is out of date, so it must not decide anything.
+    if (blueskyNotificationsVersionOf(row.settings) !== startedAtVersion) return false;
     const current = (row.settings?.bluesky ?? {}) as Record<string, unknown>;
     const mark = time(blueskyNotificationsSeenThrough(row.settings));
     const resume = blueskyNotificationsResume(row.settings);
@@ -221,23 +237,33 @@ export async function advanceNotificationWatermark(
     // A continuation the adapter had to abandon is not one to keep carrying.
     const through = Math.max(newest, progress?.restarted ? 0 : time(resume?.throughAt));
 
-    if (progress && !progress.complete && progress.resume) {
-      next[BLUESKY_RESUME_KEY] = {
-        cursor: progress.resume,
-        throughAt: through > 0 ? new Date(through).toISOString() : null,
-      };
+    if (progress && !progress.complete) {
+      if (progress.resume) {
+        next[BLUESKY_RESUME_KEY] = {
+          cursor: progress.resume,
+          throughAt: through > 0 ? new Date(through).toISOString() : null,
+        };
+      } else {
+        // Not finished and nowhere to carry on from: a stored cursor the server
+        // refused was dropped and the budget ran out before starting again. The
+        // mark does not move; the stale continuation goes, so the next poll
+        // starts from the newest.
+        delete next[BLUESKY_RESUME_KEY];
+      }
     } else {
       delete next[BLUESKY_RESUME_KEY];
       const moved = Math.max(mark, through);
       if (moved > 0) next[BLUESKY_WATERMARK_KEY] = new Date(moved).toISOString();
     }
 
+    next[BLUESKY_VERSION_KEY] = startedAtVersion + 1;
     await tx.query(
       `UPDATE accounts
           SET settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{bluesky}', $2::jsonb)
         WHERE id = $1`,
       [accountId, JSON.stringify(next)],
     );
+    return true;
   });
 }
 

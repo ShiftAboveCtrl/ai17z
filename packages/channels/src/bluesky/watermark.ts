@@ -12,6 +12,9 @@
  *   and stopped; `cursor` is where the next one carries on, and `throughAt` is the
  *   newest event of that burst, which becomes the mark only when the burst has
  *   been read to its end. The mark itself does not move until then.
+ * - `notificationsVersion`: a counter bumped by every write of the two above. A
+ *   poll notes the version it started from and its write applies only if that is
+ *   still the version, so a poll that overlapped a newer one writes nothing.
  * - `sessionGeneration`: a counter bumped whenever a session must stop being used
  *   (disconnect, a new password), checked by every process before it reuses the
  *   session it holds.
@@ -19,6 +22,7 @@
 export const WATERMARK_KEY = 'notificationsSeenThrough';
 export const RESUME_KEY = 'notificationsResume';
 export const SESSION_GENERATION_KEY = 'sessionGeneration';
+export const VERSION_KEY = 'notificationsVersion';
 
 type Settings = Record<string, unknown> | null | undefined;
 
@@ -47,6 +51,12 @@ export function notificationsResume(settings: Settings): NotificationResume | nu
   const { cursor, throughAt } = raw as { cursor?: unknown; throughAt?: unknown };
   if (typeof cursor !== 'string' || !cursor) return null;
   return { cursor, throughAt: asTime(throughAt) };
+}
+
+/** The version of the notification state, 0 before anything has been written. */
+export function notificationsVersionOf(settings: Settings): number {
+  const value = blueskySettings(settings)[VERSION_KEY];
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
 export function sessionGenerationOf(settings: Settings): number {

@@ -24,9 +24,11 @@ export {
   notificationsSeenThrough as blueskyNotificationsSeenThrough,
   notificationsResume as blueskyNotificationsResume,
   sessionGenerationOf as blueskySessionGenerationOf,
+  notificationsVersionOf as blueskyNotificationsVersionOf,
   WATERMARK_KEY as BLUESKY_WATERMARK_KEY,
   RESUME_KEY as BLUESKY_RESUME_KEY,
   SESSION_GENERATION_KEY as BLUESKY_SESSION_GENERATION_KEY,
+  VERSION_KEY as BLUESKY_VERSION_KEY,
 } from './bluesky/watermark';
 export { inventoryOf as blueskyInventoryOf } from './bluesky/normalise';
 export {

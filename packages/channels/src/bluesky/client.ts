@@ -211,12 +211,17 @@ export interface BlueskySession {
 
 /** In memory only, keyed by account. See the note at the top of this file. */
 const sessions = new Map<string, BlueskySession>();
-/** One sign-in in flight per account, so two callers arriving together make one. */
+/**
+ * One sign-in in flight per account **and generation**, so two callers arriving
+ * together make one, and a caller that already knows the account has moved on
+ * does not join a sign-in begun before it did and come away with the old session.
+ */
 const signingIn = new Map<string, Promise<BlueskySession>>();
+const signInKey = (accountId: string, generation: number) => `${accountId}:${generation}`;
 
 export function forgetBlueskySession(accountId: string): void {
   sessions.delete(accountId);
-  signingIn.delete(accountId);
+  for (const key of [...signingIn.keys()]) if (key.startsWith(`${accountId}:`)) signingIn.delete(key);
 }
 
 /** Tests only: a fresh process has no sessions. */
@@ -304,7 +309,9 @@ export function classifyBlueskyError(error: unknown, what: string): PipelineErro
  */
 export async function createSession(ctx: ChannelContext, target: ServiceTarget): Promise<BlueskySession> {
   const accountId = ctx.account.id;
-  const existing = signingIn.get(accountId);
+  const generation = sessionGenerationOf(ctx.account.settings);
+  const key = signInKey(accountId, generation);
+  const existing = signingIn.get(key);
   if (existing) return existing;
 
   const attempt = (async () => {
@@ -320,11 +327,27 @@ export async function createSession(ctx: ChannelContext, target: ServiceTarget):
         method: 'POST',
         body: { identifier: credentials.loginUsername, password: credentials.loginPassword },
       });
-      const session = sessionFrom(body, sessionGenerationOf(ctx.account.settings));
+      const session = sessionFrom(body, generation);
+      // A sign-in that began before the account moved on can finish after one
+      // that began later. Its session was made under a generation the account
+      // has left, so it is ended and not cached over the newer one; its caller,
+      // whose view of the account is out of date, is told to try again.
+      const newer = sessions.get(accountId);
+      if (newer && newer.generation > generation) {
+        await xrpc(target, 'com.atproto.server.deleteSession', { method: 'POST', bearer: session.refreshJwt }).catch(() => undefined);
+        throw PipelineError.retryable(
+          'bluesky_session_superseded',
+          'The account was signed in again while this sign-in was under way, so this one was ended. It is tried again with the account as it is now.',
+        );
+      }
       sessions.set(accountId, session);
       return session;
     } catch (error) {
-      sessions.delete(accountId);
+      if (error instanceof PipelineError && error.reason === 'bluesky_session_superseded') throw error;
+      // Only a session this sign-in could have replaced: a failure of an older
+      // generation must not discard a newer one.
+      const held = sessions.get(accountId);
+      if (!held || held.generation <= generation) sessions.delete(accountId);
       if (error instanceof BlueskyApiError) {
         if (error.code === 'AuthFactorTokenRequired') {
           throw PipelineError.permanent(
@@ -347,11 +370,11 @@ export async function createSession(ctx: ChannelContext, target: ServiceTarget):
     }
   })();
 
-  signingIn.set(accountId, attempt);
+  signingIn.set(key, attempt);
   try {
     return await attempt;
   } finally {
-    signingIn.delete(accountId);
+    if (signingIn.get(key) === attempt) signingIn.delete(key);
   }
 }
 

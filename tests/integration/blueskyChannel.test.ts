@@ -587,24 +587,114 @@ describe('a burst larger than one poll reads', () => {
     const account = await linked(fixture);
     const { advanceNotificationWatermark } = await import('@xbam/runtime');
     const event = (i: number) => ({ raw: { indexedAt: at(i) } });
+    // A poll that starts now, from the state as it is now.
+    const advance = async (events: Array<{ raw: Record<string, unknown> }>, progress: { complete: boolean; resume: string | null }) =>
+      advanceNotificationWatermark(account.id, events, progress, ((await bluesky(account.id)).notificationsVersion as number | undefined) ?? 0);
 
-    await advanceNotificationWatermark(account.id, [event(50)], { complete: false, resume: 'c1' });
+    await advance([event(50)], { complete: false, resume: 'c1' });
     let s = await bluesky(account.id);
     expect(s.notificationsSeenThrough).toBeUndefined();
     expect(s.notificationsResume).toEqual({ cursor: 'c1', throughAt: at(50) });
 
     // An older page: the cursor moves on, the newest of the burst is not forgotten.
-    await advanceNotificationWatermark(account.id, [event(30)], { complete: false, resume: 'c2' });
+    await advance([event(30)], { complete: false, resume: 'c2' });
     s = await bluesky(account.id);
     expect(s.notificationsResume).toEqual({ cursor: 'c2', throughAt: at(50) });
     expect(s.notificationsSeenThrough).toBeUndefined();
 
-    await advanceNotificationWatermark(account.id, [event(10)], { complete: true, resume: null });
+    await advance([event(10)], { complete: true, resume: null });
     s = await bluesky(account.id);
     expect(s.notificationsSeenThrough).toBe(at(50));
     expect(s.notificationsResume).toBeUndefined();
     // The server address written beside them survived all of it.
     expect(s.serviceUrl).toBe(fake.origin);
+  });
+});
+
+describe('two polls of one account that overlap', () => {
+  const BASE = Date.now() - 3_600_000;
+  const at = (i: number) => new Date(BASE + i * 1_000).toISOString();
+  const event = (i: number) => ({ raw: { indexedAt: at(i) } });
+  const state = async (accountId: string) =>
+    (await accountsRepo.requireAccount(accountId)).settings.bluesky as Record<string, unknown> & {
+      notificationsResume?: { cursor: string; throughAt: string | null };
+      notificationsVersion?: number;
+    };
+
+  it('writes nothing for the one that began from a state the other has since replaced', async () => {
+    const fixture = await createFixture();
+    const account = await linked(fixture);
+    const { advanceNotificationWatermark } = await import('@xbam/runtime');
+    const startedFrom = (await state(account.id)).notificationsVersion ?? 0;
+
+    // Two polls begin from the same state. The newer one reads the newest of a
+    // burst (up to event 400) and is not finished: it stores a cursor.
+    expect(await advanceNotificationWatermark(account.id, [event(400)], { complete: false, resume: 'c1' }, startedFrom)).toBe(true);
+    // The older one reached the mark and finishes afterwards. It must not take
+    // the newer one's 400 as its own, move the mark there and clear the cursor
+    // with 101 to 200 never read.
+    expect(await advanceNotificationWatermark(account.id, [event(100), event(150), event(200)], { complete: true, resume: null }, startedFrom)).toBe(false);
+
+    const s = await state(account.id);
+    expect(s.notificationsSeenThrough).toBeUndefined();
+    expect(s.notificationsResume).toEqual({ cursor: 'c1', throughAt: at(400) });
+  });
+
+  it('lets the next poll, which began from the state that is there now, carry on and finish', async () => {
+    const fixture = await createFixture();
+    const account = await linked(fixture);
+    const { advanceNotificationWatermark } = await import('@xbam/runtime');
+    await advanceNotificationWatermark(account.id, [event(400)], { complete: false, resume: 'c1' }, 0);
+    await advanceNotificationWatermark(account.id, [event(100)], { complete: true, resume: null }, 0);
+
+    const resumedFrom = (await state(account.id)).notificationsVersion!;
+    expect(resumedFrom).toBe(1);
+    expect(await advanceNotificationWatermark(account.id, [event(150)], { complete: true, resume: null }, resumedFrom)).toBe(true);
+    const s = await state(account.id);
+    expect(s.notificationsSeenThrough).toBe(at(400));
+    expect(s.notificationsResume).toBeUndefined();
+  });
+
+  it('is what the poller does: an older poll that finishes second leaves the newer one\'s state alone', async () => {
+    const fixture = await createFixture();
+    const account = await linked(fixture);
+    // Mark in place, then a burst larger than one poll. The first poll of the
+    // burst is begun, and while it is "running" a second poll finishes first.
+    const seedRange = (from: number, to: number) => {
+      for (let i = from; i < to; i += 1) {
+        fake.notify(fake.seedPost({ id: `3ko${String(i).padStart(4, '0')}`, author: ALICE, text: `overlap ${i}`, createdAt: at(i) }), 'mention');
+      }
+    };
+    seedRange(0, 5);
+    await pollOnce(account.id);
+    seedRange(5, 455);
+
+    const { advanceNotificationWatermark } = await import('@xbam/runtime');
+    const before = (await state(account.id)).notificationsVersion ?? 0;
+    await pollOnce(account.id); // the newer poll: reads 200, leaves a cursor
+    const afterNewer = await state(account.id);
+    expect(afterNewer.notificationsResume).toBeTruthy();
+
+    // The older poll, begun from the state before it, now reports it finished.
+    expect(await advanceNotificationWatermark(account.id, [event(300)], { complete: true, resume: null }, before)).toBe(false);
+    const s = await state(account.id);
+    expect(s.notificationsSeenThrough).toBe(afterNewer.notificationsSeenThrough);
+    expect(s.notificationsResume).toEqual(afterNewer.notificationsResume);
+  });
+
+  it('drops a continuation the server refused when the budget ran out before starting again, and does not move the mark', async () => {
+    const fixture = await createFixture();
+    const account = await linked(fixture);
+    const { advanceNotificationWatermark } = await import('@xbam/runtime');
+    await advanceNotificationWatermark(account.id, [event(5)], { complete: true, resume: null }, 0);
+    await advanceNotificationWatermark(account.id, [event(90)], { complete: false, resume: 'long-gone' }, 1);
+    expect((await state(account.id)).notificationsResume).toMatchObject({ cursor: 'long-gone' });
+
+    // Not finished, no cursor: the restart was cut short by the budget.
+    expect(await advanceNotificationWatermark(account.id, [], { complete: false, resume: null, restarted: true }, 2)).toBe(true);
+    const s = await state(account.id);
+    expect(s.notificationsResume).toBeUndefined();
+    expect(s.notificationsSeenThrough).toBe(at(5));
   });
 });
 

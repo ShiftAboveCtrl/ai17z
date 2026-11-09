@@ -5,11 +5,13 @@ import {
   BLUESKY_UNSAFE_DEV_ORIGIN_ENV,
   blueskyAdapter,
   blueskyServiceTargetFor,
+  cachedBlueskySession,
   resetBlueskySessionsForTest,
   type ChannelContext,
 } from '@xbam/channels';
 import { classifyXSignal } from '@xbam/runtime';
 import { ALICE, FakeBluesky, ME } from '../support/fakeBluesky';
+import { createSession } from '../../packages/channels/src/bluesky/client';
 
 /**
  * The Bluesky adapter against a fixture server.
@@ -96,6 +98,8 @@ beforeEach(() => {
   fake.omitCounts = false;
   fake.hiddenUris.clear();
   fake.staleCursors.clear();
+  fake.createSessionGates.length = 0;
+  fake.issued.length = 0;
   logs.length = 0;
 });
 
@@ -829,5 +833,124 @@ describe('a session held by another process', () => {
     await worker.adapter.ingestEvents(as(2), { limit: 10 });
     expect(fake.of('com.atproto.server.createSession')).toHaveLength(1);
     expect(fake.of('com.atproto.server.deleteSession')).toHaveLength(0);
+  });
+});
+
+describe('a sign-in that began before the account moved on', () => {
+  const as = (generation: number) =>
+    context(ME.password, { settings: { bluesky: { serviceUrl: fake.origin, sessionGeneration: generation } } });
+  function holdSignIn() {
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    fake.createSessionGates.push(async () => { entered(); await held; });
+    return { started, release };
+  }
+
+  it('is not joined by a caller that knows the account has a newer generation', async () => {
+    const gate = holdSignIn();
+    const target = blueskyServiceTargetFor(as(0).account.settings);
+    const stale = createSession(as(0), target).catch((e: unknown) => e);
+    await gate.started;
+    const current = createSession(as(1), target);
+    gate.release();
+    const [oldResult, newSession] = await Promise.all([stale, current]);
+    expect(fake.of('com.atproto.server.createSession')).toHaveLength(2);
+    expect(newSession.generation).toBe(1);
+    expect(cachedBlueskySession(as(1).account.id)!.generation).toBe(1);
+    // Whichever request completes first, the newer caller cannot receive the
+    // generation 0 session. An older result may already have been superseded.
+    if (!(oldResult instanceof PipelineError)) expect(oldResult).toMatchObject({ generation: 0 });
+  });
+
+  it('ends an older sign-in that finishes last without replacing the newer session', async () => {
+    const gate = holdSignIn();
+    const stale = blueskyAdapter.ingestEvents(as(0), { limit: 10 }).catch((e: unknown) => e);
+    await gate.started;
+    const current = blueskyAdapter.ingestEvents(as(1), { limit: 10 });
+    try {
+      // The barrier keeps generation 0 pending until generation 1 has been used.
+      await vi.waitFor(() => expect(fake.of('app.bsky.notification.listNotifications')).toHaveLength(1));
+      await current;
+    } finally {
+      gate.release();
+      await Promise.allSettled([stale, current]);
+    }
+    const result = await stale;
+    expect(result).toBeInstanceOf(PipelineError);
+    expect(result).toMatchObject({ errorClass: 'RETRYABLE', reason: 'bluesky_session_superseded' });
+    expect(fake.isAccessValid(fake.issued[1]!.accessJwt)).toBe(false);
+    expect(fake.isAccessValid(fake.issued[0]!.accessJwt)).toBe(true);
+    expect(cachedBlueskySession(as(1).account.id)!.generation).toBe(1);
+  });
+
+  it('is still joined by a caller on the same generation, so two arriving together make one', async () => {
+    const gate = holdSignIn();
+    const first = blueskyAdapter.ingestEvents(as(3), { limit: 10 });
+    await gate.started;
+    const second = blueskyAdapter.ingestEvents(as(3), { limit: 10 });
+    gate.release();
+    await Promise.all([first, second]);
+    expect(fake.of('com.atproto.server.createSession')).toHaveLength(1);
+  });
+});
+
+describe('a stored cursor the server refuses', () => {
+  const BASE = Date.parse('2026-11-08T10:00:00.000Z');
+  const mark = new Date(BASE - 1_000).toISOString();
+
+  function seed(count: number) {
+    for (let i = 0; i < count; i += 1) {
+      const post = fake.seedPost({ id: `3kq${String(i).padStart(4, '0')}`, author: ALICE, text: `message ${i}`, createdAt: new Date(BASE + i * 1_000).toISOString() });
+      fake.notify(post, 'mention');
+    }
+  }
+
+  async function poll(extra: Partial<Parameters<typeof blueskyAdapter.ingestEvents>[1]>) {
+    let progress: { complete: boolean; resume: string | null; restarted?: boolean } | undefined;
+    const events = await blueskyAdapter.ingestEvents(
+      context(ME.password, {
+        settings: { bluesky: { serviceUrl: fake.origin, notificationsSeenThrough: mark, notificationsResume: { cursor: 'long-gone', throughAt: mark } } },
+      }),
+      { limit: 10, report: (p) => { progress = p; }, ...extra },
+    );
+    return { events, progress: progress! };
+  }
+
+  it('is charged as the read it was, and starting again asks the budget first', async () => {
+    seed(120);
+    fake.staleCursors.add('long-gone');
+    let charged = 0;
+    const { events, progress } = await poll({
+      onRead: async () => { charged += 1; },
+      canReadAnother: async () => false,
+    });
+    // One request was made, the refused one, and it was charged. The retry did not
+    // happen because the budget said no.
+    expect(fake.of('app.bsky.notification.listNotifications')).toHaveLength(1);
+    expect(charged).toBe(1);
+    expect(events).toEqual([]);
+    // Not finished, with nothing to resume from: the stale cursor is dropped and
+    // the next poll starts from the newest. It is never reported as complete.
+    expect(progress).toEqual({ complete: false, resume: null, restarted: true });
+  });
+
+  it('charges the refusal and every page after it when the budget allows the retry', async () => {
+    seed(120);
+    fake.staleCursors.add('long-gone');
+    let charged = 0;
+    let asked = 0;
+    const { events, progress } = await poll({
+      onRead: async () => { charged += 1; },
+      canReadAnother: async () => { asked += 1; return true; },
+    });
+    const requests = fake.of('app.bsky.notification.listNotifications').length;
+    // Every call to Bluesky was charged, the refused one included.
+    expect(charged).toBe(requests);
+    expect(requests).toBe(1 + 3);
+    expect(asked).toBe(1 + 2);
+    expect(events).toHaveLength(120);
+    expect(progress).toMatchObject({ complete: true, restarted: true });
   });
 });

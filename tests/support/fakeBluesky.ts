@@ -67,6 +67,10 @@ export class FakeBluesky {
   omitCounts = false;
   /** Answer reads of a thread's post as deleted. */
   hiddenUris = new Set<string>();
+  /** Test-controlled barriers for overlapping sign-ins, one per call in request order. */
+  createSessionGates: Array<() => Promise<void>> = [];
+  /** Every session issued, in order, so a test can ask whether a given one is still alive. */
+  readonly issued: Array<{ accessJwt: string; refreshJwt: string }> = [];
   /** Cursors the server no longer honours, refused as a real one refuses an old cursor. */
   staleCursors = new Set<string>();
 
@@ -166,6 +170,7 @@ export class FakeBluesky {
     this.validAccess.add(accessJwt);
     this.validRefresh.add(refreshJwt);
     this.pairs.set(refreshJwt, accessJwt);
+    this.issued.push({ accessJwt, refreshJwt });
     return { accessJwt, refreshJwt, did: ME.did, handle: ME.handle, active: true, ...(this.takendown ? { status: 'takendown' } : {}) };
   }
 
@@ -192,6 +197,7 @@ export class FakeBluesky {
     }
 
     if (nsid === 'com.atproto.server.createSession') {
+      await this.createSessionGates.shift()?.();
       if (this.challenge) return refuse(401, 'AuthFactorTokenRequired', 'A sign in code has been sent to your email address');
       if (body?.password !== ME.password || ![ME.handle, 'agent@example.test'].includes(body?.identifier)) {
         return refuse(401, 'AuthenticationRequired', 'Invalid identifier or password');

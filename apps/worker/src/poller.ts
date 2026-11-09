@@ -1,6 +1,11 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, cadences as cadencesRepo } from '@xbam/database';
-import { getChannelAdapter, isChannelImplemented, type IngestProgress } from '@xbam/channels';
+import {
+  blueskyNotificationsVersionOf,
+  getChannelAdapter,
+  isChannelImplemented,
+  type IngestProgress,
+} from '@xbam/channels';
 import {
   advanceNotificationWatermark,
   buildChannelContext,
@@ -137,6 +142,9 @@ export class ChannelPoller {
       */
       let charged = 0;
       let progress: IngestProgress | undefined;
+      // The state this poll starts from. Its write applies only if that is still
+      // the state when it finishes; see `advanceNotificationWatermark`.
+      const startedAtVersion = blueskyNotificationsVersionOf(account.settings);
       const events = await adapter.ingestEvents(ctx, {
         limit: config.polling.batchLimit,
         ...(spendsReadBudget(account.channel)
@@ -159,7 +167,15 @@ export class ChannelPoller {
         created += outcome.jobs.filter((j) => j.created).length;
       }
       // Only after every event was taken in, so a failure above re-reads them.
-      if (account.channel === 'bluesky') await advanceNotificationWatermark(account.id, events, progress);
+      if (account.channel === 'bluesky') {
+        const applied = await advanceNotificationWatermark(account.id, events, progress, startedAtVersion);
+        if (!applied) {
+          log.warn('another poll moved this account\'s notification state first; this one wrote nothing', {
+            handle: account.handle,
+            events: events.length,
+          });
+        }
+      }
 
       const found = events.length > 0;
       const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak, foundEvents: found });

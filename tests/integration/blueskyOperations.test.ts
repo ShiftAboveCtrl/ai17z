@@ -259,10 +259,11 @@ describe('notifications that arrive in a burst', () => {
     const account = await linked(fixture);
     const { advanceNotificationWatermark } = await import('@xbam/runtime');
     const at = (ms: number) => ({ raw: { indexedAt: new Date(BASE + ms).toISOString() } });
-    await advanceNotificationWatermark(account.id, [at(5_000)]);
-    await advanceNotificationWatermark(account.id, [at(1_000)]);
+    const version = async () => ((await settings(account.id)).notificationsVersion as number | undefined) ?? 0;
+    await advanceNotificationWatermark(account.id, [at(5_000)], undefined, await version());
+    await advanceNotificationWatermark(account.id, [at(1_000)], undefined, await version());
     expect((await settings(account.id)).notificationsSeenThrough).toBe(new Date(BASE + 5_000).toISOString());
-    await advanceNotificationWatermark(account.id, []);
+    await advanceNotificationWatermark(account.id, [], undefined, await version());
     expect((await settings(account.id)).notificationsSeenThrough).toBe(new Date(BASE + 5_000).toISOString());
   });
 });

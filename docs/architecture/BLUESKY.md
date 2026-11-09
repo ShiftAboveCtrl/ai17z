@@ -354,7 +354,9 @@ keeps, in `settings.bluesky`:
 - `notificationsResume` (`{ cursor, throughAt }`): a burst was read part of the way
   and stopped. `cursor` is where the next poll carries on, and `throughAt` is the
   newest event of the burst, which becomes the mark only when the burst has been
-  read to its end.
+  read to its end;
+- `notificationsVersion`: a counter for writes to the mark and continuation,
+  starting at zero for accounts without it.
 
 How a poll behaves:
 
@@ -368,7 +370,10 @@ How a poll behaves:
   `advanceNotificationWatermark`, which in one transaction over the locked row
   either **moves the mark** (complete: forward only, to the newest event of the
   burst, clearing the cursor) or **keeps the mark and stores the cursor**
-  (incomplete).
+  (incomplete). The write compares the version the poll started from with the
+  version in the locked row, and increments it only on a match. An overlapping
+  poll whose starting version is stale writes nothing. The next poll resumes
+  from the winning continuation, and event uniqueness makes rereads harmless.
 
 The point is the second case. Pages come newest first, so what a poll leaves behind
 is the **oldest** of a burst. Moving the mark to the newest event, as the first
@@ -376,8 +381,11 @@ version did, would skip that remainder for ever because the next poll only looks
 what is newer than the mark, and re-reading from the newest would never get past the
 first pages. So the mark stays where it was, and the next poll starts at the cursor.
 A cursor the server no longer honours (a 400 on the first page) is not a failed
-poll: it starts again from the newest with the mark unmoved, which re-reads and skips
-nothing. The unique index on the event stays the real deduplication.
+poll: the refused read is charged, and retrying from the newest asks the same read
+budget first. If the budget refuses, the poll reports incomplete, drops the stale
+cursor and keeps the mark, so the next poll starts from the newest. If allowed,
+the retry re-reads with the mark unmoved and skips nothing. The unique index on
+the event stays the real deduplication.
 
 Nothing is marked read on Bluesky (`updateSeen` is deliberately not used): that would
 change what the owner sees in their own app.
@@ -404,7 +412,12 @@ reach the worker's, so ending the API's own on disconnect left the worker's live
   database when it starts a poll or a job) before reusing it. An older one is ended
   on Bluesky's side with the tokens only that process has, and not used;
 - a switched-off account is not signed in again: `ensureSession` ends whatever it
-  holds and refuses with `bluesky_disconnected`.
+  holds and refuses with `bluesky_disconnected`;
+- pending sign-ins are shared only by callers on the same account and generation.
+  A caller on a newer generation starts its own sign-in. If an older sign-in
+  finishes after a newer session was cached, its tokens are ended and its caller
+  gets a retryable `bluesky_session_superseded` error. An older sign-in failure
+  also leaves the newer cached session intact.
 
 So after a disconnect the worker never reuses its session and ends it at its next
 touch of the account. What this cannot do is end a token in a process that never
