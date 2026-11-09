@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { agents as agentsRepo, tradeShadows, trading } from '@xbam/database';
+import { agents as agentsRepo, query, tradeShadows, trading } from '@xbam/database';
 import { AssetRef, MarketSnapshot, SHADOW_OUTCOMES, type TradeMandate, type TradeVenue } from '@xbam/shared/contracts';
 import {
   MAX_SHADOWS_PER_PASS,
@@ -104,6 +104,10 @@ async function shadowed(over: Record<string, unknown> = {}, mandateOver: Record<
     intervalSeconds: 300,
     ...over,
   });
+  // next_run_at defaults to the database's now(), which can sit a few
+  // milliseconds ahead of the host clock that runDueShadows compares against.
+  // Make the shadow unambiguously due rather than racing that skew.
+  await query(`UPDATE trade_shadows SET next_run_at = now() - interval '1 minute' WHERE id = $1`, [row.id]);
   return { fixture, row };
 }
 
