@@ -86,6 +86,18 @@ export const TOOLPACKS: Toolpack[] = [
     prefixes: ['telegram.'],
   },
   {
+    id: 'bluesky',
+    name: 'Bluesky',
+    // Honest about the one write. Replying and posting are not in this pack:
+    // they are the account's POST and REPLY grants, performed by the engagement
+    // pipeline behind its gates. The pack holds the reads and a like, and the
+    // like stays off until it is turned on by name.
+    summary:
+      'Look up posts, conversations and profiles on Bluesky, and like a post once you allow it. ' +
+      'Replying and posting are set on the account itself, not here.',
+    prefixes: ['bluesky.'],
+  },
+  {
     id: 'projects',
     name: 'Projects',
     summary:

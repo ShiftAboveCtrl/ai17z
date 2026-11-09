@@ -1,17 +1,54 @@
-import { createLogger, envInt, errorMessage, PipelineError } from '@xbam/shared';
+import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, cadences as cadencesRepo, telegramChannel, channelState } from '@xbam/database';
-import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import {
+  blueskyNotificationsVersionOf,
+  getChannelAdapter,
+  isChannelImplemented,
+  type IngestProgress,
+} from '@xbam/channels';
+import {
+  advanceNotificationWatermark,
   buildChannelContext,
   checkReadCapacity,
   ingestNormalizedEvent,
   nextPollDelayMs,
   noteXFailure,
   noteXRead,
+  spendsReadBudget,
 } from '@xbam/runtime';
+import { PipelineError } from '@xbam/shared';
+import type { Account } from '@xbam/shared/contracts';
 import { startLoop } from './loop';
 
 const log = createLogger('poller');
+
+/**
+ * A channel that signs in over an API stops being polled when the sign-in is gone.
+ *
+ * Bluesky limits how often a session may be created, so an account whose app
+ * password was revoked must not be polled back into that limit every few minutes.
+ * Moving it out of CONNECTED is what takes it out of the due list (the claim
+ * only selects CONNECTED accounts), and it is also the truth: the account needs
+ * a person. A security challenge gets its own status, because it is a different
+ * thing to tell somebody and the watcher must not keep reading around it.
+ */
+async function stopPollingIfSignInIsGone(account: Account, error: unknown): Promise<void> {
+  if (account.channel !== 'bluesky' || !(error instanceof PipelineError)) return;
+  const status =
+    error.reason === 'bluesky_auth_challenge'
+      ? 'CHALLENGE_REQUIRES_USER'
+      : error.reason === 'bluesky_auth_failed' || error.reason === 'bluesky_no_credentials'
+        ? 'NEEDS_AUTH'
+        : null;
+  if (!status) return;
+  await accountsRepo
+    .updateAccount(account.id, {
+      status,
+      lastError: error.message.slice(0, 500),
+      ...(status === 'CHALLENGE_REQUIRES_USER' ? { challengeKind: 'EMAIL_CODE' } : {}),
+    })
+    .catch(() => undefined);
+}
 
 /**
  * Pulls new events from channels that have to be polled rather than pushed.
@@ -101,18 +138,37 @@ export class ChannelPoller {
       const offsetState = account.channel === 'telegram' ? await telegramChannel.pollState(account.id) : null;
       const state = account.channel === 'farcaster' ? await channelState.pollState(account.id) : null;
       let reported: string | null = null;
+      /*
+        One read is one charge, whatever the adapter reads in a call.
+
+        An adapter that pages (Bluesky) is handed the means to ask before each
+        further page and to charge after it, so a burst cannot cost one read and
+        spend four. One that does not (X reads a single page) is charged once
+        below, as it always was.
+      */
+      let charged = 0;
+      let progress: IngestProgress | undefined;
+      // The state this poll starts from. Its write applies only if that is still
+      // the state when it finishes; see `advanceNotificationWatermark`.
+      const startedAtVersion = blueskyNotificationsVersionOf(account.settings);
       const events = await adapter.ingestEvents(ctx, {
         limit: config.polling.batchLimit,
-        ...(offsetState
+        ...(offsetState ? { cursor: offsetState.offset === null ? null : String(offsetState.offset), reportCursor: (value: string) => { reported = value; } }
+          : state ? { cursor: state.cursor, reportCursor: (value: string) => { reported = value; } } : {}),
+        ...(spendsReadBudget(account.channel)
           ? {
-              cursor: offsetState.offset === null ? null : String(offsetState.offset),
-              reportCursor: (value: string) => {
-                reported = value;
+              canReadAnother: async () => (await checkReadCapacity(account.id, 'DIRECT').catch(() => null))?.allowed ?? true,
+              onRead: async () => {
+                charged += 1;
+                await noteXRead(account.id, 'DIRECT');
               },
             }
-          : state ? { cursor: state.cursor, reportCursor: (value: string) => { reported = value; } } : {}),
+          : {}),
+        report: (reported) => {
+          progress = reported;
+        },
       });
-      if (account.channel === 'x') await noteXRead(account.id, 'DIRECT');
+      if (spendsReadBudget(account.channel) && charged === 0) await noteXRead(account.id, 'DIRECT');
       let created = 0;
       for (const event of events) {
         const outcome = await ingestNormalizedEvent({ accountId: account.id, event });
@@ -122,6 +178,16 @@ export class ChannelPoller {
         await telegramChannel.advanceOffset(account.id, offsetState.version, Number(reported));
       }
       if (state && reported !== null) await channelState.advancePoll(account.id, state.version, reported);
+      // Only after every event was taken in, so a failure above re-reads them.
+      if (account.channel === 'bluesky') {
+        const applied = await advanceNotificationWatermark(account.id, events, progress, startedAtVersion);
+        if (!applied) {
+          log.warn('another poll moved this account\'s notification state first; this one wrote nothing', {
+            handle: account.handle,
+            events: events.length,
+          });
+        }
+      }
 
       const found = events.length > 0;
       const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak, foundEvents: found });
@@ -144,7 +210,8 @@ export class ChannelPoller {
     } catch (error) {
       const message = errorMessage(error);
       log.warn('channel poll failed', { channel: account.channel, handle: account.handle, message });
-      if (account.channel === 'x') await noteXFailure(account.id, 'DIRECT', message);
+      if (spendsReadBudget(account.channel)) await noteXFailure(account.id, 'DIRECT', message);
+      await stopPollingIfSignInIsGone(account, error);
       // A failing account backs off like an idle one rather than being retried
       // every tick, but the streak is what grows, not a separate failure counter.
       // A wait the remote named (Telegram's retry_after) is a floor, not a hint.

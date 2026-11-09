@@ -40,6 +40,16 @@ export interface ChannelContext {
   /** Every HTTP read, including verification and recovery, uses this budget. */
   beforeRead?: () => Promise<void>;
   afterRead?: (error?: unknown) => Promise<void>;
+  /**
+   * Opens the stored sign-in details, for a channel that signs in over an API
+   * rather than through a browser.
+   *
+   * A function, not a value, for the reason `LoginCredentials` is never placed on
+   * this object: the plaintext exists only for the length of the call that asks
+   * for it, and a context is passed around, logged by accident and kept in
+   * closures. Absent for every channel that has a browser session instead.
+   */
+  credentials?: () => Promise<LoginCredentials | null>;
 }
 
 export interface ConnectionResult {
@@ -127,6 +137,22 @@ export interface RadarPollRequest {
   cursor: string | null;
 }
 
+/**
+ * How much of what was waiting an adapter actually read.
+ *
+ * `complete: false` means there is more beyond what was returned, and `resume`
+ * is the adapter's own token for where to carry on. The caller must not treat
+ * what it was handed as everything: moving a "seen up to here" mark past events
+ * that were never read is how they are skipped for ever.
+ */
+export interface IngestProgress {
+  complete: boolean;
+  /** Opaque, meaningful only to the adapter that issued it. Null when complete. */
+  resume: string | null;
+  /** True when a stored continuation was refused and the read started again from the newest. */
+  restarted?: boolean;
+}
+
 export interface IngestOptions {
   /** Opaque adapter cursor, committed by the poller only after ingestion. */
   cursor?: string | null;
@@ -134,6 +160,17 @@ export interface IngestOptions {
   /** Remote event ids already recorded; the adapter should skip them. */
   since?: string | null;
   limit: number;
+  /**
+   * Whether one more read of the remote may happen now. Absent means yes.
+   *
+   * An adapter that reads several pages in one call asks before each page after
+   * the first, so the one read budget is honoured per read and not per call.
+   */
+  canReadAnother?: () => Promise<boolean>;
+  /** Called after each read of the remote, so each one is charged to the budget. */
+  onRead?: () => Promise<void>;
+  /** Called once, with how much of what was waiting was read. */
+  report?: (progress: IngestProgress) => void;
 }
 
 export interface ActionRequest {
@@ -188,6 +225,12 @@ export interface ChannelAdapter {
   readonly capabilities: readonly ActionType[];
   /** True when this adapter needs a browser session to function. */
   readonly requiresBrowser: boolean;
+  /**
+   * Set for a channel that signs in over an API with stored details rather than
+   * through a browser. Such an account can still be signed out, which is a thing
+   * to tell a person; `requiresBrowser` alone said only the browser channels could.
+   */
+  readonly signInKind?: 'APP_PASSWORD';
 
   connect(ctx: ChannelContext): Promise<ConnectionResult>;
   disconnect(ctx: ChannelContext): Promise<void>;

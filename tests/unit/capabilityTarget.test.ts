@@ -128,4 +128,16 @@ describe('the key two writers have to agree on', () => {
   it('falls back to the job key when there is no target to build from', () => {
     expect(actionIdempotencyKeyFor({ actionType: 'LIKE', jobIdempotencyKey: JOB, targetRef: null })).toBe(JOB);
   });
+
+  it('agrees with bluesky.like on Bluesky, and not with x.like', () => {
+    // A Bluesky like claimed under X's capability id would still be one action,
+    // but it would not agree with the executor that writes it through
+    // bluesky.like, and the two could then each send one.
+    const uri = 'at://did:plc:abc123/app.bsky.feed.post/3kabc';
+    const key = actionIdempotencyKeyFor({ actionType: 'LIKE', jobIdempotencyKey: JOB, targetRef: uri, channel: 'bluesky' });
+    expect(key).toBe(capabilityIdempotencyKey({ jobIdempotencyKey: JOB, capabilityId: 'bluesky.like', targetRef: uri }));
+    expect(key).not.toBe(capabilityIdempotencyKey({ jobIdempotencyKey: JOB, capabilityId: 'x.like', targetRef: uri }));
+    // Bluesky has no repost here, so a repost keeps the bare job key.
+    expect(actionIdempotencyKeyFor({ actionType: 'REPOST', jobIdempotencyKey: JOB, targetRef: uri, channel: 'bluesky' })).toBe(JOB);
+  });
 });

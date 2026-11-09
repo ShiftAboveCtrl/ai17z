@@ -70,6 +70,8 @@ export * from './updates';
 export * from './capabilityLoop';
 export * from './capabilityInputShape';
 export * from './xCapabilities';
+export * from './blueskyCapabilities';
+export * from './blueskyConnect';
 export * from './xSurfaceCapabilities';
 export * from './xCapabilityContext';
 export * from './capabilityPermissions';

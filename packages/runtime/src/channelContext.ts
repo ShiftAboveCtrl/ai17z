@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import type { Account, CapacityClass } from '@xbam/shared/contracts';
 import { createLogger, envString, PipelineError } from '@xbam/shared';
-import { accounts as accountsRepo, cadences, farcasterSigners, type XSignal } from '@xbam/database';
+import { accounts as accountsRepo, accountCredentials, cadences, farcasterSigners, type XSignal } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { resolveProfileDir } from '@xbam/browser';
 import type { ChannelContext } from '@xbam/channels';
@@ -68,6 +68,12 @@ export async function buildChannelContext(account: Account, jobId: string | null
         if (signal) await notePushback(account.id, readClass, signal, (error as PipelineError).message);
       },
     } : {}),
+    // A channel that signs in over an API asks for its sealed details at the
+    // moment it needs them. Nothing is opened here, so a context that is never
+    // used to sign in never holds a password, and a synthetic account has no row.
+    ...(account.channel === 'bluesky' && !account.id.startsWith('synthetic-')
+      ? { credentials: () => accountCredentials.getDecryptedLogin(account.id) }
+      : {}),
   };
 }
 

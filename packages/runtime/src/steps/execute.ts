@@ -185,6 +185,8 @@ export async function persistTurnAndMemory(bundle: JobBundle, outgoing: string, 
  * executes has one writer, so there is nothing for its key to agree with.
  */
 const CAPABILITY_FOR_ACTION: Record<string, string> = { LIKE: 'x.like', REPOST: 'x.repost' };
+/** Bluesky has its own like. It has no repost here, so it has no entry for one. */
+const BLUESKY_CAPABILITY_FOR_ACTION: Record<string, string> = { LIKE: 'bluesky.like' };
 
 /**
  * The key this path claims an action under.
@@ -201,7 +203,7 @@ export function actionIdempotencyKeyFor(input: {
 }): string {
   const capabilityId = input.channel === 'farcaster'
     ? ({ LIKE: 'farcaster.like', REPOST: 'farcaster.recast' } as Record<string, string>)[input.actionType]
-    : CAPABILITY_FOR_ACTION[input.actionType];
+    : (input.channel === 'bluesky' ? BLUESKY_CAPABILITY_FOR_ACTION : CAPABILITY_FOR_ACTION)[input.actionType];
   if (!capabilityId || !input.targetRef) return input.jobIdempotencyKey;
   return capabilityIdempotencyKey({
     jobIdempotencyKey: input.jobIdempotencyKey,
@@ -252,6 +254,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     channel: job.channel,
     jobIdempotencyKey: job.idempotencyKey,
     targetRef,
+    channel: job.channel,
   });
 
   // A development update is checked again on the text actually about to go

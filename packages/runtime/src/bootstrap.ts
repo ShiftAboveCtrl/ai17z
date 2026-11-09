@@ -51,6 +51,7 @@ import { defaultPipelineDraft } from './defaultPipeline';
 import { registerXCapabilities } from './xCapabilities';
 import { registerTelegramCapabilities } from './telegramCapabilities';
 import { registerFarcasterCapabilities } from './farcasterCapabilities';
+import { registerBlueskyCapabilities } from './blueskyCapabilities';
 import { registerGithubCapabilities } from './githubCapabilities';
 import { registerIntrospectionCapabilities } from './introspectionCapabilities';
 import { registerManagementCapabilities } from './managementCapabilities';
@@ -84,6 +85,8 @@ export async function bootstrapRuntime(): Promise<void> {
   registerXCapabilities();
   registerTelegramCapabilities();
   registerFarcasterCapabilities();
+  // Bluesky's, for the same reason, and with no browser anywhere in them.
+  registerBlueskyCapabilities();
   // What a watched repository did, answered from what was recorded rather than
   // by calling GitHub. An agent cannot add a watch and cannot reach a project
   // its owner has not pointed it at.

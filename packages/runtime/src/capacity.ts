@@ -26,6 +26,19 @@ const log = createLogger('capacity');
  * state that nobody asks about does not need to move.
  */
 
+/**
+ * Whether reading this channel spends from the one budget.
+ *
+ * The ledger and the breaker are keyed on the account, not on X, so they serve
+ * any channel that can be asked too often. X pays in page loads and Bluesky in
+ * API calls, and the cheaper unit does not make a runaway poll any less of one:
+ * a second network must not be a way around the first one's discipline. The
+ * names say X because X was first; the account row is what they mean.
+ */
+export function spendsReadBudget(channel: string): boolean {
+  return channel === 'x' || channel === 'bluesky';
+}
+
 /** Which class of capacity a radar source spends. */
 export function capacityClassForSource(kind: RadarSourceKind): CapacityClass {
   switch (kind) {
@@ -79,6 +92,7 @@ export function classifyXSignal(message: string | null | undefined): XSignal | n
 async function loadState(accountId: string): Promise<{
   state: CapacityState;
   status: AccountStatus;
+  channel: string;
   changedAt: Date | null;
 } | null> {
   const row = await capacityRepo.getState(accountId);
@@ -91,6 +105,7 @@ async function loadState(accountId: string): Promise<{
       strikes: row.healthStrikes,
     },
     status: row.status as AccountStatus,
+    channel: row.channel,
     changedAt: row.healthChangedAt ? new Date(row.healthChangedAt) : null,
   };
 }
@@ -113,6 +128,7 @@ export async function settleAccountCapacity(accountId: string, now = new Date())
     loaded.state,
     {
       status: loaded.status,
+      channel: loaded.channel,
       rateLimits: usage.rateLimits,
       stalled: usage.stalled,
       // X's own error page counts as pressure only when several arrive
@@ -154,7 +170,7 @@ export async function settleAccountCapacity(accountId: string, now = new Date())
   return next;
 }
 
-/** Whether one more read of X may happen now, for this class of work. */
+/** Whether one more read may happen now, for this class of work. */
 export async function checkReadCapacity(
   accountId: string,
   klass: CapacityClass,
@@ -165,7 +181,9 @@ export async function checkReadCapacity(
   if (!state) return { allowed: true, message: 'No such account.', retryAfterMs: null };
   const config = (await cadencesRepo.activeCadence(accountId)).capacity;
   const usage = await capacityRepo.usage(accountId, now);
+  const channel = (await loadState(accountId))?.channel ?? null;
   return readAllowance({
+    channel,
     state,
     klass,
     readsLast10Minutes: usage.readsLast10Minutes,
@@ -184,7 +202,7 @@ export async function checkWriteCapacity(
 ): Promise<CapacityVerdict> {
   const state = await settleAccountCapacity(accountId, now);
   if (!state) return { allowed: true, message: 'No such account.', retryAfterMs: null };
-  return writeAllowance(state, klass, now);
+  return writeAllowance(state, klass, now, (await loadState(accountId))?.channel ?? null);
 }
 
 /**

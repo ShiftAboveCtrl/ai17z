@@ -16,7 +16,7 @@
  * the contract already defines, and rendering it for a screen or for a chat is
  * the caller's business.
  */
-import type { HealthComponent, HealthReport } from '@xbam/shared/contracts';
+import { describeSignIn, type Account, type HealthComponent, type HealthReport } from '@xbam/shared/contracts';
 import {
   budgetFor,
   pressureFor,
@@ -37,7 +37,13 @@ import {
 } from '@xbam/database';
 import { getAdapter } from '@xbam/models';
 import { browserEnabled } from '@xbam/browser';
-import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
+import { channelHasSignIn, isChannelImplemented } from '@xbam/channels';
+
+/** The plain sentence for an account whose sign-in needs attention, where the channel has one. */
+function signInDetail(account: Pick<Account, 'channel' | 'status'>): string | null {
+  const explanation = describeSignIn(account.channel, account.status);
+  return explanation ? `${explanation.what} ${explanation.fix}` : null;
+}
 
 /**
  * Whether any account has a browser a worker is still reporting on.
@@ -164,12 +170,11 @@ export async function collectHealth(): Promise<HealthReport> {
         if (!account.enabled) continue;
         // Channels without a browser session have nothing to connect; an enabled
         // mock account is ready by definition and should not read as degraded.
-        // A Telegram bot has no browser but it does have a token, and a revoked one
-        // must not read as healthy because it needs no session.
-        const sessionless =
-          isChannelImplemented(account.channel) &&
-          !getChannelAdapter(account.channel).requiresBrowser &&
-          account.channel !== 'telegram';
+        // Only a channel with nothing to be signed out of reads as ready by
+        // definition. Bluesky has no browser but it does have a sign-in, and
+        // reporting "no session required" for an account whose app password
+        // was revoked would be the health screen saying the opposite of the truth.
+        const sessionless = isChannelImplemented(account.channel) && !channelHasSignIn(account.channel);
         components.push({
           name: `${account.channel} @${account.handle}`,
           status: sessionless
@@ -179,7 +184,7 @@ export async function collectHealth(): Promise<HealthReport> {
               : account.status === 'ERROR'
                 ? 'offline'
                 : 'degraded',
-          detail: sessionless ? 'No session required' : (account.lastHealthStatus ?? account.status),
+          detail: sessionless ? 'No session required' : (signInDetail(account) ?? account.lastHealthStatus ?? account.status),
           optional: true,
           kind: 'account',
           checkedAt,
