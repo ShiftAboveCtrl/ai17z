@@ -34,6 +34,7 @@ export * as capabilityPermissions from './repositories/capabilityPermissions';
 export * as autonomy from './repositories/autonomy';
 export * as targets from './repositories/targets';
 export * as xCapacity from './repositories/xCapacity';
+export * as telegramChannel from './repositories/telegramChannel';
 export * as broadCandidates from './repositories/broadCandidates';
 export * as learning from './repositories/learning';
 export * as plugins from './repositories/plugins';

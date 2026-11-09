@@ -2,6 +2,8 @@ export * from './contract';
 export * from './registry';
 export { mockAdapter } from './mock/index';
 export { xAdapter } from './x/index';
+export { telegramAdapter, inspectBot as inspectTelegramBot, readChat as readTelegramChat, describeChat as describeTelegramChat } from './telegram/index';
+export { eventOf as telegramEventOf, addressing as telegramAddressing } from './telegram/normalise';
 export { observeAuthPage } from './x/auth';
 export { signInWithStoredCredentials } from './x/credentialSignIn';
 export { CHALLENGE_SIGNALS, SEL } from './x/selectors';

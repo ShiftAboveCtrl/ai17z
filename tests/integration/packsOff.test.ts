@@ -70,6 +70,7 @@ function registerEverything(): void {
   upstream.registerEntityUpstreams();
   upstream.registerSecUpstreams();
   runtime.registerXCapabilities();
+  runtime.registerTelegramCapabilities();
   // The projects pack, whose capabilities are registered from the runtime for
   // the same reason X's are: they need the agent row to know whose watches they
   // may read. A pack with no registered members makes setToolpack refuse, which

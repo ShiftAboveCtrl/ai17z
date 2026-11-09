@@ -5,6 +5,7 @@ import { accounts as accountsRepo } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { resolveProfileDir } from '@xbam/browser';
 import type { ChannelContext } from '@xbam/channels';
+import { agentBotToken } from './telegramBotGuard';
 
 export function storageDir(): string {
   return resolve(envString('AI17Z_STORAGE_DIR', './storage'));
@@ -37,6 +38,9 @@ export async function buildChannelContext(account: Account, jobId: string | null
     storageDir: storageDir(),
     logger: createLogger('channel', { channel: account.channel, account: account.handle }),
     jobId,
+    // Opened per call and checked against the notification bot every time, so a
+    // context that is logged or kept holds no token.
+    ...(account.channel === 'telegram' ? { botToken: () => agentBotToken(account.id) } : {}),
   };
 }
 
