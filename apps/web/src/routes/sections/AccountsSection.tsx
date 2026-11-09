@@ -9,6 +9,7 @@ import { humanStatus, toneFor } from '@app/lib/format';
 import { EmptyState, Field, Modal, Spinner, StatusDot } from '@app/components/ui';
 import { SessionPanel } from '@app/components/SessionPanel';
 import { CapabilitiesPanel } from '@app/components/CapabilitiesPanel';
+import { StudioRiskWatchesPanel } from '@app/components/StudioRiskWatchesPanel';
 import { IndexedRow, Section } from './Section';
 
 export function AccountsSection({
@@ -168,6 +169,7 @@ export function AccountsSection({
               handle={open_.handle}
               actionType={open_.actionType}
             />
+            <StudioRiskWatchesPanel agentId={agentId} accountId={open_.accountId} />
           </div>
         )}
       </Modal>

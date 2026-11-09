@@ -89,10 +89,19 @@ export interface SignalState {
   generation: number;
 }
 
+/**
+ * Where a radar source came from. Computed from the config the Studio bridge
+ * alone writes, never from the label: a label is text an owner may type.
+ */
+export type RadarSourceProvenance = 'OWNER' | 'STUDIO_RISK_WATCH';
+export function radarSourceProvenance(config: { studioRisk?: unknown } | null | undefined): RadarSourceProvenance {
+  return config?.studioRisk ? 'STUDIO_RISK_WATCH' : 'OWNER';
+}
+
 export interface SignalRadarData {
-  baselines: { sourceId: string; watchKey: string; watch: SignalWatch; state: SignalState | null; lastRead: SignalObservation | null; reason: string }[];
+  baselines: { sourceId: string; watchKey: string; watch: SignalWatch; state: SignalState | null; lastRead: SignalObservation | null; reason: string; provenance: RadarSourceProvenance }[];
   candidates: {
-    id: string; sourceId: string;
+    id: string; sourceId: string; provenance: RadarSourceProvenance;
     evidence: { watch: SignalWatch; before: SignalObservation; after: SignalObservation };
     reason: string; ideaStatus: string | null; ideaError: string | null;
     jobStatus: string | null; jobError: string | null;

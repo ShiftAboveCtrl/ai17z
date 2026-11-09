@@ -252,6 +252,49 @@ describe('Studio risk watch bridge', () => {
     expect(studio!.batches).toHaveLength(0);
     expect(await query(`SELECT id FROM studio_risk_outbox WHERE delivered_at IS NULL`)).toHaveLength(1);
   });
+  it('the notification opens the account Radar panel, not the accounts list', async () => {
+    const f = await setup();
+    await runtime.pollSignalSource(f.source, async () => read(200));
+    await runtime.pollSignalSource(f.source, async () => read(50));
+    const [notification] = await query(`SELECT action_href FROM notifications WHERE kind='STUDIO_RISK_WATCH'`);
+    expect(notification!.action_href).toBe(`/settings?account=${f.accountId}&focus=radar`);
+  });
+  it('the read model and the Radar API say which sources and candidates came from Studio, whatever their labels', async () => {
+    const f = await setup();
+    await runtime.pollSignalSource(f.source, async () => read(200));
+    await runtime.pollSignalSource(f.source, async () => read(50));
+    const mine = await radar.upsertSource({ accountId: f.accountId, kind: 'market_signal', label: 'Studio risk watch: mine', config: { watches: [{ chain: 'solana', address: mint, predicate: 'liquidity_below', threshold: 5 }], mayTrigger: false } });
+    const model = await signals.forAccount(f.accountId);
+    expect(model.baselines.map(b => b.provenance)).toContain('STUDIO_RISK_WATCH');
+    expect(model.candidates[0]?.provenance).toBe('STUDIO_RISK_WATCH');
+    const app = await buildServer();
+    try {
+      const headers = { authorization: `Bearer ${(await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: f.ownerEmail, password: 'test-password-1234' } })).json().data.token}` };
+      const listed = (await app.inject({ method: 'GET', url: `/api/accounts/${f.accountId}/radar`, headers })).json().data.sources as { id: string; provenance: string }[];
+      expect(listed.find(s => s.id === f.source.id)?.provenance).toBe('STUDIO_RISK_WATCH');
+      expect(listed.find(s => s.id === mine.id)?.provenance).toBe('OWNER');
+      // A Studio source is recreated by every sync, so the API refuses to pretend to delete it.
+      const refused = await app.inject({ method: 'DELETE', url: `/api/accounts/${f.accountId}/radar/${f.source.id}`, headers });
+      expect(refused.statusCode).toBe(400);
+      expect(refused.body).toMatch(/follows your Studio risk watch/);
+      expect(await radar.getSource(f.source.id)).not.toBeNull();
+      expect((await app.inject({ method: 'DELETE', url: `/api/accounts/${f.accountId}/radar/${mine.id}`, headers })).statusCode).toBe(200);
+    } finally { await app.close(); }
+  });
+  it('write-back rows cannot outlive their binding, and rebinding to another account still works', async () => {
+    const f = await setup();
+    await runtime.pollSignalSource(f.source, async () => read(200));
+    expect(await query(`SELECT id FROM studio_risk_outbox`)).toHaveLength(1);
+    await expect(query(`INSERT INTO studio_risk_outbox(binding_id,source_id,observation_key,payload) VALUES(gen_random_uuid(),$1,'k','{}')`, [f.source.id])).rejects.toThrow(/foreign key/i);
+    const other = await accounts.createAccount({ ownerId: f.ownerId, channel: 'mock', handle: 'second' });
+    await accounts.updateAccount(other.id, { enabled: true, status: 'CONNECTED' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: other.id });
+    const moved = await runtime.setStudioRiskWatches({ agentId: f.agentId, ownerId: f.ownerId, accountId: other.id, enabled: true });
+    expect(moved.ok).toBe(true);
+    expect(await query(`SELECT id FROM studio_risk_outbox`)).toHaveLength(0);
+    await query(`DELETE FROM studio_risk_bindings WHERE agent_id=$1`, [f.agentId]);
+    expect(await query(`SELECT id FROM studio_risk_outbox`)).toHaveLength(0);
+  });
   it('the real posting path still runs engagement, quality, cadence and the final signal guard', async () => {
     const f = await setup();
     await agents.updateAgent(f.agentId, { state: 'ACTIVE' });

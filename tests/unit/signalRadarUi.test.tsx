@@ -6,8 +6,8 @@ const watch = { chain: 'solana', address: 'So11111111111111111111111111111111111
 const before = { value: 200, source: 'fixture-provider', observedAt: '2026-11-09T09:00:00Z', definition: 'Median USD pool liquidity; top 20 coverage.' };
 const after = { ...before, value: 50, observedAt: '2026-11-09T09:01:00Z' };
 const data: SignalRadarData = {
-  baselines: [{ sourceId: 'source', watchKey: 'watch', watch, state: null, lastRead: { ...before, value: null }, reason: 'Reading unavailable; retained baseline unchanged.' }],
-  candidates: [{ id: 'candidate', sourceId: 'source', evidence: { watch, before, after }, reason: 'In idea backlog; posting gates have not run.', ideaStatus: 'unused', ideaError: null, jobStatus: null, jobError: null }],
+  baselines: [{ sourceId: 'source', watchKey: 'watch', watch, state: null, lastRead: { ...before, value: null }, reason: 'Reading unavailable; retained baseline unchanged.', provenance: 'OWNER' }],
+  candidates: [{ id: 'candidate', sourceId: 'source', provenance: 'OWNER', evidence: { watch, before, after }, reason: 'In idea backlog; posting gates have not run.', ideaStatus: 'unused', ideaError: null, jobStatus: null, jobError: null }],
 };
 describe('signal evidence UI', () => {
   it('AC5 and AC6 show exact wrapping identities, unavailable fields, before/after provenance and outcome', () => {

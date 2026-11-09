@@ -13,7 +13,7 @@ import {
 } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { DEFAULT_X_RADAR } from '@xbam/runtime';
-import { RadarSourceConfig, RadarSourceKind, RADAR_KINDS_NEEDING_TARGET, SignalUniverse } from '@xbam/shared/contracts';
+import { RadarSourceConfig, RadarSourceKind, RADAR_KINDS_NEEDING_TARGET, SignalUniverse, radarSourceProvenance } from '@xbam/shared/contracts';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAccount(accountId: string, user: UserRow) {
@@ -252,7 +252,8 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       const adapter = getChannelAdapter(account.channel);
       return {
         supported: [...(adapter.radarSourceKinds ?? []), 'market_signal'],
-        sources: await radarRepo.listSources(account.id),
+        // Provenance is computed here, not guessed from the label by the screen.
+        sources: (await radarRepo.listSources(account.id)).map((source) => ({ ...source, provenance: radarSourceProvenance(source.config) })),
         signals: await signals.forAccount(account.id),
       };
     }),
@@ -380,6 +381,10 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       const account = await ownedAccount(params(request).id!, user);
       const source = await radarRepo.getSource(params(request).sourceId!);
       if (!source || source.accountId !== account.id) throw new NotFoundError('Radar source');
+      // The bridge recreates it at the next sync, so a delete would only look like it worked.
+      if (radarSourceProvenance(source.config) === 'STUDIO_RISK_WATCH') {
+        throw new BadRequestError('This source follows your Studio risk watch link. Change the watch in Studio, or turn the Studio risk watches switch off for this agent.');
+      }
       await radarRepo.deleteSource(source.id);
       return { deleted: true };
     }),

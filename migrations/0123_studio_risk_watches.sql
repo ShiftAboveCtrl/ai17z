@@ -19,7 +19,8 @@ CREATE TABLE studio_risk_bindings (
 -- Delivery metadata over retained signal evidence, not another crossing store.
 CREATE TABLE studio_risk_outbox (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  binding_id uuid NOT NULL,
+  -- studio_risk_bindings.id is UNIQUE, so it can be referenced; a removed binding takes its queue with it.
+  binding_id uuid NOT NULL REFERENCES studio_risk_bindings(id) ON DELETE CASCADE,
   source_id uuid NOT NULL REFERENCES radar_sources(id) ON DELETE CASCADE,
   observation_key text NOT NULL,
   payload jsonb NOT NULL,

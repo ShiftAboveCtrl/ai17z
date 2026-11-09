@@ -64,6 +64,9 @@ export async function setStudioRiskWatches(input: { agentId: string; ownerId: st
       return;
     }
     const reuse = old?.enabled && old.account_id === input.accountId && sameLink(old, ready);
+    // A new binding id orphans the old queue by design (it must never reach Studio under the
+    // new scope); the foreign key would refuse the id change, so the old rows go first.
+    if (old && !reuse) await tx.query('DELETE FROM studio_risk_outbox WHERE binding_id=$1', [old.id]);
     await tx.query(`INSERT INTO studio_risk_bindings(agent_id,owner_id,account_id,enabled,may_trigger,installation_id,origin,linked_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(agent_id) DO UPDATE SET
       id=CASE WHEN $9 THEN studio_risk_bindings.id ELSE gen_random_uuid() END,

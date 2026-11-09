@@ -93,3 +93,15 @@ Pending write-back is durable, limited to 50 per sweep and discarded from delive
 after 24 hours or after removal/rebinding. Missing acknowledgements are retried
 with the original keys. The worker never reports an acknowledgement it did not
 receive, and nothing depends on Studio being available for unrelated work.
+
+## Owner screens
+
+The agent's Accounts section (inside an account's session) holds the two opt-in
+switches, both off until the owner turns them on, with one sentence each. The
+Radar panel marks every source, baseline and candidate that came from Studio
+using `provenance` (`STUDIO_RISK_WATCH` or `OWNER`), computed from the
+`studioRisk` config key and never from a label, and shows each candidate's
+recorded reason in sentences. A Studio source has no remove control because the
+next sync recreates it; `DELETE /api/accounts/:id/radar/:sourceId` refuses it
+with a sentence. The crossing notification opens
+`/settings?account=<id>&focus=radar`.

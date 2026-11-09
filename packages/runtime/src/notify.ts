@@ -53,7 +53,8 @@ export async function studioRiskWatchCrossed(input: { agentId: string; accountId
     kind: 'STUDIO_RISK_WATCH', severity: 'INFO', agentId: input.agentId, accountId: input.accountId,
     title: 'A Studio risk watch crossed its limit',
     body: `${input.detail} This is an observation, never a buy or sell signal or a safety rating.`,
-    actionLabel: 'Open radar', actionHref: '/settings#accounts',
+    // The Radar panel lives inside the account's session, which this query opens.
+    actionLabel: 'Open radar', actionHref: `/settings?account=${input.accountId}&focus=radar`,
     data: { sourceId: input.sourceId, watchKey: input.watchKey },
     dedupeKey: `studio-risk:${input.sourceId}:${input.watchKey}:${input.generation}`,
   }, tx);
