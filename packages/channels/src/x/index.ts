@@ -183,6 +183,7 @@ export const xAdapter: ChannelAdapter = {
    * reconciler upstream merges them on the status id.
    */
   async pollRadarSource(ctx: ChannelContext, request: RadarPollRequest): Promise<RadarPollResult> {
+    if (request.kind === 'market_signal') return { candidates: [], cursor: null, error: 'Market signals are not X reads.' };
     const monitor = X_MONITORS[request.kind];
     if (!monitor) {
       return { candidates: [], cursor: null, error: `X has no ${request.kind} monitor.` };

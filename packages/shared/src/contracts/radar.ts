@@ -25,6 +25,8 @@ export const RADAR_SOURCE_KINDS = [
    * per growth session, filtered by engagement and ranked by audience.
    */
   'persona_discovery',
+  /** Owner-pinned, read-only chain observations. Never an X read. */
+  'market_signal',
 ] as const;
 export const RadarSourceKind = z.enum(RADAR_SOURCE_KINDS);
 export type RadarSourceKind = (typeof RADAR_SOURCE_KINDS)[number];
@@ -35,6 +37,65 @@ export const RADAR_KINDS_NEEDING_TARGET: readonly RadarSourceKind[] = ['tracked_
 export const RADAR_STATUSES = ['UNKNOWN', 'HEALTHY', 'DEGRADED', 'FAILING', 'DISABLED'] as const;
 export const RadarStatus = z.enum(RADAR_STATUSES);
 export type RadarStatus = (typeof RADAR_STATUSES)[number];
+
+/** Decode identity length rather than accepting arbitrary base58-looking text. */
+function exactSignalAddress(address: string): boolean {
+  if (/^0x[0-9a-fA-F]{40}$/.test(address)) return true;
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return false;
+  const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  let value = 0n;
+  for (const char of address) value = value * 58n + BigInt(alphabet.indexOf(char));
+  const leading = address.match(/^1*/)?.[0].length ?? 0;
+  const bytes = value === 0n ? 0 : Math.ceil(value.toString(16).length / 2);
+  return leading + bytes === 32;
+}
+
+export const SignalWatch = z.object({
+  chain: z.string().trim().regex(/^[a-z0-9_]{1,30}$/),
+  address: z.string().trim().max(120).refine(exactSignalAddress, 'Use an exact mint or address, never a ticker.'),
+  predicate: z.enum(['liquidity_below', 'concentration_above', 'new_pool', 'wallet_transaction']),
+  threshold: z.number().finite().nonnegative().max(1e15).optional(),
+}).strict().superRefine((watch, ctx) => {
+  if (watch.chain === 'solana' && watch.address.startsWith('0x')) ctx.addIssue({ code: 'custom', message: 'A Solana mint must be a Solana address.' });
+  if (watch.predicate === 'liquidity_below' || watch.predicate === 'concentration_above') {
+    if (watch.threshold === undefined || (watch.predicate === 'concentration_above' && watch.threshold > 100)) {
+      ctx.addIssue({ code: 'custom', message: 'Set a threshold in USD, or a concentration percentage from 0 to 100.' });
+    }
+  }
+});
+export type SignalWatch = z.infer<typeof SignalWatch>;
+export const SignalUniverse = z.array(SignalWatch).min(1).max(12).refine(
+  watches => new Set(watches.map(w => JSON.stringify(w))).size === watches.length,
+  'Each pin and predicate must be unique.',
+);
+
+export interface SignalObservation {
+  value: number | string | string[] | null;
+  source: string;
+  observedAt: string;
+  definition: string;
+  /** Individual upstream reads when a metric combines multiple observations. */
+  reads?: { source: string; observedAt: string }[];
+  /** Pool creation times from the provider, keyed by exact pool address. */
+  poolCreatedAt?: Record<string, string>;
+}
+export interface SignalState {
+  baseline: SignalObservation;
+  latest: SignalObservation;
+  active: boolean;
+  generation: number;
+}
+
+export interface SignalRadarData {
+  baselines: { sourceId: string; watchKey: string; watch: SignalWatch; state: SignalState | null; lastRead: SignalObservation | null; reason: string }[];
+  candidates: {
+    id: string; sourceId: string;
+    evidence: { watch: SignalWatch; before: SignalObservation; after: SignalObservation };
+    reason: string; ideaStatus: string | null; ideaError: string | null;
+    jobStatus: string | null; jobError: string | null;
+    postingEnabled?: boolean | null; postingReason?: string | null;
+  }[];
+}
 
 export const RadarSourceConfig = z.object({
   /** Base gap between polls of this source. */
@@ -58,6 +119,8 @@ export const RadarSourceConfig = z.object({
    * Applied by X itself, so a post nobody has responded to costs nothing.
    */
   minFaves: z.number().int().min(0).max(100_000).optional(),
+  /** Exact owner pins; this source is opt-in and bounded independently of X. */
+  watches: SignalUniverse.optional(),
 });
 export type RadarSourceConfig = z.infer<typeof RadarSourceConfig>;
 

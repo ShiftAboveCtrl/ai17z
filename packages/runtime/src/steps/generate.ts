@@ -50,6 +50,7 @@ const LENGTH_TARGETS = { SHORT: 45, MEDIUM: 100, LONG: 170 } as const;
 import { asksAboutTheAgent, questionsIn } from '../research';
 import { removeEmDashes } from '../punctuation';
 import { judgePost } from '../postQuality';
+import { signalIdeaRefusal } from '../signalRadar';
 import { publicSelfFacts } from '../publicSelf';
 
 import { classifyEvidence } from '../evidenceClass';
@@ -644,6 +645,14 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
  */
 export async function stepQualityGate(bundle: JobBundle): Promise<'next' | 'silent'> {
   const { job, policy } = bundle;
+  const signal = bundle.event.payload as { ideaSource?: string; ideaId?: string };
+  if (signal.ideaSource === 'market_signal') {
+    const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, job.validatedOutput ?? job.generatedOutput ?? '', { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
+    if (refusal) {
+      await jobsRepo.updateJob(job.id, { lastError: `Not worth posting: ${refusal}` });
+      return 'silent';
+    }
+  }
   /*
     An original post has to be worth interrupting everybody for, which is a
     different question from whether it sounds right. Asked first, and answered

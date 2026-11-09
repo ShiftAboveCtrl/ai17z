@@ -50,6 +50,7 @@ import type { JobBundle } from '../loadJob';
 import { checkActionRate } from '../policyGate';
 import { checkDevUpdateAtSend } from '../devUpdateGuard';
 import { paperReplyForJob } from '../paperCapabilities';
+import { signalIdeaRefusal } from '../signalRadar';
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
@@ -219,6 +220,11 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   const paperReply = await paperReplyForJob(job.id);
   if (paperReply !== null && paperReply !== output) {
     throw PipelineError.review('paper_receipt_changed', 'The paper receipt changed after validation. Send the complete simulated record only.');
+  }
+  const signal = bundle.event.payload as { ideaSource?: string; ideaId?: string };
+  if (signal.ideaSource === 'market_signal') {
+    const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
+    if (refusal) throw PipelineError.permanent('signal_publication_refused', refusal);
   }
 
   const context = job.resolvedContext;

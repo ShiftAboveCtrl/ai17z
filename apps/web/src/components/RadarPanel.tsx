@@ -5,6 +5,8 @@ import { useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
 import { RADAR_SOURCE_KINDS, effectiveXInterval, type RadarSourceKind } from '@xbam/shared/contracts';
 import { ErrorPanel, Field, Modal, Spinner, StatusDot } from './ui';
+import { SignalRadar, type SignalRadarData } from './SignalRadar';
+import type { SignalWatch } from '@xbam/shared/contracts';
 
 interface RadarSource {
   id: string;
@@ -21,12 +23,13 @@ interface RadarSource {
   idleReason: string | null;
   consecutiveFailures: number;
   nextPollAt: string | null;
-  config: { intervalSeconds?: number; mayTrigger?: boolean };
+  config: { intervalSeconds?: number; mayTrigger?: boolean; watches?: SignalWatch[] };
 }
 
 interface RadarData {
   supported: string[];
   sources: RadarSource[];
+  signals?: SignalRadarData;
 }
 
 const KIND_NAMES: Record<string, string> = {
@@ -37,6 +40,7 @@ const KIND_NAMES: Record<string, string> = {
   tracked_account: 'Watched account',
   tracked_keyword: 'Watched topic',
   persona_discovery: 'Goes looking on its own',
+  market_signal: 'Market and wallet signals',
 };
 
 const KIND_HINTS: Record<string, string> = {
@@ -240,6 +244,13 @@ export function RadarPanel({ accountId }: { accountId: string }) {
           reload();
         }}
       />
+      <SignalRadar
+        key={data.sources.find(s => s.kind === 'market_signal')?.id ?? 'new-signals'}
+        accountId={accountId}
+        source={data.sources.find(s => s.kind === 'market_signal')}
+        data={data.signals ?? { baselines: [], candidates: [] }}
+        reload={reload}
+      />
     </div>
   );
 }
@@ -373,7 +384,7 @@ function paceWords(seconds: number): string {
  * who set one minute and sees five deserves to be told why.
  */
 function PaceLine({ kind, configured }: { kind: string; configured?: number }) {
-  if (!(RADAR_SOURCE_KINDS as readonly string[]).includes(kind) || kind === 'persona_discovery') return null;
+  if (!(RADAR_SOURCE_KINDS as readonly string[]).includes(kind) || kind === 'persona_discovery' || kind === 'market_signal') return null;
   const pace = effectiveXInterval(kind as RadarSourceKind, configured);
   return (
     <p className="mt-1 text-[11px] text-bone-faint">

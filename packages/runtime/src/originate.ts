@@ -61,8 +61,10 @@ export async function originatePost(input: {
     return { posted: false, reason: 'No account is connected for this agent to post through.', jobId: null };
   }
 
-  // The backlog decides whether there is a post, not the clock.
-  const brief = await nextPost(agent.id);
+  // The backlog decides whether there is a post, not the clock. The claim and
+  // the signal refusal share one account scope inside nextPost, so a signal
+  // idea bound to another account is never taken and never released back.
+  const brief = await nextPost(agent.id, input.accountId);
   if (!brief) {
     return { posted: false, reason: 'Nothing in the idea backlog was worth posting.', jobId: null };
   }
