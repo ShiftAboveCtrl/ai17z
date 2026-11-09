@@ -215,6 +215,8 @@ export * from './runtimeBackup';
 export * from './backupStoreFs';
 export * from './backupStoreObject';
 export * from './walletCapabilities';
+export * from './studioPaperCapabilities';
+export * from './studioPaperVoice';
 export * from './socialTests';
 export * from './publicSelf';
 export * from './devUpdates';

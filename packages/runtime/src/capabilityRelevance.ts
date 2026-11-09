@@ -110,6 +110,9 @@ const FAMILY_HINTS: Record<string, string[]> = {
   feed: ['feed', 'rss', 'blog'],
   web: ['website', 'web page', 'archive', 'wayback'],
   storage: ['ipfs', 'arweave', 'cid'],
+  // Phrases, never single words: "paper" alone is as often a study, and
+  // "trading" already lifts the market family.
+  studio: ['paper trading', 'paper trades', 'paper record', 'paper results', 'track record', 'your trading', 'simulated trading'],
 };
 
 /** Too common to say anything about which capability is wanted. */

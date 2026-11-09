@@ -49,6 +49,7 @@ import type { JobBundle } from '../loadJob';
 
 import { checkActionRate } from '../policyGate';
 import { checkDevUpdateAtSend } from '../devUpdateGuard';
+import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
@@ -258,6 +259,11 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     policy,
     operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
   });
+
+  // A post made from the owner's Studio paper record is read once more as
+  // finished text, with the policy as it is now: the owner may have switched
+  // posting or PnL off since the idea was made, or edited the text in review.
+  checkPaperRecordAtSend({ raw: bundle.event.payload, text: output, policy });
 
   if (!job.dryRun) {
     // The final say on whether this action is permitted. Ingest checked the same

@@ -410,6 +410,37 @@ export function PoliciesSection({
             />
           </Field>
         </Group>
+
+        {/*
+          Both off, and not offered by Easy Mode: a public post about simulated
+          results is the one place they can be read as investment performance,
+          so it is a decision made here on purpose.
+        */}
+        <Group title="Paper record on Studio" blurb="Whether the agent may post about the simulated paper trading you keep on AI17Z Studio. Telling you in a private conversation is the Studio capability, not this.">
+          <Toggle
+            label="Let it post its paper record"
+            description="When a whole window is finished and had trades, it may write one post that says the results are simulated paper trading from Studio, with the dates. It goes through the same checks as any post it starts. Needs the Studio capability switched on and the posting schedule running."
+            checked={draft.studio.postPaperRecord}
+            onChange={(v) => patch((n) => void (n.studio.postPaperRecord = v))}
+          />
+          <Toggle
+            label="Let that post say how the trades did"
+            description="Off, a post says how many simulated trades were made and on what cost assumptions, and nothing about profit, loss or wins. On, it states the net result as plainly for a loss as for a gain."
+            checked={draft.studio.postPaperPnl}
+            onChange={(v) => patch((n) => void (n.studio.postPaperPnl = v))}
+          />
+          <Field label="Window it posts about" hint="Only a finished window is ever posted.">
+            <select
+              className="field"
+              value={draft.studio.paperRecordWindow}
+              onChange={(e) => patch((n) => void (n.studio.paperRecordWindow = e.target.value as PolicyConfig['studio']['paperRecordWindow']))}
+            >
+              <option value="7d">last 7 days</option>
+              <option value="30d">last 30 days</option>
+              <option value="90d">last 90 days</option>
+            </select>
+          </Field>
+        </Group>
       </div>
 
       {/*
