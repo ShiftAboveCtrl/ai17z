@@ -319,6 +319,28 @@ async function linkedContext(): Promise<{ where: StudioOrigin; key: Installation
   return { where, key, link };
 }
 
+/**
+ * What `studioVoice.ts` needs of the transport, and no more: the authenticated
+ * request as this installation (token plus a DPoP proof, no stored secret), a
+ * read that carries no credential at all, and the answer's shape.
+ *
+ * A public read goes out without the installation's token on purpose. A signed
+ * out visitor can read a published voice, so installing one has no business
+ * telling Studio which installation asked.
+ */
+export type StudioReply = StudioAnswer;
+export const studioAuthed = authed;
+export const studioLinkedContext = linkedContext;
+export const describeStudioReply = describe;
+export async function studioPublicGet(path: string): Promise<StudioAnswer | StudioProblem> {
+  const where = await studioOrigin();
+  if (!where) return { ok: false, why: 'No Studio address is configured.' };
+  return send(where, path, { method: 'GET' }).catch((error: Error) => ({
+    ok: false as const,
+    why: `Studio could not be reached: ${error.message}`,
+  }));
+}
+
 async function markRevoked(why: string): Promise<void> {
   const link = await linkRecord();
   forgetTokens();

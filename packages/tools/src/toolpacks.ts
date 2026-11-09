@@ -107,6 +107,14 @@ export const TOOLPACKS: Toolpack[] = [
     prefixes: ['wallet.'],
   },
   {
+    id: 'studio_voice',
+    name: 'Share my voice',
+    summary:
+      "Let the agent show you its voice as it would be published to AI17Z Studio, and publish or take it down when you say so in your own words. " +
+      'Only the character, style examples and output settings are ever shared, never memory, keys, permissions or policy.',
+    prefixes: ['studio_voice.'],
+  },
+  {
     id: 'reference',
     name: 'Reference & Knowledge',
     summary:

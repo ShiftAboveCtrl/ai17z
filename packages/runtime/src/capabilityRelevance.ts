@@ -110,6 +110,8 @@ const FAMILY_HINTS: Record<string, string[]> = {
   feed: ['feed', 'rss', 'blog'],
   web: ['website', 'web page', 'archive', 'wayback'],
   storage: ['ipfs', 'arweave', 'cid'],
+  // Phrases, never single words: "voice" alone is as often audio.
+  studio_voice: ['publish my voice', 'share my voice', 'publish your voice', 'share your voice', 'publish voice', 'share this voice', 'unpublish', 'published voice', 'list my voice', 'voice on studio'],
 };
 
 /** Too common to say anything about which capability is wanted. */

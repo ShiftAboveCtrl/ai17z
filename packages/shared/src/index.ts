@@ -8,6 +8,7 @@ export * from './util';
 export * from './reference';
 export * from './supervisor';
 export * from './version';
+export * from './canonicalJson';
 export * from './image';
 export * from './workerAbsence';
 export * from './installEnv';

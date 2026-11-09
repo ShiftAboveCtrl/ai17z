@@ -53,6 +53,7 @@ import { registerGithubCapabilities } from './githubCapabilities';
 import { registerIntrospectionCapabilities } from './introspectionCapabilities';
 import { registerManagementCapabilities } from './managementCapabilities';
 import { registerWalletCapabilities } from './walletCapabilities';
+import { registerStudioVoiceCapabilities } from './studioVoiceCapabilities';
 import { loadWalletAdapter } from './walletCore';
 
 const log = createLogger('bootstrap');
@@ -93,6 +94,9 @@ export async function bootstrapRuntime(): Promise<void> {
   // its pinned hash or not at all. Nothing here can send.
   registerWalletCapabilities();
   await loadWalletAdapter();
+  // Publishing the agent's voice to Studio. Owner chat only, off until the
+  // owner enables it, and nothing leaves without their own words confirming it.
+  registerStudioVoiceCapabilities();
 
   // Plugins an owner installed, registered the same way and into the same
   // registry as everything above. There is no second invocation engine and no
