@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { KeyRound } from 'lucide-react';
-import { transportBase } from '@app/lib/transport';
+import { transportBase, transportMode } from '@app/lib/transport';
 import { MCP_SERVER_FILE, apiUrlFrom, commandState, type DevUpdateConnection } from '@app/lib/devUpdates';
 import { CopyButton } from './parts';
 
@@ -37,6 +37,7 @@ export function TokenReveal({
   const [localPath, setLocalPath] = useState('');
   const pathId = useId();
   const hintId = useId();
+  const hosted = transportMode() === 'HOSTED';
   const state = commandState({
     connection,
     localPath,
@@ -59,7 +60,12 @@ export function TokenReveal({
 
       <div className="space-y-2">
         <p className="eyebrow text-bone-dim">Connect your coding assistant</p>
-        {!connection && !connectionError ? (
+        {hosted ? (
+          <p className="break-words text-sm text-signal-wait" role="status">
+            Sender commands are not available through this hosted connection. The gateway requires a Studio browser grant in x-ai17z-grant;
+            a sender token alone cannot connect to it. Open a directly reachable AI17Z API in LOCAL mode to prepare a sender command.
+          </p>
+        ) : !connection && !connectionError ? (
           // Still asking: not a failure, and saying it was one tells the owner
           // to give up on a command that is a moment away.
           <p className="break-words text-sm text-bone-dim" role="status">

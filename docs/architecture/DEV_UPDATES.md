@@ -324,6 +324,17 @@ Owner, with a session:
 - `GET /api/dev-updates/updates?projectId=&status=&limit=`, `GET /api/dev-updates/updates/:id`
 - `POST /api/dev-updates/updates/:id/approve` (`editedText`, `note`), `POST /api/dev-updates/updates/:id/reject` (`note`)
 
+## HOSTED connections
+
+In HOSTED mode the gateway accepts a short-lived Studio browser grant in the
+`x-ai17z-grant` header, as set by `transportHeaders`. The sender token sent as
+`Authorization: Bearer <sender token>` does not authenticate to that gateway,
+and the CLI and MCP sender do not supply the browser grant. The token reveal
+therefore offers no sender command through a HOSTED connection. Owners should
+open a directly reachable AI17Z API in LOCAL mode to prepare the sender command
+for that installation. The token is still available to copy; it grants only
+sender access and cannot approve or publish updates.
+
 ## Limits worth knowing
 
 - There are two ceilings and both apply. The dispatcher counts hand-overs in
