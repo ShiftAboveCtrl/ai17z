@@ -48,6 +48,7 @@ import { registerReferenceCapabilities } from './referenceCapabilities';
 import { registerMarketCapabilities } from './marketCapabilities';
 import { registerMarketIntelCapabilities } from './marketIntelCapabilities';
 import { defaultPipelineDraft } from './defaultPipeline';
+import { registerActivityTapeCapability } from './studioActivityTape';
 import { registerXCapabilities } from './xCapabilities';
 import { registerTelegramCapabilities } from './telegramCapabilities';
 import { registerFarcasterCapabilities } from './farcasterCapabilities';
@@ -106,6 +107,7 @@ export async function bootstrapRuntime(): Promise<void> {
   registerPaperCapabilities();
   // The league standing, owner chat only and off until the owner enables it.
   registerStudioLeagueCapabilities();
+  registerActivityTapeCapability();
   await loadWalletAdapter();
   // What the owner's paper track record on Studio says. Owner chat only, and
   // off until the owner enables it; it reads Studio and nothing else.

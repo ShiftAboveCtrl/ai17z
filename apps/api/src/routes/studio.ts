@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { ops, studio as ledger } from '@xbam/database';
+import { ActivityEventId } from '@xbam/shared/contracts';
 import {
   abandonStudioPurchase,
   beginStudioLink,
@@ -8,6 +9,9 @@ import {
   prepareStudioPurchase,
   recordStudioPurchaseSent,
   reviewStudioPurchase,
+  scrubStudioActivity,
+  setStudioActivityTape,
+  studioActivityTapeSetting,
   setStudioControl,
   setStudioLiveView,
   setStudioTakeover,
@@ -49,6 +53,22 @@ const legOf = (request: Parameters<typeof params>[0]): number | null => {
  * the device code. The pairing code is shown because the owner types it.
  */
 export async function registerStudioRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/studio/activity-tape', handler(async (request) => {
+    await requireUser(request);
+    return studioActivityTapeSetting();
+  }));
+  app.put('/api/studio/activity-tape', handler(async (request) => {
+    const user = await requireUser(request);
+    const body = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
+    return setStudioActivityTape(body.enabled, user.id);
+  }));
+  app.post('/api/studio/activity-tape/scrub', handler(async (request) => {
+    const user = await requireUser(request);
+    const body = parseBody(z.object({ id: ActivityEventId }).strict(), request);
+    await scrubStudioActivity(body.id, user.id);
+    return { queued: true };
+  }));
+
   app.get(
     '/api/studio',
     handler(async (request) => {

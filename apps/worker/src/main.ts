@@ -19,6 +19,7 @@ import {
   installTelegramTransport,
   runJob,
   sweepNotifications,
+  sweepStudioActivityTape,
   pollTelegramCommands,
   telegramHeartbeat,
 } from '@xbam/runtime';
@@ -238,6 +239,11 @@ async function main(): Promise<void> {
       }
     } catch (error) {
       log.warn('Studio sync failed', { message: errorMessage(error) });
+    }
+    try {
+      await sweepStudioActivityTape();
+    } catch (error) {
+      log.warn('Studio activity tape sweep failed', { message: errorMessage(error) });
     }
     try {
       /*
