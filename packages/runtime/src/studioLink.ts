@@ -3,7 +3,9 @@ import { buildVersion, openSecret, sealSecret } from '@xbam/shared';
 import {
   AI17Z_PAYMENT,
   formatBaseUnits,
+  PaperRecord,
   prepareMarketplacePurchase,
+  type PaperRecordWindow,
   type PreparedMarketplacePurchase,
   type StudioPurchaseTerms,
 } from '@xbam/shared/contracts';
@@ -901,6 +903,65 @@ export async function studioExchange(json: Record<string, unknown>): Promise<{ o
   return { ok: true, body: answer.body };
 }
 
+/**
+ * How old a paper record may be and still be believed. Studio stamps every
+ * answer, so a copy that sat in a cache between here and there is recognised
+ * by its own date rather than trusted because it arrived just now.
+ */
+export const PAPER_RECORD_MAX_AGE_MS = 15 * 60_000;
+const PAPER_RECORD_FUTURE_SLACK_MS = 5 * 60_000;
+
+/**
+ * Reads the owner's paper track record from the linked Studio, as this
+ * installation: the access token and a DPoP proof bound to this exact request,
+ * and no stored secret of any kind.
+ *
+ * ## Nothing is kept
+ *
+ * There is no variable here that holds an answer, on purpose. A record is read
+ * when somebody asks and used for that answer; the next question reads again.
+ * Remembering the last good record would let an unreachable Studio keep
+ * "saying" last week's result as though it were current, which is the one
+ * failure a track record cannot afford.
+ *
+ * ## Only what the contract allows
+ *
+ * The answer must parse as a strict `PaperRecord`, so a field Studio was never
+ * meant to publish refuses the whole record. Every link must point at the
+ * linked Studio's own origin, because the agent may repeat a link and a
+ * sanitized decision page on somebody else's host is not one.
+ */
+export async function studioPaperRecord(
+  window: PaperRecordWindow,
+  now: Date = new Date(),
+): Promise<{ ok: true; record: PaperRecord } | StudioProblem> {
+  const where = await studioOrigin();
+  const answer = await authed(`/api/v1/installation/paper-record?window=${encodeURIComponent(window)}`, { method: 'GET' }).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  if (answer.status === 404) return { ok: false, why: 'This Studio does not publish a paper track record yet.' };
+  if (answer.status !== 200) return { ok: false, why: describe(answer) };
+  const parsed = PaperRecord.safeParse(answer.body);
+  if (!parsed.success) {
+    return { ok: false, why: 'Studio answered with something other than the paper record this installation reads, so none of it was used.' };
+  }
+  const record = parsed.data;
+  if (record.window.label !== window) return { ok: false, why: 'Studio answered for a different window than the one asked for, so none of it was used.' };
+  if (where) {
+    for (const decision of record.decisions) {
+      if (new URL(decision.url).origin !== where.origin) {
+        return { ok: false, why: 'Studio\'s record linked to a page that is not on Studio, so none of it was used.' };
+      }
+    }
+  }
+  const age = now.getTime() - Date.parse(record.generated_at);
+  if (age > PAPER_RECORD_MAX_AGE_MS || age < -PAPER_RECORD_FUTURE_SLACK_MS) {
+    return { ok: false, why: 'Studio\'s record is not current, so it was not treated as live.' };
+  }
+  return { ok: true, record };
+}
+
 export async function studioPurchases(): Promise<{ ok: true; purchases: StudioPurchase[] } | StudioProblem> {
   const answer = await authed('/api/v1/installation/purchases', { method: 'GET' }).catch(
     (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
@@ -1244,6 +1305,15 @@ export interface StudioStatus {
   payment: { chainId: number; chainName: string; token: string; decimals: number };
   /** Installed Plugins by id and version, so an entitlement for one not yet installed can be offered. */
   installed: Record<string, string>;
+}
+
+/**
+ * Whether this installation can ask Studio anything at all, without asking.
+ * For readiness checks, which run often and must not make a network call.
+ */
+export async function studioLinkReadiness(): Promise<{ linked: true } | { linked: false; why: string }> {
+  const ready = await linkedContext();
+  return 'ok' in ready ? { linked: false, why: ready.why } : { linked: true };
 }
 
 export async function studioStatus(): Promise<StudioStatus> {

@@ -57,6 +57,7 @@ import { registerIntrospectionCapabilities } from './introspectionCapabilities';
 import { registerManagementCapabilities } from './managementCapabilities';
 import { registerWalletCapabilities } from './walletCapabilities';
 import { registerPaperCapabilities } from './paperCapabilities';
+import { registerStudioPaperCapabilities } from './studioPaperCapabilities';
 import { loadWalletAdapter } from './walletCore';
 
 const log = createLogger('bootstrap');
@@ -102,6 +103,9 @@ export async function bootstrapRuntime(): Promise<void> {
   registerWalletCapabilities();
   registerPaperCapabilities();
   await loadWalletAdapter();
+  // What the owner's paper track record on Studio says. Owner chat only, and
+  // off until the owner enables it; it reads Studio and nothing else.
+  registerStudioPaperCapabilities();
 
   // Plugins an owner installed, registered the same way and into the same
   // registry as everything above. There is no second invocation engine and no

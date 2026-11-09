@@ -137,6 +137,14 @@ export const TOOLPACKS: Toolpack[] = [
     prefixes: ['wallet.'],
   },
   {
+    id: 'studio',
+    name: 'Studio',
+    summary:
+      "Let the agent tell you what your simulated paper trading on AI17Z Studio did, with the dates and Studio named as the source. " +
+      'Reading only, and only in a conversation with you; saying it in public is a separate switch in the policy.',
+    prefixes: ['studio.'],
+  },
+  {
     id: 'reference',
     name: 'Reference & Knowledge',
     summary:

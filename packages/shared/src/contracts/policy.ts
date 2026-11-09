@@ -437,6 +437,35 @@ export const RESPONSE_SPEED_LEVERS = [
   'capabilitySteps',
 ] as const;
 
+/**
+ * What the agent may say, unprompted, about the paper track record its owner
+ * keeps on AI17Z Studio.
+ *
+ * Answering "how is your paper trading going" in owner chat needs only the
+ * `studio.paper_record` capability, which is off until the owner enables it.
+ * Saying it in public is a separate decision, because a public post about
+ * simulated results is the one place they can be read as investment
+ * performance. Both of these are therefore off by default, and neither can be
+ * turned on by anything the agent writes.
+ */
+export const StudioPolicy = z.object({
+  /**
+   * Let the agent put a post about its complete paper window into the idea
+   * backlog. The post then goes through the same reticence check, identity
+   * policy, cadence and quality gate as any other post it originates.
+   */
+  postPaperRecord: z.boolean().default(false),
+  /**
+   * Whether a public post may state profit or loss, returns and win counts.
+   * Off: the post says how many simulated trades were made and on what cost
+   * assumptions, and nothing about whether they made money.
+   */
+  postPaperPnl: z.boolean().default(false),
+  /** Which complete window a public post is about. */
+  paperRecordWindow: z.enum(['7d', '30d', '90d']).default('7d'),
+});
+export type StudioPolicy = z.infer<typeof StudioPolicy>;
+
 /** The complete, versioned policy document attached to an agent. */
 export const PolicyConfig = z.object({
   automation: z
@@ -482,6 +511,8 @@ export const PolicyConfig = z.object({
   learning: LearningPolicy.prefault({}),
   /** Checks on a draft beyond the agent's own, such as a peer's second opinion. */
   quality: QualityPolicy.prefault({}),
+  /** Speaking publicly about the owner's paper record on AI17Z Studio. Off by default. */
+  studio: StudioPolicy.prefault({}),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 

@@ -2,7 +2,14 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listCapabilities, registerBuiltinCapabilities, resetCapabilitiesForTest } from '@xbam/tools';
-import { NEVER_MODEL_CALLABLE, capabilityCrossesTheLine, registerManagementCapabilities, registerWalletCapabilities, registerPaperCapabilities } from '@xbam/runtime';
+import {
+  NEVER_MODEL_CALLABLE,
+  capabilityCrossesTheLine,
+  registerManagementCapabilities,
+  registerStudioPaperCapabilities,
+  registerPaperCapabilities,
+  registerWalletCapabilities,
+} from '@xbam/runtime';
 
 /**
  * Paying for something is the owner's act, never the agent's.
@@ -33,6 +40,7 @@ function registerAll() {
   registerManagementCapabilities();
   registerWalletCapabilities();
   registerPaperCapabilities();
+  registerStudioPaperCapabilities();
 }
 
 describe('no capability can move money', () => {
@@ -56,6 +64,23 @@ describe('no capability can move money', () => {
     }
   });
 
+  it('the Studio paper record is one read, off until the owner enables it, owner only, and reaches no money path', () => {
+    registerAll();
+    const studio = listCapabilities().filter((c) => c.id.startsWith('studio.'));
+    // Exactly one, shaped like the wallet reads. Growing this list is a
+    // decision about effect, audience and default, made here.
+    expect(studio.map((c) => c.id)).toEqual(['studio.paper_record']);
+    const record = studio[0]!;
+    expect(record.effect).toBe('READ');
+    expect(record.risk).toBe('LOW');
+    expect(record.unsetPermission).toBe('DISABLED');
+    expect(record.audience).toBe('OWNER');
+    expect(record.modelCallable).toBe(true);
+
+    const text = readFileSync(join(__dirname, '..', '..', 'packages', 'runtime', 'src', 'studioPaperCapabilities.ts'), 'utf8');
+    expect(text).not.toMatch(/prepareMarketplacePurchase|prepareStudioPurchase|studioLiveTrade|studioWallet|walletCore|\.sign\(|\.broadcast\(/);
+  });
+
   it('keeps the purchase builder and the wallet submit path out of the capability layer', () => {
     const root = join(__dirname, '..', '..', 'packages');
     const reachable = [
@@ -65,6 +90,7 @@ describe('no capability can move money', () => {
       join(root, 'runtime', 'src', 'walletCapabilities.ts'),
       join(root, 'runtime', 'src', 'paperCapabilities.ts'),
       join(root, 'runtime', 'src', 'paperTrading.ts'),
+      join(root, 'runtime', 'src', 'studioPaperCapabilities.ts'),
       join(root, 'runtime', 'src', 'managementCapabilities.ts'),
     ];
     for (const file of reachable) {
