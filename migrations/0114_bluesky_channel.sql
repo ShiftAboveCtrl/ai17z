@@ -14,4 +14,4 @@
 ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_channel_check;
 ALTER TABLE accounts
   ADD CONSTRAINT accounts_channel_check
-  CHECK (channel IN ('mock','x','bluesky','discord','telegram','slack','email','http'));
+  CHECK (channel IN ('mock','x','bluesky','farcaster','discord','telegram','slack','email','http'));

@@ -211,7 +211,7 @@ export async function checkWriteCapacity(
  */
 export async function noteRead(accountId: string, klass: CapacityClass): Promise<void> {
   await capacityRepo.recordRead(accountId, klass).catch((error) => {
-    log.warn('could not count a read', { accountId, message: errorMessage(error) });
+    log.warn('could not count a read', { family: 'x', accountId, message: errorMessage(error) });
   });
 }
 
@@ -235,7 +235,7 @@ export async function notePushback(
     await capacityRepo.recordSignal(accountId, klass, signal, detail);
     await settleAccountCapacity(accountId);
   } catch (error) {
-    log.warn('could not record pushback', { accountId, signal, message: errorMessage(error) });
+    log.warn('could not record pushback', { family: 'x', accountId, signal, message: errorMessage(error) });
   }
 }
 

@@ -90,7 +90,7 @@ export async function startPreflight(agentId: string): Promise<Blocker[]> {
     if (account.channel === 'x') needsBrowser = true;
 
     // Browser sessions, bot tokens and app signers all require a connection.
-    const signsIn = getChannelAdapter(account.channel).requiresBrowser || ['telegram', 'farcaster', 'bluesky'].includes(account.channel);
+    const signsIn = getChannelAdapter(account.channel).requiresBrowser || ['telegram', 'farcaster'].includes(account.channel);
     if (signsIn && account.status !== 'CONNECTED') {
       blockers.push({
         what:

@@ -261,7 +261,6 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     channel: job.channel,
     jobIdempotencyKey: job.idempotencyKey,
     targetRef,
-    channel: job.channel,
   });
 
   // A development update is checked again on the text actually about to go

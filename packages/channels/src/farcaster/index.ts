@@ -3,7 +3,6 @@ import { channelState } from '@xbam/database';
 import { PipelineError } from '@xbam/shared';
 import type { ActionRequest, ChannelAdapter, ChannelContext } from '../contract';
 import { ownFid, readCast, request, unreadable } from './client';
-import { handleOf, resolveNames } from './names';
 import { castUrl, readThread } from './reads';
 import { ingestEvents } from './poll';
 import { digestFor, messageHash, preparedMessage, readReaction, signMessage } from './writes';
@@ -46,9 +45,8 @@ export const farcasterAdapter: ChannelAdapter = {
         targetAuthorHandle: null, evidence: {} };
     }
     const cast = await readCast(ctx, action.targetRef ?? '');
-    const names = await resolveNames(ctx, [cast]);
     return { verified: true, detail: 'The full cast hash and author FID match the action target.',
-      targetRef: action.targetRef, targetUrl: castUrl(cast.hash), targetAuthorHandle: handleOf(names, cast.data.fid), evidence: {} };
+      targetRef: action.targetRef, targetUrl: castUrl(cast.hash), targetAuthorHandle: `fid:${cast.data.fid}`, evidence: {} };
   },
   async executeAction(ctx, action) {
     const verification = await farcasterAdapter.verifyAction(ctx, action);

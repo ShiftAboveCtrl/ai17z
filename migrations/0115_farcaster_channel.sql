@@ -1,6 +1,6 @@
 ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_channel_check;
 ALTER TABLE accounts ADD CONSTRAINT accounts_channel_check
-  CHECK (channel IN ('mock','x','farcaster','discord','telegram','slack','email','http'));
+  CHECK (channel IN ('mock','x','bluesky','farcaster','discord','telegram','slack','email','http'));
 
 CREATE TABLE farcaster_signers (
   account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,

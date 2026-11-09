@@ -20,7 +20,7 @@ import { drainAgentJobs, makeDue } from '../support/runner';
 import { fakeTelegram } from '../support/fakeTelegram';
 
 installHarness();
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 const CHAT = -1001234567890;
 const OTHER_CHAT = -1009876543210;
@@ -401,6 +401,21 @@ describe('sending once', () => {
     });
     expect(await query('SELECT 1 FROM telegram_outbox')).toHaveLength(0);
     expect(await telegramAdapter.wasAlreadyDone!(s.ctx, reply(60))).toMatchObject({ done: false, conclusive: true });
+  });
+
+  it('keeps a losing send claim retryable while the winning sender is in progress', async () => {
+    const s = await setup();
+    const begin = telegramChannel.beginSend;
+    // Another worker inserted the claim after our first read and before our insert.
+    vi.spyOn(telegramChannel, 'beginSend').mockImplementationOnce(async (...args) => {
+      await begin(...args);
+      return false;
+    });
+    await expect(telegramAdapter.executeAction(s.ctx, reply(60))).rejects.toMatchObject({
+      errorClass: 'RETRYABLE', reason: 'telegram_send_in_progress',
+    });
+    expect(s.tg.sent).toHaveLength(0);
+    expect(await query("SELECT state FROM telegram_outbox")).toEqual([{ state: 'SENDING' }]);
   });
 
   it('lets one of two racing workers send', async () => {

@@ -219,7 +219,12 @@ export function VoiceInstallPanel({ onInstalled }: { onInstalled?: (agentId: str
       {notice && <p className="break-words rounded-lg border border-ink-line px-3.5 py-3 text-[13px] leading-relaxed text-bone-dim" role="status">{notice}</p>}
 
       {looked && inspection && !inspection.valid && (
-        <RetryablePanel title="That is not a voice AI17Z can use." detail={inspection.problem ?? 'It could not be read.'} onRetry={() => setLooked(null)} retryLabel="Choose another" />
+        <RetryablePanel
+          title={looked.answer.source.kind === 'STUDIO' ? 'That voice could not be inspected.' : 'That is not a voice AI17Z can use.'}
+          detail={inspection.problem ?? 'It could not be read.'}
+          onRetry={looked.answer.source.kind === 'STUDIO' ? () => void look(looked.request) : () => setLooked(null)}
+          retryLabel={looked.answer.source.kind === 'STUDIO' ? 'Try again' : 'Choose another'}
+        />
       )}
 
       {looked && inspection?.valid && looked.answer.document && (

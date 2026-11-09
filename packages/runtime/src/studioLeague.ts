@@ -178,7 +178,7 @@ async function advanceEntry(entry: LeagueEntryRow, now: Date): Promise<{ ok: tru
       await leagueBridge.noteProblem(current.id, answer.why);
       return { ok: false, why: `${answer.why} The entry is saved and will be tried again.` };
     }
-    if (DEFINITIVE.has(answer.status)) {
+    if (DEFINITIVE.has(answer.status) && !(answer.status === 400 && answer.body?.error === 'invalid_dpop_proof')) {
       await leagueBridge.refuseEntry(current.id, answer.sentence);
       return { ok: false, why: `Studio refused the entry. ${answer.sentence}` };
     }

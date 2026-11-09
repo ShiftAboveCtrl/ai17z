@@ -75,6 +75,17 @@ describe('Farcaster HTTP channel', () => {
     })).rejects.toMatchObject({ errorClass: 'PERMANENT', reason: 'farcaster_target_mismatch' });
   });
 
+  it('verifies the exact cast without spending extra reads on display names', async () => {
+    resetFarcasterNames();
+    const paths: string[] = [];
+    http((url) => { paths.push(url.pathname); return cast(); });
+    const result = await getChannelAdapter('farcaster').verifyAction(context(), {
+      type: 'LIKE', targetRef: ref, text: '', idempotencyKey: 'verify', dryRun: false,
+    });
+    expect(result).toMatchObject({ verified: true, targetRef: ref, targetAuthorHandle: 'fid:22' });
+    expect(paths).toEqual(['/v1/castById']);
+  });
+
   it('classifies a rate limit without exposing the remote error body', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('private server internals', {
       status: 429, headers: { 'Retry-After': '37' },

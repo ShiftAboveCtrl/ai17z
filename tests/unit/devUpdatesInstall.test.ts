@@ -7,7 +7,7 @@ const example = {
   apiUrl: 'http://localhost:8787',
   token: 'ai17z_dus_REPLACE_WITH_SENDER_TOKEN',
   projectKey: 'my-project',
-  serverPath: '/path/to/ai17z/tools/dev-updates-mcp.mjs',
+  serverPath: '/opt/ai17z/tools/dev-updates-mcp.mjs',
 };
 
 describe('coding assistant installation instructions', () => {

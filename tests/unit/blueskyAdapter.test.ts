@@ -885,6 +885,17 @@ describe('a sign-in that began before the account moved on', () => {
     expect(cachedBlueskySession(as(1).account.id)!.generation).toBe(1);
   });
 
+  it('refuses a stale-at-start sign-in before spending another session request', async () => {
+    const target = blueskyServiceTargetFor(as(1).account.settings);
+    const current = await createSession(as(1), target);
+    const before = fake.of('com.atproto.server.createSession').length;
+    await expect(createSession(as(0), target)).rejects.toMatchObject({
+      errorClass: 'RETRYABLE', reason: 'bluesky_session_superseded',
+    });
+    expect(fake.of('com.atproto.server.createSession')).toHaveLength(before);
+    expect(cachedBlueskySession(as(1).account.id)).toEqual(current);
+  });
+
   it('is still joined by a caller on the same generation, so two arriving together make one', async () => {
     const gate = holdSignIn();
     const first = blueskyAdapter.ingestEvents(as(3), { limit: 10 });

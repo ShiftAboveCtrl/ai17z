@@ -310,6 +310,12 @@ export function classifyBlueskyError(error: unknown, what: string): PipelineErro
 export async function createSession(ctx: ChannelContext, target: ServiceTarget): Promise<BlueskySession> {
   const accountId = ctx.account.id;
   const generation = sessionGenerationOf(ctx.account.settings);
+  if ((sessions.get(accountId)?.generation ?? -1) > generation) {
+    throw PipelineError.retryable(
+      'bluesky_session_superseded',
+      'This sign-in belongs to an older account connection. Try again with the current account.',
+    );
+  }
   const key = signInKey(accountId, generation);
   const existing = signingIn.get(key);
   if (existing) return existing;

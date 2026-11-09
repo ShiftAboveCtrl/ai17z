@@ -249,6 +249,9 @@ export const telegramAdapter: ChannelAdapter = {
     if (!(await telegramChannel.beginSend(ctx.account.id, action.idempotencyKey, digest, chatId))) {
       const raced = await telegramChannel.outboxRow(ctx.account.id, action.idempotencyKey, digest);
       if (raced?.state === 'SENT') return done(raced.remoteMessageId);
+      if (raced?.state === 'SENDING') {
+        throw PipelineError.retryable('telegram_send_in_progress', 'Another worker is sending this reply. Wait for its result.', { retryAfterMs: 5_000 });
+      }
       throw unknownSend();
     }
     let sent: { messageId: number };
