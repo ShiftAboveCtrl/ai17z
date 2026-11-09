@@ -86,7 +86,8 @@ export async function syncRadarSources(tx?: Tx, agentId?: string): Promise<void>
     ON CONFLICT (account_id, kind, target) DO UPDATE SET
       label = excluded.label, enabled = true, status = 'UNKNOWN', config = excluded.config,
       cursor = NULL, next_poll_at = now(), updated_at = now()
-    WHERE radar_sources.config->>'playbookPinId' IS DISTINCT FROM excluded.config->>'playbookPinId'`);
+    WHERE radar_sources.config->>'playbookPinId' IS DISTINCT FROM excluded.config->>'playbookPinId'
+      OR radar_sources.enabled = false`);
 }
 
 /**

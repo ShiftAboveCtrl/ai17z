@@ -209,32 +209,59 @@ describe('importing a playbook from a file', () => {
 });
 
 describe('versions', () => {
+  it('re-enables the same pinned source after unlinking and relinking its agent', async () => {
+    const t = await setup();
+    const account = await accounts.createAccount({ ownerId: t.f.ownerId, channel: 'mock', handle: 'relinked-playbook' });
+    await accounts.linkAgentAccount({ agentId: t.f.agentId, accountId: account.id, actionType: 'REPLY' });
+    await t.imported(doc());
+    await playbooks.syncRadarSources();
+    const [source] = await radar.listSources(account.id);
+    expect(source).toBeDefined();
+    await query(`UPDATE agent_accounts SET enabled = false WHERE agent_id = $1`, [t.f.agentId]);
+    await playbooks.syncRadarSources();
+    expect(await radar.getSource(source!.id)).toMatchObject({ enabled: false, status: 'DISABLED' });
+    await query(`UPDATE agent_accounts SET enabled = true WHERE agent_id = $1`, [t.f.agentId]);
+    await playbooks.syncRadarSources();
+    expect(await radar.getSource(source!.id)).toMatchObject({ enabled: true, status: 'UNKNOWN', cursor: null, config: source!.config });
+    expect(await radar.listSources(account.id)).toHaveLength(1);
+  });
+
   it('defers playbook X reads under account capacity and records allowed reads in the shared budget', async () => {
     const t = await setup();
     const account = await accounts.createAccount({ ownerId: t.f.ownerId, channel: 'x', handle: 'playbook-budget' });
     await accounts.updateAccount(account.id, { enabled: true, status: 'CONNECTED' });
     await accounts.linkAgentAccount({ agentId: t.f.agentId, accountId: account.id, actionType: 'REPLY', triggerEventTypes: ['MENTION'] });
     const reads: string[] = [];
+    const budgetAtRead: number[] = [];
     vi.mocked(getChannelAdapter).mockReturnValue({
       ...mockAdapter,
       async pollRadarSource(_ctx, input): Promise<RadarPollResult> {
         reads.push(input.target ?? '');
+        budgetAtRead.push((await xCapacity.usage(account.id, new Date(Date.now() - 60_000))).readsByClass.BROAD);
         return { candidates: [], cursor: null, error: null };
       },
     });
     await t.imported(doc());
     const [source] = await radar.listSources(account.id);
     expect(source).toBeDefined();
+    // The worker must recreate a missing source on tick, without an import or timer.
+    await query(`DELETE FROM radar_sources WHERE id = $1`, [source!.id]);
     await xCapacity.setState({ accountId: account.id, health: 'COOLDOWN', reason: 'fixture pressure', until: new Date(Date.now() + 600_000), strikes: 1 });
     const worker = new SocialRadar();
     await worker.tick();
     expect(reads).toEqual([]);
-    expect((await radar.getSource(source!.id))!.idleReason).toMatch(/cool/i);
+    const [synced] = await radar.listSources(account.id);
+    expect(synced!.idleReason).toMatch(/cool/i);
     await xCapacity.setState({ accountId: account.id, health: 'HEALTHY', reason: null, until: null, strikes: 0 });
-    await radar.retryNow(source!.id);
+    await radar.retryNow(synced!.id);
     await worker.tick();
     expect(reads).toEqual([MINT_A]);
     expect((await xCapacity.usage(account.id, new Date(Date.now() - 60_000))).readsByClass.BROAD).toBe(1);
+    await radar.retryNow(synced!.id);
+    await worker.tick();
+    expect(reads).toEqual([MINT_A, MINT_B]);
+    expect(budgetAtRead).toEqual([0, 1]);
+    expect((await xCapacity.usage(account.id, new Date(Date.now() - 60_000))).readsByClass.BROAD).toBe(2);
   });
 
   it('runs the confirmed mint universe through the existing radar and stops reading after an owner edit', async () => {
