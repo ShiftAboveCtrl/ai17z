@@ -1,6 +1,7 @@
 import { PipelineError } from '@xbam/shared';
 import { safeFetch } from '@xbam/upstream';
 import type { ChannelContext } from '../contract';
+import { sessionGenerationOf } from './watermark';
 
 /**
  * Talking to a Bluesky server over the AT Protocol's HTTP API (XRPC).
@@ -196,6 +197,16 @@ export interface BlueskySession {
   handle: string;
   /** `takendown`, `suspended` or `deactivated` when the account is not usable. */
   status: string | null;
+  /**
+   * The account's `sessionGeneration` when this session was made.
+   *
+   * Sessions live in the memory of the process that made them, so another
+   * process cannot reach one to end it. What it can do is bump the generation on
+   * the account, which every process reads from the database before reusing a
+   * session: a session made under an older one is dropped, and ended on
+   * Bluesky's side by the process that holds its tokens.
+   */
+  generation: number;
 }
 
 /** In memory only, keyed by account. See the note at the top of this file. */
@@ -227,7 +238,7 @@ interface SessionResponse {
   active?: unknown;
 }
 
-function sessionFrom(body: SessionResponse): BlueskySession {
+function sessionFrom(body: SessionResponse, generation: number): BlueskySession {
   if (
     typeof body.accessJwt !== 'string' ||
     typeof body.refreshJwt !== 'string' ||
@@ -242,6 +253,7 @@ function sessionFrom(body: SessionResponse): BlueskySession {
     did: body.did,
     handle: body.handle,
     status: typeof body.status === 'string' ? body.status : body.active === false ? 'deactivated' : null,
+    generation,
   };
 }
 
@@ -308,7 +320,7 @@ export async function createSession(ctx: ChannelContext, target: ServiceTarget):
         method: 'POST',
         body: { identifier: credentials.loginUsername, password: credentials.loginPassword },
       });
-      const session = sessionFrom(body);
+      const session = sessionFrom(body, sessionGenerationOf(ctx.account.settings));
       sessions.set(accountId, session);
       return session;
     } catch (error) {
@@ -343,7 +355,33 @@ export async function createSession(ctx: ChannelContext, target: ServiceTarget):
   }
 }
 
+/**
+ * The session to use for this account, or a refusal when it must not be used.
+ *
+ * Two checks happen before a cached session is reused, because the cache belongs
+ * to one process and the decision to stop belongs to the account:
+ *
+ * - **Generation.** A session made under an older `sessionGeneration` than the
+ *   account now has was made before a disconnect or a new password. It is ended
+ *   on Bluesky's side with its own tokens and not used.
+ * - **Enabled.** A switched-off account is not signed in again behind the
+ *   owner's back: whatever it holds is ended and the call is refused.
+ *
+ * The account comes from the context, which each process builds from the
+ * database when it starts a poll or a job, so this is as current as that read.
+ */
 export async function ensureSession(ctx: ChannelContext, target: ServiceTarget): Promise<BlueskySession> {
+  const cached = cachedSessionFor(ctx.account.id);
+  if (cached && cached.generation < sessionGenerationOf(ctx.account.settings)) {
+    await endSession(ctx, target);
+  }
+  if (ctx.account.enabled === false) {
+    await endSession(ctx, target);
+    throw PipelineError.permanent(
+      'bluesky_disconnected',
+      `@${ctx.account.handle} is switched off, so Bluesky is not signed in to for it. Reconnect it to use it again.`,
+    );
+  }
   return cachedSessionFor(ctx.account.id) ?? createSession(ctx, target);
 }
 
@@ -352,7 +390,7 @@ async function refreshSession(ctx: ChannelContext, target: ServiceTarget, sessio
     method: 'POST',
     bearer: session.refreshJwt,
   });
-  const next = sessionFrom(body);
+  const next = sessionFrom(body, session.generation);
   sessions.set(ctx.account.id, next);
   return next;
 }

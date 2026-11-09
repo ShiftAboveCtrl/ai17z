@@ -1,17 +1,55 @@
 /**
- * Where the last poll of an account's notifications stopped.
+ * What an account remembers between polls, kept in its settings.
  *
- * Kept in the account's settings (`bluesky.notificationsSeenThrough`, an ISO
- * time) so it survives a restart, and read here so the adapter and the code that
- * advances it agree on the name. Nothing is marked read on Bluesky: that would
- * change what the owner sees in their own app.
+ * All under `settings.bluesky`, so it survives a restart and every process sees
+ * the same thing. Read here so the adapter and the code that writes them agree on
+ * the names. Nothing is marked read on Bluesky: that would change what the owner
+ * sees in their own app.
+ *
+ * - `notificationsSeenThrough`: an ISO time. Everything at or after it that is an
+ *   event has been ingested, with nothing unread between it and the newest.
+ * - `notificationsResume`: `{ cursor, throughAt }`. A poll read part of a burst
+ *   and stopped; `cursor` is where the next one carries on, and `throughAt` is the
+ *   newest event of that burst, which becomes the mark only when the burst has
+ *   been read to its end. The mark itself does not move until then.
+ * - `sessionGeneration`: a counter bumped whenever a session must stop being used
+ *   (disconnect, a new password), checked by every process before it reuses the
+ *   session it holds.
  */
 export const WATERMARK_KEY = 'notificationsSeenThrough';
+export const RESUME_KEY = 'notificationsResume';
+export const SESSION_GENERATION_KEY = 'sessionGeneration';
 
-export function notificationsSeenThrough(settings: Record<string, unknown> | null | undefined): string | null {
-  const bluesky = settings?.bluesky as Record<string, unknown> | undefined;
-  const value = bluesky?.[WATERMARK_KEY];
-  if (typeof value !== 'string') return null;
+type Settings = Record<string, unknown> | null | undefined;
+
+function blueskySettings(settings: Settings): Record<string, unknown> {
+  const value = settings?.bluesky;
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+const asTime = (value: unknown): string | null =>
+  typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
+
+export function notificationsSeenThrough(settings: Settings): string | null {
   // A value that is not a time is no mark, which reads a single page rather than refusing.
-  return Number.isFinite(Date.parse(value)) ? value : null;
+  return asTime(blueskySettings(settings)[WATERMARK_KEY]);
+}
+
+export interface NotificationResume {
+  cursor: string;
+  /** Null when the burst so far held no event. */
+  throughAt: string | null;
+}
+
+export function notificationsResume(settings: Settings): NotificationResume | null {
+  const raw = blueskySettings(settings)[RESUME_KEY];
+  if (raw === null || typeof raw !== 'object') return null;
+  const { cursor, throughAt } = raw as { cursor?: unknown; throughAt?: unknown };
+  if (typeof cursor !== 'string' || !cursor) return null;
+  return { cursor, throughAt: asTime(throughAt) };
+}
+
+export function sessionGenerationOf(settings: Settings): number {
+  const value = blueskySettings(settings)[SESSION_GENERATION_KEY];
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0;
 }

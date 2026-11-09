@@ -12,6 +12,7 @@ import type {
   VerificationResult,
 } from '../contract';
 import {
+  BlueskyApiError,
   BlueskyTransportError,
   authed,
   classifyBlueskyError,
@@ -36,7 +37,7 @@ import {
 } from './reads';
 import { buildFacets, lengthProblem } from './text';
 import { LIKE_COLLECTION, POST_COLLECTION, parseAtUri, postPermalink } from './uri';
-import { notificationsSeenThrough } from './watermark';
+import { notificationsResume, notificationsSeenThrough } from './watermark';
 
 /**
  * Bluesky, over the AT Protocol's HTTP API.
@@ -276,17 +277,52 @@ export const blueskyAdapter: ChannelAdapter = {
     const mark = seenThrough ? Date.parse(seenThrough) : null;
     const items: ReturnType<typeof parseNotifications>['items'] = [];
     let skipped = 0;
-    let cursor: string | undefined;
     let metKnown = false;
-    for (let page = 0; page < (mark === null ? 1 : NOTIFICATION_PAGES_PER_POLL); page += 1) {
+    let restarted = false;
+
+    /*
+      A burst that was only partly read carries on where it stopped.
+
+      The newest pages are read first, so what a poll leaves behind is the OLDEST
+      of the burst, between the mark and the oldest thing it read. Taking the
+      newest event as the new mark would skip that remainder for ever, and
+      re-reading from the newest would never get past the first pages. So the
+      account keeps the cursor, the mark stays where it was, and the next poll
+      starts from the cursor. The mark moves only when a poll reaches it.
+    */
+    const resume = mark === null ? null : notificationsResume(ctx.account.settings);
+    let cursor: string | undefined = resume?.cursor;
+    let resuming = resume !== null;
+    const maxPages = mark === null ? 1 : NOTIFICATION_PAGES_PER_POLL;
+    let pages = 0;
+    let stoppedForBudget = false;
+
+    while (pages < maxPages) {
+      // Every page is a read against the one budget. The first was checked
+      // before this poll started; each further one is asked about here.
+      if (pages > 0 && options.canReadAnother && !(await options.canReadAnother().catch(() => true))) {
+        stoppedForBudget = true;
+        break;
+      }
       let body: { cursor?: unknown };
       try {
         body = await authed<{ cursor?: unknown }>(ctx, target, 'app.bsky.notification.listNotifications', {
           params: { limit: NOTIFICATION_PAGE, reasons: ['mention', 'reply', 'quote'], ...(cursor ? { cursor } : {}) },
         });
       } catch (error) {
+        // A stored cursor the server no longer accepts (it was issued long ago)
+        // is not a failed poll: start again from the newest, with the mark
+        // unmoved, which re-reads and skips nothing.
+        if (resuming && pages === 0 && error instanceof BlueskyApiError && error.status === 400) {
+          resuming = false;
+          restarted = true;
+          cursor = undefined;
+          continue;
+        }
         throw classifyBlueskyError(error, 'reading notifications');
       }
+      pages += 1;
+      await options.onRead?.();
       const parsed = parseNotifications(body);
       skipped += parsed.skipped;
       items.push(...parsed.items);
@@ -294,10 +330,18 @@ export const blueskyAdapter: ChannelAdapter = {
       metKnown = mark !== null && parsed.items.some((n) => Date.parse(n.indexedAt) < mark);
       if (!cursor || metKnown) break;
     }
-    if (mark !== null && !metKnown && cursor) {
-      ctx.logger.warn('more new Bluesky notifications than one poll reads; the oldest were not read', {
-        read: items.length,
-      });
+
+    // With no mark there is no history to catch up on, so one page is the whole
+    // read and a new link does not ingest what came before it.
+    const complete = mark === null || metKnown || !cursor;
+    options.report?.({ complete, resume: complete ? null : (cursor ?? null), restarted });
+    if (!complete) {
+      ctx.logger.warn(
+        stoppedForBudget
+          ? 'the read budget ran out part way through a burst of Bluesky notifications; the rest is read next poll'
+          : 'more new Bluesky notifications than one poll reads; the rest is read next poll',
+        { read: items.length },
+      );
     }
     if (skipped > 0) ctx.logger.warn('some Bluesky notifications could not be read', { skipped });
 
@@ -311,9 +355,9 @@ export const blueskyAdapter: ChannelAdapter = {
       if (options.since && event.remoteEventId === options.since) continue;
       events.push(event);
     }
-    // Oldest first, so a burst is answered in the order it arrived. The page is
-    // read again on the next poll, and the unique index on the event is what
-    // makes that safe; nothing is marked read on the owner's behalf.
+    // Oldest first, so what was read is answered in the order it arrived. The
+    // unique index on the event makes reading one twice harmless; nothing is
+    // marked read on the owner's behalf.
     return events.reverse();
   },
 

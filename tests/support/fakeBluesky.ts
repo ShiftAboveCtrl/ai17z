@@ -67,6 +67,8 @@ export class FakeBluesky {
   omitCounts = false;
   /** Answer reads of a thread's post as deleted. */
   hiddenUris = new Set<string>();
+  /** Cursors the server no longer honours, refused as a real one refuses an old cursor. */
+  staleCursors = new Set<string>();
 
   private server: Server | null = null;
   private port = 0;
@@ -74,6 +76,13 @@ export class FakeBluesky {
   private validAccess = new Set<string>();
   private expiredAccess = new Set<string>();
   private validRefresh = new Set<string>();
+  /** Which access token belongs to which refresh token, so ending a session ends both. */
+  private pairs = new Map<string, string>();
+
+  /** Whether this access token would still be accepted. */
+  isAccessValid(token: string): boolean {
+    return this.validAccess.has(token);
+  }
 
   get origin(): string {
     return `http://127.0.0.1:${this.port}`;
@@ -156,6 +165,7 @@ export class FakeBluesky {
     const refreshJwt = `refresh-${this.counter}`;
     this.validAccess.add(accessJwt);
     this.validRefresh.add(refreshJwt);
+    this.pairs.set(refreshJwt, accessJwt);
     return { accessJwt, refreshJwt, did: ME.did, handle: ME.handle, active: true, ...(this.takendown ? { status: 'takendown' } : {}) };
   }
 
@@ -196,7 +206,14 @@ export class FakeBluesky {
       return send(200, this.issueSession());
     }
 
-    if (nsid === 'com.atproto.server.deleteSession') return send(200, {});
+    if (nsid === 'com.atproto.server.deleteSession') {
+      // Ends the session the refresh token belongs to: its access token dies too.
+      const token = authorization?.replace(/^Bearer /, '') ?? '';
+      const access = this.pairs.get(token);
+      this.validRefresh.delete(token);
+      if (access) this.validAccess.delete(access);
+      return send(200, {});
+    }
 
     if (nsid === 'com.atproto.identity.resolveHandle') {
       const handle = url.searchParams.get('handle');
@@ -224,11 +241,19 @@ export class FakeBluesky {
 
       case 'app.bsky.notification.listNotifications': {
         // Paged as the real one is: newest first, `limit` at a time, with an
-        // opaque cursor that is absent on the last page.
+        // opaque cursor that is absent on the last page. The cursor names a
+        // position in time, not an index, because notifications arrive between
+        // two polls and an index would then point somewhere else.
         const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 100);
-        const start = Number(url.searchParams.get('cursor') ?? 0);
-        const page = this.notifications.slice(start, start + limit);
-        const next = start + limit < this.notifications.length ? String(start + limit) : undefined;
+        const cursor = url.searchParams.get('cursor');
+        if (cursor && this.staleCursors.has(cursor)) return refuse(400, 'InvalidRequest', 'Invalid cursor');
+        // Newest first; notifications with the same time keep the order they arrived in.
+        const ordered = (this.notifications as Array<{ indexedAt: string }>)
+          .slice()
+          .sort((a, b) => (a.indexedAt < b.indexedAt ? 1 : a.indexedAt > b.indexedAt ? -1 : 0));
+        const after = cursor ? ordered.filter((n) => n.indexedAt < cursor) : ordered;
+        const page = after.slice(0, limit);
+        const next = after.length > limit ? page[page.length - 1]!.indexedAt : undefined;
         return send(200, { notifications: page, ...(next ? { cursor: next } : {}) });
       }
 

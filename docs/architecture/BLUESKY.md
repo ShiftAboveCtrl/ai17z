@@ -132,8 +132,12 @@ Every read spends from the one budget. `spendsReadBudget(channel)` in
 `capacity.ts` names the channels that do (X and Bluesky). The ledger and the
 breaker are keyed on the account, so no second engine exists:
 
-- the poller calls `checkReadCapacity(account, 'DIRECT')` before it reads, notes
-  the read with `noteXRead`, and records a failure with `noteXFailure`;
+- the poller calls `checkReadCapacity(account, 'DIRECT')` before it reads and
+  records a failure with `noteXFailure`. **Each page is a read:** the adapter is
+  handed `canReadAnother` and `onRead`, asks before every page after the first, and
+  charges after each one, so a four page burst costs four reads and a poll stops
+  paging the moment the budget says no (an adapter that does not charge per read,
+  X, is charged once, as before);
 - `stepResolveContext` checks and notes the thread read for a reply, exactly as
   for X;
 - the model-callable reads go through the same check as `BROAD` work, which
@@ -343,24 +347,70 @@ Nothing is fetched or described by the channel itself.
 ### Notification paging
 
 One page of 50 was read per poll and nothing was marked seen. Now the account
-keeps a mark, `settings.bluesky.notificationsSeenThrough`, the newest `indexedAt`
-among the events it ingested:
+keeps, in `settings.bluesky`:
 
-- With no mark (a new link) the poll reads one page, because linking is not a
-  reason to ingest history.
-- With one it pages back until it meets something older than the mark, up to four
-  pages a poll, so a burst larger than a page is read to its end. Past that bound
-  it says so in a warning instead of spending the budget on history.
-- The mark moves **only after every event was ingested** (`advanceNotificationWatermark`,
-  called by the poller), in one forward-only statement, so a crash between reading
-  and ingesting re-reads and a late poller cannot pull it back. The unique index on
-  the event is still the real deduplication.
-- Nothing is marked read on Bluesky (`updateSeen` is deliberately not used): that
-  would change what the owner sees in their own app.
+- `notificationsSeenThrough` (the mark): everything at or after it that is an event
+  has been ingested, with **nothing unread between it and the newest**;
+- `notificationsResume` (`{ cursor, throughAt }`): a burst was read part of the way
+  and stopped. `cursor` is where the next poll carries on, and `throughAt` is the
+  newest event of the burst, which becomes the mark only when the burst has been
+  read to its end.
 
-A reconnect keeps the mark and replaces the server address (`settingsAfterReconnect`),
-so a reconnect that names no server goes back to bsky.social and does not keep an
-earlier custom one.
+How a poll behaves:
+
+- With no mark (a new link) it reads one page and is finished, because linking is
+  not a reason to ingest history.
+- With a mark it pages back from the newest, or from the cursor if there is one,
+  until it meets something older than the mark, up to four pages a poll, and stops
+  early if the read budget says no.
+- The adapter says how it ended (`IngestProgress`: `complete`, and a `resume`
+  token if not). The poller, after every event was ingested, calls
+  `advanceNotificationWatermark`, which in one transaction over the locked row
+  either **moves the mark** (complete: forward only, to the newest event of the
+  burst, clearing the cursor) or **keeps the mark and stores the cursor**
+  (incomplete).
+
+The point is the second case. Pages come newest first, so what a poll leaves behind
+is the **oldest** of a burst. Moving the mark to the newest event, as the first
+version did, would skip that remainder for ever because the next poll only looks for
+what is newer than the mark, and re-reading from the newest would never get past the
+first pages. So the mark stays where it was, and the next poll starts at the cursor.
+A cursor the server no longer honours (a 400 on the first page) is not a failed
+poll: it starts again from the newest with the mark unmoved, which re-reads and skips
+nothing. The unique index on the event stays the real deduplication.
+
+Nothing is marked read on Bluesky (`updateSeen` is deliberately not used): that would
+change what the owner sees in their own app.
+
+### Settings are merged, never written back
+
+A reconnect used to write the settings it had read before the sign-in, so a poll
+moving the mark in between was overwritten. Now `replaceServerAndEndSessions` is one
+`UPDATE` over the row as it is now: it replaces `bluesky.serviceUrl` (none named
+means the default) and bumps the session generation, and every other key, the mark
+and the cursor included, is carried through by the database rather than by a copy.
+The watermark writer merges under `FOR UPDATE` for the same reason.
+
+### Sessions and more than one process
+
+Session tokens live in the memory of the process that made them. The API cannot
+reach the worker's, so ending the API's own on disconnect left the worker's live.
+`settings.bluesky.sessionGeneration` is the shared fact instead:
+
+- disconnect bumps it (`bumpSessionGeneration`, atomic) before ending the API's own
+  session; a new link bumps it too;
+- every session records the generation it was made under, and `ensureSession`
+  compares it with the account's (from the context each process builds from the
+  database when it starts a poll or a job) before reusing it. An older one is ended
+  on Bluesky's side with the tokens only that process has, and not used;
+- a switched-off account is not signed in again: `ensureSession` ends whatever it
+  holds and refuses with `bluesky_disconnected`.
+
+So after a disconnect the worker never reuses its session and ends it at its next
+touch of the account. What this cannot do is end a token in a process that never
+touches the account again: that token stays valid on Bluesky's side until it
+expires, though nothing in AI17Z will use it. Revoking the app password in Bluesky
+ends everything immediately, and is what to do if a token may have leaked.
 
 ## Not verified
 

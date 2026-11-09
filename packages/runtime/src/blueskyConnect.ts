@@ -1,12 +1,17 @@
 import { describeSignIn, type Account } from '@xbam/shared/contracts';
 import { BadRequestError, PipelineError, createLogger } from '@xbam/shared';
-import { accountCredentials, accounts as accountsRepo, query } from '@xbam/database';
+import { accountCredentials, accounts as accountsRepo, query, withTransaction } from '@xbam/database';
 import {
+  BLUESKY_RESUME_KEY,
+  BLUESKY_SESSION_GENERATION_KEY,
   BLUESKY_WATERMARK_KEY,
   blueskyAdapter,
+  blueskyNotificationsResume,
+  blueskyNotificationsSeenThrough,
   blueskyServiceTargetFor,
   forgetBlueskySession,
   type ChannelContext,
+  type IngestProgress,
 } from '@xbam/channels';
 import { buildChannelContext, storageDir } from './channelContext';
 
@@ -82,22 +87,6 @@ function probeContext(settings: Record<string, unknown>, identifier: string, app
   };
 }
 
-/**
- * An account's settings after a reconnect.
- *
- * The Bluesky server is replaced by `next`'s, or by the default if `next` names
- * none, and everything else is kept. Exported so the case a test cannot reach
- * over the network (a reconnect to the default server) is still a test.
- */
-export function settingsAfterReconnect(current: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
-  const { bluesky: previous, ...rest } = current;
-  const kept = previous && typeof previous === 'object' ? { ...(previous as Record<string, unknown>) } : {};
-  delete kept.serviceUrl;
-  const incoming = (next.bluesky ?? {}) as Record<string, unknown>;
-  const merged = { ...kept, ...incoming };
-  return Object.keys(merged).length > 0 ? { ...rest, bluesky: merged } : rest;
-}
-
 export async function connectBlueskyAccount(input: ConnectBlueskyInput): Promise<ConnectBlueskyResult> {
   const identifier = input.identifier.trim().replace(/^@+/, '');
   if (!identifier) throw new BadRequestError('Give the Bluesky handle, for example name.bsky.social.');
@@ -152,6 +141,17 @@ export async function connectBlueskyAccount(input: ConnectBlueskyInput): Promise
     loginUsername: identifier,
     loginPassword: input.appPassword,
   });
+  /*
+    The server address and the session generation are written by one statement
+    against the row as it is now, never from the copy read above.
+
+    A poll finishing in between moves the notification mark, and writing back a
+    snapshot taken before it would put the mark back or lose it. Only the two
+    keys this link owns are touched. A reconnect that names no server means the
+    default one and must not keep a custom address from an earlier link, and a
+    new link is a new sign-in, so every process holding the old session drops it.
+  */
+  if (existing) await replaceServerAndEndSessions(account.id, custom || null);
   account = await accountsRepo.updateAccount(account.id, {
     status: 'CONNECTED',
     enabled: true,
@@ -160,10 +160,6 @@ export async function connectBlueskyAccount(input: ConnectBlueskyInput): Promise
     challengeKind: null,
     lastHealthStatus: 'connected',
     touchHealthCheck: true,
-    // The server address is replaced, never merged: a reconnect that names no
-    // server means the default one, and must not keep a custom address from an
-    // earlier link. Every other setting on the account is left as it was.
-    ...(existing ? { settings: settingsAfterReconnect(existing.settings, settings) } : {}),
   });
 
   // 3. Prime the session cache for the real account, so the first poll does not
@@ -183,36 +179,112 @@ export function describeBlueskyFailure(error: unknown): string {
 }
 
 /**
- * Moves an account's notification mark forward after its events were ingested.
+ * Records what a poll read, after its events were ingested.
  *
- * Called by the poller once ingest has finished, never by the adapter, so the
- * mark only ever covers what was actually taken in. Forward only, in one
- * statement: a stale poller finishing late must not pull it back, and a
- * reconnect writing settings at the same moment must not lose it. The mark is
- * the newest `indexedAt` among the events, because the likes and follows that
- * may be newer are not events and are skipped again for free.
+ * Called by the poller and never by the adapter, so nothing here covers an event
+ * that was not taken in. One transaction over the locked row, merging into the
+ * settings as they are now, so a reconnect or another poll writing at the same
+ * moment is not overwritten.
+ *
+ * - **Complete** (the poll reached the mark, or the history ran out): the mark
+ *   moves to the newest event of the burst, forward only, and the continuation is
+ *   cleared.
+ * - **Incomplete** (the page limit or the read budget stopped it): the mark does
+ *   **not** move. What is left unread is older than everything read, so moving the
+ *   mark to the newest event would skip it for ever. The cursor is kept and the
+ *   newest event so far is remembered as `throughAt`, to become the mark when the
+ *   burst has been read to its end.
  */
 export async function advanceNotificationWatermark(
   accountId: string,
   events: ReadonlyArray<{ raw: Record<string, unknown> }>,
+  progress?: IngestProgress,
 ): Promise<void> {
   let newest = 0;
   for (const event of events) {
     const at = typeof event.raw.indexedAt === 'string' ? Date.parse(event.raw.indexedAt) : NaN;
     if (Number.isFinite(at) && at > newest) newest = at;
   }
-  if (newest === 0) return;
-  const iso = new Date(newest).toISOString();
+  const time = (value: string | null | undefined) => (value ? Date.parse(value) : 0) || 0;
+
+  await withTransaction(async (tx) => {
+    const row = await tx.one<{ settings: Record<string, unknown> | null }>(
+      'SELECT settings FROM accounts WHERE id = $1 FOR UPDATE',
+      [accountId],
+    );
+    if (!row) return;
+    const current = (row.settings?.bluesky ?? {}) as Record<string, unknown>;
+    const mark = time(blueskyNotificationsSeenThrough(row.settings));
+    const resume = blueskyNotificationsResume(row.settings);
+    const next: Record<string, unknown> = { ...current };
+
+    // A continuation the adapter had to abandon is not one to keep carrying.
+    const through = Math.max(newest, progress?.restarted ? 0 : time(resume?.throughAt));
+
+    if (progress && !progress.complete && progress.resume) {
+      next[BLUESKY_RESUME_KEY] = {
+        cursor: progress.resume,
+        throughAt: through > 0 ? new Date(through).toISOString() : null,
+      };
+    } else {
+      delete next[BLUESKY_RESUME_KEY];
+      const moved = Math.max(mark, through);
+      if (moved > 0) next[BLUESKY_WATERMARK_KEY] = new Date(moved).toISOString();
+    }
+
+    await tx.query(
+      `UPDATE accounts
+          SET settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{bluesky}', $2::jsonb)
+        WHERE id = $1`,
+      [accountId, JSON.stringify(next)],
+    );
+  });
+}
+
+/**
+ * Replaces the account's Bluesky server and bumps its session generation, in one
+ * statement over the row as it is now.
+ *
+ * `$2` is `{"serviceUrl": ...}` or `{}`: the server is removed and then put back
+ * if one was named, so naming none means the default. Everything else under
+ * `bluesky` (the notification mark, its continuation) and every other settings
+ * key is carried through untouched by the database rather than by a copy.
+ */
+export async function replaceServerAndEndSessions(accountId: string, serviceUrl: string | null): Promise<void> {
   await query(
     `UPDATE accounts
         SET settings = jsonb_set(
               coalesce(settings, '{}'::jsonb),
               '{bluesky}',
-              coalesce(settings->'bluesky', '{}'::jsonb) || jsonb_build_object($2::text, $3::text)
+              (coalesce(settings->'bluesky', '{}'::jsonb) - 'serviceUrl')
+                || $2::jsonb
+                || jsonb_build_object($3::text, coalesce((settings->'bluesky'->>$3)::int, 0) + 1)
             )
-      WHERE id = $1
-        AND coalesce(settings->'bluesky'->>$2, '') < $3`,
-    [accountId, BLUESKY_WATERMARK_KEY, iso],
+      WHERE id = $1`,
+    [accountId, JSON.stringify(serviceUrl ? { serviceUrl } : {}), BLUESKY_SESSION_GENERATION_KEY],
+  );
+}
+
+/**
+ * Makes every process stop using the sessions it holds for this account.
+ *
+ * Sessions are in the memory of whichever process made them, and the API cannot
+ * reach the worker's. So the account's generation is bumped, which each process
+ * reads before reusing a session (`ensureSession`): one made under an older
+ * generation is ended on Bluesky's side by the process that holds its tokens, and
+ * not used. Atomic, so two bumps are two.
+ */
+export async function bumpSessionGeneration(accountId: string): Promise<void> {
+  await query(
+    `UPDATE accounts
+        SET settings = jsonb_set(
+              coalesce(settings, '{}'::jsonb),
+              '{bluesky}',
+              coalesce(settings->'bluesky', '{}'::jsonb)
+                || jsonb_build_object($2::text, coalesce((settings->'bluesky'->>$2)::int, 0) + 1)
+            )
+      WHERE id = $1`,
+    [accountId, BLUESKY_SESSION_GENERATION_KEY],
   );
 }
 
@@ -246,5 +318,8 @@ export async function reconnectBlueskyAccount(accountId: string): Promise<Accoun
 export async function disconnectBlueskyAccount(accountId: string): Promise<void> {
   const account = await accountsRepo.getAccount(accountId);
   if (!account || account.channel !== 'bluesky') return;
+  // First, so that by the time this returns no process may reuse a session it
+  // holds, whichever process that is. Ending this process's own is the easy half.
+  await bumpSessionGeneration(account.id);
   await blueskyAdapter.disconnect(await buildChannelContext(account, null));
 }

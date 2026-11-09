@@ -1,6 +1,6 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, cadences as cadencesRepo } from '@xbam/database';
-import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
+import { getChannelAdapter, isChannelImplemented, type IngestProgress } from '@xbam/channels';
 import {
   advanceNotificationWatermark,
   buildChannelContext,
@@ -127,15 +127,39 @@ export class ChannelPoller {
     const adapter = getChannelAdapter(account.channel);
     try {
       const ctx = await buildChannelContext(account, null);
-      const events = await adapter.ingestEvents(ctx, { limit: config.polling.batchLimit });
-      if (spendsReadBudget(account.channel)) await noteXRead(account.id, 'DIRECT');
+      /*
+        One read is one charge, whatever the adapter reads in a call.
+
+        An adapter that pages (Bluesky) is handed the means to ask before each
+        further page and to charge after it, so a burst cannot cost one read and
+        spend four. One that does not (X reads a single page) is charged once
+        below, as it always was.
+      */
+      let charged = 0;
+      let progress: IngestProgress | undefined;
+      const events = await adapter.ingestEvents(ctx, {
+        limit: config.polling.batchLimit,
+        ...(spendsReadBudget(account.channel)
+          ? {
+              canReadAnother: async () => (await checkReadCapacity(account.id, 'DIRECT').catch(() => null))?.allowed ?? true,
+              onRead: async () => {
+                charged += 1;
+                await noteXRead(account.id, 'DIRECT');
+              },
+            }
+          : {}),
+        report: (reported) => {
+          progress = reported;
+        },
+      });
+      if (spendsReadBudget(account.channel) && charged === 0) await noteXRead(account.id, 'DIRECT');
       let created = 0;
       for (const event of events) {
         const outcome = await ingestNormalizedEvent({ accountId: account.id, event });
         created += outcome.jobs.filter((j) => j.created).length;
       }
       // Only after every event was taken in, so a failure above re-reads them.
-      if (account.channel === 'bluesky') await advanceNotificationWatermark(account.id, events);
+      if (account.channel === 'bluesky') await advanceNotificationWatermark(account.id, events, progress);
 
       const found = events.length > 0;
       const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak, foundEvents: found });

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   accountCredentials,
   accounts as accountsRepo,
@@ -506,5 +506,221 @@ describe('switching a Bluesky account off and on', () => {
     const data = (response.json() as { data: { status: string; lastHealthStatus: string } }).data;
     expect(data.status).toBe('NEEDS_AUTH');
     expect(data.lastHealthStatus).toMatch(/does not accept the app password/);
+  });
+});
+
+
+describe('a burst larger than one poll reads', () => {
+  const BASE = Date.now() - 3_600_000;
+  const at = (i: number) => new Date(BASE + i * 1_000).toISOString();
+
+  function seed(from: number, to: number) {
+    for (let i = from; i < to; i += 1) {
+      const post = fake.seedPost({ id: `3kz${String(i).padStart(4, '0')}`, author: ALICE, text: `burst message ${i}`, createdAt: at(i) });
+      fake.notify(post, 'mention');
+    }
+  }
+  const bluesky = async (accountId: string) =>
+    (await accountsRepo.requireAccount(accountId)).settings.bluesky as Record<string, unknown> & {
+      notificationsResume?: { cursor: string; throughAt: string | null };
+    };
+
+  it('does not move the mark past what it read, and reads the rest on the polls that follow', async () => {
+    const fixture = await createFixture();
+    const account = await linked(fixture);
+    seed(0, 5);
+    await pollOnce(account.id);
+    expect((await bluesky(account.id)).notificationsSeenThrough).toBe(at(4));
+
+    // Two hundred and fifty arrive. One poll reads four pages: the newest two hundred.
+    seed(5, 255);
+    await pollOnce(account.id);
+    expect(await query('SELECT 1 FROM events')).toHaveLength(5 + 200);
+    const afterFirst = await bluesky(account.id);
+    // The mark stayed where it was. Moving it to the newest event would have
+    // skipped the fifty older ones for ever, because the next poll only looks
+    // for what is newer than the mark.
+    expect(afterFirst.notificationsSeenThrough).toBe(at(4));
+    expect(afterFirst.notificationsResume).toMatchObject({ cursor: expect.any(String), throughAt: at(254) });
+
+    // The next poll carries on from the cursor, not from the newest.
+    fake.requests.length = 0;
+    await pollOnce(account.id);
+    const firstRequest = fake.of('app.bsky.notification.listNotifications')[0]!;
+    expect(firstRequest.query.get('cursor')).toBe(afterFirst.notificationsResume!.cursor);
+
+    const ids = await query<{ remote_event_id: string }>('SELECT remote_event_id FROM events');
+    expect(new Set(ids.map((r) => r.remote_event_id)).size).toBe(255);
+    const done = await bluesky(account.id);
+    expect(done.notificationsSeenThrough).toBe(at(254));
+    expect(done.notificationsResume).toBeUndefined();
+  });
+
+  it('stops paging when the read budget runs out, charges every page, and picks up where it stopped', async () => {
+    const fixture = await createFixture();
+    const account = await linked(fixture);
+    seed(0, 5);
+    await pollOnce(account.id);
+    seed(5, 455);
+
+    const budget = (await cadencesRepo.activeCadence(account.id)).capacity.readsPer10Minutes;
+    const reads = async () => (await xCapacity.usage(account.id, new Date(Date.now() - 600_000))).readsLast10Minutes;
+    // Leave exactly two reads in the budget.
+    for (let spent = await reads(); spent < budget - 2; spent += 1) await xCapacity.recordRead(account.id, 'DIRECT');
+    const before = await reads();
+
+    fake.requests.length = 0;
+    await pollOnce(account.id);
+
+    // Two pages were read and two were charged. It was one read charged for four
+    // pages, which is how a runaway burst spends a budget it was never allowed.
+    expect(fake.of('app.bsky.notification.listNotifications')).toHaveLength(2);
+    expect((await reads()) - before).toBe(2);
+    const stopped = await bluesky(account.id);
+    expect(stopped.notificationsSeenThrough).toBe(at(4));
+    expect(stopped.notificationsResume).toMatchObject({ cursor: expect.any(String) });
+    expect(await query('SELECT 1 FROM events')).toHaveLength(5 + 100);
+  });
+
+  it('records what a poll read without moving the mark, and moves it only when the burst is finished', async () => {
+    const fixture = await createFixture();
+    const account = await linked(fixture);
+    const { advanceNotificationWatermark } = await import('@xbam/runtime');
+    const event = (i: number) => ({ raw: { indexedAt: at(i) } });
+
+    await advanceNotificationWatermark(account.id, [event(50)], { complete: false, resume: 'c1' });
+    let s = await bluesky(account.id);
+    expect(s.notificationsSeenThrough).toBeUndefined();
+    expect(s.notificationsResume).toEqual({ cursor: 'c1', throughAt: at(50) });
+
+    // An older page: the cursor moves on, the newest of the burst is not forgotten.
+    await advanceNotificationWatermark(account.id, [event(30)], { complete: false, resume: 'c2' });
+    s = await bluesky(account.id);
+    expect(s.notificationsResume).toEqual({ cursor: 'c2', throughAt: at(50) });
+    expect(s.notificationsSeenThrough).toBeUndefined();
+
+    await advanceNotificationWatermark(account.id, [event(10)], { complete: true, resume: null });
+    s = await bluesky(account.id);
+    expect(s.notificationsSeenThrough).toBe(at(50));
+    expect(s.notificationsResume).toBeUndefined();
+    // The server address written beside them survived all of it.
+    expect(s.serviceUrl).toBe(fake.origin);
+  });
+});
+
+describe('linking again while the account is being polled', () => {
+  async function accountWith(settings: Record<string, unknown>) {
+    const fixture = await createFixture();
+    const { account } = await connectBlueskyAccount({ ownerId: fixture.ownerId, identifier: ME.handle, appPassword: ME.password, serviceUrl: fake.origin });
+    await accountsRepo.updateAccount(account.id, { settings: { ...account.settings, ...settings } });
+    return { fixture, account };
+  }
+  const bluesky = async (id: string) => (await accountsRepo.requireAccount(id)).settings;
+
+  it('keeps a mark that a poll moved after the link read the account', async () => {
+    const { fixture, account } = await accountWith({});
+    // A poll finishing between the link reading the account and saving it. A
+    // trigger stands in for it: it moves the mark as the credentials are saved,
+    // which is after the account was read and before it was written.
+    await query(
+      `CREATE FUNCTION bsky_poll_lands() RETURNS trigger LANGUAGE plpgsql AS $fn$
+       BEGIN
+         UPDATE accounts SET settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{bluesky}',
+           coalesce(settings->'bluesky', '{}'::jsonb) || '{"notificationsSeenThrough":"2030-01-01T00:00:00.000Z"}'::jsonb)
+         WHERE id = NEW.account_id;
+         RETURN NEW;
+       END $fn$`,
+    );
+    await query('CREATE TRIGGER bsky_poll_lands AFTER INSERT OR UPDATE ON account_credentials FOR EACH ROW EXECUTE FUNCTION bsky_poll_lands()');
+    try {
+      await connectBlueskyAccount({ ownerId: fixture.ownerId, identifier: ME.handle, appPassword: ME.password, serviceUrl: fake.origin });
+    } finally {
+      await query('DROP TRIGGER bsky_poll_lands ON account_credentials');
+      await query('DROP FUNCTION bsky_poll_lands()');
+    }
+    const settings = (await bluesky(account.id)).bluesky as Record<string, unknown>;
+    expect(settings.notificationsSeenThrough).toBe('2030-01-01T00:00:00.000Z');
+    expect(settings.serviceUrl).toBe(fake.origin);
+  });
+
+  it('replaces the server and nothing else, and goes back to the default when none is named', async () => {
+    const { account } = await accountWith({
+      somethingElse: 'kept',
+      bluesky: { serviceUrl: 'https://old.example.invalid', notificationsSeenThrough: '2026-01-01T00:00:00.000Z', langs: ['en'] },
+    });
+    const { replaceServerAndEndSessions } = await import('@xbam/runtime');
+
+    await replaceServerAndEndSessions(account.id, 'https://new.example.invalid');
+    let s = await bluesky(account.id);
+    expect(s.somethingElse).toBe('kept');
+    expect(s.bluesky).toMatchObject({ serviceUrl: 'https://new.example.invalid', notificationsSeenThrough: '2026-01-01T00:00:00.000Z', langs: ['en'] });
+
+    await replaceServerAndEndSessions(account.id, null);
+    s = await bluesky(account.id);
+    expect((s.bluesky as Record<string, unknown>).serviceUrl).toBeUndefined();
+    expect(JSON.stringify(s)).not.toContain('example.invalid');
+    expect(s.bluesky).toMatchObject({ notificationsSeenThrough: '2026-01-01T00:00:00.000Z', langs: ['en'] });
+  });
+});
+
+describe('disconnecting an account whose session another process holds', () => {
+  const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } };
+
+  /** A second copy of the channel code: sessions are per module, so this is a separate process's cache. */
+  async function workerProcess() {
+    vi.resetModules();
+    const { blueskyAdapter: adapter } = await import('../../packages/channels/src/bluesky/index');
+    const { cachedSessionFor } = await import('../../packages/channels/src/bluesky/client');
+    const contextFor = async (accountId: string) => {
+      const account = await accountsRepo.requireAccount(accountId);
+      return { account, session: null, storageDir: '.', logger: quiet as never, jobId: null, credentials: () => accountCredentials.getDecryptedLogin(accountId) };
+    };
+    return { adapter, cachedSessionFor, contextFor };
+  }
+
+  async function signedIn() {
+    const fixture = await createFixture();
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: fixture.ownerEmail, password: 'test-password-1234' } });
+    const auth = { authorization: `Bearer ${(login.json() as { data: { token: string } }).data.token}` };
+    return { account: await linked(fixture), auth };
+  }
+
+  it('stops the worker using its session, and ends it on Bluesky, once the API disconnects the account', async () => {
+    const { account, auth } = await signedIn();
+    const worker = await workerProcess();
+    await worker.adapter.ingestEvents(await worker.contextFor(account.id), { limit: 10 });
+    const held = worker.cachedSessionFor(account.id)!;
+    expect(fake.isAccessValid(held.accessJwt)).toBe(true);
+
+    const response = await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/disconnect`, headers: auth });
+    expect(response.statusCode, response.body).toBe(200);
+    // The API ended its own session. It could not have reached the worker's.
+    expect(fake.isAccessValid(held.accessJwt)).toBe(true);
+
+    fake.requests.length = 0;
+    const failure = await worker.adapter.ingestEvents(await worker.contextFor(account.id), { limit: 10 }).catch((e: unknown) => e);
+    expect(failure).toMatchObject({ errorClass: 'PERMANENT', reason: 'bluesky_disconnected' });
+    expect(fake.isAccessValid(held.accessJwt)).toBe(false);
+    expect(fake.requests.filter((r) => r.authorization === `Bearer ${held.accessJwt}`).map((r) => r.nsid)).not.toContain('app.bsky.notification.listNotifications');
+    expect(fake.of('com.atproto.server.createSession')).toHaveLength(0);
+    expect(worker.cachedSessionFor(account.id)).toBeNull();
+  });
+
+  it('drops a session made before a disconnect even if the account was reconnected before the worker looked', async () => {
+    const { account, auth } = await signedIn();
+    const worker = await workerProcess();
+    await worker.adapter.ingestEvents(await worker.contextFor(account.id), { limit: 10 });
+    const held = worker.cachedSessionFor(account.id)!;
+
+    await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/disconnect`, headers: auth });
+    await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/reconnect`, headers: auth });
+    // The account is enabled again, so the worker is allowed to sign in: but not with the old session.
+    fake.requests.length = 0;
+    await worker.adapter.ingestEvents(await worker.contextFor(account.id), { limit: 10 });
+
+    expect(fake.requests.filter((r) => r.authorization === `Bearer ${held.accessJwt}`).map((r) => r.nsid)).not.toContain('app.bsky.notification.listNotifications');
+    expect(fake.isAccessValid(held.accessJwt)).toBe(false);
+    expect(worker.cachedSessionFor(account.id)!.accessJwt).not.toBe(held.accessJwt);
+    expect(worker.cachedSessionFor(account.id)!.generation).toBeGreaterThanOrEqual(1);
   });
 });

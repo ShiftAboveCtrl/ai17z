@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Account } from '@xbam/shared/contracts';
 import { PipelineError, redact } from '@xbam/shared';
 import {
@@ -95,6 +95,7 @@ beforeEach(() => {
   fake.dropNextPostResponse = false;
   fake.omitCounts = false;
   fake.hiddenUris.clear();
+  fake.staleCursors.clear();
   logs.length = 0;
 });
 
@@ -644,5 +645,189 @@ describe('reading more than one page of notifications', () => {
     seedMentions(60);
     const events = await blueskyAdapter.ingestEvents(withMark('not a time'), { limit: 10 });
     expect(events).toHaveLength(50);
+  });
+});
+
+
+describe('a burst that is only partly read', () => {
+  const BASE = Date.parse('2026-11-08T10:00:00.000Z');
+  const at = (i: number) => new Date(BASE + i * 1_000).toISOString();
+
+  function seed(count: number, from = 0) {
+    for (let i = from; i < from + count; i += 1) {
+      const post = fake.seedPost({ id: `3kp${String(i).padStart(4, '0')}`, author: ALICE, text: `message ${i}`, createdAt: at(i) });
+      fake.notify(post, 'mention');
+    }
+  }
+
+  const settingsOf = (bluesky: Record<string, unknown>) => ({ bluesky: { serviceUrl: fake.origin, ...bluesky } });
+
+  async function poll(bluesky: Record<string, unknown>, extra: Partial<Parameters<typeof blueskyAdapter.ingestEvents>[1]> = {}) {
+    let progress: { complete: boolean; resume: string | null; restarted?: boolean } | undefined;
+    const events = await blueskyAdapter.ingestEvents(context(ME.password, { settings: settingsOf(bluesky) }), {
+      limit: 10,
+      report: (p) => {
+        progress = p;
+      },
+      ...extra,
+    });
+    return { events, progress: progress! };
+  }
+
+  it('says it is not finished, and where to carry on, instead of returning as if it were', async () => {
+    seed(450);
+    const { events, progress } = await poll({ notificationsSeenThrough: new Date(BASE - 1_000).toISOString() });
+    expect(events).toHaveLength(200);
+    expect(progress.complete).toBe(false);
+    expect(progress.resume).toEqual(expect.any(String));
+    // The newest 200 were read. The 250 older ones were not, and are what a
+    // caller that moved its mark to the newest event would skip for ever.
+    expect(events[events.length - 1]!.text).toBe('message 449');
+    expect(events[0]!.text).toBe('message 250');
+  });
+
+  it('carries on from the continuation and reads the whole burst across polls, skipping nothing', async () => {
+    seed(450);
+    const mark = new Date(BASE - 1_000).toISOString();
+    const seen: string[] = [];
+    let resume: string | null = null;
+    for (let round = 0; round < 3; round += 1) {
+      const result = await poll({ notificationsSeenThrough: mark, ...(resume ? { notificationsResume: { cursor: resume, throughAt: at(449) } } : {}) });
+      seen.push(...result.events.map((e) => e.text));
+      resume = result.progress.resume;
+      if (result.progress.complete) break;
+    }
+    expect(new Set(seen).size).toBe(450);
+    expect(resume).toBeNull();
+    // The first request of the second poll started at the cursor, not at the newest.
+    const cursors = fake.of('app.bsky.notification.listNotifications').map((r) => r.query.get('cursor'));
+    expect(cursors.filter((c) => c === null)).toHaveLength(1);
+  });
+
+  it('is finished when it reaches the mark', async () => {
+    seed(500);
+    const { events, progress } = await poll({ notificationsSeenThrough: at(480) });
+    expect(events).toHaveLength(20);
+    expect(progress).toMatchObject({ complete: true, resume: null });
+  });
+
+  it('is finished after one page when there is no mark, because a new link does not ingest history', async () => {
+    seed(120);
+    const { events, progress } = await poll({});
+    expect(events).toHaveLength(50);
+    expect(progress).toMatchObject({ complete: true, resume: null });
+  });
+
+  it('starts again from the newest when the server no longer honours the cursor, and says so', async () => {
+    seed(120);
+    fake.staleCursors.add('long-gone');
+    const { events, progress } = await poll({
+      notificationsSeenThrough: new Date(BASE - 1_000).toISOString(),
+      notificationsResume: { cursor: 'long-gone', throughAt: at(119) },
+    });
+    expect(events.length).toBeGreaterThan(0);
+    expect(progress.restarted).toBe(true);
+  });
+
+  it('asks before every page after the first and charges each one it reads', async () => {
+    seed(450);
+    let asked = 0;
+    let charged = 0;
+    const { events } = await poll(
+      { notificationsSeenThrough: new Date(BASE - 1_000).toISOString() },
+      {
+        canReadAnother: async () => {
+          asked += 1;
+          return true;
+        },
+        onRead: async () => {
+          charged += 1;
+        },
+      },
+    );
+    expect(events).toHaveLength(200);
+    expect(fake.of('app.bsky.notification.listNotifications')).toHaveLength(4);
+    expect(charged).toBe(4);
+    expect(asked).toBe(3);
+  });
+
+  it('stops paging the moment the budget says no, and says it is not finished', async () => {
+    seed(450);
+    let charged = 0;
+    const { events, progress } = await poll(
+      { notificationsSeenThrough: new Date(BASE - 1_000).toISOString() },
+      {
+        // Two reads left in the budget: the first page, then one more.
+        canReadAnother: async () => charged < 2,
+        onRead: async () => {
+          charged += 1;
+        },
+      },
+    );
+    expect(fake.of('app.bsky.notification.listNotifications')).toHaveLength(2);
+    expect(charged).toBe(2);
+    expect(events).toHaveLength(100);
+    expect(progress.complete).toBe(false);
+    expect(progress.resume).toEqual(expect.any(String));
+  });
+});
+
+describe('a session held by another process', () => {
+  /**
+   * A second copy of the channel code is a second process: the sessions are
+   * module level, so a fresh module registry is a fresh, separate cache.
+   */
+  async function otherProcess() {
+    vi.resetModules();
+    const adapter = (await import('../../packages/channels/src/bluesky/index')).blueskyAdapter;
+    const { cachedSessionFor } = await import('../../packages/channels/src/bluesky/client');
+    return { adapter, cachedSessionFor };
+  }
+
+  const as = (generation: number, enabled = true) =>
+    context(ME.password, { enabled, settings: { bluesky: { serviceUrl: fake.origin, sessionGeneration: generation } } });
+
+  it('is ended, and not used again, once the account moves to a newer generation', async () => {
+    const worker = await otherProcess();
+    await worker.adapter.ingestEvents(as(0), { limit: 10 });
+    const held = worker.cachedSessionFor(as(0).account.id)!;
+    expect(fake.isAccessValid(held.accessJwt)).toBe(true);
+    const before = fake.requests.length;
+
+    // The API disconnected the account: all it can do is bump the generation.
+    // Its own cache is a different one and cannot reach the worker's tokens.
+    await worker.adapter.ingestEvents(as(1), { limit: 10 });
+
+    const after = fake.requests.slice(before);
+    // The old access token was not used for anything after the bump...
+    expect(after.filter((r) => r.authorization === `Bearer ${held.accessJwt}`)).toHaveLength(0);
+    // ...it was ended on Bluesky's side, with the tokens only the worker has...
+    expect(fake.isAccessValid(held.accessJwt)).toBe(false);
+    expect(after.filter((r) => r.nsid === 'com.atproto.server.deleteSession' && r.authorization === `Bearer ${held.refreshJwt}`)).toHaveLength(1);
+    // ...and a fresh one was made for the generation the account is on now.
+    expect(worker.cachedSessionFor(as(1).account.id)!.generation).toBe(1);
+  });
+
+  it('does not sign an account in again once it is switched off, and ends what it held', async () => {
+    const worker = await otherProcess();
+    await worker.adapter.ingestEvents(as(0), { limit: 10 });
+    const held = worker.cachedSessionFor(as(0).account.id)!;
+    const signIns = fake.of('com.atproto.server.createSession').length;
+
+    const failure = await worker.adapter.ingestEvents(as(1, false), { limit: 10 }).catch((e: unknown) => e);
+    // Not `instanceof`: this is a second copy of the module, which is the point.
+    expect((failure as Error).name).toBe('PipelineError');
+    expect(failure).toMatchObject({ errorClass: 'PERMANENT', reason: 'bluesky_disconnected' });
+    expect(fake.isAccessValid(held.accessJwt)).toBe(false);
+    expect(fake.of('com.atproto.server.createSession')).toHaveLength(signIns);
+    expect(worker.cachedSessionFor(as(0).account.id)).toBeNull();
+  });
+
+  it('keeps a session made under the generation the account is still on', async () => {
+    const worker = await otherProcess();
+    await worker.adapter.ingestEvents(as(2), { limit: 10 });
+    await worker.adapter.ingestEvents(as(2), { limit: 10 });
+    expect(fake.of('com.atproto.server.createSession')).toHaveLength(1);
+    expect(fake.of('com.atproto.server.deleteSession')).toHaveLength(0);
   });
 });

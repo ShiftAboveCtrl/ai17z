@@ -124,10 +124,37 @@ export interface RadarPollRequest {
   cursor: string | null;
 }
 
+/**
+ * How much of what was waiting an adapter actually read.
+ *
+ * `complete: false` means there is more beyond what was returned, and `resume`
+ * is the adapter's own token for where to carry on. The caller must not treat
+ * what it was handed as everything: moving a "seen up to here" mark past events
+ * that were never read is how they are skipped for ever.
+ */
+export interface IngestProgress {
+  complete: boolean;
+  /** Opaque, meaningful only to the adapter that issued it. Null when complete. */
+  resume: string | null;
+  /** True when a stored continuation was refused and the read started again from the newest. */
+  restarted?: boolean;
+}
+
 export interface IngestOptions {
   /** Remote event ids already recorded; the adapter should skip them. */
   since?: string | null;
   limit: number;
+  /**
+   * Whether one more read of the remote may happen now. Absent means yes.
+   *
+   * An adapter that reads several pages in one call asks before each page after
+   * the first, so the one read budget is honoured per read and not per call.
+   */
+  canReadAnother?: () => Promise<boolean>;
+  /** Called after each read of the remote, so each one is charged to the budget. */
+  onRead?: () => Promise<void>;
+  /** Called once, with how much of what was waiting was read. */
+  report?: (progress: IngestProgress) => void;
 }
 
 export interface ActionRequest {
