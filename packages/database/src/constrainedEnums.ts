@@ -46,6 +46,7 @@ import {
   SOURCE_TRUST_TIERS,
   STANCE_POSITIONS,
   STANCE_STATUSES,
+  TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
   TRADE_INTENT_STATUSES,
   TRADE_ASSET_SCOPES,
@@ -290,6 +291,12 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'stances', column: 'position', values: STANCE_POSITIONS },
   { table: 'stances', column: 'status', values: STANCE_STATUSES },
   { table: 'trace_events', column: 'type', values: TRACE_EVENT_TYPES },
+  {
+    table: 'telegram_outbox',
+    column: 'state',
+    values: TELEGRAM_OUTBOX_STATES,
+    note: 'A Telegram send, written before the request and settled after it. SENDING left behind means the outcome is unknown.',
+  },
 
   // ── Database-only vocabularies ────────────────────────────────────────────
   // Nothing outside the schema names these, so they live here rather than in a

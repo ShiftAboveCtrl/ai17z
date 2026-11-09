@@ -27,6 +27,14 @@ export interface ChannelContext {
   logger: Logger;
   /** Correlation id, present when the call belongs to a job. */
   jobId: string | null;
+  /**
+   * Opens a bot token only for the call that needs it.
+   *
+   * A function, not a value, so a context that is logged by accident or kept in
+   * a closure holds nothing. It is also where the runtime refuses a token that
+   * belongs to the owner's notification bot.
+   */
+  botToken?: () => Promise<string | null>;
 }
 
 export interface ConnectionResult {
@@ -115,6 +123,9 @@ export interface RadarPollRequest {
 }
 
 export interface IngestOptions {
+  /** Opaque adapter cursor, committed by the poller only after ingestion. */
+  cursor?: string | null;
+  reportCursor?: (cursor: string) => void;
   /** Remote event ids already recorded; the adapter should skip them. */
   since?: string | null;
   limit: number;

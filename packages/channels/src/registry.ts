@@ -3,10 +3,12 @@ import { BadRequestError } from '@xbam/shared';
 import type { ChannelAdapter } from './contract';
 import { mockAdapter } from './mock/index';
 import { xAdapter } from './x/index';
+import { telegramAdapter } from './telegram/index';
 
 const ADAPTERS = new Map<ChannelId, ChannelAdapter>([
   ['mock', mockAdapter],
   ['x', xAdapter],
+  ['telegram', telegramAdapter],
 ]);
 
 export function getChannelAdapter(channel: ChannelId): ChannelAdapter {

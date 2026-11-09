@@ -1,5 +1,5 @@
-import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { accounts as accountsRepo, cadences as cadencesRepo } from '@xbam/database';
+import { createLogger, envInt, errorMessage, PipelineError } from '@xbam/shared';
+import { accounts as accountsRepo, cadences as cadencesRepo, telegramChannel } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import {
   buildChannelContext,
@@ -95,12 +95,30 @@ export class ChannelPoller {
     const adapter = getChannelAdapter(account.channel);
     try {
       const ctx = await buildChannelContext(account, null);
-      const events = await adapter.ingestEvents(ctx, { limit: config.polling.batchLimit });
+      // A Telegram bot's update offset, committed below and only after the
+      // batch it covers was ingested. The version stops a poll that outlived its
+      // claim from writing an old offset over a newer one.
+      const offsetState = account.channel === 'telegram' ? await telegramChannel.pollState(account.id) : null;
+      let reported: string | null = null;
+      const events = await adapter.ingestEvents(ctx, {
+        limit: config.polling.batchLimit,
+        ...(offsetState
+          ? {
+              cursor: offsetState.offset === null ? null : String(offsetState.offset),
+              reportCursor: (value: string) => {
+                reported = value;
+              },
+            }
+          : {}),
+      });
       if (account.channel === 'x') await noteXRead(account.id, 'DIRECT');
       let created = 0;
       for (const event of events) {
         const outcome = await ingestNormalizedEvent({ accountId: account.id, event });
         created += outcome.jobs.filter((j) => j.created).length;
+      }
+      if (offsetState && reported !== null) {
+        await telegramChannel.advanceOffset(account.id, offsetState.version, Number(reported));
       }
 
       const found = events.length > 0;
@@ -127,13 +145,26 @@ export class ChannelPoller {
       if (account.channel === 'x') await noteXFailure(account.id, 'DIRECT', message);
       // A failing account backs off like an idle one rather than being retried
       // every tick, but the streak is what grows, not a separate failure counter.
-      const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak + 1, foundEvents: false });
+      // A wait the remote named (Telegram's retry_after) is a floor, not a hint.
+      const requestedWait =
+        error instanceof PipelineError && typeof error.data.retryAfterMs === 'number' ? error.data.retryAfterMs : 0;
+      const delay = Math.max(
+        requestedWait,
+        nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak + 1, foundEvents: false }),
+      );
       await cadencesRepo.recordPoll(claimed.id, new Date(Date.now() + delay), false).catch(() => undefined);
       await accountsRepo
         .updateAccount(account.id, {
           lastHealthStatus: `poll failed: ${message.slice(0, 200)}`,
           touchHealthCheck: true,
           lastError: message.slice(0, 500),
+          // A revoked or shared bot token will not fix itself, and polling it again
+          // every few minutes only asks Telegram to keep saying no.
+          ...(account.channel === 'telegram' &&
+          error instanceof PipelineError &&
+          ['telegram_auth_failed', 'telegram_no_token', 'telegram_shared_bot'].includes(error.reason)
+            ? { status: 'NEEDS_AUTH' as const }
+            : {}),
         })
         .catch(() => undefined);
     }

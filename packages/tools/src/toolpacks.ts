@@ -73,6 +73,14 @@ export const TOOLPACKS: Toolpack[] = [
     prefixes: ['x.'],
   },
   {
+    id: 'telegram',
+    name: 'Telegram groups',
+    summary:
+      'Read the groups an owner allowed. Reacting needs its own permission; replying is set on the account, and nothing here ' +
+      'reads a group that was not allowed or any message that did not mention or reply to this agent.',
+    prefixes: ['telegram.'],
+  },
+  {
     id: 'projects',
     name: 'Projects',
     summary:

@@ -164,7 +164,12 @@ export async function collectHealth(): Promise<HealthReport> {
         if (!account.enabled) continue;
         // Channels without a browser session have nothing to connect; an enabled
         // mock account is ready by definition and should not read as degraded.
-        const sessionless = isChannelImplemented(account.channel) && !getChannelAdapter(account.channel).requiresBrowser;
+        // A Telegram bot has no browser but it does have a token, and a revoked one
+        // must not read as healthy because it needs no session.
+        const sessionless =
+          isChannelImplemented(account.channel) &&
+          !getChannelAdapter(account.channel).requiresBrowser &&
+          account.channel !== 'telegram';
         components.push({
           name: `${account.channel} @${account.handle}`,
           status: sessionless

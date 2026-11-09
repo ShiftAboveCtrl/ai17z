@@ -87,8 +87,9 @@ without notice. Treat the first live run as a dry run.
 
 ## Not implemented
 
-Discord, Telegram, Slack, email, and generic HTTP webhooks appear in the channel
-enum and the account schema but have no adapter. Selecting one produces a clear
+Discord, Slack, email, and generic HTTP webhooks appear in the channel enum and
+the account schema but have no adapter. Telegram groups are implemented; see
+[TELEGRAM_CHANNEL.md](TELEGRAM_CHANNEL.md). Selecting one produces a clear
 error naming the implemented channels rather than failing obscurely.
 
 Adding one means implementing the eight methods above and registering it. Nothing

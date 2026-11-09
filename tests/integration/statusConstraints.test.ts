@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_STATUSES,
   APPROVAL_MODES,
+  CHANNELS,
   PIPELINE_NODE_KINDS,
   PROVIDER_KINDS,
+  TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
   TRADE_INTENT_STATUSES,
   TRADE_MODES,
@@ -20,6 +22,7 @@ import {
   observability,
   pipelines,
   providers,
+  query,
   trading,
   tradeShadows,
   users,
@@ -412,5 +415,55 @@ describe('every trading value the code can produce is one the database accepts',
       await expect(tradeShadows.noteRun(row.id, 'NEITHER' as never, null)).rejects.toThrow();
     }
     await expect(tradeShadows.putShadow({ ...draft, label: 'sideways', side: 'SIDEWAYS' as never })).rejects.toThrow();
+  });
+});
+
+/**
+ * Telegram as an agent channel.
+ *
+ * `accounts.channel` has admitted 'telegram' since migration 0004, long before
+ * any adapter, so nothing was widened for it; this holds that to the contract
+ * rather than to a memory of it. The one new constrained column is the state of
+ * an outgoing send, and it is the thing that stops a reply being sent twice.
+ */
+describe('every value the Telegram channel can write is one the database accepts', () => {
+  it('creates an account on every channel the contract names, Telegram included', async () => {
+    expect(CHANNELS).toContain('telegram');
+    const fixture = await createFixture();
+    for (const channel of CHANNELS) {
+      const account = await accountsRepo.createAccount({ ownerId: fixture.ownerId, channel, handle: uniqueSuffix() });
+      expect(account.channel, `the database refused a ${channel} account`).toBe(channel);
+    }
+  });
+
+  it('writes each send state and refuses one that is not in the contract', async () => {
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({ ownerId: fixture.ownerId, channel: 'telegram', handle: uniqueSuffix() });
+    for (const state of TELEGRAM_OUTBOX_STATES) {
+      await query(
+        `INSERT INTO telegram_outbox (account_id, idempotency_key, request_digest, state, chat_id, remote_message_id)
+         VALUES ($1, $2, 'digest', $3, '-1001234567890', 'telegram:-1001234567890:5')`,
+        [account.id, `key-${state}`, state],
+      );
+    }
+    await expect(
+      query(
+        `INSERT INTO telegram_outbox (account_id, idempotency_key, request_digest, state, chat_id)
+         VALUES ($1, 'key-bogus', 'digest', 'DELIVERED', '-1001234567890')`,
+        [account.id],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('will not call a send SENT without the message it produced', async () => {
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({ ownerId: fixture.ownerId, channel: 'telegram', handle: uniqueSuffix() });
+    await expect(
+      query(
+        `INSERT INTO telegram_outbox (account_id, idempotency_key, request_digest, state, chat_id)
+         VALUES ($1, 'key', 'digest', 'SENT', '-1001234567890')`,
+        [account.id],
+      ),
+    ).rejects.toThrow();
   });
 });

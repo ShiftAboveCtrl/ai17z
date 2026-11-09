@@ -96,6 +96,11 @@ installation's. What arrives here reaches the owner's own controls and nowhere
 else: it cannot become something an agent says, and it cannot become part of a
 prompt.
 
+That stays true of this bot. A *different* bot can be an agent's channel in
+groups the owner allowed; see [TELEGRAM_CHANNEL.md](TELEGRAM_CHANNEL.md). The two
+share no token, no update offset and no table, and the agent side refuses the
+notification bot's token.
+
 **It is a command surface, which it deliberately was not at first.** The
 reasoning for refusing, that a bot token is a bearer credential and a chat is
 not an authenticated session, was right about the risk and wrong about the
