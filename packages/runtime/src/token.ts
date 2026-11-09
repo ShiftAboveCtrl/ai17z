@@ -100,7 +100,7 @@ export function parseTokenReference(text: string): TokenReference {
     if (base58) reference.address = base58[0];
   }
 
-  const ticker = text.match(/\$([A-Za-z][A-Za-z0-9]{1,9})\b/);
+  const ticker = text.match(/\$([A-Za-z][A-Za-z0-9]{0,9})\b/);
   if (ticker) reference.symbol = ticker[1]!;
 
   if (!reference.chain) {

@@ -110,6 +110,10 @@ async function runPaperTradeNow(input: {
   maxPriceImpactBps: number;
   maxFeeBase: string;
   idempotencyKey?: string;
+  /** A social simulation pins the owner's paper mandate rather than inheriting another mode. */
+  requirePaperMandateId?: string;
+  /** Re-read permission after market reads and immediately before recording a fill. */
+  beforeFill?: () => Promise<string | null>;
   now?: Date;
 }): Promise<PaperOutcome> {
   const now = input.now ?? new Date();
@@ -125,6 +129,17 @@ async function runPaperTradeNow(input: {
   }
   const mandate = await trading.liveMandate(input.agentId);
   if (!mandate) return { outcome: 'NO_MARKET', detail: 'This agent has no mandate, so nothing may be traded even on paper.' };
+  const paperGrant = async (): Promise<string | null> => {
+    if (input.requirePaperMandateId) {
+      const current = await trading.liveMandate(input.agentId);
+      if (!current || current.id !== input.requirePaperMandateId || current.id !== mandate.id || current.mode !== 'PAPER'
+        || current.approval !== 'OWNER_APPROVES_EACH' || current.protectiveExits !== null || current.paused
+        || current.retiredAt || (current.expiresAt && Date.parse(current.expiresAt) <= Date.now())
+        || current.updatedAt !== mandate.updatedAt) return 'The pinned paper mandate changed, expired or was paused before execution.';
+    }
+    return input.beforeFill ? input.beforeFill() : null;
+  };
+  if (input.requirePaperMandateId && await paperGrant()) return { outcome: 'NO_MARKET', detail: 'The pinned paper mandate is no longer available for this request.' };
 
   /*
    * Priced in the other side of this trade, not in whatever the venue felt
@@ -146,7 +161,7 @@ async function runPaperTradeNow(input: {
   // Written down before anything else happens, so a crash here leaves a record
   // of a decision rather than nothing. Paper has no irreversible step, but the
   // ordering is the same as live on purpose: this is the path being proved.
-  const { row } = await trading.createIntent({
+  const { row, created } = await trading.createIntent({
     agentId: input.agentId,
     mandateId: mandate.id,
     walletId: null,
@@ -166,6 +181,7 @@ async function runPaperTradeNow(input: {
     expiresAt: new Date(now.getTime() + mandate.quoteMaxAgeMs).toISOString(),
     idempotencyKey: input.idempotencyKey ?? `paper-${input.agentId}-${randomUUID()}`,
   });
+  if (!created) return { outcome: 'NO_MARKET', detail: `This paper intent already exists at ${row.status}; it is not filled again.` };
 
   // A simulation, recorded the same way a live one would be, so the gate's
   // mandatory-simulation check is satisfied by having actually done it.
@@ -204,6 +220,11 @@ async function runPaperTradeNow(input: {
       now: input.now ?? new Date(),
     }),
   );
+  const revoked = await paperGrant();
+  if (revoked) {
+    verdict.allowed = false;
+    verdict.reasons.push({ code: 'SOCIAL_PAPER_REVOKED', detail: revoked });
+  }
   if (!verdict.allowed) {
     const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: verdict.reasons });
     return { outcome: 'REFUSED', verdict, intent: refused ?? onRow };
@@ -226,7 +247,7 @@ async function runPaperTradeNow(input: {
         return { outcome: 'REFUSED' as const, verdict: { ...verdict, allowed: false, reasons }, intent: refused ?? onRow };
       }
     }
-    return fillPaper(onRow, atFill.snapshot, input.maxIn, spending, verdict);
+    return fillPaper(onRow, atFill.snapshot, input.maxIn, spending, verdict, paperGrant);
   });
 }
 
@@ -237,6 +258,7 @@ async function fillPaper(
   maxIn: string,
   spending: PricedSide,
   verdict: RiskVerdict,
+  beforeFill: () => Promise<string | null>,
 ): Promise<PaperOutcome> {
   const atFill = { snapshot: executed };
   const spent = BigInt(maxIn);
@@ -253,6 +275,11 @@ async function fillPaper(
       : { ...modelled, model: routed.gap ? `${modelled.model}; no route quote (${routed.gap})` : modelled.model };
   const fee = 'out' in routed ? routed.fee : modelledFee;
   const out = impact.out;
+  if (fee > BigInt(onRow.maxFeeBase)) {
+    const reasons = [...verdict.reasons, { code: 'FEE_TOO_HIGH', detail: `The simulated fee is ${fee} base units and this intent allows ${onRow.maxFeeBase}.` }];
+    const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: reasons });
+    return { outcome: 'REFUSED', verdict: { ...verdict, allowed: false, reasons }, intent: refused ?? onRow };
+  }
   if (impact.bps > onRow.maxPriceImpactBps) {
     const reasons = [
       ...verdict.reasons,
@@ -281,11 +308,20 @@ async function fillPaper(
     latencyMs: Date.parse(atFill.snapshot.observedAt) - Date.parse(onRow.quote.observedAt),
   };
 
+  const revoked = await beforeFill();
+  if (revoked) {
+    const reasons = [...verdict.reasons, { code: 'SOCIAL_PAPER_REVOKED', detail: revoked }];
+    const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: reasons });
+    return { outcome: 'REFUSED', verdict: { ...verdict, allowed: false, reasons }, intent: refused ?? onRow };
+  }
+
   const filled = await trading.transitionIntent(onRow.id, 'SIMULATED', 'PAPER_FILLED', {
     executedOn: atFill.snapshot,
     postcondition: { ...fill },
+    riskReasons: verdict.reasons,
   });
-  return { outcome: 'FILLED', fill, verdict, intent: filled ?? onRow };
+  if (!filled) return { outcome: 'NO_MARKET', detail: 'The intent changed before its simulated fill was recorded. No new fill is claimed.' };
+  return { outcome: 'FILLED', fill, verdict, intent: filled };
 }
 
 const WRAPPED_SOL = 'So11111111111111111111111111111111111111112';

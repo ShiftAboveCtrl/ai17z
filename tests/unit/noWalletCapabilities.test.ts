@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listCapabilities, registerBuiltinCapabilities, resetCapabilitiesForTest } from '@xbam/tools';
-import { NEVER_MODEL_CALLABLE, capabilityCrossesTheLine, registerManagementCapabilities, registerWalletCapabilities } from '@xbam/runtime';
+import { NEVER_MODEL_CALLABLE, capabilityCrossesTheLine, registerManagementCapabilities, registerWalletCapabilities, registerPaperCapabilities } from '@xbam/runtime';
 
 /**
  * Paying for something is the owner's act, never the agent's.
@@ -32,6 +32,7 @@ function registerAll() {
   registerBuiltinCapabilities();
   registerManagementCapabilities();
   registerWalletCapabilities();
+  registerPaperCapabilities();
 }
 
 describe('no capability can move money', () => {
@@ -62,6 +63,8 @@ describe('no capability can move money', () => {
       join(root, 'runtime', 'src', 'pluginCapabilities.ts'),
       join(root, 'runtime', 'src', 'capabilityLoop.ts'),
       join(root, 'runtime', 'src', 'walletCapabilities.ts'),
+      join(root, 'runtime', 'src', 'paperCapabilities.ts'),
+      join(root, 'runtime', 'src', 'paperTrading.ts'),
       join(root, 'runtime', 'src', 'managementCapabilities.ts'),
     ];
     for (const file of reachable) {

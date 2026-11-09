@@ -56,6 +56,11 @@ export interface Toolpack {
  */
 export const TOOLPACKS: Toolpack[] = [
   {
+    id: 'paper', name: 'Social paper trading',
+    summary: 'Simulate one requested trade with an owner-pinned paper mandate. Every result says simulated and carries its fee and risk verdict. No money moves.',
+    prefixes: ['paper.'],
+  },
+  {
     id: 'x',
     name: 'X',
     // "and act on them" used to be on the end of this sentence and was never
