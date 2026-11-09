@@ -114,7 +114,7 @@ export function hasStudioRiskMark(config: { studioRisk?: unknown } | null | unde
 
 export function radarSourceProvenance(config: { studioRisk?: unknown; playbookAgentId?: unknown } | null | undefined): RadarSourceProvenance {
   if (hasStudioRiskMark(config)) return 'STUDIO_RISK_WATCH';
-  // Present and non-null, as the playbook sync's own `config ? 'playbookAgentId'` reads it.
+  // Present and not JSON null, as the playbook sync reads it with jsonb_typeof.
   return config?.playbookAgentId != null ? 'PLAYBOOK' : 'OWNER';
 }
 

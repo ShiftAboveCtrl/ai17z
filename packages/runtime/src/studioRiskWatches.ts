@@ -109,6 +109,10 @@ export async function syncStudioRiskWatches(): Promise<void> {
         JOIN agent_accounts aa ON aa.agent_id=a.id AND aa.account_id=ac.id AND aa.enabled WHERE a.id=$1 AND a.owner_id=$3`, [binding.agent_id, binding.account_id, binding.owner_id]);
       if (!allowed) {
         await tx.query(`UPDATE radar_sources s SET enabled=false,status='DISABLED',idle_reason='The local account link was removed.' WHERE ${sourceScope}=$1`, [binding.id]);
+        // Unsettle the binding too. Left with an unexpired snapshot, it reads as "Studio has said this watch is gone"
+        // to radar.linkedSourceCanReturn, so a re-link within the snapshot window would allow deleting a source the
+        // next sync recreates. A cleared expiry keeps delete refused until a sync has actually run.
+        await tx.query('UPDATE studio_risk_bindings SET expires_at=NULL WHERE id=$1', [binding.id]);
         return;
       }
       const targets: string[] = [];

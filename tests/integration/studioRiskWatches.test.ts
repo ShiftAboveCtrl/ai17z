@@ -187,6 +187,23 @@ describe('Studio risk watch bridge', () => {
       expect((await radar.getSource(f.source.id))?.enabled).toBe(false);
     } finally { await app.close(); }
   });
+  it('keeps refusing to delete the source after a removed account link is restored, until a sync has run', async () => {
+    const f = await setup();
+    await query('UPDATE agent_accounts SET enabled = false WHERE agent_id = $1', [f.agentId]);
+    await resync();
+    expect((await radar.getSource(f.source.id))?.enabled).toBe(false);
+    await query('UPDATE agent_accounts SET enabled = true WHERE agent_id = $1', [f.agentId]);
+    const app = await buildServer();
+    try {
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: f.ownerEmail, password: 'test-password-1234' } });
+      const headers = { authorization: `Bearer ${login.json().data.token}` };
+      const refused = await app.inject({ method: 'DELETE', url: `/api/accounts/${f.accountId}/radar/${f.source.id}`, headers });
+      expect(refused.statusCode, refused.body).toBe(400);
+      expect(await radar.getSource(f.source.id)).not.toBeNull();
+    } finally { await app.close(); }
+    await resync();
+    expect((await radar.getSource(f.source.id))?.enabled).toBe(true);
+  });
   it('unchanged Studio sync preserves the baseline and due time instead of spending another read', async () => {
     const f = await setup();
     await runtime.pollSignalSource(f.source, async () => read(200));
