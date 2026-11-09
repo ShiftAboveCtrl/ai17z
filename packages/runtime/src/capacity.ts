@@ -191,10 +191,34 @@ export async function checkWriteCapacity(
  * Counts one read against the account. Never fails the caller: a meter that
  * cannot be written loses a tick, and a read that fails for that loses a reply.
  */
-export async function noteXRead(accountId: string, klass: CapacityClass): Promise<void> {
+export async function noteRead(accountId: string, klass: CapacityClass): Promise<void> {
   await capacityRepo.recordRead(accountId, klass).catch((error) => {
-    log.warn('could not count an x read', { accountId, message: errorMessage(error) });
+    log.warn('could not count a read', { accountId, message: errorMessage(error) });
   });
+}
+
+/** The X-named spelling, kept for the X callers. The meter itself is channel-neutral. */
+export const noteXRead = noteRead;
+
+/**
+ * Records a pushback the caller has already recognised and moves the breaker.
+ *
+ * Channel-neutral: a channel that reports pushback by a code rather than by a
+ * sentence classifies it itself and comes here, instead of having its words
+ * read as if X had written them.
+ */
+export async function notePushback(
+  accountId: string,
+  klass: CapacityClass,
+  signal: XSignal,
+  detail: string,
+): Promise<void> {
+  try {
+    await capacityRepo.recordSignal(accountId, klass, signal, detail);
+    await settleAccountCapacity(accountId);
+  } catch (error) {
+    log.warn('could not record pushback', { accountId, signal, message: errorMessage(error) });
+  }
 }
 
 /**
@@ -210,12 +234,7 @@ export async function noteXFailure(
 ): Promise<XSignal | null> {
   const signal = classifyXSignal(message);
   if (!signal) return null;
-  try {
-    await capacityRepo.recordSignal(accountId, klass, signal, message ?? signal);
-    await settleAccountCapacity(accountId);
-  } catch (error) {
-    log.warn('could not record x pushback', { accountId, signal, message: errorMessage(error) });
-  }
+  await notePushback(accountId, klass, signal, message ?? signal);
   return signal;
 }
 

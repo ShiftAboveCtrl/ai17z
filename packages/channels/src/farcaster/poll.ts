@@ -2,16 +2,19 @@ import { z } from 'zod';
 import { NormalizedEvent } from '@xbam/shared/contracts';
 import type { ChannelContext, IngestOptions } from '../contract';
 import { CastReference, castRef, ownFid, page, parseReference, unreadable, type Cast } from './client';
+import { resolveNames, type Names } from './names';
 import { asPost } from './reads';
 
 const cursorSchema = z.object({
   surface: z.enum(['mentions', 'own', 'replies']),
   mentionToken: z.string().default(''), ownToken: z.string().default(''),
   parents: z.array(CastReference).max(100).default([]), replyToken: z.string().default(''),
+  // The newest own cast a finished walk reached, and the newest one the walk in progress began at.
+  ownSeen: z.string().default(''), ownHead: z.string().default(''),
 });
 
-function eventOf(ctx: ChannelContext, cast: Cast, reply: boolean): NormalizedEvent {
-  const post = asPost(ctx, cast);
+function eventOf(ctx: ChannelContext, cast: Cast, reply: boolean, names: Names): NormalizedEvent {
+  const post = asPost(ctx, cast, names);
   const parent = cast.data.castAddBody.parentCastId;
   return NormalizedEvent.parse({ channel: 'farcaster', type: reply ? 'REPLY' : 'MENTION',
     remoteEventId: cast.hash, remoteMessageId: post.remoteId, remoteAuthorId: String(cast.data.fid),
@@ -36,15 +39,24 @@ export async function ingestEvents(ctx: ChannelContext, options: IngestOptions):
   if (state.surface === 'mentions') {
     const result = await page(ctx, 'castsByMention', { fid, pageSize: limit, pageToken: state.mentionToken });
     if (result.casts.some((c) => !c.data.castAddBody.mentions.includes(fid))) throw unreadable();
-    events = result.casts.filter((c) => c.data.fid !== fid).map((c) => eventOf(ctx, c,
-      c.data.castAddBody.parentCastId?.fid === fid));
+    const others = result.casts.filter((c) => c.data.fid !== fid);
+    const names = await resolveNames(ctx, others);
+    events = others.map((c) => eventOf(ctx, c, c.data.castAddBody.parentCastId?.fid === fid, names));
     state.mentionToken = result.token;
     state.surface = state.parents.length ? 'replies' : 'own';
   } else if (state.surface === 'own') {
-    const result = await page(ctx, 'castsByFid', { fid, pageSize: limit, pageToken: state.ownToken });
+    // Newest first, so a walk can end where the previous one began instead of
+    // reading the whole history again every time it comes round.
+    const result = await page(ctx, 'castsByFid', { fid, pageSize: limit, pageToken: state.ownToken, reverse: 'true' });
     if (result.casts.some((c) => c.data.fid !== fid)) throw unreadable();
-    state.parents = result.casts.map(castRef);
-    state.ownToken = result.token;
+    if (!state.ownToken && result.casts[0]) state.ownHead = result.casts[0].hash;
+    const boundary = state.ownSeen ? result.casts.findIndex((c) => c.hash === state.ownSeen) : -1;
+    const fresh = boundary < 0 ? result.casts : result.casts.slice(0, boundary);
+    state.parents = fresh.map(castRef);
+    if (boundary >= 0 || !result.token) {
+      state.ownSeen = state.ownHead || state.ownSeen;
+      state.ownToken = '';
+    } else state.ownToken = result.token;
     state.surface = 'mentions';
   } else {
     const reference = state.parents[0];
@@ -55,7 +67,9 @@ export async function ingestEvents(ctx: ChannelContext, options: IngestOptions):
       const parent = c.data.castAddBody.parentCastId;
       return parent?.fid !== target.fid || parent.hash !== target.hash;
     })) throw unreadable();
-    events = result.casts.filter((c) => c.data.fid !== fid).map((c) => eventOf(ctx, c, true));
+    const others = result.casts.filter((c) => c.data.fid !== fid);
+    const names = await resolveNames(ctx, others);
+    events = others.map((c) => eventOf(ctx, c, true, names));
     state.replyToken = result.token;
     if (!result.token) state.parents.shift();
     state.surface = 'mentions';

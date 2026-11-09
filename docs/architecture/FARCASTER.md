@@ -33,7 +33,23 @@ only after ingestion. Events deduplicate on the full cast hash through the exist
 event/job indexes. Thread reads retain the incoming target and fetch at most twelve
 ancestors. All HTTP reads, including validation, verification and recovery, use the
 existing per-account capacity ledger and quiet hours. Node rate limits honor
-`Retry-After`; there is no separate scheduler or budget.
+`Retry-After`; there is no separate scheduler or budget. A node's HTTP 429 is
+recorded as `RATE_LIMITED` pushback by its error code (`farcaster_rate_limited`),
+never by matching X's wording; no other Farcaster error counts as pressure.
+
+Authors and mentions are shown by username (`alice`, `@alice`), read from the
+node's `/v1/userDataByFid` and cached per node and FID (1000 entries, one hour,
+absences included). Identity is still the numeric FID: `remoteAuthorId`, cast
+references and dedup keys never use the name. A name is used only if the node
+returned it for the same FID and it is a plain username; otherwise, or when the
+lookup fails or is refused, the display falls back to `fid:<n>` and the read
+itself still succeeds. Each lookup is a charged read; one batch makes at most 25
+and stops at the first pushback.
+
+The own-cast walk reads newest first and ends at the newest cast the previous walk
+saw (`ownSeen` in the cursor), so only new casts have their replies read. The
+poller does not pass `since`; the cursor carries the boundary. Replies to older
+own casts that do not mention the account are therefore no longer rediscovered.
 
 POST and REPLY use pipeline account grants. The pinned model-callable capabilities
 are `farcaster.read_cast`, `farcaster.read_thread`, `farcaster.like` and

@@ -1,5 +1,6 @@
 import { Message, MessageType, ReactionType, validations } from '@farcaster/core';
 import { vi } from 'vitest';
+import { resetFarcasterNames } from '../../packages/channels/src/farcaster/names';
 
 export const CAST_HASH = `0x${'ab'.repeat(20)}`;
 export const OWN_HASH = `0x${'cd'.repeat(20)}`;
@@ -16,9 +17,13 @@ const hex = (bytes: Uint8Array) => `0x${Buffer.from(bytes).toString('hex')}`;
 
 /** Only the HTTP boundary is replaced. Signing, repositories and runtime are real. */
 export function fakeFarcaster() {
+  // The username cache lives for the process; a new node is a new world.
+  resetFarcasterNames();
   const casts = new Map<string, ReturnType<typeof castMessage>>([
     [CAST_HASH, castMessage()], [OWN_HASH, castMessage(OWN_HASH, 11, 'Our original cast')],
   ]);
+  const usernames = new Map<number, string>();
+  const fidOverride = new Map<number, number>();
   const reactions = new Map<string, unknown>();
   const submitted: Message[] = [];
   const reads: URL[] = [];
@@ -75,6 +80,14 @@ export function fakeFarcaster() {
       const reaction = reactions.get(key);
       return reaction ? Response.json(reaction) : Response.json({ errCode: 'not_found' }, { status: 404 });
     }
+    if (endpoint === 'userDataByFid') {
+      const fid = Number(url.searchParams.get('fid'));
+      const value = usernames.get(fid);
+      if (url.searchParams.get('user_data_type') !== 'USER_DATA_TYPE_USERNAME') throw new Error('Only usernames are read.');
+      return value === undefined ? Response.json({ errCode: 'not_found' }, { status: 404 })
+        : Response.json({ data: { type: 'MESSAGE_TYPE_USER_DATA_ADD', fid: fidOverride.get(fid) ?? fid,
+          userDataBody: { type: 'USER_DATA_TYPE_USERNAME', value } } });
+    }
     if (customPage) return Response.json(customPage(url));
     const list = [...casts.values()];
     return Response.json({ messages: endpoint === 'castsByMention'
@@ -83,7 +96,7 @@ export function fakeFarcaster() {
         : list.filter((c) => c.data.castAddBody.parentCastId?.hash === url.searchParams.get('hash')),
       nextPageToken: '' });
   }));
-  return { casts, submitted, reads,
+  return { casts, submitted, reads, usernames, fidOverride,
     loseNextResponse: () => { loseResponse = true; },
     delayNextReadback: () => { delayReadback = true; },
     refuse: (endpoint: string) => { refusedEndpoint = endpoint; },

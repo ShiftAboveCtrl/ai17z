@@ -60,7 +60,7 @@ export function ownFid(ctx: ChannelContext): number {
   return fid;
 }
 
-function baseUrl(ctx: ChannelContext): URL {
+export function baseUrl(ctx: ChannelContext): URL {
   const settings = FarcasterSettings.safeParse(ctx.account.settings);
   if (!settings.success) {
     throw PipelineError.permanent('farcaster_bad_node', 'Configure a Farcaster node origin using HTTPS, or HTTP on loopback, without credentials or a path.');

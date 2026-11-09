@@ -6,7 +6,7 @@ import { buildChannelContext, connectFarcaster, ingestNormalizedEvent, loadJobBu
   stepExecute, stepResolveContext, actionIdempotencyKeyFor, capabilityIdempotencyKey } from '@xbam/runtime';
 import { getCapability, resetCapabilitiesForTest } from '@xbam/tools';
 import { ChannelPoller } from '../../apps/worker/src/poller';
-import { createLogger, redact } from '@xbam/shared';
+import { createLogger, PipelineError, redact } from '@xbam/shared';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { CAST_HASH, CAST_REF, OWN_HASH, TEST_SIGNER, castMessage, fakeFarcaster } from '../support/fakeFarcaster';
@@ -110,9 +110,11 @@ describe('Farcaster channel with real database guarantees', () => {
     const { hub, fixture, account, ctx } = await setup();
     const { job } = await incoming(ctx, fixture.agentId);
     const before = await query<{ n: number }>("SELECT count(*)::int AS n FROM x_capacity_ledger WHERE account_id = $1 AND entry = 'READ'", [account.id]);
+    const readsBefore = hub.reads.length;
     await stepResolveContext(await loadJobBundle(job));
     const after = await query<{ n: number }>("SELECT count(*)::int AS n FROM x_capacity_ledger WHERE account_id = $1 AND entry = 'READ'", [account.id]);
-    expect(after[0]!.n - before[0]!.n).toBe(1);
+    // Every HTTP read the context step made, name lookups included, is on the ledger.
+    expect(after[0]!.n - before[0]!.n).toBe(hub.reads.length - readsBefore);
     await query(`INSERT INTO x_capacity_ledger (account_id, entry, class) SELECT $1, 'READ', 'DIRECT' FROM generate_series(1,200)`, [account.id]);
     const count = hub.reads.length;
     await expect(farcasterAdapter.ingestEvents(ctx, { limit: 10 })).rejects.toMatchObject({ reason: 'account_capacity' });
@@ -209,7 +211,32 @@ describe('Farcaster channel with real database guarantees', () => {
     const scheduled = await cadences.pollState(account.id);
     expect(Date.parse(scheduled!.nextPollAt!) - before).toBeGreaterThanOrEqual(61_000);
     const [usage] = await query<{ n: number }>("SELECT count(*)::int AS n FROM x_capacity_ledger WHERE account_id = $1 AND entry = 'READ'", [account.id]);
-    expect(usage!.n).toBe(3);
+    // Three before this change, plus one username lookup each for FIDs 22 and 11.
+    expect(usage!.n).toBe(5);
+  });
+
+  it('records a node rate limit as pushback by its code, and never reads other errors as X wording', async () => {
+    const { hub, account, ctx } = await setup();
+    const signals = () => query<{ signal: string }>("SELECT signal FROM x_capacity_ledger WHERE account_id = $1 AND entry = 'SIGNAL'", [account.id]);
+    // These sentences are what classifyXSignal reads as X pushback. A node did not write them.
+    for (const words of ['Something went wrong, try reloading.', 'It never finished and showed a loading screen.']) {
+      await ctx.afterRead!(PipelineError.retryable('farcaster_unavailable', words));
+    }
+    await ctx.afterRead!(new Error('slow down, too many requests'));
+    expect(await signals()).toHaveLength(0);
+    hub.refuse('castsByMention');
+    await expect(farcasterAdapter.ingestEvents(ctx, { limit: 10 })).rejects.toMatchObject({ reason: 'farcaster_rate_limited' });
+    expect(await signals()).toEqual([{ signal: 'RATE_LIMITED' }]);
+  });
+
+  it('shows usernames from the node and keeps the numeric FID as the event identity', async () => {
+    const { hub, fixture, ctx } = await setup();
+    hub.usernames.set(22, 'alice');
+    const { event } = await incoming(ctx, fixture.agentId);
+    expect(event).toMatchObject({ remoteAuthorHandle: 'alice', remoteAuthorId: '22', remoteMessageId: CAST_REF });
+    const resolved = await farcasterAdapter.resolveContext(ctx, event);
+    // FID 11 has no name on this node, so it keeps the FID form.
+    expect(resolved).toMatchObject({ targetAuthorHandle: 'alice', incomingText: '@fid:11A question about crypto infrastructure?' });
   });
 
   it('holds HTTP reads during quiet hours using the existing cadence configuration', async () => {
@@ -233,7 +260,8 @@ describe('Farcaster channel with real database guarantees', () => {
     });
     expect(result).toMatchObject({ targetRef: CAST_REF, parentText: '@fid:11Our original cast' });
     const [usage] = await query<{ n: number }>("SELECT count(*)::int AS n FROM x_capacity_ledger WHERE account_id = $1 AND entry = 'READ' AND class = 'BROAD'", [account.id]);
-    expect(usage!.n).toBe(2);
+    // Two casts, then one username lookup each for the two FIDs shown.
+    expect(usage!.n).toBe(4);
   });
 
   it('executes a granted model like through durable actions and observes account cadence on the next one', async () => {

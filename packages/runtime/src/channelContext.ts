@@ -1,12 +1,20 @@
 import { resolve } from 'node:path';
 import type { Account, CapacityClass } from '@xbam/shared/contracts';
 import { createLogger, envString, PipelineError } from '@xbam/shared';
-import { accounts as accountsRepo, cadences, farcasterSigners } from '@xbam/database';
+import { accounts as accountsRepo, cadences, farcasterSigners, type XSignal } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { resolveProfileDir } from '@xbam/browser';
 import type { ChannelContext } from '@xbam/channels';
-import { capacityClassForEvent, checkReadCapacity, noteXFailure, noteXRead } from './capacity';
+import { capacityClassForEvent, checkReadCapacity, notePushback, noteRead } from './capacity';
 import { msUntilAwake } from './cadence';
+
+/**
+ * Pushback from a Farcaster node, told by the code its client gave the error.
+ * classifyXSignal reads X's own sentences, which say nothing about a node.
+ */
+function farcasterSignal(error: unknown): XSignal | null {
+  return error instanceof PipelineError && error.reason === 'farcaster_rate_limited' ? 'RATE_LIMITED' : null;
+}
 
 export function storageDir(): string {
   return resolve(envString('AI17Z_STORAGE_DIR', './storage'));
@@ -51,8 +59,9 @@ export async function buildChannelContext(account: Account, jobId: string | null
         });
       },
       afterRead: async (error?: unknown) => {
-        await noteXRead(account.id, readClass);
-        if (error) await noteXFailure(account.id, readClass, error instanceof Error ? error.message : 'The Farcaster read failed.');
+        await noteRead(account.id, readClass);
+        const signal = farcasterSignal(error);
+        if (signal) await notePushback(account.id, readClass, signal, (error as PipelineError).message);
       },
     } : {}),
   };
