@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-export const ActivityEventId = z.string().regex(/^(action|paper|radar):[0-9a-f-]{36}$/i);
+export const ActivityEventId = z.string().toLowerCase().regex(/^(action|paper|radar):/)
+  .refine((id) => z.string().uuid().safeParse(id.slice(id.indexOf(':') + 1)).success, 'The event id must contain a UUID.');
 const AssetLabel = z.string().regex(/^[A-Z0-9.]{1,16}$/);
 const Size = z.string().regex(/^\d{1,78}$/);
 export const ActivityTapeEvent = z.object({

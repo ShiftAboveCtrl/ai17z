@@ -12,6 +12,9 @@ export async function activityStudioServer(key: InstallationKey) {
   const proofs = new Set<string>();
   let requests = 0;
   let unavailable = false;
+  let rejectedBatches = 0;
+  let tokenRequests = 0;
+  let batchRequests = 0;
   let origin = '';
   const server = createServer(async (req, res) => {
     requests++;
@@ -21,6 +24,8 @@ export async function activityStudioServer(key: InstallationKey) {
       const header = JSON.parse(Buffer.from(proof[0]!, 'base64url').toString());
       const claims = JSON.parse(Buffer.from(proof[1]!, 'base64url').toString());
       const tokenRequest = req.url === '/api/v1/token';
+      if (tokenRequest) tokenRequests++;
+      else if (req.url === '/api/v1/installation/activity-tape') batchRequests++;
       const valid = header.typ === 'dpop+jwt' && header.alg === 'ES256'
         && JSON.stringify(header.jwk) === JSON.stringify(key.publicJwk)
         && verify('sha256', Buffer.from(`${proof[0]}.${proof[1]}`), { key: createPublicKey({ key: key.publicJwk, format: 'jwk' }), dsaEncoding: 'ieee-p1363' }, Buffer.from(proof[2]!, 'base64url'))
@@ -32,6 +37,7 @@ export async function activityStudioServer(key: InstallationKey) {
       proofs.add(claims.jti);
       if (tokenRequest) return answer(200, { access_token: 'tape-test-token', expires_in: 300 });
       if (req.url !== '/api/v1/installation/activity-tape') return answer(404, {});
+      if (rejectedBatches > 0) { rejectedBatches--; return answer(401, {}); }
       if (unavailable) { req.socket.destroy(); return; }
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -50,6 +56,8 @@ export async function activityStudioServer(key: InstallationKey) {
   });
   origin = `http://127.0.0.1:${await listenReachable(server)}`;
   return { origin, batches, visible, get requests() { return requests; },
+    get tokenRequests() { return tokenRequests; }, get batchRequests() { return batchRequests; },
+    rejectBatches(count: number) { rejectedBatches = count; },
     setUnavailable(value: boolean) { unavailable = value; },
     close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };

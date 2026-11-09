@@ -37,12 +37,12 @@ async function grant() {
 }
 async function ready() { await grant(); await setStudioActivityTape(true, fixture.ownerId); }
 async function due() { await query("DELETE FROM app_settings WHERE key = 'studio.activity_tape.attempt'"); }
-async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0) {
-  const [event] = await query<{ id: string }>("INSERT INTO events (channel,type,remote_event_id,text,remote_author_handle,payload) VALUES ('mock','MENTION',$1,'PRIVATE','private-person','{\"prompt\":\"PRIVATE\"}') RETURNING id", [randomUUID()]);
-  const [job] = await query<{ id: string }>("INSERT INTO jobs(event_id,agent_id,channel,action_type,idempotency_key,generated_output) VALUES ($1,$2,'mock',$3,$4,'PRIVATE') RETURNING id", [event!.id, fixture.agentId, type, randomUUID()]);
+async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, channel = 'x', rehearsal = false) {
+  const [event] = await query<{ id: string }>("INSERT INTO events (channel,type,remote_event_id,text,remote_author_handle,payload) VALUES ($1,'MENTION',$2,'PRIVATE','private-person',$3) RETURNING id", [channel, randomUUID(), JSON.stringify({ prompt: 'PRIVATE', rehearsal, ...(rehearsal ? { origin: 'rehearsal' } : {}) })]);
+  const [job] = await query<{ id: string }>("INSERT INTO jobs(event_id,agent_id,channel,action_type,idempotency_key,generated_output) VALUES ($1,$2,$3,$4,$5,'PRIVATE') RETURNING id", [event!.id, fixture.agentId, channel, type, randomUUID()]);
   const [row] = await query<{ id: string }>(`INSERT INTO actions(job_id,agent_id,channel,type,status,dry_run,payload,target_ref,idempotency_key,executed_at)
-    VALUES ($1,$2,'mock',$3,$4,$5,'{"text":"PRIVATE","wallet":"PRIVATE","reasoning":"PRIVATE","cookies":"PRIVATE"}','@private-person',$6,now() - ($7::int * interval '1 minute')) RETURNING id`,
-  [job!.id, fixture.agentId, type, status, status === 'DRY_RUN', randomUUID(), ageMinutes]);
+    VALUES ($1,$2,$8,$3,$4,$5,'{"text":"PRIVATE","wallet":"PRIVATE","reasoning":"PRIVATE","cookies":"PRIVATE"}','@private-person',$6,now() - ($7::int * interval '1 minute')) RETURNING id`,
+  [job!.id, fixture.agentId, type, status, status === 'DRY_RUN', randomUUID(), ageMinutes, channel]);
   return `action:${row!.id}`;
 }
 
@@ -89,9 +89,9 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
         VALUES ($1,$2,$3,'AMM_POOL_SOLANA','BUY','{"kind":"NATIVE","network":"solana","wallet":"PRIVATE"}','{}','100','1',100,100,'1','{"reasoning":"PRIVATE"}','PAPER_FILLED',$4,'{"simulated":true,"inBase":"42","prompt":"PRIVATE"}',now() + interval '1 hour')`,
       [fixture.agentId, mandate!.id, mode, randomUUID()]);
     }
-    const [account] = await query<{ id: string }>("INSERT INTO accounts(owner_id,channel,handle) VALUES ($1,'mock','PRIVATE') RETURNING id", [fixture.ownerId]);
+    const [account] = await query<{ id: string }>("INSERT INTO accounts(owner_id,channel,handle) VALUES ($1,'x','PRIVATE') RETURNING id", [fixture.ownerId]);
     await query('INSERT INTO agent_accounts(agent_id,account_id) VALUES ($1,$2)', [fixture.agentId, account!.id]);
-    const [event] = await query<{ id: string }>("INSERT INTO events(channel,account_id,type,remote_event_id,text,payload) VALUES ('mock',$1,'KEYWORD_MATCH',$2,'PRIVATE','{\"reasoning\":\"PRIVATE\"}') RETURNING id", [account!.id, randomUUID()]);
+    const [event] = await query<{ id: string }>("INSERT INTO events(channel,account_id,type,remote_event_id,text,payload) VALUES ('x',$1,'KEYWORD_MATCH',$2,'PRIVATE','{\"reasoning\":\"PRIVATE\"}') RETURNING id", [account!.id, randomUUID()]);
     await query("INSERT INTO event_discoveries(event_id,source_kind) VALUES ($1,'tracked_keyword')", [event!.id]);
     expect((await sweepStudioActivityTape()).sent).toBe(2);
     const events = studio.batches[0]!.events;
@@ -148,9 +148,140 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
     expect((await sweepStudioActivityTape()).sent).toBe(1);
     await scrubStudioActivity(id, fixture.ownerId); await due(); await sweepStudioActivityTape();
     expect(studio.visible.size).toBe(0);
-    expect(await activityTapeProjection(new Date(Date.now() - 900_000))).toEqual([]);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([]);
+    await query("DELETE FROM app_settings WHERE key = 'studio.activity_tape.cursor'");
     await due(); await sweepStudioActivityTape();
     expect(studio.visible.size).toBe(0);
+  });
+
+  it('normalizes scrub ids before exclusion and duplicate detection', async () => {
+    await ready();
+    const id = await action();
+    await scrubStudioActivity(id.toUpperCase(), fixture.ownerId);
+    await scrubStudioActivity(id, fixture.ownerId);
+    expect(await activityTapeProjection(new Date(Date.now() - 900_000))).toEqual([]);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([id]);
+  });
+
+  it('clears only acknowledged tombstones and preserves scrubs added in flight', async () => {
+    await ready();
+    const id = await action();
+    const later = `action:${randomUUID()}`;
+    await scrubStudioActivity(id, fixture.ownerId);
+    setStudioTransportForTests(async (url, init) => {
+      const response = await fetch(url, init);
+      if (url.endsWith('/activity-tape')) await scrubStudioActivity(later, fixture.ownerId);
+      return { status: response.status, text: await response.text() };
+    });
+    await sweepStudioActivityTape();
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([later]);
+    expect(studio.batches[0]!.remove).toEqual([id]);
+  });
+
+  it('returns 409 for a full pending queue and frees capacity after acknowledgement', async () => {
+    await ready();
+    const ids = Array.from({ length: 200 }, () => `action:${randomUUID()}`);
+    await ops.setSetting('studio.activity_tape.scrubs', ids);
+    const app = await buildServer();
+    try {
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: fixture.ownerEmail, password: 'test-password-1234' } });
+      const headers = { authorization: `Bearer ${login.json().data.token}` };
+      const scrub = (id: string) => app.inject({ method: 'POST', url: '/api/studio/activity-tape/scrub', headers, payload: { id } });
+      const extra = `action:${randomUUID()}`;
+      expect((await scrub(extra)).statusCode).toBe(409);
+      expect((await scrub(ids[0]!.toUpperCase())).statusCode).toBe(200);
+      await sweepStudioActivityTape();
+      expect(studio.batches[0]!.remove).toHaveLength(200);
+      expect((await scrub(extra)).statusCode).toBe(200);
+      expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([extra]);
+    } finally { await app.close(); }
+  });
+
+  it('replays a committed batch after a lost acknowledgement without duplicates or resurrection', async () => {
+    await ready();
+    const removed = await action();
+    const kept = await action();
+    await scrubStudioActivity(removed, fixture.ownerId);
+    let loseAcknowledgement = true;
+    setStudioTransportForTests(async (url, init) => {
+      const response = await fetch(url, init);
+      const text = await response.text();
+      if (url.endsWith('/activity-tape') && loseAcknowledgement) {
+        loseAcknowledgement = false;
+        throw new Error('Acknowledgement lost after commit');
+      }
+      return { status: response.status, text };
+    });
+    expect((await sweepStudioActivityTape()).sent).toBe(0);
+    expect([...studio.visible.values()].map((event) => event.id)).toEqual([kept]);
+    expect(await ops.getSetting('studio.activity_tape.cursor')).toBeNull();
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([removed]);
+    await due();
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect(studio.batches[1]).toEqual(studio.batches[0]);
+    expect([...studio.visible.values()].map((event) => event.id)).toEqual([kept]);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([]);
+    await query("DELETE FROM app_settings WHERE key = 'studio.activity_tape.cursor'");
+    await due(); await sweepStudioActivityTape();
+    expect([...studio.visible.values()].map((event) => event.id)).toEqual([kept]);
+  });
+
+  it('refreshes once on 401 and clears tombstones only after the authenticated retry', async () => {
+    await ready();
+    const id = await action();
+    await scrubStudioActivity(id, fixture.ownerId);
+    studio.rejectBatches(1);
+    await sweepStudioActivityTape();
+    expect(studio.tokenRequests).toBe(2);
+    expect(studio.batchRequests).toBe(2);
+    expect(studio.batches).toHaveLength(1);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([]);
+    const next = `action:${randomUUID()}`;
+    await scrubStudioActivity(next, fixture.ownerId);
+    studio.rejectBatches(2);
+    await due(); await sweepStudioActivityTape();
+    expect(studio.tokenRequests).toBe(3);
+    expect(studio.batchRequests).toBe(4);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([next]);
+  });
+
+  it('excludes mock actions and Response Lab rehearsals but retains real-channel dry runs', async () => {
+    await ready();
+    await action('POST', 'EXECUTED', 0, 'mock');
+    await action('REPLY', 'DRY_RUN', 0, 'x', true);
+    const real = await action('POST', 'DRY_RUN');
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect(studio.batches[0]!.events).toEqual([expect.objectContaining({ id: real, dry_run: true })]);
+  });
+
+  it('keeps the opt-in cutoff and pending activity on an idempotent enabled PUT', async () => {
+    await ready();
+    const setting = await studioActivityTapeSetting();
+    const id = await action();
+    const app = await buildServer();
+    try {
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: fixture.ownerEmail, password: 'test-password-1234' } });
+      const response = await app.inject({ method: 'PUT', url: '/api/studio/activity-tape', headers: { authorization: `Bearer ${login.json().data.token}` }, payload: { enabled: true } });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data).toEqual(setting);
+      expect((await sweepStudioActivityTape()).sent).toBe(1);
+      expect(studio.batches[0]!.events[0]!.id).toBe(id);
+    } finally { await app.close(); }
+  });
+
+  it.each([
+    { channel: 'mock', payload: {} },
+    { channel: 'x', payload: { rehearsal: true } },
+    { channel: 'x', payload: { origin: 'rehearsal' } },
+  ])('excludes synthetic radar discoveries: $channel $payload', async ({ channel, payload }) => {
+    await ready();
+    const [account] = await query<{ id: string }>('INSERT INTO accounts(owner_id,channel,handle) VALUES ($1,$2,$3) RETURNING id', [fixture.ownerId, channel, 'PRIVATE']);
+    await query('INSERT INTO agent_accounts(agent_id,account_id) VALUES ($1,$2)', [fixture.agentId, account!.id]);
+    const [event] = await query<{ id: string }>("INSERT INTO events(channel,account_id,type,remote_event_id,payload) VALUES ($1,$2,'KEYWORD_MATCH',$3,$4) RETURNING id", [channel, account!.id, randomUUID(), JSON.stringify(payload)]);
+    await query("INSERT INTO event_discoveries(event_id,source_kind) VALUES ($1,'tracked_keyword')", [event!.id]);
+    expect(await activityTapeProjection(new Date(Date.now() - 900_000))).toEqual([]);
+    expect((await sweepStudioActivityTape()).sent).toBe(0);
+    expect(studio.requests).toBe(0);
   });
 
   it('bounds each batch and revoking the grant stops the next sweep', async () => {

@@ -23,12 +23,17 @@ sends no announcement, token request or event request. Requests already in fligh
 can finish. Core rechecks the switch and grants immediately before transport.
 Turning it back on starts at that opt-in time; it does not publish activity from
 the paused period. A newly allowed capability also starts at its grant time.
+Repeating PUT with the current enabled value is a no-op and preserves changedAt.
 
 `POST /api/studio/activity-tape/scrub` accepts only `{ "id": "action:<uuid>" }`
 (also `paper:` and `radar:`). Authentication is required. It records an audited
 local tombstone and returns `{ "queued": true }`. Source evidence is preserved.
-Scrubs are retried in every enabled batch and never evicted locally. The bounded
-queue holds 200 distinct ids; a new id beyond that returns 409 with a sentence
+Ids are normalized to lowercase and the suffix must be a valid UUID. Scrubs are
+retried in every enabled batch until Studio durably acknowledges them. Only the
+acknowledged ids are removed from the local pending queue; scrubs added during
+delivery remain queued. Permanent Studio tombstones prevent resurrection on
+replay after local removal. A lost acknowledgement retains the pending ids for
+retry. The bounded queue holds 200 pending distinct ids; a new id beyond that returns 409 with a sentence
 instructing the owner to remove it in Studio. Repeating a scrub is harmless.
 While the switch is off, scrubs stay queued and nothing is sent. Studio must also
 offer the linked owner immediate deletion and pause in its own interface so an
@@ -108,8 +113,10 @@ or restart replays the same row identities; it must never create duplicate items
 
 The cutoff is fifteen minutes, additionally bounded by the installation enable
 time and each capability's grant time. Expired rows are skipped even after an
-outage. Future timestamps, pending or failed actions, direct messages, and LIVE
-trade intents are excluded. Empty projections with no scrubs send nothing.
+outage. Future timestamps, pending or failed actions, direct messages, mock-channel
+activity, Response Lab rehearsals, and LIVE trade intents are excluded. Real
+dry-run actions on real channels remain eligible and carry dry_run: true.
+Empty projections with no scrubs send nothing.
 There is no event spool or second event store. Actions come from `actions`, paper
 fills from PAPER/PAPER_FILLED `trade_intents` with a simulated postcondition, and
 radar observations from `event_discoveries` on an agent's linked account.

@@ -32,6 +32,8 @@ export async function studioActivityTapeSetting(): Promise<ActivityTapeSetting> 
   return (await ops.getSetting<ActivityTapeSetting>(SETTING)) ?? { enabled: false, changedAt: null };
 }
 export async function setStudioActivityTape(enabled: boolean, by: string): Promise<ActivityTapeSetting> {
+  const current = await studioActivityTapeSetting();
+  if (current.enabled === enabled) return current;
   const setting = { enabled, changedAt: new Date().toISOString() };
   await ops.setSetting(SETTING, setting);
   await ops.audit({ actorUserId: by, action: enabled ? 'studio.activity_tape.enabled' : 'studio.activity_tape.disabled', entityType: 'settings', entityId: 'studio' });
@@ -40,7 +42,7 @@ export async function setStudioActivityTape(enabled: boolean, by: string): Promi
 
 /** Tombstones are delivery metadata, never copies of events. Studio keeps them permanently. */
 export async function scrubStudioActivity(id: string, by: string): Promise<void> {
-  EventId.parse(id);
+  id = EventId.parse(id);
   const saved = await query(`INSERT INTO app_settings (key, value) VALUES ($1, jsonb_build_array($2::text))
     ON CONFLICT (key) DO UPDATE SET value = app_settings.value || excluded.value
     WHERE jsonb_array_length(app_settings.value) < 200 AND NOT app_settings.value @> excluded.value RETURNING key`, [SCRUBS, id]);
@@ -58,7 +60,10 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
     SELECT 'action:' || a.id AS id, a.agent_id, a.type AS kind, date_trunc('milliseconds', a.executed_at) AS at,
       a.dry_run, NULL::text AS size, NULL::text AS asset
     FROM actions a JOIN permitted p ON p.agent_id = a.agent_id
+      LEFT JOIN jobs j ON j.id = a.job_id LEFT JOIN events e ON e.id = j.event_id
     WHERE a.status IN ('EXECUTED','DRY_RUN') AND a.type IN ('REPLY','POST')
+      AND a.channel <> 'mock' AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
+      AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'
       AND a.executed_at >= greatest($2::timestamptz, p.updated_at)
     UNION ALL
     SELECT 'paper:' || t.id, t.agent_id, 'PAPER_FILL', date_trunc('milliseconds', t.updated_at), true,
@@ -74,6 +79,8 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
     FROM event_discoveries d JOIN events e ON e.id = d.event_id
       JOIN agent_accounts aa ON aa.account_id = e.account_id JOIN permitted p ON p.agent_id = aa.agent_id
     WHERE d.first_seen_at >= greatest($2::timestamptz, p.updated_at)
+      AND e.channel <> 'mock' AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
+      AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'
   ) SELECT * FROM tape WHERE at <= now() AND NOT (id = ANY($3::text[]))
     AND ($4::timestamptz IS NULL OR (at, id, agent_id) > ($4::timestamptz, $5::text, $6::uuid))
     ORDER BY at, id, agent_id LIMIT 50`,
@@ -98,6 +105,11 @@ export async function sweepStudioActivityTape(): Promise<{ sent: number; skipped
   const batch = ActivityTapeBatch.parse({ protocol: 1, events: events.filter((event) => allowed.some((p) => p.agent_id === event.agent_id)), remove });
   const result = await studioActivityBatch(batch);
   if (!result.ok) return { sent: 0, skipped: result.why };
+  // Studio's permanent tombstones protect replays after the pending queue is cleared.
+  // Subtract only this batch so scrubs queued during transport remain pending.
+  if (batch.remove.length) await query(`UPDATE app_settings SET value = COALESCE(
+    (SELECT jsonb_agg(id) FROM jsonb_array_elements_text(value) AS pending(id)
+      WHERE NOT (id = ANY($2::text[]))), '[]'::jsonb) WHERE key = $1`, [SCRUBS, batch.remove]);
   const last = events.at(-1);
   if (last) await ops.setSetting(CURSOR, { at: last.at, id: last.id, agentId: last.agent_id });
   return { sent: batch.events.length };
