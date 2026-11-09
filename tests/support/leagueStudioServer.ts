@@ -63,6 +63,8 @@ export interface LeagueStudio {
   fillAnswerOverride: ((keys: string[]) => { status?: number; body: unknown }) | null;
   /** Make the next N fill reports fail with this status, to prove retries. */
   failFillReports: { times: number; status: number };
+  /** Make the next N entry requests fail with this status, before the entry is stored. */
+  failEntries: { times: number; status: number };
   /** Entries by entry_key, as Studio holds them. */
   entries: Map<string, { entryId: string; alias: string; enteredAt: string }>;
   /** Fills by fill_key, as Studio holds them. */
@@ -176,8 +178,8 @@ export async function startLeagueStudio(initial: { slug?: string; now?: Date; ru
     if (!proof) return { ok: false, why: 'no DPoP proof' };
     const parts = proof.split('.');
     if (parts.length !== 3) return { ok: false, why: 'not a compact JWS' };
-    let header: Record<string, any>;
-    let payload: Record<string, any>;
+    let header: { typ?: string; alg?: string; jwk?: { kty: string; crv: string; x: string; y: string } };
+    let payload: { htm?: string; htu?: string; iat?: number; jti?: string; ath?: string };
     try {
       header = JSON.parse(b64(parts[0]!).toString('utf8'));
       payload = JSON.parse(b64(parts[1]!).toString('utf8'));
@@ -296,6 +298,11 @@ export async function startLeagueStudio(initial: { slug?: string; now?: Date; ru
 
     // POST an entry.
     if (tail === '/entry' && method === 'POST') {
+      if (studio.failEntries.times > 0) {
+        studio.failEntries.times -= 1;
+        send(studio.failEntries.status, { error: 'temporarily_unavailable' });
+        return;
+      }
       const parsed = LeagueEntryRequest.safeParse(log.body);
       if (!parsed.success) {
         send(422, { error: 'invalid_request', error_description: `The entry is not valid: ${parsed.error.issues[0]?.path.join('.') || 'document'}.` });
@@ -423,6 +430,7 @@ export async function startLeagueStudio(initial: { slug?: string; now?: Date; ru
     standingOverride: null,
     fillAnswerOverride: null,
     failFillReports: { times: 0, status: 503 },
+    failEntries: { times: 0, status: 503 },
     entries: entriesByKey,
     fills,
     goDown: () => {

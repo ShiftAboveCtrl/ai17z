@@ -13,7 +13,9 @@ import {
 } from '@xbam/shared/contracts';
 import {
   baseUnitsOf,
+  canonicalJson,
   contentHashOf,
+  pendingRetryDelayMs,
   describeStanding,
   describeUnavailable,
   fillFromIntent,
@@ -105,6 +107,24 @@ describe('a season payload is refused whole, before anything is written', () => 
     expect(isCurrent(new Date(NOW.getTime() - 20 * 60_000).toISOString(), NOW)).toBe(false);
     expect(isCurrent(new Date(NOW.getTime() + 20 * 60_000).toISOString(), NOW)).toBe(false);
   });
+
+  // Fixed vectors, produced by an independent script and shared with Studio:
+  // Studio's rules hash must reproduce each `sha256` from each `input`.
+  const vectors = JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'league-hash-vectors.json'), 'utf8')) as Array<{ name: string; input: string; canonical: string; sha256: string }>;
+
+  it('has the vectors the contract names', () => {
+    expect(vectors.length).toBeGreaterThanOrEqual(5);
+    expect(vectors.some((v) => /^\{.*\d\.\d/.test(v.input) || v.input.includes('0.1'))).toBe(true);
+    expect(vectors.some((v) => [...v.input].some((ch) => ch.charCodeAt(0) > 127))).toBe(true);
+  });
+
+  for (const [index, name] of ['key order', 'numbers', 'non-ASCII', 'UTF-16', 'arrays'].entries()) {
+    it(`reproduces the fixed vector for ${name}`, () => {
+      const v = vectors[index]!;
+      expect(canonicalJson(JSON.parse(v.input))).toBe(v.canonical);
+      expect(leagueRulesHash(JSON.parse(v.input) as never)).toBe(v.sha256);
+    });
+  }
 
   it('hashes a document the same wherever its keys were written', () => {
     const rules = leagueRules();
@@ -211,6 +231,27 @@ describe('what leaves is an allowlist', () => {
     expect(fillFromIntent(ENTRY_KEY, { ...buy, assetOut: { kind: 'NATIVE' as const, network: 'solana' as const } }, season).ok).toBe(false);
   });
 
+  it('degrades a malformed trade record to "not counted" for that fill, never a throw', () => {
+    const bad: Array<Record<string, unknown>> = [
+      { executedOn: { ...snap, asset: null } },
+      { executedOn: { ...snap, asset: undefined } },
+      { executedOn: { ...snap, observedAt: 'not a date' } },
+      { executedOn: { ...snap, source: 7 } },
+      { executedOn: { ...snap, priceBaseUnits: '1.5' } },
+      { executedOn: 'garbage' },
+      { postcondition: 'garbage' },
+      { postcondition: [1, 2] },
+      { assetIn: null },
+      { assetOut: null },
+      { filledAt: 'never' },
+    ];
+    for (const over of bad) {
+      let verdict: ReturnType<typeof fillFromIntent> | undefined;
+      expect(() => { verdict = fillFromIntent(ENTRY_KEY, { ...buy, ...over } as never, season); }, JSON.stringify(over)).not.toThrow();
+      expect(verdict!.ok, JSON.stringify(over)).toBe(false);
+    }
+  });
+
   it('refuses a report with an unknown field, a fill that is not simulated, an oversized batch or a repeated key', () => {
     const fill = (fillFromIntent(ENTRY_KEY, buy, season) as { fill: LeagueFill }).fill;
     const report = (fills: unknown[]) => LeagueFillReport.safeParse({ protocol: 1, entry_id: 'ent_1', fills }).success;
@@ -228,6 +269,15 @@ describe('what leaves is an allowlist', () => {
     expect(LeagueFillAnswer.safeParse({ protocol: 1, simulated: true, accepted: [key], duplicates: [], rejected: [] }).success).toBe(true);
     expect(LeagueFillAnswer.safeParse({ protocol: 1, simulated: true, accepted: [], duplicates: [], rejected: [{ fill_key: key, reason: 'WHATEVER' }] }).success).toBe(false);
     expect(LeagueFillAnswer.safeParse({ protocol: 1, simulated: true, accepted: [], duplicates: [], rejected: [], extra: 1 }).success).toBe(false);
+  });
+});
+
+describe('how long a pending entry waits', () => {
+  it('is set by the time already waited, between a minute and a quarter of an hour, and has no end', () => {
+    expect(pendingRetryDelayMs(0)).toBe(60_000);
+    expect(pendingRetryDelayMs(30 * 60_000)).toBe(3 * 60_000);
+    expect(pendingRetryDelayMs(24 * 3_600_000)).toBe(15 * 60_000);
+    expect(pendingRetryDelayMs(30 * 24 * 3_600_000)).toBe(15 * 60_000);
   });
 });
 

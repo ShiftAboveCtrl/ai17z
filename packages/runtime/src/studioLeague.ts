@@ -7,6 +7,7 @@ import {
   LEAGUE_SLUG,
   LeagueAlias,
   LeagueEntryAnswer,
+  LeagueFill,
   LeagueFillAnswer,
   LeagueStandingDocument,
   type LeagueEntryRequest,
@@ -268,9 +269,24 @@ export async function reportLeagueFills(entry: LeagueEntryRow, now: Date = new D
     return out;
   }
 
-  const due = await leagueBridge.dueFills(entry.id, now, LEAGUE_FILLS_PER_REPORT);
+  // A stored payload is read back through the contract's own schema, never cast:
+  // a row that no longer fits (hand edited past the trigger, or written by a
+  // build with another schema) is rejected for good rather than sent.
+  const dueRows = await leagueBridge.dueFills(entry.id, now, LEAGUE_FILLS_PER_REPORT);
+  const due: typeof dueRows = [];
+  const fills: LeagueFill[] = [];
+  for (const row of dueRows) {
+    const stored = LeagueFill.safeParse(row.payload);
+    if (stored.success && stored.data.fill_key === row.fillKey) {
+      due.push(row);
+      fills.push(stored.data);
+    } else {
+      await leagueBridge.settleFill(entry.id, row.fillKey, 'REJECTED', 'The stored report no longer fits the contract, so it was not sent.');
+      out.rejected += 1;
+    }
+  }
   if (due.length === 0) return out;
-  const report: LeagueFillReport = { protocol: LEAGUE_PROTOCOL, entry_id: entry.remoteEntryId, fills: due.map((f) => f.payload as never) };
+  const report: LeagueFillReport = { protocol: LEAGUE_PROTOCOL, entry_id: entry.remoteEntryId, fills };
   const keys = due.map((f) => f.fillKey);
   const retryAt = () => new Date(now.getTime() + backoffMs(Math.max(...due.map((f) => f.attempts)), 60_000, 60 * 60_000));
 
@@ -284,7 +300,7 @@ export async function reportLeagueFills(entry: LeagueEntryRow, now: Date = new D
   if (DEFINITIVE.has(answer.status)) {
     for (const key of keys) await leagueBridge.settleFill(entry.id, key, 'REJECTED', answer.sentence);
     await leagueBridge.noteProblem(entry.id, answer.sentence);
-    out.rejected = keys.length;
+    out.rejected += keys.length;
     return out;
   }
   const parsed = LeagueFillAnswer.safeParse(answer.body);
@@ -328,8 +344,17 @@ export async function reportLeagueFills(entry: LeagueEntryRow, now: Date = new D
 // ---------------------------------------------------------------------------
 
 const SEASON_CHECK_EVERY_MS = 30 * 60_000;
-/** An entry Studio never accepted is dropped after this, so a stuck one does not sit for ever. */
-const PENDING_GIVE_UP_MS = 24 * 3_600_000;
+
+/**
+ * How long a pending entry waits between tries: a tenth of the time it has been
+ * waiting, between a minute and a quarter of an hour. Elapsed time sets the pace
+ * and never the outcome: an entry is dropped only when the season's entry lock
+ * passes (see `advanceEntry`) or Studio says no, because a Studio outage of any
+ * length is not a refusal and the owner must not lose the season to one.
+ */
+export function pendingRetryDelayMs(elapsedMs: number): number {
+  return Math.min(15 * 60_000, Math.max(60_000, Math.floor(elapsedMs / 10)));
+}
 
 /**
  * One pass over every open entry, on the worker's ordinary sweep rather than a
@@ -346,10 +371,15 @@ export async function sweepLeagueBridge(now: Date = new Date()): Promise<{ entri
     tally.entries += 1;
     try {
       if (entry.status === 'PENDING') {
-        if (now.getTime() - Date.parse(entry.createdAt) > PENDING_GIVE_UP_MS) {
-          await leagueBridge.refuseEntry(entry.id, 'Studio did not take this entry within a day, so it was dropped.');
+        if (entry.remoteEntryId && now.getTime() > Date.parse(entry.endsAt)) {
+          // Studio holds the entry but the mandate could never be written (a live
+          // mandate in the way, say) and the season is over: nothing left to do.
+          await leagueBridge.endEntry(entry.id, 'The season ended before this entry could be activated here.');
           continue;
         }
+        // Every failed try stamps `updated_at`, so the wait runs from the last try.
+        const waited = now.getTime() - Date.parse(entry.updatedAt);
+        if (waited < pendingRetryDelayMs(now.getTime() - Date.parse(entry.createdAt))) continue;
         await advanceEntry(entry, now);
         continue;
       }

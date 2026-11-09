@@ -3,6 +3,7 @@ import type { PaperFillIntent } from '@xbam/database';
 import {
   LeagueFill,
   LeagueSeasonDocument,
+  MarketSnapshot,
   assetKey,
   type AssetRef,
   type LeagueRules,
@@ -189,6 +190,21 @@ export function fillFromIntent(
   fill: PaperFillIntent,
   season: { quoteAddress: string; startsAt: string; endsAt: string },
 ): FillVerdict {
+  // One fill with a malformed record must cost only that fill. Anything the
+  // checks below did not anticipate in a stored row (a null asset, a date that
+  // is not a date) degrades it to "not counted" instead of aborting the batch.
+  try {
+    return fillFromIntentChecked(entryKey, fill, season);
+  } catch {
+    return { ok: false, why: 'The record of this fill is unreadable, so it is not counted.' };
+  }
+}
+
+function fillFromIntentChecked(
+  entryKey: string,
+  fill: PaperFillIntent,
+  season: { quoteAddress: string; startsAt: string; endsAt: string },
+): FillVerdict {
   const at = Date.parse(fill.filledAt);
   if (at < Date.parse(season.startsAt)) return { ok: false, why: 'Made before the season started, so it is not counted.' };
   if (at > Date.parse(season.endsAt)) return { ok: false, why: 'Made after the season ended, so it is not counted.' };
@@ -199,9 +215,11 @@ export function fillFromIntent(
     return { ok: false, why: "Not priced in the season's quote asset, so it is not counted." };
   }
   if (token.kind !== 'ONCHAIN' || token.network !== 'solana') return { ok: false, why: 'Not a Solana token, so it is not counted.' };
-  const executed = fill.executedOn;
   const post = fill.postcondition;
-  if (!executed || !post) return { ok: false, why: 'The record of this fill is incomplete, so it is not counted.' };
+  if (!fill.executedOn || !post || typeof post !== 'object' || Array.isArray(post)) return { ok: false, why: 'The record of this fill is incomplete, so it is not counted.' };
+  const snapshot = MarketSnapshot.safeParse(fill.executedOn);
+  if (!snapshot.success) return { ok: false, why: 'The price recorded for this fill is malformed, so it is not counted.' };
+  const executed = snapshot.data;
   if (assetKey(executed.asset) !== assetKey(token)) return { ok: false, why: 'The price recorded is for another asset, so the fill is not counted.' };
   const { inBase, outBase, feeBase, slippageBps, priceImpactBps } = post as Record<string, unknown>;
   if (![inBase, outBase, feeBase].every((v) => typeof v === 'string' && DIGITS.test(v))) return { ok: false, why: 'The amounts of this fill are incomplete, so it is not counted.' };

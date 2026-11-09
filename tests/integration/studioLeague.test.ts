@@ -16,7 +16,7 @@ import { AssetRef, MarketSnapshot, TradeMandate } from '@xbam/shared/contracts';
 import { invokeCapability, registerBuiltinCapabilities, resetCapabilitiesForTest } from '@xbam/tools';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
-import { TOKEN_MINT, USDC, leagueRules, seasonDocument, startLeagueStudio, type LeagueStudio } from '../support/leagueStudioServer';
+import { TOKEN_MINT, USDC, leagueRules, seasonDocument, seasonTimes, startLeagueStudio, type LeagueStudio } from '../support/leagueStudioServer';
 
 installHarness();
 
@@ -59,6 +59,8 @@ beforeEach(() => {
   studio.standingOverride = null;
   studio.fillAnswerOverride = null;
   studio.failFillReports = { times: 0, status: 503 };
+  studio.failEntries = { times: 0, status: 503 };
+  studio.times = seasonTimes(BASE);
   studio.setNow(BASE);
   studio.goUp();
 });
@@ -206,8 +208,8 @@ describe('entering', () => {
     });
     expect(created.kind).toBe('CREATED');
     studio.entries.set(created.row.entryKey, { entryId: 'ent_lost', alias: 'Night Owl', enteredAt: BASE.toISOString() });
-    // The sweep finishes it.
-    await sweepLeagueBridge(BASE);
+    // The sweep finishes it, once the first wait (a minute) has passed.
+    await sweepLeagueBridge(new Date(Date.now() + 2 * 60_000));
     const after = await leagueBridge.getEntry(created.row.id);
     expect(after).toMatchObject({ status: 'ACTIVE', remoteEntryId: 'ent_lost' });
     expect(studio.entries.size).toBe(1);
@@ -288,6 +290,76 @@ describe('entering', () => {
     const { agentId, ownerId } = await entered();
     const other = await enterLeagueSeason({ agentId, ownerId, slug: 'week-46', alias: 'Night Owl' }, BASE);
     expect(other.ok).toBe(false);
+  });
+});
+
+describe('an entry Studio has not taken yet', () => {
+  /** A season whose entry lock is `days` away, so a long outage is still inside it. */
+  const lockAt = (days: number) => {
+    const lock = new Date(BASE.getTime() + days * 24 * H);
+    const ends = new Date(lock.getTime() + 2 * H + 3 * 24 * H);
+    studio.times = { entryClosesAt: lock, startsAt: new Date(lock.getTime() + 2 * H), endsAt: ends, fillsAcceptedUntil: new Date(ends.getTime() + 24 * H) };
+  };
+  const posts = () => studio.requests.filter((r) => r.method === 'POST' && r.path.endsWith('/entry')).length;
+
+  it('survives a Studio outage longer than a day and is entered when Studio comes back', async () => {
+    lockAt(3);
+    const f = await setup();
+    studio.failEntries = { times: 3, status: 503 };
+    const first = await enter(f.agentId, f.ownerId);
+    expect(first.ok).toBe(false);
+    const pending = (await leagueBridge.latestEntryOf(f.agentId))!;
+    expect(pending.status).toBe('PENDING');
+
+    // More than twenty-four hours later, still failing: still pending, not refused.
+    await sweepLeagueBridge(new Date(BASE.getTime() + 25 * H));
+    expect(await leagueBridge.getEntry(pending.id)).toMatchObject({ status: 'PENDING', statusReason: null });
+
+    // Studio back, same key: the same entry, and the mandate is written.
+    studio.failEntries = { times: 0, status: 503 };
+    await sweepLeagueBridge(new Date(BASE.getTime() + 26 * H));
+    expect(await leagueBridge.getEntry(pending.id)).toMatchObject({ status: 'ACTIVE' });
+    expect(studio.entries.size).toBe(1);
+    expect([...studio.entries.keys()]).toEqual([pending.entryKey]);
+    expect(await trading.liveMandate(f.agentId)).toMatchObject({ mode: 'PAPER' });
+  });
+
+  it('retries with a backoff set by how long it has waited, not by a deadline', async () => {
+    lockAt(3);
+    const f = await setup();
+    studio.failEntries = { times: 50, status: 429 };
+    await enter(f.agentId, f.ownerId);
+    expect(posts()).toBe(1);
+    // Straight after a failed try: not yet.
+    await sweepLeagueBridge(new Date(Date.now() + 10_000));
+    expect(posts()).toBe(1);
+    await sweepLeagueBridge(new Date(Date.now() + 2 * 60_000));
+    expect(posts()).toBe(2);
+  });
+
+  it('is refused, with that reason, only when the entry lock passes', async () => {
+    lockAt(3);
+    const f = await setup();
+    studio.failEntries = { times: 50, status: 503 };
+    await enter(f.agentId, f.ownerId);
+    const entry = (await leagueBridge.latestEntryOf(f.agentId))!;
+    await sweepLeagueBridge(new Date(BASE.getTime() + 2 * 24 * H));
+    expect((await leagueBridge.getEntry(entry.id))!.status).toBe('PENDING');
+    await sweepLeagueBridge(new Date(studio.times.entryClosesAt.getTime() + 1000));
+    expect(await leagueBridge.getEntry(entry.id)).toMatchObject({ status: 'REFUSED', statusReason: expect.stringMatching(/Entry closed before Studio took this one/) });
+  });
+
+  it('ends an entry Studio holds but whose mandate was never written, once the season is over', async () => {
+    const g = await setup();
+    const read = await readLeagueSeason('week-45', BASE);
+    if (!read.ok) throw new Error(read.why);
+    const created = await leagueBridge.createPendingEntry({
+      agentId: g.agentId, ownerId: g.ownerId, seasonSlug: 'week-45', alias: 'Night Owl', replacePaperMandate: false, season: read.season,
+      rulesHash: read.season.season.rules_hash, startsAt: read.season.season.starts_at, endsAt: read.season.season.ends_at, fillsAcceptedUntil: read.season.season.fills_accepted_until,
+    });
+    await leagueBridge.setRemoteEntry(created.row.id, 'ent_held');
+    await sweepLeagueBridge(new Date(studio.times.endsAt.getTime() + H));
+    expect(await leagueBridge.getEntry(created.row.id)).toMatchObject({ status: 'ENDED' });
   });
 });
 
@@ -382,6 +454,45 @@ describe('reporting fills', () => {
     expect(studio.fills.size).toBe(1);
     expect([...studio.fills.values()][0]!.fill.out_base).toBe('49875000');
     expect((await leagueBridge.fillsOf(entry.id))[0]).toMatchObject({ state: 'REJECTED', reason: expect.stringMatching(/content changed/) });
+  });
+
+  it('rejects a stored report that no longer fits the contract instead of sending it, and sends the rest', async () => {
+    const { agentId, entry } = await entered();
+    studio.failFillReports = { times: 50, status: 503 };
+    await seedFill(agentId, entry.mandateId!, inSeason(3));
+    await seedFill(agentId, entry.mandateId!, inSeason(4));
+    studio.setNow(inSeason(5));
+    await sweepLeagueBridge(inSeason(5));
+    const [bad] = await leagueBridge.fillsOf(entry.id);
+    await query(`ALTER TABLE league_fill_reports DISABLE TRIGGER league_fill_reports_frozen`);
+    try {
+      await query(`UPDATE league_fill_reports SET payload = jsonb_set(payload, '{wallet}', '"x"') WHERE fill_key = $1`, [bad!.fillKey]);
+    } finally {
+      await query(`ALTER TABLE league_fill_reports ENABLE TRIGGER league_fill_reports_frozen`);
+    }
+    studio.failFillReports = { times: 0, status: 503 };
+    const later = new Date(inSeason(5).getTime() + 2 * H);
+    studio.setNow(later);
+    await sweepLeagueBridge(later);
+    expect(studio.fills.size).toBe(1);
+    expect(studio.fills.has(bad!.fillKey)).toBe(false);
+    const rows = await leagueBridge.fillsOf(entry.id);
+    expect(rows.find((r) => r.fillKey === bad!.fillKey)).toMatchObject({ state: 'REJECTED', reason: expect.stringMatching(/no longer fits the contract/) });
+    expect(rows.filter((r) => r.state === 'ACCEPTED')).toHaveLength(1);
+  });
+
+  it('a fill whose trade record is malformed is kept at home on its own and does not stop the others', async () => {
+    const { agentId, entry } = await entered();
+    const broken = await seedFill(agentId, entry.mandateId!, inSeason(3));
+    await seedFill(agentId, entry.mandateId!, inSeason(4));
+    await query(`UPDATE trade_intents SET executed_on = '{"asset": null, "observedAt": "not a date", "source": 7}'::jsonb WHERE id = $1`, [broken]);
+    studio.setNow(inSeason(5));
+    const result = await sweepLeagueBridge(inSeason(5));
+    expect(result).toMatchObject({ recorded: 2, accepted: 1 });
+    expect(studio.fills.size).toBe(1);
+    const rows = await leagueBridge.fillsOf(entry.id);
+    expect(rows.map((r) => r.state).sort()).toEqual(['ACCEPTED', 'LOCAL_ONLY']);
+    expect(rows.find((r) => r.intentId === broken)).toMatchObject({ state: 'LOCAL_ONLY', reason: expect.stringMatching(/malformed|unreadable|incomplete/) });
   });
 
   it('keeps a fill made outside the season at home, with the reason, and never sends it', async () => {
