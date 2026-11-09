@@ -130,7 +130,7 @@ radar observations from `event_discoveries` on an agent's linked account.
 An observation proves discovery on that linked account, not a model decision or
 an endorsement. The only added persistence is settings for consent, attempt time,
 acknowledged cursor and removal ids, plus the permission-change timestamp in
-migration 0114. No event persistence is added.
+migration 0121. No event persistence is added.
 
 Studio must atomically apply removals first, then insert new events, and return:
 
