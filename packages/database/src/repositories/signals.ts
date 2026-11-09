@@ -5,7 +5,8 @@ import type { SignalRadarData } from '@xbam/shared/contracts';
 /**
  * The same rule as `hasStudioRiskMark`: only the Studio bridge writes
  * `config.studioRisk`, and it counts only as a non-null object. `config ? key`
- * would also match a JSON null, a string or a boolean.
+ * would also match a JSON null, a string or a boolean. Playbook sources are
+ * tracked_keyword and own no baselines or candidates, so this SQL never returns PLAYBOOK.
  */
 const PROVENANCE = `CASE WHEN jsonb_typeof(s.config->'studioRisk') = 'object' THEN 'STUDIO_RISK_WATCH' ELSE 'OWNER' END`;
 

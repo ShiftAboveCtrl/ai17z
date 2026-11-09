@@ -68,11 +68,16 @@ export async function versionDigests(playbookId: string, version: number, tx?: T
   return rows.map((r) => String(r.content_sha256));
 }
 
-/** Materialise one ordinary keyword source per linked playbook, without another timer. */
+/**
+ * Materialise one ordinary keyword source per linked playbook, without another timer.
+ *
+ * A marker counts only as a non-null value, as `radarSourceProvenance` reads it: `config ? key`
+ * is also true for a JSON null, which would disable a source the screen calls an owner's.
+ */
 export async function syncRadarSources(tx?: Tx, agentId?: string): Promise<void> {
   const run = async (sql: string) => tx ? tx.query(sql, [agentId ?? null]) : query(sql, [agentId ?? null]);
   await run(`UPDATE radar_sources s SET enabled = false, status = 'DISABLED', updated_at = now()
-    WHERE s.config ? 'playbookAgentId' AND ($1::uuid IS NULL OR s.config->>'playbookAgentId' = $1::text)
+    WHERE coalesce(jsonb_typeof(s.config->'playbookAgentId'), 'null') <> 'null' AND ($1::uuid IS NULL OR s.config->>'playbookAgentId' = $1::text)
       AND NOT EXISTS (
         SELECT 1 FROM agent_playbooks p JOIN trade_mandates m ON m.id = p.mandate_id AND m.retired_at IS NULL
           JOIN agent_accounts aa ON aa.agent_id = p.agent_id AND aa.account_id = s.account_id AND aa.enabled

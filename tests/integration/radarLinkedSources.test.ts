@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { accounts, query, radar, signals } from '@xbam/database';
+import { accounts, query, radar, signals, trading } from '@xbam/database';
 import { radarSourceProvenance } from '@xbam/shared/contracts';
 import { signalWatchKey } from '@xbam/shared';
 import { buildServer } from '../../apps/api/src/server';
@@ -62,11 +62,33 @@ describe('the radar API and sources that a sync recreates', () => {
     const bindingId = randomUUID();
     const watchId = randomUUID();
     const agentId = f.agentId;
+    // Both sources are backed by live state, because a delete is refused only while a sync can bring a source back.
+    await accounts.linkAgentAccount({ agentId, accountId: account.id, actionType: 'REPLY' });
+    await query(
+      `INSERT INTO studio_risk_bindings (agent_id, id, owner_id, account_id, enabled, installation_id, origin, linked_at, expires_at)
+       VALUES ($1,$2,$3,$4,true,'inst','https://studio.example.invalid','2026-01-01T00:00:00.000Z', now() + interval '10 minutes')`,
+      [agentId, bindingId, f.ownerId, account.id],
+    );
+    const mandate = await trading.putMandate({
+      agentId, ownerId: f.ownerId,
+      mandate: {
+        mode: 'PAPER', approval: 'OWNER_APPROVES_EACH', venues: ['AMM_POOL_SOLANA'], networks: ['solana'], assetScope: 'LISTED',
+        allowedAssets: [{ kind: 'ONCHAIN', network: 'solana', address: mint, decimals: 9, symbol: 'SOL' }],
+        maxPerTrade: '1000000000', maxPerDay: '3000000000', maxOpenExposure: '5000000000', maxOpenPositions: 4, maxSlippageBps: 300,
+        maxPriceImpactBps: 500, minLiquidityBase: '50000000000', maxFeeBase: '10000000', quoteMaxAgeMs: 30_000, expiresAt: null, paused: false,
+        protectiveExits: null,
+      } as unknown as Parameters<typeof trading.putMandate>[0]['mandate'],
+    });
+    const pinId = randomUUID();
+    await query(
+      `INSERT INTO agent_playbooks (id, agent_id, owner_id, playbook_id, version, title, content_sha256, document, effective, mandate_id)
+       VALUES ($1,$2,$3,'fixture',1,'Momentum',$4,'{}'::jsonb,'{}'::jsonb,$5)`,
+      [pinId, agentId, f.ownerId, 'c'.repeat(64), mandate.id],
+    );
     const studioId = await insertSource(account.id, 'market_signal', `studio-risk:${bindingId}:${watchId}:${'a'.repeat(64)}`, 'Studio risk watch: LIQUIDITY_BELOW', {
       intervalSeconds: 14400, limit: 1, mayTrigger: false, priority: 30, watches: [watch],
       studioRisk: { bindingId, agentId, watchId, watchRevision: 'a'.repeat(64) },
     });
-    const pinId = randomUUID();
     const playbookId = await insertSource(account.id, 'tracked_keyword', `playbook:${agentId}`, 'Playbook: Momentum', {
       playbookAgentId: agentId, playbookPinId: pinId, mayTrigger: false, intervalSeconds: 180,
     });
@@ -129,6 +151,100 @@ describe('the radar API and sources that a sync recreates', () => {
       // An ordinary source is still saved over.
       const ok = await app.inject({ method: 'POST', url, headers, payload: { kind: 'tracked_keyword', target: 'my topic', enabled: false } });
       expect(ok.statusCode, ok.body).toBe(200);
+    } finally { await app.close(); }
+  });
+});
+
+describe('removing a linked source that nothing can recreate any more', () => {
+  async function bound(over: { enabled?: boolean; lastError?: string | null; expiresInMs?: number | null; linked?: boolean } = {}) {
+    const f = await createFixture();
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'orphan-owner' });
+    if (over.linked !== false) await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id, actionType: 'REPLY' });
+    const bindingId = randomUUID();
+    await query(
+      `INSERT INTO studio_risk_bindings (agent_id, id, owner_id, account_id, enabled, installation_id, origin, linked_at, last_error, expires_at)
+       VALUES ($1,$2,$3,$4,true,'inst','https://studio.example.invalid','2026-01-01T00:00:00.000Z',$5,
+               CASE WHEN $6::bigint IS NULL THEN NULL ELSE now() + ($6::bigint * interval '1 millisecond') END)`,
+      [f.agentId, bindingId, f.ownerId, account.id, over.lastError ?? null, over.expiresInMs === undefined ? 600_000 : over.expiresInMs],
+    );
+    const watchId = randomUUID();
+    const sourceId = await insertSource(account.id, 'market_signal', `studio-risk:${bindingId}:${watchId}:${'b'.repeat(64)}`, 'Studio risk watch: LIQUIDITY_BELOW', {
+      intervalSeconds: 14400, watches: [watch], studioRisk: { bindingId, agentId: f.agentId, watchId, watchRevision: 'b'.repeat(64) },
+    });
+    await query('UPDATE radar_sources SET enabled = $2 WHERE id = $1', [sourceId, over.enabled ?? true]);
+    return { ...f, account, sourceId };
+  }
+  const del = async (f: { account: { id: string }; ownerEmail: string }, sourceId: string) => {
+    const app = await buildServer();
+    try {
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: f.ownerEmail, password: 'test-password-1234' } });
+      const headers = { authorization: `Bearer ${login.json().data.token}` };
+      return await app.inject({ method: 'DELETE', url: `/api/accounts/${f.account.id}/radar/${sourceId}`, headers });
+    } finally { await app.close(); }
+  };
+
+  it('deletes a disabled Studio source once the settled binding no longer lists the watch', async () => {
+    const f = await bound({ enabled: false });
+    const response = await del(f, f.sourceId);
+    expect(response.statusCode, response.body).toBe(200);
+    expect(await radar.getSource(f.sourceId)).toBeNull();
+  });
+
+  it('deletes a Studio source whose binding has been switched off or whose account link is gone', async () => {
+    const off = await bound({ enabled: true });
+    await query('UPDATE studio_risk_bindings SET enabled = false WHERE agent_id = $1', [off.agentId]);
+    expect((await del(off, off.sourceId)).statusCode).toBe(200);
+    const unlinked = await bound({ enabled: false, lastError: 'The local account link was removed.', linked: false });
+    expect((await del(unlinked, unlinked.sourceId)).statusCode).toBe(200);
+  });
+
+  it('still refuses while the sync can switch it on, with the sentence that says so', async () => {
+    const live = await bound({ enabled: true });
+    const refused = await del(live, live.sourceId);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.body).toContain('Studio risk watch link');
+    expect(await radar.getSource(live.sourceId)).not.toBeNull();
+    // A suspension may be lifted by the next sync, and a fresh enable has not been settled yet.
+    const suspended = await bound({ enabled: false, lastError: 'Studio risk watches are unavailable.' });
+    expect((await del(suspended, suspended.sourceId)).statusCode).toBe(400);
+    const fresh = await bound({ enabled: false, expiresInMs: null });
+    expect((await del(fresh, fresh.sourceId)).statusCode).toBe(400);
+  });
+
+  it('deletes a disabled playbook source nothing pins any more', async () => {
+    const f = await createFixture();
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'orphan-playbook' });
+    const id = await insertSource(account.id, 'tracked_keyword', `playbook:${f.agentId}`, 'Playbook: Gone', {
+      playbookAgentId: f.agentId, playbookPinId: randomUUID(), mayTrigger: false,
+    });
+    await query(`UPDATE radar_sources SET enabled = false, status = 'DISABLED' WHERE id = $1`, [id]);
+    const response = await del({ account, ownerEmail: f.ownerEmail }, id);
+    expect(response.statusCode, response.body).toBe(200);
+    expect(await radar.getSource(id)).toBeNull();
+  });
+});
+
+describe('the other radar writes return the same view as the list', () => {
+  it('POST /radar and POST /radar/defaults return no raw row', async () => {
+    const f = await createFixture();
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'view-owner' });
+    const app = await buildServer();
+    try {
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: f.ownerEmail, password: 'test-password-1234' } });
+      const headers = { authorization: `Bearer ${login.json().data.token}` };
+      const saved = await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/radar`, headers, payload: { kind: 'tracked_keyword', target: 'my topic', config: { mayTrigger: true, intervalSeconds: 300 } } });
+      expect(saved.statusCode, saved.body).toBe(200);
+      const one = saved.json().data as Record<string, unknown>;
+      expect(one).toMatchObject({ provenance: 'OWNER', target: 'my topic' });
+      for (const raw of ['accountId', 'cursor', 'createdAt', 'updatedAt', 'lastSideWorkAt']) expect(one, raw).not.toHaveProperty(raw);
+      const defaults = await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/radar/defaults`, headers });
+      expect(defaults.statusCode, defaults.body).toBe(200);
+      const many = defaults.json().data.sources as Record<string, unknown>[];
+      expect(many.length).toBeGreaterThan(0);
+      for (const source of many) {
+        expect(source).toHaveProperty('provenance', 'OWNER');
+        for (const raw of ['accountId', 'cursor', 'createdAt', 'updatedAt', 'lastSideWorkAt']) expect(source, raw).not.toHaveProperty(raw);
+      }
     } finally { await app.close(); }
   });
 });

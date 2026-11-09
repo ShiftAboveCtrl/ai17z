@@ -299,6 +299,64 @@ describe('versions', () => {
     expect(await radar.listSources(account.id)).toHaveLength(1);
   });
 
+  it('moves past a playbook asset that has no mint address instead of stalling on it', async () => {
+    const t = await setup();
+    const account = await accounts.createAccount({ ownerId: t.f.ownerId, channel: 'mock', handle: 'playbook-native' });
+    await accounts.updateAccount(account.id, { enabled: true, status: 'CONNECTED' });
+    await accounts.linkAgentAccount({ agentId: t.f.agentId, accountId: account.id, actionType: 'REPLY', triggerEventTypes: ['MENTION'] });
+    const reads: string[] = [];
+    vi.mocked(getChannelAdapter).mockReturnValue({
+      ...mockAdapter,
+      async pollRadarSource(_ctx, input): Promise<RadarPollResult> {
+        reads.push(input.target ?? '');
+        return { candidates: [], cursor: null, error: null };
+      },
+    });
+    await t.imported(doc());
+    // The pinned mandate keeps its id; only its asset list gains a native asset ahead of the mints.
+    const live = (await trading.liveMandate(t.f.agentId))!;
+    const assets = [{ kind: 'NATIVE', network: 'solana' }, ...live.allowedAssets];
+    await query('UPDATE trade_mandates SET allowed_assets = $2::jsonb WHERE id = $1', [live.id, JSON.stringify(assets)]);
+    const [source] = await radar.listSources(account.id);
+    const worker = new SocialRadar();
+    await worker.tick();
+    expect(reads).toEqual([]);
+    expect(await radar.getSource(source!.id)).toMatchObject({ cursor: '1', enabled: true });
+    await radar.retryNow(source!.id);
+    await worker.tick();
+    expect(reads).toEqual([MINT_A]);
+  });
+
+  it('leaves a source alone whose playbook marker is a JSON null', async () => {
+    const t = await setup();
+    const account = await accounts.createAccount({ ownerId: t.f.ownerId, channel: 'mock', handle: 'null-marker' });
+    const [row] = await query<{ id: string }>(
+      `INSERT INTO radar_sources (account_id, kind, target, label, enabled, config, next_poll_at)
+       VALUES ($1,'tracked_keyword','my topic','mine',true,'{"playbookAgentId":null,"mayTrigger":true}'::jsonb, now()) RETURNING id`,
+      [account.id],
+    );
+    await playbooks.syncRadarSources();
+    expect(await radar.getSource(row!.id)).toMatchObject({ enabled: true });
+  });
+
+  it('refuses to remove a live playbook source, then allows it once the agent is unlinked and the sync has disabled it', async () => {
+    const t = await setup();
+    const account = await accounts.createAccount({ ownerId: t.f.ownerId, channel: 'mock', handle: 'playbook-delete' });
+    await accounts.linkAgentAccount({ agentId: t.f.agentId, accountId: account.id, actionType: 'REPLY' });
+    await t.imported(doc());
+    const [source] = await radar.listSources(account.id);
+    const url = `/api/accounts/${account.id}/radar/${source!.id}`;
+    const live = await app.inject({ method: 'DELETE', url, headers: t.auth });
+    expect(live.statusCode).toBe(400);
+    expect(live.body).toContain('turns itself back on');
+    await query('UPDATE agent_accounts SET enabled = false WHERE agent_id = $1', [t.f.agentId]);
+    await playbooks.syncRadarSources();
+    expect(await radar.getSource(source!.id)).toMatchObject({ enabled: false });
+    const gone = await app.inject({ method: 'DELETE', url, headers: t.auth });
+    expect(gone.statusCode, gone.body).toBe(200);
+    expect(await radar.getSource(source!.id)).toBeNull();
+  });
+
   it('keeps the original owner ceilings through upgrades and switching playbooks', async () => {
     const t = await setup();
     const own = { mode: 'PAPER', assetScope: 'LISTED', maxPerTradeSol: '0.05', maxPerDaySol: '0.2', maxOpenExposureSol: '0.2', maxOpenPositions: 2, maxSlippageBps: 100, maxPriceImpactBps: 200, minLiquiditySol: '100', maxFeeSol: '0.002', expiresAt: null, protectiveExits: null };

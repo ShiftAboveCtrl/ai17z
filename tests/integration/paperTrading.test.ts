@@ -292,6 +292,28 @@ describe('a paper trade runs the whole path and signs nothing', () => {
     expect(out.detail).toContain('no mandate');
   }, 60_000);
 
+  it('settles the intent as refused when the mandate is gone by the time the fill is decided', async () => {
+    const fixture = await agent();
+    const first = snap();
+    let reads = 0;
+    // The second read is the one made just before the lock; the mandate is retired during it.
+    registerMarketReader({
+      id: 'retiring', version: '1', venues: ['PONS_V2_CURVE'],
+      async read() {
+        reads += 1;
+        if (reads === 2) await query('UPDATE trade_mandates SET retired_at = now() WHERE agent_id = $1', [fixture.agentId]);
+        return first;
+      },
+    });
+    const out = await ask(fixture.agentId);
+    expect(out.outcome).toBe('REFUSED');
+    if (out.outcome !== 'REFUSED') return;
+    expect(out.intent.status).toBe('RISK_REJECTED');
+    expect(out.verdict.reasons[0]!.detail).toMatch(/no longer has a mandate/);
+    const rows = await query<{ status: string }>('SELECT status FROM trade_intents WHERE agent_id = $1', [fixture.agentId]);
+    expect(rows.map((r) => r.status)).toEqual(['RISK_REJECTED']);
+  }, 60_000);
+
   it('makes one trade per decision when retried', async () => {
     const fixture = await agent();
     registerMarketReader(fakeReader([snap()]));

@@ -300,7 +300,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       // Saving over a linked source would switch it off or rewrite it until the next sync undid that.
       const target = body.target?.trim() || null;
       const existing = (await radarRepo.listSources(account.id)).find((s) => s.kind === body.kind && s.target === target);
-      if (existing) refuseLinkedSourceChange(existing);
+      if (existing) await refuseLinkedSourceChange(existing, 'save');
 
       const source = await radarRepo.upsertSource({
         accountId: account.id,
@@ -317,7 +317,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         entityId: account.id,
         data: { kind: body.kind, target: source.target },
       });
-      return source;
+      return radarSourceView(source);
     }),
   );
 
@@ -343,7 +343,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
           }),
         );
       }
-      return { sources: created };
+      return { sources: created.map(radarSourceView) };
     }),
   );
 
@@ -389,8 +389,8 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       const account = await ownedAccount(params(request).id!, user);
       const source = await radarRepo.getSource(params(request).sourceId!);
       if (!source || source.accountId !== account.id) throw new NotFoundError('Radar source');
-      // A sync recreates it, so a delete would only look like it worked.
-      refuseLinkedSourceChange(source);
+      // While a sync can still recreate it a delete would only look like it worked.
+      await refuseLinkedSourceChange(source, 'delete');
       await radarRepo.deleteSource(source.id);
       return { deleted: true };
     }),

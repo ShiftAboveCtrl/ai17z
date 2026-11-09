@@ -211,9 +211,14 @@ export class SocialRadar {
       }
       const index = /^\d+$/.test(source.cursor ?? '') ? Number(source.cursor) % universe.length : 0;
       const asset = universe[index]!;
-      if (asset.kind !== 'ONCHAIN') return;
-      target = asset.address;
       playbookNext = String((index + 1) % universe.length);
+      if (asset.kind !== 'ONCHAIN') {
+        // Only an exact mint can be searched. Returning without moving the cursor met this same
+        // asset on every poll and the assets after it were never read.
+        await radarRepo.deferPoll(source.id, new Date(Date.now() + interval), 'A playbook asset without a mint address was skipped; the next one is read on the next poll.', playbookNext);
+        return;
+      }
+      target = asset.address;
     }
     let ownPostId: string | null = null;
     let ownPostAgentId: string | null = null;

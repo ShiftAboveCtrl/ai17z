@@ -1,5 +1,5 @@
 import { BadRequestError } from '@xbam/shared';
-import type { RadarSourceRow } from '@xbam/database';
+import { radar as radarRepo, type RadarSourceRow } from '@xbam/database';
 import { radarSourceProvenance, type RadarSourceProvenance } from '@xbam/shared/contracts';
 
 /**
@@ -60,13 +60,29 @@ export function radarSourceView(source: RadarSourceRow): RadarSourceView {
  * Switching it off or deleting it would look like it worked until the next
  * tick, which turns it back on, so the refusal says where the setting really
  * lives instead.
+ *
+ * That is only true while something live can still do the recreating. Once the
+ * watch is gone, the Studio switch is off, the link failed, the pin is retired
+ * or the account link is removed, the sync has already left the source
+ * disabled and nothing will bring it back, so a delete is honest and is
+ * allowed: refusing would leave a dead row nobody can clear. Saving over it
+ * stays refused either way, because a save rewrites its config and would
+ * strip the marker that says where it came from.
  */
-export function refuseLinkedSourceChange(source: Pick<RadarSourceRow, 'config'>): void {
+export async function refuseLinkedSourceChange(source: RadarSourceRow, action: 'save' | 'delete'): Promise<void> {
   const provenance = radarSourceProvenance(source.config);
+  if (provenance === 'OWNER') return;
+  const live = await radarRepo.linkedSourceCanReturn(source);
+  if (!live) {
+    if (action === 'delete') return;
+    throw new BadRequestError(
+      provenance === 'STUDIO_RISK_WATCH'
+        ? 'This source came from a Studio risk watch that is no longer active here, so it cannot be edited. Remove it from the list instead.'
+        : 'This source came from a playbook that this agent no longer runs, so it cannot be edited. Remove it from the list instead.',
+    );
+  }
   if (provenance === 'STUDIO_RISK_WATCH') {
     throw new BadRequestError('This source follows your Studio risk watch link. Change the watch in Studio, or turn the Studio risk watches switch off for this agent.');
   }
-  if (provenance === 'PLAYBOOK') {
-    throw new BadRequestError('This source follows the playbook linked to this agent and turns itself back on at every sync. Import a different playbook for the agent to change it.');
-  }
+  throw new BadRequestError('This source follows the playbook linked to this agent and turns itself back on at every sync. Import a different playbook for the agent to change it.');
 }

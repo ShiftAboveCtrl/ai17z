@@ -203,7 +203,13 @@ async function runPaperTradeNow(input: {
   // and a sale is checked against what is held at the moment it is filled.
   return trading.withPaperLock(input.agentId, async () => {
     const currentMandate = await trading.liveMandate(input.agentId);
-    if (!currentMandate) return { outcome: 'NO_MARKET' as const, detail: 'This agent no longer has a mandate, so nothing may be filled.' };
+    if (!currentMandate) {
+      // The market was read, so this is a refusal of a recorded decision and not an unreadable
+      // venue. Leaving the intent SIMULATED would strand it where nothing ever settles it.
+      const reasons = [{ code: 'MANDATE_GONE', detail: 'This agent no longer has a mandate, so nothing may be filled.' }];
+      const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: reasons });
+      return { outcome: 'REFUSED' as const, verdict: { allowed: false, needsOwnerApproval: false, reasons }, intent: refused ?? onRow };
+    }
     const verdict = judgeTrade(
       await judgeTradeInput({
         intentRow: onRow,
