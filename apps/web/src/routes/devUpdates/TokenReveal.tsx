@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useId, useState } from 'react';
 import { KeyRound } from 'lucide-react';
 import { transportBase, transportMode } from '@app/lib/transport';
 import { MCP_SERVER_FILE, apiUrlFrom, commandState, type DevUpdateConnection } from '@app/lib/devUpdates';
@@ -37,16 +37,6 @@ export function TokenReveal({
   const [localPath, setLocalPath] = useState('');
   const pathId = useId();
   const hintId = useId();
-  useEffect(() => {
-    const dismiss = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopImmediatePropagation();
-        onDone();
-      }
-    };
-    document.addEventListener('keydown', dismiss, true);
-    return () => document.removeEventListener('keydown', dismiss, true);
-  }, [onDone]);
   const hosted = transportMode() === 'HOSTED';
   const state = commandState({
     connection,
@@ -72,8 +62,8 @@ export function TokenReveal({
         <p className="eyebrow text-bone-dim">Connect your coding assistant</p>
         {hosted ? (
           <p className="break-words text-sm text-signal-wait" role="status">
-            Sender commands are not available through this hosted connection. The gateway requires a browser grant;
-            a sender token alone cannot connect to it. Connect through a directly reachable AI17Z API to prepare a command.
+            Sender commands are not available through this hosted connection. The gateway requires a Studio browser grant in x-ai17z-grant;
+            a sender token alone cannot connect to it. Open a directly reachable AI17Z API in LOCAL mode to prepare a sender command.
           </p>
         ) : !connection && !connectionError ? (
           // Still asking: not a failure, and saying it was one tells the owner
