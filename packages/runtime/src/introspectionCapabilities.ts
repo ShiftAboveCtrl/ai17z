@@ -40,6 +40,7 @@ import { defineCapability, registerCapability, collectDiagnostics, type AnyCapab
 import type { ComponentHealth } from '@xbam/shared/contracts';
 import { explainRehearsal } from './rehearse';
 import { describeLearning } from './learning';
+import { playbookStatus } from './playbookImport';
 
 const DAY_MS = 86_400_000;
 
@@ -103,12 +104,15 @@ const selfState = defineCapability({
     beliefs: z.number(),
     activeGoals: z.number(),
     people: z.record(z.string(), z.number()),
+    /** Which published playbook its paper mandate is set from, and at which version. Null when none. */
+    playbook: z.string().nullable(),
     detail: z.string(),
   }),
   modelCallable: true,
   timeoutMs: 10_000,
   async run(_input, ctx) {
     const agent = await agentsRepo.requireAgent(ctx.agentId);
+    const playbook = (await playbookStatus(agent.id))?.sentence ?? null;
     const [persona, links, memories, sources, stances, goals, people, wake] = await Promise.all([
       agentsRepo.getActivePersona(agent.id),
       accountsRepo.listAgentAccounts(agent.id),
@@ -133,6 +137,7 @@ const selfState = defineCapability({
       beliefs: stances.length,
       activeGoals: goals.length,
       people: people as Record<string, number>,
+      playbook,
       detail:
         links.length === 0
           ? 'No account is connected, so this agent cannot read or act anywhere yet.'

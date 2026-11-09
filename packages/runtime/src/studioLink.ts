@@ -901,6 +901,25 @@ export async function studioExchange(json: Record<string, unknown>): Promise<{ o
   return { ok: true, body: answer.body };
 }
 
+/**
+ * One published playbook, as Studio serves it to a linked installation.
+ *
+ * Read only and a plain GET: the id is checked against the playbook id grammar
+ * before it reaches a path, and what comes back is returned as an unparsed
+ * value, because `playbookImport.ts` is the only thing allowed to decide what
+ * a playbook may say. Nothing in the answer is trusted here.
+ */
+export async function studioPlaybook(studioId: string): Promise<{ ok: true; document: unknown } | StudioProblem> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(studioId)) return { ok: false, why: 'That is not a playbook id.' };
+  const answer = await authed(`/api/v1/installation/playbooks/${studioId}`, { method: 'GET' }).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  if (answer.status === 404) return { ok: false, why: 'Studio has no playbook with that id for this installation.' };
+  if (answer.status !== 200 || !answer.body || answer.body.protocol !== 1 || answer.body.playbook === undefined) return { ok: false, why: describe(answer) };
+  return { ok: true, document: answer.body.playbook };
+}
+
 export async function studioPurchases(): Promise<{ ok: true; purchases: StudioPurchase[] } | StudioProblem> {
   const answer = await authed('/api/v1/installation/purchases', { method: 'GET' }).catch(
     (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),

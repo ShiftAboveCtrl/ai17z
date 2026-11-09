@@ -27,7 +27,7 @@ import type {
   TradeSide,
   TradeVenue,
 } from '@xbam/shared/contracts';
-import { getPool, query, queryOne } from '../pool';
+import { getPool, query, queryOne, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
 export interface TradeMandateRow {
@@ -118,11 +118,15 @@ export async function putMandate(input: {
   agentId: string;
   ownerId: string | null;
   mandate: Omit<TradeMandate, 'id' | 'agentId'>;
+  /** Inside a transaction the pooled helpers are refused, so the caller's own connection is passed through. */
+  tx?: Tx;
 }): Promise<TradeMandateRow> {
   const m = input.mandate;
-  await query(`UPDATE trade_mandates SET retired_at = now() WHERE agent_id = $1 AND retired_at IS NULL`, [input.agentId]);
+  const run = input.tx ? (text: string, params: unknown[]) => input.tx!.query(text, params) : (text: string, params: unknown[]) => query(text, params);
+  const one = input.tx ? (text: string, params: unknown[]) => input.tx!.one(text, params) : (text: string, params: unknown[]) => queryOne(text, params);
+  await run(`UPDATE trade_mandates SET retired_at = now() WHERE agent_id = $1 AND retired_at IS NULL`, [input.agentId]);
   return mapRow<TradeMandateRow>(
-    await queryOne(
+    await one(
       `INSERT INTO trade_mandates (
          agent_id, owner_id, mode, approval, venues, networks, allowed_assets,
          max_per_trade, max_per_day, max_open_exposure, max_open_positions,

@@ -81,6 +81,7 @@ export * from './studioControl';
 export * from './studioLiveTrades';
 export * from './protectiveExits';
 export * from './mandateEditor';
+export * from './playbookImport';
 export * from './studioLiveView';
 export * from './agentStart';
 export * from './agentStatusNow';
