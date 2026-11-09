@@ -10,6 +10,7 @@ import { registerInboxRoutes as inboxRoutes } from './routes/inbox';
 import { registerPluginRoutes as pluginRoutes } from './routes/plugins';
 import { registerCouncilRoutes as councilRoutes } from './routes/council';
 import { registerStudioRoutes as studioRoutes } from './routes/studio';
+import { registerStudioVoiceRoutes as studioVoiceRoutes } from './routes/studioVoice';
 import { liveTradeRoutes } from './routes/liveTrades';
 import { mandateRoutes } from './routes/mandates';
 import { easyRoutes, easyStartRoutes } from './routes/easy';
@@ -89,6 +90,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(pluginRoutes);
   await app.register(councilRoutes);
   await app.register(studioRoutes);
+  await app.register(studioVoiceRoutes);
   await app.register(liveTradeRoutes);
   await app.register(mandateRoutes);
   await app.register(easyRoutes);

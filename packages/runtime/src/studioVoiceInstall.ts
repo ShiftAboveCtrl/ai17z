@@ -28,7 +28,7 @@
  * only a screen read.
  */
 import { BadRequestError, slugify } from '@xbam/shared';
-import type { VoiceCounts, VoiceDocument } from '@xbam/shared/contracts';
+import { hasForbiddenCharacters, type VoiceCounts, type VoiceDocument } from '@xbam/shared/contracts';
 import { agents as agentsRepo, deliberation, ops } from '@xbam/database';
 import { ensureAgentPipeline } from './bootstrap';
 import { fetchPublishedVoice } from './studioVoice';
@@ -104,6 +104,12 @@ function agentName(chosen: string | undefined, document: VoiceDocument): string 
   const name = (chosen ?? '').trim() || document.title;
   if (name.length > 120) throw new BadRequestError('An agent name is at most 120 characters.');
   if (/[\r\n]/.test(name)) throw new BadRequestError('An agent name is a single line.');
+  // The installer's own typing is held to what a stranger's file is: a
+  // direction override or a control character reads differently from how it is
+  // stored, and this name is shown in lists and becomes part of a slug.
+  if (hasForbiddenCharacters(name)) {
+    throw new BadRequestError('An agent name cannot contain control or direction-override characters.');
+  }
   return name;
 }
 

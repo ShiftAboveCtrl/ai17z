@@ -301,15 +301,37 @@ updates to installed copies.
 
 ## Not done on the core side
 
-- API routes and screens for preview, publish, list, inspect and install. The
-  service functions (`previewVoice`, `publishVoice`, `unpublishVoice`,
-  `inspectVoice`, `installVoice`, `installPublishedVoice`) are exported and the
-  routes are a thin layer on them, using `OWNER_ACTION` for the button.
+- Nothing for the routes and screens: they exist (below). What remains is
+  outside them: a `.ai17z-voice` file *export* button.
 - A `.ai17z-voice` file download and import dialog. `installVoice` already reads
   one.
 - No migration: the pending record, listing record and install provenance live
   in `app_settings`, keyed by agent id. They are not removed when an agent is
   deleted, which leaves a few orphan rows.
+
+## The owner's routes and screens
+
+`apps/api/src/routes/studioVoice.ts` is a thin layer over the functions above
+and adds no rule. Every route is for a signed-in owner; the agent routes also
+require the agent to be theirs. Under `/api/agents/:id/studio-voice` (not
+`/voice`, which is the persona's own) and `/api/studio/voices`.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/agents/:id/studio-voice` | Link state and what this installation last heard about the agent's listing. |
+| `POST .../preview` | `previewVoice`. Sends nothing. |
+| `POST .../publish` `{ digest }` | `publishVoice` with `OWNER_ACTION`. A digest with no stored, unexpired, unchanged preview is `409` (`NO_PREVIEW`, `EXPIRED`, `CHANGED_SINCE_PREVIEW`); Studio unreachable is `200` `UNAVAILABLE` with a sentence. |
+| `POST .../unpublish` `{ listingId }` | `unpublishVoice` with `OWNER_ACTION`. |
+| `GET /api/studio/voices` | `listPublishedVoices`. |
+| `POST /api/studio/voices/inspect` | A file's document or a Studio listing; creates nothing; returns the parsed document for the screen to show. |
+| `POST /api/studio/voices/install` | `installVoice` / `installPublishedVoice`: the powerless draft described above. Reading a published voice needs no link. |
+
+Bodies are strict. `OWNER_ACTION` is only ever constructed here, and the digest
+in the request is still checked against the stored preview, so a button for a
+stale or invented digest publishes nothing. The agent page's **Publish voice**
+section (Character area) shows the document field by field before the owner
+ticks the confirmation that names the digest; the install entry is on the agent
+list and in the new-agent flow.
 
 ## Tests
 
@@ -319,5 +341,6 @@ updates to installed copies.
   installed voice becomes, and the pinned capability list.
 - `tests/integration/studioVoicePublish.test.ts`: the flows above against
   `tests/support/voiceStudioServer.ts` and a real Postgres.
+- `tests/integration/studioVoiceRoutes.test.ts`: each route, including a publish that is refused for every digest the stored preview does not name.
 - `tests/integration/packsOff.test.ts` registers the new capabilities with the
   rest.

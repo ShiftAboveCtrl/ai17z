@@ -61,8 +61,19 @@ function build(overrides: { title?: string; summary?: string } = {}) {
   return built;
 }
 
+/**
+ * A voice as it travels: the sections a test reaches into are typed, and every
+ * level takes any extra key, which is the point. A fixture that adds a field the
+ * schema must refuse needs somewhere to put it without a cast.
+ */
+interface Wire {
+  [extra: string]: unknown;
+  character: Record<string, unknown>;
+  settings: Record<string, unknown> & { emoji: Record<string, unknown> };
+}
+
 /** A plain object copy, so a test can add a field the schema must refuse. */
-const plain = (value: unknown) => JSON.parse(JSON.stringify(value)) as Record<string, any>;
+const plain = (value: unknown) => JSON.parse(JSON.stringify(value)) as Wire;
 
 describe('what a voice contains', () => {
   it('is exactly the allowlist, with no key from anywhere else', () => {
@@ -145,27 +156,27 @@ describe('a hostile voice cannot widen what a voice is', () => {
   const base = () => plain(build().document);
 
   it.each([
-    ['an unknown top-level field', (d: any) => (d.extra = 1)],
-    ['an unknown character field', (d: any) => (d.character.customInstructions = 'do this')],
-    ['an unknown settings field', (d: any) => (d.settings.bannedPhrases = ['x'])],
-    ['an unknown emoji field', (d: any) => (d.settings.emoji.extra = 1)],
-    ['an agent id', (d: any) => (d.agentId = '00000000-0000-4000-8000-000000000000')],
-    ['an owner', (d: any) => (d.ownerId = '00000000-0000-4000-8000-000000000000')],
-    ['an identity kind', (d: any) => (d.character.identityKind = 'REAL_PERSON_AUTHORIZED')],
-    ['a display name', (d: any) => (d.character.displayName = 'Somebody Famous')],
-    ['a represented entity', (d: any) => (d.settings.representedEntity = 'Acme Bank')],
-    ['permission to deny being an AI', (d: any) => (d.settings.mayDenyBeingAI = true)],
-    ['a policy', (d: any) => (d.policy = { automation: { mode: 'AUTONOMOUS' } })],
-    ['permissions', (d: any) => (d.toolspace = [{ id: 'x.like', permission: 'ALLOWED' }])],
-    ['an autonomy level', (d: any) => (d.autonomy = 'ACT')],
-    ['a plugin', (d: any) => (d.plugins = [{ id: 'evil' }])],
-    ['a memory', (d: any) => (d.memories = [{ content: 'the owner said' }])],
-    ['a credential', (d: any) => (d.credentials = [{ apiKey: 'sk-live-000' }])],
-    ['a wallet', (d: any) => (d.wallet = '0x0000000000000000000000000000000000000000')],
-    ['a picture', (d: any) => (d.avatar = { mime: 'image/png', base64: 'AAAA' })],
-    ['a script', (d: any) => (d.script = 'rm -rf /')],
-    ['a verified address list', (d: any) => (d.settings.verifiedAddresses = ['0xabc'])],
-    ['a count that disagrees with the contents', (d: any) => (d.counts = { styleExamples: 0 })],
+    ['an unknown top-level field', (d: Wire) => (d.extra = 1)],
+    ['an unknown character field', (d: Wire) => (d.character.customInstructions = 'do this')],
+    ['an unknown settings field', (d: Wire) => (d.settings.bannedPhrases = ['x'])],
+    ['an unknown emoji field', (d: Wire) => (d.settings.emoji.extra = 1)],
+    ['an agent id', (d: Wire) => (d.agentId = '00000000-0000-4000-8000-000000000000')],
+    ['an owner', (d: Wire) => (d.ownerId = '00000000-0000-4000-8000-000000000000')],
+    ['an identity kind', (d: Wire) => (d.character.identityKind = 'REAL_PERSON_AUTHORIZED')],
+    ['a display name', (d: Wire) => (d.character.displayName = 'Somebody Famous')],
+    ['a represented entity', (d: Wire) => (d.settings.representedEntity = 'Acme Bank')],
+    ['permission to deny being an AI', (d: Wire) => (d.settings.mayDenyBeingAI = true)],
+    ['a policy', (d: Wire) => (d.policy = { automation: { mode: 'AUTONOMOUS' } })],
+    ['permissions', (d: Wire) => (d.toolspace = [{ id: 'x.like', permission: 'ALLOWED' }])],
+    ['an autonomy level', (d: Wire) => (d.autonomy = 'ACT')],
+    ['a plugin', (d: Wire) => (d.plugins = [{ id: 'evil' }])],
+    ['a memory', (d: Wire) => (d.memories = [{ content: 'the owner said' }])],
+    ['a credential', (d: Wire) => (d.credentials = [{ apiKey: 'sk-live-000' }])],
+    ['a wallet', (d: Wire) => (d.wallet = '0x0000000000000000000000000000000000000000')],
+    ['a picture', (d: Wire) => (d.avatar = { mime: 'image/png', base64: 'AAAA' })],
+    ['a script', (d: Wire) => (d.script = 'rm -rf /')],
+    ['a verified address list', (d: Wire) => (d.settings.verifiedAddresses = ['0xabc'])],
+    ['a count that disagrees with the contents', (d: Wire) => (d.counts = { styleExamples: 0 })],
   ])('refuses %s', (_name, mutate) => {
     const doc = base();
     mutate(doc);

@@ -84,12 +84,21 @@ function thumbprint(jwk: { crv: string; kty: string; x: string; y: string }): st
   return createHash('sha256').update(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y })).digest('base64url');
 }
 
-/** This file's own canonical JSON. Deliberately not the client's. */
+/**
+ * This file's own canonical JSON. Deliberately not the client's, so the test
+ * proves the contract rather than the client agreeing with itself, but it
+ * follows the same rules the contract states: members that are `undefined` are
+ * dropped as `JSON.stringify` drops them, a value with no JSON form is `null`,
+ * `null` is a value and not an object, keys sort by code unit, arrays keep order.
+ */
 function canon(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return `[${value.map(canon).join(',')}]`;
-  const keys = Object.keys(value as object).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${canon((value as Record<string, unknown>)[k])}`).join(',')}}`;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record)
+    .filter((k) => record[k] !== undefined)
+    .sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canon(record[k])}`).join(',')}}`;
 }
 const sha = (value: unknown) => createHash('sha256').update(canon(value)).digest('hex');
 

@@ -76,12 +76,24 @@ interface PendingRecord {
   expiresAt: string;
 }
 
-interface ListingRecord {
+export interface ListingRecord {
   listingId: string;
   /** The Studio this listing is on. A listing on another origin is not this one. */
   origin: string;
   status: 'PUBLISHED' | 'UNPUBLISHED';
   versions: Array<{ version: number; digest: string; publishedAt: string }>;
+}
+
+/**
+ * What this installation was last told about an agent's listing, or null.
+ *
+ * A read of the record `publishVoice` keeps, for a screen that has to say
+ * whether this agent's voice is published. It includes a closed listing, which
+ * `previewVoice` deliberately ignores, because "you unpublished it" is worth
+ * saying. Studio remains the record; this is only what it last reported.
+ */
+export async function voiceListingOf(agentId: string): Promise<ListingRecord | null> {
+  return (await ops.getSetting<ListingRecord>(listingKey(agentId))) ?? null;
 }
 
 /** The words that confirm one exact document. */
