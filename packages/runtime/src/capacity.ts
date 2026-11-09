@@ -26,6 +26,19 @@ const log = createLogger('capacity');
  * state that nobody asks about does not need to move.
  */
 
+/**
+ * Whether reading this channel spends from the one budget.
+ *
+ * The ledger and the breaker are keyed on the account, not on X, so they serve
+ * any channel that can be asked too often. X pays in page loads and Bluesky in
+ * API calls, and the cheaper unit does not make a runaway poll any less of one:
+ * a second network must not be a way around the first one's discipline. The
+ * names say X because X was first; the account row is what they mean.
+ */
+export function spendsReadBudget(channel: string): boolean {
+  return channel === 'x' || channel === 'bluesky';
+}
+
 /** Which class of capacity a radar source spends. */
 export function capacityClassForSource(kind: RadarSourceKind): CapacityClass {
   switch (kind) {

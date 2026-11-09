@@ -27,6 +27,16 @@ export interface ChannelContext {
   logger: Logger;
   /** Correlation id, present when the call belongs to a job. */
   jobId: string | null;
+  /**
+   * Opens the stored sign-in details, for a channel that signs in over an API
+   * rather than through a browser.
+   *
+   * A function, not a value, for the reason `LoginCredentials` is never placed on
+   * this object: the plaintext exists only for the length of the call that asks
+   * for it, and a context is passed around, logged by accident and kept in
+   * closures. Absent for every channel that has a browser session instead.
+   */
+  credentials?: () => Promise<LoginCredentials | null>;
 }
 
 export interface ConnectionResult {

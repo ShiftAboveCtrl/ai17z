@@ -2,6 +2,37 @@ export * from './contract';
 export * from './registry';
 export { mockAdapter } from './mock/index';
 export { xAdapter } from './x/index';
+// Bluesky, over the AT Protocol's HTTP API. The reads are a namespace because
+// readPost, readThread and readProfile are already X's names above.
+export { blueskyAdapter } from './bluesky/index';
+export * as blueskyReads from './bluesky/reads';
+export {
+  UNSAFE_DEV_ORIGIN_ENV as BLUESKY_UNSAFE_DEV_ORIGIN_ENV,
+  DEFAULT_SERVICE_URL as BLUESKY_DEFAULT_SERVICE_URL,
+  serviceTargetFor as blueskyServiceTargetFor,
+  forgetBlueskySession,
+  resetBlueskySessionsForTest,
+  cachedSessionFor as cachedBlueskySession,
+} from './bluesky/client';
+export {
+  notificationToEvent as blueskyNotificationToEvent,
+  parseNotifications as parseBlueskyNotifications,
+  branchFromThread as blueskyBranchFromThread,
+  eventTypeForReason as blueskyEventTypeForReason,
+} from './bluesky/normalise';
+export {
+  parsePostReference as parseBlueskyPostReference,
+  parseAtUri,
+  postPermalink as blueskyPermalink,
+  isPostUri as isBlueskyPostUri,
+} from './bluesky/uri';
+export {
+  detectSpans as detectBlueskySpans,
+  buildFacets as buildBlueskyFacets,
+  graphemeCount,
+  lengthProblem as blueskyLengthProblem,
+  MAX_POST_GRAPHEMES as BLUESKY_MAX_POST_GRAPHEMES,
+} from './bluesky/text';
 export { observeAuthPage } from './x/auth';
 export { signInWithStoredCredentials } from './x/credentialSignIn';
 export { CHALLENGE_SIGNALS, SEL } from './x/selectors';

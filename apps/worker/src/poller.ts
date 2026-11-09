@@ -8,10 +8,41 @@ import {
   nextPollDelayMs,
   noteXFailure,
   noteXRead,
+  spendsReadBudget,
 } from '@xbam/runtime';
+import { PipelineError } from '@xbam/shared';
+import type { Account } from '@xbam/shared/contracts';
 import { startLoop } from './loop';
 
 const log = createLogger('poller');
+
+/**
+ * A channel that signs in over an API stops being polled when the sign-in is gone.
+ *
+ * Bluesky limits how often a session may be created, so an account whose app
+ * password was revoked must not be polled back into that limit every few minutes.
+ * Moving it out of CONNECTED is what takes it out of the due list (the claim
+ * only selects CONNECTED accounts), and it is also the truth: the account needs
+ * a person. A security challenge gets its own status, because it is a different
+ * thing to tell somebody and the watcher must not keep reading around it.
+ */
+async function stopPollingIfSignInIsGone(account: Account, error: unknown): Promise<void> {
+  if (account.channel !== 'bluesky' || !(error instanceof PipelineError)) return;
+  const status =
+    error.reason === 'bluesky_auth_challenge'
+      ? 'CHALLENGE_REQUIRES_USER'
+      : error.reason === 'bluesky_auth_failed' || error.reason === 'bluesky_no_credentials'
+        ? 'NEEDS_AUTH'
+        : null;
+  if (!status) return;
+  await accountsRepo
+    .updateAccount(account.id, {
+      status,
+      lastError: error.message.slice(0, 500),
+      ...(status === 'CHALLENGE_REQUIRES_USER' ? { challengeKind: 'EMAIL_CODE' } : {}),
+    })
+    .catch(() => undefined);
+}
 
 /**
  * Pulls new events from channels that have to be polled rather than pushed.
@@ -96,7 +127,7 @@ export class ChannelPoller {
     try {
       const ctx = await buildChannelContext(account, null);
       const events = await adapter.ingestEvents(ctx, { limit: config.polling.batchLimit });
-      if (account.channel === 'x') await noteXRead(account.id, 'DIRECT');
+      if (spendsReadBudget(account.channel)) await noteXRead(account.id, 'DIRECT');
       let created = 0;
       for (const event of events) {
         const outcome = await ingestNormalizedEvent({ accountId: account.id, event });
@@ -124,7 +155,8 @@ export class ChannelPoller {
     } catch (error) {
       const message = errorMessage(error);
       log.warn('channel poll failed', { channel: account.channel, handle: account.handle, message });
-      if (account.channel === 'x') await noteXFailure(account.id, 'DIRECT', message);
+      if (spendsReadBudget(account.channel)) await noteXFailure(account.id, 'DIRECT', message);
+      await stopPollingIfSignInIsGone(account, error);
       // A failing account backs off like an idle one rather than being retried
       // every tick, but the streak is what grows, not a separate failure counter.
       const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak + 1, foundEvents: false });

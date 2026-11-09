@@ -85,6 +85,14 @@ The X adapter is written but has not been run against a live signed-in account.
 Its pure logic is unit tested; its browser behaviour is not, and X markup changes
 without notice. Treat the first live run as a dry run.
 
+## Bluesky
+
+Over the AT Protocol's HTTP API, with no browser. Linked with an app password that
+is proved before it is kept and then sealed under the master key; polled through
+the same cadence and the same read budget as X; replies quote the parent and root
+by URI and CID. See [BLUESKY.md](BLUESKY.md) for the full account, including what
+is not finished.
+
 ## Not implemented
 
 Discord, Telegram, Slack, email, and generic HTTP webhooks appear in the channel

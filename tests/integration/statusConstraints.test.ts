@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_STATUSES,
   APPROVAL_MODES,
+  CHANNELS,
   PIPELINE_NODE_KINDS,
   PROVIDER_KINDS,
   TRACE_EVENT_TYPES,
@@ -64,6 +65,37 @@ describe('every account status the code can produce is one the database accepts'
 
     await expect(
       accountsRepo.updateAccount(account.id, { status: 'DEFINITELY_NOT_A_STATUS' as never }),
+    ).rejects.toThrow();
+  });
+});
+
+describe('every channel the code can name is one the database accepts', () => {
+  /*
+    `accounts.channel` is the only column with a CHECK on the channel name, and
+    it was last written when X was the second channel. Adding 'bluesky' to the
+    contract without widening it would fail at the database on the first link,
+    and no unit test would have noticed.
+  */
+  it('writes each channel in the contract', async () => {
+    const fixture = await createFixture();
+    for (const channel of CHANNELS) {
+      const account = await accountsRepo.createAccount({
+        ownerId: fixture.ownerId,
+        channel,
+        handle: `channel_${channel}_${uniqueSuffix()}`,
+      });
+      expect(account.channel).toBe(channel);
+    }
+  });
+
+  it('still refuses a channel that is not in the contract', async () => {
+    const fixture = await createFixture();
+    await expect(
+      accountsRepo.createAccount({
+        ownerId: fixture.ownerId,
+        channel: 'definitely_not_a_channel' as never,
+        handle: `channel_${uniqueSuffix()}`,
+      }),
     ).rejects.toThrow();
   });
 });

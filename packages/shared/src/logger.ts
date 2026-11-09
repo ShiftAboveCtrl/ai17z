@@ -10,7 +10,9 @@ const pretty = process.env.NODE_ENV !== 'production' && process.env.XBAM_LOG_JSO
 // login name is usually an email address or a phone number rather than the
 // public handle, so it is a credential; `botUsername` and the rest are not,
 // which is why this is the specific shape and not `username`.
-const REDACT_KEYS = /(api_?key|apikey|password|secret|token|authorization|cookie|encrypted|login_?username)/i;
+// `jwt` is here for Bluesky: its session tokens are named accessJwt and refreshJwt,
+// which `token` does not match, and a log line holding one is a signed-in session.
+const REDACT_KEYS = /(api_?key|apikey|password|secret|token|jwt|authorization|cookie|encrypted|login_?username)/i;
 
 /** Recursively blanks anything that looks like a credential before it is logged. */
 export function redact(value: unknown, depth = 0): unknown {

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { BrowserEngine, CadenceConfig, CreateAccountInput } from '@xbam/shared/contracts';
-import { ForbiddenError, NotFoundError } from '@xbam/shared';
+import { BadRequestError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   browserTasks as browserTasksRepo,
@@ -11,7 +11,7 @@ import {
 } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@xbam/channels';
 import { closeSession } from '@xbam/browser';
-import { accountIsWell, ensureDefaultRadarSources } from '@xbam/runtime';
+import { accountIsWell, connectBlueskyAccount, ensureDefaultRadarSources } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAccount(accountId: string, user: UserRow) {
@@ -55,6 +55,12 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => {
       const user = await requireUser(request);
       const input = parseBody(CreateAccountInput, request);
+      if (input.channel === 'bluesky') {
+        // A Bluesky account is made by proving an app password, never by naming
+        // a handle: a row with no working sign-in is an account that polls into
+        // Bluesky's session limit and does nothing.
+        throw new BadRequestError('Link a Bluesky account with its app password: POST /api/accounts/bluesky.');
+      }
       const adapter = getChannelAdapter(input.channel);
 
       // Connecting a handle that is already connected is a thing people do, and
@@ -99,6 +105,43 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       // CONNECTED, so they sit idle until sign-in finishes.
       await ensureDefaultRadarSources(account.id);
       await ops.audit({ actorUserId: user.id, action: 'account.created', entityType: 'account', entityId: account.id });
+      return account;
+    }),
+  );
+
+  /*
+    Linking a Bluesky account.
+
+    Write-only for the password: what goes in is checked against Bluesky, then
+    sealed under the master key, and the response is the account row, which has
+    never had a secret on it. The audit row names the account and nothing the
+    owner typed.
+  */
+  app.post(
+    '/api/accounts/bluesky',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(
+        z.object({
+          identifier: z.string().trim().min(1).max(320),
+          appPassword: z.string().min(1).max(64),
+          serviceUrl: z.string().trim().max(300).nullable().optional(),
+        }),
+        request,
+      );
+      const { account, created } = await connectBlueskyAccount({
+        ownerId: user.id,
+        identifier: body.identifier,
+        appPassword: body.appPassword,
+        serviceUrl: body.serviceUrl ?? null,
+      });
+      await ops.audit({
+        actorUserId: user.id,
+        action: created ? 'account.created' : 'account.reconnected',
+        entityType: 'account',
+        entityId: account.id,
+        data: { channel: 'bluesky' },
+      });
       return account;
     }),
   );
