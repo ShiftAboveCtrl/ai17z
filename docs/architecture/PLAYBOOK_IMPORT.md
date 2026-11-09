@@ -51,7 +51,7 @@ call them.
 The fixed promises, shown with every preview:
 
 - It is written as a paper mandate. Nothing here can make it live, autonomous or able to sign.
-- Every entry still waits for you to approve it.
+- Paper entries are simulated automatically without per-entry approval, within your paper limits. Nothing is signed or sent.
 - No capability, permission or wallet is changed.
 - Only the assets listed are in its universe, by exact mint.
 
@@ -62,14 +62,17 @@ used by both the preview and the write, so they cannot disagree. It writes:
 
 - `mode: 'PAPER'` and `approval: 'OWNER_APPROVES_EACH'` as literals. No document
   field is read for either, and a unit test hands it a document that smuggles
-  both and shows they are ignored.
+  both and shows they are ignored. The approval field gates live trades only;
+  paper simulations do not enter the transaction approval workflow.
 - `venues: ['AMM_POOL_SOLANA']`, `networks: ['solana']`, `assetScope: 'LISTED'`
   with `allowedAssets` the exact mints, and no protective exits.
 - Each limit as the tightest of the published value, the playbook's capital, and
-  the owner's own mandate **where the owner wrote it** (a higher liquidity floor
+  the latest owner-written mandate, including retired owner mandates across
+  later imports (a higher liquidity floor
   is the stricter one; the earlier expiry wins; a tighter quote age is kept).
   A mandate a previous playbook wrote is not a ceiling the owner chose, so a
-  new version is shown as a change against it instead (`widensCurrent`).
+  new version is shown as a change against it instead (`widensCurrent`), while
+  the retained owner ceiling still binds.
 - The pause: a paused mandate stays paused.
 
 It refuses, with a sentence and the agent unchanged: a **LIVE** current mandate
@@ -77,8 +80,8 @@ It refuses, with a sentence and the agent unchanged: a **LIVE** current mandate
 owner switches it themselves first); an expired playbook; a duplicate or
 malformed mint; a limit set the owner's ceiling leaves with nothing to spend.
 
-Nothing reads a wallet, writes `agent_capability_permissions`, or reaches a
-channel. `tests/unit/noWalletCapabilities.test.ts` is unchanged and passes.
+Importing reads no wallet and writes no `agent_capability_permissions`.
+Radar observations use the existing channel path and grant no permission to act.
 
 ## Versions are pins
 
@@ -88,8 +91,9 @@ agent row** (`applyPin`), deciding against the mandate and pin read inside it. T
 imports at once queue; a plan made against a mandate the owner has since edited
 is never written over their edit.
 
-- The same id and version with different content is refused. A version that can
-  change is not a pin.
+- The same id and version with different content is refused against every digest
+  recorded in this installation, including retired pins and other agents. A
+  transaction lock serialises concurrent imports of the same version.
 - A lower version than the one running is refused unless `allowDowngrade` is
   sent, as with Plugin updates.
 - The same version and content when the agent still runs it is a no-op.
@@ -112,9 +116,18 @@ reaches owner chat, which is why it never reaches a public prompt.
 ## The signal radar
 
 `playbookUniverse(agentId)` returns the exact assets of a running playbook, and
-null when none runs or the owner has since edited the mandate. The signal radar
-(`feat/signal-radar`, not yet on `main`) reads its universe from here when it
-lands; nothing in this change reaches into it.
+null when none runs or the owner has since edited the mandate. Confirm creates
+an ordinary Social Radar keyword source per linked account. The existing radar
+tick also creates sources for accounts linked later, and disables sources after
+an owner edit or unlink. Each poll rotates to one exact mint from the current
+universe. X reads pass through `checkReadCapacity`, `noteXRead` and the existing
+keyword pacing rules. These sources inform context only and cannot create jobs.
+No second scheduler or market-signal implementation is introduced.
+
+Paper fills enforce per-trade and daily limits at execution. Daily spend and
+open exposure come from the paper journal in the trade's quote units, separate
+from live exposure. The gate and fill share the existing paper-journal lock, so
+concurrent buys cannot each spend the same remaining daily allowance.
 
 ## Studio's side of the contract
 

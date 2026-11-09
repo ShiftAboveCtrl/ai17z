@@ -83,7 +83,7 @@ export type PlaybookRefusal = { ok: false; why: string };
 
 export const PLAYBOOK_PROMISES = [
   'It is written as a paper mandate. Nothing here can make it live, autonomous or able to sign.',
-  'Every entry still waits for you to approve it.',
+  'Paper entries are simulated automatically without per-entry approval, within your paper limits. Nothing is signed or sent.',
   'No capability, permission or wallet is changed.',
   'Only the assets listed are in its universe, by exact mint.',
 ] as const;
@@ -138,7 +138,7 @@ export function planPlaybook(
   sha256: string,
   current: TradeMandateRow | null,
   pinned: PlaybookPinRow | null,
-  options: { allowDowngrade?: boolean; now?: Date } = {},
+  options: { allowDowngrade?: boolean; now?: Date; ownerCeiling?: TradeMandateRow | null; versionDigests?: string[] } = {},
 ): PlaybookPlan {
   const now = options.now ?? new Date();
   if (current?.mode === 'LIVE') {
@@ -151,8 +151,8 @@ export function planPlaybook(
   if (samePlaybook && doc.version < pinned.version && !options.allowDowngrade) {
     return { kind: 'REFUSE', why: `This is version ${doc.version} and the agent runs version ${pinned.version}. Going back to an older version has to be asked for. The agent is unchanged.` };
   }
-  if (samePlaybook && doc.version === pinned.version && pinned.contentSha256 !== sha256) {
-    return { kind: 'REFUSE', why: `Studio now serves different content for version ${doc.version} than the one this agent runs. A version never changes, so this is refused and the agent is unchanged.` };
+  if ((samePlaybook && doc.version === pinned.version && pinned.contentSha256 !== sha256) || options.versionDigests?.some((digest) => digest !== sha256)) {
+    return { kind: 'REFUSE', why: `Different content was already recorded for version ${doc.version} of this playbook. A version never changes, so this is refused and the agent is unchanged.` };
   }
 
   const assets: Asset[] = [];
@@ -181,10 +181,9 @@ export function planPlaybook(
   if (pub.trade > pub.day) return { kind: 'REFUSE', why: 'One trade cannot be allowed more than a whole day. The agent is unchanged.' };
 
   // Each limit is the tightest of: what was published, what the capital allows,
-  // and what the owner already holds. The owner's own mandate is a ceiling only
-  // where the owner wrote it; one a playbook produced is shown as a change
-  // instead, because the owner never chose it.
-  const c = ownerWritten ? current! : null;
+  // and the latest owner-written mandate, retained across every import.
+  // A previous published limit may change; an owner choice is still binding.
+  const c = options.ownerCeiling ?? (ownerWritten ? current! : null);
   const by = (published: bigint, ceiling: bigint | null, capital: bigint | null): { v: bigint; by: PlaybookLimitRow['narrowedBy'] } => {
     let v = published;
     let who: PlaybookLimitRow['narrowedBy'] = null;
@@ -193,7 +192,7 @@ export function planPlaybook(
     return { v, by: who };
   };
   const trade0 = by(pub.trade, c ? BigInt(c.maxPerTrade) : null, cap);
-  const day = by(pub.day, c ? BigInt(c.maxPerDay) : null, null);
+  const day = by(pub.day, c ? BigInt(c.maxPerDay) : null, cap);
   const trade = trade0.v > day.v ? { v: day.v, by: day.by ?? ('YOUR_MANDATE' as const) } : trade0;
   const exposure = by(pub.exposure, c ? BigInt(c.maxOpenExposure) : null, cap);
   const positions = by(BigInt(L.maxOpenPositions), c ? BigInt(c.maxOpenPositions) : null, null);
@@ -314,8 +313,10 @@ export async function previewPlaybook(
   if (!read.ok) return read;
   const parsed = parsePlaybook(read.raw);
   if (!parsed.ok) return parsed;
-  const [current, pinned] = await Promise.all([trading.liveMandate(agentId), playbooks.livePin(agentId)]);
-  const plan = planPlaybook(parsed.doc, parsed.sha256, current, pinned, options);
+  const [current, pinned, ownerCeiling, versionDigests] = await Promise.all([
+    trading.liveMandate(agentId), playbooks.livePin(agentId), playbooks.ownerCeiling(agentId), playbooks.versionDigests(parsed.doc.id, parsed.doc.version),
+  ]);
+  const plan = planPlaybook(parsed.doc, parsed.sha256, current, pinned, { ...options, ownerCeiling, versionDigests });
   if (plan.kind === 'REFUSE') return { ok: false, why: plan.why };
   return { ok: true, preview: plan.preview, promises: PLAYBOOK_PROMISES };
 }
@@ -343,9 +344,9 @@ export async function confirmPlaybook(
     return { ok: false, why: 'The playbook is not the one you were shown: it has changed since the preview. Look at it again. The agent is unchanged.' };
   }
   let preview: PlaybookPreview | null = null;
-  const result = await playbooks.applyPin(agentId, ownerId, (current, pinned) => {
+  const result = await playbooks.applyPin(agentId, ownerId, (current, pinned, ownerCeiling, versionDigests) => {
     // Decided against what is in the database now, under the agent's lock.
-    const plan = planPlaybook(parsed.doc, parsed.sha256, current, pinned, options);
+    const plan = planPlaybook(parsed.doc, parsed.sha256, current, pinned, { ...options, ownerCeiling, versionDigests });
     if (plan.kind === 'REFUSE') return { kind: 'REFUSE', why: plan.why };
     preview = plan.preview;
     if (plan.kind === 'UNCHANGED') return { kind: 'UNCHANGED', pin: plan.pin };
@@ -361,7 +362,7 @@ export async function confirmPlaybook(
         effective: plan.effective,
       },
     };
-  });
+  }, { playbookId: parsed.doc.id, version: parsed.doc.version });
   if (result.kind === 'REFUSED') return { ok: false, why: result.why };
   if (result.kind === 'UNCHANGED') return { ok: true, preview: preview!, unchanged: true };
   await ops.audit({

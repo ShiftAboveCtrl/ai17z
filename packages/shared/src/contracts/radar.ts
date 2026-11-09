@@ -37,6 +37,9 @@ export const RadarStatus = z.enum(RADAR_STATUSES);
 export type RadarStatus = (typeof RADAR_STATUSES)[number];
 
 export const RadarSourceConfig = z.object({
+  /** Internal playbook source: the worker rotates exact mints from the current pin. */
+  playbookAgentId: z.string().uuid().optional(),
+  playbookPinId: z.string().uuid().optional(),
   /** Base gap between polls of this source. */
   intervalSeconds: z.number().int().min(20).max(86_400).default(180),
   /** Results pulled per poll. */

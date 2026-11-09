@@ -436,11 +436,13 @@ export interface PaperFillRow {
  * any agent that has made more.
  */
 export async function paperFillsOf(agentId: string): Promise<PaperFillRow[]> {
-  const rows = mapRows<{ id: string; side: TradeSide; assetIn: AssetRef; assetOut: AssetRef; postcondition: Record<string, unknown> | null; createdAt: string }>(
+  const rows = mapRows<{ id: string; side: TradeSide; assetIn: AssetRef; assetOut: AssetRef; postcondition: Record<string, unknown> | null; filledAt: string }>(
     await query(
-      `SELECT id, side, asset_in, asset_out, postcondition, created_at FROM trade_intents
+      // PAPER_FILLED is terminal. Its last transition is the execution, which
+      // may be a different day from drafting and determines the spend window.
+      `SELECT id, side, asset_in, asset_out, postcondition, updated_at AS filled_at FROM trade_intents
          WHERE agent_id = $1 AND mode = 'PAPER' AND status = 'PAPER_FILLED'
-         ORDER BY created_at ASC`,
+         ORDER BY updated_at ASC`,
       [agentId],
     ),
   );
@@ -451,7 +453,7 @@ export async function paperFillsOf(agentId: string): Promise<PaperFillRow[]> {
     // A fill without its amounts cannot be counted; leaving it out is safer
     // than counting it as zero, which would read as a free trade.
     if (typeof inBase !== 'string' || typeof outBase !== 'string' || !/^[0-9]+$/.test(inBase) || !/^[0-9]+$/.test(outBase)) continue;
-    fills.push({ intentId: r.id, side: r.side, assetIn: r.assetIn, assetOut: r.assetOut, inBase, outBase, at: r.createdAt });
+    fills.push({ intentId: r.id, side: r.side, assetIn: r.assetIn, assetOut: r.assetOut, inBase, outBase, at: r.filledAt });
   }
   return fills;
 }

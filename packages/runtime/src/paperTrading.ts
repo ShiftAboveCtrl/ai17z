@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { trading } from '@xbam/database';
-import type { TradeIntentRow, TradeMandateRow } from '@xbam/database';
+import type { TradeIntentRow } from '@xbam/database';
 import { assetKey, type AssetRef, type MarketSnapshot, type TradeSide, type TradeVenue } from '@xbam/shared/contracts';
 import { JUPITER_SWAP_FAMILY, ask, type SwapQuoteQuery, type SwapQuoteResult } from '@xbam/upstream';
 import { errorMessage, withPatience } from '@xbam/shared';
@@ -181,37 +181,39 @@ async function runPaperTradeNow(input: {
     return { outcome: 'NO_MARKET', detail: atFill.detail };
   }
 
-  const verdict = judgeTrade(
-    await judgeTradeInput({
-      intentRow: onRow,
-      mandateRow: mandate as TradeMandateRow,
-      fresh: atFill.snapshot,
-      /*
-       * The instant the verdict is reached, not the instant the function was
-       * entered.
-       *
-       * The gate compares the fresh read's `observedAt` against this, and
-       * refuses a quote observed after it. Taken once at the top, every
-       * millisecond the reads actually took made the venue's own answer look
-       * like it came from the future: the first live paper trade was refused
-       * `QUOTE_FROM_THE_FUTURE` against a quote it had just fetched itself.
-       * Invisible to every test, because a fake reader answers instantly with
-       * a timestamp somebody wrote down earlier.
-       *
-       * An explicit `now` still wins, because a test choosing the instant is
-       * choosing it for the comparison this is on both sides of.
-       */
-      now: input.now ?? new Date(),
-    }),
-  );
-  if (!verdict.allowed) {
-    const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: verdict.reasons });
-    return { outcome: 'REFUSED', verdict, intent: refused ?? onRow };
-  }
-
-  // What is held is checked and the fill recorded under one lock on this
-  // agent's journal, so two sales of the same holding cannot both see it.
+  // Limits and holdings are read under the same journal lock as the fill.
+  // Concurrent simulations cannot both spend the last of a daily allowance.
   return trading.withPaperLock(input.agentId, async () => {
+    const currentMandate = await trading.liveMandate(input.agentId);
+    if (!currentMandate) return { outcome: 'NO_MARKET' as const, detail: 'This agent no longer has a mandate, so nothing may be filled.' };
+    const verdict = judgeTrade(
+      await judgeTradeInput({
+        intentRow: onRow,
+        mandateRow: currentMandate,
+        fresh: atFill.snapshot,
+        /*
+         * The instant the verdict is reached, not the instant the function was
+         * entered.
+         *
+         * The gate compares the fresh read's `observedAt` against this, and
+         * refuses a quote observed after it. Taken once at the top, every
+         * millisecond the reads actually took made the venue's own answer look
+         * like it came from the future: the first live paper trade was refused
+         * `QUOTE_FROM_THE_FUTURE` against a quote it had just fetched itself.
+         * Invisible to every test, because a fake reader answers instantly with
+         * a timestamp somebody wrote down earlier.
+         *
+         * An explicit `now` still wins, because a test choosing the instant is
+         * choosing it for the comparison this is on both sides of.
+         */
+        now: input.now ?? new Date(),
+      }),
+    );
+    if (!verdict.allowed) {
+      const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: verdict.reasons });
+      return { outcome: 'REFUSED', verdict, intent: refused ?? onRow };
+    }
+
     if (input.side === 'SELL') {
       const held = heldAgainst(paperPositions(await trading.paperFillsOf(input.agentId)), input.subject, counterparty);
       if (BigInt(input.maxIn) > held) {

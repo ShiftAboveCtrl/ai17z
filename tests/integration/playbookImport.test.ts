@@ -1,9 +1,12 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { capabilityPermissions, ops, playbooks, query, trading } from '@xbam/database';
-import { playbookStatus, playbookUniverse } from '@xbam/runtime';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { accounts, capabilityPermissions, ops, playbooks, query, radar, trading, xCapacity } from '@xbam/database';
+import { getChannelAdapter, mockAdapter } from '@xbam/channels';
+import { SocialRadar } from '../../apps/worker/src/radar';
+import type { RadarPollResult } from '@xbam/shared/contracts';
+import { asMandate, parsePlaybook, playbookStatus, playbookUniverse, type PlaybookPreview, type PlaybookStatus } from '@xbam/runtime';
 import { sealSecret } from '@xbam/shared';
 import { newInstallationKey } from '../../packages/runtime/src/studioJose';
 import { buildServer } from '../../apps/api/src/server';
@@ -13,13 +16,18 @@ import { createFixture } from '../support/fixtures';
 /**
  * Running a published playbook on the local agent, against the real database
  * and a Studio that is a local server on loopback. No real host is contacted.
- * What is proved: the import writes a paper, owner-approved, exact-asset
+ * What is proved: the import writes a paper, exact-asset
  * mandate and a pin in one transaction; nothing a document says can change
  * that; an owner's ceiling holds; versions are pins; a failed or hostile
  * import leaves the agent exactly as it was.
  */
 
 installHarness();
+// Only the channel boundary is replaced. The worker, capacity and database run normally.
+vi.mock('@xbam/channels', async (original) => ({
+  ...await original<typeof import('@xbam/channels')>(),
+  getChannelAdapter: vi.fn(),
+}));
 let app: FastifyInstance;
 let studio: Server;
 const served = new Map<string, { status: number; body: unknown }>();
@@ -92,7 +100,7 @@ async function setup() {
 }
 
 const mandateRows = async (agentId: string) => (await query<{ id: string }>(`SELECT id FROM trade_mandates WHERE agent_id = $1`, [agentId])).length;
-const body = (r: { json(): unknown }) => (r.json() as { data: Record<string, any> }).data;
+const body = (r: { json(): unknown }) => (r.json() as { data: { preview: PlaybookPreview; promises: string[]; playbook: PlaybookStatus | null } }).data;
 
 describe('importing a playbook from a file', () => {
   it('previews every limit from the parsed document, writes nothing, then writes a paper mandate and a pin on confirm', async () => {
@@ -201,6 +209,109 @@ describe('importing a playbook from a file', () => {
 });
 
 describe('versions', () => {
+  it('defers playbook X reads under account capacity and records allowed reads in the shared budget', async () => {
+    const t = await setup();
+    const account = await accounts.createAccount({ ownerId: t.f.ownerId, channel: 'x', handle: 'playbook-budget' });
+    await accounts.updateAccount(account.id, { enabled: true, status: 'CONNECTED' });
+    await accounts.linkAgentAccount({ agentId: t.f.agentId, accountId: account.id, actionType: 'REPLY', triggerEventTypes: ['MENTION'] });
+    const reads: string[] = [];
+    vi.mocked(getChannelAdapter).mockReturnValue({
+      ...mockAdapter,
+      async pollRadarSource(_ctx, input): Promise<RadarPollResult> {
+        reads.push(input.target ?? '');
+        return { candidates: [], cursor: null, error: null };
+      },
+    });
+    await t.imported(doc());
+    const [source] = await radar.listSources(account.id);
+    expect(source).toBeDefined();
+    await xCapacity.setState({ accountId: account.id, health: 'COOLDOWN', reason: 'fixture pressure', until: new Date(Date.now() + 600_000), strikes: 1 });
+    const worker = new SocialRadar();
+    await worker.tick();
+    expect(reads).toEqual([]);
+    expect((await radar.getSource(source!.id))!.idleReason).toMatch(/cool/i);
+    await xCapacity.setState({ accountId: account.id, health: 'HEALTHY', reason: null, until: null, strikes: 0 });
+    await radar.retryNow(source!.id);
+    await worker.tick();
+    expect(reads).toEqual([MINT_A]);
+    expect((await xCapacity.usage(account.id, new Date(Date.now() - 60_000))).readsByClass.BROAD).toBe(1);
+  });
+
+  it('runs the confirmed mint universe through the existing radar and stops reading after an owner edit', async () => {
+    const t = await setup();
+    const account = await accounts.createAccount({ ownerId: t.f.ownerId, channel: 'mock', handle: 'playbook-radar' });
+    await accounts.updateAccount(account.id, { enabled: true, status: 'CONNECTED' });
+    await accounts.linkAgentAccount({ agentId: t.f.agentId, accountId: account.id, actionType: 'REPLY', triggerEventTypes: ['MENTION'] });
+    const reads: string[] = [];
+    vi.mocked(getChannelAdapter).mockReturnValue({
+      ...mockAdapter,
+      async pollRadarSource(_ctx, input): Promise<RadarPollResult> {
+        reads.push(input.target ?? '');
+        return { candidates: [], cursor: null, error: null };
+      },
+    });
+    await t.imported(doc());
+    const sources = await radar.listSources(account.id);
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({ kind: 'tracked_keyword', config: { mayTrigger: false } });
+    const worker = new SocialRadar();
+    await worker.tick();
+    await radar.retryNow(sources[0]!.id);
+    await worker.tick();
+    expect(reads).toEqual([MINT_A, MINT_B]);
+    const own = (await trading.liveMandate(t.f.agentId))!;
+    await trading.putMandate({ agentId: t.f.agentId, ownerId: t.f.ownerId, mandate: { ...asMandate(own), maxPerTrade: '1' } });
+    await radar.retryNow(sources[0]!.id);
+    await worker.tick();
+    expect(reads).toHaveLength(2);
+    expect((await radar.getSource(sources[0]!.id))!.enabled).toBe(false);
+    // A confirmed new pin replaces the source's rotation, including a formerly disabled source.
+    await t.imported(doc({ version: 2, universe: { chain: 'solana', assets: [{ mint: MINT_B, decimals: 9 }] } }));
+    await worker.tick();
+    expect(reads).toEqual([MINT_A, MINT_B, MINT_B]);
+    expect(await radar.listSources(account.id)).toHaveLength(1);
+  });
+
+  it('keeps the original owner ceilings through upgrades and switching playbooks', async () => {
+    const t = await setup();
+    const own = { mode: 'PAPER', assetScope: 'LISTED', maxPerTradeSol: '0.05', maxPerDaySol: '0.2', maxOpenExposureSol: '0.2', maxOpenPositions: 2, maxSlippageBps: 100, maxPriceImpactBps: 200, minLiquiditySol: '100', maxFeeSol: '0.002', expiresAt: null, protectiveExits: null };
+    expect((await app.inject({ method: 'PUT', url: `/api/agents/${t.f.agentId}/mandate`, headers: t.auth, payload: own })).statusCode).toBe(200);
+    await t.imported(doc());
+    for (const document of [doc({ version: 2 }), doc({ id: 'another-playbook' }), doc({ version: 3, capitalSol: '0.01' })]) {
+      const p = body(await t.preview({ document })).preview;
+      expect(p.limits.find((l: { key: string }) => l.key === 'maxPerDay')).toMatchObject(document.capitalSol === '0.01'
+        ? { effective: '0.01 SOL', narrowedBy: 'PLAYBOOK_CAPITAL' } : { effective: '0.2 SOL', narrowedBy: 'YOUR_MANDATE' });
+      expect((await t.confirm({ document, sha256: p.sha256 })).statusCode).toBe(200);
+      expect(await trading.liveMandate(t.f.agentId)).toMatchObject({
+        maxPerTrade: document.capitalSol === '0.01' ? '10000000' : '50000000', maxPerDay: document.capitalSol === '0.01' ? '10000000' : '200000000',
+        maxOpenExposure: document.capitalSol === '0.01' ? '10000000' : '200000000',
+        maxOpenPositions: 2, maxSlippageBps: 100, maxPriceImpactBps: 200, minLiquidityBase: '100000000000', maxFeeBase: '2000000',
+      });
+    }
+  });
+
+  it('refuses changed content for a retired version after switching playbooks, including confirm without preview', async () => {
+    const t = await setup();
+    await t.imported(doc());
+    await t.imported(doc({ id: 'another-playbook' }));
+    const changed = doc({ title: 'Changed contents' });
+    const parsed = parsePlaybook(changed);
+    if (!parsed.ok) throw new Error(parsed.why);
+    expect((await t.preview({ document: changed })).statusCode).toBe(422);
+    const confirm = await t.confirm({ document: changed, sha256: parsed.sha256 });
+    expect(confirm.statusCode).toBe(422);
+    expect(confirm.body).toMatch(/never changes/);
+    expect(await mandateRows(t.f.agentId)).toBe(2);
+    expect((await t.imported(doc())).statusCode).toBe(200);
+  });
+
+  it('describes automatic paper simulation without promising per-entry approval', async () => {
+    const t = await setup();
+    const p = body(await t.preview({ document: doc() }));
+    expect(p.promises.join(' ')).not.toMatch(/Every entry still waits for you to approve/);
+    expect(p.promises.join(' ')).toMatch(/simulated.*without.*approval/i);
+  });
+
   it('a new version is a new mandate and a new pin, the old ones are retired, and the agent says which it runs', async () => {
     const t = await setup();
     await t.imported(doc());
