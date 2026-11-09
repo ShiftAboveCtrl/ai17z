@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
 import { RESPONSE_SPEEDS, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contracts';
 import { ApiError, get, put } from '@app/lib/api';
+import { useResource } from '@app/lib/hooks';
 import { ChoiceGroup, ChoiceOption, Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
 import { Section, useSubHeading } from './Section';
 
@@ -69,6 +70,7 @@ export function PoliciesSection({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [spending, setSpending] = useState<SpendingReport | null>(null);
+  const allAgents = useResource<{ items: { id: string; name: string }[] }>('/api/agents');
 
   useEffect(() => setDraft(policy), [policy]);
   // Read after every save, so the sentences under each limit describe the
@@ -374,6 +376,29 @@ export function PoliciesSection({
           </Field>
           <Field label="Phrases to avoid" hint="Comma separated.">
             <input className="field" value={draft.voice.avoidPhrases.join(', ')} onChange={(e) => patch((n) => void (n.voice.avoidPhrases = list(e.target.value)))} />
+          </Field>
+        </Group>
+
+        <Group title="Second opinion" blurb="Before a reply goes out, another of your agents reads the draft and says what it would change.">
+          <Toggle
+            label="Ask a peer to review replies"
+            description="Adds one model call by the peer's model to each reply. The peer can only comment: it cannot post, use tools or see this agent's memory, and the reply is checked against every output rule again afterwards. Off by default."
+            checked={draft.quality.peerReview.enabled}
+            onChange={(v) => patch((n) => void (n.quality.peerReview.enabled = v))}
+          />
+          <Field label="Peer agent" hint="One of your other agents. Needs a primary model of its own.">
+            <select
+              className="field"
+              value={draft.quality.peerReview.peerAgentId ?? ''}
+              onChange={(e) => patch((n) => void (n.quality.peerReview.peerAgentId = e.target.value || null))}
+            >
+              <option value="">None chosen</option>
+              {(allAgents.data?.items ?? [])
+                .filter((a) => a.id !== agentId)
+                .map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+            </select>
           </Field>
         </Group>
 

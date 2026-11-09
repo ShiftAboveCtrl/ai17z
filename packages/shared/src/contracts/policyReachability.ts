@@ -161,6 +161,12 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'outreach.minimumValue': { where: 'ADVANCED_ONLY' },
   'outreach.mode': { where: 'EASY_AND_ADVANCED' },
   'outreach.requireTopicMatch': { where: 'ADVANCED_ONLY' },
+  'quality.peerReview.enabled': { where: 'ADVANCED_ONLY' },
+  'quality.peerReview.peerAgentId': { where: 'ADVANCED_ONLY' },
+  'quality.peerReview.timeoutMs': {
+    where: 'INTERNAL',
+    why: 'How long a peer critique is awaited before the reply goes on without it. Slow peers are skipped, so there is nothing to tune.',
+  },
   'rate.maxActionsPerDay': { where: 'ADVANCED_ONLY' },
   'rate.maxActionsPerHour': { where: 'ADVANCED_ONLY' },
   'rate.minSecondsBetweenActions': { where: 'ADVANCED_ONLY' },

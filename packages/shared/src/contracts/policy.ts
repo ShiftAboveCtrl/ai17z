@@ -344,6 +344,36 @@ export const LearningPolicy = z.object({
 });
 export type LearningPolicy = z.infer<typeof LearningPolicy>;
 
+/**
+ * A second opinion from another of the owner's agents, before a reply goes out.
+ *
+ * Off by default, and that default is the cost control: turning it on adds one
+ * critique call by the peer's model to every reply that reaches the voice step.
+ * The peer only comments. It is handed the draft and the message being answered
+ * and nothing else (no memory, no policy, no credentials, no capabilities), its
+ * answer is read as a fixed shape that has no field an action could ride in, and
+ * what it said reaches the reply only as notes inside the voice rewrite brief.
+ * The validator, the dash and emoji rules and the identity checks run on the
+ * result exactly as they do on any rewrite, so enabling this never changes the
+ * persona, the identity, the permissions or what the agent is reticent about.
+ */
+export const PeerReviewPolicy = z.object({
+  enabled: z.boolean().default(false),
+  /**
+   * The agent whose model is asked. Must belong to the same owner and cannot
+   * be this agent; anything else is recorded as skipped, never as a failure.
+   */
+  peerAgentId: z.string().min(1).max(64).nullable().default(null),
+  /** How long the critique is given. A slow peer is skipped, never waited on. */
+  timeoutMs: z.number().int().min(1_000).max(60_000).default(15_000),
+});
+export type PeerReviewPolicy = z.infer<typeof PeerReviewPolicy>;
+
+export const QualityPolicy = z.object({
+  peerReview: PeerReviewPolicy.prefault({}),
+});
+export type QualityPolicy = z.infer<typeof QualityPolicy>;
+
 export const RESPONSE_SPEEDS = ['FAST', 'BALANCED', 'THOROUGH'] as const;
 export const ResponseSpeed = z.enum(RESPONSE_SPEEDS);
 export type ResponseSpeed = (typeof RESPONSE_SPEEDS)[number];
@@ -450,6 +480,8 @@ export const PolicyConfig = z.object({
   responseSpeed: ResponseSpeed.default('BALANCED'),
   /** Whether the agent learns from outcomes. See LearningPolicy. */
   learning: LearningPolicy.prefault({}),
+  /** Checks on a draft beyond the agent's own, such as a peer's second opinion. */
+  quality: QualityPolicy.prefault({}),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 

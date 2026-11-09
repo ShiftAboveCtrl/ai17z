@@ -12,6 +12,14 @@ import {
 } from '@xbam/persona';
 import { generate } from '@xbam/models';
 import { NO_EM_DASHES } from './punctuation';
+import {
+  peerBriefSection,
+  runPeerReview,
+  settlePeerReview,
+  type PeerCritique,
+  type PeerReviewRecord,
+} from './peerReview';
+import { validateOutput } from './validator';
 
 const log = createLogger('voice');
 
@@ -83,6 +91,19 @@ export interface CompileForJobInput {
    * is decisive on its own. See `RepetitionOptions.openerIsDecisive`.
    */
   isPost?: boolean;
+  /**
+   * Whether a peer may be asked for a second opinion on this draft.
+   *
+   * Separate from `allowModelCall` because the two answer different questions.
+   * A dry run is not paid for by default, so it does not rewrite on its own; a
+   * peer review is something the owner switched on and wants to watch in a
+   * rehearsal, so it runs there. Both still need `policy.quality.peerReview`.
+   */
+  allowPeerReview?: boolean;
+  /** The message being answered, for the peer to read. */
+  incomingText?: string | null;
+  /** The operator's own text, so a rewrite is held to the same address rule. */
+  operatorText?: string | null;
 }
 
 export interface CompileForJobResult {
@@ -91,6 +112,8 @@ export interface CompileForJobResult {
   /** Which stages actually ran, for the trace and for cost accounting. */
   applied: string[];
   modelCallUsed: boolean;
+  /** What the peer review did, or null when it was off. */
+  peerReview: PeerReviewRecord | null;
 }
 
 /**
@@ -140,7 +163,7 @@ export async function compileForJob(input: CompileForJobInput): Promise<CompileF
   // when it reads as generic prose, or when it repeats the agent too closely.
   // The deterministic pass cannot fix the last two: they are about what the
   // draft says, not how it is punctuated.
-  const needsModel =
+  const ordinaryReason =
     policy.enabled &&
     policy.allowModelRewrite &&
     input.allowModelCall &&
@@ -148,8 +171,56 @@ export async function compileForJob(input: CompileForJobInput): Promise<CompileF
       generic.score > policy.genericRewriteAbove ||
       repetition.score > policy.repetitionRewriteAbove);
 
+  /*
+    A second opinion, asked for before the rewrite and folded into it.
+
+    It rides the rewrite that already exists rather than adding one: the peer
+    only supplies notes, the rewriter decides what to do with them, and the
+    result is held to the output rules again below. A rewrite is also the only
+    thing that can act on a critique, so with rewriting forbidden the peer is
+    not asked at all; paying for notes nothing can apply would be the wrong
+    trade.
+  */
+  let peerReview: PeerReviewRecord | null = null;
+  let critique: PeerCritique | null = null;
+  const peerMayRun =
+    input.policy.quality.peerReview.enabled &&
+    policy.enabled &&
+    policy.allowModelRewrite &&
+    input.allowPeerReview === true;
+  if (peerMayRun) {
+    const reviewed = await runPeerReview({
+      agentId: input.agentId,
+      jobId: input.jobId,
+      config: input.policy.quality.peerReview,
+      draft: text,
+      incomingText: input.incomingText ?? null,
+      maxCalls: input.maxCalls,
+    });
+    peerReview = reviewed?.record ?? null;
+    critique = reviewed?.critique ?? null;
+    if (peerReview?.peerName) applied.push(`peer review (${peerReview.peerName}): ${peerReview.outcome === 'unavailable' ? 'unavailable' : 'consulted'}`);
+  } else if (input.policy.quality.peerReview.enabled) {
+    peerReview = {
+      ran: false,
+      outcome: 'skipped',
+      reason: !policy.enabled
+        ? 'Peer review needs the voice step, which is off.'
+        : !policy.allowModelRewrite
+          ? 'Peer review needs a model rewrite to act on its notes, and this agent does not allow one.'
+          : 'Peer review is not run at this response speed or for this kind of reply.',
+      peerAgentId: input.policy.quality.peerReview.peerAgentId,
+      peerName: null,
+      summary: null,
+      kept: [],
+      undone: [],
+    };
+  }
+
+  const needsModel = Boolean(ordinaryReason) || critique !== null;
+
   if (needsModel) {
-    const brief = buildBrief(compiled.rewriteBrief, text, fingerprint, generic, repetition);
+    const brief = buildBrief(compiled.rewriteBrief, text, fingerprint, generic, repetition, critique);
     try {
       const result = await generate({
         agentId: input.agentId,
@@ -184,16 +255,58 @@ export async function compileForJob(input: CompileForJobInput): Promise<CompileF
               maxCharacters: input.policy.output.maxCharacters,
             }).text
           : returned;
-      if (rewritten.length > 0) {
+      /*
+        A rewrite that carried a peer's notes is held to the output rules again.
+
+        The notes are text from another model, written about a message from a
+        stranger, and the rewriter acts on them. Whatever came out is therefore
+        the last thing to write the reply and has to be the last thing to check
+        it: dashes, emoji, banned phrases, addresses nobody gave the agent, a
+        claim to be human, a disclosure of what runs it. A violation that cannot
+        be repaired discards the rewrite and the reply stays as it was.
+      */
+      let candidate = rewritten;
+      let refusedByRules: string | null = null;
+      if (critique && candidate.length > 0) {
+        const checked = validateOutput(candidate, input.policy, input.recipientHandle, input.operatorText);
+        const blocking = checked.violations.find((v) => v.severity === 'REJECT' || v.severity === 'REVIEW');
+        if (blocking) refusedByRules = blocking.message;
+        else candidate = checked.output;
+      }
+
+      if (candidate.length > 0) {
         // Only keep the rewrite if it actually helped. A rewrite that scores
         // worse is a worse reply, whatever it cost.
-        const after = scoreVoice(rewritten, fingerprint);
+        const after = scoreVoice(candidate, fingerprint);
         const before = scoreVoice(text, fingerprint);
-        if (after.score >= before.score) {
-          text = rewritten;
+        if (refusedByRules) {
+          applied.push('model rewrite rejected: it broke an output rule');
+          if (critique && peerReview) {
+            peerReview = settlePeerReview(peerReview, critique, {
+              adopted: false,
+              reason: `The rewrite that used the peer notes broke an output rule, so it was dropped: ${refusedByRules}`,
+            });
+          }
+        } else if (after.score >= before.score) {
+          if (critique && peerReview) {
+            peerReview = settlePeerReview(peerReview, critique, {
+              adopted: candidate !== text,
+              reason:
+                candidate !== text
+                  ? 'The rewrite took the peer notes into the reply.'
+                  : 'The rewrite left the reply as it was, so none of the peer notes changed it.',
+            });
+          }
+          text = candidate;
           applied.push(`model rewrite (${result.provider}/${result.model})`);
         } else {
           applied.push('model rewrite rejected: it scored worse');
+          if (critique && peerReview) {
+            peerReview = settlePeerReview(peerReview, critique, {
+              adopted: false,
+              reason: 'The rewrite that used the peer notes scored worse for this agent, so it was dropped.',
+            });
+          }
         }
         modelCallUsed = true;
       }
@@ -203,6 +316,12 @@ export async function compileForJob(input: CompileForJobInput): Promise<CompileF
       // be the wrong trade.
       log.warn('voice rewrite failed', { agentId: input.agentId, message: errorMessage(error) });
       applied.push('model rewrite unavailable');
+      if (critique && peerReview) {
+        peerReview = settlePeerReview(peerReview, critique, {
+          adopted: false,
+          reason: 'The rewrite that would have used the peer notes failed, so the reply went on without them.',
+        });
+      }
     }
   } else if (compiled.applied === 'model_needed') {
     applied.push('rewrite skipped: not permitted here');
@@ -231,6 +350,7 @@ export async function compileForJob(input: CompileForJobInput): Promise<CompileF
     },
     applied,
     modelCallUsed,
+    peerReview,
   };
 }
 
@@ -274,6 +394,7 @@ function buildBrief(
   fingerprint: VoiceFingerprint,
   generic: ReturnType<typeof scoreGeneric>,
   repetition: ReturnType<typeof scoreRepetition>,
+  peer: PeerCritique | null = null,
 ): string {
   /*
     Said to the rewriter as well as enforced after it.
@@ -312,6 +433,8 @@ function buildBrief(
       'Say this differently.',
     );
   }
+  // After every rule, so the notes are read as advice inside them.
+  if (peer) extra.push(...peerBriefSection(peer));
   if (base) {
     // The draft is the last section of the base brief, so extras go before it.
     const marker = '\n\nDRAFT\n';
