@@ -26,7 +26,7 @@ can finish. Core rechecks the switch and grants immediately before transport.
 Turning it back on starts at that opt-in time; it does not publish activity from
 the paused period. A newly allowed capability also starts at its grant time.
 The grant floor uses `agent_capability_permissions.permission_changed_at`, added
-by migration `0114_capability_permission_changed_at.sql`. It starts at insertion
+by migration `0121_capability_permission_changed_at.sql`. It starts at insertion
 and moves only when the permission value changes. Config edits and repeated
 ALLOWED decisions leave it unchanged. Existing decisions are initialized from
 `updated_at` because no earlier grant timestamp was stored.
