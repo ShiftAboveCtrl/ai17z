@@ -110,6 +110,13 @@ export interface ReplyValueInput {
   text: string;
   /** True when the agent's own handle is actually addressed. */
   directlyAddressed: boolean;
+  /**
+   * True when the message is a request for a sourced reading of a contract
+   * that this agent has been set up to answer. Somebody who asks for that
+   * wants an answer whatever the sentence around the address scores, but the
+   * exchange limits still run first and are not bought past.
+   */
+  evidenceRequest?: boolean;
   relationship: RelationshipContext | null;
   threadDepth: number;
   /** Replies already sent to this person in the last hour. */
@@ -283,6 +290,7 @@ export function replyValue(input: ReplyValueInput): { value: number; factors: Va
   if (QUESTION.test(text) && !subjectless && !notForUs) add('asks a direct question', 25);
   if (subjectless) add('a question with no subject and nothing above it', -25);
   if (input.directlyAddressed) add('addressed to this account', 15);
+  if (input.evidenceRequest) add('asked for a sourced reading of a contract', 30);
 
   const mentions = countMentions(text);
   if (input.policy.ignoreMassTags && mentions >= input.policy.massTagThreshold) {

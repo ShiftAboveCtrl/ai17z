@@ -50,6 +50,7 @@ import type { JobBundle } from '../loadJob';
 import { checkActionRate } from '../policyGate';
 import { checkDevUpdateAtSend } from '../devUpdateGuard';
 import { paperReplyForJob } from '../paperCapabilities';
+import { mintCardRefusal, mintReplyOf } from '../mintCheck';
 import { signalIdeaRefusal } from '../signalRadar';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { capacityClassForEvent } from '../capacity';
@@ -226,6 +227,21 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   if (signal.ideaSource === 'market_signal') {
     const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
     if (refusal) throw PipelineError.permanent('signal_publication_refused', refusal);
+  }
+  /*
+    An evidence card is checked again at the last moment, including after an
+    owner approved it: what is sent must be exactly the card that was built, free
+    of verdict wording, and must still be something the owner has switched on.
+  */
+  const mintReply = mintReplyOf(job.resolvedContext);
+  if (mintReply !== null) {
+    if (!policy.tools.mintCheck.enabled) {
+      throw PipelineError.permanent('mint_check_off', 'Evidence cards were switched off while this was waiting, so it was not sent.');
+    }
+    const refusal = mintCardRefusal(output);
+    if (output !== mintReply || refusal) {
+      throw PipelineError.review('mint_card_changed', refusal ?? 'The evidence card changed after it was built. Send the card as built only.');
+    }
   }
 
   const context = job.resolvedContext;

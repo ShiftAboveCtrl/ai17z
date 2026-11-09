@@ -18,7 +18,7 @@
  * grants no permission to predict one.
  */
 import { createLogger, errorMessage } from '@xbam/shared';
-import { ask, type MarketPairs, type MarketQuery } from '@xbam/upstream';
+import { ask, isAddress, type MarketPairs, type MarketQuery } from '@xbam/upstream';
 
 const log = createLogger('token');
 
@@ -119,6 +119,37 @@ export function parseTokenReference(text: string): TokenReference {
   }
 
   return reference;
+}
+
+/**
+ * Every distinct token address a message contains, in the order written.
+ *
+ * `parseTokenReference` returns the first and is right for a conversation that
+ * names one token. A request that must refuse when it names several needs the
+ * count, and a base58-shaped word has to decode to 32 bytes before it counts:
+ * a long identifier is not a mint because it happens to use the right letters.
+ * Text inside a link is skipped for the same reason as above, a run in a URL is
+ * usually a pair or a transaction.
+ */
+export function tokenAddressesIn(text: string): string[] {
+  const found: { at: number; address: string }[] = [];
+  const withoutLinks = text.replace(/https?:\/\/\S+/g, (link) => ' '.repeat(link.length));
+  for (const match of withoutLinks.matchAll(new RegExp(EVM.source, 'g'))) {
+    found.push({ at: match.index ?? 0, address: match[0] });
+  }
+  for (const match of withoutLinks.matchAll(new RegExp(BASE58.source, 'g'))) {
+    // A run inside a 0x address would otherwise match its own tail.
+    if (isAddress(match[0]) && !/^0x/i.test(match[0])) found.push({ at: match.index ?? 0, address: match[0] });
+  }
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const { address } of found.sort((a, b) => a.at - b.at)) {
+    const key = address.startsWith('0x') ? address.toLowerCase() : address;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(address);
+  }
+  return ordered;
 }
 
 /** Merge what several places said, preferring the more specific source. */

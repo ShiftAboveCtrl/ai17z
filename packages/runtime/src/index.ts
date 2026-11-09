@@ -240,5 +240,6 @@ export * from './publicSelf';
 export * from './devUpdates';
 export * from './devUpdateSafety';
 export * from './signalRadar';
+export * from './mintCheck';
 export * from './studioActivityTape';
 export * from './studioRiskWatches';

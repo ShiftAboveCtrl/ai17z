@@ -25,6 +25,7 @@ import { withoutWhatACapabilityAnswers } from '../researchCoverage';
 import { capabilitySettings } from '../capabilityPermissions';
 import { pauseState } from '../killSwitch';
 import { pluginResearchSources } from '../pluginFeatures';
+import { stepMintCheck } from '../mintCheck';
 
 import type { JobBundle } from '../loadJob';
 import { ensureMediaResolved } from './context';
@@ -48,6 +49,11 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
   const { job } = bundle;
   const context = job.resolvedContext;
   if (!context) return;
+
+  // A request to check a contract is answered from the evidence reads alone.
+  // Searching the web for the words around an address would add exactly the
+  // unsourced colour the card exists to leave out.
+  if (await stepMintCheck(bundle)) return;
 
   const inventory = MediaInventory.safeParse((context.meta as { inventory?: unknown })?.inventory);
   const links = inventory.success ? inventory.data.links : [];

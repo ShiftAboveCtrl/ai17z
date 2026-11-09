@@ -51,6 +51,7 @@ import { asksAboutTheAgent, questionsIn } from '../research';
 import { removeEmDashes } from '../punctuation';
 import { judgePost } from '../postQuality';
 import { signalIdeaRefusal } from '../signalRadar';
+import { mintCardRefusal, mintReplyOf } from '../mintCheck';
 import { publicSelfFacts } from '../publicSelf';
 
 import { classifyEvidence } from '../evidenceClass';
@@ -123,6 +124,25 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
   const budget = await checkBudget(bundle.agent.id, bundle.policy);
   if (!budget.allow) {
     throw PipelineError.retryable(budget.reason, budget.message, { retryAfterMs: budget.retryAfterMs });
+  }
+
+  /*
+    A mint check is fixed text built from the evidence reads. It is not written
+    by a model and is not offered to one: the words of a safety statement are
+    not something to leave to a draft. It still passed the audience and budget
+    gates above, and goes on through validation unchanged.
+  */
+  const mintReply = mintReplyOf(context);
+  if (mintReply !== null) {
+    await observability.emitTrace({
+      jobId: bundle.job.id,
+      agentId: bundle.agent.id,
+      type: 'PROMPT_ASSEMBLED',
+      message: 'Evidence card: fixed text from the evidence reads, no model call.',
+      data: { mintCheck: true, chars: mintReply.length },
+    });
+    await jobsRepo.updateJob(bundle.job.id, { status: 'GENERATED', generatedOutput: mintReply, touch: ['generatedAt'] });
+    return;
   }
 
   const template = bundle.job.promptTemplateVersionId
@@ -437,6 +457,18 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
   if (paperReply !== null && result.output !== paperReply) {
     throw PipelineError.review('paper_receipt_changed', 'The complete simulated paper receipt cannot fit this output policy. Review it before sending.');
   }
+  // The same rule for an evidence card: the validator may not shorten, repair or
+  // reword it, because a card edited into something else is a different claim.
+  const mintReply = mintReplyOf(bundle.job.resolvedContext);
+  if (mintReply !== null) {
+    const refusal = result.ok ? mintCardRefusal(result.output) : null;
+    if (result.ok && (result.output !== mintReply || refusal)) {
+      throw PipelineError.review(
+        'mint_card_changed',
+        refusal ?? 'The output policy would change this evidence card. Review it before sending.',
+      );
+    }
+  }
 
   if (!result.ok) {
     const summary = blocking.map((v) => v.message).join(' ');
@@ -522,6 +554,18 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
   const { job, policy } = bundle;
   const draft = job.validatedOutput ?? job.generatedOutput;
   if (!policy.voice.enabled || !draft) return;
+  if (mintReplyOf(job.resolvedContext) !== null) {
+    // A fixed card is not pulled towards a register. Its wording is the safety
+    // property, so it is published as it was built or not at all.
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'VOICE_COMPILED',
+      message: 'Left as written: an evidence card is fixed text.',
+      data: { mintCheck: true },
+    });
+    return;
+  }
   const paperReceipt = await paperReplyForJob(job.id);
 
   const context = job.resolvedContext;

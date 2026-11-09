@@ -9,6 +9,7 @@ import { createLogger, errorMessage, openSecret } from '@xbam/shared';
 import { approveJob, rejectJob } from './approvals';
 import { collectHealth } from './health';
 import { pauseState, setPauseAll } from './killSwitch';
+import { confirmMintWatch, listWatchable } from './mintCheck';
 import { loadConfig, saveConfig, telegramMuted, type TelegramConfig } from './telegram';
 import { escapeHtml, getUpdates, publishCommands, sendMessage } from './telegramApi';
 
@@ -117,6 +118,12 @@ export const COMMANDS: CommandSpec[] = [
   { name: 'mute', args: '<hours>', blurb: 'No messages here for a while. Up to 24 hours.', acts: true },
   { name: 'unmute', args: null, blurb: 'Start telling me things again.', acts: true },
   { name: 'health', args: null, blurb: 'The worker, the browser, and anything unhealthy.', acts: false },
+  {
+    name: 'watch',
+    args: '<id>',
+    blurb: 'Watch a mint someone asked your agent to check, for new pools. Without an id, lists them.',
+    acts: true,
+  },
 ];
 
 const BY_NAME = new Map(COMMANDS.map((command) => [command.name, command]));
@@ -388,6 +395,31 @@ export async function runCommand(text: string, actor: string): Promise<CommandRe
 
     case 'health':
       return { reply: await healthReply(), command: 'health' };
+
+    case 'watch': {
+      /*
+        The one place a mint-check watch is created, and only for the owner's
+        own paired chat, which is the only chat this function is ever reached
+        from. A stranger's words never arrive here: they go through the
+        pipeline, which has no path to `confirmMintWatch`.
+      */
+      if (!parsed.argument) {
+        const open = await listWatchable();
+        if (open.length === 0) return { reply: 'No card is waiting for a watch.', command: 'watch' };
+        return {
+          reply: [
+            '<b>Mints people asked about</b>',
+            '',
+            ...open.map((c) => `<code>${c.id}</code> ${escapeHtml(c.chain)} ${escapeHtml(`${c.mint.slice(0, 6)}...${c.mint.slice(-4)}`)}${c.asker ? ` asked by @${escapeHtml(c.asker)}` : ''}`),
+            '',
+            '<code>/watch &lt;id&gt;</code> pins a watch for new pools. Nothing is watched until you do.',
+          ].join('\n'),
+          command: 'watch',
+        };
+      }
+      const done = await confirmMintWatch(parsed.argument);
+      return { reply: escapeHtml(done.sentence), command: 'watch' };
+    }
 
     case 'show': {
       const found = await findByShortId(parsed.argument);

@@ -28,6 +28,7 @@ import { asksToBeLeftAlone } from '../doNotContact';
 
 import { loadThreadContext } from '../arcs';
 import { mindForMessage } from '../deliberate';
+import { planMintCheck } from '../mintCheck';
 
 import type { JobBundle } from '../loadJob';
 
@@ -343,6 +344,25 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
   const alreadyInThread = ourTurns > 0;
   const unprompted = bundle.event.type === 'KEYWORD_MATCH' && !directlyAddressed && !alreadyInThread;
 
+  /*
+    "check <mint>", decided here so it meets the same exchange limits, pitch
+    rule and strategy as any other message. Off unless the owner turned it on,
+    and never for something the agent came across rather than was asked.
+  */
+  const mintPlan = await planMintCheck(bundle, { text, unprompted });
+  if (mintPlan.kind === 'IGNORE') {
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'ENGAGEMENT_DECIDED',
+      level: 'info',
+      message: `ignore: ${mintPlan.reason}`,
+      data: { decision: 'IGNORE', mintCheck: true },
+    });
+    await jobsRepo.updateJob(job.id, { lastError: mintPlan.reason.slice(0, 500) });
+    return 'ignore';
+  }
+
   // The two limits that are about rate rather than about worth, checked here
   // rather than in the heuristic because reaching one is a reason not to speak,
   // not a score. And recorded as a decision rather than a failure: a cap that
@@ -445,6 +465,7 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
         topics: bundle.persona.topics,
         text,
         directlyAddressed,
+        evidenceRequest: mintPlan.kind === 'REQUEST',
         unprompted,
         outreach: policy.outreach,
         relationship,
@@ -479,7 +500,14 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
 
   if (context) {
     await jobsRepo.updateJob(job.id, {
-      resolvedContext: { ...context, meta: { ...context.meta, engagement: verdict } },
+      resolvedContext: {
+        ...context,
+        meta: {
+          ...context.meta,
+          engagement: verdict,
+          ...(mintPlan.kind === 'REQUEST' ? { mintCheck: { request: mintPlan.request } } : {}),
+        },
+      },
     });
   }
 
