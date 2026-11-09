@@ -47,10 +47,9 @@ The batch adds `0114_bluesky_channel`, `0115_farcaster_channel`,
 `0120_league_bridge` and `0121_capability_permission_changed_at`.
 There are no duplicate numbers; 0119 remains unused.
 
-The two unreleased channel migrations both widen `accounts_channel_check` to
-include Bluesky and Farcaster. No previously released migration was edited.
-Fresh databases applied all 120 files from 0001 through 0121, both normally and
-with 0115 before 0114. Both databases accepted inserts for both channels.
+Only `0114_bluesky_channel` rewrites `accounts_channel_check`, widening it to
+include Bluesky and Farcaster (Telegram was already listed). `0115` leaves it
+alone. No previously released migration was edited.
 
 ## Fixes and remaining nits
 

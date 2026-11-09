@@ -1,6 +1,5 @@
-ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_channel_check;
-ALTER TABLE accounts ADD CONSTRAINT accounts_channel_check
-  CHECK (channel IN ('mock','x','bluesky','farcaster','discord','telegram','slack','email','http'));
+-- accounts_channel_check already admits 'farcaster': migration 0114 widens it
+-- once for both new channels, so there is exactly one rewrite of that constraint.
 
 CREATE TABLE farcaster_signers (
   account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
