@@ -296,6 +296,27 @@ export const ToolPolicy = z.object({
       xIntelligence: z.boolean().default(false),
     })
     .prefault({}),
+  /**
+   * Answering "check <mint>" with an evidence card.
+   *
+   * Off by default, and an Easy Mode control reaches `enabled`. It makes the
+   * agent publish a sourced reading of a contract to whoever asks, which is a
+   * public statement under the owner's name, so it is a decision rather than
+   * something an upgrade starts doing. Only a mention that names the agent can
+   * trigger it; it never speaks first.
+   *
+   * The two limits exist because anyone can ask and the reads are shared:
+   * `maxPerAskerPerHour` caps one person, `mintCooldownSeconds` makes a mint
+   * asked about twice inside the window a pointer at the first card, not a
+   * second read.
+   */
+  mintCheck: z
+    .object({
+      enabled: z.boolean().default(false),
+      maxPerAskerPerHour: z.number().int().min(1).max(60).default(3),
+      mintCooldownSeconds: z.number().int().min(30).max(3_600).default(300),
+    })
+    .prefault({}),
 });
 export type ToolPolicy = z.infer<typeof ToolPolicy>;
 

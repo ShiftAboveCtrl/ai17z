@@ -136,6 +136,8 @@ export * as spam from './repositories/spam';
 export * as agentChanges from './repositories/agentChanges';
 export * as trading from './repositories/trading';
 export * as socialPaper from './repositories/socialPaper';
+export * as mintChecks from './repositories/mintChecks';
+export type { MintCheckRow, MintCheckOutcome, ClaimResult as MintCheckClaim, PointerTarget as MintCheckPointer } from './repositories/mintChecks';
 export * as leagueBridge from './repositories/leagueBridge';
 export type { LeagueEntryRow, LeagueFillRow, PaperFillIntent } from './repositories/leagueBridge';
 export * as playbooks from './repositories/playbooks';

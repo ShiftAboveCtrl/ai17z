@@ -126,6 +126,12 @@ export function toPolicy(setup: EasySetup, base: PolicyConfig = DEFAULT_POLICY):
         messagesPercent: easy.emoji.messagesPercent,
       },
     },
+    tools: {
+      ...base.tools,
+      // Only `enabled` is Easy Mode's to set. The per-asker cap and the cooldown
+      // an owner tuned in Advanced come through untouched.
+      mintCheck: { ...base.tools.mintCheck, enabled: easy.replies.mintCheck },
+    },
     content: {
       ...base.content,
       allowedRemoteHandles: audience === 'ALLOWLIST' ? allowlist : [],
@@ -292,6 +298,7 @@ export function readEasyView(input: EasyViewInput): EasyView {
       selectivity: selectivityOf(policy),
       filters,
       allowlist: policy.content.allowedRemoteHandles,
+      mintCheck: policy.tools.mintCheck.enabled,
     },
     language: persona.languagePolicy
       ? /always reply in english/i.test(persona.languagePolicy)

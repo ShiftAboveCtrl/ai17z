@@ -114,6 +114,7 @@ const EMPTY: Draft = {
         repliesInConversations: true,
       },
       allowlist: [],
+      mintCheck: false,
     },
     emoji: { use: 'MINIMAL', allowed: [], maxPerMessage: 1, messagesPercent: 25 },
     language: 'MIRROR',
@@ -773,6 +774,12 @@ export function EasySetup() {
                 }
                 label="Only when it is named"
                 description="Ignores replies in a conversation that do not mention it."
+              />
+              <Toggle
+                checked={draft.setup.replies.mintCheck}
+                onChange={(v) => setSetup({ replies: { ...draft.setup.replies, mintCheck: v } })}
+                label="Check a token when someone asks"
+                description="When someone mentions it with &quot;check&quot; and one token address, it replies with sourced readings such as liquidity and who holds the supply. It gives no verdict, says what it could not read, and never speaks first. Off until you turn it on."
               />
             </div>
           </>

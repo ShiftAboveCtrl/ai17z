@@ -419,6 +419,36 @@ export function PoliciesSection({
             onChange={(v) => patch((n) => void (n.tools.capabilityLoop = v))}
           />
           {/*
+            Off by default. The same switch as Easy Mode's, with the two limits
+            Easy Mode has no word for.
+          */}
+          <Toggle
+            label="Answer &quot;check &lt;address&gt;&quot; with an evidence card"
+            description="When someone who mentions the agent asks it to check one token address, it replies with sourced readings (liquidity, holders, authorities, pool age) and says plainly what could not be read. It gives no verdict. It never speaks first."
+            checked={draft.tools.mintCheck.enabled}
+            onChange={(v) => patch((n) => void (n.tools.mintCheck.enabled = v))}
+          />
+          <Field label="Checks per person per hour" hint="Past this, that person gets no further card until the hour clears.">
+            <input
+              className="field"
+              type="number"
+              min={1}
+              max={60}
+              value={draft.tools.mintCheck.maxPerAskerPerHour}
+              onChange={(e) => patch((n) => void (n.tools.mintCheck.maxPerAskerPerHour = Math.min(60, Math.max(1, Number(e.target.value) || 1))))}
+            />
+          </Field>
+          <Field label="Seconds before a token is read again" hint="A token asked about inside this window gets a short pointer to the first card, not a second read.">
+            <input
+              className="field"
+              type="number"
+              min={30}
+              max={3600}
+              value={draft.tools.mintCheck.mintCooldownSeconds}
+              onChange={(e) => patch((n) => void (n.tools.mintCheck.mintCooldownSeconds = Math.min(3600, Math.max(30, Number(e.target.value) || 30))))}
+            />
+          </Field>
+          {/*
             The validator rejects any address the agent was not given, and until
             this field existed the only way to give it one was to write it into
             the persona.

@@ -178,6 +178,11 @@ export const EasyReplies = z.object({
   filters: EasyFilters.prefault({}),
   /** Only consulted when audience is ALLOWLIST. */
   allowlist: z.array(z.string().max(120)).max(500).default([]),
+  /**
+   * Answer "check <mint>" with a sourced evidence card. Off by default.
+   * Reads and writes `tools.mintCheck.enabled`; the limits stay in Advanced.
+   */
+  mintCheck: z.boolean().default(false),
 });
 export type EasyReplies = z.infer<typeof EasyReplies>;
 
