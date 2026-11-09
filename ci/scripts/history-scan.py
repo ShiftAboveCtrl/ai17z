@@ -40,7 +40,9 @@ the maintainer's machine) rather than a contributor's:
                      tool or a bot, or a tool's "Generated with" footer
   foreign-identity   an author, committer or tagger other than the `identity`
                      lines of the list (or identity.txt); skipped, and said so,
-                     when the list names none
+                     when the list names none. A merge made on github.com is
+                     accepted: GitHub's own committer, and an author with an
+                     identity's email under the account's display name.
 
 They are not run for everybody because the history a contributor clones may
 predate the rewrite that enforces them, and a check that fails on every fork is
