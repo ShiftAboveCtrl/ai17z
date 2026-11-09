@@ -9,5 +9,6 @@ import type { SignalWatch } from './contracts/radar';
  * rather than the raw values keeps `watch_key` a compact column, not a payload.
  */
 export function signalWatchKey(watch: SignalWatch): string {
-  return sha256Hex(`${watch.chain}:${watch.address}:${watch.predicate}:${watch.threshold ?? ''}`);
+  const native = `${watch.chain}:${watch.address}:${watch.predicate}:${watch.threshold ?? ''}`;
+  return sha256Hex(watch.studioMetric ? `${native}:${watch.studioMetric}` : native);
 }

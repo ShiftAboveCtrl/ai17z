@@ -4,6 +4,8 @@ import { query, radar, withTransaction, type RadarSourceRow } from '@xbam/databa
 import { ask, GECKO_FAMILY, SOLANA_FAMILY, exactInteger, isAddress, isSignature, type GeckoQuery, type GeckoResult, type SolanaQuery, type SolanaResult } from '@xbam/upstream';
 import { unpromptedSubject, reticenceReason } from './reticence';
 import { readPromo } from './promo';
+import { readStudioRiskMetric, recordStudioRiskObservation, studioRiskSourceRefusal, studioRiskTransactionValid } from './studioRiskWatches';
+import { studioRiskWatchCrossed } from './notify';
 
 export const SIGNAL_MAX_AGE_MS = 5 * 60_000;
 
@@ -56,6 +58,7 @@ async function solana(method: SolanaQuery['method'], address: string) {
 
 /** All network I/O is machine-scoped upstream.ask, with the upstream's actual observation time. */
 export async function readSignalWatch(watch: SignalWatch): Promise<SignalObservation> {
+  if (watch.studioMetric) return readStudioRiskMetric(watch);
   if (watch.chain !== 'solana') throw new Error(`${watch.chain}: unsupported chain; not watched.`);
   if (watch.predicate === 'wallet_transaction') {
     const answer = await solana('getSignaturesForAddress', watch.address);
@@ -104,6 +107,11 @@ function evidenceBrief(watch: SignalWatch, before: SignalObservation, after: Sig
 }
 
 export async function pollSignalSource(source: RadarSourceRow, reader = readSignalWatch): Promise<void> {
+  const studioRefusal = await studioRiskSourceRefusal(source);
+  if (studioRefusal) {
+    await radar.deferPoll(source.id, new Date(Date.now() + 60_000), studioRefusal);
+    return;
+  }
   const parsed = SignalUniverse.safeParse(source.config.watches);
   if (!parsed.success) {
     await radar.recordPoll({ sourceId: source.id, found: 0, nextPollAt: new Date(Date.now() + 300_000), error: 'Configure one to twelve exact owner pins.' });
@@ -127,24 +135,33 @@ export async function pollSignalSource(source: RadarSourceRow, reader = readSign
       const current = await tx.one('SELECT enabled, config FROM radar_sources WHERE id = $1 FOR UPDATE', [source.id]);
       const config = current?.config as RadarSourceRow['config'] | undefined;
       if (!current?.enabled || !config?.watches?.some(w => signalWatchKey(w) === key)) return;
+      if (!await studioRiskTransactionValid(tx, source)) return;
       const row = await tx.one('SELECT state FROM signal_baselines WHERE source_id = $1 AND watch_key = $2', [source.id, key]);
       const evaluation = evaluateSignal(watch, (row?.state as SignalState | null) ?? null, read);
+      if (!row?.state && config.studioRisk && evaluation.state) {
+        // Re-baselining after a coverage gap must not reuse an earlier crossing's key.
+        const generation = await tx.one('SELECT COALESCE(max(generation),0) AS n FROM signal_candidates WHERE source_id=$1 AND watch_key=$2', [source.id, key]);
+        evaluation.state.generation = Number(generation?.n ?? 0);
+      }
       const unsupported = watch.chain !== 'solana';
       const reason = unsupported ? read.definition : read.value === null ? `${evaluation.reason} ${read.definition}` : evaluation.reason;
       if (!unsupported && (read.value === null || /stale|unavailable/i.test(reason))) gaps++;
       reasons.push(reason);
       await tx.query(`INSERT INTO signal_baselines(source_id, watch_key, watch, state, last_read, reason) VALUES ($1,$2,$3,$4,$5,$6)
         ON CONFLICT(source_id,watch_key) DO UPDATE SET state = excluded.state, last_read = excluded.last_read, reason = excluded.reason, updated_at = now()`, [source.id, key, watch, evaluation.state, read, reason]);
+      if (evaluation.state?.latest === read) await recordStudioRiskObservation(tx, source, watch, evaluation.before, read);
       if (!evaluation.transition || !evaluation.before || !evaluation.state) return;
       found++;
       const summary = `Chain observation: ${watch.predicate.replaceAll('_', ' ')} at ${watch.address.slice(0, 6)}...${watch.address.slice(-4)}`;
       const detail = evidenceBrief(watch, evaluation.before, read);
+      if (config.studioRisk) await studioRiskWatchCrossed({ agentId: config.studioRisk.agentId, accountId: source.accountId, sourceId: source.id, watchKey: key, generation: evaluation.state.generation, detail }, tx);
       const links = await tx.many(`SELECT aa.agent_id,
         EXISTS(SELECT 1 FROM agent_account_capabilities c WHERE c.agent_id=aa.agent_id AND c.account_id=aa.account_id AND c.capability='READ') AS can_read,
         EXISTS(SELECT 1 FROM agent_account_capabilities c WHERE c.agent_id=aa.agent_id AND c.account_id=aa.account_id AND c.capability='POST') AS can_post
         FROM agent_accounts aa JOIN agents a ON a.id=aa.agent_id JOIN accounts ac ON ac.id=aa.account_id
         WHERE aa.account_id=$1 AND aa.enabled AND a.owner_id=ac.owner_id`, [source.accountId]);
       for (const link of links) {
+        if (config.studioRisk && config.studioRisk.agentId !== link.agent_id) continue;
         const refusal = signalPublicationRefusal(detail) ?? (!config.mayTrigger ? 'Context only; posting candidates are switched off.' : !link.can_read || !link.can_post ? 'READ and POST grants are required at ingest.' : null);
         const candidate = await tx.one(`INSERT INTO signal_candidates(source_id,watch_key,generation,agent_id,evidence,reason) VALUES($1,$2,$3,$4,$5,$6)
           ON CONFLICT DO NOTHING RETURNING id`, [source.id, key, evaluation.state.generation, link.agent_id, { watch, before: evaluation.before, after: read }, refusal ?? 'In idea backlog; posting gates have not run.']);
@@ -159,7 +176,7 @@ export async function pollSignalSource(source: RadarSourceRow, reader = readSign
 
 /** Run again at send, including approved jobs, so edits and revocations cannot be outrun. */
 export async function signalIdeaRefusal(ideaId: string, draft?: string, scope?: { accountId?: string | null; agentId: string }): Promise<string | null> {
-  const [row] = await query(`SELECT c.evidence, c.watch_key, c.agent_id, s.account_id, s.enabled, s.config,
+  const [row] = await query(`SELECT c.evidence, c.watch_key, c.agent_id, s.id AS source_id, s.account_id, s.enabled, s.config,
     EXISTS(SELECT 1 FROM agent_account_capabilities p WHERE p.agent_id=c.agent_id AND p.account_id=s.account_id AND p.capability='READ') AS can_read,
     EXISTS(SELECT 1 FROM agent_account_capabilities p WHERE p.agent_id=c.agent_id AND p.account_id=s.account_id AND p.capability='POST') AS can_post,
     EXISTS(SELECT 1 FROM agent_accounts aa WHERE aa.agent_id=c.agent_id AND aa.account_id=s.account_id AND aa.enabled) AS linked
@@ -168,6 +185,8 @@ export async function signalIdeaRefusal(ideaId: string, draft?: string, scope?: 
   if (!row.can_read || !row.can_post || !row.linked) return 'READ and POST grants and an enabled account link are required.';
   if (scope && (scope.agentId !== row.agent_id || (scope.accountId !== undefined && scope.accountId !== row.account_id))) return 'Signal evidence belongs to a different agent or account.';
   const config = row.config as RadarSourceRow['config'];
+  const studioRefusal = await studioRiskSourceRefusal({ id: String(row.source_id), config });
+  if (studioRefusal) return studioRefusal;
   if (!row.enabled || !config.mayTrigger || !config.watches?.some(w => signalWatchKey(w) === row.watch_key)) return 'Signal watch or posting permission was removed.';
   return draft ? signalPublicationRefusal(draft) : null;
 }

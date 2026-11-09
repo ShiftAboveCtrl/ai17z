@@ -269,7 +269,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
           target: z.string().max(300).nullable().default(null),
           label: z.string().max(120).default(''),
           enabled: z.boolean().default(true),
-          config: RadarSourceConfig.partial().extend({ mayTrigger: z.boolean().optional() }).prefault({}),
+          config: RadarSourceConfig.partial().extend({ mayTrigger: z.boolean().optional(), studioRisk: z.never().optional() }).prefault({}),
         }),
         request,
       );

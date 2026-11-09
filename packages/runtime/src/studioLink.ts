@@ -91,6 +91,7 @@ interface LinkRecord {
   /** Set when Studio said this installation is no longer linked. */
   revokedAt?: string | null;
 }
+export type StudioLinkScope = Pick<LinkRecord, 'installationId' | 'origin' | 'linkedAt'>;
 
 interface PendingRecord {
   origin: string;
@@ -272,9 +273,13 @@ async function accessToken(where: StudioOrigin, key: InstallationKey, link: Link
 async function authed(
   path: string,
   init: { method: 'GET' | 'POST'; json?: unknown },
+  expectedLink?: StudioLinkScope,
 ): Promise<StudioAnswer | StudioProblem> {
   const ready = await linkedContext();
   if ('ok' in ready) return ready;
+  if (expectedLink && (ready.link.installationId !== expectedLink.installationId || ready.where.origin !== expectedLink.origin || ready.link.linkedAt !== expectedLink.linkedAt)) {
+    return { ok: false, why: 'The Studio link changed before this request could be sent.' };
+  }
   const token = await accessToken(ready.where, ready.key, ready.link);
   if (typeof token !== 'string') return token;
   const answer = await send(ready.where, path, {
@@ -321,11 +326,12 @@ async function authed(
 export async function studioInstallationRequest(
   path: string,
   init: { method: 'GET' | 'POST'; json?: unknown },
+  expectedLink?: StudioLinkScope,
 ): Promise<{ ok: true; status: number; body: Record<string, unknown> | null; sentence: string } | StudioProblem> {
   if (!/^\/api\/v1\/installation\/[A-Za-z0-9/_?=&.-]+$/.test(path) || path.includes('..') || path.includes('//')) {
     return { ok: false, why: 'That is not a Studio installation address.' };
   }
-  const answer = await authed(path, init).catch((error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }));
+  const answer = await authed(path, init, expectedLink).catch((error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }));
   if ('ok' in answer) return answer;
   return { ok: true, status: answer.status, body: answer.body, sentence: describe(answer) };
 }

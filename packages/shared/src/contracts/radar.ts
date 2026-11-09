@@ -55,8 +55,11 @@ export const SignalWatch = z.object({
   address: z.string().trim().max(120).refine(exactSignalAddress, 'Use an exact mint or address, never a ticker.'),
   predicate: z.enum(['liquidity_below', 'concentration_above', 'new_pool', 'wallet_transaction']),
   threshold: z.number().finite().nonnegative().max(1e15).optional(),
+  /** Studio's index metrics are distinct from the native pool and RPC metrics. */
+  studioMetric: z.enum(['LIQUIDITY_BELOW', 'TOP_HOLDERS_ABOVE', 'DEVELOPER_SHARE_ABOVE']).optional(),
 }).strict().superRefine((watch, ctx) => {
   if (watch.chain === 'solana' && watch.address.startsWith('0x')) ctx.addIssue({ code: 'custom', message: 'A Solana mint must be a Solana address.' });
+  if (watch.studioMetric && (watch.chain !== 'solana' || watch.predicate !== (watch.studioMetric === 'LIQUIDITY_BELOW' ? 'liquidity_below' : 'concentration_above'))) ctx.addIssue({ code: 'custom', message: 'The Studio index metric must match its condition.' });
   if (watch.predicate === 'liquidity_below' || watch.predicate === 'concentration_above') {
     if (watch.threshold === undefined || (watch.predicate === 'concentration_above' && watch.threshold > 100)) {
       ctx.addIssue({ code: 'custom', message: 'Set a threshold in USD, or a concentration percentage from 0 to 100.' });
@@ -121,6 +124,8 @@ export const RadarSourceConfig = z.object({
   minFaves: z.number().int().min(0).max(100_000).optional(),
   /** Exact owner pins; this source is opt-in and bounded independently of X. */
   watches: SignalUniverse.optional(),
+  /** Set only by the locally opted-in Studio watch bridge. */
+  studioRisk: z.object({ bindingId: z.string().uuid(), agentId: z.string().uuid(), watchId: z.string().uuid(), watchRevision: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 });
 export type RadarSourceConfig = z.infer<typeof RadarSourceConfig>;
 
