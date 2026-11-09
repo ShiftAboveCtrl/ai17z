@@ -1,6 +1,7 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootstrapRuntime, shortlistCapabilities, familyOf, taskText, SHORTLIST_LIMIT, zodToDescription } from '@xbam/runtime';
 import { listModelCallable, renderMenu, type AnyCapability } from '@xbam/tools';
+import { setupTestDatabase, teardownTestDatabase } from '../support/db';
 
 /**
  * Which capabilities a model is shown for one task.
@@ -19,9 +20,11 @@ import { listModelCallable, renderMenu, type AnyCapability } from '@xbam/tools';
 let all: AnyCapability[];
 
 beforeAll(async () => {
+  await setupTestDatabase();
   await bootstrapRuntime();
   all = listModelCallable();
 });
+afterAll(async () => teardownTestDatabase());
 
 const menuSize = (capabilities: AnyCapability[]) =>
   capabilities.length === 0 ? 0 : renderMenu(capabilities, (c) => zodToDescription(c.input)).length;

@@ -22,7 +22,9 @@ with authenticated `PUT /api/agents/:id/paper-trading`:
     "decimals": 9,
     "symbol": "SOL"
   },
-  "maxInBase": "10000000"
+  "maxInBase": "10000000",
+  "maxPerDayBase": "100000000",
+  "maxRequestsPerRequesterPerDay": 3
 }
 ```
 
@@ -34,6 +36,28 @@ Enable the Social paper trading Plugin, or set `paper.trade` to ALLOWED through
 owner's `policy.tools.capabilityLoop` opt-in and the ordinary channel grants.
 `GET /api/agents/:id/paper-trading` reports the saved configuration and permission.
 Both setup routes are owner-scoped. There is no model-callable setup route.
+
+`maxPerDayBase` bounds paper BUY spend per UTC day in the configured quote
+asset's base units. If omitted, it defaults to ten times `maxInBase`. The
+mandate's `maxPerDay` also applies, so the smaller ceiling wins. Sales do not
+refund the daily budget. Both daily limits use the committed fill timestamp,
+including requests that started before midnight. `maxRequestsPerRequesterPerDay` defaults to three
+committed fills per UTC day, with an owner-configurable range of 1 to 100.
+It counts distinct messages from the same channel author ID, across the
+agent's accounts, rather than a model-supplied identity or a changeable handle.
+Missing author IDs share one conservative bucket per channel. Owner chat uses
+the conversation owner's ID across their conversations. Replaying an existing
+request does not spend either limit again.
+
+These checks use the committed paper journal, not `exposureOf`, which accounts
+for LIVE trades. They include fills whose subsequent receipt write failed.
+Open paper cost in the configured quote asset must fit `maxOpenExposure`, and
+opening another asset/quote position must fit `maxOpenPositions`. Existing
+paper buys and sales determine current quantities and remaining cost through
+`paperPositions`. Costs in different quote assets are never added together.
+Admission checks fail early; the same limits are checked again inside the
+engine's paper journal lock immediately before the committed fill. Concurrent
+requests cannot consume the same remaining budget. No new migration is needed.
 
 Accepted incoming requests are `paper long $WIF`, `paper buy $X`, or a single
 mint or contract address. A leading account mention is allowed. An optional
@@ -59,12 +83,22 @@ Migration `0117_social_paper_requests.sql` claims each `(agent, incoming message
 once with a primary key. Retries replay the recorded result, including refusals
 and NO_MARKET. Concurrent callers cannot create a second fill. A process that
 dies after claiming leaves PENDING for inspection; it is never automatically
-rerun. Inspect the trade intent keyed `social-paper:<agent>:event:<event>` or
+rerun. A thrown attempt settles a durable PENDING result in `finally`, since
+an exception could follow a committed fill. PENDING, missing results on a
+claimed request, and failed or timed-out invocations hold the reply for review.
+Their internal errors and operator instructions are never published to a
+stranger. Inspect the trade intent keyed `social-paper:<agent>:event:<event>` or
 `social-paper:<agent>:chat:<message>` before deciding what to ask next. A new
 incoming message is a new request, even when its text matches an earlier one.
 
 Every receipt says "Simulated paper", gives the fill and fee in labelled base
-units, and carries the risk verdict with its reasons. REFUSED and NO_MARKET
+units, and carries the risk verdict with its named reasons. The full reason
+sentences remain in the structured result and journal; public risk refusals
+use compact reason codes so a realistic multiple-cause refusal fits 280
+characters. Every resolved asset label includes a shortened contract address.
+Symbols must match `[A-Za-z0-9]{1,12}`; any other upstream symbol is replaced
+by the shortened mint, so it cannot inject mentions, tickers or promotional
+copy. REFUSED and NO_MARKET
 have no fill. The model cannot turn this receipt into a claim of money moved:
 generation selects the recorded receipt, voice scoring keeps the receipt intact,
 and validation and execution hold any changed or truncated receipt for review.

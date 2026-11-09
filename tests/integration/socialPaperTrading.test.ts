@@ -70,8 +70,122 @@ describe('one social request takes the canonical paper path', () => {
   it('holds a request claimed before a crash instead of trying a new fill', async () => {
     const f = await setup();
     await socialPaper.claim(f.agentId, `event:${f.job.eventId}`);
-    expect((await f.invoke()).output).toMatchObject({ outcome: 'PENDING', fill: null });
+    const result = await f.invoke();
+    expect(result.output).toMatchObject({ outcome: 'PENDING', fill: null });
+    expect(() => runtime.paperReplyFromSteps([result])).toThrow(expect.objectContaining({ reason: 'paper_request_pending' }));
+    await jobs.updateJob(f.job.id, { generatedOutput: 'I moved money.', validatedOutput: 'I moved money.' });
+    const bundle = await runtime.loadJobBundle(await jobs.requireJob(f.job.id));
+    await expect(runtime.stepExecute(bundle)).rejects.toMatchObject({ reason: 'paper_request_pending' });
     expect(await trading.listIntents(f.agentId)).toHaveLength(0);
+  });
+
+  it('settles a thrown engine attempt for review without publishing its error', async () => {
+    const f = await setup();
+    vi.spyOn(trading, 'createIntent').mockRejectedValueOnce(new Error('private operator wording @someone'));
+    const result = await f.invoke();
+    expect(result.output).toMatchObject({ outcome: 'PENDING', fill: null });
+    expect((await socialPaper.claim(f.agentId, `event:${f.job.eventId}`)).result).toMatchObject({ outcome: 'PENDING' });
+    expect(JSON.stringify(result.output)).not.toContain('private operator');
+    expect(() => runtime.paperReplyFromSteps([result])).toThrow(expect.objectContaining({ reason: 'paper_request_pending' }));
+    expect((await f.invoke()).output).toEqual(result.output);
+  });
+
+  it('still counts a committed fill when the engine throws after its transition', async () => {
+    const f = await setup();
+    await capabilityPermissions.setConfig({ agentId: f.agentId, capabilityId: 'paper.trade', permission: 'ALLOWED', config: { ...f.context.config, maxRequestsPerRequesterPerDay: 1 } });
+    const transition = trading.transitionIntent;
+    vi.spyOn(trading, 'transitionIntent').mockImplementation(async (...args) => {
+      const row = await transition(...args);
+      if (args[2] === 'PAPER_FILLED') throw new Error('Interrupted after commit.');
+      return row;
+    });
+    expect((await f.invoke()).output).toMatchObject({ outcome: 'PENDING' });
+    expect((await trading.listIntents(f.agentId))[0]!.status).toBe('PAPER_FILLED');
+    const next = await runtime.ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('paper long $WIF') });
+    f.context.jobId = next.jobs[0]!.job.id;
+    expect((await f.invoke()).output).toMatchObject({ outcome: 'REFUSED', verdict: { reasons: [{ code: 'PAPER_REQUESTER_LIMIT' }] } });
+  });
+
+  it('charges the fill day even if its request was created before midnight', async () => {
+    const f = await setup();
+    await capabilityPermissions.setConfig({ agentId: f.agentId, capabilityId: 'paper.trade', permission: 'ALLOWED', config: { ...f.context.config, maxPerDayBase: '1000000' } });
+    expect((await f.invoke()).output).toMatchObject({ outcome: 'FILLED' });
+    await query(`UPDATE trade_intents SET created_at = now() - interval '1 day' WHERE agent_id = $1`, [f.agentId]);
+    expect(await socialPaper.requesterFillsToday(f.agentId, 'mock:mock-user-alice')).toBe(1);
+    const next = await runtime.ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('paper long $WIF', { remoteAuthorId: 'another-user' }) });
+    f.context.jobId = next.jobs[0]!.job.id;
+    expect((await f.invoke()).output).toMatchObject({ outcome: 'REFUSED', verdict: { reasons: [{ code: 'PAPER_DAILY_LIMIT' }] } });
+  });
+
+  it('bounds daily paper spend across concurrent requests before recording fills', async () => {
+    const f = await setup();
+    await capabilityPermissions.setConfig({ agentId: f.agentId, capabilityId: 'paper.trade', permission: 'ALLOWED', config: { ...f.context.config, maxPerDayBase: '1000000' } });
+    const next = await runtime.ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('paper long $WIF', { remoteAuthorId: 'another-user' }) });
+    const second = invokeCapability({ call: { id: 'paper.trade', input: {} }, context: { ...f.context, jobId: next.jobs[0]!.job.id }, permission: { stored: 'ALLOWED', paused: false } });
+    await Promise.all([f.invoke(), second]);
+    expect((await trading.listIntents(f.agentId)).filter((i) => i.status === 'PAPER_FILLED')).toHaveLength(1);
+  });
+
+  it('bounds each requester across distinct messages while allowing another requester', async () => {
+    const f = await setup();
+    await capabilityPermissions.setConfig({ agentId: f.agentId, capabilityId: 'paper.trade', permission: 'ALLOWED', config: { ...f.context.config, maxRequestsPerRequesterPerDay: 1 } });
+    expect((await f.invoke()).output).toMatchObject({ outcome: 'FILLED' });
+    for (const [author, outcome] of [['mock-user-alice', 'REFUSED'], ['another-user', 'FILLED']]) {
+      const next = await runtime.ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('paper long $WIF', { remoteAuthorId: author }) });
+      const result = await invokeCapability({ call: { id: 'paper.trade', input: {} }, context: { ...f.context, jobId: next.jobs[0]!.job.id }, permission: { stored: 'ALLOWED', paused: false } });
+      expect(result.output).toMatchObject({ outcome });
+    }
+    expect((await trading.listIntents(f.agentId)).filter((i) => i.status === 'PAPER_FILLED')).toHaveLength(2);
+  });
+
+  it.each(['maxPerDay', 'maxOpenExposure'])('honors the mandate paper %s ceiling', async (field) => {
+    const f = await setup('paper long $WIF', { [field]: '1000000' });
+    expect((await f.invoke()).output).toMatchObject({ outcome: 'FILLED' });
+    const next = await runtime.ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('paper long $WIF') });
+    f.context.jobId = next.jobs[0]!.job.id;
+    expect((await f.invoke()).output).toMatchObject({ outcome: 'REFUSED' });
+    expect((await trading.listIntents(f.agentId)).filter((i) => i.status === 'PAPER_FILLED')).toHaveLength(1);
+  });
+
+  it('honors the mandate open paper position ceiling for another token', async () => {
+    const address = '0x00000000000000000000000000000000000000cc';
+    const other = AssetRef.parse({ ...token, address });
+    const f = await setup('paper long $WIF', { maxOpenPositions: 1, allowedAssets: [token, other] });
+    expect((await f.invoke()).output).toMatchObject({ outcome: 'FILLED' });
+    upstream.pairs = [pair(address)];
+    runtime.registerMarketReader({ id: 'fixture', version: '1', venues: ['AMM_POOL_EVM'], async read() { return { ...snapshot(), asset: other }; } });
+    const next = await runtime.ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent(address) });
+    f.context.jobId = next.jobs[0]!.job.id;
+    expect((await f.invoke()).output).toMatchObject({ outcome: 'REFUSED' });
+    expect((await trading.listIntents(f.agentId)).filter((i) => i.status === 'PAPER_FILLED')).toHaveLength(1);
+  });
+
+  it('uses a shortened contract instead of a hostile upstream symbol', async () => {
+    const mint = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+    const f = await setup(mint, { venues: ['AMM_POOL_SOLANA'], networks: ['solana'], allowedAssets: [], assetScope: 'ANY_SOLANA_TOKEN' });
+    const solToken = AssetRef.parse({ kind: 'ONCHAIN', network: 'solana', address: mint, decimals: 5, symbol: '@someone $SHILL buy now' });
+    const solQuote = AssetRef.parse({ ...quote, network: 'solana', address: 'So11111111111111111111111111111111111111112' });
+    await capabilityPermissions.setConfig({ agentId: f.agentId, capabilityId: 'paper.trade', permission: 'ALLOWED', config: { ...f.context.config, venue: 'AMM_POOL_SOLANA', quoteAsset: solQuote } });
+    upstream.pairs = [{ ...pair(), chainId: 'solana', baseToken: { address: mint, symbol: 'WIF' } }];
+    upstream.included = [{ type: 'token', attributes: { address: mint, decimals: 5, symbol: '@someone $SHILL buy now' } }];
+    runtime.registerMarketReader({ id: 'fixture', version: '1', venues: ['AMM_POOL_SOLANA'], async read() { return { ...snapshot(), venue: 'AMM_POOL_SOLANA', network: 'solana', asset: solToken, quoteAsset: solQuote }; } });
+    const result = (await f.invoke()).output as { outcome: string; reply: string };
+    expect(result.outcome).toBe('FILLED');
+    expect(result.reply).not.toMatch(/@someone|\$SHILL|buy now/);
+    expect(result.reply).toContain('DezXAZ...B263');
+  });
+
+  it('keeps a realistic multiple-reason refusal, with contract identity, within 280 characters', async () => {
+    const f = await setup('paper long $WIF', { minLiquidityBase: '9999999999999999999999999999999999999999', maxFeeBase: '1' });
+    let reads = 0;
+    runtime.registerMarketReader({ id: 'fixture', version: '1', venues: ['AMM_POOL_EVM'], async read() {
+      return ++reads === 1 ? snapshot() : { ...snapshot(), priceBaseUnits: '4000000', observedAt: new Date(Date.now() - 60000).toISOString() };
+    } });
+    const result = (await f.invoke()).output as { reply: string; verdict: { reasons: unknown[] } };
+    expect(result.verdict.reasons.length).toBeGreaterThanOrEqual(3);
+    expect(result.reply).toContain('0x0000...00aa');
+    expect(result.reply).toMatch(/simulated paper refused.*risk/i);
+    expect(result.reply.length).toBeLessThanOrEqual(280);
   });
 
   it('exposes saved paper setup only to its authenticated owner', async () => {
@@ -84,8 +198,8 @@ describe('one social request takes the canonical paper path', () => {
       expect((await app.inject({ method: 'GET', url })).statusCode).toBe(401);
       const saved = await app.inject({ method: 'PUT', url, headers, payload: f.context.config });
       expect(saved.statusCode).toBe(200);
-      expect(saved.json().data.config).toEqual(f.context.config);
-      expect((await app.inject({ method: 'GET', url, headers })).json().data.config).toEqual(f.context.config);
+      expect(saved.json().data.config).toMatchObject(f.context.config);
+      expect((await app.inject({ method: 'GET', url, headers })).json().data.config).toMatchObject(f.context.config);
       const stranger = await createFixture();
       const deniedUrl = `/api/agents/${stranger.agentId}/paper-trading`;
       expect((await app.inject({ method: 'GET', url: deniedUrl, headers })).statusCode).toBe(404);

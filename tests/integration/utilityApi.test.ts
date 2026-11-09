@@ -305,6 +305,7 @@ describe('the bridge to public capabilities', () => {
     for (const register of [
       runtime.registerIntrospectionCapabilities,
       runtime.registerWalletCapabilities,
+      runtime.registerPaperCapabilities,
       runtime.registerChainCapabilities,
       runtime.registerContractCapabilities,
       runtime.registerDefiCapabilities,

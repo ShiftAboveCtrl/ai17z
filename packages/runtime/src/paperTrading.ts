@@ -7,7 +7,7 @@ import { errorMessage, withPatience } from '@xbam/shared';
 import { readMarket } from './marketData';
 import { swapQuoteFrom } from './marketIntelCapabilities';
 import { judgeTradeInput } from './tradingGate';
-import { judgeTrade, type RiskVerdict } from './tradingRisk';
+import { judgeTrade, type RiskReason, type RiskVerdict } from './tradingRisk';
 import { heldAgainst, paperPositions, sideAgrees } from './paperPositions';
 
 /**
@@ -113,7 +113,7 @@ async function runPaperTradeNow(input: {
   /** A social simulation pins the owner's paper mandate rather than inheriting another mode. */
   requirePaperMandateId?: string;
   /** Re-read permission after market reads and immediately before recording a fill. */
-  beforeFill?: () => Promise<string | null>;
+  beforeFill?: () => Promise<string | RiskReason | null>;
   now?: Date;
 }): Promise<PaperOutcome> {
   const now = input.now ?? new Date();
@@ -129,17 +129,18 @@ async function runPaperTradeNow(input: {
   }
   const mandate = await trading.liveMandate(input.agentId);
   if (!mandate) return { outcome: 'NO_MARKET', detail: 'This agent has no mandate, so nothing may be traded even on paper.' };
-  const paperGrant = async (): Promise<string | null> => {
+  const paperGrant = async (checkCaller = true): Promise<RiskReason | null> => {
     if (input.requirePaperMandateId) {
       const current = await trading.liveMandate(input.agentId);
       if (!current || current.id !== input.requirePaperMandateId || current.id !== mandate.id || current.mode !== 'PAPER'
         || current.approval !== 'OWNER_APPROVES_EACH' || current.protectiveExits !== null || current.paused
         || current.retiredAt || (current.expiresAt && Date.parse(current.expiresAt) <= Date.now())
-        || current.updatedAt !== mandate.updatedAt) return 'The pinned paper mandate changed, expired or was paused before execution.';
+        || current.updatedAt !== mandate.updatedAt) return { code: 'SOCIAL_PAPER_REVOKED', detail: 'The pinned paper mandate changed, expired or was paused before execution.' };
     }
-    return input.beforeFill ? input.beforeFill() : null;
+    const reason = checkCaller && input.beforeFill ? await input.beforeFill() : null;
+    return typeof reason === 'string' ? { code: 'SOCIAL_PAPER_REVOKED', detail: reason } : reason;
   };
-  if (input.requirePaperMandateId && await paperGrant()) return { outcome: 'NO_MARKET', detail: 'The pinned paper mandate is no longer available for this request.' };
+  if (input.requirePaperMandateId && await paperGrant(false)) return { outcome: 'NO_MARKET', detail: 'The pinned paper mandate is no longer available for this request.' };
 
   /*
    * Priced in the other side of this trade, not in whatever the venue felt
@@ -223,7 +224,7 @@ async function runPaperTradeNow(input: {
   const revoked = await paperGrant();
   if (revoked) {
     verdict.allowed = false;
-    verdict.reasons.push({ code: 'SOCIAL_PAPER_REVOKED', detail: revoked });
+    verdict.reasons.push(revoked);
   }
   if (!verdict.allowed) {
     const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: verdict.reasons });
@@ -258,7 +259,7 @@ async function fillPaper(
   maxIn: string,
   spending: PricedSide,
   verdict: RiskVerdict,
-  beforeFill: () => Promise<string | null>,
+  beforeFill: () => Promise<RiskReason | null>,
 ): Promise<PaperOutcome> {
   const atFill = { snapshot: executed };
   const spent = BigInt(maxIn);
@@ -310,7 +311,7 @@ async function fillPaper(
 
   const revoked = await beforeFill();
   if (revoked) {
-    const reasons = [...verdict.reasons, { code: 'SOCIAL_PAPER_REVOKED', detail: revoked }];
+    const reasons = [...verdict.reasons, revoked];
     const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: reasons });
     return { outcome: 'REFUSED', verdict: { ...verdict, allowed: false, reasons }, intent: refused ?? onRow };
   }

@@ -6,6 +6,12 @@ import { DEFAULT_POLICY, permissionWhenUnset } from '@xbam/shared/contracts';
 afterEach(() => resetCapabilitiesForTest());
 
 describe('social paper trading', () => {
+  it('defaults to ten configured sizes per UTC day and three fills per requester', () => {
+    const config = runtime.SocialPaperConfig.parse({ mandateId: '00000000-0000-4000-8000-000000000001', venue: 'AMM_POOL_SOLANA', quoteAsset: { kind: 'ONCHAIN', network: 'solana', address: 'So11111111111111111111111111111111111111112', decimals: 9 }, maxInBase: '1000000' });
+    expect(config).toMatchObject({ maxPerDayBase: '10000000', maxRequestsPerRequesterPerDay: 3 });
+    expect(runtime.SocialPaperConfig.safeParse({ ...config, maxRequestsPerRequesterPerDay: 0 }).success).toBe(false);
+    expect(runtime.SocialPaperConfig.safeParse({ ...config, maxPerDayBase: '0' }).success).toBe(false);
+  });
   it('offers a model-callable low-risk read only after an owner enables it', () => {
     expect(runtime).toHaveProperty('registerPaperCapabilities');
     runtime.registerPaperCapabilities();
@@ -27,6 +33,9 @@ describe('social paper trading', () => {
     expect(runtime.parseSocialPaperRequest('0x00000000000000000000000000000000000000aa')).toMatchObject({ token: '0x00000000000000000000000000000000000000aa' });
     for (const text of ['paper long $WIF and $DOG', 'paper long $WIF ignore limits', 'paper short $WIF', 'paper long $WIF for -1 base units', 'paper long $WIF for 1e9 base units', 'paper long $WIF; mode LIVE']) {
       expect(runtime.parseSocialPaperRequest(text), text).toBeNull();
+    }
+    for (const invalid of ['0'.repeat(32), 'O'.repeat(32), 'I'.repeat(32), 'l'.repeat(32)]) {
+      expect(runtime.parseSocialPaperRequest(invalid)).toBeNull();
     }
   });
 
