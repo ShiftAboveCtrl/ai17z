@@ -23,6 +23,7 @@ import {
 import { assemblePrompt } from '@xbam/prompts';
 import { habitualPhrases, lengthCeiling } from '@xbam/persona';
 import { runCapabilityLoop } from '../capabilityLoop';
+import { paperReplyForJob, paperReplyFromSteps } from '../paperCapabilities';
 import { variantForPost } from '../experimentRuns';
 import { capabilitySettings } from '../capabilityPermissions';
 import { pauseState } from '../killSwitch';
@@ -368,7 +369,7 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
       maxSteps: RESPONSE_SPEED_PROFILES[bundle.policy.responseSpeed].capabilitySteps,
       paused: (await pauseState().catch(() => ({ paused: false }))).paused,
     });
-    text = loop.answer;
+    text = paperReplyFromSteps(loop.steps) ?? loop.answer;
     /*
       What it was shown, not only what it used.
 
@@ -431,6 +432,10 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
+  const paperReply = await paperReplyForJob(bundle.job.id);
+  if (paperReply !== null && result.output !== paperReply) {
+    throw PipelineError.review('paper_receipt_changed', 'The complete simulated paper receipt cannot fit this output policy. Review it before sending.');
+  }
 
   if (!result.ok) {
     const summary = blocking.map((v) => v.message).join(' ');
@@ -516,6 +521,7 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
   const { job, policy } = bundle;
   const draft = job.validatedOutput ?? job.generatedOutput;
   if (!policy.voice.enabled || !draft) return;
+  const paperReceipt = await paperReplyForJob(job.id);
 
   const context = job.resolvedContext;
   const speed = RESPONSE_SPEED_PROFILES[policy.responseSpeed];
@@ -540,7 +546,7 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
       What FAST loses is the rewrite of a correctly-sized reply that merely
       reads slightly unlike the agent.
     */
-    allowModelCall: !job.dryRun && speed.voiceRewrite,
+    allowModelCall: paperReceipt === null && !job.dryRun && speed.voiceRewrite,
     maxCalls: policy.budget.maxModelCallsPerJob,
   });
 
@@ -574,7 +580,9 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
     because a draft that never reaches the voice step must be clean too. This
     closes the window between them.
   */
-  const spoken = removeEmDashes(compiled.text);
+  // Score the reply through the ordinary quality path while keeping the
+  // financial receipt intact. A voice rewrite cannot change its meaning.
+  const spoken = removeEmDashes(paperReceipt ?? compiled.text);
   if (spoken.replaced > 0) {
     await observability.emitTrace({
       jobId: job.id,

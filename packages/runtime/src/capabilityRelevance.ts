@@ -89,6 +89,7 @@ const FAMILY_HINTS: Record<string, string[]> = {
   solana: ['solana', 'sol', 'spl'],
   bitcoin: ['bitcoin', 'btc', 'satoshi', 'utxo'],
   market: ['price', 'ticker', 'pair', 'liquidity', 'volume', 'market cap', 'chart', 'trading'],
+  paper: ['paper long', 'paper buy', 'paper trade', 'mint', 'address'],
   defi: ['tvl', 'defi', 'stablecoin', 'protocol'],
   token: ['token', 'rug', 'honeypot', 'risk'],
   address: ['wallet', 'address', 'sanction', 'phishing', 'stolen'],
@@ -207,6 +208,9 @@ export function shortlistCapabilities(
   // every capability in that family rather than only the one whose description
   // happened to repeat the word.
   const familyScore = new Map<string, number>();
+  // Pasting one exact token identity is a supported paper request. There are
+  // no topic words to match, and the capability still checks the original.
+  if (/^(?:@[A-Za-z0-9_]+\s+)*(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})[.!]?$/.test(task.trim())) familyScore.set('paper', 6);
   for (const [family, hints] of Object.entries(FAMILY_HINTS)) {
     let hits = 0;
     for (const hint of hints) {

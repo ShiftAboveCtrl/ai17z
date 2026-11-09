@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { mandateOf, pauseOwnerMandate, writeOwnerMandate } from '@xbam/runtime';
+import { configureSocialPaper, mandateOf, pauseOwnerMandate, socialPaperSettings, writeOwnerMandate } from '@xbam/runtime';
 import { z } from 'zod';
 import { handler, params, parseBody, requireUser } from '../http';
 
@@ -9,6 +9,10 @@ import { handler, params, parseBody, requireUser } from '../http';
  * exactly the thing an agent must not be able to change about itself.
  */
 export async function mandateRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/agents/:id/paper-trading', handler(async (request) =>
+    socialPaperSettings(params(request).id!, (await requireUser(request)).id)));
+  app.put('/api/agents/:id/paper-trading', handler(async (request) =>
+    configureSocialPaper(params(request).id!, (await requireUser(request)).id, request.body)));
   app.get(
     '/api/agents/:id/mandate',
     handler(async (request) => ({ mandate: await mandateOf(params(request).id!, (await requireUser(request)).id) })),

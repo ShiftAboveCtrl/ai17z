@@ -131,6 +131,7 @@ export { STANDARD_WORK } from './repositories/workers';
 export * as spam from './repositories/spam';
 export * as agentChanges from './repositories/agentChanges';
 export * as trading from './repositories/trading';
+export * as socialPaper from './repositories/socialPaper';
 export * as tradeShadows from './repositories/tradeShadows';
 export type { ShadowDraft, ShadowOutcome, TradeShadowRow } from './repositories/tradeShadows';
 export * as hosting from './repositories/hosting';

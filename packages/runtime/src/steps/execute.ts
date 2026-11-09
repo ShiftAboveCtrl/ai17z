@@ -49,6 +49,7 @@ import type { JobBundle } from '../loadJob';
 
 import { checkActionRate } from '../policyGate';
 import { checkDevUpdateAtSend } from '../devUpdateGuard';
+import { paperReplyForJob } from '../paperCapabilities';
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
@@ -210,6 +211,10 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   const { job, policy } = bundle;
   const output = job.validatedOutput;
   if (!output) throw PipelineError.retryable('output_missing', 'Execution ran before validation produced output.');
+  const paperReply = await paperReplyForJob(job.id);
+  if (paperReply !== null && paperReply !== output) {
+    throw PipelineError.review('paper_receipt_changed', 'The paper receipt changed after validation. Send the complete simulated record only.');
+  }
 
   const context = job.resolvedContext;
   const targetRef = context?.targetRef ?? null;
