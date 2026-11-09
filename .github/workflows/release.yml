@@ -20,7 +20,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The whole history, so the tag can be checked against main.
           fetch-depth: 0
@@ -51,7 +51,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build and prove native Ubuntu package
@@ -61,7 +61,7 @@ jobs:
           export PATH="/usr/local/bin:$PATH"
           npm ci --no-audit --no-fund
           bash ci/scripts/package-ubuntu.sh "${{ needs.version.outputs.version }}" "${{ matrix.arch }}" "$PWD/out"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ubuntu-${{ matrix.arch }}
           path: out/ai17z_*.deb
@@ -81,7 +81,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build and prove native macOS package
@@ -90,7 +90,7 @@ jobs:
           source ci/scripts/setup-macos-job.sh
           npm ci --no-audit --no-fund
           bash ci/scripts/package-macos.sh "${{ needs.version.outputs.version }}" "$PWD/out" "${{ matrix.arch }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-${{ matrix.arch }}
           path: out/AI17Z-macos-*.tar.gz
@@ -102,7 +102,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build native Windows package and installer
@@ -110,7 +110,7 @@ jobs:
         run: |
           . .\ci\scripts\setup-windows-job.ps1
           . .\ci\scripts\build-windows-release.ps1 -Version '${{ needs.version.outputs.version }}'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
           path: |
@@ -131,7 +131,7 @@ jobs:
       contents: write
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -143,7 +143,7 @@ jobs:
           sudo apt-get install -y python3 zstd innoextract
           sudo bash ci/scripts/setup-cosign.sh
           npm ci --no-audit --no-fund
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
@@ -167,7 +167,7 @@ jobs:
             bash ci/scripts/publish-release.sh dist "$VERSION"
           fi
       - if: startsWith(github.ref_name, 'rehearsal-')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rehearsal-dist
           path: dist/
@@ -180,7 +180,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Verify published hashes, manifest and signatures
