@@ -189,10 +189,10 @@ describe('development updates browser regressions', () => {
     await browserExpect(page.getByTestId('search')).toContainText('marker=current');
   });
 
-  it('uses the hosted API address in the token command', async () => {
+  it('explains that a hosted connection cannot prepare a sender command', async () => {
     await page.goto(`${origin}__test?hosted`);
-    await browserExpect(page.locator('pre')).toContainText('AI17Z_API_URL=https://gateway.example.invalid');
-    await browserExpect(page.locator('pre')).not.toContainText('localhost');
+    await browserExpect(page.getByText('Sender commands are not available through this hosted connection')).toBeVisible();
+    await browserExpect(page.locator('pre')).toHaveCount(0);
   });
 
   it('renders the held review at desktop and mobile sizes', async () => {
