@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { BrowserEngine, CadenceConfig, CreateAccountInput } from '@xbam/shared/contracts';
-import { ForbiddenError, NotFoundError } from '@xbam/shared';
+import { BrowserEngine, CadenceConfig, CreateAccountInput, FarcasterSettings } from '@xbam/shared/contracts';
+import { BadRequestError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   accounts as accountsRepo,
+  farcasterSigners,
   browserTasks as browserTasksRepo,
   cadences as cadencesRepo,
   ops,
@@ -11,7 +12,7 @@ import {
 } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@xbam/channels';
 import { closeSession } from '@xbam/browser';
-import { accountIsWell, ensureDefaultRadarSources } from '@xbam/runtime';
+import { accountIsWell, connectFarcaster, ensureDefaultRadarSources } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAccount(accountId: string, user: UserRow) {
@@ -22,6 +23,23 @@ async function ownedAccount(accountId: string, user: UserRow) {
 }
 
 export async function accountRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/accounts/:id/farcaster/signer', handler(async (request) => {
+    const account = await ownedAccount(params(request).id!, await requireUser(request));
+    if (account.channel !== 'farcaster') throw new BadRequestError('This account is not on Farcaster.');
+    return farcasterSigners.signerPresence(account.id);
+  }));
+  app.put('/api/accounts/:id/farcaster/signer', handler(async (request) => {
+    const account = await ownedAccount(params(request).id!, await requireUser(request));
+    const input = parseBody(z.object({ signerKey: z.string().regex(/^(?:0x)?[a-fA-F0-9]{64}$/) }).strict(), request);
+    await connectFarcaster(account.id, input.signerKey);
+    return farcasterSigners.signerPresence(account.id);
+  }));
+  app.delete('/api/accounts/:id/farcaster/signer', handler(async (request) => {
+    const account = await ownedAccount(params(request).id!, await requireUser(request));
+    if (account.channel !== 'farcaster') throw new BadRequestError('This account is not on Farcaster.');
+    await farcasterSigners.clearSigner(account.id);
+    return farcasterSigners.signerPresence(account.id);
+  }));
   app.get(
     '/api/channels',
     handler(async () => ({
@@ -186,6 +204,11 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         // Configuration changed, so any live context is no longer valid.
         await closeSession(account.id).catch(() => undefined);
       }
+      if (account.channel === 'farcaster' && body.settings !== undefined) FarcasterSettings.parse(body.settings);
+      if (account.channel === 'farcaster') {
+        await farcasterSigners.updateConfiguration(account.id, body);
+        return { ...await accountsRepo.requireAccount(account.id), browserSession: null };
+      }
       const updated = await accountsRepo.updateAccount(account.id, {
         ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
         ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
@@ -215,7 +238,8 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       const account = await ownedAccount(params(request).id!, user);
       await closeSession(account.id).catch(() => undefined);
       await browserTasksRepo.cancelAccountTasks(account.id, 'The account was disconnected.').catch(() => 0);
-      await accountsRepo.disconnectAccount(account.id);
+      if (account.channel === 'farcaster') await farcasterSigners.clearSigner(account.id);
+      else await accountsRepo.disconnectAccount(account.id);
       // Cleared here rather than waiting for the next health sweep, so the
       // warning goes when the owner acts rather than up to a minute later.
       await accountIsWell(account.id).catch(() => undefined);
@@ -229,6 +253,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => {
       const user = await requireUser(request);
       const account = await ownedAccount(params(request).id!, user);
+      if (account.channel === 'farcaster') return connectFarcaster(account.id);
       await accountsRepo.reconnectAccount(account.id);
       return accountsRepo.requireAccount(account.id);
     }),

@@ -1,10 +1,12 @@
 import { resolve } from 'node:path';
-import type { Account } from '@xbam/shared/contracts';
-import { createLogger, envString } from '@xbam/shared';
-import { accounts as accountsRepo } from '@xbam/database';
+import type { Account, CapacityClass } from '@xbam/shared/contracts';
+import { createLogger, envString, PipelineError } from '@xbam/shared';
+import { accounts as accountsRepo, cadences, farcasterSigners } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { resolveProfileDir } from '@xbam/browser';
 import type { ChannelContext } from '@xbam/channels';
+import { capacityClassForEvent, checkReadCapacity, noteXFailure, noteXRead } from './capacity';
+import { msUntilAwake } from './cadence';
 
 export function storageDir(): string {
   return resolve(envString('AI17Z_STORAGE_DIR', './storage'));
@@ -12,7 +14,7 @@ export function storageDir(): string {
 import type { JobBundle } from './loadJob';
 
 /** Builds the adapter context for an account, including its browser session config. */
-export async function buildChannelContext(account: Account, jobId: string | null): Promise<ChannelContext> {
+export async function buildChannelContext(account: Account, jobId: string | null, readClass: CapacityClass = 'DIRECT'): Promise<ChannelContext> {
   // Only browser channels have a stored session, and synthetic accounts (used by
   // channels that need no connected account at all) have no database row to read.
   const needsSession = getChannelAdapter(account.channel).requiresBrowser && !account.id.startsWith('synthetic-');
@@ -37,6 +39,22 @@ export async function buildChannelContext(account: Account, jobId: string | null
     storageDir: storageDir(),
     logger: createLogger('channel', { channel: account.channel, account: account.handle }),
     jobId,
+    ...(account.channel === 'farcaster' ? {
+      signerKey: () => farcasterSigners.getDecryptedSigner(account.id),
+      beforeRead: async () => {
+        const config = await cadences.activeCadence(account.id);
+        const quiet = msUntilAwake(config.quietHours, new Date());
+        if (quiet > 0) throw PipelineError.retryable('quiet_hours', 'This account is within its quiet hours.', { retryAfterMs: quiet });
+        const verdict = await checkReadCapacity(account.id, readClass);
+        if (!verdict.allowed) throw PipelineError.retryable('account_capacity', verdict.message, {
+          retryAfterMs: verdict.retryAfterMs ?? 10 * 60_000,
+        });
+      },
+      afterRead: async (error?: unknown) => {
+        await noteXRead(account.id, readClass);
+        if (error) await noteXFailure(account.id, readClass, error instanceof Error ? error.message : 'The Farcaster read failed.');
+      },
+    } : {}),
   };
 }
 
@@ -77,7 +95,7 @@ export function syntheticAccount(overrides: Partial<Account> & Pick<Account, 'id
 export async function adapterContext(bundle: JobBundle) {
   const account =
     bundle.account ?? syntheticAccount({ id: `synthetic-${bundle.agent.id}`, ownerId: bundle.agent.ownerId });
-  return buildChannelContext(account, bundle.job.id);
+  return buildChannelContext(account, bundle.job.id, capacityClassForEvent(bundle.event.type));
 }
 
 /**

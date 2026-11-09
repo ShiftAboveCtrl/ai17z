@@ -1,5 +1,5 @@
-import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { accounts as accountsRepo, cadences as cadencesRepo } from '@xbam/database';
+import { createLogger, envInt, errorMessage, PipelineError } from '@xbam/shared';
+import { accounts as accountsRepo, cadences as cadencesRepo, channelState } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import {
   buildChannelContext,
@@ -95,13 +95,20 @@ export class ChannelPoller {
     const adapter = getChannelAdapter(account.channel);
     try {
       const ctx = await buildChannelContext(account, null);
-      const events = await adapter.ingestEvents(ctx, { limit: config.polling.batchLimit });
+      const state = account.channel === 'farcaster' ? await channelState.pollState(account.id) : null;
+      let cursor: string | null = null;
+      const events = await adapter.ingestEvents(ctx, { limit: config.polling.batchLimit,
+        ...(state ? { cursor: state.cursor, reportCursor: (value: string) => { cursor = value; } } : {}),
+      });
       if (account.channel === 'x') await noteXRead(account.id, 'DIRECT');
       let created = 0;
       for (const event of events) {
         const outcome = await ingestNormalizedEvent({ accountId: account.id, event });
         created += outcome.jobs.filter((j) => j.created).length;
       }
+      // Nothing advances through events that were not ingested. A late poll
+      // cannot overwrite a newer version after an expired claim was retaken.
+      if (state && cursor !== null) await channelState.advancePoll(account.id, state.version, cursor);
 
       const found = events.length > 0;
       const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak, foundEvents: found });
@@ -127,13 +134,18 @@ export class ChannelPoller {
       if (account.channel === 'x') await noteXFailure(account.id, 'DIRECT', message);
       // A failing account backs off like an idle one rather than being retried
       // every tick, but the streak is what grows, not a separate failure counter.
-      const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak + 1, foundEvents: false });
+      const requestedWait = error instanceof PipelineError && typeof error.data.retryAfterMs === 'number'
+        ? error.data.retryAfterMs : 0;
+      const delay = Math.max(requestedWait, nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak + 1, foundEvents: false }));
       await cadencesRepo.recordPoll(claimed.id, new Date(Date.now() + delay), false).catch(() => undefined);
       await accountsRepo
         .updateAccount(account.id, {
           lastHealthStatus: `poll failed: ${message.slice(0, 200)}`,
           touchHealthCheck: true,
           lastError: message.slice(0, 500),
+          ...(account.channel === 'farcaster' && error instanceof PipelineError &&
+            (error.reason === 'farcaster_auth_failed' || error.reason === 'farcaster_no_signer')
+            ? { status: 'NEEDS_AUTH' as const } : {}),
         })
         .catch(() => undefined);
     }

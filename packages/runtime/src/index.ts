@@ -16,6 +16,8 @@ export * from './nodes';
 export * from './steps';
 export * from './loadJob';
 export * from './channelContext';
+export * from './farcasterConnect';
+export * from './farcasterCapabilities';
 export * from './approvals';
 export * from './attentionQueue';
 export * from './accountHealth';

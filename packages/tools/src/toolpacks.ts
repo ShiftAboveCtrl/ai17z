@@ -56,6 +56,11 @@ export interface Toolpack {
  */
 export const TOOLPACKS: Toolpack[] = [
   {
+    id: 'farcaster', name: 'Farcaster',
+    summary: 'Read casts and conversations on Farcaster. Likes and recasts require separate permission; publishing uses account grants.',
+    prefixes: ['farcaster.'],
+  },
+  {
     id: 'x',
     name: 'X',
     // "and act on them" used to be on the end of this sentence and was never

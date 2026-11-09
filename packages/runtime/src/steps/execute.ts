@@ -196,8 +196,11 @@ export function actionIdempotencyKeyFor(input: {
   actionType: string;
   jobIdempotencyKey: string;
   targetRef: string | null;
+  channel?: string;
 }): string {
-  const capabilityId = CAPABILITY_FOR_ACTION[input.actionType];
+  const capabilityId = input.channel === 'farcaster'
+    ? ({ LIKE: 'farcaster.like', REPOST: 'farcaster.recast' } as Record<string, string>)[input.actionType]
+    : CAPABILITY_FOR_ACTION[input.actionType];
   if (!capabilityId || !input.targetRef) return input.jobIdempotencyKey;
   return capabilityIdempotencyKey({
     jobIdempotencyKey: input.jobIdempotencyKey,
@@ -241,6 +244,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   */
   const actionIdempotencyKey = actionIdempotencyKeyFor({
     actionType: job.actionType,
+    channel: job.channel,
     jobIdempotencyKey: job.idempotencyKey,
     targetRef,
   });
@@ -381,7 +385,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
             type: job.actionType,
             targetRef: attemptedTarget,
             text: attemptedText,
-            idempotencyKey: job.idempotencyKey,
+            idempotencyKey: job.channel === 'farcaster' ? actionIdempotencyKey : job.idempotencyKey,
             dryRun: false,
           })
           .catch(() => null)
@@ -429,7 +433,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
         type: job.actionType,
         targetRef,
         text: output,
-        idempotencyKey: job.idempotencyKey,
+        idempotencyKey: job.channel === 'farcaster' ? actionIdempotencyKey : job.idempotencyKey,
         dryRun: false,
       })
       .catch(() => null);
@@ -493,7 +497,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       type: job.actionType,
       targetRef,
       text: output,
-      idempotencyKey: job.idempotencyKey,
+      idempotencyKey: job.channel === 'farcaster' ? actionIdempotencyKey : job.idempotencyKey,
       dryRun: job.dryRun,
     });
 

@@ -88,17 +88,16 @@ export async function startPreflight(agentId: string): Promise<Blocker[]> {
     if (!account) continue;
     if (account.channel === 'x') needsBrowser = true;
 
-    // Only a channel that signs in through a browser can be signed out of. The
-    // mock channel has no session, and telling somebody to sign in to it is
-    // advice they cannot act on.
-    const signsIn = getChannelAdapter(account.channel).requiresBrowser;
+    // Browser sessions and app signers require an explicit connection. The
+    // mock channel has no credentials to reconnect.
+    const signsIn = getChannelAdapter(account.channel).requiresBrowser || account.channel === 'farcaster';
     if (signsIn && account.status !== 'CONNECTED') {
       blockers.push({
         what:
           account.status === 'NEEDS_AUTH' || account.status === 'SESSION_EXPIRED'
             ? `The ${account.channel.toUpperCase()} session for @${account.handle} has expired.`
             : `@${account.handle} is not connected (${account.status.toLowerCase().replace(/_/g, ' ')}).`,
-        fix: 'Sign in again.',
+        fix: account.channel === 'farcaster' ? 'Reconnect with an authorized Farcaster app signer.' : 'Sign in again.',
         where: 'account',
       });
     } else if (!signsIn && account.status === 'ERROR') {

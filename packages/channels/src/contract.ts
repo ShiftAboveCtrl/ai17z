@@ -27,6 +27,11 @@ export interface ChannelContext {
   logger: Logger;
   /** Correlation id, present when the call belongs to a job. */
   jobId: string | null;
+  /** Opens an app signing key only for the operation that needs it. */
+  signerKey?: () => Promise<string | null>;
+  /** Every HTTP read, including verification and recovery, uses this budget. */
+  beforeRead?: () => Promise<void>;
+  afterRead?: (error?: unknown) => Promise<void>;
 }
 
 export interface ConnectionResult {
@@ -115,6 +120,9 @@ export interface RadarPollRequest {
 }
 
 export interface IngestOptions {
+  /** Opaque adapter cursor, committed by the poller only after ingestion. */
+  cursor?: string | null;
+  reportCursor?: (cursor: string) => void;
   /** Remote event ids already recorded; the adapter should skip them. */
   since?: string | null;
   limit: number;
