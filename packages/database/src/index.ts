@@ -132,6 +132,8 @@ export * as spam from './repositories/spam';
 export * as agentChanges from './repositories/agentChanges';
 export * as trading from './repositories/trading';
 export * as socialPaper from './repositories/socialPaper';
+export * as leagueBridge from './repositories/leagueBridge';
+export type { LeagueEntryRow, LeagueFillRow, PaperFillIntent } from './repositories/leagueBridge';
 export * as tradeShadows from './repositories/tradeShadows';
 export type { ShadowDraft, ShadowOutcome, TradeShadowRow } from './repositories/tradeShadows';
 export * as hosting from './repositories/hosting';

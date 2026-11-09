@@ -306,6 +306,33 @@ async function authed(
   return answer;
 }
 
+/**
+ * One request to the linked Studio's installation API, as this installation:
+ * the access token and a DPoP proof bound to this exact method and address.
+ *
+ * For callers that own their own contract (the league bridge). The path must be
+ * under `/api/v1/installation/`, so nothing built from an answer can aim this at
+ * the token endpoint or anywhere else, and the origin is never a parameter: it is
+ * the linked one or nothing.
+ */
+export async function studioInstallationRequest(
+  path: string,
+  init: { method: 'GET' | 'POST'; json?: unknown },
+): Promise<{ ok: true; status: number; body: Record<string, unknown> | null; sentence: string } | StudioProblem> {
+  if (!/^\/api\/v1\/installation\/[A-Za-z0-9/_?=&.-]+$/.test(path) || path.includes('..') || path.includes('//')) {
+    return { ok: false, why: 'That is not a Studio installation address.' };
+  }
+  const answer = await authed(path, init).catch((error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }));
+  if ('ok' in answer) return answer;
+  return { ok: true, status: answer.status, body: answer.body, sentence: describe(answer) };
+}
+
+/** Whether this installation could ask Studio anything at all, without asking. */
+export async function studioInstallationReady(): Promise<{ linked: true } | { linked: false; why: string }> {
+  const ready = await linkedContext();
+  return 'ok' in ready ? { linked: false, why: ready.why } : { linked: true };
+}
+
 async function linkedContext(): Promise<{ where: StudioOrigin; key: InstallationKey; link: LinkRecord } | StudioProblem> {
   const where = await studioOrigin();
   if (!where) return { ok: false, why: 'No Studio address is configured.' };

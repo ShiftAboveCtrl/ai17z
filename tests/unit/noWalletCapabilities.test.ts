@@ -2,7 +2,14 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listCapabilities, registerBuiltinCapabilities, resetCapabilitiesForTest } from '@xbam/tools';
-import { NEVER_MODEL_CALLABLE, capabilityCrossesTheLine, registerManagementCapabilities, registerWalletCapabilities, registerPaperCapabilities } from '@xbam/runtime';
+import {
+  NEVER_MODEL_CALLABLE,
+  capabilityCrossesTheLine,
+  registerManagementCapabilities,
+  registerPaperCapabilities,
+  registerStudioLeagueCapabilities,
+  registerWalletCapabilities,
+} from '@xbam/runtime';
 
 /**
  * Paying for something is the owner's act, never the agent's.
@@ -33,6 +40,7 @@ function registerAll() {
   registerManagementCapabilities();
   registerWalletCapabilities();
   registerPaperCapabilities();
+  registerStudioLeagueCapabilities();
 }
 
 describe('no capability can move money', () => {
@@ -56,6 +64,21 @@ describe('no capability can move money', () => {
     }
   });
 
+  it('the league standing is one read, off until the owner enables it, owner only, and posts nothing', () => {
+    registerAll();
+    const league = listCapabilities().filter((c) => c.id.startsWith('league.'));
+    // Exactly one. Entering a season and reporting fills are not capabilities at
+    // all: they are the owner's act and the worker's sweep. Growing this list is
+    // a decision about effect, audience and default, made here.
+    expect(league.map((c) => c.id)).toEqual(['league.standing']);
+    const standing = league[0]!;
+    expect(standing.effect).toBe('READ');
+    expect(standing.risk).toBe('LOW');
+    expect(standing.unsetPermission).toBe('DISABLED');
+    expect(standing.audience).toBe('OWNER');
+    expect(standing.modelCallable).toBe(true);
+  });
+
   it('keeps the purchase builder and the wallet submit path out of the capability layer', () => {
     const root = join(__dirname, '..', '..', 'packages');
     const reachable = [
@@ -65,6 +88,9 @@ describe('no capability can move money', () => {
       join(root, 'runtime', 'src', 'walletCapabilities.ts'),
       join(root, 'runtime', 'src', 'paperCapabilities.ts'),
       join(root, 'runtime', 'src', 'paperTrading.ts'),
+      join(root, 'runtime', 'src', 'studioLeagueCapabilities.ts'),
+      join(root, 'runtime', 'src', 'studioLeague.ts'),
+      join(root, 'runtime', 'src', 'leagueSeason.ts'),
       join(root, 'runtime', 'src', 'managementCapabilities.ts'),
     ];
     for (const file of reachable) {

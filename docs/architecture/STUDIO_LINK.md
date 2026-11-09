@@ -30,6 +30,13 @@ state and the one sentence its status line already shows. Agents were in the
 right-hand column until then, and linking an installation still sends nothing
 about them.
 
+One more row, again only behind an owner act: **entering an agent in a Studio
+paper league season** sends an alias the owner chose, a random entry key and,
+afterwards, the simulated paper fills that agent makes under the season's
+mandate (amounts, the mint, the time and the price source, labelled simulated),
+with no agent id, handle, wallet, persona, prompt or reasoning. See
+`STUDIO_LEAGUE_BRIDGE.md`.
+
 ## Control from Studio
 
 `packages/runtime/src/studioControl.ts`. Off by default, a separate switch

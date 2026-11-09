@@ -33,6 +33,7 @@ export * from './xDomain';
 export * from './research';
 export * from './wallet';
 export * from './trading';
+export * from './studioLeague';
 export * from './hosting';
 export * from './confidential';
 export * from './knowledgeCollections';

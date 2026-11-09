@@ -111,6 +111,8 @@ const FAMILY_HINTS: Record<string, string[]> = {
   feed: ['feed', 'rss', 'blog'],
   web: ['website', 'web page', 'archive', 'wayback'],
   storage: ['ipfs', 'arweave', 'cid'],
+  // Phrases, never "rank" or "season" alone: both are ordinary words.
+  league: ['the league', 'paper league', 'my league', 'league standing', 'league rank', 'my standing', 'leaderboard', 'this season'],
 };
 
 /** Too common to say anything about which capability is wanted. */

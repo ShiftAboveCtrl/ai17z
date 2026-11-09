@@ -54,6 +54,7 @@ import { registerIntrospectionCapabilities } from './introspectionCapabilities';
 import { registerManagementCapabilities } from './managementCapabilities';
 import { registerWalletCapabilities } from './walletCapabilities';
 import { registerPaperCapabilities } from './paperCapabilities';
+import { registerStudioLeagueCapabilities } from './studioLeagueCapabilities';
 import { loadWalletAdapter } from './walletCore';
 
 const log = createLogger('bootstrap');
@@ -94,6 +95,8 @@ export async function bootstrapRuntime(): Promise<void> {
   // its pinned hash or not at all. Nothing here can send.
   registerWalletCapabilities();
   registerPaperCapabilities();
+  // The league standing, owner chat only and off until the owner enables it.
+  registerStudioLeagueCapabilities();
   await loadWalletAdapter();
 
   // Plugins an owner installed, registered the same way and into the same
