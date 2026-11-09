@@ -76,7 +76,7 @@ afterEach(() => { act(() => trees.forEach((t) => t.unmount())); trees = []; vi.u
 
 describe('R4 deferred dev-updates regressions', () => {
   it.each(['approve', 'reject'] as const)('keeps a successful %s decision locked until the queue refreshes', async (decision) => {
-    const tree = mount(h(Review, { updates: [draft], agent: null, handle: null, rehearse: false, onDecided: vi.fn() }));
+    const tree = mount(h(Review, { updates: [draft], agent: null, handle: null, rehearse: false, publishing: { tone: 'live', words: 'Live', sentence: 'Ready to publish.', heldBy: null }, onDecided: vi.fn() }));
     if (decision === 'reject') {
       act(() => button(tree, 'Reject').props.onClick());
       act(() => tree.root.findByType('textarea').props.onChange({ target: { value: 'Not announced' } }));
@@ -90,12 +90,12 @@ describe('R4 deferred dev-updates regressions', () => {
 
   it('allows a failed decision to be retried', async () => {
     state.post.mockRejectedValueOnce(new Error('Offline'));
-    const tree = mount(h(Review, { updates: [draft], agent: null, handle: null, rehearse: false, onDecided: vi.fn() }));
+    const tree = mount(h(Review, { updates: [draft], agent: null, handle: null, rehearse: false, publishing: { tone: 'live', words: 'Live', sentence: 'Ready to publish.', heldBy: null }, onDecided: vi.fn() }));
     await act(async () => button(tree, 'Approve').props.onClick());
     expect(button(tree, 'Approve').props.disabled).toBe(false);
     await act(async () => button(tree, 'Approve').props.onClick());
     expect(state.post).toHaveBeenCalledTimes(2);
-    expect(button(tree, 'Approve').props.disabled).toBe(true);
+    expect(button(tree, 'Approved').props.disabled).toBe(true);
   });
 
   it('names the actual publishing hold in Review instead of promising a send', () => {

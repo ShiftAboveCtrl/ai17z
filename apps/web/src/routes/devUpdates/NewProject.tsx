@@ -63,10 +63,6 @@ export function NewProject({
     onClose();
   };
   const created = creation.revealed;
-  const requestClose = () => {
-    if (created && !window.confirm('Close and hide this sender token? Make sure you have copied it. AI17Z cannot show it again.')) return;
-    close();
-  };
   const busy = creation.pending !== null;
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
