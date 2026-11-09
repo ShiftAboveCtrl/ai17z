@@ -220,7 +220,12 @@ export function growthWindow(policy: GrowthPolicy, facts: GrowthFacts, now = new
   }
 
   if (facts.lastSessionEndedAt) {
-    const since = now.getTime() - new Date(facts.lastSessionEndedAt).getTime();
+    // The database clock can sit a couple of milliseconds ahead of this
+    // machine's. A session that "ended" in the future by that much has
+    // ended, not still got a cooldown to run, which with a zero-minute
+    // cooldown is the difference between recovering a stale session and
+    // leaving it wedged.
+    const since = Math.max(0, now.getTime() - new Date(facts.lastSessionEndedAt).getTime());
     const cooldown = minutes(policy.cooldownMinutes);
     if (since < cooldown) {
       const left = Math.round((cooldown - since) / 60_000);

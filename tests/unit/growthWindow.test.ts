@@ -163,6 +163,17 @@ describe('sessions, cooldown and daily limits', () => {
     expect(growthWindow(policy(), facts({ lastSessionEndedAt: before(at(14), 46) }), at(14)).allowed).toBe(true);
   });
 
+  it('does not read a clock a few milliseconds ahead as still cooling down', () => {
+    // The database clock can sit a couple of milliseconds ahead of this
+    // machine's. A session that ended "in the future" by that much has
+    // ended, which with a zero-minute cooldown is the difference between
+    // recovering a stale session and leaving it wedged.
+    const endedAhead = new Date(at(14).getTime() + 2).toISOString();
+    const verdict = growthWindow(policy({ cooldownMinutes: 0 }), facts({ lastSessionEndedAt: endedAhead }), at(14));
+    expect(verdict.allowed).toBe(true);
+    expect(verdict.state).toBe('ELIGIBLE');
+  });
+
   it('stops after the day’s sessions are used', () => {
     const verdict = growthWindow(policy(), facts({ sessionsThisHour: 1, sessionsToday: 8 }), at(14));
     expect(verdict.allowed).toBe(false);
