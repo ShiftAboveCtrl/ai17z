@@ -7,7 +7,9 @@
  * exact command an owner pastes into a terminal.
  */
 
-import { PolicyConfig } from '@xbam/shared/contracts';
+import { PolicyConfig, mcpAddCommand } from '@xbam/shared/contracts';
+
+export { mcpAddCommand } from '@xbam/shared/contracts';
 
 export type DevUpdateStatus =
   | 'PENDING_REVIEW'
@@ -227,30 +229,6 @@ export function accountChoices(
 /** Where the API is, as this browser reaches it. The MCP server calls the same address. */
 export function apiUrlFrom(base: string, origin: string): string {
   return (base || origin).replace(/\/+$/, '');
-}
-
-/**
- * The one line an owner pastes into a terminal.
- *
- * One line, because a backslash continues a line in bash and a backtick does
- * in PowerShell, and a command that works in one of them is a command that
- * fails for half the people pasting it. The path is quoted for the spaces a
- * Windows profile path usually has. The name comes straight after `add`:
- * `--env` takes any number of values, so a name placed after it would be read
- * as one more variable.
- */
-export function mcpAddCommand(input: { serverName: string; apiUrl: string; token: string; projectKey: string; serverPath: string }): string {
-  return [
-    'claude mcp add',
-    input.serverName,
-    '--scope local',
-    `--env AI17Z_API_URL=${input.apiUrl}`,
-    `--env AI17Z_DEV_UPDATES_TOKEN=${input.token}`,
-    `--env AI17Z_DEV_UPDATES_PROJECT=${input.projectKey}`,
-    '--',
-    'node',
-    `"${input.serverPath}"`,
-  ].join(' ');
 }
 
 // ── Whether this project really publishes ──────────────────────────────────

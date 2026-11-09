@@ -48,7 +48,7 @@ describe('the development updates screen', () => {
       serverPath: 'C:\\Users\\Default User\\AI17Z\\tools\\dev-updates-mcp.mjs',
     });
     expect(command).toBe(
-      'claude mcp add ai17z-dev-updates --scope local --env AI17Z_API_URL=http://localhost:5173 --env AI17Z_DEV_UPDATES_TOKEN=ai17z_dus_abc --env AI17Z_DEV_UPDATES_PROJECT=my-app -- node "C:\\Users\\Default User\\AI17Z\\tools\\dev-updates-mcp.mjs"',
+      'claude mcp add ai17z-dev-updates --scope local --env AI17Z_API_URL=http://localhost:5173 --env AI17Z_DEV_UPDATES_TOKEN=ai17z_dus_abc --env AI17Z_DEV_UPDATES_PROJECT=my-app --transport stdio -- node "C:\\Users\\Default User\\AI17Z\\tools\\dev-updates-mcp.mjs"',
     );
     expect(command).not.toContain('\n');
   });
