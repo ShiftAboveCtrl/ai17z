@@ -1,3 +1,4 @@
+import { ActivityTapeBatch } from '@xbam/shared/contracts';
 import { ops, plugins as installedPlugins, studio as ledger } from '@xbam/database';
 import { buildVersion, openSecret, sealSecret } from '@xbam/shared';
 import {
@@ -1291,4 +1292,15 @@ export async function studioSyncDue(intervalMs: number, now: Date = new Date()):
   if (!link || link.revokedAt) return false;
   const sync = await ops.getSetting<SyncRecord>(SYNC_SETTING);
   return !sync || now.getTime() - Date.parse(sync.attemptedAt) >= intervalMs;
+}
+
+/** Frozen public projection. Uses the installation DPoP transport only. */
+export async function studioActivityBatch(input: unknown): Promise<{ ok: true } | StudioProblem> {
+  const json = ActivityTapeBatch.parse(input);
+  const answer = await authed('/api/v1/installation/activity-tape', { method: 'POST', json }).catch(
+    () => ({ ok: false as const, why: 'Studio could not be reached.' }),
+  );
+  if ('ok' in answer) return answer;
+  return answer.status === 200 && answer.body?.protocol === 1 && answer.body?.accepted === true
+    ? { ok: true } : { ok: false, why: 'Studio did not acknowledge the activity tape.' };
 }

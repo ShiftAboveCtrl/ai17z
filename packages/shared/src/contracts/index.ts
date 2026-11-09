@@ -37,3 +37,5 @@ export * from './hosting';
 export * from './confidential';
 export * from './knowledgeCollections';
 export * from './foundry';
+
+export * from './studioActivityTape';

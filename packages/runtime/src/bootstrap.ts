@@ -1,3 +1,4 @@
+import { registerActivityTapeCapability } from './studioActivityTape';
 import { createLogger, errorMessage } from '@xbam/shared';
 import { pipelines as pipelinesRepo, prompts as promptsRepo } from '@xbam/database';
 import { DEFAULT_TEMPLATES } from '@xbam/prompts';
@@ -92,6 +93,7 @@ export async function bootstrapRuntime(): Promise<void> {
   // useless until the owner installs a wallet adapter, which is loaded here by
   // its pinned hash or not at all. Nothing here can send.
   registerWalletCapabilities();
+  registerActivityTapeCapability();
   await loadWalletAdapter();
 
   // Plugins an owner installed, registered the same way and into the same
