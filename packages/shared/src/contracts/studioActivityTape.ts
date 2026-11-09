@@ -14,4 +14,3 @@ export const ActivityTapeEvent = z.object({
 });
 export const ActivityTapeBatch = z.object({ protocol: z.literal(1), events: z.array(ActivityTapeEvent).max(50), remove: z.array(ActivityEventId).max(200) }).strict();
 export type ActivityEvent = z.infer<typeof ActivityTapeEvent>;
-
