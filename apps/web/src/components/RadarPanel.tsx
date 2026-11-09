@@ -204,6 +204,8 @@ export function RadarPanel({ accountId }: { accountId: string }) {
 
 const STUDIO_FOLLOWS_SENTENCE =
   'This source follows your Studio risk watch link and turns itself back on at every sync. Change the watch in Studio, or switch Studio risk watches off for this agent under Accounts.';
+const PLAYBOOK_FOLLOWS_SENTENCE =
+  'This source follows the playbook linked to this agent and turns itself back on at every sync. Import a different playbook for the agent to change it.';
 
 /** One monitor. Presentational, so every state can be rendered without a network. */
 export function RadarSourceItem({
@@ -218,13 +220,15 @@ export function RadarSourceItem({
   onRemove: () => void;
 }) {
   const fromStudio = source.provenance === 'STUDIO_RISK_WATCH';
+  // Either kind is recreated by a sync, so offering to remove or switch it off would only look like it worked.
+  const linked = source.provenance !== 'OWNER';
   return (
     <li className="py-3" data-provenance={source.provenance}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
         <StatusDot state={source.enabled ? TONE[source.status] ?? 'idle' : 'idle'} />
         <span className="min-w-0 break-words text-sm text-bone">
           {source.label || KIND_NAMES[source.kind] || source.kind}
-          {source.target && !fromStudio && <span className="ml-1.5 font-mono text-[11px] text-bone-dim">{source.target}</span>}
+          {source.target && !linked && <span className="ml-1.5 font-mono text-[11px] text-bone-dim">{source.target}</span>}
         </span>
         <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">
           {source.enabled ? source.status.toLowerCase() : 'off'}
@@ -241,8 +245,7 @@ export function RadarSourceItem({
             <RotateCw className="h-3.5 w-3.5" aria-hidden />
           </button>
         )}
-        {/* A Studio source is recreated at the next sync, so offering to remove or switch it off would only look like it worked. */}
-        {!fromStudio && (
+        {!linked && (
           <button
             type="button"
             className="btn-quiet p-1.5 hover:text-signal-fail"
@@ -254,10 +257,12 @@ export function RadarSourceItem({
         )}
       </div>
 
-      {fromStudio && (
+      {linked && (
         <>
-          <p className="mt-1 text-xs text-signal-calm">From your Studio risk watch list.</p>
-          <p className="mt-1 break-words text-[11px] leading-relaxed text-bone-faint">{STUDIO_FOLLOWS_SENTENCE}</p>
+          {fromStudio && <p className="mt-1 text-xs text-signal-calm">From your Studio risk watch list.</p>}
+          <p className="mt-1 break-words text-[11px] leading-relaxed text-bone-faint">
+            {fromStudio ? STUDIO_FOLLOWS_SENTENCE : PLAYBOOK_FOLLOWS_SENTENCE}
+          </p>
         </>
       )}
 

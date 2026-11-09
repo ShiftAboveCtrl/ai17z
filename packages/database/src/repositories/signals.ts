@@ -2,8 +2,12 @@ import { mapRows } from '../mapper';
 import { query } from '../pool';
 import type { SignalRadarData } from '@xbam/shared/contracts';
 
-/** The same rule as `radarSourceProvenance`: only the Studio bridge writes `config.studioRisk`. */
-const PROVENANCE = `CASE WHEN s.config ? 'studioRisk' THEN 'STUDIO_RISK_WATCH' ELSE 'OWNER' END`;
+/**
+ * The same rule as `hasStudioRiskMark`: only the Studio bridge writes
+ * `config.studioRisk`, and it counts only as a non-null object. `config ? key`
+ * would also match a JSON null, a string or a boolean.
+ */
+const PROVENANCE = `CASE WHEN jsonb_typeof(s.config->'studioRisk') = 'object' THEN 'STUDIO_RISK_WATCH' ELSE 'OWNER' END`;
 
 /** Read models only. Polling commits baseline, transition and idea together. */
 export async function forAccount(accountId: string): Promise<SignalRadarData> {

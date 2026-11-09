@@ -90,12 +90,32 @@ export interface SignalState {
 }
 
 /**
- * Where a radar source came from. Computed from the config the Studio bridge
- * alone writes, never from the label: a label is text an owner may type.
+ * Where a radar source came from. Computed from the config the writer alone
+ * sets, never from the label: a label is text an owner may type.
+ *
+ * `STUDIO_RISK_WATCH` and `PLAYBOOK` are both sources a sync recreates, so
+ * neither can be switched off or removed by hand: the next tick would undo it.
  */
-export type RadarSourceProvenance = 'OWNER' | 'STUDIO_RISK_WATCH';
-export function radarSourceProvenance(config: { studioRisk?: unknown } | null | undefined): RadarSourceProvenance {
-  return config?.studioRisk ? 'STUDIO_RISK_WATCH' : 'OWNER';
+export type RadarSourceProvenance = 'OWNER' | 'STUDIO_RISK_WATCH' | 'PLAYBOOK';
+
+/**
+ * Whether a config marks a Studio risk source: a present, non-null object.
+ *
+ * This is the one rule. The SQL twin is `jsonb_typeof(config->'studioRisk') =
+ * 'object'` in `signals.ts`, and an integration test feeds both the same
+ * configs. The two used to differ: `config ? 'studioRisk'` is true for a JSON
+ * null, a boolean or a string, which `config?.studioRisk` treated as truthy or
+ * falsy by a different rule again.
+ */
+export function hasStudioRiskMark(config: { studioRisk?: unknown } | null | undefined): boolean {
+  const mark = config?.studioRisk;
+  return typeof mark === 'object' && mark !== null && !Array.isArray(mark);
+}
+
+export function radarSourceProvenance(config: { studioRisk?: unknown; playbookAgentId?: unknown } | null | undefined): RadarSourceProvenance {
+  if (hasStudioRiskMark(config)) return 'STUDIO_RISK_WATCH';
+  // Present and non-null, as the playbook sync's own `config ? 'playbookAgentId'` reads it.
+  return config?.playbookAgentId != null ? 'PLAYBOOK' : 'OWNER';
 }
 
 export interface SignalRadarData {
