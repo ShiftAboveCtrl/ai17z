@@ -1,4 +1,3 @@
-import { sweepStudioActivityTape } from '@xbam/runtime';
 import { hostname } from 'node:os';
 import { createLogger, describeVersion, envInt, envString, errorMessage, loadEnv, thisWorkerId, loopAllowed, settledPressure, throttleFor } from '@xbam/shared';
 import {
@@ -20,6 +19,7 @@ import {
   installTelegramTransport,
   runJob,
   sweepNotifications,
+  sweepStudioActivityTape,
   pollTelegramCommands,
   telegramHeartbeat,
 } from '@xbam/runtime';

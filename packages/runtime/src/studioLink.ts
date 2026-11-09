@@ -1,8 +1,8 @@
-import { ActivityTapeBatch } from '@xbam/shared/contracts';
 import { ops, plugins as installedPlugins, studio as ledger } from '@xbam/database';
 import { buildVersion, openSecret, sealSecret } from '@xbam/shared';
 import {
   AI17Z_PAYMENT,
+  ActivityTapeBatch,
   formatBaseUnits,
   prepareMarketplacePurchase,
   type PreparedMarketplacePurchase,

@@ -1,7 +1,6 @@
-import { scrubStudioActivity, setStudioActivityTape, studioActivityTapeSetting } from '@xbam/runtime';
-import { ActivityEventId } from '@xbam/shared/contracts';
 import type { FastifyInstance } from 'fastify';
 import { ops, studio as ledger } from '@xbam/database';
+import { ActivityEventId } from '@xbam/shared/contracts';
 import {
   abandonStudioPurchase,
   beginStudioLink,
@@ -10,6 +9,9 @@ import {
   prepareStudioPurchase,
   recordStudioPurchaseSent,
   reviewStudioPurchase,
+  scrubStudioActivity,
+  setStudioActivityTape,
+  studioActivityTapeSetting,
   setStudioControl,
   setStudioLiveView,
   setStudioTakeover,

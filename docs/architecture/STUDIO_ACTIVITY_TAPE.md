@@ -16,13 +16,20 @@ Two independent decisions are required:
   through the existing capability permission routes. Missing, DISABLED and
   OWNER_APPROVAL permissions prohibit background delivery. The capability is a
   READ with `audience: 'OWNER'`, `unsetPermission: 'DISABLED'`. Its owner-chat
-  invocation previews normalized rows and cannot enable publishing or scrub.
+  invocation previews normalized rows for that agent under ALLOWED or approved
+  OWNER_APPROVAL, filtering in SQL before the 50-row limit, and cannot enable
+  publishing or scrub.
 
 Linking, control, live view and takeover do not enable the tape. Pausing the tape
 sends no announcement, token request or event request. Requests already in flight
 can finish. Core rechecks the switch and grants immediately before transport.
 Turning it back on starts at that opt-in time; it does not publish activity from
 the paused period. A newly allowed capability also starts at its grant time.
+The grant floor uses `agent_capability_permissions.permission_changed_at`, added
+by migration `0114_capability_permission_changed_at.sql`. It starts at insertion
+and moves only when the permission value changes. Config edits and repeated
+ALLOWED decisions leave it unchanged. Existing decisions are initialized from
+`updated_at` because no earlier grant timestamp was stored.
 Repeating PUT with the current enabled value is a no-op and preserves changedAt.
 
 `POST /api/studio/activity-tape/scrub` accepts only `{ "id": "action:<uuid>" }`
@@ -122,7 +129,8 @@ fills from PAPER/PAPER_FILLED `trade_intents` with a simulated postcondition, an
 radar observations from `event_discoveries` on an agent's linked account.
 An observation proves discovery on that linked account, not a model decision or
 an endorsement. The only added persistence is settings for consent, attempt time,
-acknowledged cursor and removal ids. No migration is needed.
+acknowledged cursor and removal ids, plus the permission-change timestamp in
+migration 0114. No event persistence is added.
 
 Studio must atomically apply removals first, then insert new events, and return:
 

@@ -39,6 +39,13 @@ describe('public activity allowlist', () => {
     expect(event?.paper).toEqual({ simulated: true, size_base_units: null, asset: null, verdict: 'PAPER_FILLED' });
   });
 
+  it.each(['bad label', '@PRIVATE', 'TOO.LONG.ASSET.LABEL', 'sol'])('redacts malformed asset label %s independently of size', (asset) => {
+    const event = projectActivity({ id: 'paper:00000000-0000-4000-8000-000000000001',
+      agent_id: '00000000-0000-4000-8000-000000000002', kind: 'PAPER_FILL',
+      at: new Date(), dry_run: true, size: '42', asset });
+    expect(event?.paper).toEqual({ simulated: true, size_base_units: '42', asset: null, verdict: 'PAPER_FILLED' });
+  });
+
   it('refuses unknown actions and private fields in outbound batches', () => {
     expect(projectActivity({ kind: 'SIGN', secret: 'PRIVATE' })).toBeNull();
     expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [], remove: [], prompt: 'PRIVATE' }).success).toBe(false);

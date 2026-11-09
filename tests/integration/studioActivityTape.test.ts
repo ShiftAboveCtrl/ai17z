@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { capabilityPermissions, ops, query } from '@xbam/database';
-import { sealSecret } from '@xbam/shared';
+import { invokeCapability } from '@xbam/tools';
+import { createLogger, sealSecret } from '@xbam/shared';
 import { ACTIVITY_CAPABILITY, activityTapeProjection, scrubStudioActivity, setStudioActivityTape, studioActivityTapeSetting, sweepStudioActivityTape, registerActivityTapeCapability } from '../../packages/runtime/src/studioActivityTape';
 import { setStudioTransportForTests } from '../../packages/runtime/src/studioLink';
 import { newInstallationKey } from '../../packages/runtime/src/studioJose';
@@ -37,16 +38,83 @@ async function grant() {
 }
 async function ready() { await grant(); await setStudioActivityTape(true, fixture.ownerId); }
 async function due() { await query("DELETE FROM app_settings WHERE key = 'studio.activity_tape.attempt'"); }
-async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, channel = 'x', rehearsal = false) {
+async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, channel = 'x', rehearsal = false, agentId = fixture.agentId) {
   const [event] = await query<{ id: string }>("INSERT INTO events (channel,type,remote_event_id,text,remote_author_handle,payload) VALUES ($1,'MENTION',$2,'PRIVATE','private-person',$3) RETURNING id", [channel, randomUUID(), JSON.stringify({ prompt: 'PRIVATE', rehearsal, ...(rehearsal ? { origin: 'rehearsal' } : {}) })]);
-  const [job] = await query<{ id: string }>("INSERT INTO jobs(event_id,agent_id,channel,action_type,idempotency_key,generated_output) VALUES ($1,$2,$3,$4,$5,'PRIVATE') RETURNING id", [event!.id, fixture.agentId, channel, type, randomUUID()]);
+  const [job] = await query<{ id: string }>("INSERT INTO jobs(event_id,agent_id,channel,action_type,idempotency_key,generated_output) VALUES ($1,$2,$3,$4,$5,'PRIVATE') RETURNING id", [event!.id, agentId, channel, type, randomUUID()]);
   const [row] = await query<{ id: string }>(`INSERT INTO actions(job_id,agent_id,channel,type,status,dry_run,payload,target_ref,idempotency_key,executed_at)
     VALUES ($1,$2,$8,$3,$4,$5,'{"text":"PRIVATE","wallet":"PRIVATE","reasoning":"PRIVATE","cookies":"PRIVATE"}','@private-person',$6,now() - ($7::int * interval '1 minute')) RETURNING id`,
-  [job!.id, fixture.agentId, type, status, status === 'DRY_RUN', randomUUID(), ageMinutes, channel]);
+  [job!.id, agentId, type, status, status === 'DRY_RUN', randomUUID(), ageMinutes, channel]);
   return `action:${row!.id}`;
 }
 
 describe('activity tape against Postgres and a DPoP Studio contract server', () => {
+  it('keeps scrubs queued and sends nothing while the switch is off', async () => {
+    await grant();
+    const id = await action();
+    await scrubStudioActivity(id, fixture.ownerId);
+    expect(await sweepStudioActivityTape()).toEqual({ sent: 0, skipped: 'off' });
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([id]);
+    expect(studio.requests).toBe(0);
+  });
+
+  it.each([null, 'DISABLED', 'OWNER_APPROVAL'] as const)('starts a fresh grant from %s after earlier rows without backdating', async (permission) => {
+    await setStudioActivityTape(true, fixture.ownerId);
+    if (permission) await capabilityPermissions.set({ agentId: fixture.agentId, capabilityId: ACTIVITY_CAPABILITY, permission });
+    await action();
+    await grant();
+    const id = await action();
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect(studio.batches[0]!.events.map((event) => event.id)).toEqual([id]);
+  });
+
+  it('excludes future-dated rows', async () => {
+    await ready();
+    await action('POST', 'EXECUTED', -1);
+    const id = await action();
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect(studio.batches[0]!.events.map((event) => event.id)).toEqual([id]);
+  });
+
+  it('excludes an ungranted agent while another agent is granted', async () => {
+    await ready();
+    const other = await createFixture();
+    await action('POST', 'EXECUTED', 0, 'x', false, other.agentId);
+    const id = await action();
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect(studio.batches[0]!.events.map((event) => event.id)).toEqual([id]);
+  });
+
+  it('preserves pending events when an ALLOWED grant config is edited', async () => {
+    await ready();
+    const id = await action();
+    await capabilityPermissions.setConfig({ agentId: fixture.agentId, capabilityId: ACTIVITY_CAPABILITY,
+      permission: 'ALLOWED', config: { display: true } });
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect(studio.batches[0]!.events.map((event) => event.id)).toEqual([id]);
+  });
+
+  it('preserves the grant floor when ALLOWED is recorded again', async () => {
+    await ready();
+    const id = await action();
+    await grant();
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect(studio.batches[0]!.events.map((event) => event.id)).toEqual([id]);
+  });
+
+  it.each(['ALLOWED', 'OWNER_APPROVAL'] as const)('previews only the requested agent before limiting under %s', async (permission) => {
+    await ready();
+    for (let i = 0; i < 50; i++) await action();
+    const other = await createFixture();
+    await capabilityPermissions.set({ agentId: other.agentId, capabilityId: ACTIVITY_CAPABILITY, permission });
+    const id = await action('POST', 'EXECUTED', 0, 'x', false, other.agentId);
+    const result = await invokeCapability({ call: { id: ACTIVITY_CAPABILITY, input: {} },
+      context: { agentId: other.agentId, jobId: null, accountId: null, config: {}, audience: 'OWNER', logger: createLogger('tape-test') },
+      permission: { stored: permission, paused: false, approved: true } });
+    expect(result.outcome).toBe('SUCCEEDED');
+    expect(result.output).toEqual({ events: [expect.objectContaining({ id, agent_id: other.agentId })] });
+    expect(studio.requests).toBe(0);
+  });
+
   it('protects owner switch and scrub routes and rejects extra fields', async () => {
     const app = await buildServer();
     try {
@@ -66,7 +134,7 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
   it('drops stale rows after an outage and skips paused-period rows on resume', async () => {
     await ready();
     await ops.setSetting('studio.activity_tape', { enabled: true, changedAt: new Date(Date.now() - 3_600_000).toISOString() });
-    await query("UPDATE agent_capability_permissions SET updated_at = now() - interval '1 hour' WHERE agent_id = $1", [fixture.agentId]);
+    await query("UPDATE agent_capability_permissions SET permission_changed_at = now() - interval '1 hour' WHERE agent_id = $1", [fixture.agentId]);
     await action('POST', 'EXECUTED', 16); const fresh = await action('POST', 'EXECUTED', 14);
     expect((await sweepStudioActivityTape()).sent).toBe(1);
     expect([...studio.visible.values()][0]!.id).toBe(fresh);

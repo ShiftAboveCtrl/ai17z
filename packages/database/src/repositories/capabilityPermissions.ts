@@ -18,6 +18,8 @@ export interface CapabilityPermissionRow extends Record<string, unknown> {
   /** Named settings for this capability and this agent. Always an object. */
   config: Record<string, unknown>;
   updated_at: string;
+  /** Changes only when the permission decision changes, never on config edits. */
+  permission_changed_at: string;
 }
 
 /** Everything this owner has decided for one agent. */

@@ -1,4 +1,3 @@
-import { registerActivityTapeCapability } from './studioActivityTape';
 import { createLogger, errorMessage } from '@xbam/shared';
 import { pipelines as pipelinesRepo, prompts as promptsRepo } from '@xbam/database';
 import { DEFAULT_TEMPLATES } from '@xbam/prompts';
@@ -49,6 +48,7 @@ import { registerReferenceCapabilities } from './referenceCapabilities';
 import { registerMarketCapabilities } from './marketCapabilities';
 import { registerMarketIntelCapabilities } from './marketIntelCapabilities';
 import { defaultPipelineDraft } from './defaultPipeline';
+import { registerActivityTapeCapability } from './studioActivityTape';
 import { registerXCapabilities } from './xCapabilities';
 import { registerGithubCapabilities } from './githubCapabilities';
 import { registerIntrospectionCapabilities } from './introspectionCapabilities';

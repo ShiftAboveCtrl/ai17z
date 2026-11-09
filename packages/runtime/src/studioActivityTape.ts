@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { ConflictError } from '@xbam/shared';
 import { ops, query } from '@xbam/database';
 import { defineCapability, registerCapability, type AnyCapability } from '@xbam/tools';
-import { studioActivityBatch } from './studioLink';
 import { ActivityEventId as EventId, ActivityTapeBatch, ActivityTapeEvent, type ActivityEvent } from '@xbam/shared/contracts';
+import { studioActivityBatch } from './studioLink';
 export { ActivityTapeBatch, ActivityTapeEvent } from '@xbam/shared/contracts';
 
 export const ACTIVITY_CAPABILITY = 'studio.activity_tape';
@@ -52,10 +52,13 @@ export async function scrubStudioActivity(id: string, by: string): Promise<void>
 
 /** Read model only. No text, correspondent identity, wallet or reasoning is selected. */
 interface TapeCursor { at: string; id: string; agentId: string }
-export async function activityTapeProjection(since: Date, cursor: TapeCursor | null = null): Promise<ActivityEvent[]> {
+/** Scoped owner previews also accept approval; unscoped background delivery requires ALLOWED. */
+export async function activityTapeProjection(since: Date, cursor: TapeCursor | null = null, previewAgentId: string | null = null): Promise<ActivityEvent[]> {
   const rows = await query(`WITH permitted AS (
-    SELECT agent_id, updated_at FROM agent_capability_permissions
-    WHERE capability_id = $1 AND permission = 'ALLOWED'
+    SELECT agent_id, permission_changed_at FROM agent_capability_permissions
+    WHERE capability_id = $1
+      AND (permission = 'ALLOWED' OR ($7::uuid IS NOT NULL AND permission = 'OWNER_APPROVAL'))
+      AND ($7::uuid IS NULL OR agent_id = $7::uuid)
   ), tape AS (
     SELECT 'action:' || a.id AS id, a.agent_id, a.type AS kind, date_trunc('milliseconds', a.executed_at) AS at,
       a.dry_run, NULL::text AS size, NULL::text AS asset
@@ -64,7 +67,7 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
     WHERE a.status IN ('EXECUTED','DRY_RUN') AND a.type IN ('REPLY','POST')
       AND a.channel <> 'mock' AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
       AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'
-      AND a.executed_at >= greatest($2::timestamptz, p.updated_at)
+      AND a.executed_at >= greatest($2::timestamptz, p.permission_changed_at)
     UNION ALL
     SELECT 'paper:' || t.id, t.agent_id, 'PAPER_FILL', date_trunc('milliseconds', t.updated_at), true,
       t.postcondition->>'inBase',
@@ -73,18 +76,18 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
       ELSE t.asset_in->>'symbol' END
     FROM trade_intents t JOIN permitted p ON p.agent_id = t.agent_id
     WHERE t.mode = 'PAPER' AND t.status = 'PAPER_FILLED' AND t.postcondition->>'simulated' = 'true'
-      AND t.updated_at >= greatest($2::timestamptz, p.updated_at)
+      AND t.updated_at >= greatest($2::timestamptz, p.permission_changed_at)
     UNION ALL
     SELECT DISTINCT 'radar:' || d.id, aa.agent_id, 'RADAR_HIT', date_trunc('milliseconds', d.first_seen_at), NULL::boolean, NULL::text, NULL::text
     FROM event_discoveries d JOIN events e ON e.id = d.event_id
       JOIN agent_accounts aa ON aa.account_id = e.account_id JOIN permitted p ON p.agent_id = aa.agent_id
-    WHERE d.first_seen_at >= greatest($2::timestamptz, p.updated_at)
+    WHERE d.first_seen_at >= greatest($2::timestamptz, p.permission_changed_at)
       AND e.channel <> 'mock' AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
       AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'
   ) SELECT * FROM tape WHERE at <= now() AND NOT (id = ANY($3::text[]))
     AND ($4::timestamptz IS NULL OR (at, id, agent_id) > ($4::timestamptz, $5::text, $6::uuid))
     ORDER BY at, id, agent_id LIMIT 50`,
-  [ACTIVITY_CAPABILITY, since.toISOString(), (await ops.getSetting<string[]>(SCRUBS)) ?? [], cursor?.at ?? null, cursor?.id ?? null, cursor?.agentId ?? null]);
+  [ACTIVITY_CAPABILITY, since.toISOString(), (await ops.getSetting<string[]>(SCRUBS)) ?? [], cursor?.at ?? null, cursor?.id ?? null, cursor?.agentId ?? null, previewAgentId]);
   return rows.map(projectActivity).filter((event): event is ActivityEvent => event !== null);
 }
 
@@ -122,7 +125,7 @@ const capability = defineCapability({
   modelCallable: true, timeoutMs: 10_000, input: z.object({}).strict(),
   output: z.object({ events: z.array(ActivityTapeEvent) }).strict(),
   async run(_input, ctx) {
-    return { events: (await activityTapeProjection(new Date(Date.now() - ACTIVITY_STALE_MS))).filter((event) => event.agent_id === ctx.agentId) };
+    return { events: await activityTapeProjection(new Date(Date.now() - ACTIVITY_STALE_MS), null, ctx.agentId) };
   },
 });
 export function registerActivityTapeCapability(): void { registerCapability(capability as AnyCapability); }
