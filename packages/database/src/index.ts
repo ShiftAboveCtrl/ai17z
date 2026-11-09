@@ -35,6 +35,8 @@ export * as autonomy from './repositories/autonomy';
 export * as targets from './repositories/targets';
 export * as xCapacity from './repositories/xCapacity';
 export * as telegramChannel from './repositories/telegramChannel';
+export * as farcasterSigners from './repositories/farcasterSigners';
+export * as channelState from './repositories/channelState';
 export * as broadCandidates from './repositories/broadCandidates';
 export * as learning from './repositories/learning';
 export * as plugins from './repositories/plugins';

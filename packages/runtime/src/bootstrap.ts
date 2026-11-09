@@ -50,6 +50,7 @@ import { registerMarketIntelCapabilities } from './marketIntelCapabilities';
 import { defaultPipelineDraft } from './defaultPipeline';
 import { registerXCapabilities } from './xCapabilities';
 import { registerTelegramCapabilities } from './telegramCapabilities';
+import { registerFarcasterCapabilities } from './farcasterCapabilities';
 import { registerGithubCapabilities } from './githubCapabilities';
 import { registerIntrospectionCapabilities } from './introspectionCapabilities';
 import { registerManagementCapabilities } from './managementCapabilities';
@@ -82,6 +83,7 @@ export async function bootstrapRuntime(): Promise<void> {
   // what crosses it is still only the normalised shapes.
   registerXCapabilities();
   registerTelegramCapabilities();
+  registerFarcasterCapabilities();
   // What a watched repository did, answered from what was recorded rather than
   // by calling GitHub. An agent cannot add a watch and cannot reach a project
   // its owner has not pointed it at.

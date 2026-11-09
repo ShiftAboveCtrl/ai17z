@@ -3,6 +3,7 @@
  * node built-ins, no database, no filesystem. The web app aliases this path.
  */
 export * from './enums';
+export * from './farcaster';
 export * from './persona';
 export * from './policy';
 export * from './cadence';

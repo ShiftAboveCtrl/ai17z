@@ -88,20 +88,16 @@ export async function startPreflight(agentId: string): Promise<Blocker[]> {
     if (!account) continue;
     if (account.channel === 'x') needsBrowser = true;
 
-    // Only a channel that signs in through a browser can be signed out of. The
-    // mock channel has no session, and telling somebody to sign in to it is
-    // advice they cannot act on.
-    // A Telegram bot has no window to sign in through, but its token can be
-    // revoked, and an agent whose bot cannot connect would otherwise start and
-    // do nothing.
-    const signsIn = getChannelAdapter(account.channel).requiresBrowser || account.channel === 'telegram';
+    // Browser sessions, bot tokens and app signers all require a connection.
+    const signsIn = getChannelAdapter(account.channel).requiresBrowser || ['telegram', 'farcaster'].includes(account.channel);
     if (signsIn && account.status !== 'CONNECTED') {
       blockers.push({
         what:
           account.status === 'NEEDS_AUTH' || account.status === 'SESSION_EXPIRED'
             ? `The ${account.channel.toUpperCase()} session for @${account.handle} has expired.`
             : `@${account.handle} is not connected (${account.status.toLowerCase().replace(/_/g, ' ')}).`,
-        fix: account.channel === 'telegram' ? 'Reconnect the Telegram bot with a working token.' : 'Sign in again.',
+        fix: account.channel === 'telegram' ? 'Reconnect the Telegram bot with a working token.'
+          : account.channel === 'farcaster' ? 'Reconnect with an authorized Farcaster app signer.' : 'Sign in again.',
         where: 'account',
       });
     } else if (!signsIn && account.status === 'ERROR') {

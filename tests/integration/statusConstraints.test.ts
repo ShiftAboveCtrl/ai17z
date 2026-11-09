@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_STATUSES,
+  CHANNELS,
   APPROVAL_MODES,
   CHANNELS,
   PIPELINE_NODE_KINDS,
@@ -33,6 +34,18 @@ import { createFixture } from '../support/fixtures';
 import { uniqueSuffix } from '../support/db';
 
 installHarness();
+
+describe('every channel the contract names is accepted by the database', () => {
+  it('creates each channel and refuses an unknown channel', async () => {
+    const fixture = await createFixture();
+    for (const channel of CHANNELS) {
+      const account = await accountsRepo.createAccount({ ownerId: fixture.ownerId, channel, handle: uniqueSuffix() });
+      expect(account.channel).toBe(channel);
+    }
+    await expect(accountsRepo.createAccount({ ownerId: fixture.ownerId,
+      channel: 'not_a_channel' as never, handle: uniqueSuffix() })).rejects.toThrow();
+  });
+});
 
 /**
  * The enum and the CHECK constraint have to agree.

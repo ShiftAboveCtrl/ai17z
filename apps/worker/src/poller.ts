@@ -1,5 +1,5 @@
 import { createLogger, envInt, errorMessage, PipelineError } from '@xbam/shared';
-import { accounts as accountsRepo, cadences as cadencesRepo, telegramChannel } from '@xbam/database';
+import { accounts as accountsRepo, cadences as cadencesRepo, telegramChannel, channelState } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import {
   buildChannelContext,
@@ -99,6 +99,7 @@ export class ChannelPoller {
       // batch it covers was ingested. The version stops a poll that outlived its
       // claim from writing an old offset over a newer one.
       const offsetState = account.channel === 'telegram' ? await telegramChannel.pollState(account.id) : null;
+      const state = account.channel === 'farcaster' ? await channelState.pollState(account.id) : null;
       let reported: string | null = null;
       const events = await adapter.ingestEvents(ctx, {
         limit: config.polling.batchLimit,
@@ -109,7 +110,7 @@ export class ChannelPoller {
                 reported = value;
               },
             }
-          : {}),
+          : state ? { cursor: state.cursor, reportCursor: (value: string) => { reported = value; } } : {}),
       });
       if (account.channel === 'x') await noteXRead(account.id, 'DIRECT');
       let created = 0;
@@ -120,6 +121,7 @@ export class ChannelPoller {
       if (offsetState && reported !== null) {
         await telegramChannel.advanceOffset(account.id, offsetState.version, Number(reported));
       }
+      if (state && reported !== null) await channelState.advancePoll(account.id, state.version, reported);
 
       const found = events.length > 0;
       const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak, foundEvents: found });
@@ -165,6 +167,9 @@ export class ChannelPoller {
           ['telegram_auth_failed', 'telegram_no_token', 'telegram_shared_bot'].includes(error.reason)
             ? { status: 'NEEDS_AUTH' as const }
             : {}),
+          ...(account.channel === 'farcaster' && error instanceof PipelineError &&
+            (error.reason === 'farcaster_auth_failed' || error.reason === 'farcaster_no_signer')
+            ? { status: 'NEEDS_AUTH' as const } : {}),
         })
         .catch(() => undefined);
     }

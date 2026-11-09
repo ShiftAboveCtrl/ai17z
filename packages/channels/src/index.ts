@@ -1,4 +1,7 @@
 export * from './contract';
+export { farcasterAdapter } from './farcaster/index';
+export { CastReference as FarcasterCastReference } from './farcaster/client';
+export * as farcasterReads from './farcaster/reads';
 export * from './registry';
 export { mockAdapter } from './mock/index';
 export { xAdapter } from './x/index';

@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { BrowserEngine, CadenceConfig, CreateAccountInput } from '@xbam/shared/contracts';
+import { BrowserEngine, CadenceConfig, CreateAccountInput, FarcasterSettings } from '@xbam/shared/contracts';
 import { BadRequestError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   accounts as accountsRepo,
+  farcasterSigners,
   browserTasks as browserTasksRepo,
   cadences as cadencesRepo,
   ops,
@@ -13,6 +14,7 @@ import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@x
 import { closeSession } from '@xbam/browser';
 import {
   accountIsWell,
+  connectFarcaster,
   allowTelegramGroup,
   connectTelegramGroupAccount,
   disconnectTelegramGroupAccount,
@@ -38,6 +40,23 @@ async function ownedTelegramAccount(accountId: string, user: UserRow) {
 }
 
 export async function accountRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/accounts/:id/farcaster/signer', handler(async (request) => {
+    const account = await ownedAccount(params(request).id!, await requireUser(request));
+    if (account.channel !== 'farcaster') throw new BadRequestError('This account is not on Farcaster.');
+    return farcasterSigners.signerPresence(account.id);
+  }));
+  app.put('/api/accounts/:id/farcaster/signer', handler(async (request) => {
+    const account = await ownedAccount(params(request).id!, await requireUser(request));
+    const input = parseBody(z.object({ signerKey: z.string().regex(/^(?:0x)?[a-fA-F0-9]{64}$/) }).strict(), request);
+    await connectFarcaster(account.id, input.signerKey);
+    return farcasterSigners.signerPresence(account.id);
+  }));
+  app.delete('/api/accounts/:id/farcaster/signer', handler(async (request) => {
+    const account = await ownedAccount(params(request).id!, await requireUser(request));
+    if (account.channel !== 'farcaster') throw new BadRequestError('This account is not on Farcaster.');
+    await farcasterSigners.clearSigner(account.id);
+    return farcasterSigners.signerPresence(account.id);
+  }));
   app.get(
     '/api/channels',
     handler(async () => ({
@@ -293,6 +312,11 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         // Configuration changed, so any live context is no longer valid.
         await closeSession(account.id).catch(() => undefined);
       }
+      if (account.channel === 'farcaster' && body.settings !== undefined) FarcasterSettings.parse(body.settings);
+      if (account.channel === 'farcaster') {
+        await farcasterSigners.updateConfiguration(account.id, body);
+        return { ...await accountsRepo.requireAccount(account.id), browserSession: null };
+      }
       const updated = await accountsRepo.updateAccount(account.id, {
         ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
         ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
@@ -322,6 +346,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       const account = await ownedAccount(params(request).id!, user);
       await closeSession(account.id).catch(() => undefined);
       await browserTasksRepo.cancelAccountTasks(account.id, 'The account was disconnected.').catch(() => 0);
+      if (account.channel === 'farcaster') await farcasterSigners.clearSigner(account.id);
       // The sealed bot token goes with the connection, as the notification bot's does.
       if (account.channel === 'telegram') await disconnectTelegramGroupAccount(account.id);
       else await accountsRepo.disconnectAccount(account.id);
@@ -340,6 +365,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       const account = await ownedAccount(params(request).id!, user);
       // The stored token is tried now, and the account says what came of it.
       if (account.channel === 'telegram') return reconnectTelegramGroupAccount(account.id);
+      if (account.channel === 'farcaster') return connectFarcaster(account.id);
       await accountsRepo.reconnectAccount(account.id);
       return accountsRepo.requireAccount(account.id);
     }),
