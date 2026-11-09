@@ -1,7 +1,8 @@
-import type { Account } from '@xbam/shared/contracts';
+import { describeSignIn, type Account } from '@xbam/shared/contracts';
 import { BadRequestError, PipelineError, createLogger } from '@xbam/shared';
-import { accountCredentials, accounts as accountsRepo } from '@xbam/database';
+import { accountCredentials, accounts as accountsRepo, query } from '@xbam/database';
 import {
+  BLUESKY_WATERMARK_KEY,
   blueskyAdapter,
   blueskyServiceTargetFor,
   forgetBlueskySession,
@@ -81,6 +82,22 @@ function probeContext(settings: Record<string, unknown>, identifier: string, app
   };
 }
 
+/**
+ * An account's settings after a reconnect.
+ *
+ * The Bluesky server is replaced by `next`'s, or by the default if `next` names
+ * none, and everything else is kept. Exported so the case a test cannot reach
+ * over the network (a reconnect to the default server) is still a test.
+ */
+export function settingsAfterReconnect(current: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
+  const { bluesky: previous, ...rest } = current;
+  const kept = previous && typeof previous === 'object' ? { ...(previous as Record<string, unknown>) } : {};
+  delete kept.serviceUrl;
+  const incoming = (next.bluesky ?? {}) as Record<string, unknown>;
+  const merged = { ...kept, ...incoming };
+  return Object.keys(merged).length > 0 ? { ...rest, bluesky: merged } : rest;
+}
+
 export async function connectBlueskyAccount(input: ConnectBlueskyInput): Promise<ConnectBlueskyResult> {
   const identifier = input.identifier.trim().replace(/^@+/, '');
   if (!identifier) throw new BadRequestError('Give the Bluesky handle, for example name.bsky.social.');
@@ -143,8 +160,10 @@ export async function connectBlueskyAccount(input: ConnectBlueskyInput): Promise
     challengeKind: null,
     lastHealthStatus: 'connected',
     touchHealthCheck: true,
-    // Replaced, never merged: a changed server address must not leave the old one.
-    ...(existing ? { settings: { ...existing.settings, ...settings } } : {}),
+    // The server address is replaced, never merged: a reconnect that names no
+    // server means the default one, and must not keep a custom address from an
+    // earlier link. Every other setting on the account is left as it was.
+    ...(existing ? { settings: settingsAfterReconnect(existing.settings, settings) } : {}),
   });
 
   // 3. Prime the session cache for the real account, so the first poll does not
@@ -161,4 +180,71 @@ export async function connectBlueskyAccount(input: ConnectBlueskyInput): Promise
 export function describeBlueskyFailure(error: unknown): string {
   if (error instanceof PipelineError) return error.message;
   return error instanceof Error ? error.message : 'Bluesky could not be reached.';
+}
+
+/**
+ * Moves an account's notification mark forward after its events were ingested.
+ *
+ * Called by the poller once ingest has finished, never by the adapter, so the
+ * mark only ever covers what was actually taken in. Forward only, in one
+ * statement: a stale poller finishing late must not pull it back, and a
+ * reconnect writing settings at the same moment must not lose it. The mark is
+ * the newest `indexedAt` among the events, because the likes and follows that
+ * may be newer are not events and are skipped again for free.
+ */
+export async function advanceNotificationWatermark(
+  accountId: string,
+  events: ReadonlyArray<{ raw: Record<string, unknown> }>,
+): Promise<void> {
+  let newest = 0;
+  for (const event of events) {
+    const at = typeof event.raw.indexedAt === 'string' ? Date.parse(event.raw.indexedAt) : NaN;
+    if (Number.isFinite(at) && at > newest) newest = at;
+  }
+  if (newest === 0) return;
+  const iso = new Date(newest).toISOString();
+  await query(
+    `UPDATE accounts
+        SET settings = jsonb_set(
+              coalesce(settings, '{}'::jsonb),
+              '{bluesky}',
+              coalesce(settings->'bluesky', '{}'::jsonb) || jsonb_build_object($2::text, $3::text)
+            )
+      WHERE id = $1
+        AND coalesce(settings->'bluesky'->>$2, '') < $3`,
+    [accountId, BLUESKY_WATERMARK_KEY, iso],
+  );
+}
+
+/**
+ * Signs a Bluesky account back in with the app password already stored for it.
+ *
+ * What "Reconnect" means here. On X it switches the account on and a person
+ * signs in; Bluesky has no window, and an account left DISCONNECTED is never
+ * polled, so switching it on and stopping there would be a button that does
+ * nothing. The stored password is proved against Bluesky exactly as at link
+ * time, and the account's status says what came of it. Nothing is typed that
+ * the owner did not store, and a challenge ends it as it always does.
+ */
+export async function reconnectBlueskyAccount(accountId: string): Promise<Account> {
+  const account = await accountsRepo.requireAccount(accountId);
+  if (account.channel !== 'bluesky') return account;
+  forgetBlueskySession(account.id);
+  const result = await blueskyAdapter.connect(await buildChannelContext(account, null));
+  const explanation = describeSignIn('bluesky', result.status);
+  return accountsRepo.updateAccount(account.id, {
+    status: result.status,
+    lastError: result.status === 'CONNECTED' ? null : result.detail.slice(0, 500),
+    lastHealthStatus: result.status === 'CONNECTED' ? 'connected' : (explanation?.what ?? result.detail).slice(0, 300),
+    challengeKind: result.status === 'CHALLENGE_REQUIRES_USER' ? 'EMAIL_CODE' : null,
+    touchHealthCheck: true,
+    ...(result.remoteAccountId ? { remoteAccountId: result.remoteAccountId } : {}),
+  });
+}
+
+/** Ends the account's session on Bluesky's side. Best effort; the account is switched off either way. */
+export async function disconnectBlueskyAccount(accountId: string): Promise<void> {
+  const account = await accountsRepo.getAccount(accountId);
+  if (!account || account.channel !== 'bluesky') return;
+  await blueskyAdapter.disconnect(await buildChannelContext(account, null));
 }

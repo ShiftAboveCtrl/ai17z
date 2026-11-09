@@ -21,6 +21,11 @@ export {
   eventTypeForReason as blueskyEventTypeForReason,
 } from './bluesky/normalise';
 export {
+  notificationsSeenThrough as blueskyNotificationsSeenThrough,
+  WATERMARK_KEY as BLUESKY_WATERMARK_KEY,
+} from './bluesky/watermark';
+export { inventoryOf as blueskyInventoryOf } from './bluesky/normalise';
+export {
   parsePostReference as parseBlueskyPostReference,
   parseAtUri,
   postPermalink as blueskyPermalink,

@@ -2,6 +2,7 @@ import { createLogger, envInt, errorMessage } from '@xbam/shared';
 import { accounts as accountsRepo, cadences as cadencesRepo } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import {
+  advanceNotificationWatermark,
   buildChannelContext,
   checkReadCapacity,
   ingestNormalizedEvent,
@@ -133,6 +134,8 @@ export class ChannelPoller {
         const outcome = await ingestNormalizedEvent({ accountId: account.id, event });
         created += outcome.jobs.filter((j) => j.created).length;
       }
+      // Only after every event was taken in, so a failure above re-reads them.
+      if (account.channel === 'bluesky') await advanceNotificationWatermark(account.id, events);
 
       const found = events.length > 0;
       const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak, foundEvents: found });

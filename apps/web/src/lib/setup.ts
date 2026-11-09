@@ -1,6 +1,7 @@
 import { DEFAULT_TRIGGER_EVENT_TYPES } from '@xbam/shared/contracts';
 import type { PreflightResult, StartResult } from '@xbam/shared/contracts';
 import { get, post, put } from './api';
+import type { AccountRow } from './types';
 
 /**
  * The writes both setup paths perform, in one place.
@@ -86,12 +87,37 @@ export async function connectAccount(
     handle: input.handle.trim().replace(/^@/, ''),
     displayName: input.displayName,
   });
-  await post(`/api/agents/${agentId}/accounts`, {
-    accountId: account.id,
-    triggerEventTypes: [...DEFAULT_TRIGGER_EVENT_TYPES],
-    actionType: input.actionType ?? 'REPLY',
-  });
+  await linkAccount(agentId, account.id, input.actionType);
   return account;
+}
+
+/** Attaches an account to an agent, with the default triggers. See `connectAccount`. */
+export async function linkAccount(agentId: string, accountId: string, actionType?: string): Promise<void> {
+  await post(`/api/agents/${agentId}/accounts`, {
+    accountId,
+    triggerEventTypes: [...DEFAULT_TRIGGER_EVENT_TYPES],
+    actionType: actionType ?? 'REPLY',
+  });
+}
+
+/**
+ * Links a Bluesky account, or signs an existing one back in.
+ *
+ * Its own call because a Bluesky account is made by proving an app password,
+ * never by naming a handle: the generic route refuses it. The API checks the
+ * details with Bluesky before keeping anything, so a typo creates nothing, and
+ * the answer is the account row, which has never had a secret on it.
+ */
+export async function saveBlueskyAccount(input: {
+  identifier: string;
+  appPassword: string;
+  serviceUrl?: string | null;
+}): Promise<AccountRow> {
+  return post<AccountRow>('/api/accounts/bluesky', {
+    identifier: input.identifier.trim().replace(/^@/, ''),
+    appPassword: input.appPassword,
+    ...(input.serviceUrl ? { serviceUrl: input.serviceUrl } : {}),
+  });
 }
 
 /** Whether this agent could run right now. A read: it changes nothing. */

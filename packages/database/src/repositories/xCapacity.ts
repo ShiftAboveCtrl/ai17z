@@ -18,6 +18,8 @@ export type XSignal = 'RATE_LIMITED' | 'STALLED' | 'BROKEN';
 
 export interface CapacityStateRow {
   status: string;
+  /** Which network this account is on, so its sentences can name the right one. */
+  channel: string;
   health: AccountHealth;
   healthReason: string | null;
   healthUntil: string | null;
@@ -30,7 +32,7 @@ export interface CapacityStateRow {
 export async function getState(accountId: string): Promise<CapacityStateRow | null> {
   return mapRow<CapacityStateRow>(
     await queryOne(
-      `SELECT status, health, health_reason, health_until, health_changed_at,
+      `SELECT status, channel, health, health_reason, health_until, health_changed_at,
               health_strikes, health_signal, health_signal_at
          FROM accounts WHERE id = $1`,
       [accountId],

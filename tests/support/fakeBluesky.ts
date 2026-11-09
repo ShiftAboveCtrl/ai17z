@@ -39,6 +39,8 @@ export interface FakePost {
     facets?: unknown[];
   };
   indexedAt: string;
+  /** The view of what is attached, as the AppView renders it (images, video, a quote, a link card). */
+  embed?: unknown;
 }
 
 export const ME = { did: 'did:plc:agentagentagentagent', handle: 'agent.test', password: 'abcd-efgh-ijkl-mnop' };
@@ -102,6 +104,7 @@ export class FakeBluesky {
     text: string;
     replyTo?: string;
     createdAt?: string;
+    embed?: unknown;
   }): FakePost {
     const author = input.author ?? ALICE;
     const uri = `at://${author.did}/app.bsky.feed.post/${input.id}`;
@@ -120,6 +123,7 @@ export class FakeBluesky {
         ...(parent && root ? { reply: { root, parent: { uri: parent.uri, cid: parent.cid } } } : {}),
       },
       indexedAt: createdAt,
+      ...(input.embed === undefined ? {} : { embed: input.embed }),
     };
     this.posts.set(uri, post);
     return post;
@@ -218,8 +222,15 @@ export class FakeBluesky {
       case 'com.atproto.server.getSession':
         return send(200, { did: ME.did, handle: ME.handle, active: true, ...(this.takendown ? { status: 'takendown' } : {}) });
 
-      case 'app.bsky.notification.listNotifications':
-        return send(200, { notifications: this.notifications });
+      case 'app.bsky.notification.listNotifications': {
+        // Paged as the real one is: newest first, `limit` at a time, with an
+        // opaque cursor that is absent on the last page.
+        const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 100);
+        const start = Number(url.searchParams.get('cursor') ?? 0);
+        const page = this.notifications.slice(start, start + limit);
+        const next = start + limit < this.notifications.length ? String(start + limit) : undefined;
+        return send(200, { notifications: page, ...(next ? { cursor: next } : {}) });
+      }
 
       case 'app.bsky.feed.getPosts': {
         const found = url.searchParams
@@ -314,6 +325,7 @@ export class FakeBluesky {
       author: { ...post.author, labels: [], viewer: { muted: false } },
       record: post.record,
       indexedAt: post.indexedAt,
+      ...(post.embed === undefined ? {} : { embed: post.embed }),
       ...(this.omitCounts ? {} : { replyCount: 0, repostCount: 0, likeCount: 2, quoteCount: 0 }),
       labels: [],
       viewer: likeUri ? { like: likeUri } : {},

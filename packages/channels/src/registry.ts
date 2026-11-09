@@ -25,6 +25,17 @@ export function listChannelAdapters(): ChannelAdapter[] {
   return [...ADAPTERS.values()];
 }
 
+/**
+ * Whether an account on this channel has a sign-in that can lapse.
+ *
+ * True for a browser channel and for one that signs in with a stored app
+ * password; false for the mock channel, which has nothing to be signed out of.
+ */
+export function channelHasSignIn(channel: ChannelId): boolean {
+  const adapter = ADAPTERS.get(channel);
+  return Boolean(adapter && (adapter.requiresBrowser || adapter.signInKind));
+}
+
 export function isChannelImplemented(channel: ChannelId): boolean {
   return ADAPTERS.has(channel);
 }

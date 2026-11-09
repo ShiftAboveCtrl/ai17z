@@ -3,8 +3,9 @@
 **A second network for the same agent.** One identity, one memory and one policy,
 reaching Bluesky as well as X, over the AT Protocol's HTTP API. No browser.
 
-This document is the account of session 1: what exists, why it is shaped the way
-it is, and, at the end, exactly what session 2 has to finish.
+This document is the account of what exists, why it is shaped the way it is and,
+at the end, what is still to do. Session 1 built the backend; session 2 added the
+screens, the words, the operations around it and the two reads that were missing.
 
 ## What it is, and what it deliberately is not
 
@@ -119,8 +120,8 @@ and `quote`. Likes, reposts, follows and the agent's own words are not events.
   parent's.
 - `raw.addressedToAgent` is true: a mention, reply or quote is addressed to the
   agent by definition, which the engagement heuristic reads instead of guessing.
-- Nothing is marked read on the owner's behalf (no `updateSeen`). The page is
-  read again each poll and the index does the deduplication.
+- Nothing is marked read on the owner's behalf (no `updateSeen`). Where the last
+  poll stopped is a mark on the account; see Notification paging below.
 - A count the server leaves out stays out. Absent is not zero.
 - `authorVerified` is three valued: true, false, or null for "the network did not
   say".
@@ -258,65 +259,139 @@ to succeed and then drop the connection.
   accepted by the database.
 - `tests/unit/capabilityTarget.test.ts`: the Bluesky like key agrees with its
   capability.
+- Session 2: `tests/unit/blueskyConnect.test.ts` (reconnect settings, the shared
+  sign-in sentences), `tests/unit/blueskyAdapter.test.ts` (attachments, paging),
+  `tests/unit/accountHealth.test.ts` (words per network),
+  `tests/integration/blueskyOperations.test.ts` (start check, Health, owner
+  notifications, bursts and the mark, unreadable pictures) and the scheduled post,
+  reconnect and disconnect cases in `blueskyChannel.test.ts`.
+
+## Session 2
+
+### The screens
+
+A Bluesky account is linked from three places and they share one form,
+`BlueskyConnect` (`apps/web/src/components/BlueskyConnect.tsx`): the Easy setup
+wizard (a network choice, X or Bluesky, at the account step), the Advanced wizard
+(a Bluesky channel with a handle and an app password), and the agent page's
+"Connect another account". The help text is `AppPasswordHelp`, said before the
+field because the mistake it prevents is pasting the main password.
+
+- The password lives in component state while the form is open and is cleared the
+  moment it is sent. It is never in a URL, a log or local storage, and the answer
+  is the account row.
+- In the Advanced wizard the password is proved **before the agent is created**, so
+  a refusal creates nothing and a retry does not make a second agent.
+- The account's own screen (`SessionPanel`) shows none of X's panels for Bluesky
+  (no browser configuration, identity evidence, radar, Open sign-in, Capture or
+  Clear session). It shows the sign-in state in plain sentences, the same form to
+  store a new app password (which is also how a lapsed account is fixed, because
+  linking is idempotent), the server it is on, and the cadence panel, which is the
+  same engine for any channel.
+- Reconnect and Disconnect in Settings do something real: disconnect ends the
+  session on Bluesky's side, and reconnect signs in with the stored app password
+  and reports what came of it (`reconnectBlueskyAccount`), because an account that
+  was only switched back on would never be polled and no window exists to sign in
+  through.
+
+The words are `describeSignIn` in `packages/shared/src/contracts/signIn.ts`, the
+one place the start check, the Health screen, the owner notification and the
+account screen get their sentences, so they cannot give a person four different
+fixes.
+
+### Words that said X
+
+The breaker and the budget serve any channel that spends from the one budget, and
+their sentences used to name X. `platformName(channel)` in `accountHealth.ts`
+now names the right network in `judgeHealth`, `settleCapacity`, `readAllowance` and
+`writeAllowance`, and the channel travels from the account row. X is the default,
+so every X sentence is unchanged.
+
+### Start check, Health and notifications
+
+- `startPreflight` no longer treats a Bluesky account as a browser account or as
+  an error state. A lapsed or challenged account blocks the start in
+  `describeSignIn`'s words, and a connected account with no stored app password
+  is a blocker too. No browser worker is asked for.
+- The Health screen no longer reports "No session required" for a channel that has
+  no browser but does have a sign-in (`channelHasSignIn`, from an adapter's
+  `signInKind`).
+- The sweep raises the same two notifications for Bluesky as for X, in Bluesky's
+  words. A challenge notice no longer says "the browser window is open".
+
+### A scheduled post, end to end
+
+`originatePost` was already channel generic. `tests/integration/blueskyChannel.test.ts`
+now proves it on a Bluesky account against the fixture server: a post is
+originated from the idea backlog, runs the ten steps, and is published with no
+reply refs; a dry run publishes nothing and keeps the idea; and revoking `POST`
+after the job is queued fails it **permanently** and sends nothing.
+
+### Pictures
+
+`ingestEvents` is unchanged, but `resolveContext` now hands the media step an
+inventory in the shape it already understands (`meta.inventory`, and
+`meta.parentInventory` when the mention carries nothing but the post above does):
+images with their address and alt text, a video as its poster frame, a link card as
+a link, and a quoted post with its own pictures. An attachment this file does not
+recognise becomes an item that cannot be read, so it is never silently dropped.
+What happens next is the ordinary path: with no vision model the item is skipped
+with a stated reason, the trace records a gap, and the prompt's NOT UNDERSTOOD
+block makes the reply say so. Proved in `tests/integration/blueskyOperations.test.ts`.
+Nothing is fetched or described by the channel itself.
+
+### Notification paging
+
+One page of 50 was read per poll and nothing was marked seen. Now the account
+keeps a mark, `settings.bluesky.notificationsSeenThrough`, the newest `indexedAt`
+among the events it ingested:
+
+- With no mark (a new link) the poll reads one page, because linking is not a
+  reason to ingest history.
+- With one it pages back until it meets something older than the mark, up to four
+  pages a poll, so a burst larger than a page is read to its end. Past that bound
+  it says so in a warning instead of spending the budget on history.
+- The mark moves **only after every event was ingested** (`advanceNotificationWatermark`,
+  called by the poller), in one forward-only statement, so a crash between reading
+  and ingesting re-reads and a late poller cannot pull it back. The unique index on
+  the event is still the real deduplication.
+- Nothing is marked read on Bluesky (`updateSeen` is deliberately not used): that
+  would change what the owner sees in their own app.
+
+A reconnect keeps the mark and replaces the server address (`settingsAfterReconnect`),
+so a reconnect that names no server goes back to bsky.social and does not keep an
+earlier custom one.
 
 ## Not verified
 
-Everything above is proved against the fixture server. **Nothing has been run
-against bsky.social or a real PDS.** The assumptions to confirm on a throwaway
-account, with a person present:
+Everything is proved against the fixture server and the scratch stack. **Nothing has
+been run against bsky.social with a real account.** The assumptions to confirm on a
+throwaway account, with a person present:
 
-- `listNotifications` honours the `reasons` filter (the adapter filters again
-  client side, so it is correct either way);
+- `listNotifications` honours the `reasons` filter and `cursor` (the adapter
+  filters again client side, so it is correct either way);
 - `getPostThread` accepts `parentHeight = 13`;
 - `listRecords` returns newest first (the scan checks the order it received rather
   than trusting it, and reports an unclear page as not conclusive);
+- the `embed` view shapes the AppView really returns for images, video, link cards
+  and quoted posts;
 - the real limits on `createSession` and on writes.
 
-## What session 2 must finish
+## Left for a later session
 
-Session 1 is the backend. Nothing in the web app knows about Bluesky yet.
+Deliberately not done, and none of it is needed for an agent to answer people:
 
-1. **Onboarding UI.** An "Add a Bluesky account" form posting to
-   `/api/accounts/bluesky` (handle or email, app password, optional server), with
-   the app password help text and the sentences the API already returns. The
-   generic Accounts section and `CreateAgent.tsx` list channels from
-   `/api/channels` and branch on `channel === 'x'`; `POST /api/accounts` now
-   refuses `bluesky` with a pointer, so both must route to the new form.
-2. **Account screen.** Show `NEEDS_AUTH` and `CHALLENGE_REQUIRES_USER` for a
-   Bluesky account with the fix ("store a new app password"; re-posting to
-   `/api/accounts/bluesky` is the reconnect, and is idempotent). The credentials
-   routes in `sessions.ts` are gated on `signInWithCredentials`, so they report
-   `supported: false` for Bluesky; either add a Bluesky branch or point the UI at
-   the connect route. Hide the X only panels (`BrowserTabsPanel`, `SessionPanel`)
-   for Bluesky.
-3. **Words that say X.** The capacity and health sentences in `accountHealth.ts`
-   ("X asked this account to slow down...") reach a Bluesky account unchanged, as
-   the integration log shows. Make them channel neutral, with their tests.
-4. **Agent start and health.** `agentStart.ts` preflight and `health.ts` /
-   `accountIsWell` should check a Bluesky account's sign-in (the adapter's
-   `healthCheck` exists) rather than only browser state. Confirm the owner
-   notification path (`notify.ts`, Telegram) fires for `NEEDS_AUTH` and
-   `CHALLENGE_REQUIRES_USER` on this channel.
-5. **Posting unprompted.** A `POST` on Bluesky is tested at the adapter, and a
-   `REPLY` is tested through the whole pipeline. A scheduled post through
-   `originate.ts` and the idea backlog on a Bluesky account is not tested end to
-   end.
-6. **Engagement and discovery.** `engage.ts` hard codes `x.like` and `x.repost`,
-   and the radar and discovery are X only. An agent on Bluesky answers people who
-   write to it; it does not yet like or go looking on its own. Wire
-   `bluesky.like` into `engage.ts` if wanted.
-7. **Media.** An incoming image is counted (`imageCount`) and not read. The prompt
-   must say it could not be read, the way it does for X ("media that could not be
-   read is an explicit gap"); check that `stepResolveMedia` does so for a Bluesky
-   event. Outbound media is out of scope.
-8. **Notification paging.** One page of 50 is read per poll and nothing is
-   marked seen. A burst of more than 50 qualifying notifications between polls
-   would leave the oldest unread. If that matters, persist a cursor on the account
-   (not in memory) or use `updateSeen` deliberately.
-9. **The real network.** Run the "Not verified" list above against a throwaway
-   account.
-10. **Docs.** Mention Bluesky in the README and in `CLAUDE.md` (the rules it
-    already states cover this channel; a short section naming the app password
-    arrangement and `AI17Z_BLUESKY_UNSAFE_DEV_ORIGIN` would do). Check that
-    agent packages (`portableAgent`) carry no Bluesky credential; they should not,
-    since credentials are a separate table and are not exported.
+1. **Engagement and discovery.** `engage.ts` hard codes `x.like` and `x.repost`, and
+   the radar and discovery are X only. An agent on Bluesky answers people who write
+   to it and posts from its backlog; it does not yet like on its own or go looking.
+   Wire `bluesky.like` into `engage.ts` if wanted.
+2. **The real-network check** of the list above, on a throwaway account.
+3. **`README.md` and `CLAUDE.md`.** Mention Bluesky, name the app password
+   arrangement and `AI17Z_BLUESKY_UNSAFE_DEV_ORIGIN`.
+4. **Agent packages.** Check `portableAgent` carries no Bluesky credential. It
+   should not, since credentials are a separate table and are not exported.
+5. **Other places that still say X only**, found while looking and left alone:
+   `studio/shared.tsx` ("Connect an X account"), the Lab (`LabView.tsx`,
+   `lab.ts` read X only), and the account picker in `SettingsPage` for new accounts.
+6. **Outbound media, direct messages, follows, reposts, quote posts.** Out of scope
+   in the spec.

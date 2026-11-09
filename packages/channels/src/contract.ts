@@ -182,6 +182,12 @@ export interface ChannelAdapter {
   readonly capabilities: readonly ActionType[];
   /** True when this adapter needs a browser session to function. */
   readonly requiresBrowser: boolean;
+  /**
+   * Set for a channel that signs in over an API with stored details rather than
+   * through a browser. Such an account can still be signed out, which is a thing
+   * to tell a person; `requiresBrowser` alone said only the browser channels could.
+   */
+  readonly signInKind?: 'APP_PASSWORD';
 
   connect(ctx: ChannelContext): Promise<ConnectionResult>;
   disconnect(ctx: ChannelContext): Promise<void>;

@@ -39,6 +39,7 @@ import {
 } from '@xbam/database';
 import type { NotificationRecord } from '@xbam/database';
 import { createLogger, workerAbsenceSentence } from '@xbam/shared';
+import { describeSignIn } from '@xbam/shared/contracts';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
 import { pauseState } from './killSwitch';
 import { browserRunning } from './health';
@@ -76,6 +77,8 @@ export const notificationKey = {
  */
 export async function accountNeedsUser(input: {
   accountId: string;
+  /** Which channel the account is on, so the words describe what is actually waiting. */
+  channel?: string;
   handle: string;
   challengeKind: string | null;
   detail: string;
@@ -85,7 +88,7 @@ export async function accountNeedsUser(input: {
     severity: 'CRITICAL',
     accountId: input.accountId,
     title: `@${input.handle} needs you to finish signing in`,
-    body: `${input.detail} The browser window is open and nothing has been typed into it. AI17Z never answers a security challenge itself.`,
+    body: bodyForChallenge(input),
     actionLabel: 'Open accounts',
     actionHref: '/settings#accounts',
     data: { challengeKind: input.challengeKind ?? 'unknown' },
@@ -93,9 +96,29 @@ export async function accountNeedsUser(input: {
   });
 }
 
+/**
+ * What a challenge notification says, for the channel it is on.
+ *
+ * "The browser window is open" is true of X and false of Bluesky, which has no
+ * window: telling an owner to go and find one sends them looking for something
+ * that does not exist. A channel with its own explanation uses that.
+ */
+function bodyForChallenge(input: { channel?: string; detail: string }): string {
+  const explanation = describeSignIn(input.channel ?? 'x', 'CHALLENGE_REQUIRES_USER');
+  if (explanation) return `${explanation.what} ${explanation.fix}`;
+  return `${input.detail} The browser window is open and nothing has been typed into it. AI17Z never answers a security challenge itself.`;
+}
+
+function bodyForSignedOut(input: { channel?: string; detail: string }): string {
+  const explanation = describeSignIn(input.channel ?? 'x', 'NEEDS_AUTH');
+  if (explanation) return `${explanation.what} ${explanation.fix}`;
+  return `${input.detail} Nothing will be read or sent on this account until it is signed in again.`;
+}
+
 /** An account that was signed in no longer is. */
 export async function accountSignedOut(input: {
   accountId: string;
+  channel?: string;
   handle: string;
   detail: string;
 }): Promise<NotificationRecord | null> {
@@ -104,7 +127,7 @@ export async function accountSignedOut(input: {
     severity: 'CRITICAL',
     accountId: input.accountId,
     title: `@${input.handle} is signed out`,
-    body: `${input.detail} Nothing will be read or sent on this account until it is signed in again.`,
+    body: bodyForSignedOut(input),
     actionLabel: 'Open accounts',
     actionHref: '/settings#accounts',
     dedupeKey: notificationKey.accountSignedOut(input.accountId),
@@ -498,6 +521,7 @@ export async function sweepNotifications(): Promise<{ raised: number; resolved: 
       count(
         await accountNeedsUser({
           accountId: account.id,
+          channel: account.channel,
           handle: account.handle,
           challengeKind: account.challengeKind ?? null,
           detail: account.lastHealthStatus ?? 'A security challenge is waiting.',
@@ -507,6 +531,7 @@ export async function sweepNotifications(): Promise<{ raised: number; resolved: 
       count(
         await accountSignedOut({
           accountId: account.id,
+          channel: account.channel,
           handle: account.handle,
           detail: account.lastHealthStatus ?? 'The stored session is no longer accepted.',
         }),

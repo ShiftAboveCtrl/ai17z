@@ -6,12 +6,19 @@ import {
   actions as actionsRepo,
   cadences as cadencesRepo,
   capabilities,
+  content as contentRepo,
   jobs as jobsRepo,
   query,
   xCapacity,
 } from '@xbam/database';
 import { BLUESKY_UNSAFE_DEV_ORIGIN_ENV, blueskyAdapter, resetBlueskySessionsForTest } from '@xbam/channels';
-import { buildChannelContext, checkReadCapacity, connectBlueskyAccount, ingestNormalizedEvent } from '@xbam/runtime';
+import {
+  buildChannelContext,
+  checkReadCapacity,
+  connectBlueskyAccount,
+  ingestNormalizedEvent,
+  originatePost,
+} from '@xbam/runtime';
 import { buildServer } from '../../apps/api/src/server';
 import { ChannelPoller } from '../../apps/worker/src/poller';
 import { installHarness } from '../support/harness';
@@ -62,7 +69,7 @@ beforeEach(() => {
   fake.dropNextPostResponse = false;
 });
 
-async function linked(fixture: Fixture) {
+async function linked(fixture: Fixture, actionType: 'REPLY' | 'POST' = 'REPLY') {
   const { account } = await connectBlueskyAccount({
     ownerId: fixture.ownerId,
     identifier: ME.handle,
@@ -73,7 +80,7 @@ async function linked(fixture: Fixture) {
     agentId: fixture.agentId,
     accountId: account.id,
     triggerEventTypes: ['MENTION', 'REPLY'],
-    actionType: 'REPLY',
+    actionType,
   });
   return account;
 }
@@ -390,5 +397,114 @@ describe('when the sign-in is gone', () => {
     expect(after.status).toBe('CHALLENGE_REQUIRES_USER');
     expect(after.challengeKind).toBe('EMAIL_CODE');
     expect(fake.requests).toHaveLength(1);
+  });
+});
+
+describe('a post the agent decided to make, on Bluesky', () => {
+  const policy = { model: 'mock-fixed:Shipped a small change today that makes the first run quieter, and the logs now say what actually happened instead of what we hoped would happen.' };
+
+  async function withIdea(fixture: Fixture) {
+    const account = await linked(fixture, 'POST');
+    // The posting engine refuses a draft agent, which is correct and is not
+    // what these tests are about.
+    await query(`UPDATE agents SET state = 'ACTIVE' WHERE id = $1`, [fixture.agentId]);
+    await contentRepo.addIdea({
+      agentId: fixture.agentId,
+      summary: 'Something the agent thought about earlier and might be worth saying',
+      score: 90,
+    });
+    return account;
+  }
+
+  it('is originated, run through the ten steps and published with no reply refs', async () => {
+    const fixture = await createFixture(policy);
+    const account = await withIdea(fixture);
+
+    const outcome = await originatePost({ agentId: fixture.agentId, accountId: account.id, dryRun: false });
+    expect(outcome.jobId, outcome.reason).toBeTruthy();
+    await drainAgentJobs(fixture.agentId);
+
+    const job = await jobsRepo.requireJob(outcome.jobId!);
+    expect(job.status, job.lastError ?? '').toBe('EXECUTED');
+    expect(job).toMatchObject({ channel: 'bluesky', actionType: 'POST', requiresBrowser: false });
+
+    const written = fake.postsBy(ME.did);
+    expect(written).toHaveLength(1);
+    expect(written[0]!.record.text).toBe('Shipped a small change today that makes the first run quieter, and the logs now say what actually happened instead of what we hoped would happen.');
+    expect(written[0]!.record.reply).toBeUndefined();
+    expect(await actionsRepo.listJobActions(job.id)).toMatchObject([{ channel: 'bluesky', type: 'POST', status: 'EXECUTED' }]);
+  });
+
+  it('is only rehearsed on a dry run, and the idea is kept', async () => {
+    const fixture = await createFixture(policy);
+    const account = await withIdea(fixture);
+
+    const outcome = await originatePost({ agentId: fixture.agentId, accountId: account.id, dryRun: true });
+    expect(outcome.jobId).toBeTruthy();
+    await drainAgentJobs(fixture.agentId);
+
+    expect(fake.of('com.atproto.repo.createRecord')).toHaveLength(0);
+    const again = await originatePost({ agentId: fixture.agentId, accountId: account.id, dryRun: true });
+    expect(again.reason).not.toMatch(/nothing in the idea backlog/i);
+  });
+
+  it('fails permanently, sending nothing, when POST is revoked after the job is queued', async () => {
+    const fixture = await createFixture(policy);
+    const account = await withIdea(fixture);
+
+    const outcome = await originatePost({ agentId: fixture.agentId, accountId: account.id, dryRun: false });
+    expect(outcome.jobId, outcome.reason).toBeTruthy();
+
+    // The post is already queued; only the check before execution can stop it.
+    await capabilities.setGrants(fixture.agentId, account.id, ['READ', 'GENERATE'], null);
+    await drainAgentJobs(fixture.agentId);
+
+    const job = await jobsRepo.requireJob(outcome.jobId!);
+    expect(job.status).toBe('PERMANENT_FAILURE');
+    expect(job.lastError).toMatch(/not permitted to POST/i);
+    expect(await actionsRepo.listJobActions(job.id)).toHaveLength(0);
+    expect(fake.of('com.atproto.repo.createRecord')).toHaveLength(0);
+  });
+});
+
+describe('switching a Bluesky account off and on', () => {
+  async function signedIn() {
+    const fixture = await createFixture();
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: fixture.ownerEmail, password: 'test-password-1234' } });
+    const auth = { authorization: `Bearer ${(login.json() as { data: { token: string } }).data.token}` };
+    const account = await linked(fixture);
+    return { account, auth };
+  }
+
+  it('ends the session on Bluesky when it is disconnected, and stops polling it', async () => {
+    const { account, auth } = await signedIn();
+    await pollOnce(account.id);
+    const response = await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/disconnect`, headers: auth });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(fake.of('com.atproto.server.deleteSession')).toHaveLength(1);
+    expect(await accountsRepo.requireAccount(account.id)).toMatchObject({ enabled: false, status: 'DISCONNECTED' });
+
+    fake.requests.length = 0;
+    await pollOnce(account.id);
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  it('signs back in with the stored app password when it is reconnected', async () => {
+    const { account, auth } = await signedIn();
+    await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/disconnect`, headers: auth });
+    const response = await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/reconnect`, headers: auth });
+    expect(response.statusCode, response.body).toBe(200);
+    expect((response.json() as { data: { status: string; enabled: boolean } }).data).toMatchObject({ status: 'CONNECTED', enabled: true });
+    expect(response.body).not.toContain(ME.password);
+  });
+
+  it('says it needs a new app password when the stored one no longer works', async () => {
+    const { account, auth } = await signedIn();
+    await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/disconnect`, headers: auth });
+    await accountCredentials.setCredentials({ accountId: account.id, loginUsername: ME.handle, loginPassword: 'zzzz-zzzz-zzzz-zzzz' });
+    const response = await app.inject({ method: 'POST', url: `/api/accounts/${account.id}/reconnect`, headers: auth });
+    const data = (response.json() as { data: { status: string; lastHealthStatus: string } }).data;
+    expect(data.status).toBe('NEEDS_AUTH');
+    expect(data.lastHealthStatus).toMatch(/does not accept the app password/);
   });
 });

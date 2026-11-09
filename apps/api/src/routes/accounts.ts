@@ -11,7 +11,13 @@ import {
 } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@xbam/channels';
 import { closeSession } from '@xbam/browser';
-import { accountIsWell, connectBlueskyAccount, ensureDefaultRadarSources } from '@xbam/runtime';
+import {
+  accountIsWell,
+  connectBlueskyAccount,
+  disconnectBlueskyAccount,
+  ensureDefaultRadarSources,
+  reconnectBlueskyAccount,
+} from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 async function ownedAccount(accountId: string, user: UserRow) {
@@ -258,6 +264,9 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       const account = await ownedAccount(params(request).id!, user);
       await closeSession(account.id).catch(() => undefined);
       await browserTasksRepo.cancelAccountTasks(account.id, 'The account was disconnected.').catch(() => 0);
+      // No browser to close, but a session on Bluesky's side to end, so a
+      // disconnected account leaves no live token behind.
+      if (account.channel === 'bluesky') await disconnectBlueskyAccount(account.id).catch(() => undefined);
       await accountsRepo.disconnectAccount(account.id);
       // Cleared here rather than waiting for the next health sweep, so the
       // warning goes when the owner acts rather than up to a minute later.
@@ -273,6 +282,9 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const account = await ownedAccount(params(request).id!, user);
       await accountsRepo.reconnectAccount(account.id);
+      // Bluesky has no window to sign in through; the stored app password is
+      // tried now, and the account says what came of it.
+      if (account.channel === 'bluesky') return reconnectBlueskyAccount(account.id);
       return accountsRepo.requireAccount(account.id);
     }),
   );

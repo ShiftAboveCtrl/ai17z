@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type {
+  MediaCandidate,
+  MediaInventory,
   BlueskyAuthor,
   BlueskyPost,
   BlueskyProfile,
@@ -58,7 +60,9 @@ const PostView = z
     repostCount: z.number().optional(),
     replyCount: z.number().optional(),
     quoteCount: z.number().optional(),
-    embed: z.object({ $type: z.string().optional(), images: z.array(z.unknown()).optional() }).loose().optional(),
+    // Whatever is attached: pictures, a video, a link card, a quoted post. Read by
+    // `inventoryOf`, which is the only thing that knows the shapes.
+    embed: z.record(z.string(), z.unknown()).optional(),
     viewer: z
       .object({
         like: z.string().optional(),
@@ -134,7 +138,7 @@ function authorOf(author: z.infer<typeof Author>): BlueskyAuthor {
 
 export function toBlueskyPost(view: PostView): BlueskyPost {
   const reply = view.record.reply;
-  const images = view.embed?.images?.length;
+  const images = inventoryOf(view.embed).media.filter((m) => m.kind === 'image').length;
   return {
     uri: view.uri,
     cid: view.cid,
@@ -148,7 +152,7 @@ export function toBlueskyPost(view: PostView): BlueskyPost {
     ...(view.repostCount === undefined ? {} : { repostCount: view.repostCount }),
     ...(view.replyCount === undefined ? {} : { replyCount: view.replyCount }),
     ...(view.quoteCount === undefined ? {} : { quoteCount: view.quoteCount }),
-    ...(images === undefined ? {} : { imageCount: images }),
+    ...(images > 0 ? { imageCount: images } : {}),
   };
 }
 
@@ -192,6 +196,103 @@ export function toBlueskyProfile(body: unknown): BlueskyProfile | null {
     ...(p.postsCount === undefined ? {} : { postCount: p.postsCount }),
     ...(verified === null ? {} : { verified }),
   };
+}
+
+// -- What is attached ---------------------------------------------------------
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+const str = (value: unknown): string | null => (typeof value === 'string' && value ? value : null);
+
+/**
+ * What a post has attached, in the shape the media step already understands.
+ *
+ * The pipeline does not read pictures here. It is handed an inventory, and the
+ * ordinary media step describes what a vision model can see, or records an
+ * explicit gap ("no vision model is configured") that the prompt then admits to.
+ * What this must never do is drop an attachment on the floor: a picture that is
+ * on the post and absent from the inventory is a picture the agent answers
+ * without knowing it exists, which is the one outcome that step is there to
+ * prevent. So every attachment becomes a candidate, a link or a quote, and one
+ * shape this file does not recognise is reported as an `unknown` candidate
+ * rather than skipped.
+ *
+ * A video is its poster frame, which is honest about being partial. A link card
+ * is a link, not a picture, so its thumbnail is not looked at.
+ */
+export function inventoryOf(embed: unknown): MediaInventory {
+  const media: MediaCandidate[] = [];
+  const links: string[] = [];
+  let quoted: MediaInventory['quoted'] = null;
+
+  const read = (value: unknown, depth: number) => {
+    const node = asRecord(value);
+    if (!node || depth > 3) return;
+    const type = str(node.$type) ?? '';
+
+    if (type.startsWith('app.bsky.embed.images')) {
+      const images = Array.isArray(node.images) ? node.images : [];
+      for (const raw of images) {
+        const image = asRecord(raw);
+        if (!image) continue;
+        media.push({
+          kind: 'image',
+          position: media.length,
+          sourceUrl: str(image.fullsize) ?? str(image.thumb),
+          altText: str(image.alt),
+          meta: {},
+        });
+      }
+    } else if (type.startsWith('app.bsky.embed.video')) {
+      media.push({
+        kind: 'video',
+        position: media.length,
+        sourceUrl: str(node.thumbnail),
+        altText: str(node.alt),
+        meta: {},
+      });
+    } else if (type.startsWith('app.bsky.embed.external')) {
+      const uri = str(asRecord(node.external)?.uri);
+      if (uri) links.push(uri);
+    } else if (type.startsWith('app.bsky.embed.recordWithMedia')) {
+      read(node.media, depth + 1);
+      read(node.record, depth + 1);
+    } else if (type.startsWith('app.bsky.embed.record')) {
+      const record = asRecord(node.record);
+      const kind = str(record?.$type) ?? '';
+      if (record && kind.endsWith('#viewRecord')) {
+        const author = asRecord(record.author);
+        const value = asRecord(record.value);
+        const nested: MediaCandidate[] = [];
+        for (const inner of Array.isArray(record.embeds) ? record.embeds : []) {
+          nested.push(...inventoryOf(inner).media);
+        }
+        const uri = str(record.uri);
+        quoted = {
+          remoteId: uri,
+          remoteUrl: uri && author && str(author.handle) ? postPermalink(str(author.handle)!, uri) : null,
+          authorHandle: str(author?.handle),
+          text: str(value?.text) ?? '',
+          media: nested.map((candidate, position) => ({ ...candidate, position })),
+        };
+      }
+      // A quoted post that is deleted, blocked or detached has no text to read.
+      // It is left out and not invented; the post itself still answers.
+    } else if (type) {
+      // Something new. Counted as an item that cannot be read, so the gap is
+      // stated instead of the attachment being invisible.
+      media.push({ kind: 'image', position: media.length, sourceUrl: null, altText: null, meta: { unrecognised: type } });
+    }
+  };
+  read(embed, 0);
+
+  return { media, quoted, links };
+}
+
+/** The inventory, or nothing when there is nothing attached. */
+export function inventoryIfAny(embed: unknown): MediaInventory | null {
+  const inventory = inventoryOf(embed);
+  return inventory.media.length > 0 || inventory.quoted || inventory.links.length > 0 ? inventory : null;
 }
 
 // -- Notifications -> events --------------------------------------------------

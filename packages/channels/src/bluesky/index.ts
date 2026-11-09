@@ -22,6 +22,7 @@ import {
 } from './client';
 import {
   conversationFromBranch,
+  inventoryIfAny,
   notificationToEvent,
   parseNotifications,
   type PostView,
@@ -35,6 +36,7 @@ import {
 } from './reads';
 import { buildFacets, lengthProblem } from './text';
 import { LIKE_COLLECTION, POST_COLLECTION, parseAtUri, postPermalink } from './uri';
+import { notificationsSeenThrough } from './watermark';
 
 /**
  * Bluesky, over the AT Protocol's HTTP API.
@@ -54,6 +56,14 @@ import { LIKE_COLLECTION, POST_COLLECTION, parseAtUri, postPermalink } from './u
 
 /** A page of notifications, at the API's own ceiling. */
 const NOTIFICATION_PAGE = 50;
+/**
+ * How many pages one poll may read when it knows where it stopped last time.
+ *
+ * Bounded, because the poll is a read against the one budget and "read until
+ * you run out" is how a busy account spends all of it on history. Two hundred
+ * new notifications between two polls is already unusual.
+ */
+const NOTIFICATION_PAGES_PER_POLL = 4;
 /** How far back a scan for an action that may already have happened looks. */
 const RECOVERY_PAGE = 100;
 /** A scan only proves absence if it reached back further than an action could be old. */
@@ -191,6 +201,7 @@ export const blueskyAdapter: ChannelAdapter = {
   displayName: 'Bluesky',
   capabilities: ['REPLY', 'POST', 'LIKE'],
   requiresBrowser: false,
+  signInKind: 'APP_PASSWORD',
 
   async connect(ctx: ChannelContext): Promise<ConnectionResult> {
     // A fresh sign-in on purpose: connecting is how new details are tested, and
@@ -248,20 +259,53 @@ export const blueskyAdapter: ChannelAdapter = {
   async ingestEvents(ctx: ChannelContext, options: IngestOptions): Promise<NormalizedEvent[]> {
     const target = targetOf(ctx);
     const session = await ensureSession(ctx, target);
-    let body: unknown;
-    try {
-      body = await authed<unknown>(ctx, target, 'app.bsky.notification.listNotifications', {
-        params: { limit: NOTIFICATION_PAGE, reasons: ['mention', 'reply', 'quote'] },
-      });
-    } catch (error) {
-      throw classifyBlueskyError(error, 'reading notifications');
-    }
 
-    const { items, skipped } = parseNotifications(body);
+    /*
+      Where the last poll stopped, kept on the account and moved only after its
+      events were ingested (see `advanceNotificationWatermark`), so a crash
+      between reading and ingesting re-reads rather than loses.
+
+      Without one this reads a single page, which is what the first poll of an
+      account should do: a new link is not a reason to ingest its history. With
+      one it pages back until it meets something older than the mark, so a burst
+      larger than a page is read to its end instead of leaving the oldest
+      unread. The unique index on the event stays the real deduplication; the
+      mark only decides how far back to look.
+    */
+    const seenThrough = notificationsSeenThrough(ctx.account.settings);
+    const mark = seenThrough ? Date.parse(seenThrough) : null;
+    const items: ReturnType<typeof parseNotifications>['items'] = [];
+    let skipped = 0;
+    let cursor: string | undefined;
+    let metKnown = false;
+    for (let page = 0; page < (mark === null ? 1 : NOTIFICATION_PAGES_PER_POLL); page += 1) {
+      let body: { cursor?: unknown };
+      try {
+        body = await authed<{ cursor?: unknown }>(ctx, target, 'app.bsky.notification.listNotifications', {
+          params: { limit: NOTIFICATION_PAGE, reasons: ['mention', 'reply', 'quote'], ...(cursor ? { cursor } : {}) },
+        });
+      } catch (error) {
+        throw classifyBlueskyError(error, 'reading notifications');
+      }
+      const parsed = parseNotifications(body);
+      skipped += parsed.skipped;
+      items.push(...parsed.items);
+      cursor = typeof body.cursor === 'string' && body.cursor ? body.cursor : undefined;
+      metKnown = mark !== null && parsed.items.some((n) => Date.parse(n.indexedAt) < mark);
+      if (!cursor || metKnown) break;
+    }
+    if (mark !== null && !metKnown && cursor) {
+      ctx.logger.warn('more new Bluesky notifications than one poll reads; the oldest were not read', {
+        read: items.length,
+      });
+    }
     if (skipped > 0) ctx.logger.warn('some Bluesky notifications could not be read', { skipped });
 
     const events: NormalizedEvent[] = [];
     for (const notification of items) {
+      // Older than the mark was ingested by an earlier poll. Equal is read
+      // again, because two notifications can share a millisecond.
+      if (mark !== null && Date.parse(notification.indexedAt) < mark) continue;
       const event = notificationToEvent(notification, selfOf(session));
       if (!event) continue;
       if (options.since && event.remoteEventId === options.since) continue;
@@ -310,6 +354,12 @@ export const blueskyAdapter: ChannelAdapter = {
       createdAt: post.createdAt,
     }));
 
+    // What is attached to the mention, and, when the mention has nothing, what is
+    // attached to the post above it. The media step describes them or records a
+    // gap; it only reads the parent's when the mention carries nothing itself.
+    const own = inventoryIfAny(branch.focal.embed);
+    const above = branch.ancestors.length > 0 ? inventoryIfAny(branch.ancestors[branch.ancestors.length - 1]!.embed) : null;
+
     return {
       targetRef: branch.focal.uri,
       targetUrl: postPermalink(branch.focal.author.handle, branch.focal.uri),
@@ -319,7 +369,13 @@ export const blueskyAdapter: ChannelAdapter = {
       parentText: parent?.text ?? null,
       thread,
       conversation,
-      meta: { channel: 'bluesky', resolvedAt: new Date().toISOString(), timingsMs: { thread: Date.now() - started } },
+      meta: {
+        channel: 'bluesky',
+        resolvedAt: new Date().toISOString(),
+        timingsMs: { thread: Date.now() - started },
+        ...(own ? { inventory: own } : {}),
+        ...(above ? { parentInventory: above } : {}),
+      },
     };
   },
 

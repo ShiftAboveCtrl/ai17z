@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Blocker } from '@xbam/shared/contracts';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { ApiError } from '@app/lib/api';
-import { connectAccount, createAgent, preflightAgent, saveModel } from '@app/lib/setup';
+import { connectAccount, createAgent, linkAccount, preflightAgent, saveBlueskyAccount, saveModel } from '@app/lib/setup';
 import { useResource } from '@app/lib/hooks';
 import type { ChannelInfo, ProviderCredential } from '@app/lib/types';
 import { AgentGlyph } from '@app/components/AgentGlyph';
@@ -11,6 +11,7 @@ import { AnimatedText, FadeIn } from '@app/components/motion';
 import { ErrorPanel, Field, Spinner, Toggle } from '@app/components/ui';
 import { Blockers } from '@app/components/Blockers';
 import { ModelChooser } from '@app/components/ModelChooser';
+import { AppPasswordHelp } from '@app/components/BlueskyConnect';
 
 const STEPS = ['Identity', 'Portrait', 'Persona', 'Intelligence', 'Channel', 'Memory', 'Automation', 'Review'] as const;
 
@@ -26,8 +27,11 @@ interface Draft {
   responseLength: 'TERSE' | 'SHORT' | 'MEDIUM' | 'LONG' | 'ADAPTIVE';
   providerId: string;
   model: string;
-  channel: 'none' | 'mock' | 'x';
+  channel: 'none' | 'mock' | 'x' | 'bluesky';
   handle: string;
+  /** Held only until Create is pressed, then sent to be checked and sealed. Never shown. */
+  appPassword: string;
+  serviceUrl: string;
   rememberUserFacts: boolean;
   threadMemory: boolean;
   automation: 'OFF' | 'MONITOR_ONLY' | 'MANUAL_ONLY' | 'REVIEW_BEFORE_ACTION' | 'AUTONOMOUS';
@@ -49,6 +53,8 @@ const INITIAL: Draft = {
   model: '',
   channel: 'mock',
   handle: '',
+  appPassword: '',
+  serviceUrl: '',
   rememberUserFacts: true,
   threadMemory: true,
   automation: 'REVIEW_BEFORE_ACTION',
@@ -93,7 +99,10 @@ export function CreateAgent() {
     [providers.data, draft.providerId],
   );
 
-  const canAdvance = step !== 0 || draft.name.trim().length > 0;
+  const canAdvance =
+    (step !== 0 || draft.name.trim().length > 0) &&
+    // The password is the one thing on the Channel step that cannot be filled in later by accident.
+    (step !== 4 || draft.channel !== 'bluesky' || (draft.handle.trim() !== '' && draft.appPassword.trim() !== ''));
 
   /**
    * Creates the agent, then asks the same question Easy Mode asks.
@@ -112,6 +121,23 @@ export function CreateAgent() {
     setBusy(true);
     setError(null);
     try {
+      /*
+        A Bluesky account is proved before the agent exists.
+
+        The password is checked with Bluesky when it is saved, and a wrong one
+        is the likeliest thing to go wrong on this screen. Creating the agent
+        first would leave it behind, half made, with a retry that makes a second.
+        Proving first means a refusal creates nothing at all.
+      */
+      const bluesky =
+        draft.channel === 'bluesky'
+          ? await saveBlueskyAccount({
+              identifier: draft.handle,
+              appPassword: draft.appPassword.trim(),
+              serviceUrl: draft.serviceUrl.trim() || null,
+            })
+          : null;
+
       const id = await createAgent({
         name: draft.name,
         description: draft.description,
@@ -140,7 +166,10 @@ export function CreateAgent() {
         await saveModel(id, { role: 'primary', providerCredentialId: draft.providerId, model: draft.model });
       }
 
-      if (draft.channel !== 'none') {
+      if (bluesky) {
+        await linkAccount(id, bluesky.id);
+        set('appPassword', '');
+      } else if (draft.channel !== 'none') {
         await connectAccount(id, {
           channel: draft.channel,
           handle: draft.handle.trim() || draft.name.trim().toLowerCase().replace(/\s+/g, '_'),
@@ -270,8 +299,8 @@ export function CreateAgent() {
         {step === 4 && (
           <>
             <Field label="Channel" hint="The mock channel is real: it runs the entire pipeline and stops at the action boundary.">
-              <div className="grid gap-2 sm:grid-cols-3">
-                {(['mock', 'x', 'none'] as const).map((option) => {
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(['mock', 'x', 'bluesky', 'none'] as const).map((option) => {
                   const info = channels.data?.items.find((c) => c.id === option);
                   return (
                     <button
@@ -282,14 +311,49 @@ export function CreateAgent() {
                     >
                       <span className="block">{option === 'none' ? 'No channel' : (info?.displayName ?? option)}</span>
                       <span className="mt-1 block text-[11px] text-bone-faint">
-                        {option === 'mock' ? 'Local, deterministic' : option === 'x' ? 'Needs a browser sign-in' : 'Add one later'}
+                        {option === 'mock'
+                          ? 'Local, deterministic'
+                          : option === 'x'
+                            ? 'Needs a browser sign-in'
+                            : option === 'bluesky'
+                              ? 'Needs an app password'
+                              : 'Add one later'}
                       </span>
                     </button>
                   );
                 })}
               </div>
             </Field>
-            {draft.channel !== 'none' && (
+            {draft.channel === 'bluesky' && (
+              <>
+                <AppPasswordHelp />
+                <Field label="Handle" htmlFor="handle" hint="For example name.bsky.social, or the email on the account.">
+                  <input
+                    id="handle"
+                    className="field"
+                    value={draft.handle}
+                    onChange={(e) => set('handle', e.target.value)}
+                    placeholder="name.bsky.social"
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                  />
+                </Field>
+                <Field label="App password" htmlFor="appPassword" hint="Checked with Bluesky when the agent is created. If it is wrong, nothing is created.">
+                  <input
+                    id="appPassword"
+                    className="field font-mono"
+                    type="password"
+                    value={draft.appPassword}
+                    onChange={(e) => set('appPassword', e.target.value)}
+                    placeholder="xxxx-xxxx-xxxx-xxxx"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </Field>
+              </>
+            )}
+            {draft.channel !== 'none' && draft.channel !== 'bluesky' && (
               <Field
                 label="Handle"
                 htmlFor="handle"

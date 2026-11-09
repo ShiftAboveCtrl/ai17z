@@ -512,3 +512,137 @@ describe('health', () => {
     expect(fake.of('com.atproto.server.createSession')).toHaveLength(2);
   });
 });
+
+describe('what is attached to a post', () => {
+  const picture = (n: number) => ({
+    $type: 'app.bsky.embed.images#view',
+    images: Array.from({ length: n }, (_, i) => ({
+      thumb: `https://cdn.example.invalid/thumb/${i}`,
+      fullsize: `https://cdn.example.invalid/full/${i}`,
+      alt: `picture ${i}`,
+    })),
+  });
+
+  async function resolved(embedOnMention: unknown, embedOnParent?: unknown) {
+    const parent = fake.seedPost({ id: '3kparent', author: ALICE, text: 'look at this', embed: embedOnParent });
+    const mention = fake.seedPost({ id: '3kment', author: ALICE, text: '@agent.test what is this?', replyTo: parent.uri, embed: embedOnMention });
+    fake.notify(mention, 'mention');
+    const [event] = await blueskyAdapter.ingestEvents(context(), { limit: 10 });
+    return blueskyAdapter.resolveContext(context(), event!);
+  }
+
+  it('hands each picture to the media step with its address and alt text', async () => {
+    const context_ = await resolved(picture(2));
+    const inventory = context_.meta.inventory as { media: Array<{ kind: string; sourceUrl: string; altText: string; position: number }> };
+    expect(inventory.media).toEqual([
+      expect.objectContaining({ kind: 'image', sourceUrl: 'https://cdn.example.invalid/full/0', altText: 'picture 0', position: 0 }),
+      expect.objectContaining({ kind: 'image', sourceUrl: 'https://cdn.example.invalid/full/1', altText: 'picture 1', position: 1 }),
+    ]);
+    expect(context_.meta.parentInventory).toBeUndefined();
+  });
+
+  it('carries the picture on the post above when the mention has none', async () => {
+    const context_ = await resolved(undefined, picture(1));
+    expect(context_.meta.inventory).toBeUndefined();
+    expect((context_.meta.parentInventory as { media: unknown[] }).media).toHaveLength(1);
+  });
+
+  it('carries a quoted post, with its own pictures, and a link card as a link', async () => {
+    const quoted = {
+      $type: 'app.bsky.embed.recordWithMedia#view',
+      media: { $type: 'app.bsky.embed.external#view', external: { uri: 'https://example.com/story', title: 'A story' } },
+      record: {
+        $type: 'app.bsky.embed.record#view',
+        record: {
+          $type: 'app.bsky.embed.record#viewRecord',
+          uri: `at://${ALICE.did}/app.bsky.feed.post/3kquoted`,
+          author: { handle: ALICE.handle },
+          value: { text: 'the quoted words' },
+          embeds: [picture(1)],
+        },
+      },
+    };
+    const context_ = await resolved(quoted);
+    const inventory = context_.meta.inventory as { links: string[]; quoted: { authorHandle: string; text: string; media: unknown[] } };
+    expect(inventory.links).toEqual(['https://example.com/story']);
+    expect(inventory.quoted).toMatchObject({ authorHandle: ALICE.handle, text: 'the quoted words' });
+    expect(inventory.quoted.media).toHaveLength(1);
+  });
+
+  it('never drops an attachment it does not recognise: it becomes an item that cannot be read', async () => {
+    const context_ = await resolved({ $type: 'app.bsky.embed.somethingNew#view', payload: 1 });
+    const inventory = context_.meta.inventory as { media: Array<{ sourceUrl: string | null; meta: { unrecognised?: string } }> };
+    expect(inventory.media).toHaveLength(1);
+    expect(inventory.media[0]!.sourceUrl).toBeNull();
+    expect(inventory.media[0]!.meta.unrecognised).toBe('app.bsky.embed.somethingNew#view');
+  });
+
+  it('counts pictures on a post that is read as a capability', async () => {
+    const post = fake.seedPost({ id: '3kpics', author: ALICE, text: 'two', embed: picture(2) });
+    const { blueskyReads } = await import('@xbam/channels');
+    expect((await blueskyReads.readPost(context(), post.uri)).imageCount).toBe(2);
+  });
+});
+
+describe('reading more than one page of notifications', () => {
+  const BASE = Date.parse('2026-11-08T10:00:00.000Z');
+
+  function seedMentions(count: number) {
+    for (let i = 0; i < count; i += 1) {
+      const post = fake.seedPost({
+        id: `3kn${String(i).padStart(4, '0')}`,
+        author: ALICE,
+        text: `message ${i}`,
+        createdAt: new Date(BASE + i * 1_000).toISOString(),
+      });
+      fake.notify(post, 'mention');
+    }
+  }
+
+  function withMark(iso: string | null) {
+    return context(ME.password, {
+      settings: { bluesky: { serviceUrl: fake.origin, ...(iso ? { notificationsSeenThrough: iso } : {}) } },
+    });
+  }
+
+  it('reads a single page when it has no mark, because a new link is not a reason to ingest history', async () => {
+    seedMentions(120);
+    const events = await blueskyAdapter.ingestEvents(withMark(null), { limit: 10 });
+    expect(events).toHaveLength(50);
+    expect(fake.of('app.bsky.notification.listNotifications')).toHaveLength(1);
+  });
+
+  it('pages back to the mark, and reads everything that is newer than it', async () => {
+    seedMentions(120);
+    // Everything from message 30 onward is new: ninety messages, two pages.
+    const mark = new Date(BASE + 30 * 1_000).toISOString();
+    const events = await blueskyAdapter.ingestEvents(withMark(mark), { limit: 10 });
+    expect(events).toHaveLength(90);
+    expect(events[0]!.text).toBe('message 30');
+    expect(events[events.length - 1]!.text).toBe('message 119');
+    expect(fake.of('app.bsky.notification.listNotifications').length).toBe(2);
+  });
+
+  it('stops at the page that meets the mark instead of reading the whole history', async () => {
+    seedMentions(500);
+    const mark = new Date(BASE + 480 * 1_000).toISOString();
+    const events = await blueskyAdapter.ingestEvents(withMark(mark), { limit: 10 });
+    expect(events).toHaveLength(20);
+    expect(fake.of('app.bsky.notification.listNotifications')).toHaveLength(1);
+  });
+
+  it('is bounded, and says so when more is waiting than one poll reads', async () => {
+    seedMentions(400);
+    const mark = new Date(BASE).toISOString();
+    const events = await blueskyAdapter.ingestEvents(withMark(mark), { limit: 10 });
+    expect(fake.of('app.bsky.notification.listNotifications')).toHaveLength(4);
+    expect(events).toHaveLength(200);
+    expect(logs.join('\n')).toMatch(/more new Bluesky notifications than one poll reads/);
+  });
+
+  it('treats a mark that is not a time as no mark', async () => {
+    seedMentions(60);
+    const events = await blueskyAdapter.ingestEvents(withMark('not a time'), { limit: 10 });
+    expect(events).toHaveLength(50);
+  });
+});
