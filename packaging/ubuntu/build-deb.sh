@@ -249,7 +249,9 @@ install -m 0644 "$STAGE/README.md" "$PKG/usr/share/doc/ai17z/README.md"
 # Deliberately few Depends. Docker and Chrome are not declared: apt would then
 # be entitled to pull, replace or remove them, and AI17Z does not own third
 # party software it merely uses. The installer checks for them and says what is
-# missing; that is a conversation, not a dependency edge.
+# missing; that is a conversation, not a dependency edge. python3 is declared
+# because the package ships Python scripts (the Forgejo mirror tooling) and must
+# not install them without the interpreter that runs them.
 # ---------------------------------------------------------------------------
 INSTALLED_KB="$(du -sk "$PKG/usr" | awk '{print $1}')"
 cat > "$PKG/DEBIAN/control" <<CONTROL
@@ -260,7 +262,7 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: AI17Z <290837309+ShiftAboveCtrl@users.noreply.github.com>
 Installed-Size: ${INSTALLED_KB}
-Depends: libc6, ca-certificates
+Depends: libc6, ca-certificates, python3:any
 Recommends: docker-ce | docker.io
 Suggests: google-chrome-stable
 Homepage: https://code.ai17z.io/AI17Z/ai17z
