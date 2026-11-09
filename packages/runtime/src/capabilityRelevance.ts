@@ -114,6 +114,8 @@ const FAMILY_HINTS: Record<string, string[]> = {
   // Phrases, never single words: "paper" alone is as often a study, and
   // "trading" already lifts the market family.
   studio: ['paper trading', 'paper trades', 'paper record', 'paper results', 'track record', 'your trading', 'simulated trading'],
+  // Phrases, never single words: "voice" alone is as often audio.
+  studio_voice: ['publish my voice', 'share my voice', 'publish your voice', 'share your voice', 'publish voice', 'share this voice', 'unpublish', 'published voice', 'list my voice', 'voice on studio'],
 };
 
 /** Too common to say anything about which capability is wanted. */

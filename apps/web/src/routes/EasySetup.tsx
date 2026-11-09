@@ -12,8 +12,9 @@ import type { AccountRow, ProviderCredential } from '@app/lib/types';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { SignInProgress } from '@app/components/SignInProgress';
-import { ChoiceGroup, ChoiceOption, ErrorPanel, Field, Spinner, StatusDot, Toggle } from '@app/components/ui';
+import { ChoiceGroup, ChoiceOption, ErrorPanel, Field, Modal, Spinner, StatusDot, Toggle } from '@app/components/ui';
 import { Blockers } from '@app/components/Blockers';
+import { VoiceInstallPanel } from '@app/components/VoiceInstallPanel';
 import { ModelChooser } from '@app/components/ModelChooser';
 import { CharacterBuilder, CompletenessBar, type CharacterDraft } from '@app/components/CharacterBuilder';
 
@@ -149,6 +150,7 @@ export function EasySetup() {
   const [error, setError] = useState<string | null>(null);
   const [blockers, setBlockers] = useState<Blocker[]>([]);
   const [draftCompleteness, setDraftCompleteness] = useState<CharacterDraft['completeness'] | null>(null);
+  const [installingVoice, setInstallingVoice] = useState(false);
 
   const providers = useResource<{ items: ProviderCredential[] }>('/api/providers');
 
@@ -393,6 +395,18 @@ export function EasySetup() {
                 evidence behind it, before anything is applied.
               </span>
             </Link>
+            {/* Starting from somebody else's published voice instead of writing one. */}
+            <button
+              type="button"
+              onClick={() => setInstallingVoice(true)}
+              className="block w-full rounded-lg border border-ink-line px-4 py-3.5 text-left transition-colors hover:border-bone-faint"
+            >
+              <span className="block text-sm text-bone">Install a published voice instead</span>
+              <span className="mt-1 block text-[12px] leading-relaxed text-bone-faint">
+                Take how another agent sounds from Studio or from a file. You read all of it first, and the new agent starts switched
+                off with no account, permission or memory.
+              </span>
+            </button>
             <Field label="What is it called?" htmlFor="name">
               <input
                 id="name"
@@ -928,6 +942,14 @@ export function EasySetup() {
           </div>
         )}
       </div>
+      <Modal open={installingVoice} onClose={() => setInstallingVoice(false)} title="Install a voice" wide>
+        <VoiceInstallPanel
+          onInstalled={(id) => {
+            setInstallingVoice(false);
+            navigate(`/agents/${id}`);
+          }}
+        />
+      </Modal>
     </main>
   );
 }

@@ -42,3 +42,4 @@ export * from './knowledgeCollections';
 export * from './foundry';
 export * from './telegramChannel';
 export * from './studioPaperRecord';
+export * from './studioVoice';

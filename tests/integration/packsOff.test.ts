@@ -98,6 +98,7 @@ function registerEverything(): void {
   runtime.registerEntityCapabilities();
   runtime.registerSecCapabilities();
   runtime.registerStudioPaperCapabilities();
+  runtime.registerStudioVoiceCapabilities();
 }
 
 /**
