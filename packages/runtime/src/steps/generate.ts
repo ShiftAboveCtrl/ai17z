@@ -548,7 +548,36 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
     */
     allowModelCall: paperReceipt === null && !job.dryRun && speed.voiceRewrite,
     maxCalls: policy.budget.maxModelCallsPerJob,
+    /*
+      A peer's notes are applied by the rewrite, so they follow the same
+      response speed. Unlike the ordinary rewrite they are not withheld from a
+      dry run: an owner who switched a second opinion on wants to watch it work
+      in the Lab, and nothing a dry run produces is published.
+    */
+    allowPeerReview: speed.voiceRewrite,
+    incomingText: context?.incomingText ?? bundle.event.text,
+    operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
   });
+
+  if (compiled.peerReview) {
+    const review = compiled.peerReview;
+    /*
+      A conclusion, never a transcript: a sentence, and which suggestions the
+      reply took and which it did not. The prompt the peer saw and the answer it
+      gave stay in the model call row like any other call; nothing here repeats
+      them, and no reasoning is stored.
+    */
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'VOICE_COMPILED',
+      level: review.outcome === 'unavailable' || review.outcome === 'unreadable' ? 'warn' : 'info',
+      message: review.ran
+        ? `Peer review by ${review.peerName ?? 'a peer'}: ${review.summary ?? review.reason}`
+        : `Peer review did not run. ${review.reason}`,
+      data: { peerReview: review },
+    });
+  }
 
   await observability.emitTrace({
     jobId: job.id,
