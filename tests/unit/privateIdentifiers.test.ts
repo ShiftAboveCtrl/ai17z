@@ -510,3 +510,101 @@ describe('round 3: shapes that are refused, and reads that are wider', () => {
     }
   });
 });
+
+describe('merges made on github.com: who may have written and committed a commit', () => {
+  const room = mkdtempSync(join(tmpdir(), 'merge-ids-'));
+  const repo = join(room, 'repo');
+  const emptyHome = join(room, 'home');
+  mkdirSync(repo);
+  mkdirSync(emptyHome);
+  afterAll(() => rmSync(room, { recursive: true, force: true }));
+
+  const OURS = 'somebody@example.invalid';
+  const GITHUB = 'GitHub <noreply@github.com>';
+  const split = (ident: string) => {
+    const at = ident.lastIndexOf(' <');
+    return { name: ident.slice(0, at), email: ident.slice(at + 2, -1) };
+  };
+  const run = (args: string[], env: Record<string, string> = {}) =>
+    spawnSync('git', ['-C', repo, '-c', 'core.hooksPath=', ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+    });
+  /** One empty commit written by `author` and committed by `committer`; returns its id. */
+  const commit = (subject: string, author: string, committer: string, ...body: string[]) => {
+    const a = split(author);
+    const c = split(committer);
+    const done = run(['commit', '-q', '--allow-empty', '-m', subject, ...body.flatMap((b) => ['-m', b])], {
+      GIT_AUTHOR_NAME: a.name,
+      GIT_AUTHOR_EMAIL: a.email,
+      GIT_COMMITTER_NAME: c.name,
+      GIT_COMMITTER_EMAIL: c.email,
+    });
+    if (done.status !== 0) throw new Error(done.stderr);
+    return run(['rev-parse', 'HEAD']).stdout.trim();
+  };
+  const LIST_HERE = [`username\t(?i)${NAME}`, `identity\tSomebody <${OURS}>`].join('\n');
+  const scan = () =>
+    spawnSync(python!, [resolve(root, 'ci/scripts/history-scan.py'), repo], {
+      encoding: 'utf8',
+      env: { ...process.env, PRIVATE_IDENTIFIERS: LIST_HERE, PRIVATE_IDENTIFIERS_FILE: '', HOME: emptyHome, USERPROFILE: emptyHome },
+    });
+  const findingsFor = (out: string, id: string) =>
+    out.split('\n').filter((l) => l.includes(`commit ${id.slice(0, 10)} `)).map((l) => l.trim().replace(/^commit [0-9a-f]+ /, ''));
+
+  it.skipIf(!python)('accepts GitHub as committer and our address under any display name, and nothing wider', () => {
+    run(['init', '-q']);
+    const squash = commit('Squashed on github.com', `Display Name <${OURS}>`, GITHUB);
+    const exact = commit('Written here', `Somebody <${OURS}>`, `Somebody <${OURS}>`);
+    const foreign = commit('Somebody else', 'Other Person <other@example.invalid>', GITHUB);
+    const bot = commit('A bot pull request', 'dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>', GITHUB);
+    const botOurs = commit('A bot name on our address', `dependabot[bot] <${OURS}>`, GITHUB);
+    const renamedCommitter = commit('Our address, another committer name', `Somebody <${OURS}>`, `Display Name <${OURS}>`);
+    const fakeGithub = commit('Not GitHub', `Somebody <${OURS}>`, 'GitHub <someone@github.com>');
+    const signed = commit('Allowed people, bot trailer', `Display Name <${OURS}>`, GITHUB, `Signed-off-by: dependabot[bot] <support@github.com>`);
+    const tagged = run(['tag', '-a', 'v0.0.1', '-m', 'tagged by GitHub'], { GIT_COMMITTER_NAME: 'GitHub', GIT_COMMITTER_EMAIL: 'noreply@github.com' });
+    expect(tagged.status).toBe(0);
+
+    const out = scan();
+    expect(out.status).toBe(1);
+    expect(findingsFor(out.stdout, squash)).toEqual([]);
+    expect(findingsFor(out.stdout, exact)).toEqual([]);
+    expect(findingsFor(out.stdout, foreign)).toEqual(['author: foreign-identity']);
+    expect(findingsFor(out.stdout, bot)).toEqual(['author: foreign-identity']);
+    expect(findingsFor(out.stdout, botOurs)).toEqual(['author: foreign-identity']);
+    expect(findingsFor(out.stdout, renamedCommitter)).toEqual(['committer: foreign-identity']);
+    expect(findingsFor(out.stdout, fakeGithub)).toEqual(['committer: foreign-identity']);
+    expect(findingsFor(out.stdout, signed)).toEqual(['message: ai-attribution']);
+    // A tagger gets no widening: GitHub never tags here.
+    expect(out.stdout).toMatch(/tag [0-9a-f]+ tagger: foreign-identity/);
+  });
+
+  // The three squash merges that first landed on the recreated main, judged
+  // against the identity of the commit before them, which is how the
+  // maintainer's machine writes. Read from this checkout, so nothing about the
+  // identity is spelled out in this file.
+  const BEFORE = '91484a05';
+  const MERGES = ['8ecac85b', '9eb522ed', '2ba7d7d5'];
+  const here = (...args: string[]) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  const haveMerges = [BEFORE, ...MERGES].every((c) => here('cat-file', '-e', `${c}^{commit}`).status === 0);
+  if (!haveMerges) console.warn('privateIdentifiers.test: this checkout lacks the first GitHub merges on main, so that test is SKIPPED');
+
+  it.skipIf(!python || !haveMerges)('passes the first squash merges on main, which GitHub wrote', () => {
+    const identity = here('show', '-s', '--format=%an <%ae>', BEFORE).stdout.trim();
+    const patterns = join(room, 'patterns.txt');
+    const identityFile = join(room, 'identity.txt');
+    writeFileSync(patterns, `username\t(?i)${NAME}\n`);
+    writeFileSync(identityFile, `${identity}\n`);
+    const tip = MERGES[MERGES.length - 1]!;
+    // Each merge has GitHub's committer and an author other than the exact line.
+    for (const c of MERGES) expect(here('show', '-s', '--format=%cn <%ce>', c).stdout.trim()).toBe(GITHUB);
+    expect(MERGES.some((c) => here('show', '-s', '--format=%an <%ae>', c).stdout.trim() !== identity)).toBe(true);
+    const out = spawnSync(
+      python!,
+      [resolve(root, 'ci/scripts/privacy_scan.py'), '--checks', 'policy', '--patterns', patterns, '--identity', identityFile, 'range', root, `${BEFORE}..${tip}`],
+      { encoding: 'utf8', env: { ...process.env, PRIVATE_IDENTIFIERS: '', PRIVATE_IDENTIFIERS_FILE: '', HOME: emptyHome, USERPROFILE: emptyHome } },
+    );
+    expect(out.stdout).toMatch(/3 commits, rules 0, findings 0/);
+    expect(out.status).toBe(0);
+  });
+});

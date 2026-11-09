@@ -52,6 +52,10 @@ of scope.
 List format (identifiers.txt):  <class><TAB><regex>
   allow:<class>[,<class>...]<TAB><regex>   excuse hits of those classes only
   identity<TAB>Name <email>                the allowed commit identity
+For merges made on github.com, two more are accepted and nothing else: the
+committer "GitHub <noreply@github.com>", and an author with an allowed
+identity's email under another display name (never one naming a tool or bot).
+A tagger must match an identity line exactly.
 allow.txt: <class>[,<class>...]<TAB><regex>. An allow match excuses a hit only
 when it covers the hit on the same line.
 
@@ -165,6 +169,22 @@ AI_FOOTER = re.compile(
     rb"cursor|chatgpt|gemini|deepseek|aider|devin)(?![a-z0-9])|claude\.com/claude-code|claude\.ai/code|"
     rb"openai\.com/codex)[^\n]*$"
 )
+
+
+# The committer GitHub writes on a merge made on github.com: a squash, a rebase
+# or "update branch". The owner merges there (decided 2026-11-09), so this one
+# committer is accepted. It vouches for nothing else: the author of the same
+# commit is judged on its own, so a bot's pull request squashed by GitHub is
+# still refused for its author.
+GITHUB_MERGE_COMMITTER = b"GitHub <noreply@github.com>"
+
+
+def email_of(ident):
+    """The address inside "Name <address>", or None when there is none."""
+    name, sep, rest = ident.rpartition(b"<")
+    if not sep or not rest.endswith(b">") or len(rest) < 3:
+        return None
+    return rest[:-1]
 
 
 def is_ai_trailer_value(value):
@@ -340,6 +360,7 @@ class Scanner:
             for c in classes:
                 self.allow.setdefault(c, []).append(rx)
         self.identities = identities
+        self.identity_emails = {e for e in (email_of(i) for i in identities) if e}
         self.checks = checks
         self.lenient = lenient or {}
         self.skip = set()
@@ -470,6 +491,24 @@ class Scanner:
     COMMIT_HEADERS = {b"tree", b"parent", b"author", b"committer", b"gpgsig", b"gpgsig-sha256", b"mergetag", b"encoding"}
     TAG_HEADERS = {b"object", b"type", b"tag", b"tagger", b"gpgsig", b"gpgsig-sha256"}
 
+    def identity_allowed(self, role, ident):
+        """Whether one author, committer or tagger is the maintainer's.
+
+        An exact identity line always is. Beyond that, exactly two widenings,
+        both for merges made on github.com: GitHub's own committer, and an
+        author carrying an allowed identity's address under another display
+        name, because GitHub writes the account's profile name rather than
+        the one git was configured with. A tagger gets neither, and a name
+        that is a tool or a bot is refused whatever address it carries.
+        """
+        if ident in self.identities:
+            return True
+        if role == b"committer":
+            return ident == GITHUB_MERGE_COMMITTER
+        if role == b"author":
+            return email_of(ident) in self.identity_emails and not is_ai_trailer_value(ident)
+        return False
+
     def git_object(self, kind, oid, raw, label):
         """A commit or tag: shape, identity, attribution, and identifiers in every byte."""
         head, _, msg = raw.partition(b"\n\n")
@@ -493,7 +532,7 @@ class Scanner:
         if "policy" in self.checks:
             for role, rest in people:
                 ident = rest.rsplit(b" ", 2)[0] if rest.count(b" ") >= 2 else rest
-                if self.identities and ident.strip() not in self.identities:
+                if self.identities and not self.identity_allowed(role, ident.strip()):
                     self.add(f"{label} {role.decode()}", "foreign-identity")
             if attribution_lines(msg) or git_trailer_attribution(msg):
                 self.add(f"{label} message", "ai-attribution")
