@@ -1,0 +1,32 @@
+[
+  {
+    "name": "key order",
+    "input": "{\"b\":1,\"a\":2}",
+    "canonical": "{\"a\":2,\"b\":1}",
+    "sha256": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772"
+  },
+  {
+    "name": "numbers: non-integers, exponent forms, negative zero, trailing zero",
+    "input": "{\"capital\":0.1,\"big\":1e21,\"tiny\":1.5e-7,\"zero\":-0,\"int\":1000000,\"frac\":12.50}",
+    "canonical": "{\"big\":1e+21,\"capital\":0.1,\"frac\":12.5,\"int\":1000000,\"tiny\":1.5e-7,\"zero\":0}",
+    "sha256": "eae5fd02224e05a96f744e18c8caf750e64cfcfe172d21c31e35d5677819a923"
+  },
+  {
+    "name": "non-ASCII string values and keys, emitted as UTF-8 and never escaped",
+    "input": "{\"title\":\"Café ☕ 😀\",\"kéy\":\"é\",\"z\":\"z\"}",
+    "canonical": "{\"kéy\":\"é\",\"title\":\"Café ☕ 😀\",\"z\":\"z\"}",
+    "sha256": "13f0c955e67b475eaa77ce5bacbf6eee75f9ba38879aa13fbaec349f8277a501"
+  },
+  {
+    "name": "keys sort by UTF-16 code unit, not code point: an astral key sorts before U+FF5E",
+    "input": "{\"～\":1,\"😀\":2,\"a\":3}",
+    "canonical": "{\"a\":3,\"😀\":2,\"～\":1}",
+    "sha256": "a7915368a7154745dc7e6e4b7c6460cedd96f84c6b71163388efebfe0d285868"
+  },
+  {
+    "name": "arrays keep their order; null and booleans; escapes in strings",
+    "input": "{\"list\":[3,1,2,{\"y\":null,\"x\":true}],\"s\":\"line\\nquote\\\" slash\\\\ ctl\\u0001\"}",
+    "canonical": "{\"list\":[3,1,2,{\"x\":true,\"y\":null}],\"s\":\"line\\nquote\\\" slash\\\\ ctl\\u0001\"}",
+    "sha256": "f5d9c6b24d5620b512d7c288995ad3a9126c4e5810cf2b2da34ed64fec49cb1a"
+  }
+]

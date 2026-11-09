@@ -59,6 +59,7 @@ import { registerWalletCapabilities } from './walletCapabilities';
 import { registerPaperCapabilities } from './paperCapabilities';
 import { registerStudioPaperCapabilities } from './studioPaperCapabilities';
 import { registerStudioVoiceCapabilities } from './studioVoiceCapabilities';
+import { registerStudioLeagueCapabilities } from './studioLeagueCapabilities';
 import { loadWalletAdapter } from './walletCore';
 
 const log = createLogger('bootstrap');
@@ -103,6 +104,8 @@ export async function bootstrapRuntime(): Promise<void> {
   // its pinned hash or not at all. Nothing here can send.
   registerWalletCapabilities();
   registerPaperCapabilities();
+  // The league standing, owner chat only and off until the owner enables it.
+  registerStudioLeagueCapabilities();
   await loadWalletAdapter();
   // What the owner's paper track record on Studio says. Owner chat only, and
   // off until the owner enables it; it reads Studio and nothing else.

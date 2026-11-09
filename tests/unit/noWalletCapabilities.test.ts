@@ -8,6 +8,7 @@ import {
   registerManagementCapabilities,
   registerStudioPaperCapabilities,
   registerPaperCapabilities,
+  registerStudioLeagueCapabilities,
   registerWalletCapabilities,
 } from '@xbam/runtime';
 
@@ -41,6 +42,7 @@ function registerAll() {
   registerWalletCapabilities();
   registerPaperCapabilities();
   registerStudioPaperCapabilities();
+  registerStudioLeagueCapabilities();
 }
 
 describe('no capability can move money', () => {
@@ -81,6 +83,21 @@ describe('no capability can move money', () => {
     expect(text).not.toMatch(/prepareMarketplacePurchase|prepareStudioPurchase|studioLiveTrade|studioWallet|walletCore|\.sign\(|\.broadcast\(/);
   });
 
+  it('the league standing is one read, off until the owner enables it, owner only, and posts nothing', () => {
+    registerAll();
+    const league = listCapabilities().filter((c) => c.id.startsWith('league.'));
+    // Exactly one. Entering a season and reporting fills are not capabilities at
+    // all: they are the owner's act and the worker's sweep. Growing this list is
+    // a decision about effect, audience and default, made here.
+    expect(league.map((c) => c.id)).toEqual(['league.standing']);
+    const standing = league[0]!;
+    expect(standing.effect).toBe('READ');
+    expect(standing.risk).toBe('LOW');
+    expect(standing.unsetPermission).toBe('DISABLED');
+    expect(standing.audience).toBe('OWNER');
+    expect(standing.modelCallable).toBe(true);
+  });
+
   it('keeps the purchase builder and the wallet submit path out of the capability layer', () => {
     const root = join(__dirname, '..', '..', 'packages');
     const reachable = [
@@ -91,6 +108,9 @@ describe('no capability can move money', () => {
       join(root, 'runtime', 'src', 'paperCapabilities.ts'),
       join(root, 'runtime', 'src', 'paperTrading.ts'),
       join(root, 'runtime', 'src', 'studioPaperCapabilities.ts'),
+      join(root, 'runtime', 'src', 'studioLeagueCapabilities.ts'),
+      join(root, 'runtime', 'src', 'studioLeague.ts'),
+      join(root, 'runtime', 'src', 'leagueSeason.ts'),
       join(root, 'runtime', 'src', 'managementCapabilities.ts'),
     ];
     for (const file of reachable) {

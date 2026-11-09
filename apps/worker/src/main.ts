@@ -32,7 +32,7 @@ import { listPersonaSourceAdapters } from '@xbam/persona';
 import { BrowserTaskRunner } from './browserTasks';
 import { PostScheduler } from './posting';
 import { pollDueFeeds, pollDueRepos, runDueEngagements, wakeDueAgents } from '@xbam/runtime';
-import { exchangeWithStudio, pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, runDueShadows, studioSyncDue, sweepStudioLiveTrades, syncStudio, guardLivePositions } from '@xbam/runtime';
+import { exchangeWithStudio, pollStudioLink, reconcileInstalledPlugins, reportUnacknowledgedPurchases, runDueShadows, studioSyncDue, sweepLeagueBridge, sweepStudioLiveTrades, syncStudio, guardLivePositions } from '@xbam/runtime';
 import { startLoop } from './loop';
 import { superviseSession } from '@xbam/browser';
 
@@ -261,6 +261,18 @@ async function main(): Promise<void> {
       if (live.prepared > 0 || live.reported > 0) log.info('Studio live trades', { prepared: live.prepared, reported: live.reported });
     } catch (error) {
       log.warn('Studio live trade sweep failed', { message: errorMessage(error) });
+    }
+    try {
+      /*
+        Paper league entries, when the owner entered an agent in a Studio
+        season. Finishes an entry Studio has accepted, sends paper fills not
+        yet reported and checks the season has not changed. With no entry it is
+        one indexed query and sends Studio nothing.
+      */
+      const league = await sweepLeagueBridge();
+      if (league.recorded > 0 || league.accepted > 0) log.info('Studio paper league', { recorded: league.recorded, accepted: league.accepted });
+    } catch (error) {
+      log.warn('Studio paper league sweep failed', { message: errorMessage(error) });
     }
     try {
       /*

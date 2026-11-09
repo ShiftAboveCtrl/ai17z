@@ -49,6 +49,7 @@ function registerEverything(): void {
   runtime.registerManagementCapabilities();
   runtime.registerWalletCapabilities();
   runtime.registerPaperCapabilities();
+  runtime.registerStudioLeagueCapabilities();
   // The upstream registry refuses a second registration of the same id, so it
   // is cleared first: this runs before every case and the registry is
   // process-wide.

@@ -153,6 +153,14 @@ export const TOOLPACKS: Toolpack[] = [
     prefixes: ['studio_voice.'],
   },
   {
+    id: 'league',
+    name: 'Paper league',
+    summary:
+      "Let the agent tell you how it is doing in the AI17Z Studio paper league season it is entered in, with Studio named as the source. " +
+      'Simulated paper results only, read in a conversation with you; it cannot enter a season, trade or post.',
+    prefixes: ['league.'],
+  },
+  {
     id: 'reference',
     name: 'Reference & Knowledge',
     summary:
