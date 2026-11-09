@@ -17,7 +17,7 @@
  *   - unless it was acknowledged with a mute still running, which is how
  *     somebody says "I know, I am working on it" without going silent for ever
  */
-import { query, queryOne } from '../pool';
+import { query, queryOne, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
 export type NotificationSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
@@ -72,24 +72,26 @@ export interface RaiseInput {
  * Returns null when a mute is still running, so a caller can tell the
  * difference between "told them" and "deliberately did not".
  */
-export async function raise(input: RaiseInput): Promise<NotificationRecord | null> {
+export async function raise(input: RaiseInput, tx?: Tx): Promise<NotificationRecord | null> {
+  const one = tx ? tx.one.bind(tx) : queryOne;
+  const run = tx ? tx.many.bind(tx) : query;
   // An acknowledged row with a mute still running suppresses the new one, and
   // counts the occurrence, so the owner sees how many times it happened while
   // they were not being told.
-  const muted = await queryOne<{ id: string }>(
+  const muted = await one<{ id: string }>(
     `SELECT id FROM notifications
       WHERE dedupe_key = $1 AND acknowledged_at IS NOT NULL AND muted_until IS NOT NULL AND muted_until > now()
       ORDER BY acknowledged_at DESC LIMIT 1`,
     [input.dedupeKey],
   );
   if (muted) {
-    await query(`UPDATE notifications SET occurrences = occurrences + 1, last_seen_at = now() WHERE id = $1`, [
+    await run(`UPDATE notifications SET occurrences = occurrences + 1, last_seen_at = now() WHERE id = $1`, [
       muted.id,
     ]);
     return null;
   }
 
-  const row = await queryOne(
+  const row = await one(
     `INSERT INTO notifications (agent_id, account_id, kind, severity, title, body, action_label, action_href, data, dedupe_key)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
      ON CONFLICT (dedupe_key) WHERE acknowledged_at IS NULL DO UPDATE

@@ -28,6 +28,7 @@ import {
 } from '@xbam/runtime';
 import { describeBrowserError } from '@xbam/browser';
 import { startLoop } from './loop';
+import { syncStudioRiskWatches, flushStudioRiskObservations } from '@xbam/runtime';
 
 const log = createLogger('radar');
 
@@ -65,10 +66,12 @@ export class SocialRadar {
     if (this.running) return;
     this.running = true;
     try {
+      await syncStudioRiskWatches().catch(error => log.warn('Studio risk sync failed', { message: errorMessage(error) }));
       await playbooks.syncRadarSources();
       for (const source of await radarRepo.claimDueSources(this.perTick, this.claimHoldSeconds)) {
         await this.pollWithinItsClaim(source);
       }
+      await flushStudioRiskObservations().catch(error => log.warn('Studio risk write-back failed', { message: errorMessage(error) }));
     } catch (error) {
       log.warn('radar tick failed', { message: errorMessage(error) });
     } finally {

@@ -17,8 +17,8 @@ describe('signal radar at desktop and mobile sizes', () => {
     const before = { value: 12500, source: 'GeckoTerminal fixture', observedAt: '2026-11-09T09:00:00Z', definition: 'Median USD pool liquidity, provider top 20. Coverage is bounded.' };
     const after = { ...before, value: 7300, observedAt: '2026-11-09T09:05:00Z' };
     const data = {
-      baselines: [{ sourceId: 'source', watchKey: 'watch', watch, state: { baseline: before, latest: after, active: true, generation: 1 }, lastRead: { ...after, value: null }, reason: 'Reading unavailable; retained baseline unchanged. Condition remains latched.' }],
-      candidates: [{ id: 'candidate', sourceId: 'source', evidence: { watch, before, after }, reason: 'In idea backlog; posting gates have not run.', ideaStatus: 'unused', ideaError: null, jobStatus: null, jobError: null }],
+      baselines: [{ sourceId: 'source', watchKey: 'watch', watch, state: { baseline: before, latest: after, active: true, generation: 1 }, lastRead: { ...after, value: null }, reason: 'Reading unavailable; retained baseline unchanged. Condition remains latched.', provenance: 'OWNER' }],
+      candidates: [{ id: 'candidate', sourceId: 'source', provenance: 'OWNER', evidence: { watch, before, after }, reason: 'In idea backlog; posting gates have not run.', ideaStatus: 'unused', ideaError: null, jobStatus: null, jobError: null }],
     };
     const html = `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signal radar verification</title></head><body><main id="root" style="max-width:1120px;margin:auto;padding:24px"></main><script type="module">
       import React from 'react'; import {createRoot} from 'react-dom/client';

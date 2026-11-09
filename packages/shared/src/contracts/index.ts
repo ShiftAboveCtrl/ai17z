@@ -47,3 +47,4 @@ export * from './studioPaperRecord';
 export * from './studioVoice';
 export * from './devUpdatesInstall';
 export * from './studioActivityTape';
+export * from './studioRisk';

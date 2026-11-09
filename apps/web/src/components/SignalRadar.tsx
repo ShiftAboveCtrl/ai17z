@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { SignalUniverse, type SignalWatch, type SignalObservation, type SignalRadarData } from '@xbam/shared/contracts';
+import { SignalUniverse, type RadarSourceProvenance, type SignalWatch, type SignalObservation, type SignalRadarData } from '@xbam/shared/contracts';
 import { del, post } from '@app/lib/api';
 
 export type { SignalRadarData } from '@xbam/shared/contracts';
@@ -13,6 +13,44 @@ const PREDICATES: Record<SignalWatch['predicate'], string> = {
   new_pool: 'New pool observed',
   wallet_transaction: 'Address transacting',
 };
+/** Studio measures the index figures, not the pools and token accounts the local radar reads. */
+const STUDIO_METRICS: Record<NonNullable<SignalWatch['studioMetric']>, string> = {
+  LIQUIDITY_BELOW: 'Index liquidity below USD',
+  TOP_HOLDERS_ABOVE: 'Index top-holder share above %',
+  DEVELOPER_SHARE_ABOVE: 'Index developer share above %',
+};
+export const studioProvenanceSentence = 'From your Studio risk watch list.';
+
+export function watchLabel(watch: SignalWatch): string {
+  return watch.studioMetric ? STUDIO_METRICS[watch.studioMetric] : PREDICATES[watch.predicate];
+}
+
+function Provenance({ provenance }: { provenance: RadarSourceProvenance }) {
+  if (provenance !== 'STUDIO_RISK_WATCH') return null;
+  return <p className="text-xs text-signal-calm" data-provenance="STUDIO_RISK_WATCH">{studioProvenanceSentence}</p>;
+}
+
+type Candidate = SignalRadarData['candidates'][number];
+
+/**
+ * Why a candidate was or was not posted, in sentences. The reason recorded when
+ * the crossing was seen always comes first, because it is the decision; later
+ * job or idea trouble is added after it rather than replacing it.
+ */
+export function candidateStory(row: Pick<Candidate, 'reason' | 'ideaStatus' | 'ideaError' | 'jobStatus' | 'jobError' | 'postingEnabled' | 'postingReason'>): { outcome: string; why: string[] } {
+  const outcome = row.jobStatus === 'EXECUTED' ? 'Posted'
+    : row.jobStatus === 'DRY_RUN_COMPLETED' ? 'Dry run; nothing published'
+      : row.jobStatus ? `Job: ${row.jobStatus}`
+        : row.ideaStatus ? `Idea: ${row.ideaStatus}`
+          : 'Not offered for posting';
+  const why = [row.reason];
+  if (row.jobError) why.push(row.jobError);
+  else if (row.ideaError) why.push(row.ideaError);
+  if (row.ideaStatus === 'unused' && !row.jobStatus) {
+    why.push(!row.postingEnabled ? 'Posting schedule is off or not configured.' : row.postingReason || 'Waiting for the existing posting cadence.');
+  }
+  return { outcome, why: why.filter((sentence, index) => sentence && why.indexOf(sentence) === index) };
+}
 
 function Observation({ label, read }: { label: string; read: SignalObservation | null | undefined }) {
   return <div className="min-w-0 rounded-lg bg-ink-raised p-3 [overflow-wrap:anywhere]">
@@ -30,7 +68,8 @@ export function SignalEvidence({ data }: { data: SignalRadarData }) {
       <h4 className="text-base text-bone">Retained baselines</h4>
       {data.baselines.length === 0 && <p className="mt-2 text-sm text-bone-dim">The first valid read establishes a baseline. It never creates a candidate.</p>}
       {data.baselines.map(row => <article key={`${row.sourceId}:${row.watchKey}`} className="mt-3 min-w-0 space-y-2 rounded-lg border border-ink-line p-3 [overflow-wrap:anywhere]">
-        <p className="text-sm text-bone">{PREDICATES[row.watch.predicate]}{row.watch.threshold !== undefined ? ` ${row.watch.threshold}` : ''}</p>
+        <Provenance provenance={row.provenance} />
+        <p className="text-sm text-bone">{watchLabel(row.watch)}{row.watch.threshold !== undefined ? ` ${row.watch.threshold}` : ''}</p>
         <p className="text-sm text-bone-dim">{row.watch.chain}:{row.watch.address}</p>
         <dl className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
           <Observation label="First valid read" read={row.state?.baseline} />
@@ -42,17 +81,23 @@ export function SignalEvidence({ data }: { data: SignalRadarData }) {
     <div>
       <h4 className="text-base text-bone">Before / after candidates</h4>
       {data.candidates.length === 0 && <p className="mt-2 text-sm text-bone-dim">No prospective transitions recorded. A timer firing is not a reason to speak.</p>}
-      {data.candidates.map(row => <article key={row.id} className="mt-3 min-w-0 space-y-2 rounded-lg border border-signal-calm/30 p-3 [overflow-wrap:anywhere]">
-        <p className="text-sm text-bone">{PREDICATES[row.evidence.watch.predicate]}</p>
-        <p className="text-sm text-bone-dim">{row.evidence.watch.chain}:{row.evidence.watch.address}</p>
-        <dl className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
-          <Observation label="Before" read={row.evidence.before} />
-          <Observation label="After" read={row.evidence.after} />
-        </dl>
-        <p className="text-sm text-bone">{row.jobStatus === 'EXECUTED' ? 'Posted' : row.jobStatus === 'DRY_RUN_COMPLETED' ? 'Dry run; nothing published' : row.jobStatus ? `Job: ${row.jobStatus}` : row.ideaStatus ? `Idea: ${row.ideaStatus}` : 'Not offered for posting'}</p>
-        <p className="text-sm leading-relaxed text-bone-dim">{row.jobError || row.ideaError || row.reason}</p>
-        {row.ideaStatus === 'unused' && !row.jobStatus && <p className="text-sm text-bone-dim">{!row.postingEnabled ? 'Posting schedule is off or not configured.' : row.postingReason || 'Waiting for the existing posting cadence.'}</p>}
-      </article>)}
+      {data.candidates.map(row => {
+        const story = candidateStory(row);
+        return <article key={row.id} className="mt-3 min-w-0 space-y-2 rounded-lg border border-signal-calm/30 p-3 [overflow-wrap:anywhere]">
+          <Provenance provenance={row.provenance} />
+          <p className="text-sm text-bone">{watchLabel(row.evidence.watch)}</p>
+          <p className="text-sm text-bone-dim">{row.evidence.watch.chain}:{row.evidence.watch.address}</p>
+          <dl className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+            <Observation label="Before" read={row.evidence.before} />
+            <Observation label="After" read={row.evidence.after} />
+          </dl>
+          <p className="text-sm text-bone">{story.outcome}</p>
+          <div data-testid="candidate-why">
+            <p className="text-xs text-bone-dim">Why</p>
+            {story.why.map(sentence => <p key={sentence} className="text-sm leading-relaxed text-bone-dim">{sentence}</p>)}
+          </div>
+        </article>;
+      })}
     </div>
   </div>;
 }

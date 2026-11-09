@@ -241,3 +241,4 @@ export * from './devUpdates';
 export * from './devUpdateSafety';
 export * from './signalRadar';
 export * from './studioActivityTape';
+export * from './studioRiskWatches';

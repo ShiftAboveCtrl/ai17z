@@ -37,7 +37,7 @@ import {
   users as usersRepo,
   workers as workersRepo,
 } from '@xbam/database';
-import type { NotificationRecord } from '@xbam/database';
+import type { NotificationRecord, Tx } from '@xbam/database';
 import { createLogger, workerAbsenceSentence } from '@xbam/shared';
 import { describeSignIn } from '@xbam/shared/contracts';
 import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
@@ -46,6 +46,19 @@ import { browserRunning } from './health';
 import { browserEnabled } from '@xbam/browser';
 
 const log = createLogger('notify');
+
+/** Evidence-only crossings use the ordinary owner inbox and delivery sweep. */
+export async function studioRiskWatchCrossed(input: { agentId: string; accountId: string; sourceId: string; watchKey: string; generation: number; detail: string }, tx: Tx): Promise<void> {
+  await notificationsRepo.raise({
+    kind: 'STUDIO_RISK_WATCH', severity: 'INFO', agentId: input.agentId, accountId: input.accountId,
+    title: 'A Studio risk watch crossed its limit',
+    body: `${input.detail} This is an observation, never a buy or sell signal or a safety rating.`,
+    // The Radar panel lives inside the account's session, which this query opens.
+    actionLabel: 'Open radar', actionHref: `/settings?account=${input.accountId}&focus=radar`,
+    data: { sourceId: input.sourceId, watchKey: input.watchKey },
+    dedupeKey: `studio-risk:${input.sourceId}:${input.watchKey}:${input.generation}`,
+  }, tx);
+}
 
 /**
  * How long an acknowledgement silences a recurring problem by default.
