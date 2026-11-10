@@ -1,0 +1,11 @@
+{
+  "name": "@xbam/faker-compat",
+  "version": "10.6.0",
+  "private": true,
+  "type": "module",
+  "description": "Farcaster factory compatibility aliases backed by current faker.",
+  "exports": "./index.js",
+  "dependencies": {
+    "@faker-js/faker": "10.6.0"
+  }
+}
