@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { agents, content, ops, query, withAdvisoryLock, withTransaction } from '@xbam/database';
-import { BadRequestError, canonicalJson, ConflictError, NotFoundError } from '@xbam/shared';
+import { BadRequestError, canonicalJson, ConflictError, logger, NotFoundError } from '@xbam/shared';
 import { LeagueAlias, PaperRecord, PaperRecordWindow, PolicyConfig, VoiceDocument } from '@xbam/shared/contracts';
 import { studioControlSetting } from './studioControl';
 import { studioStatus, studioPaperRecord, studioPublicHomeRequest, studioPublicHomeRenew } from './studioLink';
@@ -183,7 +183,14 @@ export async function sweepPublicHomeRenewals(now = new Date()): Promise<void> {
   for (const { agent_id: agentId } of rows) await locked(agentId, async () => {
     const state = await publicHomeState(agentId, now);
     const c = state.confirmed;
-    if (!c?.published || state.stale || c.renewal?.stopped) return;
+    if (!c?.published || c.renewal?.stopped) return;
+    if (state.stale) {
+      if (now.getTime() - Date.parse(c.confirmedAt) >= HOME_TTL_MS || Date.parse(c.validUntil) <= now.getTime()) {
+        const agent = await agents.getAgent(agentId);
+        if (agent) await publicHomeNeedsRepublish({ agentId, agentName: agent.name, why: 'EXPIRED' });
+      }
+      return;
+    }
     const lastAttempt = Date.parse(c.renewal?.attemptedAt ?? c.confirmedAt);
     if (!Number.isFinite(lastAttempt) || now.getTime() - lastAttempt < 5 * 60_000) return;
     // Save before transport. A crash or lost acknowledgement retries the same operation key.
@@ -200,10 +207,18 @@ export async function sweepPublicHomeRenewals(now = new Date()): Promise<void> {
       if (result.code === 'publication_expired' || result.code === 'renewal_limit') {
         const agent = await agents.getAgent(agentId);
         if (agent) await publicHomeNeedsRepublish({ agentId, agentName: agent.name, why: result.code === 'renewal_limit' ? 'LIMIT' : 'EXPIRED' });
-      } else await problem(agentId);
+      } else {
+        // Other 403/409 codes are permanent for this revision under STUDIO_PUBLIC_HOME.md.
+        await problem(agentId);
+      }
       return;
     }
-    if (result.slug !== c.slug || result.digest !== c.digest || Date.parse(result.validUntil) <= now.getTime()) return;
+    const mismatch = result.slug !== c.slug ? 'slug_mismatch' : result.digest !== c.digest ? 'digest_mismatch'
+      : Date.parse(result.validUntil) <= now.getTime() ? 'expiry_passed' : null;
+    if (mismatch) {
+      logger.warn('Public home renewal acknowledgement rejected', { code: mismatch });
+      return;
+    }
     // Consent or link can change during transport. Never acknowledge against a new link or disabled control.
     if ((await publicHomeState(agentId, now)).stale) return;
     await save({ ...c, renewal: undefined, confirmedAt: now.toISOString(),

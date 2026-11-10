@@ -33,7 +33,7 @@ ALLOWED decisions leave it unchanged. Existing decisions are initialized from
 Repeating PUT with the current enabled value is a no-op and preserves changedAt.
 
 `POST /api/studio/activity-tape/scrub` accepts only `{ "id": "action:<uuid>" }`
-(also `paper:` and `radar:`). Authentication is required. It records an audited
+(also `paper:`, `radar:` and `receipt:`). Authentication is required. It records an audited
 local tombstone and returns `{ "queued": true }`. Source evidence is preserved.
 Ids are normalized to lowercase and the suffix must be a valid UUID. Scrubs are
 retried in every enabled batch until Studio durably acknowledges them. Only the

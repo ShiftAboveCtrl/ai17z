@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilityPermissions, jobs, ops, query } from '@xbam/database';
-import { sealSecret } from '@xbam/shared';
+import { logger, sealSecret } from '@xbam/shared';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture, type Fixture } from '../support/fixtures';
 import { previewPublicHome, publishPublicHome, publicHomeState, publicHomeReply, unpublishPublicHome, proposePublicHomePost, setPublicHomePosting, publicHomeSendRefusal, sweepPublicHomeRenewals } from '../../packages/runtime/src/studioPublicHome';
@@ -26,6 +26,7 @@ let f: Fixture;
 let studio: Awaited<ReturnType<typeof publicHomeStudioServer>> | null = null;
 beforeEach(async () => { f = await createFixture({ persona: { biography: 'An AI agent studying liquidity changes.', tone: 'Calm and precise.', customInstructions: 'PRIVATE-OPERATOR-PROMPT' } }); });
 afterEach(async () => {
+  vi.restoreAllMocks();
   setStudioTransportForTests(null);
   delete process.env.AI17Z_STUDIO_UNSAFE_DEV_ORIGIN;
   await studio?.close(); studio = null;
@@ -46,6 +47,35 @@ async function publish() {
   return p;
 }
 describe('public home consent persisted in Postgres', () => {
+  it.each(['confirmedAt', 'validUntil'])('notifies once when the local %s lease lapses without renewing', async field => {
+    await link(); await publish();
+    await query(`UPDATE agent_public_home SET confirmed=jsonb_set(confirmed,$1::text[],to_jsonb((now()-interval '16 minutes')::text))`, [[field]]);
+    const before = (await publicHomeState(f.agentId)).confirmed!;
+    await Promise.all([sweepPublicHomeRenewals(), sweepPublicHomeRenewals()]);
+    await sweepPublicHomeRenewals();
+    expect(studio!.requests).toHaveLength(1);
+    expect((await publicHomeState(f.agentId)).confirmed).toEqual(before);
+    const notices = await query<{ body: string }>("SELECT body FROM notifications WHERE agent_id=$1 AND kind='PUBLIC_HOME_REPUBLISH' AND acknowledged_at IS NULL", [f.agentId]);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.body).toContain('lapsed before it could be renewed');
+  });
+  it.each(['slug', 'digest', 'expiry'] as const)('logs only a code for a mismatched renewal %s and retries with the same key', async mismatch => {
+    await link(); await publish(); await renewalDue();
+    const before = (await publicHomeState(f.agentId)).confirmed!;
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    studio!.setRenewalAnswer({ status: 200, body: { protocol: 1, published: true,
+      slug: mismatch === 'slug' ? 'private-response-slug' : before.slug,
+      manifest_sha256: mismatch === 'digest' ? '0'.repeat(64) : before.digest,
+      valid_until: new Date(Date.now() + (mismatch === 'expiry' ? -60_000 : 900_000)).toISOString() } });
+    await sweepPublicHomeRenewals();
+    expect(warn).toHaveBeenCalledExactlyOnceWith('Public home renewal acknowledgement rejected', {
+      code: { slug: 'slug_mismatch', digest: 'digest_mismatch', expiry: 'expiry_passed' }[mismatch],
+    });
+    expect((await publicHomeState(f.agentId)).confirmed!.confirmedAt).toBe(before.confirmedAt);
+    await retryDue(); studio!.setRenewalAnswer(null); await sweepPublicHomeRenewals();
+    expect(studio!.requests[2]!.idempotency_key).toBe(studio!.requests[1]!.idempotency_key);
+    expect((await publicHomeState(f.agentId)).stale).toBe(false);
+  });
   it('renews unchanged revisions at most every five minutes across concurrent sweeps', async () => {
     await link(); await publish();
     await sweepPublicHomeRenewals();
