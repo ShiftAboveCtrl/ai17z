@@ -358,7 +358,10 @@ export async function planMintCheck(
 
   const request = detectMintRequest(input.text);
   if (!request) return { kind: 'NONE' };
-  if (readTemperature(input.text) === 'hostile') return { kind: 'NONE' };
+  // "Is this a scam?" is the question being asked, not an insult. The shared
+  // reading counts that word as hostility, so it is taken out before judging.
+  // Anything actually hostile is left to the ordinary pipeline, which deflects.
+  if (readTemperature(input.text.replace(/\b(?:scam|fraud)\b/gi, ' ')) === 'hostile') return { kind: 'NONE' };
 
   const pitch = readPromo(input.text);
   if (pitch.level === 'strong') {
