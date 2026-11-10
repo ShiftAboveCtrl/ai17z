@@ -44,7 +44,7 @@ import type {
   PortableCredential,
   PortableLearned,
 } from '@xbam/shared/contracts';
-import { BadRequestError, describeVersion, nowIso, sniffImage } from '@xbam/shared';
+import { BadRequestError, canonicalJson, describeVersion, nowIso, sniffImage } from '@xbam/shared';
 import {
   agents as agentsRepo,
   memories as memoriesRepo,
@@ -93,18 +93,8 @@ export function checksumOf(content: {
     ? undefined
     : content.credentials;
   return createHash('sha256')
-    .update(canonical({ agent: content.agent, avatar: content.avatar, learned: content.learned, credentials }))
+    .update(canonicalJson({ agent: content.agent, avatar: content.avatar, learned: content.learned, credentials }))
     .digest('hex');
-}
-
-/** Stable JSON: object keys sorted, arrays left in order because order is data. */
-function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
 }
 
 /** The filename a download is offered under. */

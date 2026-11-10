@@ -28,6 +28,8 @@ const { registerCapability, resetCapabilitiesForTest, defineCapability, CALL_OPE
 );
 
 vi.mock('@xbam/database', () => ({
+  // peerReview.ts reads agents.getAgent while the runtime is imported; nothing here calls it.
+  agents: {},
   capabilityInvocations: {
     async recordInvocation() {
       return { id: 'x' };

@@ -1,6 +1,7 @@
-import type { Blocker } from '@xbam/shared/contracts';
+import { describeSignIn, type Blocker } from '@xbam/shared/contracts';
 import { noBrowserWorker, noWorkerRunning } from '@xbam/shared';
 import {
+  accountCredentials,
   accounts as accountsRepo,
   agents as agentsRepo,
   capabilities as capabilitiesRepo,
@@ -77,7 +78,7 @@ export async function startPreflight(agentId: string): Promise<Blocker[]> {
   if (enabledLinks.length === 0) {
     blockers.push({
       what: 'No account is connected, so there is nothing for it to read.',
-      fix: 'Connect an X account.',
+      fix: 'Connect an X or Bluesky account.',
       where: 'account',
     });
   }
@@ -88,19 +89,43 @@ export async function startPreflight(agentId: string): Promise<Blocker[]> {
     if (!account) continue;
     if (account.channel === 'x') needsBrowser = true;
 
-    // Only a channel that signs in through a browser can be signed out of. The
-    // mock channel has no session, and telling somebody to sign in to it is
-    // advice they cannot act on.
-    const signsIn = getChannelAdapter(account.channel).requiresBrowser;
+    // Browser sessions, bot tokens and app signers all require a connection.
+    const signsIn = getChannelAdapter(account.channel).requiresBrowser || ['telegram', 'farcaster'].includes(account.channel);
     if (signsIn && account.status !== 'CONNECTED') {
       blockers.push({
         what:
           account.status === 'NEEDS_AUTH' || account.status === 'SESSION_EXPIRED'
             ? `The ${account.channel.toUpperCase()} session for @${account.handle} has expired.`
             : `@${account.handle} is not connected (${account.status.toLowerCase().replace(/_/g, ' ')}).`,
-        fix: 'Sign in again.',
+        fix: account.channel === 'telegram' ? 'Reconnect the Telegram bot with a working token.'
+          : account.channel === 'farcaster' ? 'Reconnect with an authorized Farcaster app signer.' : 'Sign in again.',
         where: 'account',
       });
+    } else if (account.channel === 'bluesky') {
+      /*
+        Signed in over an API, so the browser rules above do not apply and the
+        error branch below would read a lapsed password as "an error state".
+
+        Said in the account's own words from describeSignIn, so the start check,
+        the Health screen and the notification cannot give three different
+        fixes. A connected account with no stored app password is a state
+        nothing should reach, but a missing row is exactly what a half finished
+        restore looks like, and the first poll would find out the hard way.
+      */
+      const explanation = describeSignIn(account.channel, account.status);
+      if (account.status !== 'CONNECTED') {
+        blockers.push({
+          what: `@${account.handle} on Bluesky is not signed in. ${explanation?.what ?? `Its status is ${account.status.toLowerCase().replace(/_/g, ' ')}.`}`,
+          fix: explanation?.fix ?? 'Store an app password for it.',
+          where: 'account',
+        });
+      } else if (!(await accountCredentials.credentialPresence(account.id)).hasCredentials) {
+        blockers.push({
+          what: `@${account.handle} on Bluesky has no app password stored.`,
+          fix: 'Store an app password for it.',
+          where: 'account',
+        });
+      }
     } else if (!signsIn && account.status === 'ERROR') {
       blockers.push({
         what: `@${account.handle} is in an error state: ${account.lastError ?? 'no reason recorded'}.`,

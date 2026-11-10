@@ -28,7 +28,7 @@ export interface XReadPace {
   search: boolean;
 }
 
-export const X_READ_PACING: Record<RadarSourceKind, XReadPace> = {
+export const X_READ_PACING: Record<Exclude<RadarSourceKind, 'market_signal'>, XReadPace> = {
   // X's own notifications page: not a search, and the first place a mention lands.
   notifications: { defaultSeconds: 90, floorSeconds: 60, search: false },
   // The two searches that catch what notifications lost. The measured healthy pace.
@@ -49,6 +49,7 @@ export function effectiveXInterval(
   kind: RadarSourceKind,
   configuredSeconds: number | null | undefined,
 ): { seconds: number; raised: boolean } {
+  if (kind === 'market_signal') return { seconds: Math.max(300, configuredSeconds ?? 300), raised: (configuredSeconds ?? 300) < 300 };
   const pace = X_READ_PACING[kind];
   const wanted = configuredSeconds ?? pace.defaultSeconds;
   if (wanted < pace.floorSeconds) return { seconds: pace.floorSeconds, raised: true };

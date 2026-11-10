@@ -1,7 +1,7 @@
 {
   "name": "xbam",
   "private": true,
-  "version": "1.0.0-beta.89",
+  "version": "1.0.0-beta.92",
   "license": "MIT",
   "type": "module",
   "description": "XBAM — a local-first universal autonomous-agent platform.",
@@ -38,6 +38,7 @@
     "evaluate": "tsx tools/scenarios/evaluate.mts",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:browser": "playwright test --config tests/browser/playwright.config.ts",
     "session:e2e": "tsx tools/e2e-session.mts",
     "import:ai4cz": "tsx tools/import-ai4cz/src/cli.ts",
     "browser:cdp": "powershell -ExecutionPolicy Bypass -File scripts/launch-chrome-cdp.ps1",
@@ -48,6 +49,7 @@
     "worker:supervised": "tsx scripts/supervise-worker.mts",
     "release:check": "tsx tools/release-check.mts",
     "dev-updates": "tsx tools/dev-updates.mts",
+    "dev-updates:docs": "tsx tools/dev-updates-install-docs.mts",
     "dev-updates:mcp": "node tools/dev-updates-mcp.mjs",
     "mutation:check": "tsx tools/mutation-check.mts",
     "phase1:barrier": "tsx tools/phase1-barrier.mts",
@@ -89,5 +91,10 @@
   "dependencies": {
     "tsx": "^4.19.2",
     "zod": "^4.6.7"
+  },
+  "overrides": {
+    "@farcaster/core": {
+      "@faker-js/faker@^7.6.0": "file:packages/faker-compat"
+    }
   }
 }

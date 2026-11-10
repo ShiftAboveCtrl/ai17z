@@ -10,8 +10,11 @@ import { putMandate, type TradeMandateRow } from './trading';
  * entry points at a PAPER mandate and a fill report is a copy of a paper fill.
  */
 
-export type LeagueEntryStatus = 'PENDING' | 'ACTIVE' | 'ENDED' | 'REFUSED';
-export type LeagueFillState = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'LOCAL_ONLY';
+/** Migration 0120's CHECKs on league_entries.status and league_fill_reports.state; registered in constrainedEnums.ts. */
+export const LEAGUE_ENTRY_STATUSES = ['PENDING', 'ACTIVE', 'ENDED', 'REFUSED'] as const;
+export const LEAGUE_FILL_STATES = ['PENDING', 'ACCEPTED', 'REJECTED', 'LOCAL_ONLY'] as const;
+export type LeagueEntryStatus = (typeof LEAGUE_ENTRY_STATUSES)[number];
+export type LeagueFillState = (typeof LEAGUE_FILL_STATES)[number];
 
 export interface LeagueEntryRow {
   id: string;

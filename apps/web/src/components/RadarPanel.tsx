@@ -5,9 +5,13 @@ import { useResource } from '@app/lib/hooks';
 import { timeAgo } from '@app/lib/format';
 import { RADAR_SOURCE_KINDS, effectiveXInterval, type RadarSourceKind } from '@xbam/shared/contracts';
 import { ErrorPanel, Field, Modal, Spinner, StatusDot } from './ui';
+import { SignalRadar, type SignalRadarData } from './SignalRadar';
+import type { RadarSourceProvenance, SignalWatch } from '@xbam/shared/contracts';
 
-interface RadarSource {
+export interface RadarSource {
   id: string;
+  /** Where the source came from, decided by the API and never by the label. */
+  provenance: RadarSourceProvenance;
   kind: string;
   target: string | null;
   label: string;
@@ -21,12 +25,18 @@ interface RadarSource {
   idleReason: string | null;
   consecutiveFailures: number;
   nextPollAt: string | null;
-  config: { intervalSeconds?: number; mayTrigger?: boolean };
+  config: { intervalSeconds?: number; mayTrigger?: boolean; watches?: SignalWatch[] };
 }
 
 interface RadarData {
   supported: string[];
   sources: RadarSource[];
+  signals?: SignalRadarData;
+}
+
+/** The owner's own market source. `find` on the kind alone would pick a Studio one and let the owner overwrite it. */
+export function ownerSignalSource(sources: RadarSource[]): RadarSource | undefined {
+  return sources.find((s) => s.kind === 'market_signal' && s.provenance === 'OWNER');
 }
 
 const KIND_NAMES: Record<string, string> = {
@@ -37,6 +47,7 @@ const KIND_NAMES: Record<string, string> = {
   tracked_account: 'Watched account',
   tracked_keyword: 'Watched topic',
   persona_discovery: 'Goes looking on its own',
+  market_signal: 'Market and wallet signals',
 };
 
 const KIND_HINTS: Record<string, string> = {
@@ -144,68 +155,7 @@ export function RadarPanel({ accountId }: { accountId: string }) {
       ) : (
         <ul className="divide-y divide-ink-line border-y border-ink-line">
           {data.sources.map((source) => (
-            <li key={source.id} className="py-3">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                <StatusDot state={source.enabled ? TONE[source.status] ?? 'idle' : 'idle'} />
-                <span className="text-sm text-bone">
-                  {source.label || KIND_NAMES[source.kind] || source.kind}
-                  {source.target && <span className="ml-1.5 font-mono text-[11px] text-bone-dim">{source.target}</span>}
-                </span>
-                <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">
-                  {source.enabled ? source.status.toLowerCase() : 'off'}
-                </span>
-                {source.consecutiveFailures > 0 && (
-                  <button
-                    type="button"
-                    className="btn-quiet p-1.5"
-                    aria-label={`Try ${KIND_NAMES[source.kind] ?? source.kind} again now`}
-                    title="Try again now"
-                    onClick={() => void retry(source.id)}
-                    disabled={busy}
-                  >
-                    <RotateCw className="h-3.5 w-3.5" aria-hidden />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn-quiet p-1.5 hover:text-signal-fail"
-                  aria-label={`Remove ${KIND_NAMES[source.kind] ?? source.kind}`}
-                  onClick={() => void remove(source.id)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                </button>
-              </div>
-
-              <p className="mt-1 font-mono text-[10px] text-bone-faint">
-                {/* Worked and found nothing is not the same as failed, so both
-                    are shown rather than one standing in for the other. */}
-                last worked {timeAgo(source.lastSuccessAt)} · last found something {timeAgo(source.lastResultAt)}
-                {source.consecutiveFailures > 0 && ` · ${source.consecutiveFailures} failures in a row`}
-                {/* A backed-off source is not a stopped one, and saying when it
-                    tries again is the difference between the two. */}
-                {source.consecutiveFailures > 0 && source.nextPollAt && ` · next try ${timeAgo(source.nextPollAt)}`}
-              </p>
-              <PaceLine kind={source.kind} configured={source.config.intervalSeconds} />
-              {source.config.mayTrigger === false && (
-                <p className="mt-1 text-[11px] text-bone-faint">Context only — this never creates a reply.</p>
-              )}
-              {source.lastError && (
-                <p className="mt-1 break-words text-xs leading-relaxed text-signal-fail">{source.lastError}</p>
-              )}
-              {/*
-                Why a healthy source has nothing to show.
-
-                A source with no error and no results is ambiguous, and that
-                ambiguity hid an eight-day outage behind a green light: the
-                replies monitor spent every cycle on something else, reported
-                success each time, and read no threads at all. "Checked and
-                found nothing" and "there was nothing to check" are different
-                facts about an account and only one of them is fine.
-              */}
-              {!source.lastError && source.idleReason && (
-                <p className="mt-1 break-words text-xs leading-relaxed text-bone-dim">{source.idleReason}</p>
-              )}
-            </li>
+            <RadarSourceItem key={source.id} source={source} busy={busy} onRetry={() => void retry(source.id)} onRemove={() => void remove(source.id)} />
           ))}
         </ul>
       )}
@@ -240,7 +190,112 @@ export function RadarPanel({ accountId }: { accountId: string }) {
           reload();
         }}
       />
+      {/* The owner's pins are one source; Studio's are several others of the same kind and are not edited here. */}
+      <SignalRadar
+        key={ownerSignalSource(data.sources)?.id ?? 'new-signals'}
+        accountId={accountId}
+        source={ownerSignalSource(data.sources)}
+        data={data.signals ?? { baselines: [], candidates: [] }}
+        reload={reload}
+      />
     </div>
+  );
+}
+
+const STUDIO_FOLLOWS_SENTENCE =
+  'This source follows your Studio risk watch link and turns itself back on at every sync. Change the watch in Studio, or switch Studio risk watches off for this agent under Accounts.';
+const PLAYBOOK_FOLLOWS_SENTENCE =
+  'This source follows the playbook linked to this agent and turns itself back on at every sync. Import a different playbook for the agent to change it.';
+
+/** One monitor. Presentational, so every state can be rendered without a network. */
+export function RadarSourceItem({
+  source,
+  busy,
+  onRetry,
+  onRemove,
+}: {
+  source: RadarSource;
+  busy: boolean;
+  onRetry: () => void;
+  onRemove: () => void;
+}) {
+  const fromStudio = source.provenance === 'STUDIO_RISK_WATCH';
+  // Either kind is recreated by a sync, so offering to remove or switch it off would only look like it worked.
+  const linked = source.provenance !== 'OWNER';
+  return (
+    <li className="py-3" data-provenance={source.provenance}>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <StatusDot state={source.enabled ? TONE[source.status] ?? 'idle' : 'idle'} />
+        <span className="min-w-0 break-words text-sm text-bone">
+          {source.label || KIND_NAMES[source.kind] || source.kind}
+          {source.target && !linked && <span className="ml-1.5 font-mono text-[11px] text-bone-dim">{source.target}</span>}
+        </span>
+        <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">
+          {source.enabled ? source.status.toLowerCase() : 'off'}
+        </span>
+        {source.consecutiveFailures > 0 && (
+          <button
+            type="button"
+            className="btn-quiet p-1.5"
+            aria-label={`Try ${KIND_NAMES[source.kind] ?? source.kind} again now`}
+            title="Try again now"
+            onClick={onRetry}
+            disabled={busy}
+          >
+            <RotateCw className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        )}
+        {!linked && (
+          <button
+            type="button"
+            className="btn-quiet p-1.5 hover:text-signal-fail"
+            aria-label={`Remove ${KIND_NAMES[source.kind] ?? source.kind}`}
+            onClick={onRemove}
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        )}
+      </div>
+
+      {linked && (
+        <>
+          {fromStudio && <p className="mt-1 text-xs text-signal-calm">From your Studio risk watch list.</p>}
+          <p className="mt-1 break-words text-[11px] leading-relaxed text-bone-faint">
+            {fromStudio ? STUDIO_FOLLOWS_SENTENCE : PLAYBOOK_FOLLOWS_SENTENCE}
+          </p>
+        </>
+      )}
+
+      <p className="mt-1 font-mono text-[10px] text-bone-faint">
+        {/* Worked and found nothing is not the same as failed, so both
+            are shown rather than one standing in for the other. */}
+        last worked {timeAgo(source.lastSuccessAt)} · last found something {timeAgo(source.lastResultAt)}
+        {source.consecutiveFailures > 0 && ` · ${source.consecutiveFailures} failures in a row`}
+        {/* A backed-off source is not a stopped one, and saying when it
+            tries again is the difference between the two. */}
+        {source.consecutiveFailures > 0 && source.nextPollAt && ` · next try ${timeAgo(source.nextPollAt)}`}
+      </p>
+      <PaceLine kind={source.kind} configured={source.config.intervalSeconds} />
+      {source.config.mayTrigger === false && (
+        <p className="mt-1 text-[11px] text-bone-faint">Context only. This never creates a reply.</p>
+      )}
+      {source.lastError && (
+        <p className="mt-1 break-words text-xs leading-relaxed text-signal-fail">{source.lastError}</p>
+      )}
+      {/*
+        Why a healthy source has nothing to show.
+
+        A source with no error and no results is ambiguous, and that
+        ambiguity hid an eight-day outage behind a green light: the
+        replies monitor spent every cycle on something else, reported
+        success each time, and read no threads at all. "Checked and
+        found nothing" and "there was nothing to check" are different
+        facts about an account and only one of them is fine.
+      */}
+      {!source.lastError && source.idleReason && (
+        <p className="mt-1 break-words text-xs leading-relaxed text-bone-dim">{source.idleReason}</p>
+      )}
+    </li>
   );
 }
 
@@ -373,7 +428,7 @@ function paceWords(seconds: number): string {
  * who set one minute and sees five deserves to be told why.
  */
 function PaceLine({ kind, configured }: { kind: string; configured?: number }) {
-  if (!(RADAR_SOURCE_KINDS as readonly string[]).includes(kind) || kind === 'persona_discovery') return null;
+  if (!(RADAR_SOURCE_KINDS as readonly string[]).includes(kind) || kind === 'persona_discovery' || kind === 'market_signal') return null;
   const pace = effectiveXInterval(kind as RadarSourceKind, configured);
   return (
     <p className="mt-1 text-[11px] text-bone-faint">

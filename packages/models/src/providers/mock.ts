@@ -17,6 +17,9 @@ const LABEL = 'Mock';
  *   mock-chatty        same substance in a breezy assistant register
  *   mock-formal        same substance in a stiff corporate register
  *   mock-condense      obeys a voice rewrite brief by saying less, never by cutting
+ *   mock-heed-peer     a rewriter that acts on a SECOND OPINION section: the first
+ *                      note of the form "say: TEXT" becomes the reply. With no such
+ *                      note it hands the draft back unchanged.
  *   mock-uses:ID       asks for capability ID once, then answers with what it returned
  */
 export const mockAdapter: ProviderAdapter = {
@@ -54,6 +57,8 @@ export const mockAdapter: ProviderAdapter = {
       text = 'This mock reply is deliberately long. '.repeat(20);
     } else if (model === 'mock-condense') {
       text = condenseToBrief(lastUser);
+    } else if (model === 'mock-heed-peer') {
+      text = heedPeerNotes(lastUser);
     } else if (model === 'mock-chatty' || model === 'mock-formal') {
       // Two deliberately opposite house styles, for proving that an agent still
       // sounds like itself after the voice compiler regardless of which model
@@ -110,6 +115,17 @@ function extractIncoming(userMessage: string): string {
 function truncateWords(text: string, maxWords: number): string {
   const words = text.split(/\s+/);
   return words.length <= maxWords ? text : `${words.slice(0, maxWords).join(' ')}...`;
+}
+
+/**
+ * A rewriter that does what a peer's notes say, so a test can prove they were
+ * handed to it rather than asserting that a prompt mentioned them.
+ */
+function heedPeerNotes(brief: string): string {
+  const draft = brief.match(/\n\s*DRAFT\s*\n([\s\S]*)$/)?.[1]?.trim() ?? brief.trim();
+  const section = brief.match(/\nSECOND OPINION\n([\s\S]*?)(?:\n\n[A-Z][A-Z ]+\n|\nDRAFT\n|$)/)?.[1] ?? '';
+  const note = section.match(/^- say: (.+)$/m)?.[1]?.trim();
+  return note || draft;
 }
 
 /**

@@ -39,6 +39,11 @@ with no agent id, handle, wallet, persona, prompt or reasoning. See
 
 ## Control from Studio
 
+The public activity tape has its own installation switch and explicit per-agent
+grant, both off by default. Its frozen allowlist and Studio receiver obligations
+are in [STUDIO_ACTIVITY_TAPE.md](STUDIO_ACTIVITY_TAPE.md). It carries normalized
+event metadata only, with no correspondent handles or private source fields.
+
 `packages/runtime/src/studioControl.ts`. Off by default, a separate switch
 from linking (`studio.control`), because an owner linked for entitlements on
 the understanding that no agent was involved.

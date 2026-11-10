@@ -25,6 +25,7 @@ import { beginGrowthSession, chargeGrowthSession, closeSession, policyFor } from
 import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
+import { processRadarReceipts } from './radarReceipts';
 import { requestDiscovery } from './discovery';
 import { learnFromOutcomes } from './learning';
 import { worthNoticing } from './repoWatcher';
@@ -897,6 +898,9 @@ export async function wakeAgent(
     await mind.noteWake(agentId, { reason: 'Everything is paused.', quiet: true, looked: false });
     return emptyOutcome(agentId, wake.autonomy, 'Everything is paused.', 'paused');
   }
+
+  try { await processRadarReceipts(agentId); }
+  catch (error) { log.warn('radar receipts did not run', { agentId, message: errorMessage(error) }); }
 
   const links = await accountsRepo.listAgentAccounts(agentId);
   const accountId = links[0]?.accountId ?? null;

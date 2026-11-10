@@ -324,6 +324,20 @@ describe('an entry Studio has not taken yet', () => {
     expect(await trading.liveMandate(f.agentId)).toMatchObject({ mode: 'PAPER' });
   });
 
+  it('retries an entry POST refused with a 400 invalid_dpop_proof under the same entry key', async () => {
+    lockAt(3);
+    const f = await setup();
+    studio.failEntries = { times: 1, status: 400, error: 'invalid_dpop_proof' };
+    expect((await enter(f.agentId, f.ownerId)).ok).toBe(false);
+    const pending = (await leagueBridge.latestEntryOf(f.agentId))!;
+    expect(pending.status).toBe('PENDING');
+    expect(await trading.liveMandate(f.agentId)).toBeNull();
+    await sweepLeagueBridge(new Date(Date.now() + 2 * 60_000));
+    expect(await leagueBridge.getEntry(pending.id)).toMatchObject({ status: 'ACTIVE' });
+    expect([...studio.entries.keys()]).toEqual([pending.entryKey]);
+    expect(posts()).toBe(2);
+  });
+
   it('retries with a backoff set by how long it has waited, not by a deadline', async () => {
     lockAt(3);
     const f = await setup();

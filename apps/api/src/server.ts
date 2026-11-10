@@ -10,8 +10,11 @@ import { registerInboxRoutes as inboxRoutes } from './routes/inbox';
 import { registerPluginRoutes as pluginRoutes } from './routes/plugins';
 import { registerCouncilRoutes as councilRoutes } from './routes/council';
 import { registerStudioRoutes as studioRoutes } from './routes/studio';
+import { registerStudioVoiceRoutes as studioVoiceRoutes } from './routes/studioVoice';
+import { studioPublicHomeRoutes } from './routes/studioPublicHome';
 import { liveTradeRoutes } from './routes/liveTrades';
 import { mandateRoutes } from './routes/mandates';
+import { playbookRoutes } from './routes/playbooks';
 import { easyRoutes, easyStartRoutes } from './routes/easy';
 import { characterRoutes } from './routes/character';
 import { providerRoutes } from './routes/providers';
@@ -38,6 +41,7 @@ import { experimentRoutes } from './routes/experiments';
 import { hostingRoutes } from './routes/hosting';
 import { utilityRoutes } from './routes/utility';
 import { devUpdateRoutes } from './routes/devUpdates';
+import { studioRiskWatchRoutes } from './routes/studioRiskWatches';
 
 const log = createLogger('api');
 
@@ -89,8 +93,11 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(pluginRoutes);
   await app.register(councilRoutes);
   await app.register(studioRoutes);
+  await app.register(studioVoiceRoutes);
+  await app.register(studioPublicHomeRoutes);
   await app.register(liveTradeRoutes);
   await app.register(mandateRoutes);
+  await app.register(playbookRoutes);
   await app.register(easyRoutes);
   await app.register(foundryRoutes);
   await app.register(chatRoutes);
@@ -118,6 +125,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(mindRoutes);
   await app.register(experimentRoutes);
   await app.register(devUpdateRoutes);
+  await app.register(studioRiskWatchRoutes);
 
   app.addHook('onResponse', async (request, reply) => {
     if (reply.statusCode >= 500) {

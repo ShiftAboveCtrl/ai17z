@@ -33,6 +33,8 @@ const sol = (base: string): string => {
   const frac = (v % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '');
   return frac ? `${whole}.${frac}` : whole.toString();
 };
+/** The one conversion between SOL as an owner writes it and lamports as a mandate stores it. */
+export { lamports as solToLamports, sol as lamportsToSol };
 const pct = z.number().min(1).max(95);
 
 export const OwnerMandate = z

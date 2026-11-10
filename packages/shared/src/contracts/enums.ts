@@ -47,7 +47,7 @@ export const AUTOMATION_MODES = [
 export const AutomationMode = enumOf(AUTOMATION_MODES).schema;
 export type AutomationMode = (typeof AUTOMATION_MODES)[number];
 
-export const CHANNELS = ['mock', 'x', 'discord', 'telegram', 'slack', 'email', 'http'] as const;
+export const CHANNELS = ['mock', 'x', 'farcaster', 'bluesky', 'discord', 'telegram', 'slack', 'email', 'http'] as const;
 export const ChannelId = enumOf(CHANNELS).schema;
 export type ChannelId = (typeof CHANNELS)[number];
 

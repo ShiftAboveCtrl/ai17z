@@ -64,7 +64,7 @@ export interface LeagueStudio {
   /** Make the next N fill reports fail with this status, to prove retries. */
   failFillReports: { times: number; status: number };
   /** Make the next N entry requests fail with this status, before the entry is stored. */
-  failEntries: { times: number; status: number };
+  failEntries: { times: number; status: number; error?: string };
   /** Entries by entry_key, as Studio holds them. */
   entries: Map<string, { entryId: string; alias: string; enteredAt: string }>;
   /** Fills by fill_key, as Studio holds them. */
@@ -300,7 +300,7 @@ export async function startLeagueStudio(initial: { slug?: string; now?: Date; ru
     if (tail === '/entry' && method === 'POST') {
       if (studio.failEntries.times > 0) {
         studio.failEntries.times -= 1;
-        send(studio.failEntries.status, { error: 'temporarily_unavailable' });
+        send(studio.failEntries.status, { error: studio.failEntries.error ?? 'temporarily_unavailable' });
         return;
       }
       const parsed = LeagueEntryRequest.safeParse(log.body);

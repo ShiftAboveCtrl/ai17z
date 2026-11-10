@@ -40,6 +40,27 @@ Options (before the mode)
   --ci                          the list is $PRIVATE_IDENTIFIERS and nothing
                                 else: every other variable, file and default
                                 directory is ignored (release checks)
+  --prove-npm LOCKFILE          a hit inside a file whose bytes are identical to
+                                the same path in an npm tarball whose sha512
+                                LOCKFILE (package-lock.json, v2 or v3) records
+                                is listed as exempt instead of refusing
+  --prove-node RUNTIME_JSON     the same for a file under runtime/node/, against
+                                the official Node.js tarball for the version
+                                RUNTIME_JSON pins, checked against nodejs.org's
+                                SHASUMS256.txt
+  --proof-cache DIR             where verified tarballs are kept between runs;
+                                a cached file counts only if its hash matches
+  --node-dist DIR               (not with --ci) read SHASUMS256.txt and Node
+                                tarballs from DIR instead of nodejs.org
+
+Proven upstream bytes. An exemption needs the exact bytes: a file one byte
+different from upstream, a file at a path upstream does not have, a file whose
+path itself carries an identifier, and every file outside node_modules and
+runtime/node still refuses. Only identifier classes are exempted, never a
+finding that says the scan could not read something, and every exemption is
+printed with the package, version and proof. Inside an archive the proven
+member's bytes are also left out of the archive's own raw pass; every other
+byte of the archive is still read there.
 
 Refused outright as unusual shapes, never read and judged: a commit or tag
 header git does not write itself (unusual-header), a message encoding other
@@ -67,9 +88,12 @@ files and clears those variables. Missing patterns is an error, not a pass.
 Exit: 0 clean, 1 findings, 2 the scan itself could not run (callers must treat
 2 as a refusal: a scan that did not run proves nothing).
 """
+import base64
 import bisect
 import bz2
+import hashlib
 import io
+import json
 import lzma
 import os
 import re
@@ -79,6 +103,9 @@ import subprocess
 import sys
 import tarfile
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 import zlib
 
@@ -353,8 +380,293 @@ def segments(label):
     return set(re.split(r"[/\\!]", label))
 
 
+# ---- proven upstream bytes ---------------------------------------------------
+#
+# Third-party files carry other people's hostnames, addresses and names: a
+# server's example config, a test fixture, a wordlist, the Node binary itself.
+# They are excused one way only: by proving the exact bytes came from upstream,
+# never by where they sit. A file under node_modules is proven when it is
+# identical to the same path inside the registry tarball whose sha512
+# package-lock.json records; a file under runtime/node is proven when it is
+# identical to the same path inside the official Node.js tarball whose sha256
+# nodejs.org's SHASUMS256.txt publishes. Editing such a file changes its bytes,
+# and then it is ours and is judged like everything else.
+
+# Classes that say the scan could not finish reading something. Never exempted,
+# whatever the bytes: a proof is about content, and these are not findings
+# about content.
+UNREAD_CLASSES = {"archive-too-large", "archive-too-deep", "unreadable-archive"}
+NPM_HOSTS = {"registry.npmjs.org"}
+NODE_HOSTS = {"nodejs.org"}
+MAX_UPSTREAM = 512 * 1024 * 1024
+
+
+class ProofUnavailable(Exception):
+    """A proof could not be made. The finding stands, with this as the reason."""
+
+
+def fetch(url, hosts):
+    """GET over https from one of hosts, refusing a redirect anywhere else."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or parts.hostname not in hosts:
+        raise ProofUnavailable("its source is not an allowed https host")
+    request = urllib.request.Request(url, headers={"User-Agent": "ai17z-release-scan"})
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            final = urllib.parse.urlsplit(response.geturl())
+            if final.scheme != "https" or final.hostname not in hosts:
+                raise ProofUnavailable("its source redirected to a host that is not allowed")
+            body = response.read(MAX_UPSTREAM + 1)
+    except (OSError, urllib.error.URLError, ValueError) as e:
+        raise ProofUnavailable(f"could not download it ({e.__class__.__name__})")
+    if len(body) > MAX_UPSTREAM:
+        raise ProofUnavailable("its upstream archive is too large to check")
+    return body
+
+
+def tar_digests(body):
+    """{path below the top directory: sha256 hex} for every regular file in a tarball.
+
+    Both npm and Node put everything under one top directory (package/,
+    node-vX-platform/), so that first component is dropped. A later entry for
+    the same path wins, as it does when the tarball is unpacked.
+    """
+    out = {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:*") as t:
+            for m in t:
+                if not m.isfile():
+                    continue
+                parts = m.name.replace("\\", "/").lstrip("/").split("/", 1)
+                if len(parts) != 2 or not parts[1]:
+                    continue
+                f = t.extractfile(m)
+                out[parts[1]] = hashlib.sha256(f.read() if f else b"").hexdigest()
+    except (tarfile.TarError, OSError, EOFError, lzma.LZMAError, zlib.error) as e:
+        raise ProofUnavailable(f"its upstream archive could not be read ({e.__class__.__name__})")
+    return out
+
+
+class NpmProof:
+    """Files identical to the same path in a tarball package-lock.json pins by sha512."""
+
+    def __init__(self, lockfile, cache):
+        try:
+            with open(lockfile, encoding="utf-8") as f:
+                lock = json.load(f)
+        except (OSError, ValueError):
+            raise ScanError("--prove-npm: the lockfile could not be read")
+        if not isinstance(lock, dict) or lock.get("lockfileVersion", 0) < 2 or not isinstance(lock.get("packages"), dict):
+            raise ScanError("--prove-npm: needs a package-lock.json with lockfileVersion 2 or 3")
+        self.packages = lock["packages"]
+        self.cache = cache
+        self.digests = {}
+
+    def locate(self, segs):
+        """(lockfile key, path inside the package) for the package a file belongs to, or None.
+
+        The earliest place a lockfile key starts, then the deepest key from
+        there, so apps/api/node_modules/x is not mistaken for node_modules/x and
+        a/node_modules/b is not mistaken for a.
+        """
+        for i in range(len(segs)):
+            for j in range(len(segs) - 1, i, -1):
+                key = "/".join(segs[i:j])
+                if "node_modules" in segs[i:j] and key in self.packages:
+                    return key, "/".join(segs[j:])
+        return None
+
+    def tarball(self, entry):
+        integrity = entry.get("integrity") or ""
+        wanted = []
+        for item in integrity.split():
+            if item.startswith("sha512-"):
+                try:
+                    wanted.append(base64.b64decode(item[7:], validate=True))
+                except ValueError:
+                    pass  # a malformed hash proves nothing; the others may still
+        if not wanted:
+            raise ProofUnavailable("package-lock.json records no sha512 for it")
+        cached = os.path.join(self.cache, f"npm-{wanted[0].hex()}.tgz") if self.cache else None
+        if cached and os.path.isfile(cached):
+            with open(cached, "rb") as f:
+                body = f.read()
+            if hashlib.sha512(body).digest() in wanted:
+                return body
+        resolved = entry.get("resolved") or ""
+        body = fetch(resolved, NPM_HOSTS)
+        if hashlib.sha512(body).digest() not in wanted:
+            raise ProofUnavailable("the registry tarball does not match the sha512 package-lock.json records")
+        if cached:
+            os.makedirs(self.cache, exist_ok=True)
+            with open(cached, "wb") as f:
+                f.write(body)
+        return body
+
+    def prove(self, segs, digest, data):
+        found = self.locate(segs)
+        if not found:
+            return None
+        key, rel = found
+        entry = self.packages[key]
+        name = entry.get("name") or key.rsplit("node_modules/", 1)[-1]
+        version = entry.get("version") or "?"
+        if entry.get("link") or not entry.get("resolved") or not entry.get("integrity"):
+            raise ProofUnavailable(f"{name} is not a registry package with a recorded integrity")
+        if key not in self.digests:
+            try:
+                self.digests[key] = tar_digests(self.tarball(entry))
+            except ProofUnavailable as e:
+                self.digests[key] = e
+        held = self.digests[key]
+        if isinstance(held, ProofUnavailable):
+            raise held
+        if rel not in held:
+            raise ProofUnavailable(f"{name}@{version} has no file at that path")
+        if held[rel] != digest:
+            raise ProofUnavailable(f"differs from {name}@{version}")
+        return f"{name}@{version}, identical to {rel} in its registry tarball, whose sha512 package-lock.json records"
+
+
+class NodeProof:
+    """Files under runtime/node/ identical to the official tarball for the pinned version."""
+
+    PLATFORMS = ["linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64"]
+
+    def __init__(self, runtime_json, cache, dist):
+        try:
+            with open(runtime_json, encoding="utf-8") as f:
+                version = json.load(f).get("version", "")
+        except (OSError, ValueError, AttributeError):
+            raise ScanError("--prove-node: the runtime pin could not be read")
+        if not re.fullmatch(r"v\d+\.\d+\.\d+", version or ""):
+            raise ScanError("--prove-node: the runtime pin names no version")
+        self.version = version
+        self.cache = cache
+        self.dist = dist
+        self.sums = None
+        self.digests = {}
+
+    def get(self, name, hosts=NODE_HOSTS):
+        if self.dist:
+            path = os.path.join(self.dist, name)
+            if not os.path.isfile(path):
+                raise ProofUnavailable(f"{name} is not in the local Node distribution")
+            with open(path, "rb") as f:
+                return f.read()
+        return fetch(f"https://nodejs.org/dist/{self.version}/{name}", hosts)
+
+    def checksums(self):
+        # Never from the cache: this is what every other check here rests on.
+        if self.sums is None:
+            sums = {}
+            for line in self.get("SHASUMS256.txt").decode("utf-8", "replace").splitlines():
+                parts = line.split()
+                if len(parts) == 2 and re.fullmatch(r"[0-9a-f]{64}", parts[0]):
+                    sums[parts[1]] = parts[0]
+            self.sums = sums
+        return self.sums
+
+    def index(self, platform):
+        if platform in self.digests:
+            held = self.digests[platform]
+            if isinstance(held, ProofUnavailable):
+                raise held
+            return held
+        try:
+            sums = self.checksums()
+            name = next((n for n in (f"node-{self.version}-{platform}.tar.xz", f"node-{self.version}-{platform}.tar.gz")
+                         if n in sums), None)
+            if not name:
+                raise ProofUnavailable(f"nodejs.org publishes no {platform} tarball for {self.version}")
+            cached = os.path.join(self.cache, f"node-{sums[name]}") if self.cache else None
+            body = None
+            if cached and os.path.isfile(cached):
+                with open(cached, "rb") as f:
+                    body = f.read()
+                if hashlib.sha256(body).hexdigest() != sums[name]:
+                    body = None
+            if body is None:
+                body = self.get(name)
+                if hashlib.sha256(body).hexdigest() != sums[name]:
+                    raise ProofUnavailable(f"{name} does not match SHASUMS256.txt")
+                if cached:
+                    os.makedirs(self.cache, exist_ok=True)
+                    with open(cached, "wb") as f:
+                        f.write(body)
+            self.digests[platform] = (name, tar_digests(body))
+        except ProofUnavailable as e:
+            self.digests[platform] = e
+            raise
+        return self.digests[platform]
+
+    @staticmethod
+    def sniff(data):
+        """The platform an executable was built for, from its header, or None."""
+        if data[:4] == b"\x7fELF" and len(data) > 20:
+            return {0x3E: "linux-x64", 0xB7: "linux-arm64"}.get(int.from_bytes(data[18:20], "little"))
+        if data[:4] == b"\xcf\xfa\xed\xfe" and len(data) > 8:
+            return {0x01000007: "darwin-x64", 0x0100000C: "darwin-arm64"}.get(int.from_bytes(data[4:8], "little"))
+        return None
+
+    def prove(self, segs, digest, data):
+        at = next((i for i in range(len(segs) - 2) if segs[i] == "runtime" and segs[i + 1] == "node"), None)
+        if at is None:
+            return None
+        rel = "/".join(segs[at + 2:])
+        first = self.sniff(data)
+        order = ([first] if first else []) + [p for p in self.PLATFORMS if p in self.digests and p != first] \
+            + [p for p in self.PLATFORMS if p not in self.digests and p != first]
+        reasons = []
+        for platform in order:
+            try:
+                name, held = self.index(platform)
+            except ProofUnavailable as e:
+                reasons.append(str(e))
+                continue
+            if held.get(rel) == digest:
+                return (f"Node.js {self.version} {platform}, identical to {rel} in {name}, "
+                        "whose sha256 nodejs.org's SHASUMS256.txt publishes")
+            if first:
+                # An executable is proved against its own platform or not at all.
+                break
+        raise ProofUnavailable(reasons[0] if reasons else f"differs from every Node.js {self.version} tarball tried")
+
+
+class Provenance:
+    """Asks each proof in turn whether a blob's exact bytes came from upstream."""
+
+    def __init__(self, npm=None, node=None):
+        self.provers = [p for p in (node, npm) if p]
+        self.unproven = set()
+
+    def prove(self, label, data):
+        path = label.rsplit("!", 1)[-1].replace("\\", "/")
+        while path.startswith("./"):
+            path = path[2:]
+        segs = [s for s in path.split("/") if s]
+        digest = hashlib.sha256(data).hexdigest()
+        reasons = []
+        for prover in self.provers:
+            try:
+                proof = prover.prove(segs, digest, data)
+            except ProofUnavailable as e:
+                reasons.append(str(e))
+                continue
+            if proof:
+                return proof
+        if reasons:
+            self.unproven.add(f"{label}: {reasons[0]}")
+        return None
+
+
 class Scanner:
-    def __init__(self, rules, allow, identities, checks, lenient=None):
+    def __init__(self, rules, allow, identities, checks, lenient=None, provenance=None):
+        self.provenance = provenance
+        # (finding, proof) for every hit excused because its bytes are upstream's.
+        self.exempted = set()
+        # Findings in the order they were made, so a blob can tell which are its own.
+        self.log = []
         self.rules = rules
         self.allow = {}
         for classes, rx in allow:
@@ -371,7 +683,10 @@ class Scanner:
         self.budget = max_unpacked()
 
     def add(self, where, cls):
-        self.findings.add(f"{where}: {cls}")
+        finding = f"{where}: {cls}"
+        if finding not in self.findings:
+            self.findings.add(finding)
+            self.log.append(finding)
 
     def find(self, body, limit=MAX_PER_CLASS_PER_FILE):
         """[(class, line number)] of hits no allow rule covers, in linear time.
@@ -651,42 +966,80 @@ class Scanner:
         return b"".join(out)
 
     def blob(self, label, data, depth=0):
-        """Text, or an archive by its bytes, unpacked and scanned member by member."""
+        """Text, or an archive by its bytes, unpacked and scanned member by member.
+
+        Returns True when this blob's identifier hits were exempted because its
+        exact bytes are proven upstream (see Provenance), so a containing
+        archive can leave those same bytes out of its own raw pass.
+        """
+        mark = len(self.log)
+        self.scan_blob(label, data, depth)
+        if not self.provenance:
+            return False
+        mine = [f for f in self.log[mark:] if f in self.findings and f.rsplit(": ", 1)[1] not in UNREAD_CLASSES]
+        if not mine:
+            return False
+        proof = self.provenance.prove(label, data)
+        if not proof:
+            return False
+        for f in mine:
+            self.findings.discard(f)
+            self.exempted.add((f, proof))
+        return True
+
+    def raw(self, label, data, proven):
+        """The container's own bytes: tar headers (uname, gname, pax), data after
+        a tar's end blocks, zip comments, a gzip's original name, ar headers.
+        Members stored uncompressed show up here too, whatever directory they
+        sit in, so the lenient (generic) classes are not applied to this pass.
+
+        proven: (start, end) spans of member bytes proven upstream. Those bytes
+        are replaced with newlines for this pass, and only those: every header,
+        every unproven member and anything between them is read as it is.
+        """
+        if proven:
+            masked = bytearray(data)
+            for start, end in proven:
+                masked[start:end] = b"\n" * (end - start)
+            data = bytes(masked)
+        held = self.skip
+        self.skip = held | set().union(*self.lenient.values()) if self.lenient else held
+        self.text(f"{label} (archive bytes)", data, line_numbers=False)
+        self.skip = held
+
+    def scan_blob(self, label, data, depth):
         self.set_skip(label)
         kind = archive_kind(data)
         if not kind:
             self.text(label, data)
             return
-        # The container's own bytes: tar headers (uname, gname, pax), data after
-        # a tar's end blocks, zip comments, a gzip's original name, ar headers.
-        # Members stored uncompressed show up here too, whatever directory they
-        # sit in, so the lenient (generic) classes are not applied to this pass.
-        held = self.skip
-        self.skip = held | set().union(*self.lenient.values()) if self.lenient else held
-        self.text(f"{label} (archive bytes)", data, line_numbers=False)
-        self.skip = held
+        proven = []
         if depth >= MAX_ARCHIVE_DEPTH:
+            self.raw(label, data, proven)
             # Too deep to open is not clean: it is a finding, and it refuses.
             self.add(label, "archive-too-deep")
             return
         try:
             if kind == "zip":
-                self.zip(label, data, depth)
+                self.zip(label, data, depth, proven)
             elif kind == "tar":
-                self.tar(label, data, depth)
+                self.tar(label, data, depth, proven)
             elif kind == "ar":
-                self.ar(label, data, depth)
+                self.ar(label, data, depth, proven)
             else:
                 inner = self.inflate(kind, data, label)
                 if inner is not None:
                     self.blob(f"{label}!", inner, depth + 1)
         except (zipfile.BadZipFile, zipfile.LargeZipFile, tarfile.TarError, OSError, EOFError, lzma.LZMAError,
                 zlib.error, ValueError, RuntimeError, NotImplementedError):
-            # Unreadable is not clean. The raw bytes were scanned above; say the
+            # Unreadable is not clean. The raw bytes are scanned below; say the
             # rest could not be read.
             self.add(label, "unreadable-archive")
+        # After the members, so it knows which of them were proven.
+        self.set_skip(label)
+        self.raw(label, data, proven)
 
-    def zip(self, label, data, depth):
+    def zip(self, label, data, depth, proven):
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             if z.comment:
                 self.text(f"{label} (comment)", z.comment, line_numbers=False)
@@ -709,10 +1062,14 @@ class Scanner:
                         if not self.charge(len(chunk), inner):
                             return
                         parts.append(chunk)
-                self.blob(inner, b"".join(parts), depth + 1)
+                content = b"".join(parts)
+                if self.blob(inner, content, depth + 1):
+                    span = zip_member_span(data, info, content)
+                    if span:
+                        proven.append(span)
                 self.set_skip(label)
 
-    def tar(self, label, data, depth):
+    def tar(self, label, data, depth, proven):
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as t:
             for i, m in enumerate(t, 1):
                 inner = self.member(label, m.name, i)
@@ -726,10 +1083,11 @@ class Scanner:
                     continue
                 f = t.extractfile(m)
                 # Already inside bytes that were charged when they were unpacked.
-                self.blob(inner, f.read() if f else b"", depth + 1)
+                if self.blob(inner, f.read() if f else b"", depth + 1) and not m.issparse():
+                    proven.append((m.offset_data, m.offset_data + m.size))
                 self.set_skip(label)
 
-    def ar(self, label, data, depth):
+    def ar(self, label, data, depth, proven):
         """The ar container a .deb is: control.tar.* and data.tar.* inside."""
         pos, i = 8, 0
         while pos + 60 <= len(data):
@@ -741,9 +1099,77 @@ class Scanner:
             size = int(header[48:58].strip() or b"0")
             body = data[pos + 60:pos + 60 + size]
             inner = self.member(label, raw_name, i)
-            self.blob(inner, body, depth + 1)
+            if self.blob(inner, body, depth + 1):
+                proven.append((pos + 60, pos + 60 + len(body)))
             self.set_skip(label)
             pos += 60 + size + (size % 2)
+
+
+def zip_member_span(data, info, content):
+    """(start, end) of a zip member's compressed bytes to mask as proven, or None.
+
+    The mask is a strict whitelist, not a length read from a header. A member's
+    compressed bytes are masked only when every check here holds, and then only
+    the local header's data through compress_size, nothing more. A stored member
+    whose file size is not its compressed size, a deflate stream that is not
+    exactly the proven bytes, any other method (bzip2, lzma), a local header
+    that names another member or states different sizes, or a data descriptor
+    whose sizes disagree all leave the member unmasked, so the raw pass reads it
+    and any hit in it stands.
+    """
+    start = info.header_offset
+    header = data[start:start + 30]
+    if len(header) < 30 or header[:4] != b"PK\x03\x04":
+        return None
+    name_len = int.from_bytes(header[26:28], "little")
+    extra_len = int.from_bytes(header[28:30], "little")
+    body = start + 30 + name_len + extra_len
+    if body + info.compress_size > len(data):
+        return None
+    # The local header must name the member the central directory names, and
+    # state the same method and sizes. With a data descriptor (flag bit 3) the
+    # sizes sit in a descriptor right after the compressed data instead.
+    if data[start + 30:start + 30 + name_len] != info.filename.encode("utf-8", "surrogateescape"):
+        return None
+    flags = int.from_bytes(header[6:8], "little")
+    method = int.from_bytes(header[8:10], "little")
+    if method != info.compress_type:
+        return None
+    if flags & 0x08:
+        descriptor = body + info.compress_size
+        if descriptor + 16 > len(data) or data[descriptor:descriptor + 4] != b"PK\x07\x08":
+            return None
+        if int.from_bytes(data[descriptor + 8:descriptor + 12], "little") != info.compress_size:
+            return None
+        if int.from_bytes(data[descriptor + 12:descriptor + 16], "little") != info.file_size:
+            return None
+    elif (int.from_bytes(header[18:22], "little") != info.compress_size
+          or int.from_bytes(header[22:26], "little") != info.file_size):
+        return None
+    stored = data[body:body + info.compress_size]
+    proven = hashlib.sha256(content).digest()
+    if method == zipfile.ZIP_STORED:
+        if info.file_size != info.compress_size or hashlib.sha256(stored).digest() != proven:
+            return None
+    elif method == zipfile.ZIP_DEFLATED:
+        d = zlib.decompressobj(-15)
+        try:
+            # One byte past the proven size is enough to refuse an oversized
+            # member, and stops a crafted one inflating without bound first.
+            out = d.decompress(stored, info.file_size + 1)
+        except zlib.error:
+            return None
+        # One whole stream, nothing after it, that decompresses to exactly the
+        # bytes that were proven. The masked span also holds the stream's own
+        # Huffman tables, which zlib has validated and which are not byte
+        # aligned, so no readable identifier can sit in them.
+        if not d.eof or d.unused_data or d.unconsumed_tail:
+            return None
+        if len(out) != info.file_size or hashlib.sha256(out).digest() != proven:
+            return None
+    else:
+        return None
+    return (body, body + info.compress_size)
 
 
 def archive_kind(data):
@@ -980,7 +1406,8 @@ def main(argv):
         if flag in ("-h", "--help"):
             print(__doc__)
             return 0
-        if flag in ("--checks", "--patterns", "--allow", "--identity", "--ref", "--lenient"):
+        if flag in ("--checks", "--patterns", "--allow", "--identity", "--ref", "--lenient",
+                    "--prove-npm", "--prove-node", "--proof-cache", "--node-dist"):
             if not argv:
                 raise ScanError(f"{flag} needs a value")
             value = argv.pop(0)
@@ -1001,6 +1428,11 @@ def main(argv):
     if CI_MODE and (opts.get("patterns") or opts.get("allow") or opts.get("identity") or opts["lenient"]
                     and set(opts["lenient"]) != {"node_modules"}):
         raise ScanError("--ci takes its list from $PRIVATE_IDENTIFIERS only")
+    # A proof changes nothing about the list. Its trust roots are a lockfile and
+    # a version pin from the repository, and nodejs.org itself, never a local
+    # copy of SHASUMS256.txt.
+    if CI_MODE and opts.get("node-dist"):
+        raise ScanError("--ci reads Node's checksums from nodejs.org only")
     if not argv:
         print(__doc__)
         return 2
@@ -1017,7 +1449,16 @@ def main(argv):
     rules, allow, identities = resolve(opts)
     if "policy" in checks and not identities:
         raise ScanError("policy check needs identity.txt (the one allowed commit identity)")
-    sc = Scanner(rules if "identifiers" in checks else [], allow, identities, checks, opts["lenient"])
+    provenance = None
+    if opts.get("prove-npm") or opts.get("prove-node"):
+        if mode != "path":
+            raise ScanError("--prove-npm and --prove-node apply to path mode only")
+        cache = opts.get("proof-cache")
+        provenance = Provenance(
+            NpmProof(opts["prove-npm"], cache) if opts.get("prove-npm") else None,
+            NodeProof(opts["prove-node"], cache, opts.get("node-dist")) if opts.get("prove-node") else None,
+        )
+    sc = Scanner(rules if "identifiers" in checks else [], allow, identities, checks, opts["lenient"], provenance)
     for i, ref in enumerate(opts["ref"], 1):
         sc.names(ref, f"ref #{i}")
     if mode in ("range", "history"):
@@ -1043,12 +1484,19 @@ def main(argv):
     found = sorted(sc.findings)
     for f in found:
         print(f"  {f}")
+    if provenance:
+        # Why a hit in a third-party file was not excused: the reason, never the match.
+        for note in sorted(provenance.unproven):
+            print(f"  not proven upstream: {note}")
+    for f, proof in sorted(sc.exempted):
+        print(f"  exempt, proven upstream bytes: {f}; {proof}")
     classes = {}
     for f in found:
         c = f.rsplit(": ", 1)[1]
         classes[c] = classes.get(c, 0) + 1
     by = ", ".join(f"{k} {v}" for k, v in sorted(classes.items()))
-    print(f"privacy-scan: {summary}, rules {len(sc.rules)}, findings {len(found)}{' (' + by + ')' if by else ''}")
+    exempt = f", exempted {len(sc.exempted)}" if provenance else ""
+    print(f"privacy-scan: {summary}, rules {len(sc.rules)}, findings {len(found)}{' (' + by + ')' if by else ''}{exempt}")
     return 1 if found else 0
 
 

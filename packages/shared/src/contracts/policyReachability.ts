@@ -161,6 +161,12 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'outreach.minimumValue': { where: 'ADVANCED_ONLY' },
   'outreach.mode': { where: 'EASY_AND_ADVANCED' },
   'outreach.requireTopicMatch': { where: 'ADVANCED_ONLY' },
+  'quality.peerReview.enabled': { where: 'ADVANCED_ONLY' },
+  'quality.peerReview.peerAgentId': { where: 'ADVANCED_ONLY' },
+  'quality.peerReview.timeoutMs': {
+    where: 'INTERNAL',
+    why: 'How long a peer critique is awaited before the reply goes on without it. Slow peers are skipped, so there is nothing to tune.',
+  },
   'rate.maxActionsPerDay': { where: 'ADVANCED_ONLY' },
   'rate.maxActionsPerHour': { where: 'ADVANCED_ONLY' },
   'rate.minSecondsBetweenActions': { where: 'ADVANCED_ONLY' },
@@ -189,6 +195,15 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'stance.onConflict': { where: 'ADVANCED_ONLY' },
   'stance.trackCommitments': { where: 'ADVANCED_ONLY' },
   'stance.trackPredictions': { where: 'ADVANCED_ONLY' },
+  // Advanced only, and off: speaking about simulated results in public is a
+  // decision an owner makes on purpose, never one Easy Mode makes for them.
+  'studio.paperRecordWindow': { where: 'ADVANCED_ONLY' },
+  'studio.postPaperPnl': { where: 'ADVANCED_ONLY' },
+  'studio.postPaperRecord': { where: 'ADVANCED_ONLY' },
+  // Advanced only and off, for the same reason as the paper record: a public
+  // post about a study of other people's wallets is a decision made on purpose.
+  'studio.postTraderDna': { where: 'ADVANCED_ONLY' },
+  'studio.traderDnaStudyId': { where: 'ADVANCED_ONLY' },
   'support.describeOwnRuntime': { where: 'ADVANCED_ONLY' },
   'support.enabled': { where: 'EASY_AND_ADVANCED' },
   'support.subject': { where: 'ADVANCED_ONLY' },

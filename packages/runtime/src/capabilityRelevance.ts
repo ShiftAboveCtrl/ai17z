@@ -111,6 +111,14 @@ const FAMILY_HINTS: Record<string, string[]> = {
   feed: ['feed', 'rss', 'blog'],
   web: ['website', 'web page', 'archive', 'wayback'],
   storage: ['ipfs', 'arweave', 'cid'],
+  // Phrases, never single words: "paper" alone is as often a study, and
+  // "trading" already lifts the market family.
+  studio: ['paper trading', 'paper trades', 'paper record', 'paper results', 'track record', 'your trading', 'simulated trading',
+    // The Trader DNA study. Phrases again: "wallet" alone belongs to the address family.
+    'trader dna', 'dna study', 'wallet study', 'smart wallet', 'smart money', 'which wallets'],
+  // Phrases, never single words: "voice" alone is as often audio.
+  studio_voice: ['publish my voice', 'share my voice', 'publish your voice', 'share your voice', 'publish voice', 'share this voice', 'unpublish', 'published voice', 'list my voice', 'voice on studio'],
+  studio_home: ['public home', 'publish home', 'unpublish home', 'record link'],
   // Phrases, never "rank" or "season" alone: both are ordinary words.
   league: ['the league', 'paper league', 'my league', 'league standing', 'league rank', 'my standing', 'leaderboard', 'this season'],
 };
@@ -163,6 +171,7 @@ function mentions(asked: Set<string>, hint: string): boolean {
 const SELF_CHANGE = new Set(['agent.change_setting', 'agent.undo_change', 'agent.cannot_change']);
 
 export function familyOf(capabilityId: string): string {
+  if (capabilityId === 'agent.memory') return 'memory';
   if (SELF_CHANGE.has(capabilityId)) return 'self';
   const dot = capabilityId.indexOf('.');
   return dot === -1 ? capabilityId : capabilityId.slice(0, dot);

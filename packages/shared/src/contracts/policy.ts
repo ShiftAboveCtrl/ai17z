@@ -5,6 +5,7 @@ import { RelationshipVoice } from './relationship';
 import { StancePolicy } from './stance';
 import { EngagementPolicy, GrowthPolicy, OutreachPolicy, ToneMirroring } from './engagement';
 import { VoicePolicy } from './voice';
+import { TRADER_DNA_STUDY_ID } from './studioTraderDna';
 
 /**
  * Helping people with the software this agent runs on.
@@ -344,6 +345,36 @@ export const LearningPolicy = z.object({
 });
 export type LearningPolicy = z.infer<typeof LearningPolicy>;
 
+/**
+ * A second opinion from another of the owner's agents, before a reply goes out.
+ *
+ * Off by default, and that default is the cost control: turning it on adds one
+ * critique call by the peer's model to every reply that reaches the voice step.
+ * The peer only comments. It is handed the draft and the message being answered
+ * and nothing else (no memory, no policy, no credentials, no capabilities), its
+ * answer is read as a fixed shape that has no field an action could ride in, and
+ * what it said reaches the reply only as notes inside the voice rewrite brief.
+ * The validator, the dash and emoji rules and the identity checks run on the
+ * result exactly as they do on any rewrite, so enabling this never changes the
+ * persona, the identity, the permissions or what the agent is reticent about.
+ */
+export const PeerReviewPolicy = z.object({
+  enabled: z.boolean().default(false),
+  /**
+   * The agent whose model is asked. Must belong to the same owner and cannot
+   * be this agent; anything else is recorded as skipped, never as a failure.
+   */
+  peerAgentId: z.string().min(1).max(64).nullable().default(null),
+  /** How long the critique is given. A slow peer is skipped, never waited on. */
+  timeoutMs: z.number().int().min(1_000).max(60_000).default(15_000),
+});
+export type PeerReviewPolicy = z.infer<typeof PeerReviewPolicy>;
+
+export const QualityPolicy = z.object({
+  peerReview: PeerReviewPolicy.prefault({}),
+});
+export type QualityPolicy = z.infer<typeof QualityPolicy>;
+
 export const RESPONSE_SPEEDS = ['FAST', 'BALANCED', 'THOROUGH'] as const;
 export const ResponseSpeed = z.enum(RESPONSE_SPEEDS);
 export type ResponseSpeed = (typeof RESPONSE_SPEEDS)[number];
@@ -407,6 +438,46 @@ export const RESPONSE_SPEED_LEVERS = [
   'capabilitySteps',
 ] as const;
 
+/**
+ * What the agent may say, unprompted, about the paper track record its owner
+ * keeps on AI17Z Studio.
+ *
+ * Answering "how is your paper trading going" in owner chat needs only the
+ * `studio.paper_record` capability, which is off until the owner enables it.
+ * Saying it in public is a separate decision, because a public post about
+ * simulated results is the one place they can be read as investment
+ * performance. Both of these are therefore off by default, and neither can be
+ * turned on by anything the agent writes.
+ */
+export const StudioPolicy = z.object({
+  /**
+   * Let the agent put a post about its complete paper window into the idea
+   * backlog. The post then goes through the same reticence check, identity
+   * policy, cadence and quality gate as any other post it originates.
+   */
+  postPaperRecord: z.boolean().default(false),
+  /**
+   * Whether a public post may state profit or loss, returns and win counts.
+   * Off: the post says how many simulated trades were made and on what cost
+   * assumptions, and nothing about whether they made money.
+   */
+  postPaperPnl: z.boolean().default(false),
+  /** Which complete window a public post is about. */
+  paperRecordWindow: z.enum(['7d', '30d', '90d']).default('7d'),
+  /**
+   * Let the agent put one post about a published Trader DNA study into the idea
+   * backlog. Off by default, and it needs `traderDnaStudyId` too. The post says
+   * which behaviours survived Studio's luck filters at what evidence level and
+   * sample size, and that nothing was traded. It can never say a wallet is
+   * smart or worth following, and it names no address: a claim about a wallet
+   * is blocked on the finished text, whatever the study said.
+   */
+  postTraderDna: z.boolean().default(false),
+  /** The one published study a public post is about. Null: none chosen, so none is posted. */
+  traderDnaStudyId: z.string().regex(TRADER_DNA_STUDY_ID).nullable().default(null),
+});
+export type StudioPolicy = z.infer<typeof StudioPolicy>;
+
 /** The complete, versioned policy document attached to an agent. */
 export const PolicyConfig = z.object({
   automation: z
@@ -450,6 +521,10 @@ export const PolicyConfig = z.object({
   responseSpeed: ResponseSpeed.default('BALANCED'),
   /** Whether the agent learns from outcomes. See LearningPolicy. */
   learning: LearningPolicy.prefault({}),
+  /** Checks on a draft beyond the agent's own, such as a peer's second opinion. */
+  quality: QualityPolicy.prefault({}),
+  /** Speaking publicly about the owner's paper record on AI17Z Studio. Off by default. */
+  studio: StudioPolicy.prefault({}),
 });
 export type PolicyConfig = z.infer<typeof PolicyConfig>;
 

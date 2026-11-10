@@ -19,8 +19,22 @@ import type { AccountStatus, CapacityCadence, CapacityClass } from '@xbam/shared
  * trouble.
  */
 
+/**
+ * What a sentence should call the network an account is on.
+ *
+ * The breaker, the budget and these sentences were written for X and serve any
+ * channel whose reads spend from the one budget. Naming X to a Bluesky account
+ * is not a cosmetic slip: the owner reading "X asked this account to slow down"
+ * goes looking for a problem on a service the account is not on.
+ */
+export function platformName(channel?: string | null): string {
+  return channel === 'bluesky' ? 'Bluesky' : 'X';
+}
+
 /** What the runtime has been seeing lately, all of it already recorded. */
 export interface HealthFacts {
+  /** Which channel the account is on. Absent means X, the first one. */
+  channel?: string | null;
   /** The sign-in state, which outranks everything below it. */
   status: AccountStatus;
   /** Writes that failed in the trailing hour. */
@@ -72,12 +86,13 @@ const minutes = (n: number) => n * 60_000;
  * them.
  */
 export function judgeHealth(facts: HealthFacts): HealthVerdict {
+  const platform = platformName(facts.channel);
   if (NEEDS_A_PERSON.includes(facts.status)) {
     return {
       health: 'HUMAN_ACTION_REQUIRED',
       reason:
         facts.status === 'CHALLENGE_REQUIRES_USER'
-          ? 'X is asking for something only you can give it. AI17Z never answers one of these.'
+          ? `${platform} is asking for something only you can give it. AI17Z never answers one of these.`
           : `This account is ${facts.status.toLowerCase().replace(/_/g, ' ')} and needs you to sign in again.`,
       holdMs: null,
     };
@@ -118,10 +133,10 @@ export function judgeHealth(facts: HealthFacts): HealthVerdict {
       health: 'COOLDOWN',
       reason:
         facts.rateLimits >= 3
-          ? `X asked this account to slow down ${facts.rateLimits} times in the last hour, so it has stopped going looking for people.`
+          ? `${platform} asked this account to slow down ${facts.rateLimits} times in the last hour, so it has stopped going looking for people.`
           : facts.failedWrites >= 5
             ? `${facts.failedWrites} actions failed in the last hour, so it has stopped going looking for people.`
-            : `X failed to draw its pages ${stalled} times in the last hour, so this account is resting before it asks again.`,
+            : `${platform} failed to draw its pages ${stalled} times in the last hour, so this account is resting before it asks again.`,
       holdMs: minutes(60),
     };
   }
@@ -131,9 +146,9 @@ export function judgeHealth(facts: HealthFacts): HealthVerdict {
       health: 'DEGRADED',
       reason:
         facts.rateLimits >= 1
-          ? `X asked this account to slow down ${facts.rateLimits === 1 ? 'once' : `${facts.rateLimits} times`} recently, so it is reading less and not going looking for people.`
+          ? `${platform} asked this account to slow down ${facts.rateLimits === 1 ? 'once' : `${facts.rateLimits} times`} recently, so it is reading less and not going looking for people.`
           : stalled >= 2
-            ? `X did not finish drawing ${stalled} pages recently, so this account is reading less until it does.`
+            ? `${platform} did not finish drawing ${stalled} pages recently, so this account is reading less until it does.`
             : facts.failingSources >= 2 && facts.failedWrites < 2
               ? `${facts.failingSources} discovery sources are failing, so optional growth is paused while that settles.`
               : 'This account is hitting trouble often enough that it has paused going looking for people.',
@@ -171,6 +186,8 @@ export interface CapacityState {
 /** What has happened since the breaker last moved. */
 export interface CapacitySince {
   status: AccountStatus;
+  /** Which channel the account is on. Absent means X. */
+  channel?: string | null;
   rateLimits: number;
   stalled: number;
   /** Pages X answered with its own error page. See BROKEN_AS_PRESSURE. */
@@ -238,6 +255,7 @@ export function settleCapacity(
   const stalled = since.stalled + (broken >= BROKEN_AS_PRESSURE ? broken : 0);
   const snapshot = judgeHealth({
     status: since.status,
+    channel: since.channel ?? null,
     failedWrites: since.failedWrites,
     rateLimits: since.rateLimits,
     failingSources: since.failingSources,
@@ -281,7 +299,9 @@ export function settleCapacity(
     // Anything at all since slowing down means slowing down was not enough.
     if (pushback > 0 || snapshot.health === 'COOLDOWN') {
       return trip(
-        snapshot.health === 'HEALTHY' ? 'X pushed back again while this account was already reading less.' : snapshot.reason,
+        snapshot.health === 'HEALTHY'
+          ? `${platformName(since.channel)} pushed back again while this account was already reading less.`
+          : snapshot.reason,
       );
     }
     if (prev.until && now < prev.until) return prev;
@@ -326,7 +346,7 @@ export interface CapacityVerdict {
 }
 
 /**
- * Whether one more read of X may happen now, for this class.
+ * Whether one more read may happen now, for this class.
  *
  * The shares are the protection. Broad growth may use only the first part of
  * the budget, a watched account a larger part, and somebody who wrote to the
@@ -334,6 +354,8 @@ export interface CapacityVerdict {
  * waits, and when it is in trouble, only what people sent is still read.
  */
 export function readAllowance(input: {
+  /** Which channel the account is on. Absent means X. */
+  channel?: string | null;
   state: CapacityState;
   klass: CapacityClass;
   readsLast10Minutes: number;
@@ -356,6 +378,7 @@ export function readAllowance(input: {
   forReply?: boolean;
 }): CapacityVerdict {
   const { state, klass, config, now } = input;
+  const platform = platformName(input.channel);
   if (input.forReply && klass === 'DIRECT' && state.health !== 'HUMAN_ACTION_REQUIRED') {
     return { allowed: true, message: 'A reply to somebody who wrote in.', retryAfterMs: null };
   }
@@ -371,7 +394,7 @@ export function readAllowance(input: {
   if (state.health === 'COOLDOWN' && klass !== 'DIRECT') {
     return {
       allowed: false,
-      message: `Cooling down: ${state.reason ?? 'X pushed back.'} Only what people send this account is being read.`,
+      message: `Cooling down: ${state.reason ?? `${platform} pushed back.`} Only what people send this account is being read.`,
       retryAfterMs: until ?? minutes(5),
     };
   }
@@ -386,7 +409,7 @@ export function readAllowance(input: {
     if (input.readsLast10Minutes >= budget) {
       return {
         allowed: false,
-        message: `This account has made ${input.readsLast10Minutes} reads of X in ten minutes, its whole budget${recovering}.`,
+        message: `This account has made ${input.readsLast10Minutes} reads of ${platform} in ten minutes, its whole budget${recovering}.`,
         retryAfterMs: wait,
       };
     }
@@ -399,7 +422,7 @@ export function readAllowance(input: {
     return {
       allowed: false,
       message:
-        `This account has made ${input.readsLast10Minutes} reads of X in ten minutes${recovering}. ` +
+        `This account has made ${input.readsLast10Minutes} reads of ${platform} in ten minutes${recovering}. ` +
         `${who} waits so the last ${budget - open} of ${budget} stay free for people who wrote in.`,
       retryAfterMs: wait,
     };
@@ -422,7 +445,13 @@ export function readAllowance(input: {
  * Nothing already under way is stopped by this: a write being verified is
  * checked by the executor that started it. What waits is the next one.
  */
-export function writeAllowance(state: CapacityState, klass: CapacityClass, now: Date): CapacityVerdict {
+export function writeAllowance(
+  state: CapacityState,
+  klass: CapacityClass,
+  now: Date,
+  channel?: string | null,
+): CapacityVerdict {
+  const platform = platformName(channel);
   const until = state.until && state.until > now ? state.until.getTime() - now.getTime() : null;
   if (state.health === 'HUMAN_ACTION_REQUIRED') {
     return { allowed: false, message: state.reason ?? 'This account needs you before it acts.', retryAfterMs: null };
@@ -439,14 +468,14 @@ export function writeAllowance(state: CapacityState, klass: CapacityClass, now: 
   if (state.health === 'COOLDOWN' && klass !== 'DIRECT') {
     return {
       allowed: false,
-      message: `Waiting out a cooldown before acting: ${state.reason ?? 'X pushed back.'}`,
+      message: `Waiting out a cooldown before acting: ${state.reason ?? `${platform} pushed back.`}`,
       retryAfterMs: until ?? minutes(5),
     };
   }
   if (state.health === 'DEGRADED' && klass === 'BROAD') {
     return {
       allowed: false,
-      message: `Not approaching anybody new while the account is reading less: ${state.reason ?? 'X pushed back recently.'}`,
+      message: `Not approaching anybody new while the account is reading less: ${state.reason ?? `${platform} pushed back recently.`}`,
       retryAfterMs: until ?? minutes(10),
     };
   }

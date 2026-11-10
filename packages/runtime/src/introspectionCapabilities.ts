@@ -33,13 +33,15 @@ import {
   deliberation as deliberationRepo,
   introspection,
   knowledge as knowledgeRepo,
+  memories as memoriesRepo,
   relationships as relationshipsRepo,
   stances as stancesRepo,
 } from '@xbam/database';
 import { defineCapability, registerCapability, collectDiagnostics, type AnyCapability } from '@xbam/tools';
-import type { ComponentHealth } from '@xbam/shared/contracts';
+import { InspectableMemory, MEMORY_SCOPES, type ComponentHealth } from '@xbam/shared/contracts';
 import { explainRehearsal } from './rehearse';
 import { describeLearning } from './learning';
+import { playbookStatus } from './playbookImport';
 
 const DAY_MS = 86_400_000;
 
@@ -103,12 +105,15 @@ const selfState = defineCapability({
     beliefs: z.number(),
     activeGoals: z.number(),
     people: z.record(z.string(), z.number()),
+    /** Which published playbook its paper mandate is set from, and at which version. Null when none. */
+    playbook: z.string().nullable(),
     detail: z.string(),
   }),
   modelCallable: true,
   timeoutMs: 10_000,
   async run(_input, ctx) {
     const agent = await agentsRepo.requireAgent(ctx.agentId);
+    const playbook = (await playbookStatus(agent.id))?.sentence ?? null;
     const [persona, links, memories, sources, stances, goals, people, wake] = await Promise.all([
       agentsRepo.getActivePersona(agent.id),
       accountsRepo.listAgentAccounts(agent.id),
@@ -133,6 +138,7 @@ const selfState = defineCapability({
       beliefs: stances.length,
       activeGoals: goals.length,
       people: people as Record<string, number>,
+      playbook,
       detail:
         links.length === 0
           ? 'No account is connected, so this agent cannot read or act anywhere yet.'
@@ -775,7 +781,52 @@ const recentChanges = defineCapability({
   },
 });
 
+// Model tool results need excerpts even when the owner stored a whole document.
+const MEMORY_EXCERPT_LENGTH = 1000;
+const MemoryExcerpt = InspectableMemory.extend({
+  truncated: z.boolean(),
+  evidence: z.array(InspectableMemory.shape.evidence.element.extend({ truncated: z.boolean() })),
+});
+
+const memory = defineCapability({
+  id: 'agent.memory',
+  name: 'What it remembers and why',
+  description: 'What do you remember about a subject and why? Search this agent memory by text and scope, with recorded retrieval reasons and source evidence. Use when asked what you remember, recall, forgot or were told. Missing evidence is not recorded; never invent it.',
+  category: 'ANALYTICS',
+  effect: 'READ',
+  risk: 'LOW',
+  audience: 'OWNER',
+  input: z.object({
+    search: z.string().trim().max(200).optional(),
+    scopes: z.array(z.enum(MEMORY_SCOPES)).optional(),
+    limit: z.number().int().min(1).max(50).default(20),
+    offset: z.number().int().min(0).default(0),
+  }),
+  output: z.object({ items: z.array(MemoryExcerpt), total: z.number(), truncated: z.boolean(), detail: z.string() }),
+  modelCallable: true,
+  timeoutMs: 10_000,
+  async run(input, ctx) {
+    const page = await memoriesRepo.inspectMemories({ ...input, agentId: ctx.agentId });
+    const items = page.items.map((item) => {
+      const evidence = item.evidence.map((source) => ({
+        ...source,
+        text: source.text?.slice(0, MEMORY_EXCERPT_LENGTH) ?? null,
+        truncated: (source.text?.length ?? 0) > MEMORY_EXCERPT_LENGTH,
+      }));
+      return {
+        ...item,
+        content: item.content.slice(0, MEMORY_EXCERPT_LENGTH),
+        summary: item.summary?.slice(0, MEMORY_EXCERPT_LENGTH) ?? null,
+        evidence,
+        truncated: item.content.length > MEMORY_EXCERPT_LENGTH || (item.summary?.length ?? 0) > MEMORY_EXCERPT_LENGTH || evidence.some((source) => source.truncated),
+      };
+    });
+    return { items, total: page.total, truncated: items.some((item) => item.truncated), detail: `Content, summaries and source text are limited to ${MEMORY_EXCERPT_LENGTH} characters each. Truncated flags mark shortened text; the owner memory API retains the full text. Reasons are the latest recorded pipeline retrieval reasons, not inferred explanations. Null means no retrieval reason was recorded. Sources and origin are recorded evidence. This search does not change retrieval or pin anything.` };
+  },
+});
+
 export const INTROSPECTION_CAPABILITIES = [
+  memory,
   selfState,
   healthReport,
   recentActivity,

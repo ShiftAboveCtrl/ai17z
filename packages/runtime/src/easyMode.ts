@@ -312,6 +312,9 @@ export function readEasyView(input: EasyViewInput): EasyView {
   // What Advanced has set that Easy Mode has no word for. Each entry is a
   // sentence, because a field name tells nobody what they would be losing.
   const beyond: string[] = [];
+  if (policy.quality.peerReview.enabled) {
+    beyond.push('Peer review is enabled. Easy Mode does not show it and will not change it.');
+  }
 
   if (!['AUTONOMOUS', 'REVIEW_BEFORE_ACTION'].includes(policy.automation.mode)) {
     beyond.push(

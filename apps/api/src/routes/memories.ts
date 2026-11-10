@@ -27,7 +27,7 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
       const query = parseQuery(SearchQuery, request);
-      const result = await memoriesRepo.searchMemories({
+      const result = await memoriesRepo.inspectMemories({
         agentId: agent.id,
         scopes: query.scopes ? query.scopes.split(',').map((s) => z.enum(MEMORY_SCOPES).parse(s.trim())) : undefined,
         handle: query.handle,
@@ -64,7 +64,7 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
         }),
         request,
       );
-      const result = await memoriesRepo.writeMemory({
+      const result = await memoriesRepo.writeOwnerMemory({
         agentId: agent.id,
         scope: body.scope,
         memoryType: body.memoryType,
@@ -102,7 +102,7 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
         }),
         request,
       );
-      return memoriesRepo.updateMemory(memory.id, body);
+      return memoriesRepo.updateOwnerMemory(memory.id, body);
     }),
   );
 
