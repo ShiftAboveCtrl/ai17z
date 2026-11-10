@@ -63,9 +63,7 @@ export type SeasonRead = { ok: true; season: LeagueSeasonDocument } | { ok: fals
 export function parseSeason(raw: unknown, askedSlug: string): SeasonRead {
   const parsed = LeagueSeasonDocument.safeParse(raw);
   if (!parsed.success) {
-    const first = parsed.error.issues[0];
-    const where = first?.path.join('.') || 'document';
-    return { ok: false, why: `Studio's season is not one this installation will apply (${where}: ${first?.message ?? 'unreadable'}), so none of it was used.` };
+    return { ok: false, why: 'Studio\'s season could not be validated, so none of it was used. It can be checked again.' };
   }
   const season = parsed.data;
   if (season.season.slug !== askedSlug) return { ok: false, why: 'Studio answered for a different season than the one asked for, so none of it was used.' };
@@ -78,7 +76,7 @@ export function parseSeason(raw: unknown, askedSlug: string): SeasonRead {
 /** Whether a read season may be newly entered now. Distinct from whether it is valid. */
 export function judgeEntry(season: LeagueSeasonDocument, now: Date): { ok: true } | { ok: false; why: string } {
   const s = season.season;
-  if (!season.local_agents.allowed) return { ok: false, why: season.local_agents.note ?? 'This season does not take an agent that runs on its owner\'s own installation.' };
+  if (!season.local_agents.allowed) return { ok: false, why: 'This season does not take an agent that runs on its owner\'s own installation.' };
   if (s.status !== 'OPEN') return { ok: false, why: `Entry to this season is not open (it is ${s.status.toLowerCase()}).` };
   if (now.getTime() >= Date.parse(s.entry_closes_at)) return { ok: false, why: 'Entry to this season has closed. An entry is not taken after the lock, and cannot be backfilled.' };
   return { ok: true };
@@ -260,7 +258,7 @@ const CAVEAT = 'These are simulated paper results, not real trades, and they say
 /** What the agent says about a standing Studio gave. Names Studio, says simulated and paper, and never guesses. */
 export function describeStanding(doc: LeagueStandingDocument, seasonTitle: string): string {
   const s = doc.standing;
-  const lead = `In the AI17Z Studio paper league season "${seasonTitle}" (simulated, paper only), `;
+  const lead = `In the AI17Z Studio paper league season ${JSON.stringify(seasonTitle)} (simulated, paper only), `;
   const basis = 'Studio worked this out from the paper fills this agent reported.';
   switch (s.state) {
     case 'NOT_STARTED':
@@ -271,14 +269,14 @@ export function describeStanding(doc: LeagueStandingDocument, seasonTitle: strin
         `${s.fills_counted} paper fill${s.fills_counted === 1 ? '' : 's'} counted. ${basis} ${CAVEAT}`
       );
     case 'PENDING':
-      return `${lead}this agent has no rank yet: ${s.reason ?? 'Studio has no usable valuation for it'}. I will not guess at one. ${basis} ${CAVEAT}`;
+      return `${lead}this agent has no rank yet: Studio has no usable valuation for it. I will not guess at one. ${basis} ${CAVEAT}`;
     case 'UNRANKED':
-      return `${lead}this agent is not ranked${s.reason ? `: ${s.reason}` : ''}. ${basis} ${CAVEAT}`;
+      return `${lead}this agent is not ranked by Studio. ${basis} ${CAVEAT}`;
   }
 }
 
 /** What the agent says when it cannot check. It still says what is true locally, and never a rank. */
-export function describeUnavailable(why: string, entry: { seasonSlug: string; endsAt: string } | null): string {
+export function describeUnavailable(_why: string, entry: { seasonSlug: string; endsAt: string } | null): string {
   const local = entry ? ` Its simulated paper mandate for "${entry.seasonSlug}" is still in place here until ${when(entry.endsAt)}.` : '';
-  return `I cannot check the league standing on Studio right now. ${why}${local} I will not guess at a rank.`;
+  return `I cannot check the league standing on Studio right now.${local} I will not guess at a rank.`;
 }

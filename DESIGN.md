@@ -19,3 +19,19 @@ Receipts extend the evidence record with Before, At post and Now. At post means 
 Trust: no buying or selling instructions, price predictions, safety verdicts, wallet attribution or signer. Sampling never posts directly. Show missing data, provider definitions and the actual job status and refusal reason. Publishing is an explicit option, disabled by default.
 
 States: baseline not read, unsupported chain, unavailable upstream, armed, condition latched, context only, pending idea, queued job, dry run, posted, declined. Errors use visible text and an alert live region. Long mints wrap anywhere.
+
+## Paper league entry extension
+
+This is a small addition to the existing agent Studio Command view. Follow the
+current Studio visual language and shared Panel component. The audience is an
+owner choosing a simulated season, and the primary action is Enter paper season.
+
+Use the existing ink, bone, border, input and button tokens, typography and rounded
+controls. Keep the form single column with visible labels and 48px controls.
+Name simulation before the action and require explicit consent before replacing
+the owner's paper mandate. Show current entry state and refusal or retry feedback.
+Hide the control while the journal is off. Preserve Studio's existing layout and
+assets; this addition introduces no imagery or motion.
+
+Check desktop at 1440px and mobile at 390px. Verify keyboard focus, error feedback,
+pending submission, alias correction, and the absence of horizontal overflow.

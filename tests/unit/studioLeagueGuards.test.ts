@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { agents, leagueBridge, trading, type LeagueEntryRow } from '@xbam/database';
+import { agents, leagueBridge, type LeagueEntryRow } from '@xbam/database';
 import { LeagueSeasonDocument } from '@xbam/shared/contracts';
 import { enterLeagueSeason, readLeagueSeason, readLeagueStanding, reportLeagueFills, sweepLeagueBridge } from '../../packages/runtime/src/studioLeague';
 import { studioInstallationRequest } from '../../packages/runtime/src/studioLink';
@@ -17,6 +17,7 @@ const entry = (): LeagueEntryRow => {
   const doc = document();
   return {
     id: randomUUID(), agentId: randomUUID(), ownerId: randomUUID(), entryKey: randomUUID(),
+    installationId: 'installation-1', linkedAt: now.toISOString(), studioOrigin: 'https://example.invalid', refusalCode: null,
     seasonSlug: 'week-45', alias: 'Night Owl', replacePaperMandate: false, season: doc,
     rulesHash: doc.season.rules_hash, startsAt: doc.season.starts_at, endsAt: doc.season.ends_at,
     fillsAcceptedUntil: doc.season.fills_accepted_until, remoteEntryId: 'ent_1', mandateId: randomUUID(),
@@ -41,7 +42,9 @@ describe('the local journal switch', () => {
     const open = vi.spyOn(leagueBridge, 'openEntries').mockRejectedValue(new Error('database reached'));
     const live = vi.spyOn(leagueBridge, 'liveEntryOf').mockRejectedValue(new Error('database reached'));
     const fills = vi.spyOn(leagueBridge, 'fillsOf').mockRejectedValue(new Error('database reached'));
-    expect(await readLeagueSeason('week-45', now)).toMatchObject({ ok: false, status: 503 });
+    const off = await readLeagueSeason('week-45', now);
+    expect(off).toMatchObject({ ok: false, status: 503 });
+    if (!off.ok) expect(off.why).not.toContain('AI17Z_LEAGUE_JOURNAL');
     expect(await enterLeagueSeason({ agentId: 'a', ownerId: 'o', slug: 'week-45', alias: 'Night Owl' }, now)).toMatchObject({ ok: false, status: 503 });
     expect(await sweepLeagueBridge(now)).toMatchObject({ entries: 0, recorded: 0, accepted: 0 });
     expect(await reportLeagueFills(entry(), now)).toMatchObject({ recorded: 0, accepted: 0 });
@@ -56,15 +59,11 @@ describe('frozen entry facts', () => {
     row[field] = field === 'rulesHash' ? 'b'.repeat(64) : new Date(Date.parse(row[field]) + 1000).toISOString();
     const readFills = vi.spyOn(leagueBridge, 'fillsOf').mockResolvedValue([]);
     vi.spyOn(leagueBridge, 'paperFillsUnderMandate').mockResolvedValue([]);
-    const note = vi.spyOn(leagueBridge, 'noteProblem').mockResolvedValue();
-    const end = vi.spyOn(leagueBridge, 'endEntry').mockResolvedValue();
-    const pause = vi.spyOn(trading, 'setMandatePaused').mockResolvedValue(null);
+    const stop = vi.spyOn(leagueBridge, 'stopEntry').mockResolvedValue();
     await reportLeagueFills(row, now);
     expect(readFills).not.toHaveBeenCalled();
     expect(studioInstallationRequest).not.toHaveBeenCalled();
-    expect(note).toHaveBeenCalledWith(row.id, expect.stringMatching(/frozen|match/));
-    expect(end).toHaveBeenCalled();
-    expect(pause).toHaveBeenCalledWith(row.mandateId, true);
+    expect(stop).toHaveBeenCalledWith(row.id, expect.stringMatching(/frozen|match/), 'ENDED');
   });
 
   it.each([503, 403, 409])('preserves Studio refusal %i without treating it as a season', async (status) => {

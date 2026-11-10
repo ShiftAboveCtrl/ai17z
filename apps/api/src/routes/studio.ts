@@ -1,10 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { ops, studio as ledger } from '@xbam/database';
-import { ActivityEventId } from '@xbam/shared/contracts';
+import { agents, leagueBridge, ops, studio as ledger } from '@xbam/database';
+import { NotFoundError } from '@xbam/shared';
+import { ActivityEventId, LEAGUE_SLUG, LeagueAlias } from '@xbam/shared/contracts';
 import {
   abandonStudioPurchase,
   beginStudioLink,
   disconnectStudio,
+  enterLeagueSeason,
+  leagueJournalEnabled,
   pollStudioLink,
   prepareStudioPurchase,
   recordStudioPurchaseSent,
@@ -53,6 +56,21 @@ const legOf = (request: Parameters<typeof params>[0]): number | null => {
  * the device code. The pairing code is shown because the owner types it.
  */
 export async function registerStudioRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/agents/:agentId/studio/league', handler(async (request) => {
+    const user = await requireUser(request);
+    const agentId = params(request).agentId ?? '';
+    const agent = await agents.getAgent(agentId);
+    if (!agent || agent.ownerId !== user.id) throw new NotFoundError('Agent');
+    if (!leagueJournalEnabled()) return { enabled: false, entry: null };
+    const row = await leagueBridge.latestEntryOf(agentId);
+    return { enabled: true, entry: row ? { seasonSlug: row.seasonSlug, alias: row.alias, status: row.status, reason: row.statusReason ?? row.lastProblem } : null };
+  }));
+  app.post('/api/agents/:agentId/studio/league/entry', handler(async (request) => {
+    const user = await requireUser(request);
+    const body = parseBody(z.object({ slug: z.string().regex(LEAGUE_SLUG), alias: LeagueAlias, replacePaperMandate: z.boolean().optional() }).strict(), request);
+    return enterLeagueSeason({ ...body, agentId: params(request).agentId ?? '', ownerId: user.id });
+  }));
+
   app.get('/api/studio/activity-tape', handler(async (request) => {
     await requireUser(request);
     return studioActivityTapeSetting();

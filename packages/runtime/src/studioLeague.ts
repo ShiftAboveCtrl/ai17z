@@ -1,4 +1,4 @@
-import { agents as agentsRepo, leagueBridge, trading } from '@xbam/database';
+import { agents as agentsRepo, leagueBridge, ops } from '@xbam/database';
 import type { LeagueEntryRow } from '@xbam/database';
 import { NotFoundError, backoffMs, createLogger, errorMessage } from '@xbam/shared';
 import {
@@ -14,7 +14,7 @@ import {
   type LeagueFillReport,
   type LeagueSeasonDocument,
 } from '@xbam/shared/contracts';
-import { studioInstallationRequest } from './studioLink';
+import { studioInstallationRequest, studioLinkedContext, type StudioLinkScope } from './studioLink';
 import {
   contentHashOf,
   canonicalJson,
@@ -37,8 +37,8 @@ const log = createLogger('studio-league');
  * ## What it cannot do
  *
  * It reaches no wallet, no signer and not Studio's live trade path: the only trading
- * code it calls is `trading.setMandatePaused` (to stop a cancelled season's
- * paper mandate) and the repository functions that write a PAPER mandate.
+ * code it calls is the league repository, which writes a PAPER mandate and
+ * atomically pauses that mandate when an entry must stop.
  * `tests/unit/leagueBridge.test.ts` reads this file's imports to keep that true.
  *
  * ## What it keeps
@@ -54,7 +54,7 @@ export type Problem = { ok: false; why: string; status?: number };
 
 /** Core requires explicit opt-in even when Studio enables its journal in production. */
 export const leagueJournalEnabled = (): boolean => process.env.AI17Z_LEAGUE_JOURNAL === '1';
-const journalOff = (): Problem => ({ ok: false, status: 503, why: 'The paper league bridge is off. Set AI17Z_LEAGUE_JOURNAL=1 to enable it.' });
+const journalOff = (): Problem => ({ ok: false, status: 503, why: 'The paper league bridge is off.' });
 
 const seasonPath = (slug: string) => `${BASE}/${slug}`;
 
@@ -63,15 +63,15 @@ const seasonPath = (slug: string) => `${BASE}/${slug}`;
 // ---------------------------------------------------------------------------
 
 /** One published season, strictly parsed, current and hash-checked, or a sentence. Nothing is written. */
-export async function readLeagueSeason(slug: string, now: Date = new Date()): Promise<{ ok: true; season: LeagueSeasonDocument } | Problem> {
+export async function readLeagueSeason(slug: string, now: Date = new Date(), expectedLink?: StudioLinkScope): Promise<{ ok: true; season: LeagueSeasonDocument } | Problem> {
   if (!leagueJournalEnabled()) return journalOff();
   if (!LEAGUE_SLUG.test(slug)) return { ok: false, why: 'That is not the name of a league season.' };
-  const answer = await studioInstallationRequest(seasonPath(slug), { method: 'GET' });
+  const answer = await studioInstallationRequest(seasonPath(slug), { method: 'GET', deferUnauthorized: true }, expectedLink);
   if (!answer.ok) return answer;
   if (answer.status === 404) return { ok: false, why: 'Studio has no published season with that name.' };
   if (answer.status !== 200) return { ok: false, why: answer.sentence, status: answer.status };
   const read = parseSeason(answer.body, slug);
-  if (!read.ok) return { ...read, status: 409 };
+  if (!read.ok) return read;
   if (!isCurrent(read.season.generated_at, now)) return { ok: false, why: "Studio's season is not current, so it was not treated as live." };
   return read;
 }
@@ -116,7 +116,13 @@ export async function enterLeagueSeason(input: EnterLeagueInput, now: Date = new
   if (!alias.success) return { ok: false, why: `That alias will not do: ${alias.error.issues[0]?.message ?? 'it is not valid'}` };
   const replace = input.replacePaperMandate === true;
 
-  const read = await readLeagueSeason(input.slug, now);
+  const context = await studioLinkedContext();
+  if ('ok' in context) return context;
+  const link: StudioLinkScope = { installationId: context.link.installationId, linkedAt: context.link.linkedAt, origin: context.link.origin };
+  const live = await leagueBridge.liveEntryOf(input.agentId);
+  if (live && !await entryLink(live)) return { ok: false, why: 'The Studio link changed. The previous entry has ended.' };
+
+  const read = await readLeagueSeason(input.slug, now, link);
   if (!read.ok) return read;
   const season = read.season;
   const allowed = judgeEntry(season, now);
@@ -137,6 +143,7 @@ export async function enterLeagueSeason(input: EnterLeagueInput, now: Date = new
     startsAt: season.season.starts_at,
     endsAt: season.season.ends_at,
     fillsAcceptedUntil: season.season.fills_accepted_until,
+    link,
   });
   if (created.kind === 'OTHER_LIVE_ENTRY') {
     return { ok: false, why: `This agent is already entered in "${created.row.seasonSlug}". An agent has one paper mandate, so it is in one season at a time.` };
@@ -151,8 +158,24 @@ export async function enterLeagueSeason(input: EnterLeagueInput, now: Date = new
   return settled.ok ? { ok: true, entry: settled.entry, state: settled.entry.status === 'ACTIVE' ? 'ACTIVE' : 'PENDING' } : settled;
 }
 
-/** Statuses from Studio that mean "no", as opposed to "not now". */
-const DEFINITIVE = new Set([400, 403, 404, 409, 410, 422]);
+/** Only known content refusals settle work. Authentication and unknown failures retry. */
+const ENTRY_REJECTIONS = new Set(['alias_taken', 'invalid_alias', 'invalid_request', 'season_closed', 'rules_changed', 'already_entered', 'local_agents_not_allowed']);
+const FILL_REJECTIONS = new Set(['invalid_request']);
+const CONTENT_STATUSES = new Set([400, 403, 404, 409, 410, 422]);
+const contentRejection = (status: number, body: Record<string, unknown> | null, codes: Set<string>): string | null =>
+  CONTENT_STATUSES.has(status) && typeof body?.error === 'string' && codes.has(body.error) ? body.error : null;
+
+/** Match the public link facts even if its key is temporarily unreadable. */
+async function entryLink(entry: LeagueEntryRow): Promise<StudioLinkScope | null> {
+  const link = await ops.getSetting<StudioLinkScope & { revokedAt?: string | null }>('studio.link');
+  if (!entry.installationId || !entry.linkedAt || !entry.studioOrigin || !link || link.revokedAt ||
+      link.installationId !== entry.installationId || link.origin !== entry.studioOrigin ||
+      Date.parse(link.linkedAt) !== Date.parse(entry.linkedAt)) {
+    await leagueBridge.stopEntry(entry.id, 'The Studio link changed. This entry belongs to the previous link and has ended.');
+    return null;
+  }
+  return { installationId: entry.installationId, linkedAt: link.linkedAt, origin: entry.studioOrigin };
+}
 
 /**
  * Takes a PENDING entry as far as it will go: tell Studio, then write the
@@ -161,6 +184,8 @@ const DEFINITIVE = new Set([400, 403, 404, 409, 410, 422]);
 async function advanceEntry(entry: LeagueEntryRow, now: Date): Promise<{ ok: true; entry: LeagueEntryRow } | Problem> {
   let current = entry;
   if (current.status !== 'PENDING') return { ok: true, entry: current };
+  const link = await entryLink(current);
+  if (!link) return { ok: false, why: 'The Studio link changed. This entry has ended.' };
   const season = pinnedSeason(current);
   if (!season.ok) {
     await leagueBridge.refuseEntry(current.id, season.why);
@@ -183,13 +208,14 @@ async function advanceEntry(entry: LeagueEntryRow, now: Date): Promise<{ ok: tru
       alias: current.alias,
       entrant: 'LOCAL_AGENT',
     };
-    const answer = await studioInstallationRequest(`${seasonPath(current.seasonSlug)}/entry`, { method: 'POST', json: request });
+    const answer = await studioInstallationRequest(`${seasonPath(current.seasonSlug)}/entry`, { method: 'POST', json: request, deferUnauthorized: true }, link);
     if (!answer.ok) {
       await leagueBridge.noteProblem(current.id, answer.why);
       return { ok: false, why: `${answer.why} The entry is saved and will be tried again.` };
     }
-    if (DEFINITIVE.has(answer.status) && !(answer.status === 400 && answer.body?.error === 'invalid_dpop_proof')) {
-      await leagueBridge.refuseEntry(current.id, answer.sentence);
+    const rejection = contentRejection(answer.status, answer.body, ENTRY_REJECTIONS);
+    if (rejection) {
+      await leagueBridge.refuseEntry(current.id, answer.sentence, rejection);
       return { ok: false, status: answer.status, why: `Studio refused the entry. ${answer.sentence}` };
     }
     const parsed = LeagueEntryAnswer.safeParse(answer.body);
@@ -211,6 +237,7 @@ async function advanceEntry(entry: LeagueEntryRow, now: Date): Promise<{ ok: tru
     await leagueBridge.noteProblem(current.id, mandate.why);
     return mandate;
   }
+  if (!await entryLink(current)) return { ok: false, why: 'The Studio link changed. This entry has ended.' };
   const activated = await leagueBridge.activateEntry({ entryId: current.id, mandate: mandate.mandate, replacePaperMandate: current.replacePaperMandate });
   if (!activated.ok) {
     await leagueBridge.noteProblem(current.id, activated.why);
@@ -249,6 +276,8 @@ export async function reportLeagueFills(entry: LeagueEntryRow, now: Date = new D
     await stopMismatch(entry);
     return out;
   }
+  const link = await entryLink(entry);
+  if (!link) return out;
 
   const known = new Set((await leagueBridge.fillsOf(entry.id)).map((f) => f.intentId));
   const fresh = (await leagueBridge.paperFillsUnderMandate(entry.mandateId, entry.agentId)).filter((f) => !known.has(f.intentId));
@@ -309,14 +338,14 @@ export async function reportLeagueFills(entry: LeagueEntryRow, now: Date = new D
   const keys = due.map((f) => f.fillKey);
   const retryAt = () => new Date(now.getTime() + backoffMs(Math.max(...due.map((f) => f.attempts)), 60_000, 60 * 60_000));
 
-  const answer = await studioInstallationRequest(`${seasonPath(entry.seasonSlug)}/entry/fills`, { method: 'POST', json: report });
+  const answer = await studioInstallationRequest(`${seasonPath(entry.seasonSlug)}/entry/fills`, { method: 'POST', json: report, deferUnauthorized: true }, link);
   if (!answer.ok) {
     await leagueBridge.deferFills(entry.id, keys, retryAt());
     await leagueBridge.noteProblem(entry.id, answer.why);
     out.deferred = keys.length;
     return out;
   }
-  if (DEFINITIVE.has(answer.status)) {
+  if (contentRejection(answer.status, answer.body, FILL_REJECTIONS)) {
     for (const key of keys) await leagueBridge.settleFill(entry.id, key, 'REJECTED', answer.sentence);
     await leagueBridge.noteProblem(entry.id, answer.sentence);
     out.rejected += keys.length;
@@ -397,6 +426,7 @@ export async function sweepLeagueBridge(now: Date = new Date()): Promise<{ entri
   for (const entry of await leagueBridge.openEntries()) {
     tally.entries += 1;
     try {
+      if (!await entryLink(entry)) continue;
       if (entry.status === 'PENDING') {
         if (entry.remoteEntryId && now.getTime() > Date.parse(entry.endsAt)) {
           // Studio holds the entry but the mandate could never be written (a live
@@ -447,10 +477,7 @@ function pinnedSeason(entry: LeagueEntryRow): { ok: true; season: LeagueSeasonDo
 
 async function stopMismatch(entry: LeagueEntryRow): Promise<Problem> {
   const why = 'The frozen season does not match: different rules or dates were supplied. No further league activity is allowed.';
-  await leagueBridge.noteProblem(entry.id, why);
-  if (entry.status === 'PENDING') await leagueBridge.refuseEntry(entry.id, why);
-  else await leagueBridge.endEntry(entry.id, why);
-  if (entry.mandateId) await trading.setMandatePaused(entry.mandateId, true);
+  await leagueBridge.stopEntry(entry.id, why, entry.status === 'PENDING' ? 'REFUSED' : 'ENDED');
   return { ok: false, status: 409, why };
 }
 
@@ -462,10 +489,11 @@ async function checkSeason(entry: LeagueEntryRow, now: Date): Promise<boolean> {
     return false;
   }
   await leagueBridge.noteSeasonChecked(entry.id);
-  const read = await readLeagueSeason(entry.seasonSlug, now);
+  const link = await entryLink(entry);
+  if (!link) return false;
+  const read = await readLeagueSeason(entry.seasonSlug, now, link);
   if (!read.ok) {
     await leagueBridge.noteProblem(entry.id, read.why);
-    if (read.status === 409) await stopMismatch(entry);
     return false;
   }
   if (!sameSeason(pinned.season, read.season)) {
@@ -473,8 +501,7 @@ async function checkSeason(entry: LeagueEntryRow, now: Date): Promise<boolean> {
     return false;
   }
   if (read.season.season.status === 'CANCELLED') {
-    await leagueBridge.endEntry(entry.id, 'Studio cancelled the season.');
-    if (entry.mandateId) await trading.setMandatePaused(entry.mandateId, true);
+    await leagueBridge.stopEntry(entry.id, 'Studio cancelled the season.');
     return false;
   }
   return true;
@@ -496,10 +523,12 @@ export async function readLeagueStanding(agentId: string, now: Date = new Date()
   if (!leagueJournalEnabled()) return { ...journalOff(), code: 'UNAVAILABLE', entry: null };
   const entry = (await leagueBridge.liveEntryOf(agentId)) ?? (await leagueBridge.latestEntryOf(agentId));
   if (!entry || entry.status === 'REFUSED') return { ok: false, code: 'NOT_ENTERED', why: 'This agent is not entered in a league season.', entry: null };
+  const link = await entryLink(entry);
+  if (!link) return { ok: false, code: 'UNAVAILABLE', why: 'The Studio link changed. This entry has ended.', entry: null };
   if (!entry.remoteEntryId) {
     return { ok: false, code: 'NOT_ENTERED', why: 'This agent\'s entry has not been taken by Studio yet.', entry };
   }
-  const answer = await studioInstallationRequest(`${seasonPath(entry.seasonSlug)}/entry`, { method: 'GET' });
+  const answer = await studioInstallationRequest(`${seasonPath(entry.seasonSlug)}/entry`, { method: 'GET', deferUnauthorized: true }, link);
   if (!answer.ok) return { ok: false, code: 'UNAVAILABLE', why: answer.why, entry };
   if (answer.status !== 200) return { ok: false, code: 'UNAVAILABLE', why: answer.status === 404 ? 'Studio has no record of this entry.' : answer.sentence, entry };
   const parsed = LeagueStandingDocument.safeParse(answer.body);

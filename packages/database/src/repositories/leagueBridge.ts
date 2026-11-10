@@ -22,6 +22,9 @@ export interface LeagueEntryRow {
   ownerId: string | null;
   seasonSlug: string;
   entryKey: string;
+  installationId: string | null;
+  linkedAt: string | null;
+  studioOrigin: string | null;
   alias: string;
   replacePaperMandate: boolean;
   /** The season as validated and applied. Opaque here; the runtime parses it. */
@@ -34,6 +37,7 @@ export interface LeagueEntryRow {
   mandateId: string | null;
   status: LeagueEntryStatus;
   statusReason: string | null;
+  refusalCode: string | null;
   lastProblem: string | null;
   lastSeasonCheckAt: string | null;
   createdAt: string;
@@ -88,7 +92,9 @@ export async function latestEntryOf(agentId: string): Promise<LeagueEntryRow | n
 
 export async function entryOfSeason(agentId: string, slug: string): Promise<LeagueEntryRow | null> {
   return mapRow<LeagueEntryRow>(
-    await queryOne(`SELECT ${ENTRY_COLUMNS} FROM league_entries WHERE agent_id = $1 AND season_slug = $2`, [agentId, slug]),
+    await queryOne(`SELECT ${ENTRY_COLUMNS} FROM league_entries WHERE agent_id = $1 AND season_slug = $2
+      AND (status <> 'REFUSED' OR refusal_code IS NULL OR refusal_code NOT IN ('alias_taken', 'invalid_alias'))
+      ORDER BY created_at DESC LIMIT 1`, [agentId, slug]),
   );
 }
 
@@ -122,6 +128,7 @@ export async function createPendingEntry(input: {
   startsAt: string;
   endsAt: string;
   fillsAcceptedUntil: string;
+  link: { installationId: string; linkedAt: string; origin: string };
 }): Promise<CreateEntryResult> {
   const existing = await entryOfSeason(input.agentId, input.seasonSlug);
   if (existing) {
@@ -130,9 +137,9 @@ export async function createPendingEntry(input: {
   try {
     const row = mapRow<LeagueEntryRow>(
       await queryOne(
-        `INSERT INTO league_entries (agent_id, owner_id, season_slug, alias, replace_paper_mandate, season, rules_hash, starts_at, ends_at, fills_accepted_until)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10) RETURNING ${ENTRY_COLUMNS}`,
-        [input.agentId, input.ownerId, input.seasonSlug, input.alias, input.replacePaperMandate, JSON.stringify(input.season), input.rulesHash, input.startsAt, input.endsAt, input.fillsAcceptedUntil],
+        `INSERT INTO league_entries (agent_id, owner_id, season_slug, alias, replace_paper_mandate, season, rules_hash, starts_at, ends_at, fills_accepted_until, installation_id, linked_at, studio_origin)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13) RETURNING ${ENTRY_COLUMNS}`,
+        [input.agentId, input.ownerId, input.seasonSlug, input.alias, input.replacePaperMandate, JSON.stringify(input.season), input.rulesHash, input.startsAt, input.endsAt, input.fillsAcceptedUntil, input.link.installationId, input.link.linkedAt, input.link.origin],
       ),
     );
     return { kind: 'CREATED', row: row as LeagueEntryRow };
@@ -221,8 +228,18 @@ export async function activateEntry(input: {
   });
 }
 
-export async function refuseEntry(entryId: string, reason: string): Promise<void> {
-  await query(`UPDATE league_entries SET status = 'REFUSED', status_reason = $2, updated_at = now() WHERE id = $1 AND status = 'PENDING'`, [entryId, reason.slice(0, 300)]);
+export async function refuseEntry(entryId: string, reason: string, code: string | null = null): Promise<void> {
+  await query(`UPDATE league_entries SET status = 'REFUSED', status_reason = $2, refusal_code = $3, updated_at = now() WHERE id = $1 AND status = 'PENDING'`, [entryId, reason.slice(0, 300), code]);
+}
+
+/** Pause first and settle together, so interruption never leaves a live mandate behind. */
+export async function stopEntry(entryId: string, reason: string, status: 'ENDED' | 'REFUSED' = 'ENDED'): Promise<void> {
+  await withTransaction(async (tx) => {
+    const entry = await tx.one<{ mandate_id: string | null }>(`SELECT mandate_id FROM league_entries WHERE id = $1 AND status IN ('PENDING', 'ACTIVE') FOR UPDATE`, [entryId]);
+    if (!entry) return;
+    if (entry.mandate_id) await tx.query(`UPDATE trade_mandates SET paused = true, updated_at = now() WHERE id = $1`, [entry.mandate_id]);
+    await tx.query(`UPDATE league_entries SET status = $2, status_reason = $3, last_problem = $3, updated_at = now() WHERE id = $1`, [entryId, status, reason.slice(0, 300)]);
+  });
 }
 
 export async function endEntry(entryId: string, reason: string): Promise<void> {

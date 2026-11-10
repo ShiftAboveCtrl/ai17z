@@ -1,5 +1,6 @@
 import { useResource } from '@app/lib/hooks';
 import { Spinner } from '@app/components/ui';
+import { LeagueEntryPanel } from '@app/components/LeagueEntryPanel';
 import { Gaps, Panel, Tally } from './shared';
 
 /**
@@ -48,6 +49,7 @@ export function CommandView({ agentId, onGo }: { agentId: string; onGo: (view: s
 
   return (
     <>
+      <LeagueEntryPanel agentId={agentId} />
       <Panel title="Where things stand" lede="Everything on this page is the same figure its own view shows.">
         {/*
           Nothing is shown until every figure has arrived. A grid of zeroes that

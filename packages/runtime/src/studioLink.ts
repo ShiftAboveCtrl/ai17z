@@ -274,6 +274,7 @@ async function authed(
   path: string,
   init: { method: 'GET' | 'POST'; json?: unknown },
   expectedLink?: StudioLinkScope,
+  deferUnauthorized = false,
 ): Promise<StudioAnswer | StudioProblem> {
   const ready = await linkedContext();
   if ('ok' in ready) return ready;
@@ -306,6 +307,8 @@ async function authed(
       ...(init.json === undefined ? {} : { json: init.json }),
     });
     if (retried.status === 401) {
+      // A journal's proof challenge is retryable work, not proof of revocation.
+      if (deferUnauthorized) return retried;
       await markRevoked('Studio no longer accepts this installation. Link it again from the Plugins screen.');
       return { ok: false, why: 'Studio no longer accepts this installation.' };
     }
@@ -325,13 +328,13 @@ async function authed(
  */
 export async function studioInstallationRequest(
   path: string,
-  init: { method: 'GET' | 'POST'; json?: unknown },
+  init: { method: 'GET' | 'POST'; json?: unknown; deferUnauthorized?: boolean },
   expectedLink?: StudioLinkScope,
 ): Promise<{ ok: true; status: number; body: Record<string, unknown> | null; sentence: string } | StudioProblem> {
   if (!/^\/api\/v1\/installation\/[A-Za-z0-9/_?=&.-]+$/.test(path) || path.includes('..') || path.includes('//')) {
     return { ok: false, why: 'That is not a Studio installation address.' };
   }
-  const answer = await authed(path, init, expectedLink).catch((error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }));
+  const answer = await authed(path, init, expectedLink, init.deferUnauthorized).catch((error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }));
   if ('ok' in answer) return answer;
   return { ok: true, status: answer.status, body: answer.body, sentence: describe(answer) };
 }

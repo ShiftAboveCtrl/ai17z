@@ -177,11 +177,17 @@ Answer `200` or `201`:
 { "protocol": 1, "entry_id": "ent_...", "season_slug": "week-45", "status": "ACTIVE", "entered_at": "..." }
 ```
 
-Definitive refusals, after which the client records the entry as REFUSED and does
-not retry: `400`, `403`, `404`, `409`, `410`, `422`, each with
-`{ "error": "...", "error_description": "..." }`. Studio uses `409` for
+Definitive refusals require both a content status (`400`, `403`, `404`, `409`,
+`410`, `422`) and a recognised content error: `alias_taken`, `invalid_alias`,
+`invalid_request`, `season_closed`, `rules_changed`, `already_entered`, or
+`local_agents_not_allowed`. Studio uses `409` for
 `season_closed` (entry is not taken after the lock, and cannot be backfilled),
 `rules_changed` and `already_entered` (one entry per installation per season).
+The owner can correct an alias refusal by entering a new alias. A new entry key
+is recorded and the refused attempt stays immutable. Other settled entries cannot
+be reopened. Authentication or proof failures, including `invalid_dpop_proof` and
+`use_dpop_nonce`, always defer entries and fill batches. Only a known content
+rejection settles a batch. Studio's free text is not included in model statements.
 Anything else (a network failure, `429`, `5xx`, an unreadable answer) keeps the
 entry PENDING and it is tried again under the same key, with a wait of a tenth of
 the time already waited, between one minute and fifteen minutes. Elapsed time
@@ -194,6 +200,17 @@ it, until the season ends. Nothing is backfilled, because only trades filled und
 the mandate are reported, so a late mandate means fewer fills and never earlier
 ones. An entry Studio holds whose mandate could never be written is ENDED once
 the season is over.
+
+The owner enters through `POST /api/agents/:agentId/studio/league/entry`, with
+`slug`, `alias` and optional `replacePaperMandate`. The agent Studio Command view
+shows the control only while `AI17Z_LEAGUE_JOURNAL=1`. Both routes require the
+authenticated owner of that agent.
+
+Entries pin the installation id, link time and Studio origin. A changed link ends
+the old entry before another league request; an unbound entry from an earlier
+version ends too. Ending for changed frozen facts or a changed link pauses the
+mandate in the same transaction. Malformed remote season documents defer work;
+only a validated document with changed frozen facts stops an entry.
 
 ### 3. Report fills
 
