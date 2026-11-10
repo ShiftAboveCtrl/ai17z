@@ -200,6 +200,10 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'studio.paperRecordWindow': { where: 'ADVANCED_ONLY' },
   'studio.postPaperPnl': { where: 'ADVANCED_ONLY' },
   'studio.postPaperRecord': { where: 'ADVANCED_ONLY' },
+  // Advanced only and off, for the same reason as the paper record: a public
+  // post about a study of other people's wallets is a decision made on purpose.
+  'studio.postTraderDna': { where: 'ADVANCED_ONLY' },
+  'studio.traderDnaStudyId': { where: 'ADVANCED_ONLY' },
   'support.describeOwnRuntime': { where: 'ADVANCED_ONLY' },
   'support.enabled': { where: 'EASY_AND_ADVANCED' },
   'support.subject': { where: 'ADVANCED_ONLY' },

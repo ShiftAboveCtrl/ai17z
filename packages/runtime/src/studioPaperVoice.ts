@@ -282,9 +282,9 @@ export async function proposePaperRecordPost(agentId: string, now: Date = new Da
 // The check on the finished text
 // ---------------------------------------------------------------------------
 
-const FORWARD_LOOKING =
+export const FORWARD_LOOKING =
   /\b(guarantee[sd]?|will (keep|continue|make|earn|return|print|pay)|expect(s|ed)? (to )?(earn|return|profit|gain|make)|going to (the moon|print|pump)|signals?|financial advice|investment advice|nfa|buy now|follow (my|these|the) trades|copy (my|these|the) trades|alpha)\b/i;
-const LIVE_OR_REAL = /\b(live (position|trade|trading|account)s?|real[- ]money (trade|position)s?|my (real )?(wallet|funds|capital))\b/i;
+export const LIVE_OR_REAL = /\b(live (position|trade|trading|account)s?|real[- ]money (trade|position)s?|my (real )?(wallet|funds|capital))\b/i;
 const MONEY_FIGURE = /[$€£]\s?\d|\d\s?%|\b(pnl|p&l|profit\w*|loss(es)?|lost|gains?|gained|returns?|drawdowns?|wins?|won(?!['’]t)|winning|losing)\b|\b(up|down)\s+\d/i;
 
 /**

@@ -14,6 +14,7 @@ import {
 import { getChannelAdapter } from '@xbam/channels';
 import { nextPost, releaseIdea } from './content';
 import { proposePaperRecordPost } from './studioPaperVoice';
+import { proposeTraderDnaPost } from './studioTraderDna';
 
 const log = createLogger('originate');
 
@@ -66,6 +67,8 @@ export async function originatePost(input: {
   // time the schedule came due. This only adds an idea, and only when the owner
   // opted in; the backlog below still decides whether there is a post.
   await proposePaperRecordPost(agent.id);
+  // The same for one published Trader DNA study the owner chose, if they opted in.
+  await proposeTraderDnaPost(agent.id);
 
   // The backlog decides whether there is a post, not the clock. The claim and
   // the signal refusal share one account scope inside nextPost, so a signal

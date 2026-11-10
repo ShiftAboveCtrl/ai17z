@@ -231,6 +231,8 @@ export * from './backupStoreObject';
 export * from './walletCapabilities';
 export * from './studioPaperCapabilities';
 export * from './studioPaperVoice';
+export * from './studioTraderDna';
+export * from './studioTraderDnaCapabilities';
 export * from './voiceDocument';
 export * from './studioVoice';
 export * from './studioVoiceInstall';

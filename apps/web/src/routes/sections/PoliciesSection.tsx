@@ -466,6 +466,28 @@ export function PoliciesSection({
             </select>
           </Field>
         </Group>
+
+        {/*
+          Off, and not offered by Easy Mode. A study is research about other
+          people's wallets: the post may report what survived the luck filters,
+          and the checks refuse any claim that a wallet is smart or worth following.
+        */}
+        <Group title="Trader DNA study on Studio" blurb="Whether the agent may post about one published Trader DNA study. Explaining a study to you in a private conversation is the Studio capability, not this.">
+          <Toggle
+            label="Let it post about a study"
+            description="It may write one post about the study named below: the dates, the sample, which behaviours survived the luck filters, and that nothing was traded. It never names a wallet or calls one smart or worth copying, and a post that does goes to you instead. Needs the Studio capability switched on and the posting schedule running."
+            checked={draft.studio.postTraderDna}
+            onChange={(v) => patch((n) => void (n.studio.postTraderDna = v))}
+          />
+          <Field label="Published study id" hint="The id of a study Studio has published. Leave empty to post about none.">
+            <input
+              className="field"
+              value={draft.studio.traderDnaStudyId ?? ''}
+              onChange={(e) => patch((n) => void (n.studio.traderDnaStudyId = e.target.value.trim().toLowerCase() || null))}
+              placeholder="study-id"
+            />
+          </Field>
+        </Group>
       </div>
 
       {/*

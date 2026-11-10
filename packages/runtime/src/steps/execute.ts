@@ -52,6 +52,7 @@ import { checkDevUpdateAtSend } from '../devUpdateGuard';
 import { paperReplyForJob } from '../paperCapabilities';
 import { signalIdeaRefusal } from '../signalRadar';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
+import { checkTraderDnaAtSend } from '../studioTraderDna';
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
@@ -281,6 +282,9 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   // finished text, with the policy as it is now: the owner may have switched
   // posting or PnL off since the idea was made, or edited the text in review.
   checkPaperRecordAtSend({ raw: bundle.event.payload, text: output, policy });
+  // Likewise a post about a Trader DNA study, which may never name a wallet or
+  // call one smart or worth copying, whatever the study or the model said.
+  checkTraderDnaAtSend({ raw: bundle.event.payload, text: output, policy });
 
   if (!job.dryRun) {
     // The final say on whether this action is permitted. Ingest checked the same

@@ -113,7 +113,9 @@ const FAMILY_HINTS: Record<string, string[]> = {
   storage: ['ipfs', 'arweave', 'cid'],
   // Phrases, never single words: "paper" alone is as often a study, and
   // "trading" already lifts the market family.
-  studio: ['paper trading', 'paper trades', 'paper record', 'paper results', 'track record', 'your trading', 'simulated trading'],
+  studio: ['paper trading', 'paper trades', 'paper record', 'paper results', 'track record', 'your trading', 'simulated trading',
+    // The Trader DNA study. Phrases again: "wallet" alone belongs to the address family.
+    'trader dna', 'dna study', 'wallet study', 'smart wallet', 'smart money', 'which wallets'],
   // Phrases, never single words: "voice" alone is as often audio.
   studio_voice: ['publish my voice', 'share my voice', 'publish your voice', 'share your voice', 'publish voice', 'share this voice', 'unpublish', 'published voice', 'list my voice', 'voice on studio'],
   // Phrases, never "rank" or "season" alone: both are ordinary words.

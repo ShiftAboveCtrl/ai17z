@@ -60,6 +60,7 @@ import { registerWalletCapabilities } from './walletCapabilities';
 import { registerPaperCapabilities } from './paperCapabilities';
 import { registerStudioPaperCapabilities } from './studioPaperCapabilities';
 import { registerStudioVoiceCapabilities } from './studioVoiceCapabilities';
+import { registerStudioTraderDnaCapabilities } from './studioTraderDnaCapabilities';
 import { registerStudioLeagueCapabilities } from './studioLeagueCapabilities';
 import { loadWalletAdapter } from './walletCore';
 
@@ -112,6 +113,9 @@ export async function bootstrapRuntime(): Promise<void> {
   // What the owner's paper track record on Studio says. Owner chat only, and
   // off until the owner enables it; it reads Studio and nothing else.
   registerStudioPaperCapabilities();
+  // A published Trader DNA study explained to the owner. One read, owner chat
+  // only, off until enabled; there is no follow, watch or trade beside it.
+  registerStudioTraderDnaCapabilities();
   // Publishing the agent's voice to Studio. Owner chat only, off until the
   // owner enables it, and nothing leaves without their own words confirming it.
   registerStudioVoiceCapabilities();
