@@ -25,6 +25,14 @@
 # paths. The Windows installer is unpacked with innoextract, and a release whose
 # installer cannot be unpacked is refused rather than waved through.
 #
+# A hit in third-party bytes is excused by proof and nothing else: a file under
+# node_modules identical to the same path in the registry tarball whose sha512
+# this tag's package-lock.json records, or a file under runtime/node identical
+# to the official tarball for the version packaging/node-runtime.json pins,
+# checked against nodejs.org's SHASUMS256.txt. The tarballs are downloaded here,
+# fresh, on every run. Every exemption is printed with the package, version and
+# proof; a file one byte different, or anywhere else, refuses exactly as before.
+#
 # Only the publish step may name the secret. A workflow a pull request can
 # start names no secret, because a pull request is somebody else's code and
 # could print it, and a printed list of somebody's identifiers is the leak.
@@ -91,16 +99,41 @@ for f in "$@"; do
   [ -e "$f" ] || { echo "REFUSED: a file to be published is missing, so the set scanned is not the set uploaded"; exit 1; }
 done
 
+ROOM="$(mktemp -d)"
+trap 'rm -rf "$EMPTY_HOME" "$ROOM"' EXIT
+
+# The trust roots of a proof come from this checkout, which is the tag being
+# released and whose history was scanned first. Without them nothing is
+# exempted and every hit refuses, which is the safe way to be missing.
+PROVE=(--proof-cache "$ROOM/proofs")
+[ -f "$ROOT/package-lock.json" ] && PROVE+=(--prove-npm "$ROOT/package-lock.json")
+[ -f "$ROOT/packaging/node-runtime.json" ] && PROVE+=(--prove-node "$ROOT/packaging/node-runtime.json")
+
 problems=0
 echo "### private identifiers in the ${#} files to be published"
 # Directories, if any, are walked: every file, recursively.
-scan python3 "$HERE/privacy_scan.py" --ci --checks identifiers --lenient node_modules=home-path path "$@" | sed 's/^/  /'
+scan python3 "$HERE/privacy_scan.py" --ci --checks identifiers --lenient node_modules=home-path "${PROVE[@]}" path "$@" | sed 's/^/  /'
 [ "${PIPESTATUS[0]}" -eq 0 ] || problems=$((problems + 1))
+
+# The application zip a given installer carries, by version, if it is in the set.
+app_zip_for() {
+  local base version f
+  base="$(basename "$1")"
+  case "$base" in AI17Z-Setup-*.exe) ;; *) return 0 ;; esac
+  version="${base#AI17Z-Setup-}"; version="${version%.exe}"
+  for f in "${@:2}"; do
+    [ "$(basename "$f")" = "AI17Z-App-$version.zip" ] && { printf '%s' "$f"; return 0; }
+  done
+}
 
 # The installer's payload is compressed in Inno Setup's own format, which only
 # innoextract reads. Its raw bytes were scanned above; its contents are here.
-ROOM="$(mktemp -d)"
-trap 'rm -rf "$EMPTY_HOME" "$ROOM"' EXIT
+#
+# A failed extraction refuses, and so does one that is not shown to be whole.
+# The innoextract that reads Inno Setup 6.7 (ci/scripts/setup-innoextract.sh)
+# cannot check some of its own output checksums and warns instead, so an exit
+# status is not enough: every file of the application zip released beside the
+# installer must come out of it byte for byte.
 n=0
 for exe in "$@"; do
   case "$exe" in *.exe) ;; *) continue ;; esac
@@ -112,12 +145,35 @@ for exe in "$@"; do
     problems=$((problems + 1))
     continue
   fi
-  if ! innoextract --silent --output-dir "$ROOM/$n" "$exe" >/dev/null 2>&1; then
+  # The log is kept, never printed: innoextract names files, and a file's name
+  # is exactly what the scan exists to withhold.
+  if ! innoextract --output-dir "$ROOM/$n" "$exe" >"$ROOM/innoextract-$n.log" 2>&1; then
     echo "  REFUSED: innoextract could not unpack the installer, so its contents were not read"
     problems=$((problems + 1))
     continue
   fi
-  scan python3 "$HERE/privacy_scan.py" --ci --checks identifiers --lenient node_modules=home-path path "$ROOM/$n" | sed 's/^/  /'
+  files="$(find "$ROOM/$n" -type f | wc -l | tr -d ' ')"
+  warned="$(grep -c '^Warning' "$ROOM/innoextract-$n.log" || true)"
+  echo "  unpacked $files files; innoextract warned $warned times"
+  if [ "$files" -eq 0 ]; then
+    echo "  REFUSED: innoextract unpacked nothing, so the installer's contents were not read"
+    problems=$((problems + 1))
+    continue
+  fi
+  zip="$(app_zip_for "$exe" "$@")"
+  if [ -n "$zip" ]; then
+    python3 "$HERE/installer_matches_zip.py" "$zip" "$ROOM/$n/app" >"$ROOM/matches-$n.txt" 2>&1
+    matched=$?
+    sed 's/^/  /' "$ROOM/matches-$n.txt"
+    if [ "$matched" -ne 0 ]; then
+      echo "  REFUSED: the unpacked installer is not the application zip released with it, so its contents were not read whole"
+      problems=$((problems + 1))
+      continue
+    fi
+  else
+    echo "  no application zip for this installer in the set, so it was not cross-checked"
+  fi
+  scan python3 "$HERE/privacy_scan.py" --ci --checks identifiers --lenient node_modules=home-path "${PROVE[@]}" path "$ROOM/$n" | sed 's/^/  /'
   [ "${PIPESTATUS[0]}" -eq 0 ] || problems=$((problems + 1))
 done
 
