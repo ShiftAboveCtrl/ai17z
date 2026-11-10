@@ -50,7 +50,7 @@ import type { JobBundle } from '../loadJob';
 import { checkActionRate } from '../policyGate';
 import { checkDevUpdateAtSend } from '../devUpdateGuard';
 import { paperReplyForJob } from '../paperCapabilities';
-import { mintCardRefusal, mintReplyOf } from '../mintCheck';
+import { announceMintCheck, mintCardRefusal, mintReplyOf } from '../mintCheck';
 import { signalIdeaRefusal } from '../signalRadar';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { capacityClassForEvent } from '../capacity';
@@ -378,6 +378,10 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   });
 
   if (claim.outcome === 'ALREADY_EXECUTED') {
+    // The action is confirmed executed, and a crash between completing it and
+    // telling the owner would otherwise lose the offer. It is keyed on the
+    // request, so saying it again is a no-op.
+    if (mintReply !== null) await announceMintCheck(bundle);
     await jobsRepo.updateJob(job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
     await observability.emitTrace({
       jobId: job.id,
@@ -551,6 +555,12 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       verification: result.verification as unknown as Record<string, unknown>,
       contentSignature: result.status === 'DRY_RUN' ? null : signature,
     });
+
+    // The owner hears about an evidence card only once it has really gone out,
+    // so the offer to watch its mint is never for a reply nobody received.
+    if (result.status !== 'DRY_RUN' && mintReply !== null) {
+      await announceMintCheck(bundle);
+    }
 
     // The exchange is recorded here, after the reply actually went out. An
     // inbound message nobody answered is not a conversation, and counting it as

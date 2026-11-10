@@ -123,6 +123,14 @@ function solanaOutput(over: Record<string, unknown> = {}, found = true, readAt =
   };
 }
 
+const ANALYSIS = { source: 'token_security.goplus', readAt: READ_AT, found: true, known: [] as string[] };
+const SIMULATION = { source: 'token_tradeable.honeypotis', readAt: READ_AT };
+
+/** The shape `token.inspect_risk` returns, with both services answering by default. */
+function evmOutput(over: Record<string, unknown> = {}) {
+  return { observations: [], notChecked: [], sourcesAnswering: 2, analysis: ANALYSIS, simulation: SIMULATION, ...over };
+}
+
 describe('the card', () => {
   it('names a source and a time on every reading, and never fixes a number it was not given', () => {
     const card = renderMintCard(evidenceFromSolanaProfile(solanaOutput(), NOW), 280);
@@ -177,7 +185,7 @@ describe('the card', () => {
 
   it('treats an answer in the wrong shape as unavailable', () => {
     expect(renderMintCard(evidenceFromSolanaProfile({ nonsense: true }, NOW), 280)).toMatch(/^Evidence unavailable right now/);
-    expect(renderMintCard(evidenceFromRiskInspect('nonsense', READ_AT, NOW), 280)).toMatch(/^Evidence unavailable right now/);
+    expect(renderMintCard(evidenceFromRiskInspect('nonsense', NOW), 280)).toMatch(/^Evidence unavailable right now/);
   });
 
   it('leaves out the least important readings when it does not fit, and says how many', () => {
@@ -189,8 +197,8 @@ describe('the card', () => {
     expect(card).toContain('Not a verdict');
   });
 
-  it('reads an EVM contract from the observations and the list of what was not checked', () => {
-    const output = {
+  it('reads an EVM contract from the observations, naming the service and the time it was read', () => {
+    const output = evmOutput({
       observations: [
         { what: 'Holders', detail: '1,204', source: 'contract analysis', kind: 'FACT' },
         { what: 'Held by the creator', detail: '31%', source: 'contract analysis', kind: 'FLAG' },
@@ -198,29 +206,135 @@ describe('the card', () => {
         { what: 'Could be sold again', detail: 'A simulated buy could be sold.', source: 'trade simulation', kind: 'FACT' },
       ],
       notChecked: ['Hidden owner (contract analysis)'],
-      sourcesAnswering: 2,
-    };
-    const card = renderMintCard(evidenceFromRiskInspect(output, READ_AT, NOW), 280);
-    expect(card).toContain('Holders: 1,204 (analysis 14:03Z)');
-    expect(card).toContain('Creator holds: 31% (analysis 14:03Z)');
-    expect(card).toContain('Supply: cannot be increased (analysis 14:03Z)');
-    expect(card).toContain('Exit tax: 15% (analysis 14:03Z)');
-    expect(card).toContain('Exit test: passed in simulation (simulation 14:03Z)');
+      analysis: { ...ANALYSIS, known: ['More can be minted', 'Holders'] },
+    });
+    const card = renderMintCard(evidenceFromRiskInspect(output, NOW), 280);
+    expect(card).toContain('Holders: 1,204 (GoPlus 14:03Z)');
+    expect(card).toContain('Creator holds: 31% (GoPlus 14:03Z)');
+    expect(card).toContain('Supply: cannot be increased (GoPlus 14:03Z)');
+    expect(card).toContain('Exit tax: 15% (GoPlus 14:03Z)');
+    expect(card).toContain('Exit test: passed in simulation (Honeypot.is 14:03Z)');
+    expect(card).not.toMatch(/\((?:analysis|simulation) /);
     expect(mintCardRefusal(card)).toBeNull();
+  });
+
+  it('keeps the fullest EVM card inside a post even with the longest source names', () => {
+    const output = evmOutput({
+      observations: [
+        { what: 'Holders', detail: '1,204,555', source: 'contract analysis', kind: 'FACT' },
+        { what: 'Held by the creator', detail: '31.55%', source: 'contract analysis', kind: 'FLAG' },
+        { what: 'More can be minted', detail: 'Supply can be increased.', source: 'contract analysis', kind: 'FLAG' },
+        { what: 'Sell tax', detail: '100%', source: 'contract analysis', kind: 'FLAG' },
+        { what: 'Could be sold again', detail: 'A simulated buy could not be sold.', source: 'trade simulation', kind: 'FLAG' },
+      ],
+      analysis: { ...ANALYSIS, known: ['More can be minted'] },
+    });
+    const card = renderMintCard(evidenceFromRiskInspect(output, NOW), 280);
+    expect(card.length).toBeLessThanOrEqual(280);
+    expect(card).not.toContain('left out for length');
+    expect(card).toContain('Supply: can be increased (GoPlus 14:03Z)');
   });
 
   it('says a mintable flag nobody checked is unavailable, not "cannot be increased"', () => {
     const card = renderMintCard(
-      evidenceFromRiskInspect({ observations: [], notChecked: ['More can be minted (contract analysis)'], sourcesAnswering: 1 }, READ_AT, NOW),
+      evidenceFromRiskInspect(evmOutput({ notChecked: ['More can be minted (contract analysis)'], sourcesAnswering: 1, simulation: null }), NOW),
       280,
     );
     expect(card).toContain('Supply: unavailable');
     expect(card).not.toContain('cannot be increased');
   });
 
+  // The review finding: "cannot be increased" was written for any contract the
+  // service had not said anything about, because the capability lists a flag only
+  // when it is raised. Silence is not a reading.
+  it('never writes "cannot be increased" for a contract the service has never analysed', () => {
+    const output = evmOutput({
+      observations: [
+        { what: 'Never analysed', detail: 'This service has no record of this contract, which is itself worth knowing about a new token.', source: 'contract analysis', kind: 'FLAG' },
+        { what: 'Could be sold again', detail: 'A simulated buy could be sold.', source: 'trade simulation', kind: 'FACT' },
+      ],
+      analysis: { ...ANALYSIS, found: false, known: [] },
+    });
+    const card = renderMintCard(evidenceFromRiskInspect(output, NOW), 280);
+    expect(card).toContain('Supply: unavailable (GoPlus 14:03Z)');
+    expect(card).not.toContain('cannot be increased');
+    expect(card).toContain('Exit test: passed in simulation');
+  });
+
+  it('never writes "cannot be increased" when only the simulation answered', () => {
+    const output = evmOutput({
+      observations: [{ what: 'Could be sold again', detail: 'A simulated buy could be sold.', source: 'trade simulation', kind: 'FACT' }],
+      sourcesAnswering: 1,
+      analysis: null,
+    });
+    const card = renderMintCard(evidenceFromRiskInspect(output, NOW), 280);
+    expect(card).toContain('Supply: unavailable');
+    expect(card).not.toContain('cannot be increased');
+  });
+
+  it('writes "cannot be increased" only when the service stated the attribute and did not flag it', () => {
+    const stated = renderMintCard(evidenceFromRiskInspect(evmOutput({ analysis: { ...ANALYSIS, known: ['More can be minted'] } }), NOW), 280);
+    expect(stated).toContain('Supply: cannot be increased');
+    const silent = renderMintCard(evidenceFromRiskInspect(evmOutput({ analysis: { ...ANALYSIS, known: ['Holders'] } }), NOW), 280);
+    expect(silent).toContain('Supply: unavailable');
+  });
+
   it('reports no source answering as unavailable', () => {
-    const card = renderMintCard(evidenceFromRiskInspect({ observations: [], notChecked: [], sourcesAnswering: 0 }, READ_AT, NOW), 280);
+    const card = renderMintCard(evidenceFromRiskInspect(evmOutput({ sourcesAnswering: 0, analysis: null, simulation: null }), NOW), 280);
     expect(card).toMatch(/^Evidence unavailable right now: no security source answered/);
+  });
+
+  // The review finding: a cached analysis (an hour) or simulation (half of one)
+  // was stamped with the time the card was built, so an old reading read as new.
+  it('dates each EVM reading by when its service was really asked, not by when the card was built', () => {
+    const output = evmOutput({
+      observations: [
+        { what: 'Holders', detail: '9', source: 'contract analysis', kind: 'FACT' },
+        { what: 'Could be sold again', detail: 'A simulated buy could be sold.', source: 'trade simulation', kind: 'FACT' },
+      ],
+      analysis: { ...ANALYSIS, readAt: '2026-11-06T14:00:00Z' },
+      simulation: { ...SIMULATION, readAt: '2026-11-06T14:04:00Z' },
+    });
+    const card = renderMintCard(evidenceFromRiskInspect(output, NOW), 280);
+    expect(card).toContain('Holders: 9 (GoPlus 14:00Z)');
+    expect(card).toContain('Exit test: passed in simulation (Honeypot.is 14:04Z)');
+    expect(card).not.toContain('14:05Z');
+  });
+
+  it('shows a stale EVM service as unavailable with its real time, and keeps the fresh one', () => {
+    const output = evmOutput({
+      observations: [
+        { what: 'Holders', detail: '9', source: 'contract analysis', kind: 'FACT' },
+        { what: 'Sell tax', detail: '15%', source: 'contract analysis', kind: 'FLAG' },
+        { what: 'Could be sold again', detail: 'A simulated buy could be sold.', source: 'trade simulation', kind: 'FACT' },
+      ],
+      analysis: { ...ANALYSIS, readAt: '2026-11-06T13:10:00Z', known: ['More can be minted'] },
+    });
+    const card = renderMintCard(evidenceFromRiskInspect(output, NOW), 280);
+    expect(card).toContain('Holders: unavailable (GoPlus 13:10Z)');
+    expect(card).toContain('Supply: unavailable (GoPlus 13:10Z)');
+    expect(card).toContain('Exit tax: unavailable');
+    expect(card).not.toContain('15%');
+    expect(card).toContain('Exit test: passed in simulation (Honeypot.is 14:03Z)');
+  });
+
+  it('says everything is unavailable, with the real time, when both EVM services are stale', () => {
+    const old = '2026-11-06T13:00:00Z';
+    const output = evmOutput({
+      observations: [{ what: 'Holders', detail: '9', source: 'contract analysis', kind: 'FACT' }],
+      analysis: { ...ANALYSIS, readAt: old },
+      simulation: { ...SIMULATION, readAt: old },
+    });
+    const card = renderMintCard(evidenceFromRiskInspect(output, NOW), 280);
+    expect(card).toMatch(/^Evidence unavailable right now: the readings are too old to show as current \(GoPlus 13:00Z\)\./);
+    expect(card).not.toContain('Holders');
+  });
+
+  it('treats an EVM reading that cannot be dated as unavailable', () => {
+    const output = evmOutput({ observations: [{ what: 'Holders', detail: '9', source: 'contract analysis', kind: 'FACT' }], analysis: undefined, simulation: undefined });
+    const card = renderMintCard(evidenceFromRiskInspect(output, NOW), 280);
+    expect(card).toMatch(/^Evidence unavailable right now: the answer carried no time I can show/);
+    expect(card).not.toContain('Holders: 9');
   });
 });
 
@@ -266,7 +380,9 @@ describe('no card can read as a verdict, a call or a price', () => {
     for (const observations of observationSets)
       for (const notChecked of [[], ['More can be minted (contract analysis)', 'Whether it can be sold (trade simulation)']])
         for (const sourcesAnswering of [0, 1, 2]) {
-          all.push(evidenceFromRiskInspect({ observations, notChecked, sourcesAnswering }, READ_AT, NOW));
+          for (const known of [[], ['More can be minted']]) {
+            all.push(evidenceFromRiskInspect({ observations, notChecked, sourcesAnswering, analysis: { ...ANALYSIS, known }, simulation: SIMULATION }, NOW));
+          }
         }
     all.push(evidenceFromSolanaProfile(solanaOutput({}, false), NOW), evidenceFromSolanaProfile({}, NOW));
     return all;

@@ -204,6 +204,55 @@ describe('what each source actually said', () => {
   });
 });
 
+describe('when each service was actually asked', () => {
+  type Dated = RiskAnswer & {
+    analysis: { source: string; readAt: string; found: boolean; known: string[] } | null;
+    simulation: { source: string; readAt: string } | null;
+  };
+
+  it('names the upstream and its own fetch time for each service, not the time of the call', async () => {
+    responses = {
+      'gopluslabs.io': security({ buy_tax: '0.05' }),
+      'honeypot.is': { status: 200, body: JSON.stringify({ simulationSuccess: true, honeypotResult: { isHoneypot: false } }) },
+    };
+    const before = Date.now();
+    const answer = (await inspect()) as Dated;
+    expect(answer.analysis).toMatchObject({ source: 'token_security.goplus', found: true });
+    expect(answer.simulation).toMatchObject({ source: 'token_tradeable.honeypotis' });
+    expect(Date.parse(answer.analysis!.readAt)).toBeGreaterThanOrEqual(before - 1_000);
+
+    // A cached answer keeps the time it was fetched, which is what a card must show.
+    vi.useFakeTimers({ now: Date.now() + 40 * 60_000, toFake: ['Date'] });
+    try {
+      const cached = (await inspect()) as Dated;
+      expect(cached.analysis!.readAt).toBe(answer.analysis!.readAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lists the attributes a service stated either way, so silence is not read as "no"', async () => {
+    responses = { 'gopluslabs.io': security({ is_mintable: '0', is_honeypot: '' }) };
+    const answer = (await inspect()) as Dated;
+    expect(answer.analysis!.known).toContain('More can be minted');
+    expect(answer.analysis!.known).not.toContain('Cannot be sold');
+    // Stated as "no": no observation, and listed as known.
+    expect(answer.observations.find((o) => o.what === 'More can be minted')).toBeUndefined();
+  });
+
+  it('says a contract the service has never analysed states nothing', async () => {
+    responses = { 'gopluslabs.io': { status: 200, body: JSON.stringify({ result: {} }) } };
+    const answer = (await inspect()) as Dated;
+    expect(answer.analysis).toMatchObject({ found: false, known: [] });
+  });
+
+  it('reports a service that did not answer as null', async () => {
+    responses = { 'gopluslabs.io': security({ buy_tax: '0' }) };
+    const answer = (await inspect()) as Dated;
+    expect(answer.simulation).toBeNull();
+  });
+});
+
 /** The 20-field record the address endpoint returns, all noughts by default. */
 function addressRecord(overrides: Record<string, string> = {}) {
   const base: Record<string, string> = {

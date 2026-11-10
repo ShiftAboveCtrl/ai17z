@@ -79,6 +79,7 @@ export const notificationKey = {
   workerStopped: () => 'worker.stopped',
   everythingPaused: () => 'runtime.paused',
   liveTradeWaiting: (tradeIntentId: string) => `live-trade.waiting:${tradeIntentId}`,
+  mintCheckAnswered: (requestId: string) => `mint-check:${requestId}`,
 };
 
 /**
@@ -408,6 +409,41 @@ export async function liveTradeWaiting(input: { tradeIntentId: string; agentName
 
 export async function liveTradeSettled(tradeIntentId: string): Promise<void> {
   await notificationsRepo.resolve(notificationKey.liveTradeWaiting(tradeIntentId));
+}
+
+/**
+ * An evidence card went out, and the owner may pin a watch on its mint.
+ *
+ * INFO, because nothing is broken: it is an offer. It reaches a phone through
+ * the `evidence` category rather than through the severity floor, which exists
+ * to keep minor events off a phone and would otherwise swallow the one message
+ * whose whole point is that the owner can act on it. The category switch is the
+ * owner's control over it. Raised only after the reply is confirmed published,
+ * and keyed on the request so a retried execute says it once.
+ */
+export async function mintCheckAnswered(input: {
+  requestId: string;
+  agentId: string;
+  accountId: string | null;
+  asker: string | null;
+  chain: string;
+  address: string;
+}): Promise<NotificationRecord | null> {
+  const short = `${input.address.slice(0, 6)}...${input.address.slice(-4)}`;
+  return notificationsRepo.raise({
+    kind: 'MINT_CHECK_ANSWERED',
+    severity: 'INFO',
+    agentId: input.agentId,
+    accountId: input.accountId,
+    title: 'Your agent answered a request to check a mint',
+    body:
+      `@${input.asker ?? 'someone'} asked about ${input.chain} ${short} and received an evidence card with no verdict. ` +
+      (input.chain === 'solana'
+        ? `To watch it for new pools, confirm with /watch ${input.requestId.slice(0, 8)} in Telegram. Nothing is watched until you do.`
+        : 'Watches read Solana mints only, so there is nothing to confirm for this one.'),
+    data: { requestId: input.requestId, chain: input.chain },
+    dedupeKey: notificationKey.mintCheckAnswered(input.requestId),
+  });
 }
 
 /**

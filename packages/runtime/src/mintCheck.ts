@@ -3,7 +3,6 @@ import {
   capabilityInvocations,
   jobs as jobsRepo,
   mintChecks,
-  notifications as notificationsRepo,
   observability,
   radar,
 } from '@xbam/database';
@@ -16,6 +15,7 @@ import { capabilitySettings } from './capabilityPermissions';
 import { readTemperature } from './engagement';
 import { pauseState } from './killSwitch';
 import type { JobBundle } from './loadJob';
+import { mintCheckAnswered } from './notify';
 import { readPromo } from './promo';
 import { unpromptedSubject } from './reticence';
 import { parseTokenReference, tokenAddressesIn } from './token';
@@ -150,7 +150,31 @@ const SolanaProfileOut = z.looseObject({
 });
 
 const Observation = z.object({ what: z.string(), detail: z.string(), source: z.string(), kind: z.enum(['FACT', 'FLAG']) });
-const RiskOut = z.looseObject({ observations: z.array(Observation), notChecked: z.array(z.string()), sourcesAnswering: z.number() });
+const RiskOut = z.looseObject({
+  observations: z.array(Observation),
+  notChecked: z.array(z.string()),
+  sourcesAnswering: z.number(),
+  // When each service was actually asked. Absent means the reading cannot be
+  // dated, and an undated reading is not shown as a current one.
+  analysis: z.looseObject({ source: z.string(), readAt: z.string(), found: z.boolean(), known: z.array(z.string()) }).nullish(),
+  simulation: z.looseObject({ source: z.string(), readAt: z.string() }).nullish(),
+});
+
+/** What an EVM card calls a source when it cannot name which one answered. */
+const EVM_UNNAMED_SOURCE = 'security services';
+
+/**
+ * The name a reader would recognise for an upstream, short enough that five
+ * readings with a source and a time still fit the limit a post has.
+ */
+const EVM_SOURCE_NAMES: Record<string, string> = {
+  'token_security.goplus': 'GoPlus',
+  'token_tradeable.honeypotis': 'Honeypot.is',
+};
+
+export function evmSourceName(upstreamId: string): string {
+  return EVM_SOURCE_NAMES[upstreamId] ?? upstreamId.split('.').pop() ?? upstreamId;
+}
 
 const usd = (value: number): string =>
   value >= 1e9 ? `$${(value / 1e9).toFixed(2)}B` : value >= 1e6 ? `$${(value / 1e6).toFixed(2)}M` : value >= 1e3 ? `$${(value / 1e3).toFixed(1)}K` : `$${value.toFixed(0)}`;
@@ -205,41 +229,80 @@ export function evidenceFromSolanaProfile(output: unknown, now = Date.now()): Mi
 /**
  * The EVM reading, from what `token.inspect_risk` reported.
  *
- * That capability lists an attribute only when a source raised or stated it, and
- * lists what nobody checked by name. So absence from both lists is a reading of
- * "no", presence in `notChecked` is "unavailable", and nothing is inferred
- * beyond that. Sell and buy are never written, only the exit and entry of a
+ * Each of the two services is read on its own terms, because they were asked at
+ * different moments and the upstream layer caches them for different lengths
+ * (analysis an hour, simulation half of one). So every line carries the real
+ * name of the service that said it and the time that service was actually
+ * asked, never the time this card was built, and a service whose reading is too
+ * old or cannot be dated is unavailable rather than quietly current.
+ *
+ * "Not raised" is not "no". A flag the service did not raise is written as
+ * absent only for an attribute it stated both ways (`analysis.known`); for a
+ * contract it has never analysed, or an attribute it did not report, the line
+ * is unavailable. Sell and buy are never written, only the exit and entry of a
  * position, because the card does not use the vocabulary of a trade.
  */
-export function evidenceFromRiskInspect(output: unknown, fetchedAt: string, now = Date.now()): MintEvidence {
+export function evidenceFromRiskInspect(output: unknown, now = Date.now()): MintEvidence {
   const parsed = RiskOut.safeParse(output);
-  if (!parsed.success) return { state: 'UNAVAILABLE', source: 'analysis', at: new Date(now).toISOString(), reason: 'the answer was not in a shape I can read' };
-  const { observations, notChecked, sourcesAnswering } = parsed.data;
+  if (!parsed.success) {
+    return { state: 'UNAVAILABLE', source: EVM_UNNAMED_SOURCE, at: new Date(now).toISOString(), reason: 'the answer was not in a shape I can read' };
+  }
+  const { observations, sourcesAnswering } = parsed.data;
+  const analysis = parsed.data.analysis ?? null;
+  const simulation = parsed.data.simulation ?? null;
   if (sourcesAnswering === 0) {
-    return { state: 'UNAVAILABLE', source: 'analysis', at: fetchedAt, reason: 'no security source answered' };
+    return { state: 'UNAVAILABLE', source: EVM_UNNAMED_SOURCE, at: new Date(now).toISOString(), reason: 'no security source answered' };
   }
-  if (tooOld(fetchedAt, now)) {
-    return { state: 'UNAVAILABLE', source: 'analysis', at: new Date(now).toISOString(), reason: 'the reading is too old to show as current' };
-  }
-  const find = (what: string) => observations.find((o) => o.what === what);
-  const unchecked = (what: string) => notChecked.some((n) => n.startsWith(what));
-  const line = (label: string, value: string | null, source: string, priority: number): EvidenceLine => ({ label, value, source, at: fetchedAt, priority });
-  const flagged = (what: string, yes: string, no: string, source: string, label: string, priority: number) =>
-    line(label, unchecked(what) ? null : find(what) ? yes : no, source, priority);
 
-  // Short names for the two kinds of source, so five readings with their source
-  // and time fit the limit a post has. They are the capability's own words.
-  const short = (source: string) => (source === 'trade simulation' ? 'simulation' : source === 'contract analysis' ? 'analysis' : source);
-  const exitTax = find('Sell tax') ?? find('Sell tax, simulated');
-  const exitTest = find('Could be sold again');
+  const analysisUsable = analysis !== null && !tooOld(analysis.readAt, now);
+  const simulationUsable = simulation !== null && !tooOld(simulation.readAt, now);
+  if (!analysisUsable && !simulationUsable) {
+    const dated = analysis ?? simulation;
+    return {
+      state: 'UNAVAILABLE',
+      source: dated ? evmSourceName(dated.source) : EVM_UNNAMED_SOURCE,
+      // The time it was really read, so an old reading says how old it is.
+      at: dated?.readAt ?? new Date(now).toISOString(),
+      reason: dated ? 'the readings are too old to show as current' : 'the answer carried no time I can show',
+    };
+  }
+
+  const find = (what: string) => observations.find((o) => o.what === what);
+  const named = (reading: { source: string; readAt: string } | null) => ({
+    source: reading ? evmSourceName(reading.source) : EVM_UNNAMED_SOURCE,
+    at: reading?.readAt ?? '',
+  });
+  const fromAnalysis = named(analysis);
+  const fromSimulation = named(simulation);
+  const line = (label: string, value: string | null, from: { source: string; at: string }, priority: number): EvidenceLine => ({
+    label,
+    value,
+    source: from.source,
+    at: from.at,
+    priority,
+  });
+  // A stale or missing service contributes no values, only its own name and time.
+  const said = (what: string) => (analysisUsable ? find(what)?.detail ?? null : null);
+
+  const mintable =
+    analysisUsable && analysis.found && analysis.known.includes('More can be minted') ? (find('More can be minted') ? 'can be increased' : 'cannot be increased') : null;
+
+  const analysisTax = analysisUsable ? find('Sell tax') : undefined;
+  const simulatedTax = simulationUsable ? find('Sell tax, simulated') : undefined;
+  const exitTest = simulationUsable ? find('Could be sold again') : undefined;
+
   return {
     state: 'READ',
     lines: [
-      line('Holders', find('Holders')?.detail ?? null, 'analysis', 3),
-      line('Creator holds', find('Held by the creator')?.detail ?? null, 'analysis', 4),
-      flagged('More can be minted', 'can be increased', 'cannot be increased', 'analysis', 'Supply', 5),
-      line('Exit tax', exitTax?.detail ?? null, short(exitTax?.source ?? 'contract analysis'), 4),
-      line('Exit test', exitTest ? (exitTest.kind === 'FLAG' ? 'failed in simulation' : 'passed in simulation') : null, 'simulation', 5),
+      line('Holders', said('Holders'), fromAnalysis, 3),
+      line('Creator holds', said('Held by the creator'), fromAnalysis, 4),
+      line('Supply', mintable, fromAnalysis, 5),
+      analysisTax
+        ? line('Exit tax', analysisTax.detail, fromAnalysis, 4)
+        : simulatedTax
+          ? line('Exit tax', simulatedTax.detail, fromSimulation, 4)
+          : line('Exit tax', null, fromAnalysis, 4),
+      line('Exit test', exitTest ? (exitTest.kind === 'FLAG' ? 'failed in simulation' : 'passed in simulation') : null, fromSimulation, 5),
     ],
   };
 }
@@ -397,7 +460,9 @@ async function readEvidence(bundle: JobBundle, request: Extract<MintRequest, { k
     context: { agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId, config: {}, logger: log },
     permission: { stored: settings?.permissions.get(id) ?? null, paused },
   });
-  const fetchedAt = new Date().toISOString();
+  // When the attempt failed. A successful EVM read is dated by the services
+  // themselves, which is not now: see `evidenceFromRiskInspect`.
+  const attemptedAt = new Date().toISOString();
 
   // Recorded like any capability call, so "what did it read for that card" has
   // an answer in the audit trail. A failed write does not lose the card.
@@ -417,10 +482,10 @@ async function readEvidence(bundle: JobBundle, request: Extract<MintRequest, { k
     .catch(() => undefined);
 
   if (result.outcome !== 'SUCCEEDED' || !result.output) {
-    const source = request.chain === 'solana' ? 'Jupiter' : 'analysis';
-    return { state: 'UNAVAILABLE', source, at: fetchedAt, reason: 'the source did not answer' };
+    const source = request.chain === 'solana' ? 'Jupiter' : EVM_UNNAMED_SOURCE;
+    return { state: 'UNAVAILABLE', source, at: attemptedAt, reason: 'the source did not answer' };
   }
-  return request.chain === 'solana' ? evidenceFromSolanaProfile(result.output) : evidenceFromRiskInspect(result.output, fetchedAt);
+  return request.chain === 'solana' ? evidenceFromSolanaProfile(result.output) : evidenceFromRiskInspect(result.output);
 }
 
 async function remember(bundle: JobBundle, meta: MintMeta): Promise<void> {
@@ -468,6 +533,17 @@ export async function stepMintCheck(bundle: JobBundle): Promise<boolean> {
       // is sent, and the reason is on the job.
       throw PipelineError.permanent('mint_check_asker_capped', 'They reached the hourly limit for evidence checks while this was queued.');
     }
+    if (claim.pending) {
+      // An earlier card for this contract is still on its way out. Pointing at
+      // it now could point at a reply that never publishes, and reading again
+      // would spend the upstream quota the cooldown exists to save. A limit
+      // that has not cleared charges no attempt, so this simply asks later.
+      throw PipelineError.retryable(
+        'mint_card_pending',
+        'An evidence card for this contract is still being sent, so this request waits for it instead of reading again.',
+        { retryAfterMs: claim.retryAfterMs },
+      );
+    }
     outcome = claim.row.outcome;
     requestId = claim.row.id;
     pointer = claim.pointer;
@@ -494,38 +570,38 @@ export async function stepMintCheck(bundle: JobBundle): Promise<boolean> {
     data: { mintCheck: true, outcome, requestId, rehearsal: job.dryRun },
   });
 
-  if (outcome === 'CARD' && requestId && request.kind === 'ONE') {
-    await offerWatch(bundle, requestId, request).catch((error: unknown) => {
-      log.warn('could not tell the owner about a mint check', { jobId: job.id, error: String(error) });
-    });
-  }
+  // No notification here: the card has not gone anywhere yet. The owner is told
+  // from `announceMintCheck`, after the execute step confirms it was published.
   return true;
 }
 
 /**
  * Tells the owner a card went out and how to pin a watch on it.
  *
- * This only informs. The watch is created by `confirmMintWatch`, which runs
- * from the owner's own paired chat and from nowhere that handles other
- * people's words.
+ * Called by the execute step once the reply is confirmed published, so the
+ * owner is never offered a watch on a card nobody received (one held for
+ * review, one that failed, one a rehearsal produced). This only informs. The
+ * watch is created by `confirmMintWatch`, which runs from the owner's own paired
+ * chat and from nowhere that handles other people's words. The notification
+ * itself is raised through `notify.ts` like every other one, and is idempotent
+ * on the request id, so a retried execute does not tell the owner twice.
  */
-async function offerWatch(bundle: JobBundle, requestId: string, request: Extract<MintRequest, { kind: 'ONE' }>): Promise<void> {
-  const short = `${request.address.slice(0, 6)}...${request.address.slice(-4)}`;
-  const id = requestId.slice(0, 8);
-  await notificationsRepo.raise({
-    kind: 'MINT_CHECK_ANSWERED',
-    severity: 'INFO',
-    agentId: bundle.agent.id,
-    accountId: bundle.job.accountId,
-    title: 'Your agent answered a request to check a mint',
-    body:
-      `@${bundle.event.remoteAuthorHandle ?? 'someone'} asked about ${request.chain} ${short} and received an evidence card with no verdict. ` +
-      (request.chain === 'solana'
-        ? `To watch it for new pools, confirm with /watch ${id} in Telegram. Nothing is watched until you do.`
-        : 'Watches read Solana mints only, so there is nothing to confirm for this one.'),
-    data: { requestId, chain: request.chain },
-    dedupeKey: `mint-check:${requestId}`,
-  });
+export async function announceMintCheck(bundle: JobBundle): Promise<void> {
+  const meta = mintMetaOf(bundle.job.resolvedContext);
+  if (!meta || meta.outcome !== 'CARD' || !meta.requestId || meta.request.kind !== 'ONE' || bundle.job.dryRun) return;
+  try {
+    await mintCheckAnswered({
+      requestId: meta.requestId,
+      agentId: bundle.agent.id,
+      accountId: bundle.job.accountId,
+      asker: bundle.event.remoteAuthorHandle ?? null,
+      chain: meta.request.chain,
+      address: meta.request.address,
+    });
+  } catch (error) {
+    // The reply is already out; failing to say so must not fail the job.
+    log.warn('could not tell the owner about a mint check', { jobId: bundle.job.id, error: String(error) });
+  }
 }
 
 /* --------------------------------------------------- the owner's confirm */

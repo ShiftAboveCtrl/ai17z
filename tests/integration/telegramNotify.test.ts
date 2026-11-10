@@ -247,6 +247,34 @@ describe('what arrives, and what does not', () => {
     expect((await deliverNotifications()).delivered).toBe(0);
   });
 
+  // The review finding: an evidence-card offer is INFO, the default floor is
+  // WARNING, and the offer fell into `runtime` besides, so it never arrived.
+  it('delivers the offer to watch a mint under the default settings, in its own category', async () => {
+    await connected();
+    installTelegramTransport();
+    expect(categoryFor('MINT_CHECK_ANSWERED')).toBe('evidence');
+    expect((await loadConfig()).minSeverity).toBe('WARNING');
+    expect((await loadConfig()).categories.evidence).toBe(true);
+
+    await raise('INFO', 'MINT_CHECK_ANSWERED');
+    expect((await deliverNotifications()).delivered).toBe(1);
+    expect(telegram.texts()).toHaveLength(1);
+  });
+
+  it('lets the owner switch the offer off, and leaves the severity floor in place for everything else', async () => {
+    await connected();
+    installTelegramTransport();
+    await updateTelegramPreferences({ categories: { evidence: false } });
+    await raise('INFO', 'MINT_CHECK_ANSWERED');
+    expect((await deliverNotifications()).delivered).toBe(0);
+
+    await updateTelegramPreferences({ categories: { evidence: true } });
+    // The exemption is for this category only: a minor event of any other kind
+    // is still held back by the floor.
+    await raise('INFO', 'SOMETHING_ADDED_LATER');
+    expect((await deliverNotifications()).delivered).toBe(0);
+  });
+
   it('honours a category being switched off', async () => {
     await connected();
     installTelegramTransport();

@@ -28,10 +28,48 @@ export interface PointerTarget {
 
 export type ClaimResult =
   | { capped: true }
-  | { capped: false; row: MintCheckRow; pointer: PointerTarget | null };
+  /**
+   * An earlier card for this contract is still on its way out. It is not
+   * something to point at yet, and not a reason to read a second time either:
+   * the caller waits `retryAfterMs` and asks again, by which time the card is
+   * either published or gone.
+   */
+  | { capped: false; pending: true; retryAfterMs: number }
+  | { capped: false; pending: false; row: MintCheckRow; pointer: PointerTarget | null };
 
-/** Jobs that never reached anybody are not a card somebody can be pointed at. */
-const NEVER_SENT = `('PERMANENT_FAILURE', 'CANCELLED', 'DRY_RUN_COMPLETED')`;
+/** How long a request waits for the card ahead of it before looking again. */
+export const PENDING_CARD_RETRY_MS = 15_000;
+
+/**
+ * The same contract, however it was typed.
+ *
+ * Mirrors the generated `mint_key` column in migration 0125: an EVM address is
+ * case-insensitive, so it is lowercased; a Solana address is base58, where case
+ * is part of the value, so it is left exactly as written.
+ */
+export function canonicalMint(chain: string | null, mint: string): string {
+  return chain === 'solana' ? mint : mint.toLowerCase();
+}
+
+/**
+ * A card somebody can be pointed at: its reply really went out.
+ *
+ * Not "the job is not a failure". A job waiting for the owner's approval, or
+ * held for review, has not published anything, and a pointer at it is a pointer
+ * at a reply that may never exist.
+ */
+const PUBLISHED = `EXISTS (
+  SELECT 1 FROM actions a
+   WHERE a.job_id = c.job_id AND a.status = 'EXECUTED' AND a.dry_run = false
+)`;
+
+/**
+ * A card still making its way out under its own power: not settled, and not
+ * parked waiting for a person. A parked one may wait for days, and everyone
+ * behind it would wait too, so it reserves nothing.
+ */
+const IN_FLIGHT = `j.status NOT IN
+  ('EXECUTED', 'DRY_RUN_COMPLETED', 'PERMANENT_FAILURE', 'CANCELLED', 'WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED')`;
 
 async function pointerFor(row: MintCheckRow): Promise<PointerTarget | null> {
   if (row.outcome !== 'POINTER' || !row.pointsTo) return null;
@@ -40,7 +78,7 @@ async function pointerFor(row: MintCheckRow): Promise<PointerTarget | null> {
             (SELECT a.remote_action_url FROM actions a
               WHERE a.job_id = c.job_id AND a.status = 'EXECUTED' AND a.dry_run = false
               ORDER BY a.created_at DESC LIMIT 1) AS url
-       FROM mint_check_requests c WHERE c.id = $1`,
+       FROM mint_check_requests c WHERE c.id = $1 AND ${PUBLISHED}`,
     [row.pointsTo],
   );
   return card ? { askedAt: card.created_at.toISOString(), url: card.url } : null;
@@ -68,9 +106,15 @@ export async function askerCountSince(agentId: string, askerKey: string, sinceMs
  * can spend together is not a cap. The job id is unique, so a retried job reads
  * back the answer it was already given instead of taking a second place.
  *
- * A mint asked about inside the cooldown becomes a pointer at the earlier card,
- * not a second card: five people asking about one mint in a minute produce one
- * read and four short replies.
+ * A contract asked about inside the cooldown becomes a pointer at the earlier
+ * card, not a second card: five people asking about one mint in a minute produce
+ * one read and four short replies. "The same contract" is agent + chain +
+ * canonical address, so a case variant is the same contract and the same string
+ * on another chain is not.
+ *
+ * Only a card that was really published can be pointed at. One still on its way
+ * out reserves the contract instead (the caller waits and asks again), and one
+ * parked for the owner reserves nothing, so a request behind it reads for itself.
  */
 export async function claim(input: {
   agentId: string;
@@ -88,7 +132,7 @@ export async function claim(input: {
     await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`mint-check:${input.agentId}`]);
 
     const existing = await tx.one('SELECT * FROM mint_check_requests WHERE job_id = $1', [input.jobId]);
-    if (existing) return { capped: false as const, row: mapRow<MintCheckRow>(existing)! };
+    if (existing) return { capped: false as const, pending: false as const, row: mapRow<MintCheckRow>(existing)! };
 
     const recent = await tx.one<{ n: string }>(
       `SELECT count(*)::text AS n FROM mint_check_requests
@@ -100,17 +144,29 @@ export async function claim(input: {
     let outcome: MintCheckOutcome = input.mint ? 'CARD' : 'REFUSED';
     let pointsTo: string | null = null;
     if (input.mint) {
-      const earlier = await tx.one<{ id: string }>(
-        `SELECT c.id FROM mint_check_requests c JOIN jobs j ON j.id = c.job_id
-          WHERE c.agent_id = $1 AND c.mint = $2 AND c.outcome = 'CARD'
-            AND c.created_at > now() - ($3::bigint * interval '1 millisecond')
-            AND j.status NOT IN ${NEVER_SENT}
+      const key = canonicalMint(input.chain, input.mint);
+      const within = `c.agent_id = $1 AND c.chain IS NOT DISTINCT FROM $2 AND c.mint_key = $3 AND c.outcome = 'CARD'
+            AND c.created_at > now() - ($4::bigint * interval '1 millisecond')`;
+      const args = [input.agentId, input.chain, key, input.cooldownMs];
+
+      const published = await tx.one<{ id: string }>(
+        `SELECT c.id FROM mint_check_requests c
+          WHERE ${within} AND ${PUBLISHED}
           ORDER BY c.created_at DESC LIMIT 1`,
-        [input.agentId, input.mint, input.cooldownMs],
+        args,
       );
-      if (earlier) {
+      if (published) {
         outcome = 'POINTER';
-        pointsTo = earlier.id;
+        pointsTo = published.id;
+      } else {
+        const pending = await tx.one<{ id: string }>(
+          `SELECT c.id FROM mint_check_requests c JOIN jobs j ON j.id = c.job_id
+            WHERE ${within} AND ${IN_FLIGHT}
+            ORDER BY c.created_at DESC LIMIT 1`,
+          args,
+        );
+        // Nothing is inserted, so the asker's hour is not spent on a wait.
+        if (pending) return { capped: false as const, pending: true as const, retryAfterMs: PENDING_CARD_RETRY_MS };
       }
     }
 
@@ -120,21 +176,26 @@ export async function claim(input: {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [input.agentId, input.jobId, input.channel, input.askerKey, input.askerHandle, input.mint, input.chain, outcome, pointsTo],
     );
-    return { capped: false as const, row: mapRow<MintCheckRow>(inserted)! };
+    return { capped: false as const, pending: false as const, row: mapRow<MintCheckRow>(inserted)! };
   });
 
-  if (result.capped) return result;
-  return { capped: false, row: result.row, pointer: await pointerFor(result.row) };
+  if (result.capped || result.pending) return result;
+  return { capped: false, pending: false, row: result.row, pointer: await pointerFor(result.row) };
 }
 
-/** Cards the owner has not yet decided about, newest first. */
+/**
+ * Cards the owner has not yet decided about, newest first.
+ *
+ * Published ones only: offering to watch the subject of a reply that never went
+ * out would be asking the owner to act on something nobody was told.
+ */
 export async function undecidedCards(agentId: string | null, limit = 10): Promise<MintCheckRow[]> {
   return mapRows<MintCheckRow>(
     await query(
-      `SELECT c.* FROM mint_check_requests c JOIN jobs j ON j.id = c.job_id
+      `SELECT c.* FROM mint_check_requests c
         WHERE c.outcome = 'CARD' AND c.watch_state IS NULL
           AND c.created_at > now() - interval '24 hours'
-          AND j.status NOT IN ${NEVER_SENT}
+          AND ${PUBLISHED}
           AND ($1::uuid IS NULL OR c.agent_id = $1)
         ORDER BY c.created_at DESC LIMIT $2`,
       [agentId, limit],

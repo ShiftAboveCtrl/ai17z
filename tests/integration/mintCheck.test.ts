@@ -70,7 +70,7 @@ function serve(mint: string, body: unknown = [record(mint)], status = 200) {
 const readsOf = (mint: string) => requested.filter((url) => url.includes(`/tokens/v2/search?query=${mint}`)).length;
 
 /** The shape `token.inspect_risk` returns, standing in for its two paid-for services. */
-function registerFakeRiskInspect(output: Record<string, unknown>) {
+function registerFakeRiskInspect(output: Record<string, unknown>, onRun: () => void = () => undefined) {
   registerCapability(
     defineCapability({
       id: 'token.inspect_risk',
@@ -84,10 +84,20 @@ function registerFakeRiskInspect(output: Record<string, unknown>) {
       modelCallable: true,
       timeoutMs: 5_000,
       async run() {
+        onRun();
         return output as never;
       },
     }),
   );
+}
+
+/** Both services answering just now, which is what the real capability reports. */
+function freshReadings(known: string[] = ['More can be minted']) {
+  const readAt = new Date().toISOString();
+  return {
+    analysis: { source: 'token_security.goplus', readAt, found: true, known },
+    simulation: { source: 'token_tradeable.honeypotis', readAt },
+  };
 }
 
 beforeEach(() => {
@@ -236,12 +246,13 @@ describe('the card', () => {
       ],
       notChecked: [],
       sourcesAnswering: 2,
+      ...freshReadings(),
     });
     const fixture = await createFixture({ policy: easyPolicy() });
     const r = await ask(fixture.agentId, `check ${EVM} on base`);
 
-    expect(r.text).toContain('Holders: 1,204 (analysis ');
-    expect(r.text).toContain('Exit tax: 15% (analysis ');
+    expect(r.text).toContain('Holders: 1,204 (GoPlus ');
+    expect(r.text).toContain('Exit tax: 15% (GoPlus ');
     expect(r.text).toContain('Supply: cannot be increased');
     expect(r.text).toContain('Creator holds: unavailable');
     expect(r.text).not.toMatch(FORBIDDEN);
@@ -353,6 +364,205 @@ describe('the limits', () => {
     expect(first.job.status).toBe('EXECUTED');
     expect(second.job.status).toBe('CANCELLED');
     expect(decided(second)).toMatch(/limit for one person/);
+  });
+});
+
+/** Takes a job's place without running the pipeline, so its state can be set by hand. */
+async function queued(agentId: string, text: string, who: string) {
+  const outcome = await runtime.ingestNormalizedEvent({
+    accountId: null,
+    onlyAgentId: agentId,
+    event: mockEvent(text, { remoteAuthorHandle: who, remoteAuthorId: `mock-user-${who}`, type: 'MENTION' }),
+  });
+  return outcome.jobs[0]!.job;
+}
+
+function claimFor(agentId: string, jobId: string, mint: string | null, chain: string | null, who = 'asker', cooldownMs = 300_000) {
+  return mintChecks.claim({ agentId, jobId, channel: 'mock', askerKey: `mock:${who}`, askerHandle: who, mint, chain, askerCap: 50, cooldownMs });
+}
+
+/** Leaves the job with an executed, non-rehearsal action: the card really went out. */
+async function publish(job: { id: string; agentId: string; accountId: string | null; actionType: string }) {
+  const claim = await actionsRepo.claimAction({
+    jobId: job.id,
+    agentId: job.agentId,
+    accountId: job.accountId,
+    channel: 'mock',
+    type: job.actionType as never,
+    dryRun: false,
+    idempotencyKey: `test:${job.id}`,
+    payload: { text: 'card', targetRef: null },
+    targetRef: null,
+  });
+  await actionsRepo.completeAction(claim.action.id, { status: 'EXECUTED', remoteActionId: 'remote-1', remoteActionUrl: 'https://example.invalid/status/1' });
+  await jobsRepo.updateJob(job.id, { status: 'EXECUTED' });
+}
+
+describe('only a card that really went out can be pointed at', () => {
+  // The review finding: a card held for the owner (or still being sent) counted as
+  // an earlier card, so the next asker was pointed at a reply that never publishes.
+  it('reads for itself when the earlier card is held for the owner, rather than pointing at it', async () => {
+    serve(BONK);
+    const policy = easyPolicy();
+    const fixture = await createFixture({ policy: { ...policy, automation: { ...policy.automation, mode: 'REVIEW_BEFORE_ACTION' } } });
+    const first = await ask(fixture.agentId, `check ${BONK}`, 'alice');
+    const second = await ask(fixture.agentId, `check ${BONK}`, 'bob');
+
+    expect(first.job.status).toBe('WAITING_FOR_APPROVAL');
+    expect(second.job.validatedOutput).toContain('Liquidity:');
+    expect(second.job.validatedOutput).not.toContain('Already read that address');
+    const rows = await query<{ outcome: string }>('SELECT outcome FROM mint_check_requests ORDER BY created_at');
+    expect(rows.map((r) => r.outcome)).toEqual(['CARD', 'CARD']);
+  });
+
+  it('asks the next request to wait while the earlier card is still being sent, and spends nothing on the wait', async () => {
+    const fixture = await createFixture({ policy: easyPolicy() });
+    const first = await queued(fixture.agentId, `check ${BONK}`, 'alice');
+    const second = await queued(fixture.agentId, `check ${BONK}`, 'bob');
+
+    const card = await claimFor(fixture.agentId, first.id, BONK, 'solana', 'alice');
+    expect(card).toMatchObject({ capped: false, pending: false });
+
+    const waiting = await claimFor(fixture.agentId, second.id, BONK, 'solana', 'bob');
+    expect(waiting).toMatchObject({ capped: false, pending: true });
+    expect((waiting as { retryAfterMs: number }).retryAfterMs).toBeGreaterThan(0);
+    // No place was taken, so the asker's hour is untouched and a retry starts clean.
+    expect(await mintChecks.forJob(second.id)).toBeNull();
+    expect(await mintChecks.askerCountSince(fixture.agentId, 'mock:bob', 3_600_000)).toBe(0);
+  });
+
+  it('points at the card once it has been published, with its link', async () => {
+    const fixture = await createFixture({ policy: easyPolicy() });
+    const first = await queued(fixture.agentId, `check ${BONK}`, 'alice');
+    const second = await queued(fixture.agentId, `check ${BONK}`, 'bob');
+    await claimFor(fixture.agentId, first.id, BONK, 'solana', 'alice');
+    await publish(first);
+
+    const pointed = await claimFor(fixture.agentId, second.id, BONK, 'solana', 'bob');
+    expect(pointed).toMatchObject({ capped: false, pending: false, row: { outcome: 'POINTER', pointsTo: (await mintChecks.forJob(first.id))!.id } });
+    expect((pointed as { pointer: { url: string } }).pointer.url).toBe('https://example.invalid/status/1');
+  });
+
+  it('does not point at a card whose job is parked for review or never sent', async () => {
+    const fixture = await createFixture({ policy: easyPolicy() });
+    for (const status of ['WAITING_FOR_APPROVAL', 'REVIEW_REQUIRED', 'PERMANENT_FAILURE', 'CANCELLED'] as const) {
+      const earlier = await queued(fixture.agentId, `check ${BONK}`, 'alice');
+      const later = await queued(fixture.agentId, `check ${BONK}`, 'bob');
+      await claimFor(fixture.agentId, earlier.id, BONK, 'solana', 'alice');
+      await jobsRepo.updateJob(earlier.id, { status });
+      const claim = await claimFor(fixture.agentId, later.id, BONK, 'solana', 'bob');
+      expect(claim, status).toMatchObject({ capped: false, pending: false, row: { outcome: 'CARD', pointsTo: null } });
+      await query('DELETE FROM mint_check_requests');
+    }
+  });
+
+  it('does not offer the owner a watch on a card that was never published', async () => {
+    const fixture = await createFixture({ policy: easyPolicy() });
+    const held = await queued(fixture.agentId, `check ${BONK}`, 'alice');
+    await claimFor(fixture.agentId, held.id, BONK, 'solana', 'alice');
+    expect(await mintChecks.undecidedCards(null)).toHaveLength(0);
+    await publish(held);
+    expect(await mintChecks.undecidedCards(null)).toHaveLength(1);
+  });
+});
+
+describe('the same contract, however it is typed', () => {
+  const MIXED = '0xAbCdEf0123456789aBcDeF0123456789AbCdEf01';
+
+  function fakeEvm(onRun: () => void) {
+    resetCapabilitiesForTest();
+    registerFakeRiskInspect(
+      { observations: [{ what: 'Holders', detail: '12', source: 'contract analysis', kind: 'FACT' }], notChecked: [], sourcesAnswering: 2, ...freshReadings() },
+      onRun,
+    );
+  }
+
+  // The review finding: the cooldown looked at the address as typed, so a case
+  // variant of one contract earned a second card.
+  it('answers a case variant of an EVM address with a pointer, from one read', async () => {
+    let reads = 0;
+    fakeEvm(() => (reads += 1));
+    const fixture = await createFixture({ policy: easyPolicy() });
+    const first = await ask(fixture.agentId, `check ${MIXED} on base`, 'alice');
+    const second = await ask(fixture.agentId, `check ${MIXED.toLowerCase()} on base`, 'bob');
+
+    expect(first.text).toContain('Holders: 12');
+    expect(second.text).toMatch(/^Already read that address \d+ min ago/);
+    expect(reads).toBe(1);
+    const rows = await query<{ outcome: string; mint_key: string }>('SELECT outcome, mint_key FROM mint_check_requests ORDER BY created_at');
+    expect(rows.map((r) => r.outcome)).toEqual(['CARD', 'POINTER']);
+    expect(new Set(rows.map((r) => r.mint_key))).toEqual(new Set([MIXED.toLowerCase()]));
+  });
+
+  // And the mirror: one string on two chains is two contracts.
+  it('never points at a card for the same address on another chain', async () => {
+    let reads = 0;
+    fakeEvm(() => (reads += 1));
+    const fixture = await createFixture({ policy: easyPolicy() });
+    await ask(fixture.agentId, `check ${MIXED} on base`, 'alice');
+    const other = await ask(fixture.agentId, `check ${MIXED} on ethereum`, 'bob');
+
+    expect(other.text).toContain('Holders: 12');
+    expect(other.text).not.toContain('Already read that address');
+    expect(reads).toBe(2);
+    expect((await query<{ outcome: string }>('SELECT outcome FROM mint_check_requests ORDER BY created_at')).map((r) => r.outcome)).toEqual(['CARD', 'CARD']);
+  });
+
+  it('keeps a Solana address exactly as written, because its case is part of the value', async () => {
+    const fixture = await createFixture({ policy: easyPolicy() });
+    const a = await queued(fixture.agentId, `check ${BONK}`, 'alice');
+    const b = await queued(fixture.agentId, `check ${BONK}`, 'bob');
+    await claimFor(fixture.agentId, a.id, BONK, 'solana', 'alice');
+    // Same letters, different case: a different address, so nothing to wait for.
+    expect(await claimFor(fixture.agentId, b.id, BONK.toLowerCase(), 'solana', 'bob')).toMatchObject({ pending: false, row: { outcome: 'CARD' } });
+  });
+
+  it('computes the same key in the database as the repository looks up', async () => {
+    const fixture = await createFixture({ policy: easyPolicy() });
+    const evm = await queued(fixture.agentId, `check ${MIXED} on base`, 'alice');
+    const sol = await queued(fixture.agentId, `check ${BONK}`, 'bob');
+    await claimFor(fixture.agentId, evm.id, MIXED, 'base', 'alice');
+    await claimFor(fixture.agentId, sol.id, BONK, 'solana', 'bob');
+    const rows = await query<{ mint: string; chain: string; mint_key: string }>('SELECT mint, chain, mint_key FROM mint_check_requests');
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.mint_key).toBe(mintChecks.canonicalMint(row.chain, row.mint));
+    expect(mintChecks.canonicalMint('base', MIXED)).toBe(MIXED.toLowerCase());
+    expect(mintChecks.canonicalMint('solana', BONK)).toBe(BONK);
+  });
+});
+
+describe('the owner is told only after the card has gone out', () => {
+  const open = async () => (await notifications.listOpen()).filter((n) => n.kind === 'MINT_CHECK_ANSWERED');
+
+  // The review finding: the notification was raised when the card was built, so a
+  // card waiting for approval (or never approved) already offered a watch on it.
+  it('raises nothing while the card waits for approval, and exactly one notice once it is sent', async () => {
+    serve(BONK);
+    const policy = easyPolicy();
+    const fixture = await createFixture({ policy: { ...policy, automation: { ...policy.automation, mode: 'REVIEW_BEFORE_ACTION' } } });
+    const held = await ask(fixture.agentId, `check ${BONK}`);
+    expect(held.job.status).toBe('WAITING_FOR_APPROVAL');
+    expect(await open()).toHaveLength(0);
+
+    const bundle = await runtime.loadJobBundle(await jobsRepo.requireJob(held.job.id));
+    await runtime.stepExecute(bundle);
+    const row = (await mintChecks.forJob(held.job.id))!;
+    const raised = await open();
+    expect(raised).toHaveLength(1);
+    expect(raised[0]!.body).toContain(`/watch ${row.id.slice(0, 8)}`);
+
+    // A retried execute says it once.
+    await runtime.stepExecute(await runtime.loadJobBundle(await jobsRepo.requireJob(held.job.id)));
+    expect(await open()).toHaveLength(1);
+  });
+
+  it('says nothing for a pointer or a refusal, which offer nothing to watch', async () => {
+    serve(BONK);
+    const fixture = await createFixture({ policy: easyPolicy() });
+    await ask(fixture.agentId, `check ${BONK}`, 'alice');
+    await ask(fixture.agentId, `check ${BONK}`, 'bob');
+    await ask(fixture.agentId, `check ${BONK} ${USDC}`, 'carol');
+    expect(await open()).toHaveLength(1);
   });
 });
 

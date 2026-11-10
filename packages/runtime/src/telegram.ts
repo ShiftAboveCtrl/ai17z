@@ -53,7 +53,7 @@ const SETTING_KEY = 'notifications.telegram';
  * Every kind maps to exactly one, and an unmapped kind falls into `runtime` --
  * a new condition arrives loud rather than silently undeliverable.
  */
-export const TELEGRAM_CATEGORIES = ['accounts', 'runtime', 'models', 'budget'] as const;
+export const TELEGRAM_CATEGORIES = ['accounts', 'runtime', 'models', 'budget', 'evidence'] as const;
 export type TelegramCategory = (typeof TELEGRAM_CATEGORIES)[number];
 
 export const CATEGORY_LABELS: Record<TelegramCategory, string> = {
@@ -61,6 +61,7 @@ export const CATEGORY_LABELS: Record<TelegramCategory, string> = {
   runtime: 'AI17Z stopped or paused',
   models: 'Models and providers',
   budget: 'Spending limits',
+  evidence: 'Evidence checks answered',
 };
 
 export const CATEGORY_DESCRIPTIONS: Record<TelegramCategory, string> = {
@@ -68,7 +69,18 @@ export const CATEGORY_DESCRIPTIONS: Record<TelegramCategory, string> = {
   runtime: 'The worker stopped, or everything was paused.',
   models: 'An agent has no model configured, or a provider is failing.',
   budget: 'An agent reached a daily or monthly limit and stopped.',
+  evidence: 'An agent answered a request to check a mint, with the id to confirm a watch. Not held back by the severity setting.',
 };
+
+/**
+ * Categories whose messages are offers rather than problems.
+ *
+ * The severity floor keeps small events off a phone, and everything in these
+ * categories is deliberately small: an offer to watch a mint is INFO, and under
+ * the default floor of WARNING it would never arrive, which defeats the one
+ * thing it is for. The category switch is the owner's control over them.
+ */
+const OFFER_CATEGORIES: ReadonlySet<TelegramCategory> = new Set(['evidence']);
 
 const KIND_CATEGORY: Record<string, TelegramCategory> = {
   ACCOUNT_NEEDS_USER: 'accounts',
@@ -78,6 +90,7 @@ const KIND_CATEGORY: Record<string, TelegramCategory> = {
   AGENT_HAS_NO_MODEL: 'models',
   PROVIDER_FAILING: 'models',
   LIMIT_REACHED: 'budget',
+  MINT_CHECK_ANSWERED: 'evidence',
 };
 
 export function categoryFor(kind: string): TelegramCategory {
@@ -131,7 +144,7 @@ const DEFAULTS: TelegramConfig = {
   // Everything on by default. Somebody who has just gone to the trouble of
   // creating a bot wants to be told things; turning categories off is a
   // decision they can make once they know what arrives.
-  categories: { accounts: true, runtime: true, models: true, budget: true },
+  categories: { accounts: true, runtime: true, models: true, budget: true, evidence: true },
   minSeverity: 'WARNING',
   heartbeatHours: 0,
   lastHeartbeatAt: null,
@@ -389,8 +402,9 @@ export const telegramTransport: NotificationTransport = {
     // still raises it, still dedupes it, and it is still in the app: a mute
     // silences the phone and never loses the notification.
     if (await telegramMuted()) return false;
-    if (SEVERITY_RANK[notification.severity] < SEVERITY_RANK[config.minSeverity]) return false;
-    return config.categories[categoryFor(notification.kind)] !== false;
+    const category = categoryFor(notification.kind);
+    if (!OFFER_CATEGORIES.has(category) && SEVERITY_RANK[notification.severity] < SEVERITY_RANK[config.minSeverity]) return false;
+    return config.categories[category] !== false;
   },
 
   async deliver(notification) {

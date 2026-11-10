@@ -66,6 +66,30 @@ const Observation = z.object({
   kind: z.enum(['FACT', 'FLAG']),
 });
 
+/**
+ * Who answered, and when they were actually asked.
+ *
+ * `readAt` is the upstream's own fetch time, which is not "now": the upstream
+ * layer keeps contract analysis for an hour and a simulation for half of one, so
+ * a cached answer is old by the time it reaches a caller. A caller that stamps
+ * its own clock on it presents an old reading as current.
+ */
+const Reading = z.object({
+  /** The upstream's id, for example `token_security.goplus`. */
+  source: z.string(),
+  readAt: z.string(),
+});
+
+const AnalysisReading = Reading.extend({
+  /** False when the service has no record of the contract at all. */
+  found: z.boolean(),
+  /**
+   * Attributes the service stated either way. An attribute missing from
+   * `observations` is a "no" only if it is listed here; otherwise nobody said.
+   */
+  known: z.array(z.string()),
+});
+
 function pct(value: number): string {
   return `${(value * 100).toFixed(2).replace(/\.00$/, '')}%`;
 }
@@ -78,11 +102,13 @@ function ifKnown<T>(
   render: (value: T) => { detail: string; kind: 'FACT' | 'FLAG' } | null,
   into: z.infer<typeof Observation>[],
   unchecked: string[],
+  known?: string[],
 ): void {
   if (!reported.known) {
     unchecked.push(`${what} (${source})`);
     return;
   }
+  known?.push(what);
   const rendered = render(reported.value);
   if (rendered) into.push({ what, detail: rendered.detail, source, kind: rendered.kind });
 }
@@ -123,6 +149,9 @@ const inspectRisk = defineCapability({
     /** What these sources cannot tell anybody, said every time. */
     limitations: z.array(z.string()),
     sourcesAnswering: z.number(),
+    /** Null when that service did not answer. */
+    analysis: AnalysisReading.nullable(),
+    simulation: Reading.nullable(),
   }),
   modelCallable: true,
   timeoutMs: 40_000,
@@ -133,6 +162,8 @@ const inspectRisk = defineCapability({
     const observations: z.infer<typeof Observation>[] = [];
     const notChecked: string[] = [];
     let answering = 0;
+    let analysis: z.infer<typeof AnalysisReading> | null = null;
+    let simulationReading: z.infer<typeof Reading> | null = null;
 
     // Asked independently. One failing is a smaller answer, not no answer, and
     // the count of sources that spoke goes out with it.
@@ -141,6 +172,8 @@ const inspectRisk = defineCapability({
       answering += 1;
       const value = security.value;
       const from = 'contract analysis';
+      const known: string[] = [];
+      analysis = { source: security.provenance.upstreamId, readAt: security.provenance.fetchedAt, found: value.found, known };
       if (!value.found) {
         observations.push({
           what: 'Never analysed',
@@ -152,7 +185,7 @@ const inspectRisk = defineCapability({
         ifKnown(value.buyTax, from, 'Buy tax', (v) => ({ detail: pct(v), kind: v > 0.1 ? 'FLAG' : 'FACT' }), observations, notChecked);
         ifKnown(value.sellTax, from, 'Sell tax', (v) => ({ detail: pct(v), kind: v > 0.1 ? 'FLAG' : 'FACT' }), observations, notChecked);
         ifKnown(value.isHoneypot, from, 'Cannot be sold', (v) => (v ? { detail: 'Reported as a honeypot.', kind: 'FLAG' } : null), observations, notChecked);
-        ifKnown(value.isMintable, from, 'More can be minted', (v) => (v ? { detail: 'Supply can be increased.', kind: 'FLAG' } : null), observations, notChecked);
+        ifKnown(value.isMintable, from, 'More can be minted', (v) => (v ? { detail: 'Supply can be increased.', kind: 'FLAG' } : null), observations, notChecked, known);
         ifKnown(value.transferPausable, from, 'Transfers can be paused', (v) => (v ? { detail: 'Someone can stop transfers.', kind: 'FLAG' } : null), observations, notChecked);
         ifKnown(value.canTakeBackOwnership, from, 'Ownership can be reclaimed', (v) => (v ? { detail: 'Renounced ownership can be taken back.', kind: 'FLAG' } : null), observations, notChecked);
         ifKnown(value.hiddenOwner, from, 'Hidden owner', (v) => (v ? { detail: 'An owner not visible in the obvious place.', kind: 'FLAG' } : null), observations, notChecked);
@@ -169,6 +202,7 @@ const inspectRisk = defineCapability({
       answering += 1;
       const value = simulation.value;
       const from = 'trade simulation';
+      simulationReading = { source: simulation.provenance.upstreamId, readAt: simulation.provenance.fetchedAt };
       if (!value.simulated) {
         notChecked.push(`Whether it can be sold (${from})`);
         if (value.note) observations.push({ what: 'Simulation', detail: value.note, source: from, kind: 'FACT' });
@@ -196,6 +230,8 @@ const inspectRisk = defineCapability({
           : 'Two independent sources answered; where they overlap, both readings are shown.',
       ],
       sourcesAnswering: answering,
+      analysis,
+      simulation: simulationReading,
     };
   },
 });
