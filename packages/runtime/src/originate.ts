@@ -1,5 +1,5 @@
 import type { ActionType } from '@xbam/shared/contracts';
-import { createLogger, sha256Hex } from '@xbam/shared';
+import { createLogger, errorMessage, sha256Hex } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -46,12 +46,14 @@ export async function originatePost(input: {
   agentId: string;
   accountId: string | null;
 }): Promise<OriginateResult> {
-  await processRadarReceipts(input.agentId);
   const agent = await agentsRepo.getAgent(input.agentId);
   if (!agent) return { posted: false, reason: 'The agent no longer exists.', jobId: null };
   if (agent.state !== 'ACTIVE') {
     return { posted: false, reason: `The agent is ${agent.state.toLowerCase()}, so it is not posting.`, jobId: null };
   }
+
+  try { await processRadarReceipts(input.agentId); }
+  catch (error) { log.warn('radar receipts did not run', { agentId: input.agentId, message: errorMessage(error) }); }
 
   const policy = await agentsRepo.getActivePolicy(agent.id);
   if (!policy) return { posted: false, reason: 'The agent has no policy version.', jobId: null };

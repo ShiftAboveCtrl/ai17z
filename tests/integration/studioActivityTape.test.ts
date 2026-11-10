@@ -48,6 +48,17 @@ async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, chann
 }
 
 describe('activity tape against Postgres and a DPoP Studio contract server', () => {
+  it('withholds unsupported receipt removals without stalling supported events', async () => {
+    await ready();
+    const receiptId = `receipt:${randomUUID()}`;
+    await scrubStudioActivity(receiptId, fixture.ownerId);
+    const id = await action();
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect(studio.batches[0]!.events.map(event => event.id)).toEqual([id]);
+    expect(studio.batches[0]!.remove).toEqual([]);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([receiptId]);
+  });
+
   it('keeps scrubs queued and sends nothing while the switch is off', async () => {
     await grant();
     const id = await action();

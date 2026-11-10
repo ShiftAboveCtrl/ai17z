@@ -877,7 +877,6 @@ export async function wakeAgent(
   }
 
   const agent = await agentsRepo.getAgent(agentId);
-  await processRadarReceipts(agentId);
   if (!agent || agent.state !== 'ACTIVE') {
     return emptyOutcome(agentId, wake.autonomy, 'The agent is not active.', 'inactive');
   }
@@ -899,6 +898,9 @@ export async function wakeAgent(
     await mind.noteWake(agentId, { reason: 'Everything is paused.', quiet: true, looked: false });
     return emptyOutcome(agentId, wake.autonomy, 'Everything is paused.', 'paused');
   }
+
+  try { await processRadarReceipts(agentId); }
+  catch (error) { log.warn('radar receipts did not run', { agentId, message: errorMessage(error) }); }
 
   const links = await accountsRepo.listAgentAccounts(agentId);
   const accountId = links[0]?.accountId ?? null;

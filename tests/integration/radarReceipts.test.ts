@@ -4,11 +4,12 @@ import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { pollSignalSource } from '../../packages/runtime/src/signalRadar';
 import { originatePost } from '../../packages/runtime/src/originate';
-import { processRadarReceipts } from '../../packages/runtime/src/radarReceipts';
+import { processRadarReceipts, receiptEvidence, receiptIdeaRefusal } from '../../packages/runtime/src/radarReceipts';
 import { setPauseAll } from '../../packages/runtime/src/killSwitch';
 import { nextPost } from '../../packages/runtime/src/content';
 import { loadJobBundle } from '../../packages/runtime/src/loadJob';
 import { stepExecute } from '../../packages/runtime/src/steps/execute';
+import * as receipts from '../../packages/runtime/src/radarReceipts';
 import * as upstream from '@xbam/upstream';
 import { activityTapeProjection, ACTIVITY_CAPABILITY } from '../../packages/runtime/src/studioActivityTape';
 import { wakeAgent } from '../../packages/runtime/src/deliberate';
@@ -18,7 +19,7 @@ import type { SignalWatch } from '@xbam/shared/contracts';
 installHarness();
 const watch = { chain: 'solana', address: 'So11111111111111111111111111111111111111112', predicate: 'liquidity_below' as const, threshold: 100 };
 const read = (value: number | null, at = Date.now()) => ({ value, source: 'fixture', observedAt: new Date(at).toISOString(), definition: 'Median liquidity across three pools.' });
-async function published(dryRun = false, watches: SignalWatch[] = [watch]) {
+async function published(dryRun = false, watches: SignalWatch[] = [watch], observation = read) {
   const f = await createFixture();
   await agents.updateAgent(f.agentId, { state: 'ACTIVE' });
   const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'mock', handle: 'receipts' });
@@ -26,8 +27,8 @@ async function published(dryRun = false, watches: SignalWatch[] = [watch]) {
   await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });
   await capabilities.grant(f.agentId, account.id, 'POST');
   const source = await radar.upsertSource({ accountId: account.id, kind: 'market_signal', config: { watches, mayTrigger: true } });
-  await pollSignalSource(source, async () => read(200, Date.now() - 1000));
-  await pollSignalSource(source, async () => read(50));
+  await pollSignalSource(source, async () => observation(watches[0]?.predicate === 'concentration_above' ? 20 : 200, Date.now() - 1000));
+  await pollSignalSource(source, async () => observation(watches[0]?.predicate === 'concentration_above' ? 60 : 50));
   const post = await originatePost({ agentId: f.agentId, accountId: account.id, dryRun });
   const claim = await actions.claimAction({ jobId: post.jobId!, agentId: f.agentId, accountId: account.id, channel: 'mock', type: 'POST', dryRun, idempotencyKey: `published:${post.jobId}`, payload: { text: 'Observed liquidity change.' }, targetRef: null });
   await actions.completeAction(claim.action.id, { status: dryRun ? 'DRY_RUN' : 'EXECUTED', remoteActionId: 'fixture-post' });
@@ -65,7 +66,7 @@ describe('durable radar receipts', () => {
     expect((await signals.forAccount(f.accountId)).receipts?.[0]).toMatchObject({ status: 'unavailable', verdict: 'unavailable' });
     expect(await query("SELECT id FROM content_ideas WHERE source='radar_receipt'")).toHaveLength(0);
   });
-  it.each(['global pause', 'agent pause', 'quiet hours', 'capacity'] as const)('AC3 skips with an owner-visible reason before reading during %s', async gate => {
+  it.each(['global pause', 'agent pause', 'quiet hours', 'capacity'] as const)('AC3 defers with an owner-visible reason before reading during %s', async gate => {
     const f = await published();
     if (gate === 'global pause') await setPauseAll({ paused: true, by: f.ownerId });
     if (gate === 'agent pause') await agents.updateAgent(f.agentId, { state: 'PAUSED' });
@@ -77,9 +78,30 @@ describe('durable radar receipts', () => {
     if (gate === 'capacity') await accounts.updateAccount(f.accountId, { status: 'CHALLENGE_REQUIRES_USER' });
     await processRadarReceipts(f.agentId, async () => { throw new Error('must not read'); });
     const receipt = (await signals.forAccount(f.accountId)).receipts?.[0];
-    expect(receipt?.status).toBe('skipped');
+    expect(receipt?.status).toBe('pending');
+    const [stored] = await query('SELECT due_at FROM signal_receipts WHERE window_hours=1');
+    expect(new Date(String(stored!.due_at)).getTime()).toBeGreaterThan(Date.now());
     expect(receipt?.reason).toMatch(/paused|hours|capacity|connected|challenge/i);
     expect(await query("SELECT id FROM content_ideas WHERE source='radar_receipt'")).toHaveLength(0);
+  });
+  it('retries a disconnected receipt after reconnection and expires a held window', async () => {
+    const f = await published();
+    await accounts.updateAccount(f.accountId, { status: 'CHALLENGE_REQUIRES_USER' });
+    await processRadarReceipts(f.agentId, async () => { throw new Error('must not read'); });
+    await accounts.updateAccount(f.accountId, { status: 'CONNECTED' });
+    await query("UPDATE signal_receipts SET due_at=now()-interval '1 minute' WHERE window_hours=1");
+    await processRadarReceipts(f.agentId, async () => read(30));
+    expect(await query("SELECT id FROM signal_receipts WHERE status='offered'")).toHaveLength(1);
+    await accounts.updateAccount(f.accountId, { status: 'CHALLENGE_REQUIRES_USER' });
+    await processRadarReceipts(f.agentId, async () => { throw new Error('expired'); }, new Date(Date.now() + 49 * 3600000));
+    expect((await query('SELECT status, reason FROM signal_receipts WHERE window_hours=24'))[0]).toMatchObject({ status: 'skipped', reason: 'Receipt window expired.' });
+  });
+  it('an offered receipt cannot be sent after its original window expires', async () => {
+    const f = await published();
+    await processRadarReceipts(f.agentId, async () => read(30));
+    const [receipt] = await query<{ idea_id: string }>("SELECT idea_id FROM signal_receipts WHERE status='offered'");
+    await query("UPDATE actions SET executed_at=now()-interval '26 hours' WHERE id=$1", [f.actionId]);
+    expect(await receiptIdeaRefusal(receipt!.idea_id)).toMatch(/window expired/i);
   });
   it('AC3 final send refuses advice and revoked watch grants, including approvals', async () => {
     const f = await published();
@@ -93,23 +115,65 @@ describe('durable radar receipts', () => {
     bundle.job.validatedOutput = 'Observed liquidity change.';
     await expect(stepExecute(bundle)).rejects.toThrow(/grant/i);
   });
+  it('a six-read concentration receipt fits the policy and passes quality and execution', async () => {
+    const observation = (value: number | null, at = Date.now()) => ({
+      ...read(value, at), source: 'solana_mainnet.official',
+      reads: [0, 500].map(offset => ({ source: 'solana_mainnet.official', observedAt: new Date(at + offset).toISOString() })),
+    });
+    const f = await published(false, [{ ...watch, predicate: 'concentration_above', threshold: 40 }], observation);
+    await processRadarReceipts(f.agentId, async () => observation(70));
+    const post = await originatePost({ agentId: f.agentId, accountId: f.accountId });
+    const bundle = await loadJobBundle(await jobs.requireJob(post.jobId!));
+    const [receipt] = await query("SELECT evidence, now_read FROM signal_receipts WHERE status='offered'");
+    const result = receiptEvidence(receipt!.evidence as Parameters<typeof receiptEvidence>[0], receipt!.now_read as Parameters<typeof receiptEvidence>[1]);
+    bundle.job.validatedOutput = result.compact;
+    expect(bundle.policy.output.maxCharacters).toBe(280);
+    expect(result.compact.length).toBeLessThanOrEqual(bundle.policy.output.maxCharacters);
+    expect(await stepQualityGate(bundle)).toBe('next');
+    await stepExecute(bundle);
+    expect((await signals.forAccount(f.accountId)).receipts?.[0]?.publishedActionId).toBeTruthy();
+  });
+  it('receipt failures do not prevent posting or an active wake', async () => {
+    const f = await published();
+    await mind.setWake(f.agentId, { enabled: true, autonomy: 'OBSERVE' });
+    const spy = vi.spyOn(receipts, 'processRadarReceipts').mockRejectedValue(new Error('receipt storage unavailable'));
+    try {
+      await expect(originatePost({ agentId: f.agentId, accountId: f.accountId })).resolves.toMatchObject({ posted: false, jobId: null });
+      const outcome = await wakeAgent(f.agentId);
+      expect(outcome).toMatchObject({ agentId: f.agentId });
+    } finally { spy.mockRestore(); }
+  });
+  it.each([false, true])('checked_at records read completion when held=%s', async held => {
+    const f = await published();
+    const started = new Date(Date.now() - 5000);
+    let finished = 0;
+    await processRadarReceipts(f.agentId, async () => {
+      if (held) await accounts.updateAccount(f.accountId, { status: 'CHALLENGE_REQUIRES_USER' });
+      finished = Date.now();
+      return read(30);
+    }, started);
+    const [receipt] = await query('SELECT status, checked_at, due_at FROM signal_receipts WHERE window_hours=1');
+    expect(receipt!.status).toBe(held ? 'pending' : 'offered');
+    expect(new Date(receipt!.checked_at as string).getTime()).toBeGreaterThanOrEqual(finished);
+    if (held) expect(new Date(String(receipt!.due_at)).getTime()).toBeGreaterThan(finished);
+  });
   it('AC3 a receipt passes normal quality and execution on a mock account', async () => {
     const f = await published();
     await processRadarReceipts(f.agentId, async () => read(30));
     const post = await originatePost({ agentId: f.agentId, accountId: f.accountId });
     const bundle = await loadJobBundle(await jobs.requireJob(post.jobId!));
-    const [idea] = await query("SELECT detail FROM content_ideas WHERE source='radar_receipt'");
-    bundle.job.validatedOutput = String(idea!.detail);
+    const [idea] = await query("SELECT evidence, now_read FROM signal_receipts WHERE status='offered'");
+    bundle.job.validatedOutput = receiptEvidence(idea!.evidence as Parameters<typeof receiptEvidence>[0], idea!.now_read as Parameters<typeof receiptEvidence>[1]).compact;
     expect(await stepQualityGate(bundle)).toBe('next');
     await stepExecute(bundle);
     expect((await signals.forAccount(f.accountId)).receipts?.[0]?.publishedActionId).toBeTruthy();
   });
-  it('AC3 the existing wake records due receipts as skipped while globally paused', async () => {
+  it('AC3 a globally paused wake does not process receipts', async () => {
     const f = await published();
     await mind.setWake(f.agentId, { enabled: true, autonomy: 'OBSERVE' });
     await setPauseAll({ paused: true, by: f.ownerId });
     await wakeAgent(f.agentId);
-    expect((await signals.forAccount(f.accountId)).receipts?.[0]).toMatchObject({ status: 'skipped', reason: 'Everything is paused.' });
+    expect((await signals.forAccount(f.accountId)).receipts).toHaveLength(0);
   });
   it('AC3 per-mint cap records skipped and never offers another same-day receipt', async () => {
     const f = await published();
@@ -136,13 +200,18 @@ describe('durable radar receipts', () => {
     expect(await nextPost(f.agentId, other.id)).toBeNull();
     expect((await nextPost(f.agentId, f.accountId))?.idea.source).toBe('radar_receipt');
   });
-  it('AC3 cadence holds before a read and records its binding ceiling', async () => {
+  it.each(['ceiling', 'cooldown'] as const)('AC3 defers before a read at the cadence %s', async limit => {
     const f = await published();
     const config = await cadences.activeCadence(f.accountId);
-    config.acting.maxActionsPerDay = 1;
+    if (limit === 'ceiling') config.acting.maxActionsPerDay = 1;
+    else config.acting.minSecondsBetweenActions = 3 * 3600;
     await cadences.saveVersion(f.accountId, config, 'fixture', f.ownerId);
     await processRadarReceipts(f.agentId, async () => { throw new Error('must not read'); });
-    expect((await signals.forAccount(f.accountId)).receipts?.[0]?.reason).toMatch(/daily ceiling/i);
+    const receipt = (await signals.forAccount(f.accountId)).receipts?.[0];
+    expect(receipt?.status).toBe('pending');
+    expect(receipt?.reason).toMatch(limit === 'ceiling' ? /daily ceiling/i : /cooling down/i);
+    const [stored] = await query('SELECT due_at FROM signal_receipts WHERE window_hours=1');
+    expect(new Date(String(stored!.due_at)).getTime()).toBeGreaterThan(Date.now());
   });
   it('AC3 agent daily cap limits different mints to two receipt offers', async () => {
     const watches = [watch, { ...watch, address: '11111111111111111111111111111111' }, { ...watch, address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }];
@@ -161,7 +230,7 @@ describe('durable radar receipts', () => {
     expect(await query("SELECT id FROM signal_receipts WHERE status='offered'")).toHaveLength(2);
     expect((await query("SELECT reason FROM signal_receipts WHERE status='skipped'"))[0]?.reason).toMatch(/Agent daily receipt cap/i);
   });
-  it('AC4 real tape projection labels a receipt and exports no evidence or post text', async () => {
+  it('AC4 tape projection withholds unsupported receipt events', async () => {
     const f = await published();
     await processRadarReceipts(f.agentId, async () => read(30));
     const post = await originatePost({ agentId: f.agentId, accountId: f.accountId });
@@ -170,9 +239,7 @@ describe('durable radar receipts', () => {
     await capabilityPermissions.set({ agentId: f.agentId, capabilityId: ACTIVITY_CAPABILITY, permission: 'ALLOWED' });
     // Stored non-mock metadata tests the public projection only; no adapter is invoked.
     await query("UPDATE actions SET channel='bluesky', executed_at=now() WHERE id=$1", [claim.action.id]);
-    expect(await activityTapeProjection(new Date(Date.now() - 60000))).toEqual([{
-      id: `receipt:${claim.action.id}`, agent_id: f.agentId, kind: 'RECEIPT', at: expect.any(String), dry_run: false, target_handle: null, paper: null,
-    }]);
+    expect(await activityTapeProjection(new Date(Date.now() - 60000))).toEqual([]);
   });
   it('receipts cannot become learnable reach outcomes', async () => {
     const f = await published();
