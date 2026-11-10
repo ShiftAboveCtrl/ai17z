@@ -46,6 +46,13 @@ export async function setStudioActivityTape(enabled: boolean, by: string): Promi
 /** Tombstones are delivery metadata, never copies of events. Studio keeps them permanently. */
 export async function scrubStudioActivity(id: string, by: string): Promise<void> {
   id = EventId.parse(id);
+  if (!STUDIO_ACCEPTS_RECEIPTS) {
+    // Older queues may contain withheld ids. They must not consume delivery capacity.
+    await query(`UPDATE app_settings SET value = COALESCE(
+      (SELECT jsonb_agg(id) FROM jsonb_array_elements_text(value) AS pending(id) WHERE id NOT LIKE 'receipt:%'), '[]'::jsonb)
+      WHERE key=$1 AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(value) AS pending(id) WHERE id LIKE 'receipt:%')`, [SCRUBS]);
+    if (id.startsWith('receipt:')) return;
+  }
   const saved = await query(`INSERT INTO app_settings (key, value) VALUES ($1, jsonb_build_array($2::text))
     ON CONFLICT (key) DO UPDATE SET value = app_settings.value || excluded.value
     WHERE jsonb_array_length(app_settings.value) < 200 AND NOT app_settings.value @> excluded.value RETURNING key`, [SCRUBS, id]);
@@ -105,7 +112,7 @@ export async function sweepStudioActivityTape(): Promise<{ sent: number; skipped
     WHERE (app_settings.value #>> '{}')::timestamptz <= now() - interval '1 minute' RETURNING key`);
   if (claimed.length === 0) return { sent: 0, skipped: 'rate' };
   const events = await activityTapeProjection(new Date(Math.max(Date.now() - ACTIVITY_STALE_MS, Date.parse(setting.changedAt))), await ops.getSetting<TapeCursor>(CURSOR));
-  // Preserve unsupported tombstones locally until Studio accepts the namespace.
+  // Also filter queues saved before receipt tombstones were withheld at enqueue.
   const remove = ((await ops.getSetting<string[]>(SCRUBS)) ?? [])
     .filter(id => STUDIO_ACCEPTS_RECEIPTS || !id.startsWith('receipt:'));
   if (!events.length && !remove.length) return { sent: 0, skipped: 'empty' };

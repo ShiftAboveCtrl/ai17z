@@ -56,7 +56,7 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
     expect((await sweepStudioActivityTape()).sent).toBe(1);
     expect(studio.batches[0]!.events.map(event => event.id)).toEqual([id]);
     expect(studio.batches[0]!.remove).toEqual([]);
-    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([receiptId]);
+    expect((await ops.getSetting('studio.activity_tape.scrubs')) ?? []).toEqual([]);
   });
 
   it('keeps scrubs queued and sends nothing while the switch is off', async () => {

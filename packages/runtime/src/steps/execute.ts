@@ -225,7 +225,9 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   }
   const signal = bundle.event.payload as { ideaSource?: string; ideaId?: string };
   if (signal.ideaSource === 'radar_receipt') {
-    const refusal = signal.ideaId ? await receiptIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Receipt evidence is missing.';
+    const retry = { afterMs: 0 };
+    const refusal = signal.ideaId ? await receiptIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }, retry) : 'Receipt evidence is missing.';
+    if (refusal && retry.afterMs > 0) throw PipelineError.retryable('receipt_limit', refusal, { retryAfterMs: retry.afterMs });
     if (refusal) throw PipelineError.permanent('receipt_publication_refused', refusal);
   }
   if (signal.ideaSource === 'market_signal') {
