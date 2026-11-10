@@ -26,5 +26,11 @@ export async function forAccount(accountId: string): Promise<SignalRadarData> {
        LEFT JOIN agent_posting p ON p.agent_id = c.agent_id
       WHERE s.account_id = $1 ORDER BY c.created_at DESC LIMIT 50`, [accountId],
   ));
-  return { baselines, candidates };
+  const receipts = mapRows<NonNullable<SignalRadarData['receipts']>[number]>(await query(`SELECT r.*, i.status AS idea_status, i.last_error AS idea_error,
+    j.status AS job_status, j.last_error AS job_error, published.id AS published_action_id
+    FROM signal_receipts r JOIN actions a ON a.id=r.action_id
+    LEFT JOIN content_ideas i ON i.id=r.idea_id LEFT JOIN jobs j ON j.id=i.job_id
+    LEFT JOIN LATERAL (SELECT id FROM actions p WHERE p.job_id=j.id AND p.status='EXECUTED' AND NOT p.dry_run LIMIT 1) published ON true
+    WHERE a.account_id=$1 ORDER BY r.due_at ASC LIMIT 50`, [accountId]));
+  return { baselines, candidates, receipts };
 }

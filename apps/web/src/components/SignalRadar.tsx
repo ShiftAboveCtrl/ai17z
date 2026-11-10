@@ -65,6 +65,22 @@ function Observation({ label, read }: { label: string; read: SignalObservation |
 export function SignalEvidence({ data }: { data: SignalRadarData }) {
   return <div className="min-w-0 space-y-5">
     <div>
+      <h4 className="text-base text-bone">Radar receipts</h4>
+      <p className="mt-2 text-sm leading-relaxed text-bone-dim">What changed after a published observation, at 1h and 24h. Missing reads remain ungraded. At post is the source observation behind the original post. Up to two receipts per day and one per mint per UTC day.</p>
+      {!data.receipts?.length && <p className="mt-2 text-sm text-bone-dim">No published observations awaiting receipts.</p>}
+      {data.receipts?.map(row => <article key={row.id} className="mt-3 min-w-0 space-y-3 rounded-lg border border-ink-line p-3 [overflow-wrap:anywhere]">
+        <p className="text-sm text-bone">{row.windowHours}h receipt · {row.publishedActionId ? 'Published' : row.status === 'skipped' || row.ideaStatus === 'discarded' || ['PERMANENT_FAILURE', 'CANCELLED'].includes(row.jobStatus ?? '') ? 'Skipped' : row.status === 'unavailable' ? 'Unavailable; ungraded' : row.jobStatus ? `Job: ${row.jobStatus}` : row.status === 'offered' ? 'Waiting for posting gates' : 'Pending'}</p>
+        <p className="text-sm text-bone-dim">{watchLabel(row.evidence.watch)} · {row.evidence.watch.chain}:{row.evidence.watch.address}</p>
+        <p className="text-xs text-bone-dim">Due {row.dueAt}</p>
+        <dl className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-3">
+          <Observation label="Before" read={row.evidence.before} />
+          <Observation label="At post" read={row.evidence.after} />
+          <Observation label="Now" read={row.nowRead} />
+        </dl>
+        <p className="text-sm text-bone-dim">{row.verdict ? `Observation: ${row.verdict}. ` : ''}{row.jobError || row.ideaError || row.reason}</p>
+      </article>)}
+    </div>
+    <div>
       <h4 className="text-base text-bone">Retained baselines</h4>
       {data.baselines.length === 0 && <p className="mt-2 text-sm text-bone-dim">The first valid read establishes a baseline. It never creates a candidate.</p>}
       {data.baselines.map(row => <article key={`${row.sourceId}:${row.watchKey}`} className="mt-3 min-w-0 space-y-2 rounded-lg border border-ink-line p-3 [overflow-wrap:anywhere]">

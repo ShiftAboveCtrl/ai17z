@@ -44,6 +44,7 @@ export * from './knowledgeCollections';
 export * from './foundry';
 export * from './telegramChannel';
 export * from './studioPaperRecord';
+export * from './studioTraderDna';
 export * from './studioVoice';
 export * from './devUpdatesInstall';
 export * from './studioActivityTape';

@@ -132,6 +132,10 @@ export async function claimBestIdea(agentId: string, accountId: string | null = 
              -- starves the account it does belong to. Skipping it here keeps it
              -- reachable by the right account. Without an account to compare, a
              -- signal idea is left alone rather than handed out blind.
+             AND (i.source <> 'radar_receipt' OR EXISTS (
+               SELECT 1 FROM signal_receipts r JOIN actions a ON a.id=r.action_id
+               WHERE r.idea_id=i.id AND a.account_id=$2::uuid
+             ))
              AND (i.source <> 'market_signal' OR (
                $2::text IS NOT NULL AND EXISTS (
                  SELECT 1 FROM signal_candidates sc

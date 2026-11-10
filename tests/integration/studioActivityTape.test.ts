@@ -48,6 +48,42 @@ async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, chann
 }
 
 describe('activity tape against Postgres and a DPoP Studio contract server', () => {
+  it('scrubs a receipt through the owner API and cannot resurrect it on replay', async () => {
+    await ready();
+    const actionId = await action('POST');
+    await query(`UPDATE events SET payload = payload || '{"ideaSource":"radar_receipt"}'::jsonb
+      WHERE id=(SELECT event_id FROM jobs WHERE id=(SELECT job_id FROM actions WHERE id=$1))`, [actionId.slice(7)]);
+    const receiptId = `receipt:${actionId.slice(7)}`;
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect([...studio.visible.values()].map(event => event.id)).toEqual([receiptId]);
+    const app = await buildServer();
+    try {
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: fixture.ownerEmail, password: 'test-password-1234' } });
+      const response = await app.inject({ method: 'POST', url: '/api/studio/activity-tape/scrub',
+        headers: { authorization: `Bearer ${login.json().data.token}` }, payload: { id: receiptId } });
+      expect(response.statusCode).toBe(200);
+    } finally { await app.close(); }
+    studio.setUnavailable(true); await due(); await sweepStudioActivityTape();
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([receiptId]);
+    studio.setUnavailable(false); await due(); await sweepStudioActivityTape();
+    expect(studio.visible.size).toBe(0);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([]);
+    await query("DELETE FROM app_settings WHERE key = 'studio.activity_tape.cursor'");
+    await due(); await sweepStudioActivityTape();
+    expect(studio.visible.size).toBe(0);
+  });
+  it('queues receipt removals and delivers them to Studio alongside ordinary events', async () => {
+    await ready();
+    const receiptId = `receipt:${randomUUID()}`;
+    await scrubStudioActivity(receiptId, fixture.ownerId);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([receiptId]);
+    const id = await action();
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    expect(studio.batches[0]!.events.map(event => event.id)).toEqual([id]);
+    expect(studio.batches[0]!.remove).toEqual([receiptId]);
+    expect((await ops.getSetting('studio.activity_tape.scrubs')) ?? []).toEqual([]);
+  });
+
   it('keeps scrubs queued and sends nothing while the switch is off', async () => {
     await grant();
     const id = await action();

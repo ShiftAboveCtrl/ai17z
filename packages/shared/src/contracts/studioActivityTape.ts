@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
-export const ActivityEventId = z.string().toLowerCase().regex(/^(action|paper|radar):/)
+export const ActivityEventId = z.string().toLowerCase().regex(/^(action|paper|radar|receipt):/)
   .refine((id) => z.string().uuid().safeParse(id.slice(id.indexOf(':') + 1)).success, 'The event id must contain a UUID.');
 const AssetLabel = z.string().regex(/^[A-Z0-9.]{1,16}$/);
 const Size = z.string().regex(/^\d{1,78}$/);
 export const ActivityTapeEvent = z.object({
   id: ActivityEventId, agent_id: z.string().uuid(),
-  kind: z.enum(['REPLY', 'POST', 'PAPER_FILL', 'RADAR_HIT']),
+  kind: z.enum(['REPLY', 'POST', 'PAPER_FILL', 'RADAR_HIT', 'RECEIPT']),
   at: z.string().datetime(), dry_run: z.boolean().nullable(), target_handle: z.null(),
   paper: z.object({ simulated: z.literal(true), size_base_units: Size.nullable(),
     asset: AssetLabel.nullable(), verdict: z.literal('PAPER_FILLED') }).strict().nullable(),

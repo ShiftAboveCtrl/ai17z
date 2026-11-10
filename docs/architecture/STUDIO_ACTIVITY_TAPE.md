@@ -33,7 +33,7 @@ ALLOWED decisions leave it unchanged. Existing decisions are initialized from
 Repeating PUT with the current enabled value is a no-op and preserves changedAt.
 
 `POST /api/studio/activity-tape/scrub` accepts only `{ "id": "action:<uuid>" }`
-(also `paper:` and `radar:`). Authentication is required. It records an audited
+(also `paper:`, `radar:` and `receipt:`). Authentication is required. It records an audited
 local tombstone and returns `{ "queued": true }`. Source evidence is preserved.
 Ids are normalized to lowercase and the suffix must be a valid UUID. Scrubs are
 retried in every enabled batch until Studio durably acknowledges them. Only the
@@ -181,3 +181,12 @@ Postgres and the loopback contract server to exercise the real client, signature
 and token binding, real source projections, switch-off silence, grant revocation,
 bounded batches, retries, deduplication and scrubbing. They do not exercise a
 deployed Studio, public rendering, real channel execution or a live trading path.
+
+## Receipts
+
+Studio's receiver accepts `RECEIPT` events and `receipt:` ids, so
+`STUDIO_ACCEPTS_RECEIPTS` is on: a published radar receipt appears on the tape as
+a normalised `RECEIPT` event with no text, correspondent or evidence. A scrub of a
+`receipt:` id is queued and delivered like any other, and `scrubStudioActivity`
+queues it whatever that flag says, so an owner's removal is never discarded
+before Studio can honour it.

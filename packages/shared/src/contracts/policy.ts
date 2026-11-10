@@ -5,6 +5,7 @@ import { RelationshipVoice } from './relationship';
 import { StancePolicy } from './stance';
 import { EngagementPolicy, GrowthPolicy, OutreachPolicy, ToneMirroring } from './engagement';
 import { VoicePolicy } from './voice';
+import { TRADER_DNA_STUDY_ID } from './studioTraderDna';
 
 /**
  * Helping people with the software this agent runs on.
@@ -463,6 +464,17 @@ export const StudioPolicy = z.object({
   postPaperPnl: z.boolean().default(false),
   /** Which complete window a public post is about. */
   paperRecordWindow: z.enum(['7d', '30d', '90d']).default('7d'),
+  /**
+   * Let the agent put one post about a published Trader DNA study into the idea
+   * backlog. Off by default, and it needs `traderDnaStudyId` too. The post says
+   * which behaviours survived Studio's luck filters at what evidence level and
+   * sample size, and that nothing was traded. It can never say a wallet is
+   * smart or worth following, and it names no address: a claim about a wallet
+   * is blocked on the finished text, whatever the study said.
+   */
+  postTraderDna: z.boolean().default(false),
+  /** The one published study a public post is about. Null: none chosen, so none is posted. */
+  traderDnaStudyId: z.string().regex(TRADER_DNA_STUDY_ID).nullable().default(null),
 });
 export type StudioPolicy = z.infer<typeof StudioPolicy>;
 

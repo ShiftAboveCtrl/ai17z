@@ -1448,3 +1448,48 @@ export async function studioActivityBatch(input: unknown): Promise<{ ok: true } 
   return answer.status === 200 && answer.body?.protocol === 1 && answer.body?.accepted === true
     ? { ok: true } : { ok: false, why: 'Studio did not acknowledge the activity tape.' };
 }
+
+/** Public-home writes use the same per-link key and DPoP transport as other installation calls. */
+export async function studioPublicHomeRequest(agentId: string, json: Record<string, unknown>, expectedLink: StudioLinkScope): Promise<
+  { ok: true; published: boolean; slug: string; digest: string } | StudioProblem
+> {
+  const answer = await authed(`/api/v1/installation/agents/${encodeURIComponent(agentId)}/home`, { method: 'POST', json }, expectedLink)
+    .catch(() => ({ ok: false as const, why: 'Studio could not be reached.' }));
+  if ('ok' in answer) return { ok: false, why: 'Studio could not confirm the public home.' };
+  const b = answer.body;
+  if ((answer.status !== 200 && answer.status !== 201) || b?.protocol !== 1 || typeof b.published !== 'boolean'
+    || typeof b.slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(b.slug) || b.slug.length < 3 || b.slug.length > 24
+    || typeof b.manifest_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(b.manifest_sha256)) {
+    return { ok: false, why: 'Studio did not acknowledge this public home.' };
+  }
+  return { ok: true, published: b.published, slug: b.slug, digest: b.manifest_sha256 };
+}
+
+/**
+ * What Studio said to a RENEW. Kept apart from the publish reader because the
+ * caller has to tell three things apart: a lease that was extended, a refusal
+ * Studio meant (403 or 409, with its stable code) and everything else, which
+ * is retried on a later sweep because it says nothing about the page.
+ */
+export type StudioHomeRenewal =
+  | { kind: 'renewed'; slug: string; digest: string; validUntil: string }
+  | { kind: 'refused'; code: string }
+  | { kind: 'retry' };
+export async function studioPublicHomeRenew(agentId: string, json: Record<string, unknown>, expectedLink: StudioLinkScope): Promise<StudioHomeRenewal> {
+  const answer = await authed(`/api/v1/installation/agents/${encodeURIComponent(agentId)}/home`, { method: 'POST', json }, expectedLink)
+    .catch(() => ({ ok: false as const, why: 'Studio could not be reached.' }));
+  if ('ok' in answer) return { kind: 'retry' };
+  const b = answer.body;
+  if (answer.status === 403 || answer.status === 409) {
+    // The code comes from a fixed vocabulary; anything else is recorded as unknown, never echoed.
+    const code = typeof b?.error === 'string' && /^[a-z_]{1,40}$/.test(b.error) ? b.error : 'unknown';
+    return { kind: 'refused', code };
+  }
+  if (answer.status === 200 && b?.protocol === 1 && b.published === true && typeof b.slug === 'string'
+    && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(b.slug) && b.slug.length >= 3 && b.slug.length <= 24
+    && typeof b.manifest_sha256 === 'string' && /^[0-9a-f]{64}$/.test(b.manifest_sha256)
+    && typeof b.valid_until === 'string' && Number.isFinite(Date.parse(b.valid_until))) {
+    return { kind: 'renewed', slug: b.slug, digest: b.manifest_sha256, validUntil: new Date(b.valid_until).toISOString() };
+  }
+  return { kind: 'retry' };
+}

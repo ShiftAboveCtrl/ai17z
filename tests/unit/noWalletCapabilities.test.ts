@@ -7,6 +7,7 @@ import {
   capabilityCrossesTheLine,
   registerManagementCapabilities,
   registerStudioPaperCapabilities,
+  registerStudioTraderDnaCapabilities,
   registerPaperCapabilities,
   registerStudioLeagueCapabilities,
   registerWalletCapabilities,
@@ -42,6 +43,7 @@ function registerAll() {
   registerWalletCapabilities();
   registerPaperCapabilities();
   registerStudioPaperCapabilities();
+  registerStudioTraderDnaCapabilities();
   registerStudioLeagueCapabilities();
 }
 
@@ -71,8 +73,8 @@ describe('no capability can move money', () => {
     const studio = listCapabilities().filter((c) => c.id.startsWith('studio.'));
     // Exactly one, shaped like the wallet reads. Growing this list is a
     // decision about effect, audience and default, made here.
-    expect(studio.map((c) => c.id)).toEqual(['studio.paper_record']);
-    const record = studio[0]!;
+    expect(studio.map((c) => c.id).sort()).toEqual(['studio.paper_record', 'studio.trader_dna']);
+    const record = studio.find((c) => c.id === 'studio.paper_record')!;
     expect(record.effect).toBe('READ');
     expect(record.risk).toBe('LOW');
     expect(record.unsetPermission).toBe('DISABLED');
@@ -81,6 +83,23 @@ describe('no capability can move money', () => {
 
     const text = readFileSync(join(__dirname, '..', '..', 'packages', 'runtime', 'src', 'studioPaperCapabilities.ts'), 'utf8');
     expect(text).not.toMatch(/prepareMarketplacePurchase|prepareStudioPurchase|studioLiveTrade|studioWallet|walletCore|\.sign\(|\.broadcast\(/);
+  });
+
+  it('the Trader DNA study is one read, off until the owner enables it, owner only, and has no follow, watch, import or order verb', () => {
+    registerAll();
+    const dna = listCapabilities().filter((c) => /dna|study|smart|follow|watch|copy/i.test(c.id));
+    // Exactly one. Following a wallet, importing one as a setup, creating a
+    // mandate or an order are not capabilities at all, and this list growing is
+    // a decision about effect, audience and default, made here.
+    expect(dna.map((c) => c.id)).toEqual(['studio.trader_dna']);
+    const study = dna[0]!;
+    expect(study.effect).toBe('READ');
+    expect(study.risk).toBe('LOW');
+    expect(study.unsetPermission).toBe('DISABLED');
+    expect(study.audience).toBe('OWNER');
+    for (const verb of ['follow', 'watch', 'copy', 'import_wallet', 'add_wallet', 'create_mandate', 'place_order']) {
+      expect(listCapabilities().map((c) => c.id)).not.toContain(`studio.${verb}`);
+    }
   });
 
   it('the league standing is one read, off until the owner enables it, owner only, and posts nothing', () => {
@@ -108,6 +127,8 @@ describe('no capability can move money', () => {
       join(root, 'runtime', 'src', 'paperCapabilities.ts'),
       join(root, 'runtime', 'src', 'paperTrading.ts'),
       join(root, 'runtime', 'src', 'studioPaperCapabilities.ts'),
+      join(root, 'runtime', 'src', 'studioTraderDna.ts'),
+      join(root, 'runtime', 'src', 'studioTraderDnaCapabilities.ts'),
       join(root, 'runtime', 'src', 'studioLeagueCapabilities.ts'),
       join(root, 'runtime', 'src', 'studioLeague.ts'),
       join(root, 'runtime', 'src', 'leagueSeason.ts'),

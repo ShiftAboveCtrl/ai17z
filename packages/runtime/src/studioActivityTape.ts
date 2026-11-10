@@ -8,6 +8,9 @@ export { ActivityTapeBatch, ActivityTapeEvent } from '@xbam/shared/contracts';
 
 export const ACTIVITY_CAPABILITY = 'studio.activity_tape';
 export const ACTIVITY_STALE_MS = 15 * 60_000;
+// Studio's receiver accepts RECEIPT events and receipt: ids. Tombstones are independent
+// of this projection switch so lowering it cannot discard an owner's removal.
+const STUDIO_ACCEPTS_RECEIPTS = true;
 const SETTING = 'studio.activity_tape';
 const SCRUBS = 'studio.activity_tape.scrubs';
 const CURSOR = 'studio.activity_tape.cursor';
@@ -16,6 +19,7 @@ const Size = z.string().regex(/^\d{1,78}$/);
 
 /** Explicit construction keeps even newly added source fields private. */
 export function projectActivity(row: Record<string, unknown>): ActivityEvent | null {
+  if (row.kind === 'RECEIPT' && !STUDIO_ACCEPTS_RECEIPTS) return null;
   const parsed = ActivityTapeEvent.safeParse({
     id: row.id, agent_id: row.agent_id, kind: row.kind,
     at: row.at instanceof Date ? row.at.toISOString() : row.at,
@@ -60,11 +64,13 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
       AND (permission = 'ALLOWED' OR ($7::uuid IS NOT NULL AND permission = 'OWNER_APPROVAL'))
       AND ($7::uuid IS NULL OR agent_id = $7::uuid)
   ), tape AS (
-    SELECT 'action:' || a.id AS id, a.agent_id, a.type AS kind, date_trunc('milliseconds', a.executed_at) AS at,
+    SELECT CASE WHEN e.payload->>'ideaSource'='radar_receipt' THEN 'receipt:' ELSE 'action:' END || a.id AS id,
+      a.agent_id, CASE WHEN e.payload->>'ideaSource'='radar_receipt' THEN 'RECEIPT' ELSE a.type END AS kind, date_trunc('milliseconds', a.executed_at) AS at,
       a.dry_run, NULL::text AS size, NULL::text AS asset
     FROM actions a JOIN permitted p ON p.agent_id = a.agent_id
       LEFT JOIN jobs j ON j.id = a.job_id LEFT JOIN events e ON e.id = j.event_id
     WHERE a.status IN ('EXECUTED','DRY_RUN') AND a.type IN ('REPLY','POST')
+      AND ($8::boolean OR COALESCE(e.payload->>'ideaSource', '') <> 'radar_receipt')
       AND a.channel <> 'mock' AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
       AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'
       AND a.executed_at >= greatest($2::timestamptz, p.permission_changed_at)
@@ -87,7 +93,7 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
   ) SELECT * FROM tape WHERE at <= now() AND NOT (id = ANY($3::text[]))
     AND ($4::timestamptz IS NULL OR (at, id, agent_id) > ($4::timestamptz, $5::text, $6::uuid))
     ORDER BY at, id, agent_id LIMIT 50`,
-  [ACTIVITY_CAPABILITY, since.toISOString(), (await ops.getSetting<string[]>(SCRUBS)) ?? [], cursor?.at ?? null, cursor?.id ?? null, cursor?.agentId ?? null, previewAgentId]);
+  [ACTIVITY_CAPABILITY, since.toISOString(), (await ops.getSetting<string[]>(SCRUBS)) ?? [], cursor?.at ?? null, cursor?.id ?? null, cursor?.agentId ?? null, previewAgentId, STUDIO_ACCEPTS_RECEIPTS]);
   return rows.map(projectActivity).filter((event): event is ActivityEvent => event !== null);
 }
 

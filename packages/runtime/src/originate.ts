@@ -1,5 +1,5 @@
 import type { ActionType } from '@xbam/shared/contracts';
-import { createLogger, sha256Hex } from '@xbam/shared';
+import { createLogger, errorMessage, sha256Hex } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   agents as agentsRepo,
@@ -14,6 +14,9 @@ import {
 import { getChannelAdapter } from '@xbam/channels';
 import { nextPost, releaseIdea } from './content';
 import { proposePaperRecordPost } from './studioPaperVoice';
+import { proposeTraderDnaPost } from './studioTraderDna';
+import { proposePublicHomePost } from './studioPublicHome';
+import { processRadarReceipts } from './radarReceipts';
 
 const log = createLogger('originate');
 
@@ -51,6 +54,9 @@ export async function originatePost(input: {
     return { posted: false, reason: `The agent is ${agent.state.toLowerCase()}, so it is not posting.`, jobId: null };
   }
 
+  try { await processRadarReceipts(input.agentId); }
+  catch (error) { log.warn('radar receipts did not run', { agentId: input.agentId, message: errorMessage(error) }); }
+
   const policy = await agentsRepo.getActivePolicy(agent.id);
   if (!policy) return { posted: false, reason: 'The agent has no policy version.', jobId: null };
   const mode = policy.config.automation.mode;
@@ -66,6 +72,9 @@ export async function originatePost(input: {
   // time the schedule came due. This only adds an idea, and only when the owner
   // opted in; the backlog below still decides whether there is a post.
   await proposePaperRecordPost(agent.id);
+  // The same for one published Trader DNA study the owner chose, if they opted in.
+  await proposeTraderDnaPost(agent.id);
+  await proposePublicHomePost(agent.id);
 
   // The backlog decides whether there is a post, not the clock. The claim and
   // the signal refusal share one account scope inside nextPost, so a signal

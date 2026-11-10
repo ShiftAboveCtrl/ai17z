@@ -51,7 +51,10 @@ import { checkActionRate } from '../policyGate';
 import { checkDevUpdateAtSend } from '../devUpdateGuard';
 import { paperReplyForJob } from '../paperCapabilities';
 import { signalIdeaRefusal } from '../signalRadar';
+import { receiptIdeaRefusal } from '../radarReceipts';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
+import { checkTraderDnaAtSend } from '../studioTraderDna';
+import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
@@ -223,6 +226,19 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     throw PipelineError.review('paper_receipt_changed', 'The paper receipt changed after validation. Send the complete simulated record only.');
   }
   const signal = bundle.event.payload as { ideaSource?: string; ideaId?: string };
+  if (job.actionType === 'REPLY' && asksForPublicHome(bundle.event.text ?? '')) {
+    if (output !== await publicHomeReply(bundle.agent.id)) throw PipelineError.review('public_home_changed', 'The confirmed public home changed. Generate a fresh answer.');
+  }
+  if (signal.ideaSource === HOME_IDEA_SOURCE) {
+    const refusal = await publicHomeSendRefusal(bundle.agent.id, output, true);
+    if (refusal) throw PipelineError.permanent('public_home_refused', refusal);
+  }
+  if (signal.ideaSource === 'radar_receipt') {
+    const retry = { afterMs: 0 };
+    const refusal = signal.ideaId ? await receiptIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }, retry) : 'Receipt evidence is missing.';
+    if (refusal && retry.afterMs > 0) throw PipelineError.retryable('receipt_limit', refusal, { retryAfterMs: retry.afterMs });
+    if (refusal) throw PipelineError.permanent('receipt_publication_refused', refusal);
+  }
   if (signal.ideaSource === 'market_signal') {
     const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
     if (refusal) throw PipelineError.permanent('signal_publication_refused', refusal);
@@ -281,6 +297,9 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   // finished text, with the policy as it is now: the owner may have switched
   // posting or PnL off since the idea was made, or edited the text in review.
   checkPaperRecordAtSend({ raw: bundle.event.payload, text: output, policy });
+  // Likewise a post about a Trader DNA study, which may never name a wallet or
+  // call one smart or worth copying, whatever the study or the model said.
+  checkTraderDnaAtSend({ raw: bundle.event.payload, text: output, policy });
 
   if (!job.dryRun) {
     // The final say on whether this action is permitted. Ingest checked the same

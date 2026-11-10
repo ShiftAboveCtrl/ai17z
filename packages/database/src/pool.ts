@@ -44,6 +44,20 @@ export async function closePool(): Promise<void> {
   await p.end();
 }
 
+/** A dedicated session leaves the query pool free while an outbound operation holds its lock. */
+export async function withAdvisoryLock<T>(key: string, run: () => Promise<T>): Promise<T> {
+  loadEnv();
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 10_000 });
+  await client.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [key]);
+    return await run();
+  } finally {
+    // Closing the dedicated connection releases its session lock even if the operation failed.
+    await client.end();
+  }
+}
+
 /**
  * Whether the caller is currently inside a transaction.
  *
