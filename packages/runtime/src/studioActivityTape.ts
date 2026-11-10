@@ -8,6 +8,8 @@ export { ActivityTapeBatch, ActivityTapeEvent } from '@xbam/shared/contracts';
 
 export const ACTIVITY_CAPABILITY = 'studio.activity_tape';
 export const ACTIVITY_STALE_MS = 15 * 60_000;
+// Studio protocol 1 rejects RECEIPT and receipt: ids until its receiver is upgraded.
+const STUDIO_ACCEPTS_RECEIPTS = false;
 const SETTING = 'studio.activity_tape';
 const SCRUBS = 'studio.activity_tape.scrubs';
 const CURSOR = 'studio.activity_tape.cursor';
@@ -16,6 +18,7 @@ const Size = z.string().regex(/^\d{1,78}$/);
 
 /** Explicit construction keeps even newly added source fields private. */
 export function projectActivity(row: Record<string, unknown>): ActivityEvent | null {
+  if (row.kind === 'RECEIPT' && !STUDIO_ACCEPTS_RECEIPTS) return null;
   const parsed = ActivityTapeEvent.safeParse({
     id: row.id, agent_id: row.agent_id, kind: row.kind,
     at: row.at instanceof Date ? row.at.toISOString() : row.at,
@@ -43,6 +46,13 @@ export async function setStudioActivityTape(enabled: boolean, by: string): Promi
 /** Tombstones are delivery metadata, never copies of events. Studio keeps them permanently. */
 export async function scrubStudioActivity(id: string, by: string): Promise<void> {
   id = EventId.parse(id);
+  if (!STUDIO_ACCEPTS_RECEIPTS) {
+    // Older queues may contain withheld ids. They must not consume delivery capacity.
+    await query(`UPDATE app_settings SET value = COALESCE(
+      (SELECT jsonb_agg(id) FROM jsonb_array_elements_text(value) AS pending(id) WHERE id NOT LIKE 'receipt:%'), '[]'::jsonb)
+      WHERE key=$1 AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(value) AS pending(id) WHERE id LIKE 'receipt:%')`, [SCRUBS]);
+    if (id.startsWith('receipt:')) return;
+  }
   const saved = await query(`INSERT INTO app_settings (key, value) VALUES ($1, jsonb_build_array($2::text))
     ON CONFLICT (key) DO UPDATE SET value = app_settings.value || excluded.value
     WHERE jsonb_array_length(app_settings.value) < 200 AND NOT app_settings.value @> excluded.value RETURNING key`, [SCRUBS, id]);
@@ -60,11 +70,13 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
       AND (permission = 'ALLOWED' OR ($7::uuid IS NOT NULL AND permission = 'OWNER_APPROVAL'))
       AND ($7::uuid IS NULL OR agent_id = $7::uuid)
   ), tape AS (
-    SELECT 'action:' || a.id AS id, a.agent_id, a.type AS kind, date_trunc('milliseconds', a.executed_at) AS at,
+    SELECT CASE WHEN e.payload->>'ideaSource'='radar_receipt' THEN 'receipt:' ELSE 'action:' END || a.id AS id,
+      a.agent_id, CASE WHEN e.payload->>'ideaSource'='radar_receipt' THEN 'RECEIPT' ELSE a.type END AS kind, date_trunc('milliseconds', a.executed_at) AS at,
       a.dry_run, NULL::text AS size, NULL::text AS asset
     FROM actions a JOIN permitted p ON p.agent_id = a.agent_id
       LEFT JOIN jobs j ON j.id = a.job_id LEFT JOIN events e ON e.id = j.event_id
     WHERE a.status IN ('EXECUTED','DRY_RUN') AND a.type IN ('REPLY','POST')
+      AND ($8::boolean OR COALESCE(e.payload->>'ideaSource', '') <> 'radar_receipt')
       AND a.channel <> 'mock' AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
       AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'
       AND a.executed_at >= greatest($2::timestamptz, p.permission_changed_at)
@@ -87,7 +99,7 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
   ) SELECT * FROM tape WHERE at <= now() AND NOT (id = ANY($3::text[]))
     AND ($4::timestamptz IS NULL OR (at, id, agent_id) > ($4::timestamptz, $5::text, $6::uuid))
     ORDER BY at, id, agent_id LIMIT 50`,
-  [ACTIVITY_CAPABILITY, since.toISOString(), (await ops.getSetting<string[]>(SCRUBS)) ?? [], cursor?.at ?? null, cursor?.id ?? null, cursor?.agentId ?? null, previewAgentId]);
+  [ACTIVITY_CAPABILITY, since.toISOString(), (await ops.getSetting<string[]>(SCRUBS)) ?? [], cursor?.at ?? null, cursor?.id ?? null, cursor?.agentId ?? null, previewAgentId, STUDIO_ACCEPTS_RECEIPTS]);
   return rows.map(projectActivity).filter((event): event is ActivityEvent => event !== null);
 }
 
@@ -100,7 +112,9 @@ export async function sweepStudioActivityTape(): Promise<{ sent: number; skipped
     WHERE (app_settings.value #>> '{}')::timestamptz <= now() - interval '1 minute' RETURNING key`);
   if (claimed.length === 0) return { sent: 0, skipped: 'rate' };
   const events = await activityTapeProjection(new Date(Math.max(Date.now() - ACTIVITY_STALE_MS, Date.parse(setting.changedAt))), await ops.getSetting<TapeCursor>(CURSOR));
-  const remove = (await ops.getSetting<string[]>(SCRUBS)) ?? [];
+  // Also filter queues saved before receipt tombstones were withheld at enqueue.
+  const remove = ((await ops.getSetting<string[]>(SCRUBS)) ?? [])
+    .filter(id => STUDIO_ACCEPTS_RECEIPTS || !id.startsWith('receipt:'));
   if (!events.length && !remove.length) return { sent: 0, skipped: 'empty' };
   const current = await studioActivityTapeSetting();
   if (!current.enabled || current.changedAt !== setting.changedAt) return { sent: 0, skipped: 'off' };

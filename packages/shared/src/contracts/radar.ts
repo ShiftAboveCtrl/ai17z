@@ -119,6 +119,7 @@ export function radarSourceProvenance(config: { studioRisk?: unknown; playbookAg
 }
 
 export interface SignalRadarData {
+  receipts?: SignalReceipt[];
   baselines: { sourceId: string; watchKey: string; watch: SignalWatch; state: SignalState | null; lastRead: SignalObservation | null; reason: string; provenance: RadarSourceProvenance }[];
   candidates: {
     id: string; sourceId: string; provenance: RadarSourceProvenance;
@@ -127,6 +128,14 @@ export interface SignalRadarData {
     jobStatus: string | null; jobError: string | null;
     postingEnabled?: boolean | null; postingReason?: string | null;
   }[];
+}
+
+export interface SignalReceipt {
+  id: string; actionId: string; windowHours: number; dueAt: string;
+  evidence: { watch: SignalWatch; before: SignalObservation; after: SignalObservation };
+  nowRead: SignalObservation | null; verdict: 'changed' | 'unchanged' | 'unavailable' | null;
+  status: string; reason: string; jobStatus: string | null; jobError: string | null;
+  ideaStatus: string | null; ideaError: string | null; publishedActionId: string | null;
 }
 
 export const RadarSourceConfig = z.object({

@@ -51,6 +51,7 @@ import { checkActionRate } from '../policyGate';
 import { checkDevUpdateAtSend } from '../devUpdateGuard';
 import { paperReplyForJob } from '../paperCapabilities';
 import { signalIdeaRefusal } from '../signalRadar';
+import { receiptIdeaRefusal } from '../radarReceipts';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { checkTraderDnaAtSend } from '../studioTraderDna';
 import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
@@ -231,6 +232,12 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   if (signal.ideaSource === HOME_IDEA_SOURCE) {
     const refusal = await publicHomeSendRefusal(bundle.agent.id, output, true);
     if (refusal) throw PipelineError.permanent('public_home_refused', refusal);
+  }
+  if (signal.ideaSource === 'radar_receipt') {
+    const retry = { afterMs: 0 };
+    const refusal = signal.ideaId ? await receiptIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }, retry) : 'Receipt evidence is missing.';
+    if (refusal && retry.afterMs > 0) throw PipelineError.retryable('receipt_limit', refusal, { retryAfterMs: retry.afterMs });
+    if (refusal) throw PipelineError.permanent('receipt_publication_refused', refusal);
   }
   if (signal.ideaSource === 'market_signal') {
     const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
