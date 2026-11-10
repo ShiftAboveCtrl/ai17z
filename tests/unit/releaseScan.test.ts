@@ -184,6 +184,24 @@ describe('installer_matches_zip.py', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(!python)('reports files only in the installer, which the zip does not have', () => {
+    const dir = room();
+    try {
+      const zip = join(dir, 'app.zip');
+      const app = join(dir, 'app');
+      mkdirSync(join(app, 'sub'), { recursive: true });
+      writeFileSync(join(app, 'a.txt'), 'top file\n');
+      writeFileSync(join(app, 'sub', 'a.txt'), 'dir file\n');
+      writeFileSync(join(app, 'extra.txt'), 'installer only\n');
+      py(zipScript, zip, 'a.txt', 'top file\n');
+      const result = spawnSync(python!, [script, zip, app], { encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('installer-only: 1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('a hit in third-party bytes is excused by proof and nothing else', () => {
@@ -283,6 +301,81 @@ describe('a hit in third-party bytes is excused by proof and nothing else', () =
     }
   });
 
+  it.skipIf(!python)('scans the slack after a proven zip member, not the header claim', () => {
+    const dir = room();
+    const home = emptyHome();
+    try {
+      const dist = join(dir, 'dist');
+      const app = join(dir, 'app');
+      mkdirSync(dist, { recursive: true });
+      mkdirSync(app, { recursive: true });
+      const zip = join(app, 'app.zip');
+      // A Node tarball for the proof, then a zip whose two members carry the
+      // tarball's bytes (which themselves carry the hostname, so the proof fires
+      // and exempts them) but claim more: a deflate member with slack after its
+      // end-of-stream, and a stored member with slack past its file size. The
+      // slack also holds the hostname, which is the byte the old span hid.
+      py(
+        [
+          'import io, sys, struct, tarfile, hashlib, zlib, zipfile',
+          'dist, zip_path, host = sys.argv[1], sys.argv[2], sys.argv[3]',
+          'content = b"built on " + host.encode() + b"\\n"',
+          'buf = io.BytesIO()',
+          't = tarfile.open(fileobj=buf, mode="w:gz")',
+          'for name in ("bin/node", "bin/helper"):',
+          '    info = tarfile.TarInfo("node-v1.2.3-linux-x64/" + name); info.size = len(content)',
+          '    t.addfile(info, io.BytesIO(content))',
+          't.close()',
+          'raw = buf.getvalue()',
+          'open(dist + "/node-v1.2.3-linux-x64.tar.gz", "wb").write(raw)',
+          'open(dist + "/SHASUMS256.txt", "w").write(hashlib.sha256(raw).hexdigest() + "  node-v1.2.3-linux-x64.tar.gz\\n")',
+          'le16 = lambda n: struct.pack("<H", n)',
+          'le32 = lambda n: struct.pack("<I", n)',
+          'LH = b"PK" + le16(0x0403)',
+          'CH = b"PK" + le16(0x0201)',
+          'EOCD = b"PK" + le16(0x0605)',
+          'def member(name, method, data, slack, offset):',
+          '    crc = zlib.crc32(data) & 0xffffffff',
+          '    if method == zipfile.ZIP_DEFLATED:',
+          '        co = zlib.compressobj(9, zlib.DEFLATED, -15)',
+          '        comp = co.compress(data) + co.flush()',
+          '    else:',
+          '        comp = data',
+          '    comp += slack',
+          '    nb = name.encode()',
+          '    lh = LH + le16(20) + le16(0) + le16(method) + le16(0) + le16(0) + le32(crc) + le32(len(comp)) + le32(len(data)) + le16(len(nb)) + le16(0)',
+          '    ch = CH + le16(20) + le16(20) + le16(0) + le16(method) + le16(0) + le16(0) + le32(crc) + le32(len(comp)) + le32(len(data)) + le16(len(nb)) + le16(0) + le16(0) + le16(0) + le16(0) + le32(0) + le32(offset) + nb',
+          '    return lh + nb + comp, ch',
+          'local = b""',
+          'central = b""',
+          'for name, method, data, slack in [',
+          '    ("runtime/node/bin/node", zipfile.ZIP_DEFLATED, content, b"deflate slack built on " + host.encode() + b"\\n"),',
+          '    ("runtime/node/bin/helper", zipfile.ZIP_STORED, content, b"stored slack built on " + host.encode() + b"\\n"),',
+          ']:',
+          '    lh, ch = member(name, method, data, slack, len(local))',
+          '    local += lh',
+          '    central += ch',
+          'open(zip_path, "wb").write(local + central + EOCD + le16(0) + le16(0) + le16(2) + le16(2) + le32(len(central)) + le32(len(local)) + le16(0))',
+        ].join('\n'),
+        dist, zip, HOST,
+      );
+      writeFileSync(join(dir, 'patterns.txt'), LIST);
+      writeFileSync(join(dir, 'runtime.json'), JSON.stringify({ version: 'v1.2.3' }));
+      const result = spawnSync(
+        python!,
+        [scan, '--checks', 'identifiers', '--patterns', join(dir, 'patterns.txt'), '--prove-node', join(dir, 'runtime.json'), '--node-dist', dist, 'path', app],
+        { encoding: 'utf8', env: { ...process.env, PRIVATE_IDENTIFIERS: '', HOME: home, USERPROFILE: home } },
+      );
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stdout).toContain('hostname');
+      expect(result.stdout).toContain('exempt, proven upstream bytes');
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(!python)('refuses a local checksum source under --ci, where nodejs.org alone is the trust root', () => {
     const home = emptyHome();
     try {
@@ -318,6 +411,13 @@ describe('pruneDependencies', () => {
     // `NODE_ENV === 'test'` is in half the packages on npm: a string, not a path.
     expect(referenced('test', true, "NODE_ENV === 'test'")).toBe(false);
     expect(referenced('README.md', false, "readFile('README.md')")).toBe(true);
+  });
+
+  it('sees a bare relative require or import, and file names without case', () => {
+    expect(referenced('docs', true, "require('./docs')")).toBe(true);
+    expect(referenced('test', true, "import './test'")).toBe(true);
+    expect(referenced('docs', true, 'require(`./docs`)')).toBe(true);
+    expect(referenced('README.md', false, "readFile('readme.md')")).toBe(true);
   });
 
   it('names the fixed set, so a removal is a decision rather than an extension list nobody owns', () => {

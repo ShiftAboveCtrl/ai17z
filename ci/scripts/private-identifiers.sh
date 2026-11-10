@@ -133,7 +133,8 @@ app_zip_for() {
 # The innoextract that reads Inno Setup 6.7 (ci/scripts/setup-innoextract.sh)
 # cannot check some of its own output checksums and warns instead, so an exit
 # status is not enough: every file of the application zip released beside the
-# installer must come out of it byte for byte.
+# installer must come out of it byte for byte, and files only in the installer
+# are not proven readable when innoextract warned, so those refuse too.
 n=0
 for exe in "$@"; do
   case "$exe" in *.exe) ;; *) continue ;; esac
@@ -167,6 +168,12 @@ for exe in "$@"; do
     sed 's/^/  /' "$ROOM/matches-$n.txt"
     if [ "$matched" -ne 0 ]; then
       echo "  REFUSED: the unpacked installer is not the application zip released with it, so its contents were not read whole"
+      problems=$((problems + 1))
+      continue
+    fi
+    extra="$(sed -n 's/.*installer-only: \([0-9][0-9]*\).*/\1/p' "$ROOM/matches-$n.txt")"
+    if [ "$warned" -gt 0 ] && [ "${extra:-0}" -gt 0 ]; then
+      echo "  REFUSED: innoextract warned $warned times and the installer holds $extra files the application zip does not, so those files were not proven readable"
       problems=$((problems + 1))
       continue
     fi
