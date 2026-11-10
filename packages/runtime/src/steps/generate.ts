@@ -52,6 +52,7 @@ import { removeEmDashes } from '../punctuation';
 import { judgePost } from '../postQuality';
 import { signalIdeaRefusal } from '../signalRadar';
 import { publicSelfFacts } from '../publicSelf';
+import { asksForPublicHome, publicHomeReply } from '../studioPublicHome';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -123,6 +124,11 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
   const budget = await checkBudget(bundle.agent.id, bundle.policy);
   if (!budget.allow) {
     throw PipelineError.retryable(budget.reason, budget.message, { retryAfterMs: budget.retryAfterMs });
+  }
+
+  if (bundle.job.actionType === 'REPLY' && asksForPublicHome(bundle.event.text ?? '')) {
+    await jobsRepo.updateJob(bundle.job.id, { status: 'GENERATED', generatedOutput: await publicHomeReply(bundle.agent.id), touch: ['generatedAt'] });
+    return;
   }
 
   const template = bundle.job.promptTemplateVersionId
@@ -520,6 +526,7 @@ export async function stepIntent(bundle: JobBundle): Promise<void> {
  */
 export async function stepVoice(bundle: JobBundle): Promise<void> {
   const { job, policy } = bundle;
+  if (job.actionType === 'REPLY' && asksForPublicHome(bundle.event.text ?? '')) return;
   const draft = job.validatedOutput ?? job.generatedOutput;
   if (!policy.voice.enabled || !draft) return;
   const paperReceipt = await paperReplyForJob(job.id);

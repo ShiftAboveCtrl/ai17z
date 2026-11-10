@@ -1,5 +1,9 @@
 # Radar evidence extension
 
+## Public home consent extension
+
+Reuse the same ink, bone, Archivo and Kanit system in the Studio panel. The primary action is preview, followed by a separate owner confirmation. Use a single column, 48px controls, visible labels, native validation, selectable wrapping JSON and a live status message. Focus moves to the preview heading. Editing choices clears the preview. State always says last confirmed; stale or failed confirmation never looks live. The removal control explains that copies cannot be recalled. No decorative motion or new visual identity is introduced.
+
 Domain: financial observation in an existing desktop application. Preserve the established Archivo and Kanit typography, ink surfaces, bone text, calm accent, rounded panels and focus treatments.
 
 Primary action: pin an exact address and a measurable predicate. Owner pins are the bounded universe. A ticker cannot configure a watch. Unsupported chains remain visible with an explicit explanation.
