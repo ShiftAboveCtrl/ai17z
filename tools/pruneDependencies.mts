@@ -72,10 +72,10 @@ const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\
 /**
  * Whether any of the package's own code names this top-level entry as a path:
  * `./docs/x`, `'docs/x'`, `require('./docs')`, `import './test'`, or `'docs'`
- * handed to `join`, `resolve` or beside `__dirname`. A bare `'test'` anywhere
- * else is a string, not a path: `NODE_ENV === 'test'` is in half the packages
- * on npm. File names are matched without case, so a `readme.md` reference keeps
- * a `README.md`.
+ * handed to `join`, `resolve`, beside `__dirname`, or interpolated as
+ * `${__dirname}/docs`. A bare `'test'` anywhere else is a string, not a path:
+ * `NODE_ENV === 'test'` is in half the packages on npm. File names are matched
+ * without case, so a `readme.md` reference keeps a `README.md`.
  */
 export function referenced(name: string, isDirectory: boolean, code: string): boolean {
   if (!isDirectory) return new RegExp(escape(name), 'i').test(code);
@@ -83,7 +83,8 @@ export function referenced(name: string, isDirectory: boolean, code: string): bo
   return (
     new RegExp(`['"\`/]${n}/`).test(code) ||
     new RegExp(`['"\`]\\./${n}['"\`]`).test(code) ||
-    new RegExp(`(__dirname|join\\(|resolve\\()[^;\\n]{0,80}['"\`]${n}['"\`]`).test(code)
+    new RegExp(`(__dirname|join\\(|resolve\\()[^;\\n]{0,80}['"\`]\\/?${n}['"\`]`).test(code) ||
+    new RegExp(`\\$\\{__dirname\\}\\/?${n}(['"\`/]|$)`).test(code)
   );
 }
 

@@ -376,6 +376,131 @@ describe('a hit in third-party bytes is excused by proof and nothing else', () =
     }
   });
 
+  // The three shapes that hid slack at b42ba90d, and the honest shapes that
+  // must stay exempted. One Node-proof setup, then a zip per shape: the member
+  // is proved byte-for-byte, so only the slack is ours.
+  const nodeProof = (dist: string) => {
+    py(
+      [
+        'import io, sys, tarfile, hashlib',
+        'dist, host = sys.argv[1], sys.argv[2]',
+        'content = b"built on " + host.encode() + b"\\n"',
+        'buf = io.BytesIO()',
+        't = tarfile.open(fileobj=buf, mode="w:gz")',
+        'for name in ("bin/node", "bin/helper"):',
+        '    info = tarfile.TarInfo("node-v1.2.3-linux-x64/" + name); info.size = len(content)',
+        '    t.addfile(info, io.BytesIO(content))',
+        't.close()',
+        'raw = buf.getvalue()',
+        'open(dist + "/node-v1.2.3-linux-x64.tar.gz", "wb").write(raw)',
+        'open(dist + "/SHASUMS256.txt", "w").write(hashlib.sha256(raw).hexdigest() + "  node-v1.2.3-linux-x64.tar.gz\\n")',
+      ].join('\n'),
+      dist, HOST,
+    );
+  };
+
+  const buildZip = (zipPath: string, scenario: string) => {
+    py(
+      [
+        'import sys, struct, zlib, bz2',
+        'zip_path, host, scenario = sys.argv[1], sys.argv[2], sys.argv[3]',
+        'content = b"built on " + host.encode() + b"\\n"',
+        'slack = b"SLACK built on " + host.encode() + b"\\n"',
+        'le16 = lambda n: struct.pack("<H", n)',
+        'le32 = lambda n: struct.pack("<I", n)',
+        'LH = b"PK" + le16(0x0403)',
+        'CH = b"PK" + le16(0x0201)',
+        'EOCD = b"PK" + le16(0x0605)',
+        'crc = zlib.crc32(content) & 0xFFFFFFFF',
+        'def raw_deflate(b):',
+        '    co = zlib.compressobj(9, zlib.DEFLATED, -15)',
+        '    return co.compress(b) + co.flush()',
+        'def stored_blocks(parts):',
+        '    out = b""',
+        '    for i, p in enumerate(parts):',
+        '        out += bytes([1 if i == len(parts) - 1 else 0]) + le16(len(p)) + le16(len(p) ^ 0xFFFF) + p',
+        '    return out',
+        'def build(entries):',
+        '    local = b""',
+        '    central = b""',
+        '    for name, method, comp, csize, fsize in entries:',
+        '        nb = name.encode()',
+        '        off = len(local)',
+        '        lh = LH + le16(20) + le16(0) + le16(method) + le16(0) + le16(0) + le32(crc) + le32(csize) + le32(fsize) + le16(len(nb)) + le16(0)',
+        '        local += lh + nb + comp',
+        '        central += CH + le16(20) + le16(20) + le16(0) + le16(method) + le16(0) + le16(0) + le32(crc) + le32(csize) + le32(fsize) + le16(len(nb)) + le16(0) + le16(0) + le16(0) + le16(0) + le32(0) + le32(off) + nb',
+        '    return local + central + EOCD + le16(0) + le16(0) + le16(len(entries)) + le16(len(entries)) + le32(len(central)) + le32(len(local)) + le16(0)',
+        'N = "runtime/node/bin/node"',
+        'H = "runtime/node/bin/helper"',
+        'stream = stored_blocks([content, slack])',
+        'bz = bz2.compress(content) + slack',
+        'dh = raw_deflate(content)',
+        'entries = {',
+        '    "a": [(N, 0, content + slack, len(content), len(content) + len(slack))],',
+        '    "b": [(N, 8, stream, len(stream), len(content))],',
+        '    "c": [(N, 12, bz, len(bz), len(content))],',
+        '    "honest": [(N, 0, content, len(content), len(content)), (H, 8, dh, len(dh), len(content))],',
+        '}[scenario]',
+        'open(zip_path, "wb").write(build(entries))',
+      ].join('\n'),
+      zipPath, HOST, scenario,
+    );
+  };
+
+  const scanZip = (scenario: string) => {
+    const dir = room();
+    const home = emptyHome();
+    try {
+      const dist = join(dir, 'dist');
+      const app = join(dir, 'app');
+      mkdirSync(dist, { recursive: true });
+      mkdirSync(app, { recursive: true });
+      nodeProof(dist);
+      buildZip(join(app, 'app.zip'), scenario);
+      writeFileSync(join(dir, 'patterns.txt'), LIST);
+      writeFileSync(join(dir, 'runtime.json'), JSON.stringify({ version: 'v1.2.3' }));
+      return spawnSync(
+        python!,
+        [scan, '--checks', 'identifiers', '--patterns', join(dir, 'patterns.txt'), '--prove-node', join(dir, 'runtime.json'), '--node-dist', dist, 'path', app],
+        { encoding: 'utf8', env: { ...process.env, PRIVATE_IDENTIFIERS: '', HOME: home, USERPROFILE: home } },
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  };
+
+  it.skipIf(!python)('leaves slack past a stored member whose central file size exceeds its compressed size unmasked', () => {
+    const result = scanZip('a');
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stdout).toContain('hostname');
+    expect(result.stdout).toContain('exempt, proven upstream bytes');
+    expect(leaks(result.stdout)).toBe(false);
+  });
+
+  it.skipIf(!python)('leaves the extra stored block of a deflate member unmasked', () => {
+    const result = scanZip('b');
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stdout).toContain('hostname');
+    expect(result.stdout).toContain('exempt, proven upstream bytes');
+    expect(leaks(result.stdout)).toBe(false);
+  });
+
+  it.skipIf(!python)('leaves slack past a bzip2 member unmasked', () => {
+    const result = scanZip('c');
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stdout).toContain('hostname');
+    expect(result.stdout).toContain('exempt, proven upstream bytes');
+    expect(leaks(result.stdout)).toBe(false);
+  });
+
+  it.skipIf(!python)('still exempts an honest stored and an honest deflate member', () => {
+    const result = scanZip('honest');
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('exempt, proven upstream bytes');
+    expect(leaks(result.stdout)).toBe(false);
+  });
+
   it.skipIf(!python)('refuses a local checksum source under --ci, where nodejs.org alone is the trust root', () => {
     const home = emptyHome();
     try {
@@ -411,6 +536,12 @@ describe('pruneDependencies', () => {
     // `NODE_ENV === 'test'` is in half the packages on npm: a string, not a path.
     expect(referenced('test', true, "NODE_ENV === 'test'")).toBe(false);
     expect(referenced('README.md', false, "readFile('README.md')")).toBe(true);
+  });
+
+  it('sees __dirname concatenated or interpolated before a directory name', () => {
+    expect(referenced('docs', true, "__dirname + '/docs'")).toBe(true);
+    expect(referenced('docs', true, '`${__dirname}/docs`')).toBe(true);
+    expect(referenced('docs', true, "resolve(__dirname, '/docs')")).toBe(true);
   });
 
   it('sees a bare relative require or import, and file names without case', () => {

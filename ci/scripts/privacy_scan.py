@@ -1062,8 +1062,9 @@ class Scanner:
                         if not self.charge(len(chunk), inner):
                             return
                         parts.append(chunk)
-                if self.blob(inner, b"".join(parts), depth + 1):
-                    span = zip_member_span(data, info)
+                content = b"".join(parts)
+                if self.blob(inner, content, depth + 1):
+                    span = zip_member_span(data, info, content)
                     if span:
                         proven.append(span)
                 self.set_skip(label)
@@ -1104,44 +1105,67 @@ class Scanner:
             pos += 60 + size + (size % 2)
 
 
-def deflate_consumed(data):
-    """Bytes of a raw-deflate stream up to and including its end, or None if it is not a whole stream."""
-    d = zlib.decompressobj(-15)
-    try:
-        d.decompress(data)
-    except zlib.error:
-        return None
-    return len(data) - len(d.unused_data) if d.eof else None
+def zip_member_span(data, info, content):
+    """(start, end) of a zip member's compressed bytes to mask as proven, or None.
 
-
-def zip_member_span(data, info):
-    """(start, end) of a zip member's stored bytes, or None if its local header is not where it says.
-
-    The header's compress_size is the zip's own claim, not a fact: a deflate
-    member's stream can end before it (the slack after its end-of-stream marker
-    is not the member), and a stored member can claim more than its file_size.
-    Those slack bytes are not proven by the member's bytes, so they stay
-    unmasked and the raw pass scans them.
+    The mask is a strict whitelist, not a length read from a header. A member's
+    compressed bytes are masked only when every check here holds, and then only
+    the local header's data through compress_size, nothing more. A stored member
+    whose file size is not its compressed size, a deflate stream that is not
+    exactly the proven bytes, any other method (bzip2, lzma), a local header
+    that names another member or states different sizes, or a data descriptor
+    whose sizes disagree all leave the member unmasked, so the raw pass reads it
+    and any hit in it stands.
     """
     start = info.header_offset
     header = data[start:start + 30]
     if len(header) < 30 or header[:4] != b"PK\x03\x04":
         return None
-    body = start + 30 + int.from_bytes(header[26:28], "little") + int.from_bytes(header[28:30], "little")
+    name_len = int.from_bytes(header[26:28], "little")
+    extra_len = int.from_bytes(header[28:30], "little")
+    body = start + 30 + name_len + extra_len
     if body + info.compress_size > len(data):
         return None
+    # The local header must name the member the central directory names, and
+    # state the same method and sizes. With a data descriptor (flag bit 3) the
+    # sizes sit in a descriptor right after the compressed data instead.
+    if data[start + 30:start + 30 + name_len] != info.filename.encode("utf-8", "surrogateescape"):
+        return None
+    flags = int.from_bytes(header[6:8], "little")
+    method = int.from_bytes(header[8:10], "little")
+    if method != info.compress_type:
+        return None
+    if flags & 0x08:
+        descriptor = body + info.compress_size
+        if descriptor + 16 > len(data) or data[descriptor:descriptor + 4] != b"PK\x07\x08":
+            return None
+        if int.from_bytes(data[descriptor + 8:descriptor + 12], "little") != info.compress_size:
+            return None
+        if int.from_bytes(data[descriptor + 12:descriptor + 16], "little") != info.file_size:
+            return None
+    elif (int.from_bytes(header[18:22], "little") != info.compress_size
+          or int.from_bytes(header[22:26], "little") != info.file_size):
+        return None
     stored = data[body:body + info.compress_size]
-    if info.compress_type == zipfile.ZIP_STORED:
-        length = info.file_size
-    elif info.compress_type == zipfile.ZIP_DEFLATED:
-        length = deflate_consumed(stored)
-        if length is None:
+    proven = hashlib.sha256(content).digest()
+    if method == zipfile.ZIP_STORED:
+        if info.file_size != info.compress_size or hashlib.sha256(stored).digest() != proven:
+            return None
+    elif method == zipfile.ZIP_DEFLATED:
+        d = zlib.decompressobj(-15)
+        try:
+            out = d.decompress(stored)
+        except zlib.error:
+            return None
+        # One whole stream, nothing after it, that decompresses to exactly the
+        # bytes that were proven.
+        if not d.eof or d.unused_data or d.unconsumed_tail:
+            return None
+        if len(out) != info.file_size or hashlib.sha256(out).digest() != proven:
             return None
     else:
-        # bzip2, lzma or a method this scanner does not decompress: only the
-        # header's claim is known, so nothing beyond it is assumed.
-        length = info.compress_size
-    return (body, body + length)
+        return None
+    return (body, body + info.compress_size)
 
 
 def archive_kind(data):

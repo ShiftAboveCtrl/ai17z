@@ -163,7 +163,7 @@ for exe in "$@"; do
   fi
   zip="$(app_zip_for "$exe" "$@")"
   if [ -n "$zip" ]; then
-    python3 "$HERE/installer_matches_zip.py" "$zip" "$ROOM/$n/app" >"$ROOM/matches-$n.txt" 2>&1
+    python3 "$HERE/installer_matches_zip.py" "$zip" "$ROOM/$n/app" "$ROOM/$n" >"$ROOM/matches-$n.txt" 2>&1
     matched=$?
     sed 's/^/  /' "$ROOM/matches-$n.txt"
     if [ "$matched" -ne 0 ]; then
@@ -177,6 +177,10 @@ for exe in "$@"; do
       problems=$((problems + 1))
       continue
     fi
+  elif [ "$warned" -gt 0 ]; then
+    echo "  REFUSED: no application zip for this installer in the set and innoextract warned $warned times, so its contents were not cross-checked"
+    problems=$((problems + 1))
+    continue
   else
     echo "  no application zip for this installer in the set, so it was not cross-checked"
   fi
