@@ -669,3 +669,17 @@ export function Tabs<T extends string>({
     </div>
   );
 }
+
+/**
+ * Moves focus to an element once the browser has painted it.
+ *
+ * Focus is moved from this file and nowhere else: a second caller would have to
+ * make the same argument Modal makes for moving it only on open, and would not
+ * be covered by the test that pins that. Use this when a result appears that a
+ * keyboard or screen-reader user has to be taken to, such as a preview heading
+ * rendered after a form is submitted. The target needs `tabIndex={-1}` to take
+ * focus if it is not already focusable.
+ */
+export function focusAfterPaint(target: { current: HTMLElement | null }): void {
+  requestAnimationFrame(() => target.current?.focus());
+}

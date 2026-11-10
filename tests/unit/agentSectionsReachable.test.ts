@@ -22,11 +22,20 @@ const areaBlock = source.slice(source.indexOf('const AREAS = ['), source.indexOf
 
 /** The sections each area claims, in declaration order. */
 const claimed = [...areaBlock.matchAll(/sections:\s*\[([^\]]*)\]/g)].flatMap((m) =>
-  [...m[1]!.matchAll(/'([a-z]+)'/g)].map((x) => x[1]!),
+  [...m[1]!.matchAll(/'([a-z-]+)'/g)].map((x) => x[1]!),
 );
 
+/**
+ * Components whose anchor is not their name. StudioVoiceSection renders the
+ * `publish-voice` section, and a hyphen cannot be recovered from a component name.
+ */
+const ANCHOR_OF_COMPONENT: Record<string, string> = { studiovoice: 'publish-voice' };
+
 /** What the page actually puts on screen. Components are named after their anchor. */
-const rendered = [...source.matchAll(/<(\w+)Section\s/g)].map((m) => m[1]!.toLowerCase());
+const rendered = [...source.matchAll(/<(\w+)Section\s/g)].map((m) => {
+  const name = m[1]!.toLowerCase();
+  return ANCHOR_OF_COMPONENT[name] ?? name;
+});
 
 describe('every section on the agent page is reachable', () => {
   it('finds both lists where this test thinks they are', () => {

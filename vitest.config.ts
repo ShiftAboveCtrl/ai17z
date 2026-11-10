@@ -47,6 +47,7 @@ export default defineConfig({
       '@xbam/shared/contracts': r('./packages/shared/src/contracts/index.ts'),
       '@xbam/shared/util': r('./packages/shared/src/util.ts'),
       '@xbam/shared': r('./packages/shared/src/index.ts'),
+      '@xbam/faker-compat': r('./packages/faker-compat/index.js'),
       '@xbam/database': r('./packages/database/src/index.ts'),
       '@xbam/jobs': r('./packages/jobs/src/index.ts'),
       '@xbam/models': r('./packages/models/src/index.ts'),

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { post, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
+import { focusAfterPaint } from '@app/components/ui';
 
 interface HomeState { confirmed: { published: boolean; confirmedAt: string; validUntil: string } | null; stale: boolean; url: string | null; postLink: boolean; problem: string | null; canUnpublish: boolean }
 interface Preview { manifest: unknown; digest: string; expiresAt: string; note: string }
@@ -64,7 +65,7 @@ export function AgentHomeControls({ agentId }: { agentId: string }) {
         const result = await post<Preview>(`${base}/preview`, { alias: form.get('alias'), includeVoice: form.get('voice') === 'on',
           paperWindow: form.get('paper') || null, includeLeague: form.get('league') === 'on', showActivity: form.get('activity') === 'on' });
         setPreview(result);
-        requestAnimationFrame(() => heading.current?.focus());
+        focusAfterPaint(heading);
       });
     }}>
       <h3 id={`${uid}-title`} className="text-sm font-medium text-bone">Choose what to share</h3>

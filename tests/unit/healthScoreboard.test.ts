@@ -57,7 +57,7 @@ describe('every notification link goes somewhere that exists', () => {
     const hrefs = [...notify.matchAll(/actionHref: '([^']+)'/g)].map((match) => match[1]!);
     expect(hrefs.length).toBeGreaterThan(0);
     for (const href of hrefs) {
-      const path = href.split('#')[0]!;
+      const path = href.split(/[#?]/)[0]!;
       expect(routes, `nothing is routed at ${path}, so "${href}" would silently redirect home`).toContain(path);
     }
   });
@@ -65,7 +65,7 @@ describe('every notification link goes somewhere that exists', () => {
   it('has a route for each destination built from an agent id', () => {
     const templated = [...notify.matchAll(/actionHref: `([^`]+)`/g)].map((match) => match[1]!);
     for (const href of templated) {
-      const path = href.split('#')[0]!.replace(/\$\{[^}]+\}/g, ':agentId');
+      const path = href.split(/[#?]/)[0]!.replace(/\$\{[^}]+\}/g, ':agentId');
       expect(routes.map((route) => route.replace(/:\w+/g, ':agentId'))).toContain(path);
     }
   });
