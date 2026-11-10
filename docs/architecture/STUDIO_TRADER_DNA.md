@@ -96,13 +96,14 @@ study.
 | `study_id` | must equal the id asked for |
 | `generated_at` | when Studio produced this answer. Older than 15 minutes, or more than 5 in the future, is refused as not current |
 | `evidence_level` | `SURVIVED_FILTERS`, `RECONSTRUCTED` or `CANDIDATE`. A candidate is something nobody traded |
-| `luck_filters` | Bonferroni, the number of hypotheses tested, alpha, and how many survived. Survivors cannot exceed tests |
+| `luck_filters` | Bonferroni, the number of hypotheses tested, alpha, and how many survived. Survivors cannot exceed tests, and cannot be fewer than the behaviours that say they survived |
 | `behaviours[].adjusted_p` | required for a behaviour that says it survived |
 | `wallets` | only what the study itself published. Addresses are EVM or Solana shaped |
 | decimals | strings, never floats |
 
 Consistency rules, enforced by the schema: the window cannot end before it starts,
-a study that says its findings survived names at least one that did, and two
+a study that says its findings survived names at least one that did, the survivor
+count is at least the number of behaviours that say they survived, and two
 behaviours cannot share an id.
 
 ### What it must never carry
@@ -117,9 +118,12 @@ Every answer, in owner chat or in a post, carries the evidence level, the sample
 size, the cost assumption, the window, and the sentence that nothing was traded.
 
 * **Unavailable, never a headline number.** A study with no sample (zero wallets or
-  zero trades) or whose window ended more than 120 days ago, an unpublished id, an
+  zero trades), whose window ended more than 120 days ago, or whose window end or
+  publication date is in the future (more than five minutes ahead), an unpublished id, an
   unreachable Studio and a malformed answer all produce `UNAVAILABLE` with a
   sentence. No figure, no behaviour and no wallet leaves the capability then.
+* **A behaviour with no observations is not a finding.** One with `sample_size` 0 is
+  left out of the answer and out of any post, never shown as "(0 observations)".
 * **Nothing is kept.** An unreachable Studio is not answered from the last study.
 * **Survived, reconstructed, candidate** are said separately. A reconstructed
   behaviour is introduced as not shown to survive the filters, and a candidate as

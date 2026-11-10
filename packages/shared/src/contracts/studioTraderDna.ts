@@ -119,6 +119,9 @@ export const TraderDnaStudy = z
     const fail = (message: string) => ctx.addIssue({ code: 'custom', message });
     if (Date.parse(study.window.end) < Date.parse(study.window.start)) fail('The window ends before it starts.');
     if (study.luck_filters.survivors > study.luck_filters.tests) fail('More survivors than hypotheses tested.');
+    // The count is a floor: a study cannot name more surviving behaviours than it says survived.
+    const named = study.behaviours.filter((b) => b.evidence_level === 'SURVIVED_FILTERS').length;
+    if (study.luck_filters.survivors < named) fail('Fewer survivors than behaviours that say they survived.');
     for (const b of study.behaviours) {
       if (b.evidence_level === 'SURVIVED_FILTERS' && b.adjusted_p === null) fail('A behaviour that survived the filters states its adjusted p-value.');
     }

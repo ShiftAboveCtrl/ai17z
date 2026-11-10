@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { defineCapability, registerCapability, type AnyCapability } from '@xbam/tools';
 import { TRADER_DNA_EVIDENCE_LEVELS, TRADER_DNA_STUDY_ID } from '@xbam/shared/contracts';
 import { studioInstallationReady } from './studioLink';
-import { describeTraderDna, describeTraderDnaUnavailable, readTraderDnaStudy } from './studioTraderDna';
+import { behavioursWithASample, describeTraderDna, describeTraderDnaUnavailable, readTraderDnaStudy } from './studioTraderDna';
 
 /**
  * "What did that Trader DNA study find", for the owner, and nothing else.
@@ -106,7 +106,7 @@ const study = defineCapability({
       sample: { wallets: s.sample.wallets, trades: s.sample.trades },
       costAssumption: { feeBps: s.costs.fee_bps, slippageBps: s.costs.slippage_bps, note: s.costs.note },
       window: { start: s.window.start, end: s.window.end },
-      behaviours: s.behaviours.map((b) => ({ summary: b.summary, evidenceLevel: b.evidence_level, sampleSize: b.sample_size, adjustedP: b.adjusted_p })),
+      behaviours: behavioursWithASample(s).map((b) => ({ summary: b.summary, evidenceLevel: b.evidence_level, sampleSize: b.sample_size, adjustedP: b.adjusted_p })),
       contaminationFlags: s.contamination_flags.map((f) => f.code),
       wallets: s.wallets.map((w) => ({ address: w.address, label: w.label })),
       statement: said.statement,

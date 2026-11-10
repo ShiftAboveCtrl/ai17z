@@ -90,9 +90,18 @@ const sentence = (text: string) => text.trim().replace(/[.!?]*$/, '.');
 
 const LEVEL_WORDS = {
   SURVIVED_FILTERS: 'survived the luck filters',
-  RECONSTRUCTED: 'reconstructed from the chain only',
-  CANDIDATE: 'a candidate that was never traded',
+  RECONSTRUCTED: 'were reconstructed from the chain only',
+  CANDIDATE: 'are only a candidate that was never traded',
 } as const;
+
+/**
+ * The behaviours there is something to say about. A sample of zero is not a
+ * small finding, it is no finding, and "(0 observations)" must not reach an
+ * owner's answer or a post as though it were one.
+ */
+export function behavioursWithASample(study: TraderDnaStudy): TraderDnaBehaviour[] {
+  return study.behaviours.filter((b) => b.sample_size > 0);
+}
 
 export interface TraderDnaReading {
   state: 'AVAILABLE' | 'UNAVAILABLE';
@@ -106,6 +115,10 @@ export function whyNoFigures(study: TraderDnaStudy, now: Date): string | null {
   if (now.getTime() - Date.parse(study.window.end) > TRADER_DNA_STALE_AFTER_MS) {
     return `The study's window ended on ${day(study.window.end)}, which is too long ago to treat as current.`;
   }
+  // A window that ends, or a publication dated, after now is a study that cannot
+  // have happened yet: treated as malformed rather than as the freshest one.
+  if (Date.parse(study.window.end) - now.getTime() > FUTURE_SLACK_MS) return "The study's window ends in the future, so it cannot be a finished study.";
+  if (Date.parse(study.published_at) - now.getTime() > FUTURE_SLACK_MS) return 'The study is dated as published in the future, so it was not treated as published.';
   return null;
 }
 
@@ -122,9 +135,10 @@ export function describeTraderDna(study: TraderDnaStudy, now: Date = new Date())
   const none = whyNoFigures(study, now);
   if (none) return describeTraderDnaUnavailable(none);
 
-  const survived = study.behaviours.filter((b) => b.evidence_level === 'SURVIVED_FILTERS');
-  const reconstructed = study.behaviours.filter((b) => b.evidence_level === 'RECONSTRUCTED');
-  const candidates = study.behaviours.filter((b) => b.evidence_level === 'CANDIDATE');
+  const sampled = behavioursWithASample(study);
+  const survived = sampled.filter((b) => b.evidence_level === 'SURVIVED_FILTERS');
+  const reconstructed = sampled.filter((b) => b.evidence_level === 'RECONSTRUCTED');
+  const candidates = sampled.filter((b) => b.evidence_level === 'CANDIDATE');
   const behaviour = (b: TraderDnaBehaviour) =>
     `${sentence(b.summary)} (${b.sample_size} observations${b.adjusted_p === null ? '' : `, adjusted p ${b.adjusted_p}`})`;
   const flags = study.contamination_flags.length === 0 ? 'Contamination flags: none raised.' : `Contamination flags: ${study.contamination_flags.map((f) => `${f.code.toLowerCase().replace(/_/g, ' ')} (${sentence(f.note)})`).join(' ')}`;
@@ -160,8 +174,28 @@ const WALLET_ADDRESS = /\b0x[0-9a-fA-F]{40}\b|\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
   wallet is smart" under the agent's name. Negations are not understood on
   purpose; a sentence that has to say "do not follow" is better rewritten.
 */
-const WALLET_CLAIM =
-  /\b(smart|sharp|alpha|genius|elite|insider|whale|top|best|winning|profitable)[- ](wallets?|money|traders?|whales?|addresses)\b|\bsmart money\b|\bworth (copying|following|watching|tailing|mirroring)\b|\b(copy|follow|mirror|tail|shadow)\b[^.!?\n]{0,40}\b(wallets?|traders?|whales?|addresses|them|these|this one|him|her)\b|\b(wallets?|traders?|addresses) (to|worth) (follow|copy|watch|track)\b|\bcopy[- ]?trad(e|er|ing)\b|\b(watch|track)(list)? (these|this|that|those) (wallets?|traders?|addresses)\b/i;
+const WALLET_NOUN = 'wallets?|traders?|whales?|addresses|cohorts?|snipers?';
+const PRAISE_WORD =
+  'smart|sharp|profitable|genius(?:es)?|elite|good|great|brilliant|clever|savvy|skilled|successful|winning|winners?|reliable|legit|insiders?|alpha|' +
+  'worth (?:(?:a|the) (?:follow|copy|watch)|keeping|following|copying|watching|tracking|mirroring|tailing|backing)';
+const LINKING_VERB = "(?:\\b(?:is|are|was|were|seems?|looks?|proved?|remains?|be|been)\\b|['’](?:s|re)\\b)";
+const WALLET_CLAIM = new RegExp(
+  [
+    // An adjective straight before the noun: "smart wallets", "top-traders".
+    String.raw`\b(?:smart|sharp|alpha|genius|elite|insider|whale|top|best|winning|profitable)[- ](?:${WALLET_NOUN}|money)\b`,
+    // A ranking word with up to two words before the noun: "top 5 wallets", "best performing wallets".
+    String.raw`\b(?:top|best|leading|greatest|finest|biggest)\b(?:\s+[\w#-]+){0,2}\s+(?:${WALLET_NOUN})\b`,
+    // The noun, a linking verb and a praise word: "this wallet is smart", "the wallets in this cohort are geniuses".
+    String.raw`\b(?:${WALLET_NOUN})\b[^.!?\n]{0,40}?${LINKING_VERB}[^.!?\n]{0,25}?\b(?:${PRAISE_WORD})\b`,
+    String.raw`\bsmart money\b`,
+    String.raw`\bworth (?:copying|following|watching|tailing|mirroring|tracking|keeping an eye|(?:a|the) (?:follow|copy|watch))\b`,
+    String.raw`\b(?:copy|follow|mirror|tail|shadow)\b[^.!?\n]{0,40}\b(?:wallets?|traders?|whales?|addresses|them|these|this one|him|her)\b`,
+    String.raw`\b(?:wallets?|traders?|addresses) (?:to|worth) (?:follow|copy|watch|track)\b`,
+    String.raw`\bcopy[- ]?trad(?:e|er|ing)\b`,
+    String.raw`\b(?:watch|track)(?:list)? (?:these|this|that|those) (?:wallets?|traders?|addresses)\b`,
+  ].join('|'),
+  'i',
+);
 const SAYS_NOTHING_TRADED =
   /\b(nothing|none of (it|this)) (was|has been|is|were) (traded|bought|sold)\b|\bnever traded\b|\bno (trades|positions?) (were|was|are|is) (made|placed|taken|open)\b/i;
 
@@ -187,11 +221,15 @@ export interface TraderDnaIdea {
 export function traderDnaIdeaFrom(study: TraderDnaStudy, now: Date = new Date()): TraderDnaIdea | null {
   if (whyNoFigures(study, now)) return null;
   if (study.evidence_level !== 'SURVIVED_FILTERS') return null;
-  const sayable = study.behaviours.filter((b) => b.evidence_level === 'SURVIVED_FILTERS' && !claimsAboutAWallet(b.summary)).slice(0, 3);
+  const sayable = behavioursWithASample(study)
+    .filter((b) => b.evidence_level === 'SURVIVED_FILTERS' && !claimsAboutAWallet(b.summary))
+    .slice(0, 3);
   if (sayable.length === 0) return null;
+  // The title is Studio's sentence too: one that praises a wallet is left out, not quoted.
+  const named = claimsAboutAWallet(study.title) ? '' : ` "${study.title}"`;
 
   const summary = [
-    `Studio's published Trader DNA study "${study.title}", ${day(study.window.start)} to ${day(study.window.end)}: ${study.sample.wallets} wallets, ${study.sample.trades} trades, findings that ${LEVEL_WORDS[study.evidence_level]} (Bonferroni over ${study.luck_filters.tests} tests).`,
+    `Studio's published Trader DNA study${named}, ${day(study.window.start)} to ${day(study.window.end)}: ${study.sample.wallets} wallets, ${study.sample.trades} trades, findings that ${LEVEL_WORDS[study.evidence_level]} (Bonferroni over ${study.luck_filters.tests} tests).`,
     `Assumed costs: ${study.costs.fee_bps} bps fees, ${study.costs.slippage_bps} bps slippage.`,
     ...sayable.map((b) => `Behaviour: ${sentence(b.summary)} (${b.sample_size} observations).`),
   ]

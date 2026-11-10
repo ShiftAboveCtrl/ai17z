@@ -60,6 +60,22 @@ describe('the contract is an allowlist of a published study', () => {
     expect(TraderDnaStudy.safeParse(studyFixture({ wallets: [{ address: 'not-an-address', label: null }] })).success).toBe(false);
     expect(TraderDnaStudy.safeParse(studyFixture({ window: { start: '2026-02-01T00:00:00.000Z', end: '2026-01-01T00:00:00.000Z' } })).success).toBe(false);
   });
+
+  it('refuses fewer survivors than behaviours that say they survived', () => {
+    const base = studyFixture();
+    const survivedTwice = [
+      { id: 'b1', summary: 'Selling in tranches', evidence_level: 'SURVIVED_FILTERS', sample_size: 30, adjusted_p: '0.02' },
+      { id: 'b2', summary: 'Exiting before an unlock', evidence_level: 'SURVIVED_FILTERS', sample_size: 30, adjusted_p: '0.03' },
+    ];
+    const filters = (survivors: number) => ({ method: 'BONFERRONI', tests: 24, alpha: '0.05', survivors });
+    expect(TraderDnaStudy.safeParse({ ...base, behaviours: survivedTwice, luck_filters: filters(0) }).success).toBe(false);
+    expect(TraderDnaStudy.safeParse({ ...base, behaviours: survivedTwice, luck_filters: filters(1) }).success).toBe(false);
+    expect(TraderDnaStudy.safeParse({ ...base, behaviours: survivedTwice, luck_filters: filters(2) }).success).toBe(true);
+    // The fixture's one surviving behaviour with a count of zero is the case the review found.
+    expect(TraderDnaStudy.safeParse(studyFixture({ luck_filters: filters(0) })).success).toBe(false);
+    // A study with no surviving behaviour may still report survivors it chose not to publish.
+    expect(TraderDnaStudy.safeParse(studyFixture({ evidence_level: 'RECONSTRUCTED', behaviours: [], luck_filters: filters(3) })).success).toBe(true);
+  });
 });
 
 describe('reading a study reaches the published route and nothing else', () => {
@@ -150,6 +166,48 @@ describe('what the agent says when asked', () => {
     expect(said.state).toBe('UNAVAILABLE');
     expect(said.statement).toMatch(/too long ago/);
     expect(said.statement).not.toMatch(/\d+ wallets|\d+ trades|bps|adjusted p/);
+  });
+
+  it('says each evidence level as a sentence with a verb', () => {
+    const said = describeTraderDna(study()).statement;
+    expect(said).toMatch(/the findings survived the luck filters\./);
+    const candidate = describeTraderDna(study({ evidence_level: 'CANDIDATE', behaviours: [] })).statement;
+    expect(candidate).toMatch(/the findings are only a candidate that was never traded\./);
+    const rebuilt = describeTraderDna(study({ evidence_level: 'RECONSTRUCTED', behaviours: [] })).statement;
+    expect(rebuilt).toMatch(/the findings were reconstructed from the chain only\./);
+  });
+
+  it('leaves out a behaviour with no observations instead of reporting "(0 observations)"', () => {
+    const behaviours = [
+      { id: 'b1', summary: 'Selling in tranches', evidence_level: 'SURVIVED_FILTERS', sample_size: 30, adjusted_p: '0.02' },
+      { id: 'b2', summary: 'Selling into strength', evidence_level: 'SURVIVED_FILTERS', sample_size: 0, adjusted_p: '0.02' },
+      { id: 'b3', summary: 'Entering on a Monday', evidence_level: 'RECONSTRUCTED', sample_size: 0, adjusted_p: null },
+      { id: 'b4', summary: 'Buying dips', evidence_level: 'CANDIDATE', sample_size: 0, adjusted_p: null },
+    ];
+    const said = describeTraderDna(study({ behaviours, luck_filters: { method: 'BONFERRONI', tests: 24, alpha: '0.05', survivors: 2 } })).statement;
+    expect(said).toMatch(/Selling in tranches\. \(30 observations/);
+    expect(said).not.toMatch(/Selling into strength|Entering on a Monday|Buying dips|\(0 observations/);
+    const onlyEmpty = describeTraderDna(study({ behaviours: [behaviours[1]], luck_filters: { method: 'BONFERRONI', tests: 24, alpha: '0.05', survivors: 1 } })).statement;
+    expect(onlyEmpty).toMatch(/No behaviour is shown to have survived the filters/);
+    expect(onlyEmpty).not.toMatch(/\(0 observations/);
+  });
+
+  it('gives no figures for a window that ends, or a publication dated, in the future', () => {
+    const now = new Date();
+    const later = new Date(now.getTime() + 10 * 86_400_000).toISOString();
+    const earlier = new Date(now.getTime() - 50 * 86_400_000).toISOString();
+    const futureWindow = describeTraderDna(study({ window: { start: earlier, end: later } }), now);
+    expect(futureWindow.state).toBe('UNAVAILABLE');
+    expect(futureWindow.statement).toMatch(/in the future/);
+    expect(futureWindow.statement).not.toMatch(/\d+ wallets|\d+ trades|bps|adjusted p/);
+    const futurePublished = describeTraderDna(study({ published_at: later }), now);
+    expect(futurePublished.state).toBe('UNAVAILABLE');
+    expect(futurePublished.statement).toMatch(/future/);
+    expect(traderDnaIdeaFrom(study({ window: { start: earlier, end: later } }), now)).toBeNull();
+    expect(traderDnaIdeaFrom(study({ published_at: later }), now)).toBeNull();
+    // A few minutes of clock difference is not a future study.
+    const slightly = new Date(now.getTime() + 60_000).toISOString();
+    expect(describeTraderDna(study({ window: { start: earlier, end: slightly } }), now).state).toBe('AVAILABLE');
   });
 
   it('never ranks or praises a wallet', () => {
@@ -282,10 +340,67 @@ describe('posting a study is a separate opt-in', () => {
       { id: 'b1', summary: 'The smart wallets here sold early', evidence_level: 'SURVIVED_FILTERS', sample_size: 10, adjusted_p: '0.01' },
       { id: 'b2', summary: `Wallet ${EVM_WALLET} was worth copying`, evidence_level: 'SURVIVED_FILTERS', sample_size: 10, adjusted_p: '0.01' },
     ];
-    expect(traderDnaIdeaFrom(study({ behaviours: praise }))).toBeNull();
-    const mixed = traderDnaIdeaFrom(study({ behaviours: [...praise, { id: 'b3', summary: 'Selling in tranches', evidence_level: 'SURVIVED_FILTERS', sample_size: 30, adjusted_p: '0.02' }] }))!;
+    const moreSurvivors = { method: 'BONFERRONI', tests: 24, alpha: '0.05', survivors: 3 };
+    expect(traderDnaIdeaFrom(study({ behaviours: praise, luck_filters: moreSurvivors }))).toBeNull();
+    const mixed = traderDnaIdeaFrom(study({ luck_filters: moreSurvivors, behaviours: [...praise, { id: 'b3', summary: 'Selling in tranches', evidence_level: 'SURVIVED_FILTERS', sample_size: 30, adjusted_p: '0.02' }] }))!;
     expect(mixed.summary).toMatch(/Selling in tranches/);
     expect(mixed.summary).not.toMatch(/smart|worth copying|0x/);
+  });
+
+  it('leaves a zero observation behaviour out of the idea', () => {
+    const behaviours = [
+      { id: 'b1', summary: 'Selling in tranches', evidence_level: 'SURVIVED_FILTERS', sample_size: 0, adjusted_p: '0.02' },
+      { id: 'b2', summary: 'Exiting before an unlock', evidence_level: 'SURVIVED_FILTERS', sample_size: 25, adjusted_p: '0.02' },
+    ];
+    const idea = traderDnaIdeaFrom(study({ behaviours }))!;
+    expect(idea.summary).toMatch(/Exiting before an unlock/);
+    expect(idea.summary).not.toMatch(/Selling in tranches|\(0 observations/);
+    expect(traderDnaIdeaFrom(study({ behaviours: [behaviours[0]], luck_filters: { method: 'BONFERRONI', tests: 24, alpha: '0.05', survivors: 1 } }))).toBeNull();
+  });
+
+  it('does not quote a study title that makes a claim about a wallet', () => {
+    const praised = traderDnaIdeaFrom(study({ title: 'The top 5 wallets on new pools' }))!;
+    expect(praised.summary).not.toMatch(/top 5 wallets/i);
+    expect(praised.summary).toMatch(/^Studio's published Trader DNA study, /);
+    const named = traderDnaIdeaFrom(study({ title: `Why ${EVM_WALLET} wins` }))!;
+    expect(named.summary).not.toContain('0x');
+    const plain = traderDnaIdeaFrom(study())!;
+    expect(plain.summary).toMatch(/study "Early entries on new pools"/);
+  });
+
+  it('catches wallet claims in every shape a sentence can take them, and leaves ordinary register alone', () => {
+    const claims = [
+      'This wallet is smart.',
+      'These traders are profitable',
+      'the wallets in this cohort are geniuses',
+      'The top 5 wallets',
+      'the best performing wallets',
+      'these wallets are worth keeping an eye on',
+      'Wallets worth a follow',
+      'That whale is sharp',
+      'The cohort looks elite',
+      'Their wallets were consistently good',
+      "That trader's smart",
+    ];
+    const fine = [
+      'a wallet is just an address',
+      'the worker died',
+      'Wallets that sold half within an hour of entry kept more of their gains',
+      'The study of 41 wallets is worth reading',
+      'Most traders in the sample held for under a day',
+      'The tests were corrected for the number of hypotheses',
+    ];
+    const frame = (phrase: string) => `A Studio study. ${phrase}. Nothing was traded.`;
+    for (const phrase of claims) {
+      expect(checkTraderDnaText(frame(phrase)).join(' '), phrase).toMatch(/claim about a wallet/);
+      const behaviours = [{ id: 'b1', summary: phrase, evidence_level: 'SURVIVED_FILTERS', sample_size: 10, adjusted_p: '0.01' }];
+      expect(traderDnaIdeaFrom(study({ behaviours })), phrase).toBeNull();
+    }
+    for (const phrase of fine) {
+      expect(checkTraderDnaText(frame(phrase)), phrase).toEqual([]);
+      const behaviours = [{ id: 'b1', summary: phrase, evidence_level: 'SURVIVED_FILTERS', sample_size: 10, adjusted_p: '0.01' }];
+      expect(traderDnaIdeaFrom(study({ behaviours })), phrase).not.toBeNull();
+    }
   });
 
   it('accepts a post that explains the study and blocks every wallet level claim', () => {
