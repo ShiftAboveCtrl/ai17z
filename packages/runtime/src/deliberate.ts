@@ -25,6 +25,7 @@ import { beginGrowthSession, chargeGrowthSession, closeSession, policyFor } from
 import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
+import { processRadarReceipts } from './radarReceipts';
 import { requestDiscovery } from './discovery';
 import { learnFromOutcomes } from './learning';
 import { worthNoticing } from './repoWatcher';
@@ -876,6 +877,7 @@ export async function wakeAgent(
   }
 
   const agent = await agentsRepo.getAgent(agentId);
+  await processRadarReceipts(agentId);
   if (!agent || agent.state !== 'ACTIVE') {
     return emptyOutcome(agentId, wake.autonomy, 'The agent is not active.', 'inactive');
   }

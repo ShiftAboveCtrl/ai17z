@@ -14,6 +14,7 @@ import {
 import { getChannelAdapter } from '@xbam/channels';
 import { nextPost, releaseIdea } from './content';
 import { proposePaperRecordPost } from './studioPaperVoice';
+import { processRadarReceipts } from './radarReceipts';
 
 const log = createLogger('originate');
 
@@ -45,6 +46,7 @@ export async function originatePost(input: {
   agentId: string;
   accountId: string | null;
 }): Promise<OriginateResult> {
+  await processRadarReceipts(input.agentId);
   const agent = await agentsRepo.getAgent(input.agentId);
   if (!agent) return { posted: false, reason: 'The agent no longer exists.', jobId: null };
   if (agent.state !== 'ACTIVE') {

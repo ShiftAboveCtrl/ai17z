@@ -60,7 +60,8 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
       AND (permission = 'ALLOWED' OR ($7::uuid IS NOT NULL AND permission = 'OWNER_APPROVAL'))
       AND ($7::uuid IS NULL OR agent_id = $7::uuid)
   ), tape AS (
-    SELECT 'action:' || a.id AS id, a.agent_id, a.type AS kind, date_trunc('milliseconds', a.executed_at) AS at,
+    SELECT CASE WHEN e.payload->>'ideaSource'='radar_receipt' THEN 'receipt:' ELSE 'action:' END || a.id AS id,
+      a.agent_id, CASE WHEN e.payload->>'ideaSource'='radar_receipt' THEN 'RECEIPT' ELSE a.type END AS kind, date_trunc('milliseconds', a.executed_at) AS at,
       a.dry_run, NULL::text AS size, NULL::text AS asset
     FROM actions a JOIN permitted p ON p.agent_id = a.agent_id
       LEFT JOIN jobs j ON j.id = a.job_id LEFT JOIN events e ON e.id = j.event_id

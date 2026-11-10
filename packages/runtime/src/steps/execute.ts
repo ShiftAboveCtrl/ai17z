@@ -51,6 +51,7 @@ import { checkActionRate } from '../policyGate';
 import { checkDevUpdateAtSend } from '../devUpdateGuard';
 import { paperReplyForJob } from '../paperCapabilities';
 import { signalIdeaRefusal } from '../signalRadar';
+import { receiptIdeaRefusal } from '../radarReceipts';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { capacityClassForEvent } from '../capacity';
 
@@ -223,6 +224,10 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     throw PipelineError.review('paper_receipt_changed', 'The paper receipt changed after validation. Send the complete simulated record only.');
   }
   const signal = bundle.event.payload as { ideaSource?: string; ideaId?: string };
+  if (signal.ideaSource === 'radar_receipt') {
+    const refusal = signal.ideaId ? await receiptIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Receipt evidence is missing.';
+    if (refusal) throw PipelineError.permanent('receipt_publication_refused', refusal);
+  }
   if (signal.ideaSource === 'market_signal') {
     const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
     if (refusal) throw PipelineError.permanent('signal_publication_refused', refusal);

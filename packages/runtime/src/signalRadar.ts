@@ -9,7 +9,14 @@ import { studioRiskWatchCrossed } from './notify';
 
 export const SIGNAL_MAX_AGE_MS = 5 * 60_000;
 
+export function signalRank(before: SignalObservation, after: SignalObservation) {
+  const numeric = typeof before.value === 'number' && typeof after.value === 'number';
+  const magnitude = numeric ? Math.min(30, Math.round(Math.abs((after.value as number) - (before.value as number)) / Math.max(1, Math.abs(before.value as number)) * 30)) : 15;
+  return { score: 45 + magnitude + 10, reason: `Ranking: prospective transition 45; measured magnitude ${magnitude}; source and observation times 10. No reach or investment outcome factor.` };
+}
+
 export function signalPublicationRefusal(text: string): string | null {
+  if (/\b(?:pnl|hit[ -]?rate)\b|\bcalled\s+it\b/i.test(text)) return 'Signal receipts cannot make performance claims.';
   // A mint ending in `pump` is an identity, never promotional language.
   text = text.replace(/[A-Za-z0-9]{6}\.\.\.[A-Za-z0-9]{4}/g, 'address');
   const reticent = unpromptedSubject(text);
@@ -163,10 +170,11 @@ export async function pollSignalSource(source: RadarSourceRow, reader = readSign
       for (const link of links) {
         if (config.studioRisk && config.studioRisk.agentId !== link.agent_id) continue;
         const refusal = signalPublicationRefusal(detail) ?? (!config.mayTrigger ? 'Context only; posting candidates are switched off.' : !link.can_read || !link.can_post ? 'READ and POST grants are required at ingest.' : null);
+        const rank = signalRank(evaluation.before, read);
         const candidate = await tx.one(`INSERT INTO signal_candidates(source_id,watch_key,generation,agent_id,evidence,reason) VALUES($1,$2,$3,$4,$5,$6)
-          ON CONFLICT DO NOTHING RETURNING id`, [source.id, key, evaluation.state.generation, link.agent_id, { watch, before: evaluation.before, after: read }, refusal ?? 'In idea backlog; posting gates have not run.']);
+          ON CONFLICT DO NOTHING RETURNING id`, [source.id, key, evaluation.state.generation, link.agent_id, { watch, before: evaluation.before, after: read }, refusal ?? `${rank.reason} In idea backlog; posting gates have not run.`]);
         if (refusal || !candidate) continue;
-        const idea = await tx.one(`INSERT INTO content_ideas(agent_id,kind,summary,detail,source,score) VALUES($1,'observation',$2,$3,'market_signal',65) RETURNING id`, [link.agent_id, summary, detail]);
+        const idea = await tx.one(`INSERT INTO content_ideas(agent_id,kind,summary,detail,source,score) VALUES($1,'observation',$2,$3,'market_signal',$4) RETURNING id`, [link.agent_id, summary, `${detail} ${rank.reason}`, rank.score]);
         await tx.query('UPDATE signal_candidates SET idea_id=$2 WHERE id=$1', [candidate.id, idea!.id]);
       }
     });
