@@ -1154,11 +1154,15 @@ def zip_member_span(data, info, content):
     elif method == zipfile.ZIP_DEFLATED:
         d = zlib.decompressobj(-15)
         try:
-            out = d.decompress(stored)
+            # One byte past the proven size is enough to refuse an oversized
+            # member, and stops a crafted one inflating without bound first.
+            out = d.decompress(stored, info.file_size + 1)
         except zlib.error:
             return None
         # One whole stream, nothing after it, that decompresses to exactly the
-        # bytes that were proven.
+        # bytes that were proven. The masked span also holds the stream's own
+        # Huffman tables, which zlib has validated and which are not byte
+        # aligned, so no readable identifier can sit in them.
         if not d.eof or d.unused_data or d.unconsumed_tail:
             return None
         if len(out) != info.file_size or hashlib.sha256(out).digest() != proven:
