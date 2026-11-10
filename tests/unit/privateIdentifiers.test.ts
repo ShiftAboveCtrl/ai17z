@@ -602,6 +602,61 @@ describe('the release step', () => {
     }
   });
 
+  it.skipIf(!bash || !python)('still scans the content of an installer file that is a proven copy of a zip file', () => {
+    const repo = releaseRepo('none');
+    const dir = mkdtempSync(join(tmpdir(), 'private-ids-ino-copyscan-'));
+    try {
+      // Proving a file is a copy says it is whole, not that it is clean. The
+      // zip member and its copy carry an identifier (invented, assembled at
+      // run time), so the hash match accepts the copy and the content scan
+      // must still be the thing that refuses it.
+      const zip = join(dir, 'AI17Z-App-1.zip');
+      pythonWrites(
+        [
+          'import sys, zipfile',
+          'z = zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED)',
+          `z.writestr("packages/pkg/index.js", "// owner ${NAME}\\n")`,
+          'z.close()',
+        ].join('\n'),
+        zip,
+      );
+      const exe = join(dir, 'AI17Z-Setup-1.exe');
+      writeFileSync(exe, 'MZ placeholder\n');
+      const bin = mkdtempSync(join(tmpdir(), 'private-ids-ino-copyscan-bin-'));
+      writeFileSync(
+        join(bin, 'innoextract'),
+        [
+          '#!/bin/sh',
+          'mkdir -p "$2/app/packages/pkg" "$2/app/node_modules/@scope/pkg"',
+          `printf '// owner ${NAME}\\n' > "$2/app/packages/pkg/index.js"`,
+          `printf '// owner ${NAME}\\n' > "$2/app/node_modules/@scope/pkg/index.js"`,
+          'echo "Warning: Could not read back a file to calculate output checksum for multi-part file" >&2',
+          'exit 0',
+        ].join('\n'),
+        { mode: 0o755 },
+      );
+      python3Shim(bin);
+      const sep = process.platform === 'win32' ? ';' : ':';
+      const result = spawnSync(bash!, [join(repo, 'ci/scripts/private-identifiers.sh'), 'files', zip, exe], {
+        encoding: 'utf8',
+        cwd: repo,
+        env: { ...process.env, PRIVATE_IDENTIFIERS: LIST, GITHUB_REF_NAME: '', PATH: `${bin}${sep}${process.env.PATH ?? ''}` },
+      });
+      const inside = result.stdout.split('### inside installer #1')[1] ?? '';
+      // The copy was accepted as a copy, not refused as unproven...
+      expect(inside).toContain('installer-only: 1; copies of zip files: 1; unproven: 0');
+      expect(inside).not.toContain('files that are neither');
+      // ...and the scan of the unpacked installer, which is a separate step,
+      // still ran and refused, without printing the identifier.
+      expect(inside).toMatch(/username/);
+      expect(result.status).toBe(1);
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(!bash || !python)('refuses when innoextract warns and no application zip matches the installer', () => {
     const repo = releaseRepo('none');
     const dir = mkdtempSync(join(tmpdir(), 'private-ids-ino-nozip-'));
