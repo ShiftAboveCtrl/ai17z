@@ -134,7 +134,9 @@ app_zip_for() {
 # cannot check some of its own output checksums and warns instead, so an exit
 # status is not enough: every file of the application zip released beside the
 # installer must come out of it byte for byte, and files only in the installer
-# are not proven readable when innoextract warned, so those refuse too.
+# are not proven readable when innoextract warned, so those refuse too, unless
+# they are byte for byte copies of zip files (installer_matches_zip.py): Inno
+# Setup follows the workspace symlinks the zip leaves out.
 n=0
 for exe in "$@"; do
   case "$exe" in *.exe) ;; *) continue ;; esac
@@ -171,9 +173,12 @@ for exe in "$@"; do
       problems=$((problems + 1))
       continue
     fi
-    extra="$(sed -n 's/.*installer-only: \([0-9][0-9]*\).*/\1/p' "$ROOM/matches-$n.txt")"
-    if [ "$warned" -gt 0 ] && [ "${extra:-0}" -gt 0 ]; then
-      echo "  REFUSED: innoextract warned $warned times and the installer holds $extra files the application zip does not, so those files were not proven readable"
+    # Installer-only files that are byte for byte copies of a zip file (the
+    # workspace links the zip skips and Inno Setup follows) are proven by that
+    # zip; anything else is not, and a missing count is read as not proven.
+    unproven="$(sed -n 's/.*unproven: \([0-9][0-9]*\).*/\1/p' "$ROOM/matches-$n.txt")"
+    if [ "$warned" -gt 0 ] && [ "${unproven:-1}" -gt 0 ]; then
+      echo "  REFUSED: innoextract warned $warned times and the installer holds ${unproven:-an unknown number of} files that are neither in the application zip nor byte for byte copies of one, so those files were not proven readable"
       problems=$((problems + 1))
       continue
     fi
