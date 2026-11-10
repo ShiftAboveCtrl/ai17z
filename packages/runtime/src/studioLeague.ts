@@ -171,7 +171,7 @@ async function entryLink(entry: LeagueEntryRow): Promise<StudioLinkScope | null>
   if (!entry.installationId || !entry.linkedAt || !entry.studioOrigin || !link || link.revokedAt ||
       link.installationId !== entry.installationId || link.origin !== entry.studioOrigin ||
       Date.parse(link.linkedAt) !== Date.parse(entry.linkedAt)) {
-    await leagueBridge.stopEntry(entry.id, 'The Studio link changed. This entry belongs to the previous link and has ended.');
+    await leagueBridge.stopEntry(entry.id, 'The Studio link changed. This entry belongs to the previous link and has ended.', 'ENDED', 'link_changed');
     return null;
   }
   return { installationId: entry.installationId, linkedAt: link.linkedAt, origin: entry.studioOrigin };
@@ -308,7 +308,7 @@ export async function reportLeagueFills(entry: LeagueEntryRow, now: Date = new D
     for (const f of await leagueBridge.dueFills(entry.id, new Date('9999-12-31T00:00:00Z'), 10_000)) {
       await leagueBridge.settleFill(entry.id, f.fillKey, 'LOCAL_ONLY', 'Studio no longer takes fills for this season, so this one was not counted.');
     }
-    await leagueBridge.endEntry(entry.id, 'The season is over and its report window has closed.');
+    await leagueBridge.stopEntry(entry.id, 'The season is over and its report window has closed.');
     return out;
   }
 
@@ -431,7 +431,7 @@ export async function sweepLeagueBridge(now: Date = new Date()): Promise<{ entri
         if (entry.remoteEntryId && now.getTime() > Date.parse(entry.endsAt)) {
           // Studio holds the entry but the mandate could never be written (a live
           // mandate in the way, say) and the season is over: nothing left to do.
-          await leagueBridge.endEntry(entry.id, 'The season ended before this entry could be activated here.');
+          await leagueBridge.stopEntry(entry.id, 'The season ended before this entry could be activated here.');
           continue;
         }
         // Every failed try stamps `updated_at`, so the wait runs from the last try.

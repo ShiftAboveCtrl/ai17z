@@ -68,7 +68,10 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
   app.post('/api/agents/:agentId/studio/league/entry', handler(async (request) => {
     const user = await requireUser(request);
     const body = parseBody(z.object({ slug: z.string().regex(LEAGUE_SLUG), alias: LeagueAlias, replacePaperMandate: z.boolean().optional() }).strict(), request);
-    return enterLeagueSeason({ ...body, agentId: params(request).agentId ?? '', ownerId: user.id });
+    const result = await enterLeagueSeason({ ...body, agentId: params(request).agentId ?? '', ownerId: user.id });
+    if (!result.ok) return result;
+    const { seasonSlug, alias, status } = result.entry;
+    return { ok: true, state: result.state, seasonSlug, alias, status };
   }));
 
   app.get('/api/studio/activity-tape', handler(async (request) => {

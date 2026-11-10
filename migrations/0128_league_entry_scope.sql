@@ -1,8 +1,11 @@
 -- A refusal of an alias leaves history but allows a fresh keyed attempt.
 ALTER TABLE league_entries ADD COLUMN refusal_code text;
+-- A relink ends the old binding without consuming the new link's season entry.
+ALTER TABLE league_entries ADD COLUMN end_code text;
 DROP INDEX league_entries_agent_season;
 CREATE UNIQUE INDEX league_entries_agent_season ON league_entries (agent_id, season_slug)
-  WHERE status <> 'REFUSED' OR refusal_code IS NULL OR refusal_code NOT IN ('alias_taken', 'invalid_alias');
+  WHERE (status <> 'REFUSED' OR refusal_code IS NULL OR refusal_code NOT IN ('alias_taken', 'invalid_alias'))
+    AND (status <> 'ENDED' OR end_code IS DISTINCT FROM 'link_changed');
 
 -- Existing entries have no provable binding. The runtime ends them instead of
 -- assigning them to whichever installation happens to be linked at migration.

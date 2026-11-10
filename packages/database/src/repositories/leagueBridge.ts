@@ -94,6 +94,7 @@ export async function entryOfSeason(agentId: string, slug: string): Promise<Leag
   return mapRow<LeagueEntryRow>(
     await queryOne(`SELECT ${ENTRY_COLUMNS} FROM league_entries WHERE agent_id = $1 AND season_slug = $2
       AND (status <> 'REFUSED' OR refusal_code IS NULL OR refusal_code NOT IN ('alias_taken', 'invalid_alias'))
+      AND (status <> 'ENDED' OR end_code IS DISTINCT FROM 'link_changed')
       ORDER BY created_at DESC LIMIT 1`, [agentId, slug]),
   );
 }
@@ -233,12 +234,12 @@ export async function refuseEntry(entryId: string, reason: string, code: string 
 }
 
 /** Pause first and settle together, so interruption never leaves a live mandate behind. */
-export async function stopEntry(entryId: string, reason: string, status: 'ENDED' | 'REFUSED' = 'ENDED'): Promise<void> {
+export async function stopEntry(entryId: string, reason: string, status: 'ENDED' | 'REFUSED' = 'ENDED', endCode: 'link_changed' | null = null): Promise<void> {
   await withTransaction(async (tx) => {
     const entry = await tx.one<{ mandate_id: string | null }>(`SELECT mandate_id FROM league_entries WHERE id = $1 AND status IN ('PENDING', 'ACTIVE') FOR UPDATE`, [entryId]);
     if (!entry) return;
     if (entry.mandate_id) await tx.query(`UPDATE trade_mandates SET paused = true, updated_at = now() WHERE id = $1`, [entry.mandate_id]);
-    await tx.query(`UPDATE league_entries SET status = $2, status_reason = $3, last_problem = $3, updated_at = now() WHERE id = $1`, [entryId, status, reason.slice(0, 300)]);
+    await tx.query(`UPDATE league_entries SET status = $2, status_reason = $3, last_problem = $3, end_code = $4, updated_at = now() WHERE id = $1`, [entryId, status, reason.slice(0, 300), endCode]);
   });
 }
 

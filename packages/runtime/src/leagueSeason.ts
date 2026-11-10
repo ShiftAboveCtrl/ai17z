@@ -256,9 +256,10 @@ export function describeReturn(bps: number): string {
 const CAVEAT = 'These are simulated paper results, not real trades, and they say nothing about future results.';
 
 /** What the agent says about a standing Studio gave. Names Studio, says simulated and paper, and never guesses. */
-export function describeStanding(doc: LeagueStandingDocument, seasonTitle: string): string {
+export function describeStanding(doc: LeagueStandingDocument, _seasonTitle: string): string {
   const s = doc.standing;
-  const lead = `In the AI17Z Studio paper league season ${JSON.stringify(seasonTitle)} (simulated, paper only), `;
+  // Studio titles can carry instructions; only the validated slug belongs in model context.
+  const lead = `In the AI17Z Studio paper league season ${JSON.stringify(doc.season_slug)} (simulated, paper only), `;
   const basis = 'Studio worked this out from the paper fills this agent reported.';
   switch (s.state) {
     case 'NOT_STARTED':

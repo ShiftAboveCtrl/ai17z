@@ -222,6 +222,43 @@ describe('review regressions', () => {
     expect(studio.requests).toHaveLength(0);
   });
 
+  it('allows re-entry after a relink while refusing two live entries', async () => {
+    const { agentId, ownerId, entry } = await entered();
+    const link = (await ops.getSetting<Record<string, unknown>>('studio.link'))!;
+    await ops.setSetting('studio.link', { ...link, installationId: randomUUID(), linkedAt: new Date(Date.now() + 1000).toISOString() });
+    // This single-installation server starts a fresh entry ledger for the new link.
+    studio.entries.clear();
+    await sweepLeagueBridge(BASE);
+    const result = await enter(agentId, ownerId, { alias: 'Morning Owl', replacePaperMandate: true });
+    expect(result).toMatchObject({ ok: true, state: 'ACTIVE' });
+    if (!result.ok) throw new Error(result.why);
+    expect(result.entry.entryKey).not.toBe(entry.entryKey);
+    expect(await leagueBridge.getEntry(entry.id)).toMatchObject({ status: 'ENDED' });
+    await expect(query(`INSERT INTO league_entries
+      (agent_id, owner_id, season_slug, alias, season, rules_hash, starts_at, ends_at, fills_accepted_until)
+      SELECT agent_id, owner_id, season_slug, 'Another Owl', season, rules_hash, starts_at, ends_at, fills_accepted_until
+      FROM league_entries WHERE id = $1`, [result.entry.id])).rejects.toMatchObject({ code: '23505' });
+  });
+
+  it.each(['ACTIVE', 'PENDING'] as const)('pauses the mandate atomically when a %s entry expires', async (state) => {
+    const { entry } = await entered();
+    if (state === 'PENDING') await query(`UPDATE league_entries SET status = 'PENDING' WHERE id = $1`, [entry.id]);
+    const late = new Date(studio.times.fillsAcceptedUntil.getTime() + H);
+    await query(`CREATE FUNCTION league_test_expiry_failure() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'pause interrupted'; END; $$ LANGUAGE plpgsql`);
+    await query(`CREATE TRIGGER league_test_expiry_failure BEFORE UPDATE ON trade_mandates FOR EACH ROW EXECUTE FUNCTION league_test_expiry_failure()`);
+    try {
+      await sweepLeagueBridge(late);
+      expect(await leagueBridge.getEntry(entry.id)).toMatchObject({ status: state });
+      expect(await trading.getMandate(entry.mandateId!)).toMatchObject({ paused: false });
+    } finally {
+      await query('DROP TRIGGER league_test_expiry_failure ON trade_mandates');
+      await query('DROP FUNCTION league_test_expiry_failure()');
+    }
+    await sweepLeagueBridge(late);
+    expect(await leagueBridge.getEntry(entry.id)).toMatchObject({ status: 'ENDED' });
+    expect(await trading.getMandate(entry.mandateId!)).toMatchObject({ paused: true });
+  });
+
   it('offers an authenticated owner entry route and hides it while the journal is off', async () => {
     const f = await setup();
     const other = await createFixture({});
@@ -237,7 +274,11 @@ describe('review regressions', () => {
       vi.stubEnv('AI17Z_LEAGUE_JOURNAL', '0');
       expect((await app.inject({ method: 'POST', url, headers, payload })).json().data).toMatchObject({ ok: false, status: 503 });
       vi.stubEnv('AI17Z_LEAGUE_JOURNAL', '1');
-      expect((await app.inject({ method: 'POST', url, headers, payload })).json().data).toMatchObject({ ok: true, state: 'ACTIVE' });
+      const body = (await app.inject({ method: 'POST', url, headers, payload })).json().data;
+      expect(body).toEqual({ ok: true, state: 'ACTIVE', seasonSlug: 'week-45', alias: 'Night Owl', status: 'ACTIVE' });
+      for (const key of ['entryKey', 'ownerId', 'installationId', 'studioOrigin', 'season']) {
+        expect(JSON.stringify(body)).not.toContain(`"${key}":`);
+      }
       expect(await leagueBridge.liveEntryOf(f.agentId)).toMatchObject({ alias: 'Night Owl' });
     } finally { await app.close(); }
   });
