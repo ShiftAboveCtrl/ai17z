@@ -4,7 +4,8 @@ import { agents, content, ops, query, withAdvisoryLock, withTransaction } from '
 import { BadRequestError, canonicalJson, ConflictError, NotFoundError } from '@xbam/shared';
 import { LeagueAlias, PaperRecord, PaperRecordWindow, PolicyConfig, VoiceDocument } from '@xbam/shared/contracts';
 import { studioControlSetting } from './studioControl';
-import { studioStatus, studioPaperRecord, studioPublicHomeRequest } from './studioLink';
+import { studioStatus, studioPaperRecord, studioPublicHomeRequest, studioPublicHomeRenew } from './studioLink';
+import { publicHomeNeedsRepublish, publicHomeRepublished } from './notify';
 import { voiceFromAgent } from './voiceDocument';
 import { readLeagueStanding } from './studioLeague';
 import { unpromptedSubject } from './reticence';
@@ -52,7 +53,8 @@ async function receiptProjection(agentId: string): Promise<z.infer<typeof Receip
 }
 const digestOf = (manifest: PublicHomeManifest) => createHash('sha256').update(canonicalJson(manifest)).digest('hex');
 interface Pending { manifest: PublicHomeManifest; digest: string; key: string; expiresAt: string; origin: string | null; installationId: string | null; linkedAt: string | null }
-interface Confirmed { published: boolean; slug: string; origin: string; installationId: string; linkedAt: string; confirmedAt: string; validUntil: string; digest: string; revision: string }
+interface Confirmed { published: boolean; slug: string; origin: string; installationId: string; linkedAt: string; confirmedAt: string; validUntil: string; digest: string; revision: string;
+  renewal?: { key: string; attemptedAt: string; stopped: boolean } }
 interface Row extends Record<string, unknown> { pending: Pending | null; confirmed: Confirmed | null; post_link: boolean; problem: string | null; proposed_digest: string | null }
 const empty = (): Row => ({ pending: null, confirmed: null, post_link: false, problem: null, proposed_digest: null });
 async function rowOf(id: string): Promise<Row> { return (await query<Row>('SELECT * FROM agent_public_home WHERE agent_id = $1', [id]))[0] ?? empty(); }
@@ -140,6 +142,7 @@ export async function publishPublicHome(input: { agentId: string; ownerId: strin
     if (!result.ok || !result.published || result.digest !== p.digest) return problem(input.agentId);
     const confirmed: Confirmed = { published: true, slug: result.slug, origin: p.origin, installationId: p.installationId, linkedAt: p.linkedAt, digest: p.digest, revision: p.key, confirmedAt: now.toISOString(), validUntil: p.expiresAt };
     await query('UPDATE agent_public_home SET confirmed=$2::jsonb, problem=NULL WHERE agent_id=$1', [input.agentId, JSON.stringify(confirmed)]);
+    await publicHomeRepublished(input.agentId);
     return { ok: true as const, url: `${p.origin}/a/${result.slug}` };
   });
 }
@@ -160,6 +163,7 @@ export async function unpublishPublicHome(agentId: string, ownerId: string, now 
     const result = await studioPublicHomeRequest(agentId, { protocol: 1, operation: 'UNPUBLISH', idempotency_key: `remove:${c.revision}`, publication_keys: publicationKeys, manifest_sha256: c.digest }, { origin: c.origin, installationId: c.installationId, linkedAt: c.linkedAt });
     if (!result.ok || result.published || (c.slug && result.slug !== c.slug) || result.digest !== c.digest) return problem(agentId);
     await query('UPDATE agent_public_home SET confirmed=$2::jsonb,pending=NULL,post_link=false,problem=NULL WHERE agent_id=$1', [agentId, JSON.stringify({ ...c, slug: result.slug, published: false, confirmedAt: now.toISOString() })]);
+    await publicHomeRepublished(agentId);
     return { ok: true as const };
   });
 }
@@ -168,6 +172,42 @@ export async function setPublicHomePosting(agentId: string, ownerId: string, ena
   await locked(agentId, async () => {
     await query(`INSERT INTO agent_public_home(agent_id,post_link) VALUES ($1,$2)
       ON CONFLICT (agent_id) DO UPDATE SET post_link=excluded.post_link`, [agentId, enabled]);
+  });
+}
+
+/** The existing worker sweep renews only unchanged, current, owner-confirmed publications. */
+export async function sweepPublicHomeRenewals(now = new Date()): Promise<void> {
+  if (!(await studioControlSetting()).enabled) return;
+  const rows = await query<{ agent_id: string }>(`SELECT agent_id FROM agent_public_home
+    WHERE confirmed->>'published'='true' AND problem IS NULL`);
+  for (const { agent_id: agentId } of rows) await locked(agentId, async () => {
+    const state = await publicHomeState(agentId, now);
+    const c = state.confirmed;
+    if (!c?.published || state.stale || c.renewal?.stopped) return;
+    const lastAttempt = Date.parse(c.renewal?.attemptedAt ?? c.confirmedAt);
+    if (!Number.isFinite(lastAttempt) || now.getTime() - lastAttempt < 5 * 60_000) return;
+    // Save before transport. A crash or lost acknowledgement retries the same operation key.
+    const renewal = { key: c.renewal?.key ?? randomUUID(), attemptedAt: now.toISOString(), stopped: false };
+    const save = async (confirmed: Confirmed) => {
+      await query('UPDATE agent_public_home SET confirmed=$2::jsonb WHERE agent_id=$1', [agentId, JSON.stringify(confirmed)]);
+    };
+    await save({ ...c, renewal });
+    const result = await studioPublicHomeRenew(agentId, { protocol: 1, operation: 'RENEW', idempotency_key: renewal.key,
+      publication_key: c.revision, manifest_sha256: c.digest }, { origin: c.origin, installationId: c.installationId, linkedAt: c.linkedAt });
+    if (result.kind === 'retry') return;
+    if (result.kind === 'refused') {
+      await save({ ...c, renewal: { ...renewal, stopped: true } });
+      if (result.code === 'publication_expired' || result.code === 'renewal_limit') {
+        const agent = await agents.getAgent(agentId);
+        if (agent) await publicHomeNeedsRepublish({ agentId, agentName: agent.name, why: result.code === 'renewal_limit' ? 'LIMIT' : 'EXPIRED' });
+      } else await problem(agentId);
+      return;
+    }
+    if (result.slug !== c.slug || result.digest !== c.digest || Date.parse(result.validUntil) <= now.getTime()) return;
+    // Consent or link can change during transport. Never acknowledge against a new link or disabled control.
+    if ((await publicHomeState(agentId, now)).stale) return;
+    await save({ ...c, renewal: undefined, confirmedAt: now.toISOString(),
+      validUntil: new Date(Math.min(Date.parse(result.validUntil), now.getTime() + HOME_TTL_MS)).toISOString() });
   });
 }
 export function asksForPublicHome(text: string): boolean {

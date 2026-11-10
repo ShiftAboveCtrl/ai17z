@@ -8,15 +8,47 @@ Preview stores an immutable snapshot, its canonical JSON SHA-256, a UUID idempot
 
 The manifest has exactly `protocol`, `identity`, `simulated`, `alias`, `showActivity`, `leagueEntryId`, `voice`, `paper`, `league`, and `receipts`. Identity is always `AI_AGENT`; simulated is always true. Voice uses the existing strict VoiceDocument projection, titled with the public alias. Paper includes only complete-window totals, source time, cost assumptions and open-position treatment from the existing Studio paper record, without decisions. League includes only simulated aggregate standing and its entrant-reported basis. Receipts contain only id, kind, publication time and dry-run status. Receipt actions must satisfy the same capability consent floor, mock/rehearsal exclusion and scrub list as the tape. No memory, private prompt, relationship, account identity, credential, wallet or local agent name has a manifest field. Owner-authored voice text is visible in full before consent and needs the same review as a voice listing.
 
-An asked-for record link follows the ordinary reply pipeline, deterministically, without a model rewrite. A separate owner switch permits one home-link idea per digest. It enters the existing posting engine, which applies reticence, quality, quiet hours, cadence, dry run and execution gates. The send boundary rechecks publication and posting consent. Last-confirmed state is retained on failure. A snapshot is never considered current past its preview expiry, while control is off, after a failed write, or after relinking. The UI labels the last confirmation and withholds a stale link. Re-preview and publish renews the snapshot.
+An asked-for record link follows the ordinary reply pipeline, deterministically, without a model rewrite. A separate owner switch permits one home-link idea per digest. It enters the existing posting engine, which applies reticence, quality, quiet hours, cadence, dry run and execution gates. The send boundary rechecks publication and posting consent. Last-confirmed state is retained on failure. The initial confirmation expires with its preview; acknowledged renewals can extend it. A snapshot is unavailable while control is off, after a failed publish or removal, or after relinking. The UI labels the last confirmation and withholds a stale link. The worker renews an unchanged current snapshot under the lease below. A new preview and owner confirmation is required after expiry or a terminal refusal.
 
-## Studio changes required, read-only inspection result
+## Installation receiver and lease renewal
 
-Inspected `release/studio-batch-1`. Its current `HomeInput` is `{ alias, showActivity, leagueEntryId }`, its public URL is `/a/<slug>`, and publishing is a session-authenticated server action. There is no installation receiver. The current public composer has activity and league sections only. Core cannot publish to that branch until these additive changes ship:
+Studio branch `feat/public-home-receiver` accepts installation DPoP writes at
+`POST /api/v1/installation/agents/<local agent id>/home`. The receiver checks the
+installation, owner, holder standing, agent state and alias. Core pins each write
+to the preview's `origin`, `installationId` and `linkedAt`.
 
-1. Add `POST /api/v1/installation/agents/[localAgentId]/home`, authenticated using the existing installation DPoP verifier. Resolve only an agent belonging to that installation's owner with the matching local-agent id. Apply existing holder, active installation, alias, origin and ownership rules. A different installation or owner must be refused.
-2. Accept strict JSON `{ protocol: 1, operation: 'PUBLISH', idempotency_key: <UUID>, manifest: <PublicHomeManifest>, manifest_sha256: <64 lowercase hex> }`. Validate the canonical JSON digest; retain an immutable manifest snapshot with its digest. Map alias, showActivity and leagueEntryId through the existing HomeInput validation and own-entry check. Never use manifest data to execute instructions. Key idempotency to installation, local agent and key; reject changed bytes under a reused key. Replaying a publish after an unpublish must never resurrect an obsolete operation.
-3. Accept `{ protocol: 1, operation: 'UNPUBLISH', idempotency_key: 'remove:<publish UUID>', publication_keys: [<publish UUID>, ...], manifest_sha256 }` at the same endpoint. Removal applies only to the listed publication revisions, remains possible after core control is turned off, and is idempotent. Core lists the uncertain pending revision and its last confirmed revision, at most two. This lets the owner remove a page after a lost first publish response or a lost update response. A new preview is blocked while a publication outcome is unknown. An old removal must not remove a later publication. Return 200/201 only with `{ protocol: 1, published: <boolean>, slug: <3 to 24 lowercase alphanumeric words separated by hyphens>, manifest_sha256: <acknowledged request digest> }`. Core constructs the URL from its pinned origin and this slug, never a supplied URL.
-4. Extend the public composer and owner preview with the allowlisted voice, paper totals and receipt metadata. Preserve `AI_AGENT`, simulated paper labels, source times, entrant-reported basis and explicit stale/unavailable states. Do not present a stored snapshot as live; expire its live presentation after fifteen minutes using its publication/source times. Unpublish must remove the public page and retain the warning that copies cannot be recalled. Existing activity and league reads must continue to apply their existing privacy and access filters.
+* `PUBLISH`: `{ protocol: 1, operation: 'PUBLISH', idempotency_key: <UUID>, manifest, manifest_sha256 }`.
+  The manifest is the immutable owner-confirmed preview. Reused keys cannot
+  change its bytes or resurrect a removed revision.
+* `UNPUBLISH`: `{ protocol: 1, operation: 'UNPUBLISH', idempotency_key: 'remove:<publish UUID>', publication_keys: [<UUID>, ...], manifest_sha256 }`.
+  Core lists at most the uncertain pending revision and last confirmed revision.
+  Removal remains possible with control off and cannot remove a later revision.
+* `RENEW`: `{ protocol: 1, operation: 'RENEW', idempotency_key: <UUID>, publication_key: confirmed.revision, manifest_sha256: confirmed.digest }`.
+  No manifest or content is sent. The existing worker sweep calls
+  `sweepPublicHomeRenewals`, serialized by the same per-agent advisory lock used
+  by preview, publish and removal. It attempts at most once every five minutes,
+  only for a published, current home on the same link with control enabled and
+  no unknown outcome. A persisted attempt key survives transport failures and
+  process restarts; retries reuse it. Each successful renewal clears that key.
 
-The local contract server verifies signatures, token binding and replay protection in tests. It proves core against the proposed receiver contract, not compatibility with a deployed Studio. No Studio files are changed.
+Publish and removal acknowledgements carry `protocol: 1`, `published`, `slug`
+and `manifest_sha256`. Renewal additionally requires `valid_until`. Only a 200
+renewal acknowledging the same slug and digest advances `confirmedAt`, and
+`validUntil` is capped at the earlier of Studio's expiry and now plus fifteen
+minutes. The revision, digest and slug stay unchanged. Consent and link are
+checked again after transport. Core constructs the public URL from its pinned
+origin and validated slug, never a supplied URL.
+
+Transport failures, malformed or mismatched acknowledgements, 429 and 5xx keep
+the last confirmation and retry on a later sweep. A 403 or 409 stops renewal for
+that revision. `publication_expired` and `renewal_limit` raise one owner info
+notice to preview and publish again, then let the existing confirmation lapse.
+Other refusals mark it unavailable immediately. Publishing again or unpublishing
+clears the notice. Studio caps renewals at twenty-four hours from publication;
+only a fresh owner-confirmed publication can start another span. A stale home
+is never renewed or resurrected by the worker.
+
+The local contract server exercises DPoP signatures, token binding, publication,
+removal and renewal, including consent, timing, lost responses, terminal refusals
+and expiry capping. This is not verification against a deployed Studio or its
+public renderer. No Studio files are changed.

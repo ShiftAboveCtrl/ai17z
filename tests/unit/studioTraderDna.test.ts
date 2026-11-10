@@ -79,6 +79,16 @@ describe('the contract is an allowlist of a published study', () => {
 });
 
 describe('reading a study reaches the published route and nothing else', () => {
+  it('reads Studio’s hyphen alias without allowing its dotted storage id into a path', async () => {
+    const id = 'flap-bsc-1788000000000-1788600000000';
+    expect(TRADER_DNA_STUDY_ID.test(id)).toBe(true);
+    expect(TRADER_DNA_STUDY_ID.test('flap-bsc.1788000000000.1788600000000')).toBe(false);
+    expect(PolicyConfig.parse({ studio: { traderDnaStudyId: id } }).studio.traderDnaStudyId).toBe(id);
+    request.mockResolvedValue(answer(studyFixture({ study_id: id })));
+    const read = await readTraderDnaStudy(id);
+    expect(read.ok && read.study.study_id).toBe(id);
+    expect(request).toHaveBeenCalledWith(`/api/v1/installation/trader-dna/studies/${id}`, { method: 'GET' });
+  });
   it('asks only for the published address of a well formed id', async () => {
     request.mockResolvedValue(answer(studyFixture()));
     const read = await readTraderDnaStudy('early-entry-study');
@@ -126,6 +136,14 @@ describe('reading a study reaches the published route and nothing else', () => {
 });
 
 describe('what the agent says when asked', () => {
+  it('describes an unsplit round-trip assumption as all-in cost in chat and post ideas', () => {
+    const s = study({ costs: { fee_bps: 300, slippage_bps: 0, note: 'All-in round-trip cost. Studio does not split it.' } });
+    expect(describeTraderDna(s).statement).toContain('300 bps all-in cost');
+    expect(describeTraderDna(s).statement).not.toMatch(/300 bps (?:in )?fees/);
+    expect(traderDnaIdeaFrom(s)!.summary).toContain('300 bps all-in cost');
+    const split = study({ costs: { fee_bps: 30, slippage_bps: 0, note: 'Fee only; slippage is zero.' } });
+    expect(describeTraderDna(split).statement).toContain('30 bps in fees');
+  });
   it('carries the evidence level, sample, cost assumption, window and that nothing was traded', () => {
     const said = describeTraderDna(study());
     expect(said.state).toBe('AVAILABLE');
@@ -329,7 +347,8 @@ describe('posting a study is a separate opt-in', () => {
     expect(idea.detail).toMatch(/Do not name, quote or describe any wallet address/);
     expect(idea.key).toMatch(/^early-entry-study@/);
 
-    expect(traderDnaIdeaFrom(study({ evidence_level: 'RECONSTRUCTED', behaviours: [] }))).toBeNull();
+    // Even individual survivors do not promote an overall reconstructed study to a post.
+    expect(traderDnaIdeaFrom(study({ evidence_level: 'RECONSTRUCTED' }))).toBeNull();
     expect(traderDnaIdeaFrom(study({ sample: { wallets: 0, trades: 0 } }))).toBeNull();
     const end = new Date(Date.now() - 400 * 86_400_000).toISOString();
     expect(traderDnaIdeaFrom(study({ window: { start: end, end } }))).toBeNull();

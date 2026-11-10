@@ -80,12 +80,12 @@ describe('durable radar receipts', () => {
     expect((await query('SELECT status, reason FROM signal_receipts WHERE window_hours=1'))[0]).toMatchObject({ status: 'skipped', reason: expect.stringMatching(/character|compact/i) });
     expect(await query("SELECT id FROM content_ideas WHERE source='radar_receipt'")).toHaveLength(0);
   });
-  it('leaves the scrub budget available after withheld and legacy receipt ids', async () => {
+  it('queues a receipt scrub like any other id, within the same bounded budget', async () => {
     const f = await published();
-    await ops.setSetting('studio.activity_tape.scrubs', Array.from({ length: 200 }, () => `receipt:${f.actionId}`));
     await scrubStudioActivity(`receipt:${f.actionId}`, f.ownerId);
-    await scrubStudioActivity(`action:${f.actionId}`, f.ownerId);
-    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([`action:${f.actionId}`]);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([`receipt:${f.actionId}`]);
+    await ops.setSetting('studio.activity_tape.scrubs', Array.from({ length: 200 }, (_, n) => `receipt:${f.actionId}-${n}`));
+    await expect(scrubStudioActivity(`receipt:${f.actionId}`, f.ownerId)).rejects.toThrow(/scrub queue is full/i);
   });
   it.each(['quiet hours', 'cooldown', 'ceiling'] as const)('defers a send-time %s refusal without claiming an action and remains bounded by expiry', async limit => {
     const f = await published();
@@ -303,7 +303,7 @@ describe('durable radar receipts', () => {
     expect(await query("SELECT id FROM signal_receipts WHERE status='offered'")).toHaveLength(2);
     expect((await query("SELECT reason FROM signal_receipts WHERE status='skipped'"))[0]?.reason).toMatch(/Agent daily receipt cap/i);
   });
-  it('AC4 tape projection withholds unsupported receipt events', async () => {
+  it('AC4 tape projection carries a published receipt as a RECEIPT event with only its normalised fields', async () => {
     const f = await published();
     await processRadarReceipts(f.agentId, async () => read(30));
     const post = await originatePost({ agentId: f.agentId, accountId: f.accountId });
@@ -312,7 +312,10 @@ describe('durable radar receipts', () => {
     await capabilityPermissions.set({ agentId: f.agentId, capabilityId: ACTIVITY_CAPABILITY, permission: 'ALLOWED' });
     // Stored non-mock metadata tests the public projection only; no adapter is invoked.
     await query("UPDATE actions SET channel='bluesky', executed_at=now() WHERE id=$1", [claim.action.id]);
-    expect(await activityTapeProjection(new Date(Date.now() - 60000))).toEqual([]);
+    const events = await activityTapeProjection(new Date(Date.now() - 60000));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ id: `receipt:${claim.action.id}`, kind: 'RECEIPT', agent_id: f.agentId, target_handle: null, paper: null });
+    expect(JSON.stringify(events)).not.toContain('PRIVATE');
   });
   it('receipts cannot become learnable reach outcomes', async () => {
     const f = await published();

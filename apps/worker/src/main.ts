@@ -20,6 +20,7 @@ import {
   runJob,
   sweepNotifications,
   sweepStudioActivityTape,
+  sweepPublicHomeRenewals,
   pollTelegramCommands,
   telegramHeartbeat,
 } from '@xbam/runtime';
@@ -244,6 +245,11 @@ async function main(): Promise<void> {
       await sweepStudioActivityTape();
     } catch (error) {
       log.warn('Studio activity tape sweep failed', { message: errorMessage(error) });
+    }
+    try {
+      await sweepPublicHomeRenewals();
+    } catch (error) {
+      log.warn('Studio public home renewal sweep failed', { message: errorMessage(error) });
     }
     try {
       /*

@@ -13,6 +13,7 @@ export async function publicHomeStudioServer(key: InstallationKey) {
   let loseAnswer = false;
   let mismatch = false;
   let published = false;
+  let renewalAnswer: { status: number; body: Record<string, unknown> } | null = null;
   const server = createServer(async (req, res) => {
     const answer = (status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
     try {
@@ -35,6 +36,18 @@ export async function publicHomeStudioServer(key: InstallationKey) {
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>;
       requests.push(body);
+      if (body.operation === 'RENEW') {
+        if (renewalAnswer) return answer(renewalAnswer.status, renewalAnswer.body);
+        if (Object.keys(body).sort().join(',') !== 'idempotency_key,manifest_sha256,operation,protocol,publication_key'
+          || !receipts.has(String(body.publication_key))) return answer(409, { error: 'unknown_publication' });
+        if (!published) return answer(409, { error: 'publication_removed' });
+        const renewal = { protocol: 1, published: true, slug: 'night-owl', manifest_sha256: body.manifest_sha256,
+          valid_until: new Date(Date.now() + 15 * 60_000).toISOString() };
+        const saved = receipts.get(String(body.idempotency_key)) ?? renewal;
+        receipts.set(String(body.idempotency_key), saved);
+        if (loseAnswer) { loseAnswer = false; req.socket.destroy(); return; }
+        return answer(200, saved);
+      }
       const id = String(body.idempotency_key);
       let receipt = receipts.get(id);
       if (!receipt) {
@@ -50,6 +63,7 @@ export async function publicHomeStudioServer(key: InstallationKey) {
   return { origin, requests, receipts, get published() { return published; },
     setUnavailable(value: boolean) { unavailable = value; }, loseNextAnswer() { loseAnswer = true; },
     mismatchNextReceipt() { mismatch = true; },
+    setRenewalAnswer(value: typeof renewalAnswer) { renewalAnswer = value; },
     close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
 }

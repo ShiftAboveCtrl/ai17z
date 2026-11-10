@@ -79,6 +79,7 @@ export const notificationKey = {
   workerStopped: () => 'worker.stopped',
   everythingPaused: () => 'runtime.paused',
   liveTradeWaiting: (tradeIntentId: string) => `live-trade.waiting:${tradeIntentId}`,
+  publicHomeRepublish: (agentId: string) => `public-home.republish:${agentId}`,
 };
 
 /**
@@ -408,6 +409,30 @@ export async function liveTradeWaiting(input: { tradeIntentId: string; agentName
 
 export async function liveTradeSettled(tradeIntentId: string): Promise<void> {
   await notificationsRepo.resolve(notificationKey.liveTradeWaiting(tradeIntentId));
+}
+
+/**
+ * Studio will not extend a public home any further. INFO, because nothing broke:
+ * the page was always a dated lease, and it simply ends. Cleared by publishing
+ * again or by taking the page down.
+ */
+export async function publicHomeNeedsRepublish(input: { agentId: string; agentName: string; why: 'LIMIT' | 'EXPIRED' }): Promise<NotificationRecord | null> {
+  return notificationsRepo.raise({
+    kind: 'PUBLIC_HOME_REPUBLISH',
+    severity: 'INFO',
+    agentId: input.agentId,
+    title: `${input.agentName}'s public home needs publishing again`,
+    body: input.why === 'LIMIT'
+      ? 'Studio keeps a public home for at most a day from when you published it. Preview and publish again to keep your home up.'
+      : 'The public home lapsed before it could be renewed. Preview and publish again to keep your home up.',
+    actionLabel: 'Open Studio',
+    actionHref: '/plugins',
+    dedupeKey: notificationKey.publicHomeRepublish(input.agentId),
+  });
+}
+
+export async function publicHomeRepublished(agentId: string): Promise<void> {
+  await notificationsRepo.resolve(notificationKey.publicHomeRepublish(agentId));
 }
 
 /**

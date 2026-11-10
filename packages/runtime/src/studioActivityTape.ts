@@ -8,8 +8,9 @@ export { ActivityTapeBatch, ActivityTapeEvent } from '@xbam/shared/contracts';
 
 export const ACTIVITY_CAPABILITY = 'studio.activity_tape';
 export const ACTIVITY_STALE_MS = 15 * 60_000;
-// Studio protocol 1 rejects RECEIPT and receipt: ids until its receiver is upgraded.
-const STUDIO_ACCEPTS_RECEIPTS = false;
+// Studio's receiver accepts RECEIPT events and receipt: ids. Tombstones are independent
+// of this projection switch so lowering it cannot discard an owner's removal.
+const STUDIO_ACCEPTS_RECEIPTS = true;
 const SETTING = 'studio.activity_tape';
 const SCRUBS = 'studio.activity_tape.scrubs';
 const CURSOR = 'studio.activity_tape.cursor';
@@ -46,13 +47,6 @@ export async function setStudioActivityTape(enabled: boolean, by: string): Promi
 /** Tombstones are delivery metadata, never copies of events. Studio keeps them permanently. */
 export async function scrubStudioActivity(id: string, by: string): Promise<void> {
   id = EventId.parse(id);
-  if (!STUDIO_ACCEPTS_RECEIPTS) {
-    // Older queues may contain withheld ids. They must not consume delivery capacity.
-    await query(`UPDATE app_settings SET value = COALESCE(
-      (SELECT jsonb_agg(id) FROM jsonb_array_elements_text(value) AS pending(id) WHERE id NOT LIKE 'receipt:%'), '[]'::jsonb)
-      WHERE key=$1 AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(value) AS pending(id) WHERE id LIKE 'receipt:%')`, [SCRUBS]);
-    if (id.startsWith('receipt:')) return;
-  }
   const saved = await query(`INSERT INTO app_settings (key, value) VALUES ($1, jsonb_build_array($2::text))
     ON CONFLICT (key) DO UPDATE SET value = app_settings.value || excluded.value
     WHERE jsonb_array_length(app_settings.value) < 200 AND NOT app_settings.value @> excluded.value RETURNING key`, [SCRUBS, id]);
@@ -112,9 +106,7 @@ export async function sweepStudioActivityTape(): Promise<{ sent: number; skipped
     WHERE (app_settings.value #>> '{}')::timestamptz <= now() - interval '1 minute' RETURNING key`);
   if (claimed.length === 0) return { sent: 0, skipped: 'rate' };
   const events = await activityTapeProjection(new Date(Math.max(Date.now() - ACTIVITY_STALE_MS, Date.parse(setting.changedAt))), await ops.getSetting<TapeCursor>(CURSOR));
-  // Also filter queues saved before receipt tombstones were withheld at enqueue.
-  const remove = ((await ops.getSetting<string[]>(SCRUBS)) ?? [])
-    .filter(id => STUDIO_ACCEPTS_RECEIPTS || !id.startsWith('receipt:'));
+  const remove = (await ops.getSetting<string[]>(SCRUBS)) ?? [];
   if (!events.length && !remove.length) return { sent: 0, skipped: 'empty' };
   const current = await studioActivityTapeSetting();
   if (!current.enabled || current.changedAt !== setting.changedAt) return { sent: 0, skipped: 'off' };

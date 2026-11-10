@@ -12,9 +12,8 @@ engine and computes nothing about a wallet. The client is `readTraderDnaStudy` i
 `packages/shared/src/contracts/studioTraderDna.ts`, and the owner chat capability
 is `studio.trader_dna` in `studioTraderDnaCapabilities.ts`.
 
-Studio has not shipped this surface yet. This document is the contract the client
-is written against, so Studio can implement it, and the tests stand in for Studio
-at `studioInstallationRequest`.
+Studio's `feat/trader-dna-endpoint` receiver implements this surface. Core's tests stand
+in for Studio at `studioInstallationRequest`; they do not verify a deployed receiver.
 
 ## The refusal is structural
 
@@ -56,6 +55,10 @@ DPoP: <proof>
 * `study_id` matches `^[a-z0-9][a-z0-9_-]{2,63}$`, checked before it reaches a
   path. Nothing else is ever put in the address, and there is no second address
   for a draft or an operator run.
+  Studio's stored id is `<venue>.<fromMs>.<toMs>`. Use its installation alias,
+  the same parts joined with hyphens, for example
+  `flap-bsc-1788000000000-1788600000000`. Dotted ids are refused. The alias is
+  used unchanged in policy, chat input, the request and the response identity check.
 * The request goes through `studioInstallationRequest`, the same DPoP bound
   request every installation call uses. There is no stored bearer secret.
 * Studio answers 404 for a study that does not exist **and** for one that is not
@@ -131,6 +134,11 @@ size, the cost assumption, the window, and the sentence that nothing was traded.
 * Wallet addresses appear in the capability output only, as published, with the
   sentence that listing one says nothing about whether to follow it.
 
+When `slippage_bps` is zero and the cost note identifies an all-in assumption,
+chat and post ideas call `fee_bps` an **all-in cost**. They do not claim Studio
+split that round-trip cost into fees and slippage. A fee-only note keeps the
+ordinary fee wording.
+
 ## A public post
 
 Off by default, and it needs a chosen study. The owner switches it on in the
@@ -143,6 +151,9 @@ Policies screen under **Trader DNA study on Studio**.
    filters, with a sample, in date. It uses only behaviours that survived, and
    drops any whose own text would be held by the send-time check below. It
    carries no address.
+   A `RECONSTRUCTED` study is never posted, even if individual behaviours name
+   survivors. Studio's current receiver supplies `RECONSTRUCTED` or `CANDIDATE`,
+   so its studies can be explained in owner chat but do not produce public posts.
 3. The idea goes through reticence (`unpromptedSubject`), the backlog's similarity
    check and the posting schedule and cadence like any post the agent starts. One
    study is proposed once.

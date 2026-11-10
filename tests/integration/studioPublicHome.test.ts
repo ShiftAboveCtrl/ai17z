@@ -4,7 +4,7 @@ import { capabilityPermissions, jobs, ops, query } from '@xbam/database';
 import { sealSecret } from '@xbam/shared';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture, type Fixture } from '../support/fixtures';
-import { previewPublicHome, publishPublicHome, publicHomeState, publicHomeReply, unpublishPublicHome, proposePublicHomePost, setPublicHomePosting, publicHomeSendRefusal } from '../../packages/runtime/src/studioPublicHome';
+import { previewPublicHome, publishPublicHome, publicHomeState, publicHomeReply, unpublishPublicHome, proposePublicHomePost, setPublicHomePosting, publicHomeSendRefusal, sweepPublicHomeRenewals } from '../../packages/runtime/src/studioPublicHome';
 import { newInstallationKey } from '../../packages/runtime/src/studioJose';
 import { setStudioTransportForTests } from '../../packages/runtime/src/studioLink';
 import { setStudioControl } from '../../packages/runtime/src/studioControl';
@@ -16,6 +16,12 @@ import { exportAgent, importAgent } from '../../packages/runtime/src/portableAge
 import { buildServer } from '../../apps/api/src/server';
 
 installHarness();
+async function renewalDue() {
+  await query(`UPDATE agent_public_home SET confirmed = jsonb_set(confirmed, '{confirmedAt}', to_jsonb((now() - interval '6 minutes')::text))`);
+}
+async function retryDue() {
+  await query(`UPDATE agent_public_home SET confirmed = jsonb_set(confirmed, '{renewal,attemptedAt}', to_jsonb((now() - interval '6 minutes')::text))`);
+}
 let f: Fixture;
 let studio: Awaited<ReturnType<typeof publicHomeStudioServer>> | null = null;
 beforeEach(async () => { f = await createFixture({ persona: { biography: 'An AI agent studying liquidity changes.', tone: 'Calm and precise.', customInstructions: 'PRIVATE-OPERATOR-PROMPT' } }); });
@@ -40,6 +46,86 @@ async function publish() {
   return p;
 }
 describe('public home consent persisted in Postgres', () => {
+  it('renews unchanged revisions at most every five minutes across concurrent sweeps', async () => {
+    await link(); await publish();
+    await sweepPublicHomeRenewals();
+    expect(studio!.requests).toHaveLength(1);
+    const before = (await publicHomeState(f.agentId)).confirmed!;
+    await renewalDue();
+    await Promise.all([sweepPublicHomeRenewals(), sweepPublicHomeRenewals()]);
+    expect(studio!.requests).toHaveLength(2);
+    expect(studio!.requests[1]).toEqual({ protocol: 1, operation: 'RENEW', idempotency_key: expect.any(String), publication_key: before.revision, manifest_sha256: before.digest });
+    const after = (await publicHomeState(f.agentId)).confirmed!;
+    expect(after.revision).toBe(before.revision);
+    expect(after.digest).toBe(before.digest);
+    expect(Date.parse(after.validUntil)).toBeGreaterThan(Date.parse(before.validUntil) - 1000);
+    await sweepPublicHomeRenewals();
+    expect(studio!.requests).toHaveLength(2);
+  });
+  it.each(['off', 'stale', 'relinked', 'removed', 'problem'] as const)('does not renew a home when %s', async reason => {
+    await link(); await publish(); await renewalDue();
+    if (reason === 'off') await setStudioControl(false, f.ownerId);
+    if (reason === 'stale') await query(`UPDATE agent_public_home SET confirmed=jsonb_set(confirmed,'{confirmedAt}',to_jsonb((now()-interval '16 minutes')::text))`);
+    if (reason === 'relinked') await ops.setSetting('studio.link', { installationId: randomUUID(), origin: studio!.origin, linkedAt: new Date().toISOString(), revokedAt: null });
+    if (reason === 'removed') await unpublishPublicHome(f.agentId, f.ownerId);
+    if (reason === 'problem') await query("UPDATE agent_public_home SET problem='Unknown outcome'");
+    const count = studio!.requests.length;
+    await sweepPublicHomeRenewals();
+    expect(studio!.requests).toHaveLength(count);
+  });
+  it('retries a lost renewal acknowledgement with the same key and keeps the last confirmation', async () => {
+    await link(); await publish(); await renewalDue();
+    const before = (await publicHomeState(f.agentId)).confirmed!;
+    studio!.loseNextAnswer();
+    await sweepPublicHomeRenewals();
+    expect((await publicHomeState(f.agentId)).confirmed!.confirmedAt).toBe(before.confirmedAt);
+    await retryDue(); await sweepPublicHomeRenewals();
+    expect(studio!.requests[2]!.idempotency_key).toBe(studio!.requests[1]!.idempotency_key);
+    expect((await publicHomeState(f.agentId)).stale).toBe(false);
+  });
+  it.each(['renewal_limit', 'publication_expired', 'publication_removed', 'not_permitted'])('stops renewing after %s and clears republish notices after a new publish', async code => {
+    await link(); await publish(); await renewalDue();
+    studio!.setRenewalAnswer({ status: code === 'not_permitted' ? 403 : 409, body: { error: code } });
+    await sweepPublicHomeRenewals();
+    await retryDue(); await sweepPublicHomeRenewals();
+    expect(studio!.requests).toHaveLength(2);
+    if (code === 'renewal_limit' || code === 'publication_expired') {
+      expect(await query("SELECT kind FROM notifications WHERE acknowledged_at IS NULL AND kind='PUBLIC_HOME_REPUBLISH'")).toHaveLength(1);
+      const p = await previewPublicHome({ agentId: f.agentId, ownerId: f.ownerId, choices: { alias: 'Night Owl' } });
+      expect((await publishPublicHome({ agentId: f.agentId, ownerId: f.ownerId, digest: p.digest, confirmed: true })).ok).toBe(true);
+      expect(await query("SELECT kind FROM notifications WHERE acknowledged_at IS NULL AND kind='PUBLIC_HOME_REPUBLISH'")).toHaveLength(0);
+    } else expect((await publicHomeState(f.agentId)).stale).toBe(true);
+  });
+  it.each([429, 500, 200])('keeps the confirmation and retries an unusable %s renewal answer', async status => {
+    await link(); await publish(); await renewalDue();
+    const before = (await publicHomeState(f.agentId)).confirmed!;
+    studio!.setRenewalAnswer({ status, body: { protocol: 1, published: true, slug: 'another-home', manifest_sha256: before.digest, valid_until: new Date(Date.now()+86_400_000).toISOString() } });
+    await sweepPublicHomeRenewals();
+    expect((await publicHomeState(f.agentId)).confirmed!.confirmedAt).toBe(before.confirmedAt);
+    await retryDue(); studio!.setRenewalAnswer(null); await sweepPublicHomeRenewals();
+    expect(studio!.requests).toHaveLength(3);
+    expect((await publicHomeState(f.agentId)).stale).toBe(false);
+  });
+  it('caps Studio renewal expiry at the local fifteen minute horizon', async () => {
+    await link(); await publish(); await renewalDue();
+    const c = (await publicHomeState(f.agentId)).confirmed!;
+    studio!.setRenewalAnswer({ status: 200, body: { protocol: 1, published: true, slug: c.slug, manifest_sha256: c.digest, valid_until: new Date(Date.now()+86_400_000).toISOString() } });
+    const now = new Date(); await sweepPublicHomeRenewals(now);
+    expect((await publicHomeState(f.agentId)).confirmed!.validUntil).toBe(new Date(now.getTime()+900_000).toISOString());
+  });
+  it('does not advance the confirmation if control is disabled during renewal transport', async () => {
+    await link(); await publish(); await renewalDue();
+    const before = (await publicHomeState(f.agentId)).confirmed!;
+    setStudioTransportForTests(async (url, init) => {
+      const response = await fetch(url, init);
+      if (url.endsWith('/home')) await setStudioControl(false, f.ownerId);
+      return { status: response.status, text: await response.text() };
+    });
+    await sweepPublicHomeRenewals();
+    expect(studio!.requests).toHaveLength(2);
+    expect((await publicHomeState(f.agentId)).confirmed!.confirmedAt).toBe(before.confirmedAt);
+    expect((await publicHomeState(f.agentId)).url).toBeNull();
+  });
   it('starts unpublished and cannot confirm without a preview', async () => {
     expect((await publicHomeState(f.agentId)).confirmed).toBeNull();
     expect(await publicHomeReply(f.agentId)).toBe('I have no published public home.');

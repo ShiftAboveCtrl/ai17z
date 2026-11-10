@@ -118,7 +118,7 @@ describe('posting a study', () => {
     const cases: Array<() => ReturnType<typeof answer> | { ok: false; why: string }> = [
       () => answer({ error: 'not_found' }, 404),
       () => answer(studyFixture({ sample: { wallets: 0, trades: 0 } })),
-      () => answer(studyFixture({ evidence_level: 'RECONSTRUCTED', behaviours: [] })),
+      () => answer(studyFixture({ evidence_level: 'RECONSTRUCTED' })),
       () => ({ ok: false, why: 'Studio could not be reached: down' }),
     ];
     for (const respond of cases) {

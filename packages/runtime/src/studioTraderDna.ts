@@ -87,6 +87,7 @@ export async function readTraderDnaStudy(studyId: string, now: Date = new Date()
 
 const day = (iso: string) => iso.slice(0, 10);
 const sentence = (text: string) => text.trim().replace(/[.!?]*$/, '.');
+const allInCosts = (study: TraderDnaStudy) => study.costs.slippage_bps === 0 && /\ball[- ]in\b/i.test(study.costs.note);
 
 const LEVEL_WORDS = {
   SURVIVED_FILTERS: 'survived the luck filters',
@@ -148,7 +149,8 @@ export function describeTraderDna(study: TraderDnaStudy, now: Date = new Date())
   const parts = [
     `According to Studio's published study${named} (${day(study.window.start)} to ${day(study.window.end)}), the findings ${LEVEL_WORDS[study.evidence_level]}.`,
     `Sample: ${study.sample.wallets} wallets and ${study.sample.trades} trades.`,
-    `Assumed costs: ${study.costs.fee_bps} bps in fees and ${study.costs.slippage_bps} bps of slippage.`,
+    allInCosts(study) ? `Assumed costs: ${study.costs.fee_bps} bps all-in cost.`
+      : `Assumed costs: ${study.costs.fee_bps} bps in fees and ${study.costs.slippage_bps} bps of slippage.`,
     `Luck filter: Bonferroni over ${study.luck_filters.tests} tests at alpha ${study.luck_filters.alpha}, ${study.luck_filters.survivors} survived.`,
     flags,
     survived.length > 0 ? `Survived the filters: ${survived.map(behaviour).join(' ')}` : 'No behaviour is shown to have survived the filters.',
@@ -299,7 +301,8 @@ export function traderDnaIdeaFrom(study: TraderDnaStudy, now: Date = new Date())
 
   const summary = [
     `Studio's published Trader DNA study${named}, ${day(study.window.start)} to ${day(study.window.end)}: ${study.sample.wallets} wallets, ${study.sample.trades} trades, findings that ${LEVEL_WORDS[study.evidence_level]} (Bonferroni over ${study.luck_filters.tests} tests).`,
-    `Assumed costs: ${study.costs.fee_bps} bps fees, ${study.costs.slippage_bps} bps slippage.`,
+    allInCosts(study) ? `Assumed costs: ${study.costs.fee_bps} bps all-in cost.`
+      : `Assumed costs: ${study.costs.fee_bps} bps fees, ${study.costs.slippage_bps} bps slippage.`,
     ...sayable.map((b) => `Behaviour: ${sentence(b.summary)} (${b.sample_size} observations).`),
   ]
     .join(' ')

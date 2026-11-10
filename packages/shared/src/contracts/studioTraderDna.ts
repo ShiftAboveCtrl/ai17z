@@ -25,7 +25,7 @@ import { z } from 'zod';
  * what came back.
  */
 
-/** The id grammar of a study. Checked before an id reaches a path. */
+/** Accepts Studio's hyphen alias (<venue>-<fromMs>-<toMs>), never its dotted storage id. Checked before a path. */
 export const TRADER_DNA_STUDY_ID = /^[a-z0-9][a-z0-9_-]{2,63}$/;
 
 /**
