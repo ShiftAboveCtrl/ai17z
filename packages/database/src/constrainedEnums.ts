@@ -53,8 +53,12 @@ import {
   TRADE_MODES,
   TRADE_PAUSE_SCOPES,
   SHADOW_OUTCOMES,
+  SIGNAL_RECEIPT_STATUSES,
+  SIGNAL_RECEIPT_VERDICTS,
+  SIGNAL_RECEIPT_WINDOW_HOURS,
   TRADE_SIDES,
 } from '@xbam/shared/contracts';
+import { LEAGUE_ENTRY_STATUSES, LEAGUE_FILL_STATES } from './repositories/leagueBridge';
 import { BROWSER_TASK_KINDS } from './repositories/browserTasks';
 import { ENGAGEMENT_KINDS, ENGAGEMENT_STATUSES } from './repositories/engagements';
 import { REPO_EVENT_KINDS, REPO_STATUSES } from './repositories/repoSources';
@@ -506,6 +510,17 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'host_nodes', column: 'state', values: HOST_STATES },
   { table: 'hosted_runtimes', column: 'state', values: RUNTIME_STATES },
   { table: 'hosted_runtimes', column: 'key_custody', values: KEY_CUSTODY_VALUES },
+  // The league bridge (migration 0120) and radar receipts (migration 0126).
+  { table: 'league_entries', column: 'status', values: LEAGUE_ENTRY_STATUSES },
+  { table: 'league_fill_reports', column: 'state', values: LEAGUE_FILL_STATES },
+  { table: 'signal_receipts', column: 'status', values: SIGNAL_RECEIPT_STATUSES },
+  { table: 'signal_receipts', column: 'verdict', values: SIGNAL_RECEIPT_VERDICTS },
+  {
+    table: 'signal_receipts',
+    column: 'window_hours',
+    values: SIGNAL_RECEIPT_WINDOW_HOURS.map(String),
+    note: 'An integer vocabulary: the follow-up windows in hours. Discovery reads bare integers in the ARRAY as their decimal text.',
+  },
 ];
 
 /** Reads the vocabulary a CHECK constraint actually enforces, from the catalogue. */
@@ -561,7 +576,16 @@ export async function discoverConstrainedEnums(
       table: String(row.tbl ?? ''),
       column: columnOf(def),
       constraint: String(row.conname ?? ''),
-      values: [...def.matchAll(/'([^']*)'::text/g)].map((m) => m[1]!),
+      values: [
+        ...[...def.matchAll(/'([^']*)'::text/g)].map((m) => m[1]!),
+        // `window_hours IN (1, 24)` renders as `= ANY (ARRAY[1, 24])`: no quotes,
+        // so the text match above sees nothing and the vocabulary reads as empty.
+        // Only elements inside an ARRAY[...] count, never a number elsewhere in
+        // the definition such as a length bound.
+        ...[...def.matchAll(/ARRAY\[([^\]]*)\]/g)].flatMap((a) =>
+          a[1]!.split(',').map((e) => e.trim()).filter((e) => /^-?\d+$/.test(e)),
+        ),
+      ],
     };
   });
 }

@@ -130,6 +130,11 @@ export interface SignalRadarData {
   }[];
 }
 
+/** Migration 0126's CHECKs on signal_receipts; registered in the database package's constrainedEnums.ts. */
+export const SIGNAL_RECEIPT_STATUSES = ['pending', 'reading', 'offered', 'skipped', 'unavailable'] as const;
+export const SIGNAL_RECEIPT_VERDICTS = ['changed', 'unchanged', 'unavailable'] as const;
+export const SIGNAL_RECEIPT_WINDOW_HOURS = [1, 24] as const;
+
 export interface SignalReceipt {
   id: string; actionId: string; windowHours: number; dueAt: string;
   evidence: { watch: SignalWatch; before: SignalObservation; after: SignalObservation };

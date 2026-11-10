@@ -8,6 +8,8 @@ const recorded: { capabilityId: string; outcome: string; step: number }[] = [];
 // times it asks, what it feeds back, when it stops -- and a database would only
 // make those questions slower to ask. `tests/integration` covers the row.
 vi.mock('@xbam/database', () => ({
+  // peerReview.ts reads agents.getAgent while the runtime is imported; nothing here calls it.
+  agents: {},
   capabilityInvocations: {
     async recordInvocation(input: { capabilityId: string; outcome: string; step: number }) {
       recorded.push({ capabilityId: input.capabilityId, outcome: input.outcome, step: input.step });

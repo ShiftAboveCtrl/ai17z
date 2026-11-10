@@ -52,8 +52,11 @@ describe('radar receipts', () => {
   it.each(['PnL 10', 'I called it', 'price rose', '100% hit rate'])('AC2 refuses performance language: %s', text => {
     expect(signalPublicationRefusal(text)).not.toBeNull();
   });
-  it('AC4 withholds receipt envelopes until Studio accepts their kind', () => {
-    expect(projectActivity({ id: 'receipt:11111111-1111-4111-8111-111111111111', agent_id: '22222222-2222-4222-8222-222222222222', kind: 'RECEIPT', at: before.observedAt, dry_run: false, text: 'private' })).toBeNull();
+  it('AC4 projects a receipt envelope now that Studio accepts the kind, carrying only normalised fields', () => {
+    // 60cf11af turned STUDIO_ACCEPTS_RECEIPTS on; this used to assert the withheld state.
+    const envelope = projectActivity({ id: 'receipt:11111111-1111-4111-8111-111111111111', agent_id: '22222222-2222-4222-8222-222222222222', kind: 'RECEIPT', at: before.observedAt, dry_run: false, text: 'private' });
+    expect(envelope).toMatchObject({ id: 'receipt:11111111-1111-4111-8111-111111111111', kind: 'RECEIPT', target_handle: null, paper: null, dry_run: false });
+    expect(JSON.stringify(envelope)).not.toContain('private');
   });
   it('AC5 ranks a larger measured change higher and names its factors', () => {
     const small = signalRank(before, { ...atPost, value: 190 });
