@@ -1,6 +1,6 @@
 import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
-import { LeagueEntryRequest, LeagueFillReport, type LeagueFill } from '@xbam/shared/contracts';
+import { LeagueEntryRequest, LeagueFillReport, type LeagueFill } from './pinnedStudioLeagueContract';
 import { canonicalJson, leagueRulesHash } from '@xbam/runtime';
 import { listenReachable } from './listen';
 

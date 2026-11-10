@@ -242,11 +242,11 @@ export async function noteSeasonChecked(entryId: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** Every paper fill made under one mandate, oldest first. */
-export async function paperFillsUnderMandate(mandateId: string): Promise<PaperFillIntent[]> {
+export async function paperFillsUnderMandate(mandateId: string, agentId: string): Promise<PaperFillIntent[]> {
   const rows = await query<Record<string, unknown>>(
     `SELECT id, side, asset_in, asset_out, quote, executed_on, postcondition, updated_at FROM trade_intents
-       WHERE mandate_id = $1 AND mode = 'PAPER' AND status = 'PAPER_FILLED' ORDER BY updated_at ASC, id ASC`,
-    [mandateId],
+       WHERE mandate_id = $1 AND agent_id = $2 AND mode = 'PAPER' AND status = 'PAPER_FILLED' ORDER BY updated_at ASC, id ASC`,
+    [mandateId, agentId],
   );
   return rows.map((r) => {
     const m = mapRow<{ id: string; side: TradeSide; assetIn: AssetRef; assetOut: AssetRef; quote: MarketSnapshot; executedOn: MarketSnapshot | null; postcondition: Record<string, unknown> | null; updatedAt: string }>(r)!;

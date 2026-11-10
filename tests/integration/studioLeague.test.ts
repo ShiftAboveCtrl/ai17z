@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { leagueBridge, query, trading, type LeagueEntryRow } from '@xbam/database';
 import {
   UNSAFE_DEV_ORIGIN_ENV,
@@ -50,6 +50,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
+  vi.stubEnv('AI17Z_LEAGUE_JOURNAL', '1');
   studio.requests.length = 0;
   studio.entries.clear();
   studio.fills.clear();
@@ -64,6 +65,8 @@ beforeEach(() => {
   studio.setNow(BASE);
   studio.goUp();
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 async function link(): Promise<void> {
   if ((await pollStudioLink()).state === 'LINKED') return;
@@ -312,11 +315,13 @@ describe('an entry Studio has not taken yet', () => {
     expect(pending.status).toBe('PENDING');
 
     // More than twenty-four hours later, still failing: still pending, not refused.
+    studio.setNow(new Date(BASE.getTime() + 25 * H));
     await sweepLeagueBridge(new Date(BASE.getTime() + 25 * H));
     expect(await leagueBridge.getEntry(pending.id)).toMatchObject({ status: 'PENDING', statusReason: null });
 
     // Studio back, same key: the same entry, and the mandate is written.
     studio.failEntries = { times: 0, status: 503 };
+    studio.setNow(new Date(BASE.getTime() + 26 * H));
     await sweepLeagueBridge(new Date(BASE.getTime() + 26 * H));
     expect(await leagueBridge.getEntry(pending.id)).toMatchObject({ status: 'ACTIVE' });
     expect(studio.entries.size).toBe(1);
@@ -411,6 +416,7 @@ describe('reporting fills', () => {
     const held = [...studio.fills.values()][0]!;
 
     await query(`DELETE FROM league_fill_reports WHERE entry_id = $1`, [entry.id]);
+    studio.setNow(inSeason(5));
     const again = await sweepLeagueBridge(inSeason(5));
     expect(again.accepted).toBe(1);
     expect(studio.fills.size).toBe(1);
@@ -464,6 +470,7 @@ describe('reporting fills', () => {
     // The trade record is changed behind the ledger's back and the ledger forgotten: same key, different content.
     await query(`UPDATE trade_intents SET postcondition = jsonb_set(postcondition, '{outBase}', '"99999999"') WHERE id = $1`, [intent]);
     await query(`DELETE FROM league_fill_reports WHERE entry_id = $1`, [entry.id]);
+    studio.setNow(inSeason(5));
     await sweepLeagueBridge(inSeason(5));
     expect(studio.fills.size).toBe(1);
     expect([...studio.fills.values()][0]!.fill.out_base).toBe('49875000');
@@ -548,27 +555,102 @@ describe('reporting fills', () => {
     expect(down).toMatchObject({ accepted: 0, deferred: 1 });
     expect(await leagueBridge.getEntry(entry.id)).toMatchObject({ status: 'ACTIVE' });
     studio.goUp();
+    studio.setNow(new Date(inSeason(4).getTime() + 2 * H));
     expect((await sweepLeagueBridge(new Date(inSeason(4).getTime() + 2 * H))).accepted).toBe(1);
   });
 });
 
 describe('the season changing under an entry', () => {
-  it('keeps the applied season when Studio publishes different rules, and records why', async () => {
+  it.each(['rules_hash', 'entry_closes_at', 'starts_at', 'ends_at', 'fills_accepted_until'])('refuses changed %s before any fill POST, including a direct report call', async (field) => {
+    const { agentId, entry } = await entered();
+    await seedFill(agentId, entry.mandateId!, inSeason(3));
+    studio.setNow(inSeason(4));
+    if (field === 'rules_hash') studio.rules = leagueRules({ capital: 5000 });
+    else {
+      const dates: Record<string, Date> = {
+        entry_closes_at: studio.times.entryClosesAt, starts_at: studio.times.startsAt,
+        ends_at: studio.times.endsAt, fills_accepted_until: studio.times.fillsAcceptedUntil,
+      };
+      studio.seasonPatch = { [field]: new Date(dates[field]!.getTime() - 1000).toISOString() };
+    }
+    await reportLeagueFills(entry, inSeason(4));
+    expect(studio.requests.filter((r) => r.path.endsWith('/entry/fills'))).toHaveLength(0);
+    expect(studio.fills.size).toBe(0);
+    expect(await leagueBridge.getEntry(entry.id)).toMatchObject({ status: 'ENDED' });
+    expect(await trading.getMandate(entry.mandateId!)).toMatchObject({ paused: true });
+  });
+
+  it('does not activate a pending entry after the published deadline changes', async () => {
+    const f = await setup();
+    studio.failEntries = { times: 1, status: 503 };
+    await enter(f.agentId, f.ownerId);
+    const pending = (await leagueBridge.latestEntryOf(f.agentId))!;
+    studio.seasonPatch = { fills_accepted_until: new Date(studio.times.fillsAcceptedUntil.getTime() - 1000).toISOString() };
+    const later = new Date(BASE.getTime() + 2 * 60_000);
+    studio.setNow(later);
+    await sweepLeagueBridge(later);
+    expect(studio.entries.size).toBe(0);
+    expect(await trading.liveMandate(f.agentId)).toBeNull();
+    expect(await leagueBridge.getEntry(pending.id)).toMatchObject({ status: 'REFUSED' });
+  });
+
+  it('defers the whole fill batch when Studio assigns two outcomes to a key', async () => {
+    const { agentId, entry } = await entered();
+    await seedFill(agentId, entry.mandateId!, inSeason(3));
+    studio.setNow(inSeason(4));
+    studio.fillAnswerOverride = (keys) => ({ body: {
+      protocol: 1, simulated: true, accepted: keys, duplicates: [],
+      rejected: keys.map((fill_key) => ({ fill_key, reason: 'INVALID' })),
+    } });
+    expect(await sweepLeagueBridge(inSeason(4))).toMatchObject({ accepted: 0, deferred: 1 });
+    expect((await leagueBridge.fillsOf(entry.id))[0]).toMatchObject({ state: 'PENDING' });
+  });
+
+  it('reads only the entered agent paper book even when another trade names its mandate', async () => {
+    const { agentId, entry } = await entered();
+    const other = await createFixture({});
+    await seedFill(other.agentId, entry.mandateId!, inSeason(3));
+    await seedFill(agentId, entry.mandateId!, inSeason(3));
+    studio.setNow(inSeason(4));
+    expect(await sweepLeagueBridge(inSeason(4))).toMatchObject({ recorded: 1, accepted: 1 });
+    expect(studio.fills.size).toBe(1);
+  });
+
+  it('the switch stops all bridge work and resumes under the same entry and fill keys', async () => {
+    const { agentId, entry } = await entered();
+    await seedFill(agentId, entry.mandateId!, inSeason(3));
+    studio.setNow(inSeason(4));
+    studio.requests.length = 0;
+    vi.stubEnv('AI17Z_LEAGUE_JOURNAL', undefined);
+    expect(await readLeagueSeason('week-45', inSeason(4))).toMatchObject({ ok: false, status: 503 });
+    expect(await enter(agentId, entry.ownerId!, {}, inSeason(4))).toMatchObject({ ok: false, status: 503 });
+    expect(await readLeagueStanding(agentId, inSeason(4))).toMatchObject({ ok: false, status: 503 });
+    expect(await sweepLeagueBridge(inSeason(4))).toMatchObject({ entries: 0, accepted: 0 });
+    expect(await reportLeagueFills(entry, inSeason(4))).toMatchObject({ recorded: 0, accepted: 0 });
+    expect(studio.requests).toHaveLength(0);
+    expect(await leagueBridge.fillsOf(entry.id)).toHaveLength(0);
+    vi.stubEnv('AI17Z_LEAGUE_JOURNAL', '1');
+    expect(await sweepLeagueBridge(inSeason(4))).toMatchObject({ accepted: 1 });
+    expect(await leagueBridge.getEntry(entry.id)).toMatchObject({ entryKey: entry.entryKey, remoteEntryId: entry.remoteEntryId });
+  });
+
+  it('stops the entry under its original rules when Studio publishes different rules', async () => {
     const { entry } = await entered();
     studio.rules = leagueRules({ capital: 5000 });
-    const later = new Date(BASE.getTime() + 31 * 60_000);
+    const later = new Date(BASE.getTime() + H);
     studio.setNow(later);
     await sweepLeagueBridge(later);
     const after = await leagueBridge.getEntry(entry.id);
-    expect(after).toMatchObject({ status: 'ACTIVE', rulesHash: entry.rulesHash });
+    expect(after).toMatchObject({ status: 'ENDED', rulesHash: entry.rulesHash });
     expect(after!.lastProblem).toMatch(/different rules/);
     expect((await trading.liveMandate(entry.agentId))!.maxPerDay).toBe('1000000000');
+    expect((await trading.getMandate(entry.mandateId!))!.paused).toBe(true);
   });
 
   it('ends the entry and pauses its mandate when Studio cancels the season', async () => {
     const { entry } = await entered();
     studio.seasonPatch = { status: 'CANCELLED' };
-    const later = new Date(BASE.getTime() + 31 * 60_000);
+    const later = new Date(BASE.getTime() + H);
     studio.setNow(later);
     await sweepLeagueBridge(later);
     expect(await leagueBridge.getEntry(entry.id)).toMatchObject({ status: 'ENDED', statusReason: 'Studio cancelled the season.' });
@@ -578,7 +660,7 @@ describe('the season changing under an entry', () => {
   it('leaves the season running on paper, and says so, when Studio cannot be reached', async () => {
     const { entry } = await entered();
     studio.goDown();
-    const later = new Date(BASE.getTime() + 31 * 60_000);
+    const later = new Date(BASE.getTime() + H);
     await sweepLeagueBridge(later);
     const after = await leagueBridge.getEntry(entry.id);
     expect(after).toMatchObject({ status: 'ACTIVE' });

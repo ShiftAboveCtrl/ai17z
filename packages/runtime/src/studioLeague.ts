@@ -17,6 +17,7 @@ import {
 import { studioInstallationRequest } from './studioLink';
 import {
   contentHashOf,
+  canonicalJson,
   fillFromIntent,
   fillKeyOf,
   isCurrent,
@@ -49,7 +50,11 @@ const log = createLogger('studio-league');
 
 const BASE = '/api/v1/installation/league/seasons';
 
-export type Problem = { ok: false; why: string };
+export type Problem = { ok: false; why: string; status?: number };
+
+/** Core requires explicit opt-in even when Studio enables its journal in production. */
+export const leagueJournalEnabled = (): boolean => process.env.AI17Z_LEAGUE_JOURNAL === '1';
+const journalOff = (): Problem => ({ ok: false, status: 503, why: 'The paper league bridge is off. Set AI17Z_LEAGUE_JOURNAL=1 to enable it.' });
 
 const seasonPath = (slug: string) => `${BASE}/${slug}`;
 
@@ -59,13 +64,14 @@ const seasonPath = (slug: string) => `${BASE}/${slug}`;
 
 /** One published season, strictly parsed, current and hash-checked, or a sentence. Nothing is written. */
 export async function readLeagueSeason(slug: string, now: Date = new Date()): Promise<{ ok: true; season: LeagueSeasonDocument } | Problem> {
+  if (!leagueJournalEnabled()) return journalOff();
   if (!LEAGUE_SLUG.test(slug)) return { ok: false, why: 'That is not the name of a league season.' };
   const answer = await studioInstallationRequest(seasonPath(slug), { method: 'GET' });
   if (!answer.ok) return answer;
   if (answer.status === 404) return { ok: false, why: 'Studio has no published season with that name.' };
-  if (answer.status !== 200) return { ok: false, why: answer.sentence };
+  if (answer.status !== 200) return { ok: false, why: answer.sentence, status: answer.status };
   const read = parseSeason(answer.body, slug);
-  if (!read.ok) return read;
+  if (!read.ok) return { ...read, status: 409 };
   if (!isCurrent(read.season.generated_at, now)) return { ok: false, why: "Studio's season is not current, so it was not treated as live." };
   return read;
 }
@@ -103,6 +109,7 @@ export type EnterLeagueResult =
  * An entry Studio refused therefore never replaced anything of the owner's.
  */
 export async function enterLeagueSeason(input: EnterLeagueInput, now: Date = new Date()): Promise<EnterLeagueResult> {
+  if (!leagueJournalEnabled()) return journalOff();
   const agent = await agentsRepo.getAgent(input.agentId);
   if (!agent || agent.ownerId !== input.ownerId) throw new NotFoundError('Agent');
   const alias = LeagueAlias.safeParse(input.alias);
@@ -137,9 +144,9 @@ export async function enterLeagueSeason(input: EnterLeagueInput, now: Date = new
   if (created.kind === 'ALREADY_SETTLED') {
     return { ok: false, why: `This agent's entry in this season is ${created.row.status.toLowerCase()}${created.row.statusReason ? `: ${created.row.statusReason}` : ''}. An entry is not reopened or changed.` };
   }
-  if (created.row.rulesHash !== season.season.rules_hash) {
-    return { ok: false, why: 'The season\'s rules are not the ones this entry was made under. Rules are frozen once published, so the answer was ignored.' };
-  }
+  const pinned = pinnedSeason(created.row);
+  if (!pinned.ok) return pinned;
+  if (!sameSeason(pinned.season, season)) return stopMismatch(created.row);
   const settled = await advanceEntry(created.row, now);
   return settled.ok ? { ok: true, entry: settled.entry, state: settled.entry.status === 'ACTIVE' ? 'ACTIVE' : 'PENDING' } : settled;
 }
@@ -154,18 +161,21 @@ const DEFINITIVE = new Set([400, 403, 404, 409, 410, 422]);
 async function advanceEntry(entry: LeagueEntryRow, now: Date): Promise<{ ok: true; entry: LeagueEntryRow } | Problem> {
   let current = entry;
   if (current.status !== 'PENDING') return { ok: true, entry: current };
-  const season = parseSeason(current.season, current.seasonSlug);
+  const season = pinnedSeason(current);
   if (!season.ok) {
     await leagueBridge.refuseEntry(current.id, season.why);
     return season;
   }
 
+  if (!current.remoteEntryId && now.getTime() >= Date.parse(season.season.season.entry_closes_at)) {
+    const why = 'Entry closed before Studio took this one, so it was not made.';
+    await leagueBridge.refuseEntry(current.id, why);
+    return { ok: false, why };
+  }
+  const checked = await checkSeason(current, now);
+  if (!checked) return { ok: false, why: 'The frozen season could not be confirmed. No entry or mandate was applied.' };
+
   if (!current.remoteEntryId) {
-    if (now.getTime() >= Date.parse(season.season.season.entry_closes_at)) {
-      const why = 'Entry closed before Studio took this one, so it was not made.';
-      await leagueBridge.refuseEntry(current.id, why);
-      return { ok: false, why };
-    }
     const request: LeagueEntryRequest = {
       protocol: LEAGUE_PROTOCOL,
       entry_key: current.entryKey,
@@ -180,7 +190,7 @@ async function advanceEntry(entry: LeagueEntryRow, now: Date): Promise<{ ok: tru
     }
     if (DEFINITIVE.has(answer.status) && !(answer.status === 400 && answer.body?.error === 'invalid_dpop_proof')) {
       await leagueBridge.refuseEntry(current.id, answer.sentence);
-      return { ok: false, why: `Studio refused the entry. ${answer.sentence}` };
+      return { ok: false, status: answer.status, why: `Studio refused the entry. ${answer.sentence}` };
     }
     const parsed = LeagueEntryAnswer.safeParse(answer.body);
     if ((answer.status !== 200 && answer.status !== 201) || !parsed.success || parsed.data.season_slug !== current.seasonSlug) {
@@ -232,12 +242,16 @@ export interface ReportOutcome {
  */
 export async function reportLeagueFills(entry: LeagueEntryRow, now: Date = new Date()): Promise<ReportOutcome> {
   const out: ReportOutcome = { recorded: 0, accepted: 0, rejected: 0, deferred: 0 };
+  if (!leagueJournalEnabled()) return out;
   if (entry.status !== 'ACTIVE' || !entry.mandateId || !entry.remoteEntryId) return out;
-  const season = parseSeason(entry.season, entry.seasonSlug);
-  if (!season.ok) return out;
+  const season = pinnedSeason(entry);
+  if (!season.ok) {
+    await stopMismatch(entry);
+    return out;
+  }
 
   const known = new Set((await leagueBridge.fillsOf(entry.id)).map((f) => f.intentId));
-  const fresh = (await leagueBridge.paperFillsUnderMandate(entry.mandateId)).filter((f) => !known.has(f.intentId));
+  const fresh = (await leagueBridge.paperFillsUnderMandate(entry.mandateId, entry.agentId)).filter((f) => !known.has(f.intentId));
   if (fresh.length > 0) {
     const quoteAddress = season.season.season.rules.quote.address;
     out.recorded = await leagueBridge.recordFills(
@@ -286,6 +300,11 @@ export async function reportLeagueFills(entry: LeagueEntryRow, now: Date = new D
     }
   }
   if (due.length === 0) return out;
+  // Dates are not covered by rules_hash, so confirm every frozen field before each batch.
+  if (!await checkSeason(entry, now)) {
+    out.deferred = due.length;
+    return out;
+  }
   const report: LeagueFillReport = { protocol: LEAGUE_PROTOCOL, entry_id: entry.remoteEntryId, fills };
   const keys = due.map((f) => f.fillKey);
   const retryAt = () => new Date(now.getTime() + backoffMs(Math.max(...due.map((f) => f.attempts)), 60_000, 60 * 60_000));
@@ -315,6 +334,13 @@ export async function reportLeagueFills(entry: LeagueEntryRow, now: Date = new D
   // Studio did not account for stays pending and is sent again, under the same
   // key and the same bytes.
   const sent = new Set(keys);
+  const answered = [...parsed.data.accepted, ...parsed.data.duplicates, ...parsed.data.rejected.map((r) => r.fill_key)];
+  if (answered.some((key) => !sent.has(key)) || new Set(answered).size !== answered.length) {
+    await leagueBridge.deferFills(entry.id, keys, retryAt());
+    await leagueBridge.noteProblem(entry.id, 'Studio gave an unknown or conflicting fill outcome, so the whole answer was ignored.');
+    out.deferred = keys.length;
+    return out;
+  }
   const seen = new Set<string>();
   const outcome = new Map<string, { state: 'ACCEPTED' | 'REJECTED'; reason: string | null }>();
   const note = (key: string, state: 'ACCEPTED' | 'REJECTED', reason: string | null): void => {
@@ -358,8 +384,8 @@ export function pendingRetryDelayMs(elapsedMs: number): number {
 
 /**
  * One pass over every open entry, on the worker's ordinary sweep rather than a
- * timer of its own. With no entries it is one indexed query and sends nothing:
- * the switch is the owner's act of entering.
+ * timer of its own. The journal switch is checked before any query. With no
+ * entries it is one indexed query and sends nothing.
  *
  * It keeps reporting fills while PAUSE ALL is set, deliberately. Reporting is a
  * record of paper fills already made, not a new action, and a pause that
@@ -367,6 +393,7 @@ export function pendingRetryDelayMs(elapsedMs: number): number {
  */
 export async function sweepLeagueBridge(now: Date = new Date()): Promise<{ entries: number; recorded: number; accepted: number; deferred: number }> {
   const tally = { entries: 0, recorded: 0, accepted: 0, deferred: 0 };
+  if (!leagueJournalEnabled()) return tally;
   for (const entry of await leagueBridge.openEntries()) {
     tally.entries += 1;
     try {
@@ -398,29 +425,59 @@ export async function sweepLeagueBridge(now: Date = new Date()): Promise<{ entri
   return tally;
 }
 
-/**
- * Asks Studio whether the season is still the one that was applied.
- *
- * Unreachable, malformed or not current: the applied season keeps running on
- * paper and the problem is recorded; nothing is changed on a guess. A different
- * hash is ignored (rules are frozen, so it is Studio's mistake or worse), and a
- * cancelled season ends the entry and pauses its mandate.
- */
-async function checkSeason(entry: LeagueEntryRow, now: Date): Promise<void> {
+/** Dates must be checked separately because the rules hash does not cover them. */
+function sameSeason(a: LeagueSeasonDocument, b: LeagueSeasonDocument): boolean {
+  const frozen = (doc: LeagueSeasonDocument) => {
+    const { slug, rules_hash, entry_closes_at, starts_at, ends_at, fills_accepted_until } = doc.season;
+    return { slug, rules_hash, entry_closes_at, starts_at, ends_at, fills_accepted_until };
+  };
+  return canonicalJson(frozen(a)) === canonicalJson(frozen(b));
+}
+
+function pinnedSeason(entry: LeagueEntryRow): { ok: true; season: LeagueSeasonDocument } | Problem {
+  const parsed = parseSeason(entry.season, entry.seasonSlug);
+  if (!parsed.ok) return parsed;
+  const s = parsed.season.season;
+  if (entry.rulesHash !== s.rules_hash || Date.parse(entry.startsAt) !== Date.parse(s.starts_at) ||
+      Date.parse(entry.endsAt) !== Date.parse(s.ends_at) || Date.parse(entry.fillsAcceptedUntil) !== Date.parse(s.fills_accepted_until)) {
+    return { ok: false, status: 409, why: 'The entry does not match its frozen season rules or dates.' };
+  }
+  return parsed;
+}
+
+async function stopMismatch(entry: LeagueEntryRow): Promise<Problem> {
+  const why = 'The frozen season does not match: different rules or dates were supplied. No further league activity is allowed.';
+  await leagueBridge.noteProblem(entry.id, why);
+  if (entry.status === 'PENDING') await leagueBridge.refuseEntry(entry.id, why);
+  else await leagueBridge.endEntry(entry.id, why);
+  if (entry.mandateId) await trading.setMandatePaused(entry.mandateId, true);
+  return { ok: false, status: 409, why };
+}
+
+/** An unavailable season defers reporting. Changed frozen facts stop the entry and its paper mandate. */
+async function checkSeason(entry: LeagueEntryRow, now: Date): Promise<boolean> {
+  const pinned = pinnedSeason(entry);
+  if (!pinned.ok) {
+    await stopMismatch(entry);
+    return false;
+  }
   await leagueBridge.noteSeasonChecked(entry.id);
   const read = await readLeagueSeason(entry.seasonSlug, now);
   if (!read.ok) {
     await leagueBridge.noteProblem(entry.id, read.why);
-    return;
+    if (read.status === 409) await stopMismatch(entry);
+    return false;
   }
-  if (read.season.season.rules_hash !== entry.rulesHash) {
-    await leagueBridge.noteProblem(entry.id, 'Studio now publishes different rules for this season. Rules are frozen, so the answer was ignored and the applied season keeps running.');
-    return;
+  if (!sameSeason(pinned.season, read.season)) {
+    await stopMismatch(entry);
+    return false;
   }
   if (read.season.season.status === 'CANCELLED') {
     await leagueBridge.endEntry(entry.id, 'Studio cancelled the season.');
     if (entry.mandateId) await trading.setMandatePaused(entry.mandateId, true);
+    return false;
   }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -429,13 +486,14 @@ async function checkSeason(entry: LeagueEntryRow, now: Date): Promise<void> {
 
 export type StandingRead =
   | { ok: true; standing: LeagueStandingDocument; entry: LeagueEntryRow; seasonTitle: string }
-  | { ok: false; why: string; code: 'NOT_ENTERED' | 'UNAVAILABLE'; entry: LeagueEntryRow | null };
+  | { ok: false; why: string; status?: number; code: 'NOT_ENTERED' | 'UNAVAILABLE'; entry: LeagueEntryRow | null };
 
 /**
  * This agent's own standing, read from Studio now. Nothing is kept: an
  * unreachable Studio is UNAVAILABLE, never the last rank said again.
  */
 export async function readLeagueStanding(agentId: string, now: Date = new Date()): Promise<StandingRead> {
+  if (!leagueJournalEnabled()) return { ...journalOff(), code: 'UNAVAILABLE', entry: null };
   const entry = (await leagueBridge.liveEntryOf(agentId)) ?? (await leagueBridge.latestEntryOf(agentId));
   if (!entry || entry.status === 'REFUSED') return { ok: false, code: 'NOT_ENTERED', why: 'This agent is not entered in a league season.', entry: null };
   if (!entry.remoteEntryId) {

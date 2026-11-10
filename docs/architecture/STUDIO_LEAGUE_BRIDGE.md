@@ -7,6 +7,13 @@ the allowlist for everything that crosses the boundary is
 `packages/shared/src/contracts/studioLeague.ts`, and the client is proved against
 `tests/support/leagueStudioServer.ts`, which implements this document strictly.
 
+The Studio schema is pinned from `forge` commit
+`e42c31f93697890d3652103d6d2d9de3c1570c72`, specifically
+`tests/support/core-league-contract.ts`. Core's schema agrees from the Zod import
+down. The fake server uses the independent copy in
+`tests/support/pinnedStudioLeagueContract.ts`; targeted tests compare both copies
+and Studio's published hash vector.
+
 This is slice 1: the contract, the core half, and the owner-only question "how am I
 doing in the league". Posting a standing in public is a later slice.
 
@@ -25,7 +32,15 @@ Local entrants are scored from fills they report. Studio did not watch them
 happen, and the standing says so (`basis: "REPORTED_BY_ENTRANT"`), as does the
 sentence the agent says.
 
-## Three switches
+## Switches
+
+Core requires `AI17Z_LEAGUE_JOURNAL=1` explicitly, including in production.
+Unset, empty, `0` and every other value disable the bridge. While disabled, season,
+entry and standing calls return an unavailable result with status `503`; reporting
+and the sweep return zero work before reading the database or contacting Studio.
+Existing entries and fill keys remain available when the switch is enabled again.
+This gate grants no holder or account access: Studio still asserts those facts
+for the owner of the authenticated installation and answers `403` on refusal.
 
 | Surface | Switch | Default |
 | --- | --- | --- |
@@ -318,6 +333,7 @@ mandate, with the owner approving each one. The bridge does not trade.
 ### Reporting
 
 The worker sweep copies the entry's `PAPER_FILLED` trades under the season mandate
+and the entered agent's own id
 into `league_fill_reports`, once each (primary key `(entry, trade)`), then sends
 what is due. The stored payload is frozen by a database trigger: a reported fill is
 not edited, and a settled report does not change state. The season's own fields on
@@ -327,10 +343,16 @@ is never sent. After `fills_accepted_until` whatever is unsent becomes `LOCAL_ON
 and the entry ends. Reporting continues while PAUSE ALL is set, on purpose: it
 records paper fills already made and is not a new action.
 
-Every thirty minutes the sweep reads the season again. Unreachable, malformed or
-stale: the applied season keeps running on paper and the problem is recorded. Other
-rules under the same slug: ignored, because rules are frozen. Cancelled: the entry
-ends and its mandate is paused.
+Every fill batch and pending entry retry confirms the season again before a POST
+or mandate activation. The sweep also checks idle entries every thirty minutes,
+using its existing loop with no new timer. Unreachable or stale: the existing
+paper mandate remains, the problem is recorded, and no fills are reported until a
+fresh season can be confirmed. A different rules hash, entry lock, start, end or
+report deadline fails closed: an active entry ends and its paper mandate pauses;
+a pending entry is refused without writing a mandate. The frozen local row is
+also checked against its stored season document before any fills are copied.
+Cancelled: the entry ends and its mandate is paused. A contradictory fill answer
+or a key that was not sent defers the whole batch without settling any fill.
 
 ## What the agent says
 
@@ -344,19 +366,20 @@ here and nothing is kept between calls.
 | not entered | that there is no league standing to give |
 | unreachable, refused, stale, malformed | that it cannot check, what is still true locally (the paper mandate is in place until the season ends), and that it will not guess at a rank |
 
-## What Studio owes
+## Studio implementation
 
-Studio's side is in the Studio repository (branch `feat/paper-league-s2` is the
-season storage and scoring). To serve this contract it needs:
+Studio's side is implemented on the pinned `forge` commit in
+`lib/http/league-bridge.ts`, `lib/services/league-bridge-service.ts`,
+`lib/trading/league-ledger.ts` and `lib/validation/league-bridge.ts`. It provides:
 
 1. `GET /api/v1/installation/league/seasons/{slug}` as in section 1, published from
-   the season row. The season's `rules_hash` is already stored. Add
-   `fills_accepted_until` to a season (frozen with the rules' dates) and the
+   the season row, with `rules_hash`,
+   `fills_accepted_until` (frozen with the rules' dates) and the
    `local_agents` block.
 2. `POST .../entry` as in section 2: an entry kind `LOCAL_AGENT` with no Studio
    journal agent behind it, the idempotency key, one entry per installation per
    season, the lock at `entry_closes_at`, and `409`s as above. The existing
-   `provisionSeasonJournals` must skip these entries.
+   `provisionSeasonJournals` skips these entries.
 3. `POST .../entry/fills` as in section 3: a fill ledger keyed by `fill_key`, content
    hashed so a replay is a duplicate and a changed fill is `CONTENT_CHANGED`, and
    the window and deadline rejections.
@@ -366,7 +389,14 @@ season storage and scoring). To serve this contract it needs:
    readings. Cost accounting for reported fills is Studio's: the reported
    `fee_base` is what the paper venue charged, and Studio may apply the season's
    `costs.feeBps` as a floor.
-5. Label local entries as self reported on every public surface.
+5. Local entries labelled Self-reported on public surfaces. The core bridge
+   reports paper facts; Studio owns scoring and these labels.
+
+The bridge preserves Studio's `503` unavailable, `403` access refusal and `409`
+conflict responses. A `503` leaves an entry pending under the same key, while a
+definitive entry refusal leaves the existing mandate untouched. No schema change
+is needed for the local gate and frozen-fact checks; migration `0120` already
+provides the entry and immutable fill ledgers.
 
 ## Not in slice 1
 
