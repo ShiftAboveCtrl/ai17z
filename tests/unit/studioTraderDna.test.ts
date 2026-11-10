@@ -386,7 +386,7 @@ describe('posting a study is a separate opt-in', () => {
       'a wallet is just an address',
       'the worker died',
       'Wallets that sold half within an hour of entry kept more of their gains',
-      'The study of 41 wallets is worth reading',
+      'The study covers 41 wallets over 60 days',
       'Most traders in the sample held for under a day',
       'The tests were corrected for the number of hypotheses',
     ];
@@ -401,6 +401,106 @@ describe('posting a study is a separate opt-in', () => {
       const behaviours = [{ id: 'b1', summary: phrase, evidence_level: 'SURVIVED_FILTERS', sample_size: 10, adjusted_p: '0.01' }];
       expect(traderDnaIdeaFrom(study({ behaviours })), phrase).not.toBeNull();
     }
+  });
+
+  it('holds a post for the owner unless every sentence is clearly safe: the phrasings reviewers found', () => {
+    const held = [
+      'These guys are printing.',
+      "These guys know what they're doing.",
+      'These degens are geniuses',
+      'These accounts are smart',
+      'The holders are smart',
+      'The buyers are smart',
+      'these wallets are legends',
+      'The wallets here are pros.',
+      'This trader is a beast.',
+      'These traders are on fire.',
+      'Smartest wallets',
+      'the sharpest traders',
+      'These wallets are smarter than you.',
+      'top-performing traders',
+      'These wallets are killing it.',
+      'These wallets crush the market.',
+      'This cohort consistently wins.',
+      'These wallets outperform.',
+      'Wallets in this cohort beat the market',
+      'Wallets that print money.',
+      'These wallets have an edge.',
+      'This wallet knows something.',
+      'You should watch them.',
+      'traders you should be watching',
+      'Keep an eye on these wallets.',
+      'Put these wallets on your radar.',
+      'Wallets you want on your radar.',
+      'Bookmark these wallets.',
+      'Worth a look: these wallets.',
+      'The wallets here are worth your attention.',
+      'Ape alongside these wallets.',
+      'Mirror their trades.',
+      'Copy their moves.',
+      'Follow their lead.',
+      'Shadow the cohort.',
+      'Do what these wallets do.',
+      'high conviction wallets',
+      "The cohort's returns are incredible",
+      'wallets with incredible returns',
+      // Earlier rounds.
+      'This wallet is smart.',
+      'These traders are profitable',
+      'the wallets in this cohort are geniuses',
+      'The top 5 wallets',
+      'the best performing wallets',
+      'these wallets are worth keeping an eye on',
+      'Wallets worth a follow',
+      'That whale is sharp',
+      'The cohort looks elite',
+      'Their wallets were consistently good',
+      "That trader's smart",
+      'Smart money behaves like this',
+      'Copy trading works here',
+      // Obfuscation and a claim split from its subject.
+      'These wal​lets are smart',
+      'Look at the cohort. Absolutely elite.',
+    ];
+    const frame = (phrase: string) => `A Studio study of 41 wallets. ${phrase}. Nothing was traded.`;
+    for (const phrase of held) {
+      expect(checkTraderDnaText(frame(phrase)).join(' '), phrase).toMatch(/needs the owner|claim about a wallet/);
+      // And at the moment of sending, where it is a review, never a send.
+      const on = PolicyConfig.parse({ studio: { postTraderDna: true, traderDnaStudyId: 'early-entry-study' } });
+      expect(() => checkTraderDnaAtSend({ raw: { ideaSource: TRADER_DNA_IDEA_SOURCE }, text: frame(phrase), policy: on }), phrase).toThrow(/needs the owner/);
+    }
+  });
+
+  it('lets an ordinary sentence through and the idea the module makes itself', () => {
+    const sendable = [
+      'The worker died mid-job.',
+      'A wallet is just an address.',
+      'The study of 41 wallets covers 60 days.',
+      'Most traders in the sample held for under a day.',
+    ];
+    const frame = (phrase: string) => `A Studio study. ${phrase} Nothing was traded.`;
+    for (const phrase of sendable) expect(checkTraderDnaText(frame(phrase)), phrase).toEqual([]);
+
+    const neutral =
+      'Studio published a study of 41 wallets over 60 days, and one behaviour survived its luck filters: selling half an hour in. Nothing was traded; this is research only.';
+    expect(checkTraderDnaText(neutral)).toEqual([]);
+
+    // The feature is not dead: what the module offers a model to write from passes its own check.
+    const idea = traderDnaIdeaFrom(study())!;
+    expect(idea).not.toBeNull();
+    expect(checkTraderDnaText(`${idea.summary} Nothing was traded; this is research only.`)).toEqual([]);
+    const on = PolicyConfig.parse({ studio: { postTraderDna: true, traderDnaStudyId: 'early-entry-study' } });
+    expect(() =>
+      checkTraderDnaAtSend({ raw: { ideaSource: TRADER_DNA_IDEA_SOURCE }, text: `${idea.summary} Nothing was traded; this is research only.`, policy: on }),
+    ).not.toThrow();
+  });
+
+  it('does not quote a title that would be held, in the idea or in owner chat', () => {
+    const title = 'These wallets are smart';
+    expect(describeTraderDna(study({ title })).statement).not.toContain(title);
+    expect(describeTraderDna(study({ title })).statement).toMatch(/Studio's published study \(/);
+    expect(describeTraderDna(study()).statement).toMatch(/published study "Early entries on new pools" \(/);
+    expect(traderDnaIdeaFrom(study({ title: 'Wallets that print money' }))!.summary).not.toMatch(/print money/);
   });
 
   it('accepts a post that explains the study and blocks every wallet level claim', () => {

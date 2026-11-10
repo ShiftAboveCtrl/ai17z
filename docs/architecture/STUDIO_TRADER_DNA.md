@@ -141,7 +141,7 @@ Policies screen under **Trader DNA study on Studio**.
    published study that makes an idea.
 2. `traderDnaIdeaFrom` makes an idea only from a study whose findings survived the
    filters, with a sample, in date. It uses only behaviours that survived, and
-   drops any whose own text names an address or already praises a wallet. It
+   drops any whose own text would be held by the send-time check below. It
    carries no address.
 3. The idea goes through reticence (`unpromptedSubject`), the backlog's similarity
    check and the posting schedule and cadence like any post the agent starts. One
@@ -149,12 +149,24 @@ Policies screen under **Trader DNA study on Studio**.
 4. The finished text is checked again by `checkTraderDnaAtSend` at the moment of
    sending, with the policy as it is now, including text an owner edited in the
    review queue. It must say it is a study, attribute it to Studio and say nothing
-   was traded. It is sent to the owner, not to X, if it contains a wallet address,
-   if it calls a wallet or trader smart, sharp, an insider or worth copying,
-   following or watching, if it tells anybody to copy or follow a wallet, or if it
-   reads as a promise, a signal, advice, or a live position. The check does not
-   understand negation on purpose: a sentence that has to say "do not follow" is
-   better rewritten.
+   was traded. It fails closed: the finished text is split into sentences, and
+   the post goes to the owner, not to X, unless every sentence is clearly safe.
+   A sentence is held when it refers to wallets or the people behind them
+   (wallets, traders, addresses, accounts, cohorts, holders, buyers, degens,
+   whales, guys, people, and the pronouns they, them, their, these, those; a
+   sentence directly after such a sentence counts too) and says anything
+   evaluative (smart, elite, legends, incredible, high, worth), comparative or
+   superlative (any -er or -est form, "than"), about performance (print, win, beat,
+   outperform, crush, kill, edge, know) or about attention (watch, eye, radar,
+   bookmark, look, follow, copy, mirror, shadow, tail, ape, "do what"). It is also
+   held when it opens with an instruction to watch, follow or copy, when it
+   addresses the reader ("you", "your") with any of those words, when it carries a
+   wallet address, and when it reads as a promise, a signal, advice, or a live
+   position. Hidden characters are removed before reading. There is no model call
+   and negation is not understood on purpose: a sentence that has to say "do not
+   follow" is better rewritten. False positives are accepted, because a hold costs
+   the owner one look. The study's title is read by the same check, in the idea and
+   in owner chat, and left out when it would be held.
 
 ## Not in this slice
 

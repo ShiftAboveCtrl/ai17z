@@ -143,8 +143,10 @@ export function describeTraderDna(study: TraderDnaStudy, now: Date = new Date())
     `${sentence(b.summary)} (${b.sample_size} observations${b.adjusted_p === null ? '' : `, adjusted p ${b.adjusted_p}`})`;
   const flags = study.contamination_flags.length === 0 ? 'Contamination flags: none raised.' : `Contamination flags: ${study.contamination_flags.map((f) => `${f.code.toLowerCase().replace(/_/g, ' ')} (${sentence(f.note)})`).join(' ')}`;
 
+  // Studio's title is its sentence, not ours: one that would be held in a post is not quoted here either.
+  const named = claimsAboutAWallet(study.title) ? '' : ` "${study.title}"`;
   const parts = [
-    `According to Studio's published study "${study.title}" (${day(study.window.start)} to ${day(study.window.end)}), the findings ${LEVEL_WORDS[study.evidence_level]}.`,
+    `According to Studio's published study${named} (${day(study.window.start)} to ${day(study.window.end)}), the findings ${LEVEL_WORDS[study.evidence_level]}.`,
     `Sample: ${study.sample.wallets} wallets and ${study.sample.trades} trades.`,
     `Assumed costs: ${study.costs.fee_bps} bps in fees and ${study.costs.slippage_bps} bps of slippage.`,
     `Luck filter: Bonferroni over ${study.luck_filters.tests} tests at alpha ${study.luck_filters.alpha}, ${study.luck_filters.survivors} survived.`,
@@ -168,40 +170,107 @@ const CAPABILITY_ID = 'studio.trader_dna';
 const CHECK_EVERY_MS = 6 * 3_600_000;
 
 const WALLET_ADDRESS = /\b0x[0-9a-fA-F]{40}\b|\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
+
 /*
-  A claim about a wallet, in the words people use for one. Deliberately wide:
-  a false positive sends a post to the owner, a false negative puts "this
-  wallet is smart" under the agent's name. Negations are not understood on
-  purpose; a sentence that has to say "do not follow" is better rewritten.
+  Fail closed. A deny-list of phrasings for "this wallet is smart" always has a
+  phrasing it missed, so this works the other way round: a post is sent only
+  when no sentence in it is both about people or wallets and evaluative,
+  comparative, a claim about performance or a call for attention. Everything
+  else goes to the owner. A false positive costs one trip to the owner; a false
+  negative puts "these wallets are legends" under the agent's name.
+
+  The word sets are deliberately broad and not understood in context: negations
+  are not parsed, a sentence that has to say "do not follow" is better rewritten,
+  and "worth" is evaluative whatever follows it.
 */
-const WALLET_NOUN = 'wallets?|traders?|whales?|addresses|cohorts?|snipers?';
-const PRAISE_WORD =
-  'smart|sharp|profitable|genius(?:es)?|elite|good|great|brilliant|clever|savvy|skilled|successful|winning|winners?|reliable|legit|insiders?|alpha|' +
-  'worth (?:(?:a|the) (?:follow|copy|watch)|keeping|following|copying|watching|tracking|mirroring|tailing|backing)';
-const LINKING_VERB = "(?:\\b(?:is|are|was|were|seems?|looks?|proved?|remains?|be|been)\\b|['’](?:s|re)\\b)";
-const WALLET_CLAIM = new RegExp(
-  [
-    // An adjective straight before the noun: "smart wallets", "top-traders".
-    String.raw`\b(?:smart|sharp|alpha|genius|elite|insider|whale|top|best|winning|profitable)[- ](?:${WALLET_NOUN}|money)\b`,
-    // A ranking word with up to two words before the noun: "top 5 wallets", "best performing wallets".
-    String.raw`\b(?:top|best|leading|greatest|finest|biggest)\b(?:\s+[\w#-]+){0,2}\s+(?:${WALLET_NOUN})\b`,
-    // The noun, a linking verb and a praise word: "this wallet is smart", "the wallets in this cohort are geniuses".
-    String.raw`\b(?:${WALLET_NOUN})\b[^.!?\n]{0,40}?${LINKING_VERB}[^.!?\n]{0,25}?\b(?:${PRAISE_WORD})\b`,
-    String.raw`\bsmart money\b`,
-    String.raw`\bworth (?:copying|following|watching|tailing|mirroring|tracking|keeping an eye|(?:a|the) (?:follow|copy|watch))\b`,
-    String.raw`\b(?:copy|follow|mirror|tail|shadow)\b[^.!?\n]{0,40}\b(?:wallets?|traders?|whales?|addresses|them|these|this one|him|her)\b`,
-    String.raw`\b(?:wallets?|traders?|addresses) (?:to|worth) (?:follow|copy|watch|track)\b`,
-    String.raw`\bcopy[- ]?trad(?:e|er|ing)\b`,
-    String.raw`\b(?:watch|track)(?:list)? (?:these|this|that|those) (?:wallets?|traders?|addresses)\b`,
-  ].join('|'),
-  'i',
+const words = (list: string[]) => new RegExp(`\\b(?:${list.join('|')})\\b`, 'i');
+
+/** Who a claim could be about: the nouns for wallets and the people behind them, and the pronouns that stand for them. */
+const SUBJECT = words([
+  'wallets?', 'traders?', 'addresse?s?', 'accounts?', 'cohorts?', 'holders?', 'buyers?', 'sellers?', 'degens?', 'whales?', 'snipers?', 'guys?',
+  'people', 'persons?', 'users?', 'investors?', 'players?', 'bots?', 'participants?', 'insiders?', 'folks', 'profiles?', 'entities', 'operators?',
+  'ones', 'crowd', 'group', 'everyone', 'everybody', 'someone', 'somebody', 'anyone', 'nobody', 'funds?',
+  'them', 'they', 'their', 'theirs', 'themselves', 'these', 'those', 'he', 'she', 'him', 'his', 'her', 'hers', 'himself', 'herself',
+]);
+/** Praise, and its adjectives and slang. */
+const EVALUATIVE = words([
+  'smart\\w*', 'sharp\\w*', 'clever\\w*', 'savvy', 'brilliant\\w*', 'genius\\w*', 'elite', 'expert\\w*', 'pros?', 'legend\\w*', 'beasts?', 'goats?', 'gods?',
+  'kings?', 'masters?', 'wizards?', 'good', 'great', 'best', 'better', 'top', 'high', 'strong\\w*', 'solid', 'incredible', 'amazing', 'insane', 'crazy',
+  'unreal', 'impressive', 'remarkable', 'outstanding', 'exceptional', 'stellar', 'superb', 'awesome', 'fantastic', 'phenomenal', 'unbelievable',
+  'ridiculous', 'absurd', 'wild', 'nuts', 'sick', 'fire', 'hot', 'lucky', 'skill\\w*', 'talent\\w*', 'gifted', 'lucrative', 'rich\\w*', 'wealth\\w*',
+  'success\\w*', 'reliable', 'legit', 'consistent\\w*', 'alpha', 'insider\\w*', 'profitable', 'worth\\w*', 'conviction', 'than',
+]);
+/** What a wallet is said to do well. */
+const PERFORMANCE = words([
+  'print\\w*', 'wins?', 'won', 'winn\\w*', 'winners?', 'beat\\w*', 'outperform\\w*', 'outpac\\w*', 'outsmart\\w*', 'crush\\w*', 'kill\\w*', 'edges?', 'edged',
+  'know\\w*', 'dominat\\w*', 'destroy\\w*', 'cook(?:s|ed|ing)?', 'earn\\w*', 'profit\\w*', 'money', 'front-?run\\w*', 'predict\\w*', 'anticipat\\w*',
+]);
+/** Watching, following and copying, and the words that ask for them. */
+const ATTENTION = words([
+  'watch\\w*', 'eyes?', 'radar', 'bookmark\\w*', 'look\\w*', 'attention', 'follow\\w*', 'copy\\w*', 'copi\\w*', 'mirror\\w*', 'shadow\\w*',
+  'tail(?:s|ed|ing)?', 'ap(?:e|es|ed|ing)', 'track\\w*', 'do what', 'subscrib\\w*', 'tabs', 'monitor\\w*', 'stalk\\w*', 'notice\\w*', 'listen\\w*',
+  'trust\\w*', 'rely', 'relies', 'bet', 'bets', 'betting', 'ride', 'rides', 'riding', 'join\\w*', 'piggyback\\w*', 'emulat\\w*', 'replicat\\w*',
+  'imitat\\w*', 'learn from', 'back(?:s|ed|ing)?', 'pin(?:s|ned|ning)?',
+]);
+/** Said to somebody: "you", "your". */
+const ADDRESSED = /\b(?:you|your|yours|yourself|you['’](?:ll|re|ve|d)|u|ya)\b/i;
+/** A sentence that opens with an instruction to watch, follow or copy. */
+const IMPERATIVE_START =
+  /^[^a-z]*(?:(?:please|just|now|and|so|but|also|then|do)\s+)*(?:watch|keep|put|bookmark|look|follow|copy|mirror|shadow|tail|ape|track|subscribe|monitor|stalk|trust|join|ride|bet|back|emulate|replicate|imitate|pin|add|save|tag|check|remember)\b/i;
+/** Phrases that are a claim or an invitation whoever they are about. */
+const ALWAYS_HELD = /\bsmart[- ]?money\b|\bcopy[- ]?trad|\bsocial trad|\bmirror trad|\bwhale[- ]?watch|\b(?:wallet|address)[- ]?(?:track|watch)/i;
+
+/** Words ending -er or -est that are not comparatives, so a sentence is not held for "over" or "filter". */
+const NOT_COMPARATIVE = new Set(
+  (
+    'over after under other another whether number never ever however whenever wherever whoever whatever either neither together order border water paper ' +
+    'filter cluster trader buyer seller holder sniper owner user worker member offer answer cover power trigger letter matter center centre tier consider ' +
+    'enter deliver discover remember register gather transfer render alter differ suffer wonder bother clutter interest request invest suggest contest ' +
+    'protest arrest harvest digest manifest forest west guest quest bitcoin'
+  ).split(' '),
 );
+const COMPARATIVE_FORM = /\b[a-z]{2,}(?:er|est)\b/gi;
+const hasComparative = (sentence: string) => (sentence.match(COMPARATIVE_FORM) ?? []).some((w) => !NOT_COMPARATIVE.has(w.toLowerCase()));
+
+/** The finished text as sentences, with the characters used to hide a word from a pattern removed. */
+function sentencesOf(text: string): string[] {
+  const plain = text.normalize('NFKC').replace(/\p{Cf}/gu, '');
+  return plain
+    .split(/(?<=[.!?])\s+|[\r\n]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/**
+ * The sentences that cannot go out without the owner. A sentence is held when it
+ * is about wallets or the people behind them (or follows one that was) and says
+ * anything evaluative, comparative, about performance or about attention; when it
+ * tells the reader to watch, follow or copy; or when it carries an address.
+ */
+function sentencesHeld(text: string): string[] {
+  const held: string[] = [];
+  let previousRefers = false;
+  for (const sentence of sentencesOf(text)) {
+    const refers = SUBJECT.test(sentence);
+    const evaluative = EVALUATIVE.test(sentence) || PERFORMANCE.test(sentence) || ATTENTION.test(sentence) || hasComparative(sentence);
+    const claim =
+      WALLET_ADDRESS.test(sentence) ||
+      ALWAYS_HELD.test(sentence) ||
+      IMPERATIVE_START.test(sentence) ||
+      ((refers || previousRefers) && evaluative) ||
+      (ADDRESSED.test(sentence) && evaluative);
+    if (claim) held.push(sentence);
+    previousRefers = refers;
+  }
+  return held;
+}
+
 const SAYS_NOTHING_TRADED =
   /\b(nothing|none of (it|this)) (was|has been|is|were) (traded|bought|sold)\b|\bnever traded\b|\bno (trades|positions?) (were|was|are|is) (made|placed|taken|open)\b/i;
 
-/** True when a sentence the study published already makes a claim about a wallet. */
+/** True when a sentence the study published could not go into a post without the owner. */
 function claimsAboutAWallet(text: string): boolean {
-  return WALLET_ADDRESS.test(text) || WALLET_CLAIM.test(text);
+  return sentencesHeld(text).length > 0;
 }
 
 export interface TraderDnaIdea {
@@ -335,7 +404,12 @@ export function checkTraderDnaText(text: string): string[] {
   if (!/\bstudio\b/i.test(text)) problems.push('It does not attribute the study to AI17Z Studio.');
   if (!SAYS_NOTHING_TRADED.test(text)) problems.push('It does not say that nothing was traded.');
   if (WALLET_ADDRESS.test(text)) problems.push('It contains a wallet address.');
-  if (WALLET_CLAIM.test(text)) problems.push('It makes a claim about a wallet or a trader, such as that one is smart or worth copying.');
+  const held = sentencesHeld(text).filter((sentence) => !WALLET_ADDRESS.test(sentence));
+  if (held.length > 0) {
+    problems.push(
+      `It makes, or may make, a claim about a wallet or a trader (praise, a comparison, how well it does, or a call to watch, follow or copy it): "${held[0]!.slice(0, 120)}".`,
+    );
+  }
   if (FORWARD_LOOKING.test(text)) problems.push('It reads as a promise, a signal or advice about what comes next.');
   if (LIVE_OR_REAL.test(text)) problems.push('It implies a live position or real money.');
   return problems;
