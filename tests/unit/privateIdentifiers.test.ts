@@ -482,7 +482,7 @@ describe('the release step', () => {
       });
       expect(result.status).toBe(1);
       expect(result.stdout).toContain('unpacked 2 files; innoextract warned 1 times');
-      expect(result.stdout).toContain('REFUSED: innoextract warned 1 times and the installer holds 1 files the application zip does not');
+      expect(result.stdout).toContain('REFUSED: innoextract warned 1 times and the installer holds 1 files that are neither in the application zip nor byte for byte copies of one');
       expect(leaks(result.stdout)).toBe(false);
     } finally {
       rmSync(repo, { recursive: true, force: true });
@@ -518,8 +518,84 @@ describe('the release step', () => {
       });
       expect(result.status).toBe(1);
       expect(result.stdout).toContain('unpacked 2 files; innoextract warned 1 times');
-      expect(result.stdout).toContain('REFUSED: innoextract warned 1 times and the installer holds 1 files the application zip does not');
+      expect(result.stdout).toContain('REFUSED: innoextract warned 1 times and the installer holds 1 files that are neither in the application zip nor byte for byte copies of one');
       expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!bash || !python)('passes when innoextract warns but every installer-only file is a byte for byte copy of a zip file, and still scans them', () => {
+    const repo = releaseRepo('none');
+    const dir = mkdtempSync(join(tmpdir(), 'private-ids-ino-copy-'));
+    try {
+      // The real shape of Beta 0.91: Inno Setup follows a workspace symlink the
+      // zip skips, so the installer holds node_modules/@scope/pkg/index.js as a
+      // second copy of packages/pkg/index.js, and innoextract warns on every file.
+      const zip = join(dir, 'AI17Z-App-1.zip');
+      pythonWrites(
+        [
+          'import sys, zipfile',
+          'z = zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED)',
+          'z.writestr("packages/pkg/index.js", "export const x = 1;\\n")',
+          'z.writestr("a.txt", "top file\\n")',
+          'z.close()',
+        ].join('\n'),
+        zip,
+      );
+      const exe = join(dir, 'AI17Z-Setup-1.exe');
+      writeFileSync(exe, 'MZ placeholder\n');
+      const bin = mkdtempSync(join(tmpdir(), 'private-ids-ino-copy-bin-'));
+      writeFileSync(
+        join(bin, 'innoextract'),
+        [
+          '#!/bin/sh',
+          'mkdir -p "$2/app/packages/pkg" "$2/app/node_modules/@scope/pkg"',
+          "printf 'top file\\n' > \"$2/app/a.txt\"",
+          "printf 'export const x = 1;\\n' > \"$2/app/packages/pkg/index.js\"",
+          "printf 'export const x = 1;\\n' > \"$2/app/node_modules/@scope/pkg/index.js\"",
+          'echo "Warning: Could not read back a file to calculate output checksum for multi-part file" >&2',
+          'exit 0',
+        ].join('\n'),
+        { mode: 0o755 },
+      );
+      python3Shim(bin);
+      const sep = process.platform === 'win32' ? ';' : ':';
+      const result = spawnSync(bash!, [join(repo, 'ci/scripts/private-identifiers.sh'), 'files', zip, exe], {
+        encoding: 'utf8',
+        cwd: repo,
+        env: { ...process.env, PRIVATE_IDENTIFIERS: LIST, GITHUB_REF_NAME: '', PATH: `${bin}${sep}${process.env.PATH ?? ''}` },
+      });
+      expect(result.stdout).toContain('unpacked 3 files; innoextract warned 1 times');
+      expect(result.stdout).toContain('installer-only: 1; copies of zip files: 1; unproven: 0');
+      expect(result.stdout).not.toContain('REFUSED');
+      expect(result.status).toBe(0);
+      expect(leaks(result.stdout)).toBe(false);
+
+      // The copy is still scanned as content: an identifier in a copy-shaped
+      // file that differs from the zip is not a copy, so it refuses as unproven.
+      writeFileSync(
+        join(bin, 'innoextract'),
+        [
+          '#!/bin/sh',
+          'mkdir -p "$2/app/packages/pkg" "$2/app/node_modules/@scope/pkg"',
+          "printf 'top file\\n' > \"$2/app/a.txt\"",
+          "printf 'export const x = 1;\\n' > \"$2/app/packages/pkg/index.js\"",
+          "printf 'export const x = 2;\\n' > \"$2/app/node_modules/@scope/pkg/index.js\"",
+          'echo "Warning: Could not read back a file to calculate output checksum for multi-part file" >&2',
+          'exit 0',
+        ].join('\n'),
+        { mode: 0o755 },
+      );
+      const changed = spawnSync(bash!, [join(repo, 'ci/scripts/private-identifiers.sh'), 'files', zip, exe], {
+        encoding: 'utf8',
+        cwd: repo,
+        env: { ...process.env, PRIVATE_IDENTIFIERS: LIST, GITHUB_REF_NAME: '', PATH: `${bin}${sep}${process.env.PATH ?? ''}` },
+      });
+      expect(changed.status).toBe(1);
+      expect(changed.stdout).toContain('installer-only: 1; copies of zip files: 0; unproven: 1');
+      expect(changed.stdout).toContain('REFUSED: innoextract warned 1 times and the installer holds 1 files that are neither');
     } finally {
       rmSync(repo, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });

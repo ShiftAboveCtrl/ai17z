@@ -198,6 +198,32 @@ describe('installer_matches_zip.py', () => {
       const result = spawnSync(python!, [script, zip, app], { encoding: 'utf8' });
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain('installer-only: 1');
+      expect(result.stdout).toContain('copies of zip files: 0; unproven: 1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!python)('proves an installer-only file that is a byte for byte copy of a zip file, anywhere in the output', () => {
+    const dir = room();
+    try {
+      const zip = join(dir, 'app.zip');
+      const whole = join(dir, 'out');
+      const app = join(whole, 'app');
+      mkdirSync(join(app, 'sub'), { recursive: true });
+      mkdirSync(join(app, 'linked', 'deep'), { recursive: true });
+      writeFileSync(join(app, 'a.txt'), 'top file\n');
+      writeFileSync(join(app, 'sub', 'a.txt'), 'dir file\n');
+      // Inno Setup follows a symlink the zip skipped: a second copy of a zip file.
+      writeFileSync(join(app, 'linked', 'deep', 'copy.txt'), 'dir file\n');
+      // Outside app/ as well, and one that is nobody's copy.
+      writeFileSync(join(whole, 'launcher.cmd'), 'top file\n');
+      writeFileSync(join(whole, 'stranger.txt'), 'in neither\n');
+      py(zipScript, zip, 'a.txt', 'top file\n');
+      const result = spawnSync(python!, [script, zip, app, whole], { encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('installer-only: 3; copies of zip files: 2; unproven: 1');
+      expect(leaks(result.stdout)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
