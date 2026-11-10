@@ -4,6 +4,8 @@ import { ApiError, artifactObjectUrl, del, get, patch, post, put } from '@app/li
 import { useElapsed, useResource } from '@app/lib/hooks';
 import type { AccountRow, BrowserTask, DiagnosticRow } from '@app/lib/types';
 import { humanStatus, timeAgo, toneFor } from '@app/lib/format';
+import { describeSignIn } from '@xbam/shared/contracts';
+import { BlueskyConnect } from './BlueskyConnect';
 import { CadencePanel } from './CadencePanel';
 import { SignInProgress } from './SignInProgress';
 import { RadarPanel } from './RadarPanel';
@@ -151,6 +153,7 @@ export function SessionPanel({
   if (!data) return null;
 
   const browserBacked = data.account.channel === 'x';
+  const isBluesky = data.account.channel === 'bluesky';
 
   return (
     <div className="space-y-7">
@@ -163,7 +166,7 @@ export function SessionPanel({
             checked {timeAgo(data.account.lastHealthCheckAt)}
           </span>
         </div>
-        {data.account.lastHealthStatus && (
+        {data.account.lastHealthStatus && !(isBluesky && data.account.status === 'CONNECTED') && (
           <p className="mt-3 break-words text-sm leading-relaxed text-bone-dim">{data.account.lastHealthStatus}</p>
         )}
       </div>
@@ -174,7 +177,15 @@ export function SessionPanel({
         identity evidence, the radar and the cadence — four panels of reading
         before the thing you came for.
       */}
-      {browserBacked ? (
+      {isBluesky ? (
+        <BlueskySignIn
+          account={data.account}
+          onChanged={() => {
+            reload();
+            onChanged();
+          }}
+        />
+      ) : browserBacked ? (
         <div className="flex flex-wrap gap-2">
           {ACTIONS.map(({ kind, label, icon: Icon }) => (
             <button
@@ -225,7 +236,12 @@ export function SessionPanel({
         </div>
       )}
 
-      {browserBacked && <CadencePanel accountId={accountId} />}
+      {/*
+        Cadence is per account and the same engine for any channel, so it is
+        shown for Bluesky too. The browser, identity and radar panels above are
+        not: there is no browser, and the radar's sources read X.
+      */}
+      {(browserBacked || isBluesky) && <CadencePanel accountId={accountId} />}
 
       {browserBacked && workers.data && !workers.data.browserWorkerPresent && (
         <div className="rounded-lg border border-signal-wait/40 bg-signal-wait/[0.06] px-3.5 py-3">
@@ -733,6 +749,64 @@ function IdRow({ term, value, mono }: { term: string; value: string; mono?: bool
     <div className="grid gap-0.5 sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-3">
       <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-bone-faint">{term}</dt>
       <dd className={`break-words text-xs text-bone-dim ${mono ? 'font-mono' : ''}`}>{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * A Bluesky account's sign-in, in plain words.
+ *
+ * There is no window to open and nothing to capture, so none of X's buttons
+ * apply. What there is: whether the app password still works, what to do if it
+ * does not, and the same form that linked the account, which is also how it is
+ * fixed. The sentences come from `describeSignIn`, the one place the start
+ * check, the Health screen and the owner notification get theirs, so the three
+ * cannot give a person three different fixes.
+ */
+function BlueskySignIn({ account, onChanged }: { account: AccountRow; onChanged: () => void }) {
+  const [changing, setChanging] = useState(false);
+  const explanation = describeSignIn(account.channel, account.status);
+  const needsYou = account.status !== 'CONNECTED';
+  const server = (account.settings.bluesky as { serviceUrl?: string } | undefined)?.serviceUrl ?? null;
+
+  return (
+    <div className="space-y-5">
+      {needsYou ? (
+        <div role="status" className="rounded-lg border border-signal-wait/40 bg-signal-wait/[0.06] px-4 py-4">
+          <p className="text-sm text-bone">{explanation?.what ?? 'This account is not signed in.'}</p>
+          <p className="mt-1.5 break-words text-[13px] leading-relaxed text-bone-dim">
+            {explanation?.fix ?? 'Store an app password for it to connect.'}
+          </p>
+        </div>
+      ) : (
+        <p className="rounded-lg border border-ink-line bg-ink-panel px-4 py-3 text-sm text-bone-dim">
+          Signed in with an app password. There is no browser involved: AI17Z talks to Bluesky directly, and the
+          password is stored sealed and is never shown.
+          {server && (
+            <span className="mt-1 block break-all font-mono text-[11px] text-bone-faint">Server {server}</span>
+          )}
+        </p>
+      )}
+
+      {changing || needsYou ? (
+        <div className="space-y-4">
+          <p className="eyebrow">{needsYou ? 'Store a new app password' : 'Replace the app password'}</p>
+          <BlueskyConnect
+            initialIdentifier={account.handle}
+            lockIdentifier
+            submitLabel="Check and store"
+            onConnected={() => {
+              setChanging(false);
+              onChanged();
+            }}
+          />
+        </div>
+      ) : (
+        <button type="button" className="btn-ghost" onClick={() => setChanging(true)}>
+          <KeyRound className="h-3.5 w-3.5" aria-hidden />
+          Replace the app password
+        </button>
+      )}
     </div>
   );
 }

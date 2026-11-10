@@ -7,13 +7,15 @@ import {
   browserTasks,
   ops,
   radar as radarRepo,
+  signals,
   workers as workersRepo,
   type UserRow,
 } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { DEFAULT_X_RADAR } from '@xbam/runtime';
-import { RadarSourceConfig, RadarSourceKind, RADAR_KINDS_NEEDING_TARGET } from '@xbam/shared/contracts';
+import { RadarSourceConfig, RadarSourceKind, RADAR_KINDS_NEEDING_TARGET, SignalUniverse } from '@xbam/shared/contracts';
 import { handler, params, parseBody, requireUser } from '../http';
+import { radarSourceView, refuseLinkedSourceChange } from './radarView';
 
 async function ownedAccount(accountId: string, user: UserRow) {
   const account = await accountsRepo.getAccount(accountId);
@@ -250,8 +252,11 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       const account = await ownedAccount(params(request).id!, user);
       const adapter = getChannelAdapter(account.channel);
       return {
-        supported: adapter.radarSourceKinds ?? [],
-        sources: await radarRepo.listSources(account.id),
+        supported: [...(adapter.radarSourceKinds ?? []), 'market_signal'],
+        // Provenance is computed here, not guessed from the label by the screen,
+        // and linked sources keep their binding, watch and pin ids to themselves.
+        sources: (await radarRepo.listSources(account.id)).map(radarSourceView),
+        signals: await signals.forAccount(account.id),
       };
     }),
   );
@@ -267,14 +272,22 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
           target: z.string().max(300).nullable().default(null),
           label: z.string().max(120).default(''),
           enabled: z.boolean().default(true),
-          config: RadarSourceConfig.partial().prefault({}),
+          // The link markers are written by their own syncs only, so an owner cannot forge one.
+          config: RadarSourceConfig.partial().extend({ mayTrigger: z.boolean().optional(), studioRisk: z.never().optional(), playbookAgentId: z.never().optional(), playbookPinId: z.never().optional() }).prefault({}),
         }),
         request,
       );
 
       const adapter = getChannelAdapter(account.channel);
-      if (!(adapter.radarSourceKinds ?? []).includes(body.kind)) {
+      if (body.kind !== 'market_signal' && !(adapter.radarSourceKinds ?? []).includes(body.kind)) {
         throw new BadRequestError(`The ${adapter.displayName} channel has no ${body.kind} monitor.`);
+      }
+      if (body.kind === 'market_signal') {
+        const universe = SignalUniverse.safeParse(body.config.watches);
+        if (!universe.success) throw new BadRequestError(universe.error.issues.map(i => i.message).join(' '));
+        body.target = null;
+        body.config.mayTrigger ??= false;
+        body.config.intervalSeconds = Math.max(300, body.config.intervalSeconds ?? 300);
       }
       if (RADAR_KINDS_NEEDING_TARGET.includes(body.kind) && !body.target?.trim()) {
         throw new BadRequestError(
@@ -284,10 +297,15 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         );
       }
 
+      // Saving over a linked source would switch it off or rewrite it until the next sync undid that.
+      const target = body.target?.trim() || null;
+      const existing = (await radarRepo.listSources(account.id)).find((s) => s.kind === body.kind && s.target === target);
+      if (existing) await refuseLinkedSourceChange(existing, 'save');
+
       const source = await radarRepo.upsertSource({
         accountId: account.id,
         kind: body.kind,
-        target: body.target?.trim() || null,
+        target,
         label: body.label,
         enabled: body.enabled,
         config: body.config,
@@ -299,7 +317,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         entityId: account.id,
         data: { kind: body.kind, target: source.target },
       });
-      return source;
+      return radarSourceView(source);
     }),
   );
 
@@ -325,7 +343,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
           }),
         );
       }
-      return { sources: created };
+      return { sources: created.map(radarSourceView) };
     }),
   );
 
@@ -371,6 +389,8 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       const account = await ownedAccount(params(request).id!, user);
       const source = await radarRepo.getSource(params(request).sourceId!);
       if (!source || source.accountId !== account.id) throw new NotFoundError('Radar source');
+      // While a sync can still recreate it a delete would only look like it worked.
+      await refuseLinkedSourceChange(source, 'delete');
       await radarRepo.deleteSource(source.id);
       return { deleted: true };
     }),

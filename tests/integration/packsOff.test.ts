@@ -48,6 +48,8 @@ function registerEverything(): void {
   // Every pack has to have its members, or turning it off reports an empty pack.
   runtime.registerManagementCapabilities();
   runtime.registerWalletCapabilities();
+  runtime.registerPaperCapabilities();
+  runtime.registerStudioLeagueCapabilities();
   // The upstream registry refuses a second registration of the same id, so it
   // is cleared first: this runs before every case and the registry is
   // process-wide.
@@ -70,6 +72,11 @@ function registerEverything(): void {
   upstream.registerEntityUpstreams();
   upstream.registerSecUpstreams();
   runtime.registerXCapabilities();
+  runtime.registerTelegramCapabilities();
+  runtime.registerFarcasterCapabilities();
+  // Bluesky's pack, for the same reason: a pack with no registered members makes
+  // setToolpack refuse, and a Bluesky capability must be switched off with the rest.
+  runtime.registerBlueskyCapabilities();
   // The projects pack, whose capabilities are registered from the runtime for
   // the same reason X's are: they need the agent row to know whose watches they
   // may read. A pack with no registered members makes setToolpack refuse, which
@@ -91,6 +98,8 @@ function registerEverything(): void {
   runtime.registerScholarCapabilities();
   runtime.registerEntityCapabilities();
   runtime.registerSecCapabilities();
+  runtime.registerStudioPaperCapabilities();
+  runtime.registerStudioVoiceCapabilities();
 }
 
 /**

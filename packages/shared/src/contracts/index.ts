@@ -3,6 +3,7 @@
  * node built-ins, no database, no filesystem. The web app aliases this path.
  */
 export * from './enums';
+export * from './farcaster';
 export * from './persona';
 export * from './policy';
 export * from './cadence';
@@ -30,10 +31,21 @@ export * from './readiness';
 export * from './modelRoleStatus';
 export * from './capabilities';
 export * from './xDomain';
+export * from './blueskyDomain';
+export * from './signIn';
 export * from './research';
 export * from './wallet';
 export * from './trading';
+export * from './studioLeague';
+export * from './playbook';
 export * from './hosting';
 export * from './confidential';
 export * from './knowledgeCollections';
 export * from './foundry';
+export * from './telegramChannel';
+export * from './studioPaperRecord';
+export * from './studioTraderDna';
+export * from './studioVoice';
+export * from './devUpdatesInstall';
+export * from './studioActivityTape';
+export * from './studioRisk';

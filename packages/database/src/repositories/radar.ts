@@ -1,4 +1,5 @@
-import type { RadarSourceConfig, RadarSourceKind, RadarStatus } from '@xbam/shared/contracts';
+import { radarSourceProvenance, type RadarSourceConfig, type RadarSourceKind, type RadarStatus } from '@xbam/shared/contracts';
+import { signalWatchKey } from '@xbam/shared';
 import { mapRow, mapRows } from '../mapper';
 import { query, queryOne } from '../pool';
 
@@ -70,11 +71,69 @@ export async function upsertSource(input: {
       JSON.stringify(input.config ?? {}),
     ],
   );
-  return mapRow<RadarSourceRow>(row) as RadarSourceRow;
+  const source = mapRow<RadarSourceRow>(row) as RadarSourceRow;
+  // A pin removed from a market source leaves its baseline behind, so re-adding
+  // the same pin later would resume from a stale state. The watch list is saved
+  // whole rather than merged, so anything not in the new set can be dropped now.
+  if (input.kind === 'market_signal' && Array.isArray(input.config?.watches)) {
+    const keys = input.config.watches.map(signalWatchKey);
+    await query(
+      `DELETE FROM signal_baselines WHERE source_id = $1 AND NOT (watch_key = ANY($2::text[]))`,
+      [source.id, keys],
+    );
+  }
+  return source;
 }
 
 export async function deleteSource(id: string): Promise<void> {
   await query('DELETE FROM radar_sources WHERE id = $1', [id]);
+}
+
+/**
+ * Whether a sync that is still running could switch a linked source back on.
+ *
+ * This decides if deleting one is an honest button or a lie that lasts until
+ * the next tick. The syncs disable a source and keep its marker when the thing
+ * behind it goes away (the Studio watch is removed, the Studio switch is off,
+ * the link failed, the playbook pin is retired, the account link is gone), and
+ * a source in that state has nothing left that could recreate it. Refusing to
+ * delete it then only leaves a dead row nobody can clear.
+ *
+ * The rules mirror the two syncs and have to move with them:
+ * `syncStudioRiskWatches` and `syncRadarSources`.
+ *
+ * - Studio: the binding is on, the agent is still linked to the account, and
+ *   either the source is enabled or the binding has not been settled by a
+ *   sync. A binding whose last sync succeeded and has not expired has already
+ *   said whether the watch is listed, so a source it left disabled is one
+ *   Studio no longer lists. A suspension (`last_error`) or a fresh enable
+ *   (`expires_at` cleared) has not said, and the next sync can switch it on.
+ * - Playbook: the agent still has an unretired pin whose mandate is unretired
+ *   and an enabled link to this account.
+ */
+export async function linkedSourceCanReturn(source: Pick<RadarSourceRow, 'accountId' | 'enabled' | 'config'>): Promise<boolean> {
+  switch (radarSourceProvenance(source.config)) {
+    case 'STUDIO_RISK_WATCH': {
+      const bindingId = source.config.studioRisk?.bindingId;
+      if (!bindingId) return false;
+      return !!(await queryOne(
+        `SELECT 1 FROM studio_risk_bindings b
+          WHERE b.id::text = $1 AND b.account_id = $2 AND b.enabled
+            AND EXISTS (SELECT 1 FROM agent_accounts aa WHERE aa.agent_id = b.agent_id AND aa.account_id = b.account_id AND aa.enabled)
+            AND ($3::boolean OR b.last_error IS NOT NULL OR b.expires_at IS NULL OR b.expires_at <= now())`,
+        [bindingId, source.accountId, source.enabled],
+      ));
+    }
+    case 'PLAYBOOK':
+      return !!(await queryOne(
+        `SELECT 1 FROM agent_playbooks p JOIN trade_mandates m ON m.id = p.mandate_id AND m.retired_at IS NULL
+           JOIN agent_accounts aa ON aa.agent_id = p.agent_id AND aa.account_id = $2 AND aa.enabled
+          WHERE p.retired_at IS NULL AND p.agent_id::text = $1`,
+        [String(source.config.playbookAgentId), source.accountId],
+      ));
+    default:
+      return false;
+  }
 }
 
 /**
@@ -139,12 +198,12 @@ export async function claimDueSources(limit: number, holdSeconds: number): Promi
  * failure nor a quiet feed, and recording it as either would be a claim about
  * X that nobody checked. Only when it is next due, and why, change.
  */
-export async function deferPoll(sourceId: string, nextPollAt: Date, reason: string): Promise<void> {
+export async function deferPoll(sourceId: string, nextPollAt: Date, reason: string, cursor?: string): Promise<void> {
   await query(
     `UPDATE radar_sources
-        SET next_poll_at = $2, idle_reason = $3, updated_at = now()
+        SET next_poll_at = $2, idle_reason = $3, cursor = coalesce($4, cursor), updated_at = now()
       WHERE id = $1`,
-    [sourceId, nextPollAt, reason.slice(0, 500)],
+    [sourceId, nextPollAt, reason.slice(0, 500), cursor ?? null],
   );
 }
 

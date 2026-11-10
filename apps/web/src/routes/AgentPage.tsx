@@ -24,6 +24,7 @@ import { LearnedSection } from './sections/LearnedSection';
 import { RelationshipsSection } from './sections/RelationshipsSection';
 import { BeliefsSection } from './sections/BeliefsSection';
 import { VoiceSection } from './sections/VoiceSection';
+import { StudioVoiceSection } from './sections/StudioVoiceSection';
 import { BehaviourSection } from './sections/BehaviourSection';
 import { AutonomySection } from './sections/AutonomySection';
 import { PipelineSection } from './sections/PipelineSection';
@@ -59,7 +60,7 @@ const AgentPortrait = lazy(() => import('@app/components/AgentPortrait').then((m
  */
 const AREAS = [
   { id: 'overview', label: 'Overview', blurb: 'How it is doing, and anything that needs you.', sections: ['activity', 'changes'] },
-  { id: 'character', label: 'Character', blurb: 'Who it is, and how it writes.', sections: ['identity', 'voice', 'beliefs'] },
+  { id: 'character', label: 'Character', blurb: 'Who it is, and how it writes.', sections: ['identity', 'voice', 'publish-voice', 'beliefs'] },
   { id: 'reach', label: 'Reach', blurb: 'Where it speaks, what it thinks with, what it can use.', sections: ['accounts', 'intelligence', 'capabilities', 'tools', 'wallet', 'shadows'] },
   { id: 'memory', label: 'Memory', blurb: 'What it knows, and who it knows.', sections: ['memory', 'knowledge', 'relationships', 'learned'] },
   { id: 'behaviour', label: 'Behaviour', blurb: 'What it does on its own, and what it is allowed to do.', sections: ['content', 'behaviour', 'autonomy', 'policies', 'pipeline'] },
@@ -510,7 +511,8 @@ export function AgentPage() {
               onSaved={reload}
             />
             <VoiceSection index={2} agentId={agent.id} />
-            <BeliefsSection index={3} agentId={agent.id} />
+            <StudioVoiceSection index={3} agentId={agent.id} agentName={agent.name} />
+            <BeliefsSection index={4} agentId={agent.id} />
           </>
         )}
 

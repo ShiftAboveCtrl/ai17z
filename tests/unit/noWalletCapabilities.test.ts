@@ -2,7 +2,16 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listCapabilities, registerBuiltinCapabilities, resetCapabilitiesForTest } from '@xbam/tools';
-import { NEVER_MODEL_CALLABLE, capabilityCrossesTheLine, registerManagementCapabilities, registerWalletCapabilities } from '@xbam/runtime';
+import {
+  NEVER_MODEL_CALLABLE,
+  capabilityCrossesTheLine,
+  registerManagementCapabilities,
+  registerStudioPaperCapabilities,
+  registerStudioTraderDnaCapabilities,
+  registerPaperCapabilities,
+  registerStudioLeagueCapabilities,
+  registerWalletCapabilities,
+} from '@xbam/runtime';
 
 /**
  * Paying for something is the owner's act, never the agent's.
@@ -32,6 +41,10 @@ function registerAll() {
   registerBuiltinCapabilities();
   registerManagementCapabilities();
   registerWalletCapabilities();
+  registerPaperCapabilities();
+  registerStudioPaperCapabilities();
+  registerStudioTraderDnaCapabilities();
+  registerStudioLeagueCapabilities();
 }
 
 describe('no capability can move money', () => {
@@ -55,6 +68,55 @@ describe('no capability can move money', () => {
     }
   });
 
+  it('the Studio paper record is one read, off until the owner enables it, owner only, and reaches no money path', () => {
+    registerAll();
+    const studio = listCapabilities().filter((c) => c.id.startsWith('studio.'));
+    // Exactly one, shaped like the wallet reads. Growing this list is a
+    // decision about effect, audience and default, made here.
+    expect(studio.map((c) => c.id).sort()).toEqual(['studio.paper_record', 'studio.trader_dna']);
+    const record = studio.find((c) => c.id === 'studio.paper_record')!;
+    expect(record.effect).toBe('READ');
+    expect(record.risk).toBe('LOW');
+    expect(record.unsetPermission).toBe('DISABLED');
+    expect(record.audience).toBe('OWNER');
+    expect(record.modelCallable).toBe(true);
+
+    const text = readFileSync(join(__dirname, '..', '..', 'packages', 'runtime', 'src', 'studioPaperCapabilities.ts'), 'utf8');
+    expect(text).not.toMatch(/prepareMarketplacePurchase|prepareStudioPurchase|studioLiveTrade|studioWallet|walletCore|\.sign\(|\.broadcast\(/);
+  });
+
+  it('the Trader DNA study is one read, off until the owner enables it, owner only, and has no follow, watch, import or order verb', () => {
+    registerAll();
+    const dna = listCapabilities().filter((c) => /dna|study|smart|follow|watch|copy/i.test(c.id));
+    // Exactly one. Following a wallet, importing one as a setup, creating a
+    // mandate or an order are not capabilities at all, and this list growing is
+    // a decision about effect, audience and default, made here.
+    expect(dna.map((c) => c.id)).toEqual(['studio.trader_dna']);
+    const study = dna[0]!;
+    expect(study.effect).toBe('READ');
+    expect(study.risk).toBe('LOW');
+    expect(study.unsetPermission).toBe('DISABLED');
+    expect(study.audience).toBe('OWNER');
+    for (const verb of ['follow', 'watch', 'copy', 'import_wallet', 'add_wallet', 'create_mandate', 'place_order']) {
+      expect(listCapabilities().map((c) => c.id)).not.toContain(`studio.${verb}`);
+    }
+  });
+
+  it('the league standing is one read, off until the owner enables it, owner only, and posts nothing', () => {
+    registerAll();
+    const league = listCapabilities().filter((c) => c.id.startsWith('league.'));
+    // Exactly one. Entering a season and reporting fills are not capabilities at
+    // all: they are the owner's act and the worker's sweep. Growing this list is
+    // a decision about effect, audience and default, made here.
+    expect(league.map((c) => c.id)).toEqual(['league.standing']);
+    const standing = league[0]!;
+    expect(standing.effect).toBe('READ');
+    expect(standing.risk).toBe('LOW');
+    expect(standing.unsetPermission).toBe('DISABLED');
+    expect(standing.audience).toBe('OWNER');
+    expect(standing.modelCallable).toBe(true);
+  });
+
   it('keeps the purchase builder and the wallet submit path out of the capability layer', () => {
     const root = join(__dirname, '..', '..', 'packages');
     const reachable = [
@@ -62,6 +124,14 @@ describe('no capability can move money', () => {
       join(root, 'runtime', 'src', 'pluginCapabilities.ts'),
       join(root, 'runtime', 'src', 'capabilityLoop.ts'),
       join(root, 'runtime', 'src', 'walletCapabilities.ts'),
+      join(root, 'runtime', 'src', 'paperCapabilities.ts'),
+      join(root, 'runtime', 'src', 'paperTrading.ts'),
+      join(root, 'runtime', 'src', 'studioPaperCapabilities.ts'),
+      join(root, 'runtime', 'src', 'studioTraderDna.ts'),
+      join(root, 'runtime', 'src', 'studioTraderDnaCapabilities.ts'),
+      join(root, 'runtime', 'src', 'studioLeagueCapabilities.ts'),
+      join(root, 'runtime', 'src', 'studioLeague.ts'),
+      join(root, 'runtime', 'src', 'leagueSeason.ts'),
       join(root, 'runtime', 'src', 'managementCapabilities.ts'),
     ];
     for (const file of reachable) {

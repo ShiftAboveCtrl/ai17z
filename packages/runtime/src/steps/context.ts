@@ -26,7 +26,7 @@ import { resolveMedia } from '../mediaResolve';
 import type { JobBundle } from '../loadJob';
 
 import { adapterContext } from '../channelContext';
-import { capacityClassForEvent, checkReadCapacity, noteXFailure, noteXRead } from '../capacity';
+import { capacityClassForEvent, checkReadCapacity, noteXFailure, noteXRead, spendsReadBudget } from '../capacity';
 
 /**
  * Working out what arrived, and what the agent already knows about it.
@@ -125,7 +125,8 @@ async function bindToThread(bundle: JobBundle, resolved: ResolvedContext): Promi
 export async function stepResolveContext(bundle: JobBundle): Promise<void> {
   const adapter = getChannelAdapter(bundle.job.channel);
   const ctx = await adapterContext(bundle);
-  const readsX = bundle.job.actionType !== 'POST' && bundle.job.channel === 'x' && Boolean(bundle.job.accountId);
+  const readsX =
+    bundle.job.actionType !== 'POST' && spendsReadBudget(bundle.job.channel) && Boolean(bundle.job.accountId);
   const klass = capacityClassForEvent(bundle.event.type);
 
   /*

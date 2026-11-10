@@ -27,7 +27,7 @@ import type {
   TradeSide,
   TradeVenue,
 } from '@xbam/shared/contracts';
-import { getPool, query, queryOne } from '../pool';
+import { getPool, query, queryOne, type Tx } from '../pool';
 import { mapRow, mapRows } from '../mapper';
 
 export interface TradeMandateRow {
@@ -114,15 +114,22 @@ export interface TradePauseRow {
  * schema are paper, owner-approved and unpaused, and nothing here overrides
  * them silently: a caller that wants live has to say so.
  */
-export async function putMandate(input: {
-  agentId: string;
-  ownerId: string | null;
-  mandate: Omit<TradeMandate, 'id' | 'agentId'>;
-}): Promise<TradeMandateRow> {
+export async function putMandate(
+  input: {
+    agentId: string;
+    ownerId: string | null;
+    mandate: Omit<TradeMandate, 'id' | 'agentId'>;
+  },
+  /** Passed by a caller that writes more than the mandate in one transaction, where a pooled query is refused. */
+  tx?: Tx,
+): Promise<TradeMandateRow> {
   const m = input.mandate;
-  await query(`UPDATE trade_mandates SET retired_at = now() WHERE agent_id = $1 AND retired_at IS NULL`, [input.agentId]);
+  const retire = `UPDATE trade_mandates SET retired_at = now() WHERE agent_id = $1 AND retired_at IS NULL`;
+  if (tx) await tx.query(retire, [input.agentId]);
+  else await query(retire, [input.agentId]);
+  const insert = tx ? tx.one.bind(tx) : queryOne;
   return mapRow<TradeMandateRow>(
-    await queryOne(
+    await insert(
       `INSERT INTO trade_mandates (
          agent_id, owner_id, mode, approval, venues, networks, allowed_assets,
          max_per_trade, max_per_day, max_open_exposure, max_open_positions,
@@ -423,6 +430,8 @@ export interface PaperFillRow {
   inBase: string;
   outBase: string;
   at: string;
+  /** The fill transition's timestamp, for daily limits across midnight. */
+  recordedAt: string;
 }
 
 /**
@@ -432,11 +441,11 @@ export interface PaperFillRow {
  * any agent that has made more.
  */
 export async function paperFillsOf(agentId: string): Promise<PaperFillRow[]> {
-  const rows = mapRows<{ id: string; side: TradeSide; assetIn: AssetRef; assetOut: AssetRef; postcondition: Record<string, unknown> | null; createdAt: string }>(
+  const rows = mapRows<{ id: string; side: TradeSide; assetIn: AssetRef; assetOut: AssetRef; postcondition: Record<string, unknown> | null; createdAt: string; updatedAt: string }>(
     await query(
-      `SELECT id, side, asset_in, asset_out, postcondition, created_at FROM trade_intents
+      `SELECT id, side, asset_in, asset_out, postcondition, created_at, updated_at FROM trade_intents
          WHERE agent_id = $1 AND mode = 'PAPER' AND status = 'PAPER_FILLED'
-         ORDER BY created_at ASC`,
+         ORDER BY updated_at ASC`,
       [agentId],
     ),
   );
@@ -447,7 +456,7 @@ export async function paperFillsOf(agentId: string): Promise<PaperFillRow[]> {
     // A fill without its amounts cannot be counted; leaving it out is safer
     // than counting it as zero, which would read as a free trade.
     if (typeof inBase !== 'string' || typeof outBase !== 'string' || !/^[0-9]+$/.test(inBase) || !/^[0-9]+$/.test(outBase)) continue;
-    fills.push({ intentId: r.id, side: r.side, assetIn: r.assetIn, assetOut: r.assetOut, inBase, outBase, at: r.createdAt });
+    fills.push({ intentId: r.id, side: r.side, assetIn: r.assetIn, assetOut: r.assetOut, inBase, outBase, at: r.createdAt, recordedAt: r.updatedAt });
   }
   return fills;
 }

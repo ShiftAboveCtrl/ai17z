@@ -282,6 +282,17 @@ describe('reading an agent back into Easy Mode', () => {
     expect(result.beyondEasyMode.join(' ')).toContain('44');
   });
 
+  it('reports enabled peer review beyond Easy Mode and preserves it on save', () => {
+    const advanced: PolicyConfig = {
+      ...toPolicy(setup),
+      quality: { peerReview: { ...DEFAULT_POLICY.quality.peerReview, enabled: true } },
+    };
+    const result = view({ policy: advanced });
+    expect(result.exact).toBe(false);
+    expect(result.beyondEasyMode.join(' ')).toMatch(/peer review.*Easy Mode/i);
+    expect(toPolicy(result.setup, advanced).quality.peerReview).toEqual(advanced.quality.peerReview);
+  });
+
   it('reports dry run, which would otherwise look like a working agent', () => {
     const dry: PolicyConfig = { ...DEFAULT_POLICY, automation: { mode: 'AUTONOMOUS', dryRunDefault: true } };
     const result = view({ policy: dry });

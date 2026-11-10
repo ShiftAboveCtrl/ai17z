@@ -30,7 +30,19 @@ state and the one sentence its status line already shows. Agents were in the
 right-hand column until then, and linking an installation still sends nothing
 about them.
 
+One more row, again only behind an owner act: **entering an agent in a Studio
+paper league season** sends an alias the owner chose, a random entry key and,
+afterwards, the simulated paper fills that agent makes under the season's
+mandate (amounts, the mint, the time and the price source, labelled simulated),
+with no agent id, handle, wallet, persona, prompt or reasoning. See
+`STUDIO_LEAGUE_BRIDGE.md`.
+
 ## Control from Studio
+
+The public activity tape has its own installation switch and explicit per-agent
+grant, both off by default. Its frozen allowlist and Studio receiver obligations
+are in [STUDIO_ACTIVITY_TAPE.md](STUDIO_ACTIVITY_TAPE.md). It carries normalized
+event metadata only, with no correspondent handles or private source fields.
 
 `packages/runtime/src/studioControl.ts`. Off by default, a separate switch
 from linking (`studio.control`), because an owner linked for entitlements on

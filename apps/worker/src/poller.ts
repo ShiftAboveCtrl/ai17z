@@ -1,17 +1,54 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { accounts as accountsRepo, cadences as cadencesRepo } from '@xbam/database';
-import { getChannelAdapter, isChannelImplemented } from '@xbam/channels';
+import { accounts as accountsRepo, cadences as cadencesRepo, telegramChannel, channelState } from '@xbam/database';
 import {
+  blueskyNotificationsVersionOf,
+  getChannelAdapter,
+  isChannelImplemented,
+  type IngestProgress,
+} from '@xbam/channels';
+import {
+  advanceNotificationWatermark,
   buildChannelContext,
   checkReadCapacity,
   ingestNormalizedEvent,
   nextPollDelayMs,
   noteXFailure,
   noteXRead,
+  spendsReadBudget,
 } from '@xbam/runtime';
+import { PipelineError } from '@xbam/shared';
+import type { Account } from '@xbam/shared/contracts';
 import { startLoop } from './loop';
 
 const log = createLogger('poller');
+
+/**
+ * A channel that signs in over an API stops being polled when the sign-in is gone.
+ *
+ * Bluesky limits how often a session may be created, so an account whose app
+ * password was revoked must not be polled back into that limit every few minutes.
+ * Moving it out of CONNECTED is what takes it out of the due list (the claim
+ * only selects CONNECTED accounts), and it is also the truth: the account needs
+ * a person. A security challenge gets its own status, because it is a different
+ * thing to tell somebody and the watcher must not keep reading around it.
+ */
+async function stopPollingIfSignInIsGone(account: Account, error: unknown): Promise<void> {
+  if (account.channel !== 'bluesky' || !(error instanceof PipelineError)) return;
+  const status =
+    error.reason === 'bluesky_auth_challenge'
+      ? 'CHALLENGE_REQUIRES_USER'
+      : error.reason === 'bluesky_auth_failed' || error.reason === 'bluesky_no_credentials'
+        ? 'NEEDS_AUTH'
+        : null;
+  if (!status) return;
+  await accountsRepo
+    .updateAccount(account.id, {
+      status,
+      lastError: error.message.slice(0, 500),
+      ...(status === 'CHALLENGE_REQUIRES_USER' ? { challengeKind: 'EMAIL_CODE' } : {}),
+    })
+    .catch(() => undefined);
+}
 
 /**
  * Pulls new events from channels that have to be polled rather than pushed.
@@ -95,12 +132,61 @@ export class ChannelPoller {
     const adapter = getChannelAdapter(account.channel);
     try {
       const ctx = await buildChannelContext(account, null);
-      const events = await adapter.ingestEvents(ctx, { limit: config.polling.batchLimit });
-      if (account.channel === 'x') await noteXRead(account.id, 'DIRECT');
+      // A Telegram bot's update offset, committed below and only after the
+      // batch it covers was ingested. The version stops a poll that outlived its
+      // claim from writing an old offset over a newer one.
+      const offsetState = account.channel === 'telegram' ? await telegramChannel.pollState(account.id) : null;
+      const state = account.channel === 'farcaster' ? await channelState.pollState(account.id) : null;
+      let reported: string | null = null;
+      /*
+        One read is one charge, whatever the adapter reads in a call.
+
+        An adapter that pages (Bluesky) is handed the means to ask before each
+        further page and to charge after it, so a burst cannot cost one read and
+        spend four. One that does not (X reads a single page) is charged once
+        below, as it always was.
+      */
+      let charged = 0;
+      let progress: IngestProgress | undefined;
+      // The state this poll starts from. Its write applies only if that is still
+      // the state when it finishes; see `advanceNotificationWatermark`.
+      const startedAtVersion = blueskyNotificationsVersionOf(account.settings);
+      const events = await adapter.ingestEvents(ctx, {
+        limit: config.polling.batchLimit,
+        ...(offsetState ? { cursor: offsetState.offset === null ? null : String(offsetState.offset), reportCursor: (value: string) => { reported = value; } }
+          : state ? { cursor: state.cursor, reportCursor: (value: string) => { reported = value; } } : {}),
+        ...(spendsReadBudget(account.channel)
+          ? {
+              canReadAnother: async () => (await checkReadCapacity(account.id, 'DIRECT').catch(() => null))?.allowed ?? true,
+              onRead: async () => {
+                charged += 1;
+                await noteXRead(account.id, 'DIRECT');
+              },
+            }
+          : {}),
+        report: (reported) => {
+          progress = reported;
+        },
+      });
+      if (spendsReadBudget(account.channel) && charged === 0) await noteXRead(account.id, 'DIRECT');
       let created = 0;
       for (const event of events) {
         const outcome = await ingestNormalizedEvent({ accountId: account.id, event });
         created += outcome.jobs.filter((j) => j.created).length;
+      }
+      if (offsetState && reported !== null) {
+        await telegramChannel.advanceOffset(account.id, offsetState.version, Number(reported));
+      }
+      if (state && reported !== null) await channelState.advancePoll(account.id, state.version, reported);
+      // Only after every event was taken in, so a failure above re-reads them.
+      if (account.channel === 'bluesky') {
+        const applied = await advanceNotificationWatermark(account.id, events, progress, startedAtVersion);
+        if (!applied) {
+          log.warn('another poll moved this account\'s notification state first; this one wrote nothing', {
+            handle: account.handle,
+            events: events.length,
+          });
+        }
       }
 
       const found = events.length > 0;
@@ -124,16 +210,33 @@ export class ChannelPoller {
     } catch (error) {
       const message = errorMessage(error);
       log.warn('channel poll failed', { channel: account.channel, handle: account.handle, message });
-      if (account.channel === 'x') await noteXFailure(account.id, 'DIRECT', message);
+      if (spendsReadBudget(account.channel)) await noteXFailure(account.id, 'DIRECT', message);
+      await stopPollingIfSignInIsGone(account, error);
       // A failing account backs off like an idle one rather than being retried
       // every tick, but the streak is what grows, not a separate failure counter.
-      const delay = nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak + 1, foundEvents: false });
+      // A wait the remote named (Telegram's retry_after) is a floor, not a hint.
+      const requestedWait =
+        error instanceof PipelineError && typeof error.data.retryAfterMs === 'number' ? error.data.retryAfterMs : 0;
+      const delay = Math.max(
+        requestedWait,
+        nextPollDelayMs(config, { emptyStreak: claimed.emptyPollStreak + 1, foundEvents: false }),
+      );
       await cadencesRepo.recordPoll(claimed.id, new Date(Date.now() + delay), false).catch(() => undefined);
       await accountsRepo
         .updateAccount(account.id, {
           lastHealthStatus: `poll failed: ${message.slice(0, 200)}`,
           touchHealthCheck: true,
           lastError: message.slice(0, 500),
+          // A revoked or shared bot token will not fix itself, and polling it again
+          // every few minutes only asks Telegram to keep saying no.
+          ...(account.channel === 'telegram' &&
+          error instanceof PipelineError &&
+          ['telegram_auth_failed', 'telegram_no_token', 'telegram_shared_bot'].includes(error.reason)
+            ? { status: 'NEEDS_AUTH' as const }
+            : {}),
+          ...(account.channel === 'farcaster' && error instanceof PipelineError &&
+            (error.reason === 'farcaster_auth_failed' || error.reason === 'farcaster_no_signer')
+            ? { status: 'NEEDS_AUTH' as const } : {}),
         })
         .catch(() => undefined);
     }

@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { DEFAULT_TRIGGER_EVENT_TYPES } from '@xbam/shared/contracts';
 import { ApiError, post } from '@app/lib/api';
+import { linkAccount } from '@app/lib/setup';
+import { BlueskyConnect } from '@app/components/BlueskyConnect';
 import { useResource } from '@app/lib/hooks';
 import type { AccountRow, AgentAccountRow } from '@app/lib/types';
 import { humanStatus, toneFor } from '@app/lib/format';
 import { EmptyState, Field, Modal, Spinner, StatusDot } from '@app/components/ui';
 import { SessionPanel } from '@app/components/SessionPanel';
 import { CapabilitiesPanel } from '@app/components/CapabilitiesPanel';
+import { StudioRiskWatchesPanel } from '@app/components/StudioRiskWatchesPanel';
 import { IndexedRow, Section } from './Section';
 
 export function AccountsSection({
@@ -26,7 +28,7 @@ export function AccountsSection({
   const [openAccountId, setOpenAccountId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [channel, setChannel] = useState<'mock' | 'x'>('mock');
+  const [channel, setChannel] = useState<'mock' | 'x' | 'bluesky'>('mock');
   const [handle, setHandle] = useState('');
   const [adding, setAdding] = useState(false);
 
@@ -42,11 +44,7 @@ export function AccountsSection({
       );
       const account =
         existing ?? (await post<{ id: string }>('/api/accounts', { channel, handle: handle.trim(), displayName: handle.trim() }));
-      await post(`/api/agents/${agentId}/accounts`, {
-        accountId: account.id,
-        triggerEventTypes: [...DEFAULT_TRIGGER_EVENT_TYPES],
-        actionType: 'REPLY',
-      });
+      await linkAccount(agentId, account.id);
       setAdding(false);
       setHandle('');
       all.reload();
@@ -55,6 +53,19 @@ export function AccountsSection({
       setError(e instanceof ApiError ? e.message : 'The account could not be connected.');
     } finally {
       setConnecting(false);
+    }
+  };
+
+  /** A Bluesky account is proved and saved by its form; what is left is attaching it. */
+  const attachBluesky = async (account: AccountRow) => {
+    setError(null);
+    try {
+      await linkAccount(agentId, account.id);
+      setAdding(false);
+      all.reload();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'The account was saved but could not be attached to this agent.');
     }
   };
 
@@ -68,8 +79,8 @@ export function AccountsSection({
       lede="Accounts are separate from agents, so an account can move between agents and one agent can drive several."
       explain={
         <>
-          <p><strong>The social account the agent reads and replies from.</strong> You sign in yourself, in a real browser window that opens on your screen.</p>
-          <p>AI17Z never types your password and never answers a security check. If X asks for a code or a CAPTCHA, the window is left open and waiting for you.</p>
+          <p><strong>The social account the agent reads and replies from.</strong> On X you sign in yourself, in a real browser window that opens on your screen. On Bluesky you give it an app password, which AI17Z checks and stores sealed.</p>
+          <p>AI17Z never answers a security check. If X asks for a code or a CAPTCHA, the window is left open and waiting for you. If Bluesky asks for an emailed code, link the account with an app password instead.</p>
           <p>Without one connected, the agent has nothing to read and nothing to answer.</p>
         </>
       }
@@ -77,7 +88,7 @@ export function AccountsSection({
       {accounts.length === 0 ? (
         <EmptyState
           title="No accounts connected."
-          detail="Attach a mock account to exercise the pipeline locally, or an X account to act for real."
+          detail="Attach a mock account to exercise the pipeline locally, or an X or Bluesky account to act for real."
           action={
             <button type="button" className="btn-ghost" onClick={() => setAdding(true)}>
               Connect an account
@@ -112,27 +123,39 @@ export function AccountsSection({
       <Modal open={adding} onClose={() => setAdding(false)} title="Connect an account">
         <div className="space-y-5">
           <Field label="Channel">
-            <div className="grid grid-cols-2 gap-2">
-              {(['mock', 'x'] as const).map((option) => (
+            <div className="grid grid-cols-3 gap-2">
+              {(['mock', 'x', 'bluesky'] as const).map((option) => (
                 <button
                   key={option}
                   type="button"
-                  onClick={() => setChannel(option)}
-                  className={`rounded-lg border px-3.5 py-3 text-sm transition-colors ${channel === option ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone' : 'border-ink-line text-bone-dim hover:border-bone-faint'}`}
+                  onClick={() => {
+                    setChannel(option);
+                    setError(null);
+                  }}
+                  className={`rounded-lg border px-3 py-3 text-sm transition-colors ${channel === option ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone' : 'border-ink-line text-bone-dim hover:border-bone-faint'}`}
                 >
-                  {option === 'mock' ? 'Mock (local)' : 'X'}
+                  {option === 'mock' ? 'Mock (local)' : option === 'x' ? 'X' : 'Bluesky'}
                 </button>
               ))}
             </div>
           </Field>
-          <Field label="Handle" htmlFor="newHandle" hint={channel === 'x' ? 'The X username, without the @.' : 'Any label.'}>
-            <input id="newHandle" className="field" value={handle} onChange={(e) => setHandle(e.target.value)} placeholder={channel === 'x' ? 'your_handle' : 'local'} />
-          </Field>
-          {error && <p className="text-sm text-signal-fail">{error}</p>}
-          <button type="button" className="btn-primary w-full" onClick={() => void attach()} disabled={connecting || !handle.trim()}>
-            {connecting && <Spinner />}
-            Connect
-          </button>
+          {channel === 'bluesky' ? (
+            <>
+              <BlueskyConnect onConnected={attachBluesky} submitLabel="Connect Bluesky" />
+              {error && <p role="alert" className="break-words text-sm text-signal-fail">{error}</p>}
+            </>
+          ) : (
+            <>
+              <Field label="Handle" htmlFor="newHandle" hint={channel === 'x' ? 'The X username, without the @.' : 'Any label.'}>
+                <input id="newHandle" className="field" value={handle} onChange={(e) => setHandle(e.target.value)} placeholder={channel === 'x' ? 'your_handle' : 'local'} />
+              </Field>
+              {error && <p className="text-sm text-signal-fail">{error}</p>}
+              <button type="button" className="btn-primary w-full" onClick={() => void attach()} disabled={connecting || !handle.trim()}>
+                {connecting && <Spinner />}
+                Connect
+              </button>
+            </>
+          )}
         </div>
       </Modal>
 
@@ -146,6 +169,7 @@ export function AccountsSection({
               handle={open_.handle}
               actionType={open_.actionType}
             />
+            <StudioRiskWatchesPanel agentId={agentId} accountId={open_.accountId} />
           </div>
         )}
       </Modal>

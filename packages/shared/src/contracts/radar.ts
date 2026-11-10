@@ -25,6 +25,8 @@ export const RADAR_SOURCE_KINDS = [
    * per growth session, filtered by engagement and ranked by audience.
    */
   'persona_discovery',
+  /** Owner-pinned, read-only chain observations. Never an X read. */
+  'market_signal',
 ] as const;
 export const RadarSourceKind = z.enum(RADAR_SOURCE_KINDS);
 export type RadarSourceKind = (typeof RADAR_SOURCE_KINDS)[number];
@@ -36,7 +38,115 @@ export const RADAR_STATUSES = ['UNKNOWN', 'HEALTHY', 'DEGRADED', 'FAILING', 'DIS
 export const RadarStatus = z.enum(RADAR_STATUSES);
 export type RadarStatus = (typeof RADAR_STATUSES)[number];
 
+/** Decode identity length rather than accepting arbitrary base58-looking text. */
+function exactSignalAddress(address: string): boolean {
+  if (/^0x[0-9a-fA-F]{40}$/.test(address)) return true;
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return false;
+  const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  let value = 0n;
+  for (const char of address) value = value * 58n + BigInt(alphabet.indexOf(char));
+  const leading = address.match(/^1*/)?.[0].length ?? 0;
+  const bytes = value === 0n ? 0 : Math.ceil(value.toString(16).length / 2);
+  return leading + bytes === 32;
+}
+
+export const SignalWatch = z.object({
+  chain: z.string().trim().regex(/^[a-z0-9_]{1,30}$/),
+  address: z.string().trim().max(120).refine(exactSignalAddress, 'Use an exact mint or address, never a ticker.'),
+  predicate: z.enum(['liquidity_below', 'concentration_above', 'new_pool', 'wallet_transaction']),
+  threshold: z.number().finite().nonnegative().max(1e15).optional(),
+  /** Studio's index metrics are distinct from the native pool and RPC metrics. */
+  studioMetric: z.enum(['LIQUIDITY_BELOW', 'TOP_HOLDERS_ABOVE', 'DEVELOPER_SHARE_ABOVE']).optional(),
+}).strict().superRefine((watch, ctx) => {
+  if (watch.chain === 'solana' && watch.address.startsWith('0x')) ctx.addIssue({ code: 'custom', message: 'A Solana mint must be a Solana address.' });
+  if (watch.studioMetric && (watch.chain !== 'solana' || watch.predicate !== (watch.studioMetric === 'LIQUIDITY_BELOW' ? 'liquidity_below' : 'concentration_above'))) ctx.addIssue({ code: 'custom', message: 'The Studio index metric must match its condition.' });
+  if (watch.predicate === 'liquidity_below' || watch.predicate === 'concentration_above') {
+    if (watch.threshold === undefined || (watch.predicate === 'concentration_above' && watch.threshold > 100)) {
+      ctx.addIssue({ code: 'custom', message: 'Set a threshold in USD, or a concentration percentage from 0 to 100.' });
+    }
+  }
+});
+export type SignalWatch = z.infer<typeof SignalWatch>;
+export const SignalUniverse = z.array(SignalWatch).min(1).max(12).refine(
+  watches => new Set(watches.map(w => JSON.stringify(w))).size === watches.length,
+  'Each pin and predicate must be unique.',
+);
+
+export interface SignalObservation {
+  value: number | string | string[] | null;
+  source: string;
+  observedAt: string;
+  definition: string;
+  /** Individual upstream reads when a metric combines multiple observations. */
+  reads?: { source: string; observedAt: string }[];
+  /** Pool creation times from the provider, keyed by exact pool address. */
+  poolCreatedAt?: Record<string, string>;
+}
+export interface SignalState {
+  baseline: SignalObservation;
+  latest: SignalObservation;
+  active: boolean;
+  generation: number;
+}
+
+/**
+ * Where a radar source came from. Computed from the config the writer alone
+ * sets, never from the label: a label is text an owner may type.
+ *
+ * `STUDIO_RISK_WATCH` and `PLAYBOOK` are both sources a sync recreates, so
+ * neither can be switched off or removed by hand: the next tick would undo it.
+ */
+export type RadarSourceProvenance = 'OWNER' | 'STUDIO_RISK_WATCH' | 'PLAYBOOK';
+
+/**
+ * Whether a config marks a Studio risk source: a present, non-null object.
+ *
+ * This is the one rule. The SQL twin is `jsonb_typeof(config->'studioRisk') =
+ * 'object'` in `signals.ts`, and an integration test feeds both the same
+ * configs. The two used to differ: `config ? 'studioRisk'` is true for a JSON
+ * null, a boolean or a string, which `config?.studioRisk` treated as truthy or
+ * falsy by a different rule again.
+ */
+export function hasStudioRiskMark(config: { studioRisk?: unknown } | null | undefined): boolean {
+  const mark = config?.studioRisk;
+  return typeof mark === 'object' && mark !== null && !Array.isArray(mark);
+}
+
+export function radarSourceProvenance(config: { studioRisk?: unknown; playbookAgentId?: unknown } | null | undefined): RadarSourceProvenance {
+  if (hasStudioRiskMark(config)) return 'STUDIO_RISK_WATCH';
+  // Present and not JSON null, as the playbook sync reads it with jsonb_typeof.
+  return config?.playbookAgentId != null ? 'PLAYBOOK' : 'OWNER';
+}
+
+export interface SignalRadarData {
+  receipts?: SignalReceipt[];
+  baselines: { sourceId: string; watchKey: string; watch: SignalWatch; state: SignalState | null; lastRead: SignalObservation | null; reason: string; provenance: RadarSourceProvenance }[];
+  candidates: {
+    id: string; sourceId: string; provenance: RadarSourceProvenance;
+    evidence: { watch: SignalWatch; before: SignalObservation; after: SignalObservation };
+    reason: string; ideaStatus: string | null; ideaError: string | null;
+    jobStatus: string | null; jobError: string | null;
+    postingEnabled?: boolean | null; postingReason?: string | null;
+  }[];
+}
+
+/** Migration 0126's CHECKs on signal_receipts; registered in the database package's constrainedEnums.ts. */
+export const SIGNAL_RECEIPT_STATUSES = ['pending', 'reading', 'offered', 'skipped', 'unavailable'] as const;
+export const SIGNAL_RECEIPT_VERDICTS = ['changed', 'unchanged', 'unavailable'] as const;
+export const SIGNAL_RECEIPT_WINDOW_HOURS = [1, 24] as const;
+
+export interface SignalReceipt {
+  id: string; actionId: string; windowHours: number; dueAt: string;
+  evidence: { watch: SignalWatch; before: SignalObservation; after: SignalObservation };
+  nowRead: SignalObservation | null; verdict: 'changed' | 'unchanged' | 'unavailable' | null;
+  status: string; reason: string; jobStatus: string | null; jobError: string | null;
+  ideaStatus: string | null; ideaError: string | null; publishedActionId: string | null;
+}
+
 export const RadarSourceConfig = z.object({
+  /** Internal playbook source: the worker rotates exact mints from the current pin. */
+  playbookAgentId: z.string().uuid().optional(),
+  playbookPinId: z.string().uuid().optional(),
   /** Base gap between polls of this source. */
   intervalSeconds: z.number().int().min(20).max(86_400).default(180),
   /** Results pulled per poll. */
@@ -58,6 +168,10 @@ export const RadarSourceConfig = z.object({
    * Applied by X itself, so a post nobody has responded to costs nothing.
    */
   minFaves: z.number().int().min(0).max(100_000).optional(),
+  /** Exact owner pins; this source is opt-in and bounded independently of X. */
+  watches: SignalUniverse.optional(),
+  /** Set only by the locally opted-in Studio watch bridge. */
+  studioRisk: z.object({ bindingId: z.string().uuid(), agentId: z.string().uuid(), watchId: z.string().uuid(), watchRevision: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 });
 export type RadarSourceConfig = z.infer<typeof RadarSourceConfig>;
 

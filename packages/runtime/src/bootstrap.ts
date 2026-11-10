@@ -48,11 +48,21 @@ import { registerReferenceCapabilities } from './referenceCapabilities';
 import { registerMarketCapabilities } from './marketCapabilities';
 import { registerMarketIntelCapabilities } from './marketIntelCapabilities';
 import { defaultPipelineDraft } from './defaultPipeline';
+import { registerActivityTapeCapability } from './studioActivityTape';
 import { registerXCapabilities } from './xCapabilities';
+import { registerTelegramCapabilities } from './telegramCapabilities';
+import { registerFarcasterCapabilities } from './farcasterCapabilities';
+import { registerBlueskyCapabilities } from './blueskyCapabilities';
 import { registerGithubCapabilities } from './githubCapabilities';
 import { registerIntrospectionCapabilities } from './introspectionCapabilities';
 import { registerManagementCapabilities } from './managementCapabilities';
 import { registerWalletCapabilities } from './walletCapabilities';
+import { registerPaperCapabilities } from './paperCapabilities';
+import { registerStudioPaperCapabilities } from './studioPaperCapabilities';
+import { registerStudioVoiceCapabilities } from './studioVoiceCapabilities';
+import { registerStudioTraderDnaCapabilities } from './studioTraderDnaCapabilities';
+import { registerStudioHomeCapabilities } from './studioPublicHomeCapabilities';
+import { registerStudioLeagueCapabilities } from './studioLeagueCapabilities';
 import { loadWalletAdapter } from './walletCore';
 
 const log = createLogger('bootstrap');
@@ -79,6 +89,10 @@ export async function bootstrapRuntime(): Promise<void> {
   // channel package does not do. The selector boundary is unaffected --
   // what crosses it is still only the normalised shapes.
   registerXCapabilities();
+  registerTelegramCapabilities();
+  registerFarcasterCapabilities();
+  // Bluesky's, for the same reason, and with no browser anywhere in them.
+  registerBlueskyCapabilities();
   // What a watched repository did, answered from what was recorded rather than
   // by calling GitHub. An agent cannot add a watch and cannot reach a project
   // its owner has not pointed it at.
@@ -92,7 +106,21 @@ export async function bootstrapRuntime(): Promise<void> {
   // useless until the owner installs a wallet adapter, which is loaded here by
   // its pinned hash or not at all. Nothing here can send.
   registerWalletCapabilities();
+  registerPaperCapabilities();
+  // The league standing, owner chat only and off until the owner enables it.
+  registerStudioLeagueCapabilities();
+  registerActivityTapeCapability();
   await loadWalletAdapter();
+  // What the owner's paper track record on Studio says. Owner chat only, and
+  // off until the owner enables it; it reads Studio and nothing else.
+  registerStudioPaperCapabilities();
+  // A published Trader DNA study explained to the owner. One read, owner chat
+  // only, off until enabled; there is no follow, watch or trade beside it.
+  registerStudioTraderDnaCapabilities();
+  // Publishing the agent's voice to Studio. Owner chat only, off until the
+  // owner enables it, and nothing leaves without their own words confirming it.
+  registerStudioVoiceCapabilities();
+  registerStudioHomeCapabilities();
 
   // Plugins an owner installed, registered the same way and into the same
   // registry as everything above. There is no second invocation engine and no

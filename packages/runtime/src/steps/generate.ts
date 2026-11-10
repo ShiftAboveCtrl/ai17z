@@ -23,6 +23,7 @@ import {
 import { assemblePrompt } from '@xbam/prompts';
 import { habitualPhrases, lengthCeiling } from '@xbam/persona';
 import { runCapabilityLoop } from '../capabilityLoop';
+import { paperReplyForJob, paperReplyFromSteps } from '../paperCapabilities';
 import { variantForPost } from '../experimentRuns';
 import { capabilitySettings } from '../capabilityPermissions';
 import { pauseState } from '../killSwitch';
@@ -49,7 +50,10 @@ const LENGTH_TARGETS = { SHORT: 45, MEDIUM: 100, LONG: 170 } as const;
 import { asksAboutTheAgent, questionsIn } from '../research';
 import { removeEmDashes } from '../punctuation';
 import { judgePost } from '../postQuality';
+import { signalIdeaRefusal } from '../signalRadar';
+import { receiptIdeaRefusal } from '../radarReceipts';
 import { publicSelfFacts } from '../publicSelf';
+import { asksForPublicHome, publicHomeReply } from '../studioPublicHome';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -121,6 +125,11 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
   const budget = await checkBudget(bundle.agent.id, bundle.policy);
   if (!budget.allow) {
     throw PipelineError.retryable(budget.reason, budget.message, { retryAfterMs: budget.retryAfterMs });
+  }
+
+  if (bundle.job.actionType === 'REPLY' && asksForPublicHome(bundle.event.text ?? '')) {
+    await jobsRepo.updateJob(bundle.job.id, { status: 'GENERATED', generatedOutput: await publicHomeReply(bundle.agent.id), touch: ['generatedAt'] });
+    return;
   }
 
   const template = bundle.job.promptTemplateVersionId
@@ -368,7 +377,7 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
       maxSteps: RESPONSE_SPEED_PROFILES[bundle.policy.responseSpeed].capabilitySteps,
       paused: (await pauseState().catch(() => ({ paused: false }))).paused,
     });
-    text = loop.answer;
+    text = paperReplyFromSteps(loop.steps) ?? loop.answer;
     /*
       What it was shown, not only what it used.
 
@@ -431,6 +440,10 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
+  const paperReply = await paperReplyForJob(bundle.job.id);
+  if (paperReply !== null && result.output !== paperReply) {
+    throw PipelineError.review('paper_receipt_changed', 'The complete simulated paper receipt cannot fit this output policy. Review it before sending.');
+  }
 
   if (!result.ok) {
     const summary = blocking.map((v) => v.message).join(' ');
@@ -514,8 +527,10 @@ export async function stepIntent(bundle: JobBundle): Promise<void> {
  */
 export async function stepVoice(bundle: JobBundle): Promise<void> {
   const { job, policy } = bundle;
+  if (job.actionType === 'REPLY' && asksForPublicHome(bundle.event.text ?? '')) return;
   const draft = job.validatedOutput ?? job.generatedOutput;
   if (!policy.voice.enabled || !draft) return;
+  const paperReceipt = await paperReplyForJob(job.id);
 
   const context = job.resolvedContext;
   const speed = RESPONSE_SPEED_PROFILES[policy.responseSpeed];
@@ -540,9 +555,38 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
       What FAST loses is the rewrite of a correctly-sized reply that merely
       reads slightly unlike the agent.
     */
-    allowModelCall: !job.dryRun && speed.voiceRewrite,
+    allowModelCall: paperReceipt === null && !job.dryRun && speed.voiceRewrite,
     maxCalls: policy.budget.maxModelCallsPerJob,
+    /*
+      A peer's notes are applied by the rewrite, so they follow the same
+      response speed. Unlike the ordinary rewrite they are not withheld from a
+      dry run: an owner who switched a second opinion on wants to watch it work
+      in the Lab, and nothing a dry run produces is published.
+    */
+    allowPeerReview: speed.voiceRewrite,
+    incomingText: context?.incomingText ?? bundle.event.text,
+    operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
   });
+
+  if (compiled.peerReview) {
+    const review = compiled.peerReview;
+    /*
+      A conclusion, never a transcript: a sentence, and which suggestions the
+      reply took and which it did not. The prompt the peer saw and the answer it
+      gave stay in the model call row like any other call; nothing here repeats
+      them, and no reasoning is stored.
+    */
+    await observability.emitTrace({
+      jobId: job.id,
+      agentId: bundle.agent.id,
+      type: 'VOICE_COMPILED',
+      level: review.outcome === 'unavailable' || review.outcome === 'unreadable' ? 'warn' : 'info',
+      message: review.ran
+        ? `Peer review by ${review.peerName ?? 'a peer'}: ${review.summary ?? review.reason}`
+        : `Peer review did not run. ${review.reason}`,
+      data: { peerReview: review },
+    });
+  }
 
   await observability.emitTrace({
     jobId: job.id,
@@ -574,7 +618,9 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
     because a draft that never reaches the voice step must be clean too. This
     closes the window between them.
   */
-  const spoken = removeEmDashes(compiled.text);
+  // Score the reply through the ordinary quality path while keeping the
+  // financial receipt intact. A voice rewrite cannot change its meaning.
+  const spoken = removeEmDashes(paperReceipt ?? compiled.text);
   if (spoken.replaced > 0) {
     await observability.emitTrace({
       jobId: job.id,
@@ -607,6 +653,21 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
  */
 export async function stepQualityGate(bundle: JobBundle): Promise<'next' | 'silent'> {
   const { job, policy } = bundle;
+  const signal = bundle.event.payload as { ideaSource?: string; ideaId?: string };
+  if (signal.ideaSource === 'radar_receipt') {
+    const refusal = signal.ideaId ? await receiptIdeaRefusal(signal.ideaId, job.validatedOutput ?? job.generatedOutput ?? '', { accountId: job.accountId, agentId: bundle.agent.id }) : 'Receipt evidence is missing.';
+    if (refusal) {
+      await jobsRepo.updateJob(job.id, { lastError: `Not worth posting: ${refusal}` });
+      return 'silent';
+    }
+  }
+  if (signal.ideaSource === 'market_signal') {
+    const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, job.validatedOutput ?? job.generatedOutput ?? '', { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
+    if (refusal) {
+      await jobsRepo.updateJob(job.id, { lastError: `Not worth posting: ${refusal}` });
+      return 'silent';
+    }
+  }
   /*
     An original post has to be worth interrupting everybody for, which is a
     different question from whether it sounds right. Asked first, and answered

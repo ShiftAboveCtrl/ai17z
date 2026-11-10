@@ -5,14 +5,16 @@ import { EASY_SETUP_PROVIDERS, EASY_STYLE_PRESETS, PROVIDER_CATALOGUE, providerL
 import type { Blocker, PreflightResult } from '@xbam/shared/contracts';
 import type { EasySetup as EasySetupType, EasyAudience, EasyStylePreset } from '@xbam/shared/contracts';
 import { ApiError, post, put } from '@app/lib/api';
-import { connectAccount, createAgent, saveModel, startAgent } from '@app/lib/setup';
+import { connectAccount, createAgent, linkAccount, saveModel, startAgent } from '@app/lib/setup';
+import { BlueskyConnect } from '@app/components/BlueskyConnect';
 import { usePolling, useResource } from '@app/lib/hooks';
 import type { AccountRow, ProviderCredential } from '@app/lib/types';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { AnimatedText, FadeIn } from '@app/components/motion';
 import { SignInProgress } from '@app/components/SignInProgress';
-import { ChoiceGroup, ChoiceOption, ErrorPanel, Field, Spinner, StatusDot, Toggle } from '@app/components/ui';
+import { ChoiceGroup, ChoiceOption, ErrorPanel, Field, Modal, Spinner, StatusDot, Toggle } from '@app/components/ui';
 import { Blockers } from '@app/components/Blockers';
+import { VoiceInstallPanel } from '@app/components/VoiceInstallPanel';
 import { ModelChooser } from '@app/components/ModelChooser';
 import { CharacterBuilder, CompletenessBar, type CharacterDraft } from '@app/components/CharacterBuilder';
 
@@ -33,7 +35,7 @@ import { CharacterBuilder, CompletenessBar, type CharacterDraft } from '@app/com
 // Connect AI sits before Character deliberately. Describing a character is the
 // step that can hand the questions to the agent's own model and let it fill
 // them in, and there is no model to ask until this step is done.
-const STEPS = ['Agent', 'Connect X', 'Connect AI', 'Character', 'Replies', 'Posts', 'Operation', 'Review'] as const;
+const STEPS = ['Agent', 'Account', 'Connect AI', 'Character', 'Replies', 'Posts', 'Operation', 'Review'] as const;
 
 
 
@@ -148,6 +150,7 @@ export function EasySetup() {
   const [error, setError] = useState<string | null>(null);
   const [blockers, setBlockers] = useState<Blocker[]>([]);
   const [draftCompleteness, setDraftCompleteness] = useState<CharacterDraft['completeness'] | null>(null);
+  const [installingVoice, setInstallingVoice] = useState(false);
 
   const providers = useResource<{ items: ProviderCredential[] }>('/api/providers');
 
@@ -392,6 +395,18 @@ export function EasySetup() {
                 evidence behind it, before anything is applied.
               </span>
             </Link>
+            {/* Starting from somebody else's published voice instead of writing one. */}
+            <button
+              type="button"
+              onClick={() => setInstallingVoice(true)}
+              className="block w-full rounded-lg border border-ink-line px-4 py-3.5 text-left transition-colors hover:border-bone-faint"
+            >
+              <span className="block text-sm text-bone">Install a published voice instead</span>
+              <span className="mt-1 block text-[12px] leading-relaxed text-bone-faint">
+                Take how another agent sounds from Studio or from a file. You read all of it first, and the new agent starts switched
+                off with no account, permission or memory.
+              </span>
+            </button>
             <Field label="What is it called?" htmlFor="name">
               <input
                 id="name"
@@ -844,7 +859,7 @@ export function EasySetup() {
             </div>
             <dl className="divide-y divide-ink-line rounded-xl border border-ink-line">
               <Row
-                label="X"
+                label="Account"
                 value={draft.handle ? `@${draft.handle.replace(/^@/, '')}` : 'Not connected'}
                 verbatim={Boolean(draft.handle)}
               />
@@ -927,6 +942,14 @@ export function EasySetup() {
           </div>
         )}
       </div>
+      <Modal open={installingVoice} onClose={() => setInstallingVoice(false)} title="Install a voice" wide>
+        <VoiceInstallPanel
+          onInstalled={(id) => {
+            setInstallingVoice(false);
+            navigate(`/agents/${id}`);
+          }}
+        />
+      </Modal>
     </main>
   );
 }
@@ -953,6 +976,8 @@ function ConnectX({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Which network is being connected, until an account exists and says for itself.
+  const [network, setNetwork] = useState<'x' | 'bluesky'>('x');
   const account = useResource<{ account: AccountRow }>(accountId ? `/api/accounts/${accountId}/session` : null, [
     accountId,
   ]);
@@ -1001,21 +1026,27 @@ function ConnectX({
     account.reload();
   };
 
+  const onBluesky = account.data?.account.channel === 'bluesky';
+
   if (status === 'CONNECTED') {
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-3 rounded-lg border border-signal-live/40 bg-signal-live/[0.06] px-4 py-4">
           <StatusDot state="live" />
           <div className="min-w-0">
-            <p className="text-sm text-bone">@{account.data?.account.handle}</p>
-            <p className="mt-0.5 text-[11px] text-bone-faint">Connected. Signed in through your own Google Chrome.</p>
+            <p className="break-words text-sm text-bone">@{account.data?.account.handle}</p>
+            <p className="mt-0.5 text-[11px] text-bone-faint">
+              {onBluesky
+                ? 'Connected to Bluesky with an app password. It is stored sealed and never shown again.'
+                : 'Connected. Signed in through your own Google Chrome.'}
+            </p>
           </div>
         </div>
       </div>
     );
   }
 
-  if (accountId && account.data) {
+  if (accountId && account.data && !onBluesky) {
     return (
       <div className="space-y-4">
         <SignInProgress account={account.data.account} onCancel={() => void cancel()} cancelling={false} />
@@ -1026,8 +1057,28 @@ function ConnectX({
     );
   }
 
+  if (network === 'bluesky') {
+    return (
+      <div className="space-y-6">
+        <NetworkChoice network={network} onChange={setNetwork} />
+        <BlueskyConnect
+          submitLabel="Connect Bluesky"
+          onConnected={async (created) => {
+            if (!agentId) return;
+            await linkAccount(agentId, created.id);
+            onHandle(created.handle);
+            onAccount(created.id);
+          }}
+        />
+        {!agentId && <p className="text-[12px] text-bone-faint">The agent is created when you continue from the first step.</p>}
+        <p className="text-[12px] text-bone-faint">You can skip this and connect an account later from the agent page.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      <NetworkChoice network={network} onChange={setNetwork} />
       <p className="text-[15px] font-light leading-relaxed text-bone-dim">
         AI17Z opens a real Chrome window with a profile kept for this account. You sign in once, by hand; it is
         remembered after that.
@@ -1052,6 +1103,28 @@ function ConnectX({
       </button>
       <p className="text-[12px] text-bone-faint">You can skip this and connect an account later from the agent page.</p>
       {error && <ErrorPanel title="X could not be connected." detail={error} />}
+    </div>
+  );
+}
+
+/** X or Bluesky. Two buttons, because it is the only thing this step asks before the account itself. */
+function NetworkChoice({ network, onChange }: { network: 'x' | 'bluesky'; onChange: (value: 'x' | 'bluesky') => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-2" role="group" aria-label="Which network">
+      {(['x', 'bluesky'] as const).map((option) => (
+        <button
+          key={option}
+          type="button"
+          aria-pressed={network === option}
+          onClick={() => onChange(option)}
+          className={`rounded-lg border px-3.5 py-3 text-left text-sm transition-colors ${network === option ? 'border-signal-calm/60 bg-signal-calm/[0.07] text-bone' : 'border-ink-line text-bone-dim hover:border-bone-faint'}`}
+        >
+          <span className="block">{option === 'x' ? 'X' : 'Bluesky'}</span>
+          <span className="mt-1 block text-[11px] text-bone-faint">
+            {option === 'x' ? 'You sign in once, in Chrome' : 'An app password, no browser'}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }

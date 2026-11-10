@@ -85,6 +85,7 @@ export async function measurableActions(
       WHERE x.agent_id = $1
         AND x.status = 'EXECUTED'
         AND x.type IN ('REPLY', 'POST')
+        AND coalesce(e.payload->>'ideaSource','') <> 'radar_receipt'
         AND x.remote_action_id IS NOT NULL
         AND x.executed_at < now() - ($2::int * interval '1 hour')
         AND x.executed_at > now() - interval '30 days'

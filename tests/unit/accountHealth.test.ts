@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judgeHealth, mayAct, type HealthFacts } from '@xbam/runtime';
+import { judgeHealth, mayAct, readAllowance, type HealthFacts } from '@xbam/runtime';
 
 /**
  * How the runtime is coping, which is not whether the session is signed in.
@@ -134,5 +134,32 @@ describe('what yields first', () => {
       if (mayAct(health, 'GROWTH')) expect(mayAct(health, 'REPLY'), health).toBe(true);
       if (mayAct(health, 'REPLY')) expect(mayAct(health, 'READ'), health).toBe(true);
     }
+  });
+});
+
+describe('the words it uses, on each network', () => {
+  it('names X for X, and by default', () => {
+    expect(judgeHealth(facts({ rateLimits: 1 })).reason).toMatch(/^X asked this account to slow down once/);
+    expect(judgeHealth(facts({ rateLimits: 1, channel: 'x' })).reason).toMatch(/^X asked/);
+  });
+
+  it('names Bluesky for a Bluesky account and never X', () => {
+    const slowed = judgeHealth(facts({ rateLimits: 1, channel: 'bluesky' })).reason;
+    const cooling = judgeHealth(facts({ rateLimits: 3, channel: 'bluesky' })).reason;
+    const challenge = judgeHealth(facts({ status: 'CHALLENGE_REQUIRES_USER', channel: 'bluesky' })).reason;
+    for (const sentence of [slowed, cooling, challenge]) {
+      expect(sentence).toMatch(/Bluesky/);
+      expect(sentence).not.toMatch(/\bX\b/);
+    }
+  });
+
+  it('names the right network in the budget sentences', () => {
+    const state = { health: 'HEALTHY' as const, reason: null, until: null, strikes: 0 };
+    const config = { readsPer10Minutes: 10 } as never;
+    const spent = readAllowance({ channel: 'bluesky', state, klass: 'DIRECT', readsLast10Minutes: 10, config, now: new Date() });
+    expect(spent.allowed).toBe(false);
+    expect(spent.message).toMatch(/reads of Bluesky/);
+    const x = readAllowance({ state, klass: 'DIRECT', readsLast10Minutes: 10, config, now: new Date() });
+    expect(x.message).toMatch(/reads of X/);
   });
 });

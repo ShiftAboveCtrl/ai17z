@@ -14,11 +14,12 @@ import { BROKEN_AS_PRESSURE, STRIKES_FORGIVEN_AFTER_MS, settleCapacity, type Cap
  */
 describe('the pace AI17Z asks X at', () => {
   it('has a pace for every kind of source', () => {
-    for (const kind of RADAR_SOURCE_KINDS) expect(X_READ_PACING[kind]).toBeDefined();
+    for (const kind of RADAR_SOURCE_KINDS) if (kind !== 'market_signal') expect(X_READ_PACING[kind]).toBeDefined();
   });
 
   it('never creates a source faster than its own floor', () => {
     for (const kind of RADAR_SOURCE_KINDS) {
+      if (kind === 'market_signal') continue;
       expect(X_READ_PACING[kind].defaultSeconds).toBeGreaterThanOrEqual(X_READ_PACING[kind].floorSeconds);
     }
   });

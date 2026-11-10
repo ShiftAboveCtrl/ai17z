@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowUpRight, Package, Plus } from 'lucide-react';
+import { ArrowUpRight, Mic, Package, Plus } from 'lucide-react';
 import { useResource } from '@app/lib/hooks';
 import type { AgentListItem } from '@app/lib/types';
 import { compactNumber, humanStatus, timeAgo, toneFor } from '@app/lib/format';
@@ -8,6 +8,7 @@ import { AgentGlyph } from '@app/components/AgentGlyph';
 import { AnimatedText, FadeIn, MagneticElement } from '@app/components/motion';
 import { EmptyState, ErrorPanel, Loading, Modal, StatusDot } from '@app/components/ui';
 import { AgentPackagePanel } from '@app/components/AgentPackagePanel';
+import { VoiceInstallPanel } from '@app/components/VoiceInstallPanel';
 import { Explain } from '@app/components/Explain';
 
 /**
@@ -34,6 +35,7 @@ export function Home() {
   // `Rendered more hooks than during the previous render` -- which unmounts the
   // whole tree.
   const [importing, setImporting] = useState(false);
+  const [installingVoice, setInstallingVoice] = useState(false);
   const navigate = useNavigate();
 
   if (loading && !data) return <Loading label="Loading agents" />;
@@ -93,6 +95,10 @@ export function Home() {
                   <Package className="h-4 w-4" aria-hidden />
                   Import one you already have
                 </button>
+                <button type="button" className="btn-ghost" onClick={() => setInstallingVoice(true)}>
+                  <Mic className="h-4 w-4" aria-hidden />
+                  Install a voice
+                </button>
               </div>
             }
           />
@@ -117,9 +123,25 @@ export function Home() {
               <Plus className="h-4 w-4" aria-hidden />
               <span className="font-mono text-[11px] uppercase tracking-[0.2em]">Create agent</span>
             </Link>
+            <button
+              type="button"
+              onClick={() => setInstallingVoice(true)}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-ink-line px-6 py-4 text-bone-faint transition-colors hover:border-bone-faint hover:text-bone-dim"
+            >
+              <Mic className="h-4 w-4" aria-hidden />
+              <span className="font-mono text-[11px] uppercase tracking-[0.2em]">Install a voice</span>
+            </button>
           </FadeIn>
         </>
       )}
+      <Modal open={installingVoice} onClose={() => setInstallingVoice(false)} title="Install a voice" wide>
+        <VoiceInstallPanel
+          onInstalled={(id) => {
+            setInstallingVoice(false);
+            navigate(`/agents/${id}`);
+          }}
+        />
+      </Modal>
       <Modal open={importing} onClose={() => setImporting(false)} title="Import an agent" wide>
         <AgentPackagePanel
           onImported={(id) => {

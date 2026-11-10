@@ -1,5 +1,5 @@
 import { GECKO_FAMILY, ask, type GeckoQuery, type GeckoResult } from '@xbam/upstream';
-import { TRADE_VENUES, WALLET_NETWORKS, type AssetRef, type MarketSnapshot, type TradeVenue, type WalletNetwork } from '@xbam/shared/contracts';
+import { AssetRef, TRADE_VENUES, WALLET_NETWORKS, type MarketSnapshot, type TradeVenue, type WalletNetwork } from '@xbam/shared/contracts';
 import { registerMarketReader, type MarketReader } from './marketData';
 
 /**
@@ -289,13 +289,13 @@ export interface PoolTokenFacts {
 }
 
 /**
- * The tokens that came with a pool list, by lower-cased address.
+ * The tokens that came with a pool list. Solana identity preserves case.
  *
  * Read out of `included` rather than asked for one at a time, because the
  * measured budget is four requests in ten seconds and it refuses rather than
  * waits: a pool list plus two token lookups plus a fee does not fit inside it.
  */
-export function tokensFromIncluded(included: unknown): Map<string, PoolTokenFacts> {
+export function tokensFromIncluded(included: unknown, caseSensitive = false): Map<string, PoolTokenFacts> {
   const out = new Map<string, PoolTokenFacts>();
   if (!Array.isArray(included)) return out;
   for (const entry of included) {
@@ -303,7 +303,7 @@ export function tokensFromIncluded(included: unknown): Map<string, PoolTokenFact
     const row = entry as { type?: unknown; attributes?: Record<string, unknown> };
     if (row.type !== 'token') continue;
     const attributes = row.attributes ?? {};
-    const address = typeof attributes.address === 'string' ? attributes.address.toLowerCase() : null;
+    const address = typeof attributes.address === 'string' ? (caseSensitive ? attributes.address : attributes.address.toLowerCase()) : null;
     const decimals = attributes.decimals;
     if (address === null) continue;
     if (typeof decimals !== 'number' || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) continue;
@@ -311,6 +311,16 @@ export function tokensFromIncluded(included: unknown): Map<string, PoolTokenFact
     out.set(address, symbol === undefined ? { decimals } : { decimals, symbol });
   }
   return out;
+}
+
+/** Exact metadata from the same paced pool read used to price a paper fill. */
+export async function readPoolAsset(network: WalletNetwork, address: string): Promise<AssetRef | null> {
+  const upstreamNetwork = GECKO_NETWORKS[network];
+  if (!upstreamNetwork) return null;
+  const answer = await askGecko({ operation: 'token_pools', network: upstreamNetwork, address, withTokens: true });
+  const metadata = tokensFromIncluded(answer.included, network === 'solana').get(network === 'solana' ? address : address.toLowerCase());
+  if (!metadata) return null;
+  return AssetRef.parse({ kind: 'ONCHAIN', network, address, ...metadata });
 }
 
 /** The fee one pool charges, read from the pool itself. */

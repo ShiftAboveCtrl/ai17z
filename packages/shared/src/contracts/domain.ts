@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FarcasterFid, FarcasterSettings } from './farcaster';
 import {
   BrowserEngine,
   AccountStatus,
@@ -97,6 +98,11 @@ export const CreateAccountInput = z.object({
       cdpUrl: z.string().max(500).default(''),
     })
     .optional(),
+}).superRefine((input, ctx) => {
+  if (input.channel !== 'farcaster') return;
+  if (!FarcasterFid.safeParse(input.remoteAccountId).success) ctx.addIssue({ code: 'custom', path: ['remoteAccountId'], message: 'Set a positive numeric Farcaster FID.' });
+  const settings = FarcasterSettings.safeParse(input.settings);
+  if (!settings.success) ctx.addIssue({ code: 'custom', path: ['settings'], message: 'Farcaster settings must contain only a node origin without credentials. Store the app signer separately.' });
 });
 export type CreateAccountInput = z.infer<typeof CreateAccountInput>;
 

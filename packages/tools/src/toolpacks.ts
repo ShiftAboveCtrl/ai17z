@@ -56,6 +56,16 @@ export interface Toolpack {
  */
 export const TOOLPACKS: Toolpack[] = [
   {
+    id: 'paper', name: 'Social paper trading',
+    summary: 'Simulate one requested trade with an owner-pinned paper mandate. Every result says simulated and carries its fee and risk verdict. No money moves.',
+    prefixes: ['paper.'],
+  },
+  {
+    id: 'farcaster', name: 'Farcaster',
+    summary: 'Read casts and conversations on Farcaster. Likes and recasts require separate permission; publishing uses account grants.',
+    prefixes: ['farcaster.'],
+  },
+  {
     id: 'x',
     name: 'X',
     // "and act on them" used to be on the end of this sentence and was never
@@ -66,6 +76,26 @@ export const TOOLPACKS: Toolpack[] = [
     // posting, and stops it reading instead.
     summary: 'Look up accounts, posts, conversations and searches on X. Reading only; it cannot post, reply or follow.',
     prefixes: ['x.'],
+  },
+  {
+    id: 'telegram',
+    name: 'Telegram groups',
+    summary:
+      'Read the groups an owner allowed. Reacting needs its own permission; replying is set on the account, and nothing here ' +
+      'reads a group that was not allowed or any message that did not mention or reply to this agent.',
+    prefixes: ['telegram.'],
+  },
+  {
+    id: 'bluesky',
+    name: 'Bluesky',
+    // Honest about the one write. Replying and posting are not in this pack:
+    // they are the account's POST and REPLY grants, performed by the engagement
+    // pipeline behind its gates. The pack holds the reads and a like, and the
+    // like stays off until it is turned on by name.
+    summary:
+      'Look up posts, conversations and profiles on Bluesky, and like a post once you allow it. ' +
+      'Replying and posting are set on the account itself, not here.',
+    prefixes: ['bluesky.'],
   },
   {
     id: 'projects',
@@ -105,6 +135,30 @@ export const TOOLPACKS: Toolpack[] = [
     summary:
       "Let the agent read its own wallet: its address, what it holds, recent activity. It can never send, sign or approve anything; you do that yourself, one transaction at a time.",
     prefixes: ['wallet.'],
+  },
+  {
+    id: 'studio',
+    name: 'Studio',
+    summary:
+      "Let the agent tell you what your simulated paper trading on AI17Z Studio did, and explain a published Trader DNA study, with the dates and Studio named as the source. " +
+      'Reading only, and only in a conversation with you; it cannot follow a wallet or trade, and saying either in public is a separate switch in the policy.',
+    prefixes: ['studio.'],
+  },
+  {
+    id: 'studio_voice',
+    name: 'Share my voice',
+    summary:
+      "Let the agent show you its voice as it would be published to AI17Z Studio, and publish or take it down when you say so in your own words. " +
+      'Only the character, style examples and output settings are ever shared, never memory, keys, permissions or policy.',
+    prefixes: ['studio_voice.'],
+  },
+  {
+    id: 'league',
+    name: 'Paper league',
+    summary:
+      "Let the agent tell you how it is doing in the AI17Z Studio paper league season it is entered in, with Studio named as the source. " +
+      'Simulated paper results only, read in a conversation with you; it cannot enter a season, trade or post.',
+    prefixes: ['league.'],
   },
   {
     id: 'reference',

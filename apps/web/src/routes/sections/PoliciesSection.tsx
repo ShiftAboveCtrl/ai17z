@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
 import { RESPONSE_SPEEDS, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contracts';
 import { ApiError, get, put } from '@app/lib/api';
+import { useResource } from '@app/lib/hooks';
 import { ChoiceGroup, ChoiceOption, Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
 import { Section, useSubHeading } from './Section';
 
@@ -69,6 +70,7 @@ export function PoliciesSection({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [spending, setSpending] = useState<SpendingReport | null>(null);
+  const allAgents = useResource<{ items: { id: string; name: string }[] }>('/api/agents');
 
   useEffect(() => setDraft(policy), [policy]);
   // Read after every save, so the sentences under each limit describe the
@@ -377,6 +379,29 @@ export function PoliciesSection({
           </Field>
         </Group>
 
+        <Group title="Second opinion" blurb="Before a reply goes out, another of your agents reads the draft and says what it would change.">
+          <Toggle
+            label="Ask a peer to review replies"
+            description="Adds one model call by the peer's model to each reply. The peer can only comment: it cannot post, use tools or see this agent's memory, and the reply is checked against every output rule again afterwards. Off by default."
+            checked={draft.quality.peerReview.enabled}
+            onChange={(v) => patch((n) => void (n.quality.peerReview.enabled = v))}
+          />
+          <Field label="Peer agent" hint="One of your other agents. Needs a primary model of its own.">
+            <select
+              className="field"
+              value={draft.quality.peerReview.peerAgentId ?? ''}
+              onChange={(e) => patch((n) => void (n.quality.peerReview.peerAgentId = e.target.value || null))}
+            >
+              <option value="">None chosen</option>
+              {(allAgents.data?.items ?? [])
+                .filter((a) => a.id !== agentId)
+                .map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+            </select>
+          </Field>
+        </Group>
+
         <Group title="Tools and addresses" blurb="What it may reach, and what it may state as fact.">
           <Field label="Tools allowed" hint="Comma separated tool keys, for example time.now, memory.search.">
             <input className="field" value={draft.tools.allowed.join(', ')} onChange={(e) => patch((n) => void (n.tools.allowed = list(e.target.value)))} />
@@ -407,6 +432,59 @@ export function PoliciesSection({
               placeholder="0x..."
               value={draft.output.verifiedAddresses.join(', ')}
               onChange={(e) => patch((n) => void (n.output.verifiedAddresses = list(e.target.value)))}
+            />
+          </Field>
+        </Group>
+
+        {/*
+          Both off, and not offered by Easy Mode: a public post about simulated
+          results is the one place they can be read as investment performance,
+          so it is a decision made here on purpose.
+        */}
+        <Group title="Paper record on Studio" blurb="Whether the agent may post about the simulated paper trading you keep on AI17Z Studio. Telling you in a private conversation is the Studio capability, not this.">
+          <Toggle
+            label="Let it post its paper record"
+            description="When a whole window is finished and had trades, it may write one post that says the results are simulated paper trading from Studio, with the dates. It goes through the same checks as any post it starts. Needs the Studio capability switched on and the posting schedule running."
+            checked={draft.studio.postPaperRecord}
+            onChange={(v) => patch((n) => void (n.studio.postPaperRecord = v))}
+          />
+          <Toggle
+            label="Let that post say how the trades did"
+            description="Off, a post says how many simulated trades were made and on what cost assumptions, and nothing about profit, loss or wins. On, it states the net result as plainly for a loss as for a gain."
+            checked={draft.studio.postPaperPnl}
+            onChange={(v) => patch((n) => void (n.studio.postPaperPnl = v))}
+          />
+          <Field label="Window it posts about" hint="Only a finished window is ever posted.">
+            <select
+              className="field"
+              value={draft.studio.paperRecordWindow}
+              onChange={(e) => patch((n) => void (n.studio.paperRecordWindow = e.target.value as PolicyConfig['studio']['paperRecordWindow']))}
+            >
+              <option value="7d">last 7 days</option>
+              <option value="30d">last 30 days</option>
+              <option value="90d">last 90 days</option>
+            </select>
+          </Field>
+        </Group>
+
+        {/*
+          Off, and not offered by Easy Mode. A study is research about other
+          people's wallets: the post may report what survived the luck filters,
+          and the checks refuse any claim that a wallet is smart or worth following.
+        */}
+        <Group title="Trader DNA study on Studio" blurb="Whether the agent may post about one published Trader DNA study. Explaining a study to you in a private conversation is the Studio capability, not this.">
+          <Toggle
+            label="Let it post about a study"
+            description="It may write one post about the study named below: the dates, the sample, which behaviours survived the luck filters, and that nothing was traded. It never names a wallet or calls one smart or worth copying, and a post that does goes to you instead. Needs the Studio capability switched on and the posting schedule running."
+            checked={draft.studio.postTraderDna}
+            onChange={(v) => patch((n) => void (n.studio.postTraderDna = v))}
+          />
+          <Field label="Published study id" hint="The id of a study Studio has published. Leave empty to post about none.">
+            <input
+              className="field"
+              value={draft.studio.traderDnaStudyId ?? ''}
+              onChange={(e) => patch((n) => void (n.studio.traderDnaStudyId = e.target.value.trim().toLowerCase() || null))}
+              placeholder="study-id"
             />
           </Field>
         </Group>

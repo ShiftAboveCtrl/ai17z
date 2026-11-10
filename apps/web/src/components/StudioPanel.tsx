@@ -5,6 +5,7 @@ import { post, put } from '@app/lib/api';
 import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
 import { RetryablePanel, Working } from '@app/components/ui';
 import { LiveTradesSection } from '@app/components/LiveTradesPanel';
+import { PublicHomePanel } from '@app/components/PublicHomePanel';
 import { ROBINHOOD_CHAIN_PARAMS, discoverWallets, ensureChain, type DiscoveredWallet, type Eip1193, type WalletWindow } from '@app/lib/walletDiscovery';
 
 /**
@@ -255,6 +256,7 @@ export function StudioPanel() {
       {data.state === 'LINKED' ? (
         <>
           <ControlSection />
+          <PublicHomePanel />
           <LiveViewSection />
           <TakeoverSection />
           <LiveTradesSection />

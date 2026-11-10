@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { trading } from '@xbam/database';
-import type { TradeIntentRow, TradeMandateRow } from '@xbam/database';
+import type { TradeIntentRow } from '@xbam/database';
 import { assetKey, type AssetRef, type MarketSnapshot, type TradeSide, type TradeVenue } from '@xbam/shared/contracts';
-import { JUPITER_SWAP_FAMILY, ask, type SwapQuoteQuery, type SwapQuoteResult } from '@xbam/upstream';
+import { JUPITER_SWAP_FAMILY, ask, type MarketPairs, type MarketQuery, type SwapQuoteQuery, type SwapQuoteResult } from '@xbam/upstream';
 import { errorMessage, withPatience } from '@xbam/shared';
 import { readMarket } from './marketData';
 import { swapQuoteFrom } from './marketIntelCapabilities';
 import { judgeTradeInput } from './tradingGate';
-import { judgeTrade, type RiskVerdict } from './tradingRisk';
+import { judgeTrade, type RiskReason, type RiskVerdict } from './tradingRisk';
 import { heldAgainst, paperPositions, sideAgrees } from './paperPositions';
 
 /**
@@ -110,6 +110,10 @@ async function runPaperTradeNow(input: {
   maxPriceImpactBps: number;
   maxFeeBase: string;
   idempotencyKey?: string;
+  /** A social simulation pins the owner's paper mandate rather than inheriting another mode. */
+  requirePaperMandateId?: string;
+  /** Re-read permission after market reads and immediately before recording a fill. */
+  beforeFill?: () => Promise<string | RiskReason | null>;
   now?: Date;
 }): Promise<PaperOutcome> {
   const now = input.now ?? new Date();
@@ -125,6 +129,18 @@ async function runPaperTradeNow(input: {
   }
   const mandate = await trading.liveMandate(input.agentId);
   if (!mandate) return { outcome: 'NO_MARKET', detail: 'This agent has no mandate, so nothing may be traded even on paper.' };
+  const paperGrant = async (checkCaller = true): Promise<RiskReason | null> => {
+    if (input.requirePaperMandateId) {
+      const current = await trading.liveMandate(input.agentId);
+      if (!current || current.id !== input.requirePaperMandateId || current.id !== mandate.id || current.mode !== 'PAPER'
+        || current.approval !== 'OWNER_APPROVES_EACH' || current.protectiveExits !== null || current.paused
+        || current.retiredAt || (current.expiresAt && Date.parse(current.expiresAt) <= Date.now())
+        || current.updatedAt !== mandate.updatedAt) return { code: 'SOCIAL_PAPER_REVOKED', detail: 'The pinned paper mandate changed, expired or was paused before execution.' };
+    }
+    const reason = checkCaller && input.beforeFill ? await input.beforeFill() : null;
+    return typeof reason === 'string' ? { code: 'SOCIAL_PAPER_REVOKED', detail: reason } : reason;
+  };
+  if (input.requirePaperMandateId && await paperGrant(false)) return { outcome: 'NO_MARKET', detail: 'The pinned paper mandate is no longer available for this request.' };
 
   /*
    * Priced in the other side of this trade, not in whatever the venue felt
@@ -140,13 +156,14 @@ async function runPaperTradeNow(input: {
   const counterparty = assetKey(input.assetIn) === assetKey(input.subject) ? input.assetOut : input.assetIn;
   // Spending the priced asset is a sale of it; spending the other side buys it.
   const spending: PricedSide = assetKey(input.assetIn) === assetKey(input.subject) ? 'ASSET' : 'QUOTE';
-  const quoted = await readMarket(input.subject, input.venue, counterparty);
+  const read = () => marketOrRoute(input.subject, input.venue, counterparty, input.assetIn, input.assetOut, input.maxIn, input.maxSlippageBps, spending);
+  const quoted = await read();
   if (quoted.outcome !== 'OK') return { outcome: 'NO_MARKET', detail: quoted.detail };
 
   // Written down before anything else happens, so a crash here leaves a record
   // of a decision rather than nothing. Paper has no irreversible step, but the
   // ordering is the same as live on purpose: this is the path being proved.
-  const { row } = await trading.createIntent({
+  const { row, created } = await trading.createIntent({
     agentId: input.agentId,
     mandateId: mandate.id,
     walletId: null,
@@ -166,6 +183,7 @@ async function runPaperTradeNow(input: {
     expiresAt: new Date(now.getTime() + mandate.quoteMaxAgeMs).toISOString(),
     idempotencyKey: input.idempotencyKey ?? `paper-${input.agentId}-${randomUUID()}`,
   });
+  if (!created) return { outcome: 'NO_MARKET', detail: `This paper intent already exists at ${row.status}; it is not filled again.` };
 
   // A simulation, recorded the same way a live one would be, so the gate's
   // mandatory-simulation check is satisfied by having actually done it.
@@ -175,43 +193,59 @@ async function runPaperTradeNow(input: {
   const onRow = simulated ?? row;
 
   // The second read: what it would have executed against.
-  const atFill = await readMarket(input.subject, input.venue, counterparty);
+  const atFill = await read();
   if (atFill.outcome !== 'OK') {
     await trading.transitionIntent(onRow.id, 'SIMULATED', 'FAILED', { error: atFill.detail });
     return { outcome: 'NO_MARKET', detail: atFill.detail };
   }
 
-  const verdict = judgeTrade(
-    await judgeTradeInput({
-      intentRow: onRow,
-      mandateRow: mandate as TradeMandateRow,
-      fresh: atFill.snapshot,
-      /*
-       * The instant the verdict is reached, not the instant the function was
-       * entered.
-       *
-       * The gate compares the fresh read's `observedAt` against this, and
-       * refuses a quote observed after it. Taken once at the top, every
-       * millisecond the reads actually took made the venue's own answer look
-       * like it came from the future: the first live paper trade was refused
-       * `QUOTE_FROM_THE_FUTURE` against a quote it had just fetched itself.
-       * Invisible to every test, because a fake reader answers instantly with
-       * a timestamp somebody wrote down earlier.
-       *
-       * An explicit `now` still wins, because a test choosing the instant is
-       * choosing it for the comparison this is on both sides of.
-       */
-      now: input.now ?? new Date(),
-    }),
-  );
-  if (!verdict.allowed) {
-    const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: verdict.reasons });
-    return { outcome: 'REFUSED', verdict, intent: refused ?? onRow };
-  }
-
-  // What is held is checked and the fill recorded under one lock on this
-  // agent's journal, so two sales of the same holding cannot both see it.
+  // Limits and holdings are read under the same journal lock as the fill.
+  // Concurrent simulations cannot both spend the last of a daily allowance,
+  // and a sale is checked against what is held at the moment it is filled.
   return trading.withPaperLock(input.agentId, async () => {
+    const currentMandate = await trading.liveMandate(input.agentId);
+    if (!currentMandate) {
+      // The market was read, so this is a refusal of a recorded decision and not an unreadable
+      // venue. Leaving the intent SIMULATED would strand it where nothing ever settles it.
+      const reasons = [{ code: 'MANDATE_GONE', detail: 'This agent no longer has a mandate, so nothing may be filled.' }];
+      const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: reasons });
+      return { outcome: 'REFUSED' as const, verdict: { allowed: false, needsOwnerApproval: false, reasons }, intent: refused ?? onRow };
+    }
+    const verdict = judgeTrade(
+      await judgeTradeInput({
+        intentRow: onRow,
+        mandateRow: currentMandate,
+        fresh: atFill.snapshot,
+        /*
+         * The instant the verdict is reached, not the instant the function was
+         * entered.
+         *
+         * The gate compares the fresh read's `observedAt` against this, and
+         * refuses a quote observed after it. Taken once at the top, every
+         * millisecond the reads actually took made the venue's own answer look
+         * like it came from the future: the first live paper trade was refused
+         * `QUOTE_FROM_THE_FUTURE` against a quote it had just fetched itself.
+         * Invisible to every test, because a fake reader answers instantly with
+         * a timestamp somebody wrote down earlier.
+         *
+         * An explicit `now` still wins, because a test choosing the instant is
+         * choosing it for the comparison this is on both sides of.
+         */
+        now: input.now ?? new Date(),
+      }),
+    );
+    // A pinned paper mandate that changed while the market was read, or a caller
+    // that withdrew its grant, refuses here, still inside the lock.
+    const revoked = await paperGrant();
+    if (revoked) {
+      verdict.allowed = false;
+      verdict.reasons.push(revoked);
+    }
+    if (!verdict.allowed) {
+      const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: verdict.reasons });
+      return { outcome: 'REFUSED', verdict, intent: refused ?? onRow };
+    }
+
     if (input.side === 'SELL') {
       const held = heldAgainst(paperPositions(await trading.paperFillsOf(input.agentId)), input.subject, counterparty);
       if (BigInt(input.maxIn) > held) {
@@ -226,7 +260,7 @@ async function runPaperTradeNow(input: {
         return { outcome: 'REFUSED' as const, verdict: { ...verdict, allowed: false, reasons }, intent: refused ?? onRow };
       }
     }
-    return fillPaper(onRow, atFill.snapshot, input.maxIn, spending, verdict);
+    return fillPaper(onRow, atFill.snapshot, input.maxIn, spending, verdict, paperGrant);
   });
 }
 
@@ -237,6 +271,7 @@ async function fillPaper(
   maxIn: string,
   spending: PricedSide,
   verdict: RiskVerdict,
+  beforeFill: () => Promise<RiskReason | null>,
 ): Promise<PaperOutcome> {
   const atFill = { snapshot: executed };
   const spent = BigInt(maxIn);
@@ -247,12 +282,25 @@ async function fillPaper(
   const modelled = withImpact(atMid, netIn, atFill.snapshot, spending);
   // A real route for exactly this size, where there is one to ask; the depth model where there is not.
   const routed = await routedOut(onRow.assetIn, onRow.assetOut, maxIn, onRow.maxSlippageBps);
+  // A price that came from the router has its fee inside it and no depth model
+  // behind it, so the depth model below would fill it fee-free. Without a route
+  // at the moment of the fill there is nothing honest to fill it from.
+  if (executed.source.startsWith(ROUTER_SOURCE) && !('out' in routed)) {
+    const detail = `No pool this engine reads lists this asset, and the router did not answer at the fill${routed.gap ? ` (${routed.gap})` : ''}.`;
+    await trading.transitionIntent(onRow.id, 'SIMULATED', 'FAILED', { error: detail });
+    return { outcome: 'NO_MARKET', detail };
+  }
   const impact =
     'out' in routed
       ? { out: routed.out, bps: routed.impactBps, model: routed.model }
       : { ...modelled, model: routed.gap ? `${modelled.model}; no route quote (${routed.gap})` : modelled.model };
   const fee = 'out' in routed ? routed.fee : modelledFee;
   const out = impact.out;
+  if (fee > BigInt(onRow.maxFeeBase)) {
+    const reasons = [...verdict.reasons, { code: 'FEE_TOO_HIGH', detail: `The simulated fee is ${fee} base units and this intent allows ${onRow.maxFeeBase}.` }];
+    const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: reasons });
+    return { outcome: 'REFUSED', verdict: { ...verdict, allowed: false, reasons }, intent: refused ?? onRow };
+  }
   if (impact.bps > onRow.maxPriceImpactBps) {
     const reasons = [
       ...verdict.reasons,
@@ -281,11 +329,20 @@ async function fillPaper(
     latencyMs: Date.parse(atFill.snapshot.observedAt) - Date.parse(onRow.quote.observedAt),
   };
 
+  const revoked = await beforeFill();
+  if (revoked) {
+    const reasons = [...verdict.reasons, revoked];
+    const refused = await trading.transitionIntent(onRow.id, 'SIMULATED', 'RISK_REJECTED', { riskReasons: reasons });
+    return { outcome: 'REFUSED', verdict: { ...verdict, allowed: false, reasons }, intent: refused ?? onRow };
+  }
+
   const filled = await trading.transitionIntent(onRow.id, 'SIMULATED', 'PAPER_FILLED', {
     executedOn: atFill.snapshot,
     postcondition: { ...fill },
+    riskReasons: verdict.reasons,
   });
-  return { outcome: 'FILLED', fill, verdict, intent: filled ?? onRow };
+  if (!filled) return { outcome: 'NO_MARKET', detail: 'The intent changed before its simulated fill was recorded. No new fill is claimed.' };
+  return { outcome: 'FILLED', fill, verdict, intent: filled };
 }
 
 const WRAPPED_SOL = 'So11111111111111111111111111111111111111112';
@@ -337,6 +394,122 @@ export async function routedOut(
   } catch (error) {
     return { gap: errorMessage(error).slice(0, 160) };
   }
+}
+
+/** Every snapshot made from a router quote starts with this, which is how the fill knows where its price came from. */
+export const ROUTER_SOURCE = 'Jupiter route quote';
+
+/**
+ * The market a paper trade is judged against: the venue's own reader first,
+ * and the router only when that reader lists no pool for a Solana token.
+ *
+ * Measured on Studio's model-led agent: 389 opportunities, one TAKE, and that
+ * one never filled, because the pool reader quotes only pools whose fee it can
+ * state and this token's pools were all elsewhere. The router had priced the
+ * same token for the agent's own readiness check a moment earlier. Only
+ * NOT_LISTED falls through: a busy or broken reader says nothing about the
+ * token and stays a refusal.
+ */
+export async function marketOrRoute(
+  subject: AssetRef,
+  venue: TradeVenue,
+  counterparty: AssetRef,
+  assetIn: AssetRef,
+  assetOut: AssetRef,
+  amountIn: string,
+  slippageBps: number,
+  spending: PricedSide,
+): ReturnType<typeof readMarket> {
+  const pooled = await readMarket(subject, venue, counterparty);
+  if (pooled.outcome !== 'NOT_LISTED' || venue !== 'AMM_POOL_SOLANA') return pooled;
+  const routed = await routerSnapshot(subject, counterparty, assetIn, assetOut, amountIn, slippageBps, spending, venue);
+  if ('gap' in routed) return { outcome: 'NOT_LISTED', detail: `${pooled.detail} The router could not price it either: ${routed.gap}` };
+  return { outcome: 'OK', snapshot: routed.snapshot };
+}
+
+/**
+ * A market snapshot built from the router's quote for exactly this trade.
+ *
+ * The price is what this size would really get, fees and impact included,
+ * so the fee is recorded as zero and the source says why; the fill then has
+ * to come from the router too (see `fillPaper`). Depth is read from the
+ * pair index for the pools the route actually goes through, in the other
+ * side of this trade, and left null when none of them can be read: the gate
+ * refuses an unknown depth rather than passing it as empty.
+ */
+export async function routerSnapshot(
+  subject: AssetRef,
+  counterparty: AssetRef,
+  assetIn: AssetRef,
+  assetOut: AssetRef,
+  amountIn: string,
+  slippageBps: number,
+  spending: PricedSide,
+  venue: TradeVenue,
+): Promise<{ snapshot: MarketSnapshot } | { gap: string }> {
+  const inputMint = solanaMint(assetIn);
+  const outputMint = solanaMint(assetOut);
+  const subjectMint = solanaMint(subject);
+  if (!inputMint || !outputMint || !subjectMint || inputMint === outputMint) return { gap: 'it is not a swap between two Solana tokens' };
+  if (subject.kind !== 'ONCHAIN') return { gap: 'the asset carries no decimals to price a whole unit in' };
+  const query: SwapQuoteQuery = { inputMint, outputMint, amount: amountIn, slippageBps: Math.min(5_000, Math.max(0, slippageBps)) };
+  let quote: ReturnType<typeof swapQuoteFrom>;
+  try {
+    const answer = await ask<SwapQuoteQuery, SwapQuoteResult>(JUPITER_SWAP_FAMILY, query);
+    quote = swapQuoteFrom(answer.value.order, query, answer.provenance.fetchedAt);
+  } catch (error) {
+    return { gap: errorMessage(error).slice(0, 160) };
+  }
+  if (!quote) return { gap: 'the router answered with something that is not a quote for this swap' };
+  const inBase = BigInt(quote.inAmount);
+  const outBase = BigInt(quote.outAmount);
+  const unit = 10n ** BigInt(subject.decimals);
+  // Quote base units per whole token: spent per token received on a buy, received per token spent on a sale.
+  const price = spending === 'QUOTE' ? (inBase * unit) / outBase : (outBase * unit) / inBase;
+  if (price === 0n) return { gap: 'the quote rounds to a price of nothing' };
+  const pools = new Set(quote.route.map((r) => r.pool).filter((p): p is string => Boolean(p)));
+  const depth = await routeDepth(subjectMint, counterparty, pools);
+  const venues = [...new Set(quote.route.map((r) => r.venue).filter((v): v is string => Boolean(v)))].slice(0, 3);
+  return {
+    snapshot: {
+      venue,
+      network: 'solana',
+      asset: subject,
+      quoteAsset: counterparty,
+      atBlock: null,
+      observedAt: quote.quotedAt,
+      priceBaseUnits: price.toString(),
+      liquidityBase: depth.base,
+      feeMicroBps: 0,
+      phase: 'POOL',
+      source: `${ROUTER_SOURCE}${venues.length ? ` via ${venues.join(', ')}` : ''}, fees inside the price; depth ${depth.said}`.slice(0, 120),
+    },
+  };
+}
+
+/** Depth on the other side of the trade, summed over the routed pools the pair index can see. */
+async function routeDepth(subjectMint: string, counterparty: AssetRef, pools: Set<string>): Promise<{ base: string | null; said: string }> {
+  const quoteMint = solanaMint(counterparty);
+  if (!quoteMint || counterparty.kind !== 'ONCHAIN' || pools.size === 0) return { base: null, said: 'unknown' };
+  let pairs: unknown[];
+  try {
+    pairs = (await ask<MarketQuery, MarketPairs>('market_pairs', { kind: 'token', address: subjectMint })).value.pairs;
+  } catch (error) {
+    // Depth is optional evidence: without it the gate refuses the trade itself, saying why.
+    return { base: null, said: `unread (${errorMessage(error).slice(0, 40)})` };
+  }
+  let total = 0;
+  let seen = 0;
+  for (const p of pairs) {
+    const pair = p as { pairAddress?: unknown; chainId?: unknown; quoteToken?: { address?: unknown }; liquidity?: { quote?: unknown } };
+    if (pair.chainId !== 'solana' || typeof pair.pairAddress !== 'string' || !pools.has(pair.pairAddress)) continue;
+    if (pair.quoteToken?.address !== quoteMint || typeof pair.liquidity?.quote !== 'number' || !Number.isFinite(pair.liquidity.quote)) continue;
+    total += pair.liquidity.quote;
+    seen += 1;
+  }
+  if (seen === 0) return { base: null, said: 'unknown' };
+  const base = BigInt(Math.floor(total * 10 ** counterparty.decimals));
+  return { base: base.toString(), said: `from ${seen} routed pool${seen === 1 ? '' : 's'}` };
 }
 
 /**

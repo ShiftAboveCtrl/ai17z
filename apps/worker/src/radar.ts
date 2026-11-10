@@ -6,6 +6,7 @@ import {
   events as eventsRepo,
   postAnalytics as postAnalyticsRepo,
   radar as radarRepo,
+  playbooks,
   type RadarSourceRow,
 } from '@xbam/database';
 import { getChannelAdapter, isChannelImplemented, readProfile } from '@xbam/channels';
@@ -17,14 +18,17 @@ import {
   noteXFailure,
   noteXRead,
   planPersonaDiscovery,
+  playbookUniverse,
   peopleCandidates,
   rankDiscovered,
   rankPeople,
   reconcileCandidates,
+  pollSignalSource,
   type DiscoveryPlan,
 } from '@xbam/runtime';
 import { describeBrowserError } from '@xbam/browser';
 import { startLoop } from './loop';
+import { syncStudioRiskWatches, flushStudioRiskObservations } from '@xbam/runtime';
 
 const log = createLogger('radar');
 
@@ -62,9 +66,12 @@ export class SocialRadar {
     if (this.running) return;
     this.running = true;
     try {
+      await syncStudioRiskWatches().catch(error => log.warn('Studio risk sync failed', { message: errorMessage(error) }));
+      await playbooks.syncRadarSources();
       for (const source of await radarRepo.claimDueSources(this.perTick, this.claimHoldSeconds)) {
         await this.pollWithinItsClaim(source);
       }
+      await flushStudioRiskObservations().catch(error => log.warn('Studio risk write-back failed', { message: errorMessage(error) }));
     } catch (error) {
       log.warn('radar tick failed', { message: errorMessage(error) });
     } finally {
@@ -132,7 +139,7 @@ export class SocialRadar {
         .catch(() => undefined);
       // A page that never came back is pressure on the account, not only on
       // this source: the next source on the same browser meets the same X.
-      await noteXFailure(source.accountId, capacityClassForSource(source.kind), overdueMessage);
+      if (source.kind !== 'market_signal') await noteXFailure(source.accountId, capacityClassForSource(source.kind), overdueMessage);
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -147,6 +154,10 @@ export class SocialRadar {
    * radar.
    */
   protected async pollOne(source: RadarSourceRow): Promise<void> {
+    if (source.kind === 'market_signal') {
+      await pollSignalSource(source);
+      return;
+    }
     const account = await accountsRepo.getAccount(source.accountId);
     if (!account || !isChannelImplemented(account.channel)) return;
 
@@ -190,6 +201,25 @@ export class SocialRadar {
     // posts is least recently checked, so a busy account cycles through them
     // instead of one thread monopolising the source.
     let target = source.target;
+    let playbookNext: string | null = null;
+    if (config.playbookAgentId) {
+      const linked = (await accountsRepo.listAccountAgents(source.accountId)).some((a) => a.agentId === config.playbookAgentId);
+      const universe = linked ? await playbookUniverse(config.playbookAgentId) : null;
+      if (!universe?.length) {
+        await radarRepo.deferPoll(source.id, new Date(Date.now() + interval), 'The linked agent no longer runs this playbook.');
+        return;
+      }
+      const index = /^\d+$/.test(source.cursor ?? '') ? Number(source.cursor) % universe.length : 0;
+      const asset = universe[index]!;
+      playbookNext = String((index + 1) % universe.length);
+      if (asset.kind !== 'ONCHAIN') {
+        // Only an exact mint can be searched. Returning without moving the cursor met this same
+        // asset on every poll and the assets after it were never read.
+        await radarRepo.deferPoll(source.id, new Date(Date.now() + interval), 'A playbook asset without a mint address was skipped; the next one is read on the next poll.', playbookNext);
+        return;
+      }
+      target = asset.address;
+    }
     let ownPostId: string | null = null;
     let ownPostAgentId: string | null = null;
     if (source.kind === 'own_threads') {
@@ -273,7 +303,7 @@ export class SocialRadar {
         kind: discovery?.mode === 'COMMUNITY' ? 'own_threads' : source.kind,
         target,
         limit: config.limit ?? 20,
-        cursor: source.cursor,
+        cursor: config.playbookAgentId ? null : source.cursor,
       });
       // One poll is counted as one read, whatever it cost underneath. A
       // structured read may be two queries and a rendered one a few scrolls;
@@ -362,7 +392,7 @@ export class SocialRadar {
         sourceId: source.id,
         sourceKind: source.kind,
         candidates: labelled,
-        mayTrigger: config.mayTrigger ?? true,
+        mayTrigger: config.playbookAgentId ? false : (config.mayTrigger ?? true),
       });
 
       await radarRepo.recordPoll({
@@ -371,7 +401,7 @@ export class SocialRadar {
         found: poll.candidates.length,
         // A discovery source keeps its place in the rotation of terms, not in
         // a feed: every search is a different feed.
-        cursor: discovery ? discovery.nextCursor : poll.cursor,
+        cursor: playbookNext ?? (discovery ? discovery.nextCursor : poll.cursor),
         idleReason: discovery
           ? `${discovery.mode === 'COMMUNITY' ? 'Read' : 'Searched'} ${discovery.term}: ${found.length} found, ${found.length - unseen.length} already seen, kept the best ${kept.length}.${unseen.length > fresh.length ? ` ${unseen.length - fresh.length} ${unseen.length - fresh.length === 1 ? 'was' : 'were'} too old to answer.` : ''}`
           : null,

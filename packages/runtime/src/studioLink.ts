@@ -2,8 +2,11 @@ import { ops, plugins as installedPlugins, studio as ledger } from '@xbam/databa
 import { buildVersion, openSecret, sealSecret } from '@xbam/shared';
 import {
   AI17Z_PAYMENT,
+  ActivityTapeBatch,
   formatBaseUnits,
+  PaperRecord,
   prepareMarketplacePurchase,
+  type PaperRecordWindow,
   type PreparedMarketplacePurchase,
   type StudioPurchaseTerms,
 } from '@xbam/shared/contracts';
@@ -88,6 +91,7 @@ interface LinkRecord {
   /** Set when Studio said this installation is no longer linked. */
   revokedAt?: string | null;
 }
+export type StudioLinkScope = Pick<LinkRecord, 'installationId' | 'origin' | 'linkedAt'>;
 
 interface PendingRecord {
   origin: string;
@@ -269,9 +273,13 @@ async function accessToken(where: StudioOrigin, key: InstallationKey, link: Link
 async function authed(
   path: string,
   init: { method: 'GET' | 'POST'; json?: unknown },
+  expectedLink?: StudioLinkScope,
 ): Promise<StudioAnswer | StudioProblem> {
   const ready = await linkedContext();
   if ('ok' in ready) return ready;
+  if (expectedLink && (ready.link.installationId !== expectedLink.installationId || ready.where.origin !== expectedLink.origin || ready.link.linkedAt !== expectedLink.linkedAt)) {
+    return { ok: false, why: 'The Studio link changed before this request could be sent.' };
+  }
   const token = await accessToken(ready.where, ready.key, ready.link);
   if (typeof token !== 'string') return token;
   const answer = await send(ready.where, path, {
@@ -306,6 +314,34 @@ async function authed(
   return answer;
 }
 
+/**
+ * One request to the linked Studio's installation API, as this installation:
+ * the access token and a DPoP proof bound to this exact method and address.
+ *
+ * For callers that own their own contract (the league bridge). The path must be
+ * under `/api/v1/installation/`, so nothing built from an answer can aim this at
+ * the token endpoint or anywhere else, and the origin is never a parameter: it is
+ * the linked one or nothing.
+ */
+export async function studioInstallationRequest(
+  path: string,
+  init: { method: 'GET' | 'POST'; json?: unknown },
+  expectedLink?: StudioLinkScope,
+): Promise<{ ok: true; status: number; body: Record<string, unknown> | null; sentence: string } | StudioProblem> {
+  if (!/^\/api\/v1\/installation\/[A-Za-z0-9/_?=&.-]+$/.test(path) || path.includes('..') || path.includes('//')) {
+    return { ok: false, why: 'That is not a Studio installation address.' };
+  }
+  const answer = await authed(path, init, expectedLink).catch((error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }));
+  if ('ok' in answer) return answer;
+  return { ok: true, status: answer.status, body: answer.body, sentence: describe(answer) };
+}
+
+/** Whether this installation could ask Studio anything at all, without asking. */
+export async function studioInstallationReady(): Promise<{ linked: true } | { linked: false; why: string }> {
+  const ready = await linkedContext();
+  return 'ok' in ready ? { linked: false, why: ready.why } : { linked: true };
+}
+
 async function linkedContext(): Promise<{ where: StudioOrigin; key: InstallationKey; link: LinkRecord } | StudioProblem> {
   const where = await studioOrigin();
   if (!where) return { ok: false, why: 'No Studio address is configured.' };
@@ -317,6 +353,28 @@ async function linkedContext(): Promise<{ where: StudioOrigin; key: Installation
   const key = await installationKey();
   if (!key) return { ok: false, why: 'The key this installation was linked with cannot be read. Link it again.' };
   return { where, key, link };
+}
+
+/**
+ * What `studioVoice.ts` needs of the transport, and no more: the authenticated
+ * request as this installation (token plus a DPoP proof, no stored secret), a
+ * read that carries no credential at all, and the answer's shape.
+ *
+ * A public read goes out without the installation's token on purpose. A signed
+ * out visitor can read a published voice, so installing one has no business
+ * telling Studio which installation asked.
+ */
+export type StudioReply = StudioAnswer;
+export const studioAuthed = authed;
+export const studioLinkedContext = linkedContext;
+export const describeStudioReply = describe;
+export async function studioPublicGet(path: string): Promise<StudioAnswer | StudioProblem> {
+  const where = await studioOrigin();
+  if (!where) return { ok: false, why: 'No Studio address is configured.' };
+  return send(where, path, { method: 'GET' }).catch((error: Error) => ({
+    ok: false as const,
+    why: `Studio could not be reached: ${error.message}`,
+  }));
 }
 
 async function markRevoked(why: string): Promise<void> {
@@ -901,6 +959,84 @@ export async function studioExchange(json: Record<string, unknown>): Promise<{ o
   return { ok: true, body: answer.body };
 }
 
+/**
+ * How old a paper record may be and still be believed. Studio stamps every
+ * answer, so a copy that sat in a cache between here and there is recognised
+ * by its own date rather than trusted because it arrived just now.
+ */
+export const PAPER_RECORD_MAX_AGE_MS = 15 * 60_000;
+const PAPER_RECORD_FUTURE_SLACK_MS = 5 * 60_000;
+
+/**
+ * Reads the owner's paper track record from the linked Studio, as this
+ * installation: the access token and a DPoP proof bound to this exact request,
+ * and no stored secret of any kind.
+ *
+ * ## Nothing is kept
+ *
+ * There is no variable here that holds an answer, on purpose. A record is read
+ * when somebody asks and used for that answer; the next question reads again.
+ * Remembering the last good record would let an unreachable Studio keep
+ * "saying" last week's result as though it were current, which is the one
+ * failure a track record cannot afford.
+ *
+ * ## Only what the contract allows
+ *
+ * The answer must parse as a strict `PaperRecord`, so a field Studio was never
+ * meant to publish refuses the whole record. Every link must point at the
+ * linked Studio's own origin, because the agent may repeat a link and a
+ * sanitized decision page on somebody else's host is not one.
+ */
+export async function studioPaperRecord(
+  window: PaperRecordWindow,
+  now: Date = new Date(),
+): Promise<{ ok: true; record: PaperRecord } | StudioProblem> {
+  const where = await studioOrigin();
+  const answer = await authed(`/api/v1/installation/paper-record?window=${encodeURIComponent(window)}`, { method: 'GET' }).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  if (answer.status === 404) return { ok: false, why: 'This Studio does not publish a paper track record yet.' };
+  if (answer.status !== 200) return { ok: false, why: describe(answer) };
+  const parsed = PaperRecord.safeParse(answer.body);
+  if (!parsed.success) {
+    return { ok: false, why: 'Studio answered with something other than the paper record this installation reads, so none of it was used.' };
+  }
+  const record = parsed.data;
+  if (record.window.label !== window) return { ok: false, why: 'Studio answered for a different window than the one asked for, so none of it was used.' };
+  if (where) {
+    for (const decision of record.decisions) {
+      if (new URL(decision.url).origin !== where.origin) {
+        return { ok: false, why: 'Studio\'s record linked to a page that is not on Studio, so none of it was used.' };
+      }
+    }
+  }
+  const age = now.getTime() - Date.parse(record.generated_at);
+  if (age > PAPER_RECORD_MAX_AGE_MS || age < -PAPER_RECORD_FUTURE_SLACK_MS) {
+    return { ok: false, why: 'Studio\'s record is not current, so it was not treated as live.' };
+  }
+  return { ok: true, record };
+}
+
+/**
+ * One published playbook, as Studio serves it to a linked installation.
+ *
+ * Read only and a plain GET: the id is checked against the playbook id grammar
+ * before it reaches a path, and what comes back is returned as an unparsed
+ * value, because `playbookImport.ts` is the only thing allowed to decide what
+ * a playbook may say. Nothing in the answer is trusted here.
+ */
+export async function studioPlaybook(studioId: string): Promise<{ ok: true; document: unknown } | StudioProblem> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(studioId)) return { ok: false, why: 'That is not a playbook id.' };
+  const answer = await authed(`/api/v1/installation/playbooks/${studioId}`, { method: 'GET' }).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  if (answer.status === 404) return { ok: false, why: 'Studio has no playbook with that id for this installation.' };
+  if (answer.status !== 200 || !answer.body || answer.body.protocol !== 1 || answer.body.playbook === undefined) return { ok: false, why: describe(answer) };
+  return { ok: true, document: answer.body.playbook };
+}
+
 export async function studioPurchases(): Promise<{ ok: true; purchases: StudioPurchase[] } | StudioProblem> {
   const answer = await authed('/api/v1/installation/purchases', { method: 'GET' }).catch(
     (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
@@ -1246,6 +1382,15 @@ export interface StudioStatus {
   installed: Record<string, string>;
 }
 
+/**
+ * Whether this installation can ask Studio anything at all, without asking.
+ * For readiness checks, which run often and must not make a network call.
+ */
+export async function studioLinkReadiness(): Promise<{ linked: true } | { linked: false; why: string }> {
+  const ready = await linkedContext();
+  return 'ok' in ready ? { linked: false, why: ready.why } : { linked: true };
+}
+
 export async function studioStatus(): Promise<StudioStatus> {
   const where = await studioOrigin();
   const link = await linkRecord();
@@ -1291,4 +1436,60 @@ export async function studioSyncDue(intervalMs: number, now: Date = new Date()):
   if (!link || link.revokedAt) return false;
   const sync = await ops.getSetting<SyncRecord>(SYNC_SETTING);
   return !sync || now.getTime() - Date.parse(sync.attemptedAt) >= intervalMs;
+}
+
+/** Frozen public projection. Uses the installation DPoP transport only. */
+export async function studioActivityBatch(input: unknown): Promise<{ ok: true } | StudioProblem> {
+  const json = ActivityTapeBatch.parse(input);
+  const answer = await authed('/api/v1/installation/activity-tape', { method: 'POST', json }).catch(
+    () => ({ ok: false as const, why: 'Studio could not be reached.' }),
+  );
+  if ('ok' in answer) return answer;
+  return answer.status === 200 && answer.body?.protocol === 1 && answer.body?.accepted === true
+    ? { ok: true } : { ok: false, why: 'Studio did not acknowledge the activity tape.' };
+}
+
+/** Public-home writes use the same per-link key and DPoP transport as other installation calls. */
+export async function studioPublicHomeRequest(agentId: string, json: Record<string, unknown>, expectedLink: StudioLinkScope): Promise<
+  { ok: true; published: boolean; slug: string; digest: string } | StudioProblem
+> {
+  const answer = await authed(`/api/v1/installation/agents/${encodeURIComponent(agentId)}/home`, { method: 'POST', json }, expectedLink)
+    .catch(() => ({ ok: false as const, why: 'Studio could not be reached.' }));
+  if ('ok' in answer) return { ok: false, why: 'Studio could not confirm the public home.' };
+  const b = answer.body;
+  if ((answer.status !== 200 && answer.status !== 201) || b?.protocol !== 1 || typeof b.published !== 'boolean'
+    || typeof b.slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(b.slug) || b.slug.length < 3 || b.slug.length > 24
+    || typeof b.manifest_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(b.manifest_sha256)) {
+    return { ok: false, why: 'Studio did not acknowledge this public home.' };
+  }
+  return { ok: true, published: b.published, slug: b.slug, digest: b.manifest_sha256 };
+}
+
+/**
+ * What Studio said to a RENEW. Kept apart from the publish reader because the
+ * caller has to tell three things apart: a lease that was extended, a refusal
+ * Studio meant (403 or 409, with its stable code) and everything else, which
+ * is retried on a later sweep because it says nothing about the page.
+ */
+export type StudioHomeRenewal =
+  | { kind: 'renewed'; slug: string; digest: string; validUntil: string }
+  | { kind: 'refused'; code: string }
+  | { kind: 'retry' };
+export async function studioPublicHomeRenew(agentId: string, json: Record<string, unknown>, expectedLink: StudioLinkScope): Promise<StudioHomeRenewal> {
+  const answer = await authed(`/api/v1/installation/agents/${encodeURIComponent(agentId)}/home`, { method: 'POST', json }, expectedLink)
+    .catch(() => ({ ok: false as const, why: 'Studio could not be reached.' }));
+  if ('ok' in answer) return { kind: 'retry' };
+  const b = answer.body;
+  if (answer.status === 403 || answer.status === 409) {
+    // The code comes from a fixed vocabulary; anything else is recorded as unknown, never echoed.
+    const code = typeof b?.error === 'string' && /^[a-z_]{1,40}$/.test(b.error) ? b.error : 'unknown';
+    return { kind: 'refused', code };
+  }
+  if (answer.status === 200 && b?.protocol === 1 && b.published === true && typeof b.slug === 'string'
+    && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(b.slug) && b.slug.length >= 3 && b.slug.length <= 24
+    && typeof b.manifest_sha256 === 'string' && /^[0-9a-f]{64}$/.test(b.manifest_sha256)
+    && typeof b.valid_until === 'string' && Number.isFinite(Date.parse(b.valid_until))) {
+    return { kind: 'renewed', slug: b.slug, digest: b.manifest_sha256, validUntil: new Date(b.valid_until).toISOString() };
+  }
+  return { kind: 'retry' };
 }

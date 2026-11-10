@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { trading } from '@xbam/database';
+import { query, trading } from '@xbam/database';
 import { AssetRef, MarketSnapshot, type TradeMandate, type TradeVenue } from '@xbam/shared/contracts';
 import {
   amountOut,
@@ -164,6 +164,49 @@ describe('reading a venue keeps its four answers apart', () => {
 });
 
 describe('a paper trade runs the whole path and signs nothing', () => {
+  it('charges the execution day rather than the day a delayed paper intent was drafted', async () => {
+    const fixture = await agent({ maxPerDay: '1500000000000000000' });
+    registerMarketReader(fakeReader([snap()]));
+    const first = await ask(fixture.agentId);
+    expect(first.outcome).toBe('FILLED');
+    if (first.outcome !== 'FILLED') return;
+    // This fill happened today, but its intent was drafted before midnight.
+    await query(`UPDATE trade_intents SET created_at = now() - interval '1 day' WHERE id = $1`, [first.intent.id]);
+    const second = await ask(fixture.agentId);
+    expect(second.outcome).toBe('REFUSED');
+    expect(second.outcome === 'REFUSED' && second.verdict.reasons.map((r) => r.code)).toContain('DAILY_LIMIT');
+    // A fill that really happened yesterday does not spend today's allowance.
+    await query(`UPDATE trade_intents SET updated_at = now() - interval '1 day' WHERE id = $1`, [first.intent.id]);
+    expect((await ask(fixture.agentId)).outcome).toBe('FILLED');
+  });
+
+  it('enforces the cumulative paper daily limit even when buys arrive together', async () => {
+    const fixture = await agent({ maxPerDay: '1500000000000000000' });
+    registerMarketReader(fakeReader([snap()]));
+    const outcomes = await Promise.all([ask(fixture.agentId), ask(fixture.agentId)]);
+    expect(outcomes.filter((o) => o.outcome === 'FILLED')).toHaveLength(1);
+    const refused = outcomes.find((o) => o.outcome === 'REFUSED');
+    expect(refused?.outcome === 'REFUSED' && refused.verdict.reasons.map((r) => r.code)).toContain('DAILY_LIMIT');
+    expect(await trading.paperFillsOf(fixture.agentId)).toHaveLength(1);
+  });
+
+  it('rechecks the owner per-trade ceiling at execution after market reads', async () => {
+    const fixture = await agent();
+    let reads = 0;
+    registerMarketReader({
+      id: 'owner-edit', version: '1', venues: ['PONS_V2_CURVE'],
+      async read() {
+        reads += 1;
+        if (reads === 2) await trading.putMandate({ agentId: fixture.agentId, ownerId: fixture.ownerId, mandate: mandateDraft({ maxPerTrade: '500000000000000000' }) as unknown as Omit<TradeMandate, 'id' | 'agentId'> });
+        return snap();
+      },
+    });
+    const outcome = await ask(fixture.agentId);
+    expect(outcome.outcome).toBe('REFUSED');
+    expect(outcome.outcome === 'REFUSED' && outcome.verdict.reasons.map((r) => r.code)).toContain('SIZE_ABOVE_MANDATE');
+    expect(await trading.paperFillsOf(fixture.agentId)).toHaveLength(0);
+  });
+
   it('fills, and records the fill as simulated', async () => {
     const fixture = await agent();
     registerMarketReader(fakeReader([snap()]));
@@ -247,6 +290,28 @@ describe('a paper trade runs the whole path and signs nothing', () => {
     expect(out.outcome).toBe('NO_MARKET');
     if (out.outcome !== 'NO_MARKET') return;
     expect(out.detail).toContain('no mandate');
+  }, 60_000);
+
+  it('settles the intent as refused when the mandate is gone by the time the fill is decided', async () => {
+    const fixture = await agent();
+    const first = snap();
+    let reads = 0;
+    // The second read is the one made just before the lock; the mandate is retired during it.
+    registerMarketReader({
+      id: 'retiring', version: '1', venues: ['PONS_V2_CURVE'],
+      async read() {
+        reads += 1;
+        if (reads === 2) await query('UPDATE trade_mandates SET retired_at = now() WHERE agent_id = $1', [fixture.agentId]);
+        return first;
+      },
+    });
+    const out = await ask(fixture.agentId);
+    expect(out.outcome).toBe('REFUSED');
+    if (out.outcome !== 'REFUSED') return;
+    expect(out.intent.status).toBe('RISK_REJECTED');
+    expect(out.verdict.reasons[0]!.detail).toMatch(/no longer has a mandate/);
+    const rows = await query<{ status: string }>('SELECT status FROM trade_intents WHERE agent_id = $1', [fixture.agentId]);
+    expect(rows.map((r) => r.status)).toEqual(['RISK_REJECTED']);
   }, 60_000);
 
   it('makes one trade per decision when retried', async () => {

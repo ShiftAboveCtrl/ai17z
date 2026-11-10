@@ -48,6 +48,7 @@ import { generate, type GenerateResult } from '@xbam/models';
 import { retrieveMemories, looksLikeSecret } from '@xbam/memory';
 import { runCapabilityLoop } from './capabilityLoop';
 import { honestChangeAnswer } from './managementCapabilities';
+import { paperReplyFromSteps } from './paperCapabilities';
 import { shortlistCapabilities } from './capabilityRelevance';
 import { listModelCallable } from '@xbam/tools';
 import { capabilitySettings } from './capabilityPermissions';
@@ -377,7 +378,9 @@ export async function writeAnswer(answer: ChatMessage, options: ChatWorkerOption
       origin: { conversationId: conversation.id, messageId: answer.answers ?? answer.id, text: question, ownerId: conversation.ownerId },
     });
 
-    const validated = validateOutput(honestChangeAnswer(loop.answer, loop.steps, question), chatPolicy(policy), null, [persona.biography, persona.customInstructions].join('\n'));
+    const paperReply = paperReplyFromSteps(loop.steps);
+    const validated = validateOutput(paperReply ?? honestChangeAnswer(loop.answer, loop.steps, question), chatPolicy(policy), null, [persona.biography, persona.customInstructions].join('\n'));
+    if (paperReply !== null && validated.output !== paperReply) return failed('The complete simulated paper receipt cannot fit this output policy. Review it before sending.');
     const model = last as GenerateResult | null;
     const evidence = {
       model: model ? { provider: model.provider, model: model.model, role: model.role, latencyMs: model.latencyMs } : null,
