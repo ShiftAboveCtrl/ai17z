@@ -31,6 +31,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { releaseName, releaseManifestSchema } from '@xbam/shared';
 import type { Platform } from '@xbam/shared';
+import { pruneDependencies } from './pruneDependencies.mjs';
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -425,6 +426,11 @@ async function main(): Promise<void> {
   // product cannot reach. Removed by name rather than by category, because the
   // category also holds the thing that makes TypeScript run.
   await rm(join(stageDir, 'node_modules', '@napi-rs'), { recursive: true, force: true });
+
+  // Dependencies' READMEs, changelogs, docs and tests: never loaded, and where
+  // the release's private identifier scan finds other people's hostnames.
+  const pruned = await pruneDependencies(join(stageDir, 'node_modules'));
+  console.log(`pruned ${pruned.removed.length} documentation and test entries from dependencies (${Math.round(pruned.bytes / 1024 / 1024)}MB)`);
 
   // Proof, rather than an exit code.
   //

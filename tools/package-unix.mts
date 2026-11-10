@@ -29,6 +29,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { releaseName } from '@xbam/shared';
 import { INCLUDE, copyFiltered, proveCompatibilityGate } from './package-windows.mjs';
+import { pruneDependencies } from './pruneDependencies.mjs';
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -253,6 +254,10 @@ async function main(): Promise<void> {
   for (const unwanted of ['@img/sharp-libvips-dev', '@img/sharp-libvips-dev-wasm32']) {
     await rm(join(stage, 'node_modules', unwanted), { recursive: true, force: true }).catch(() => undefined);
   }
+
+  // The same pruning as the Windows packager, from the same module.
+  const pruned = await pruneDependencies(join(stage, 'node_modules'));
+  console.log(`  pruned ${pruned.removed.length} documentation and test entries from dependencies (${Math.round(pruned.bytes / 1024 / 1024)}MB)`);
 
   await writeFile(
     join(stage, 'BUILD_INFO.json'),

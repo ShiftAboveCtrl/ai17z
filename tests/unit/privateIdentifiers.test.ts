@@ -316,7 +316,7 @@ describe('the release step', () => {
   function releaseRepo(withOptOut: 'none' | 'tagged' | 'untracked'): string {
     const repo = mkdtempSync(join(tmpdir(), 'private-ids-repo-'));
     mkdirSync(join(repo, 'ci', 'scripts'), { recursive: true });
-    for (const f of ['private-identifiers.sh', 'privacy_scan.py', 'history-scan.py']) {
+    for (const f of ['private-identifiers.sh', 'privacy_scan.py', 'history-scan.py', 'installer_matches_zip.py']) {
       writeFileSync(join(repo, 'ci', 'scripts', f), readFileSync(resolve(root, 'ci/scripts', f)));
     }
     const g = (...args: string[]) =>
@@ -449,6 +449,114 @@ describe('the release step', () => {
       expect(result.stdout).not.toMatch(/README\.md[^\n]*home-path/);
       expect(leaks(result.stdout)).toBe(false);
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!bash || !python)('refuses when innoextract warns and the installer holds files the zip does not', () => {
+    const repo = releaseRepo('none');
+    const dir = mkdtempSync(join(tmpdir(), 'private-ids-ino-'));
+    try {
+      // The application zip the installer must reproduce, plus a dummy .exe.
+      const zip = join(dir, 'AI17Z-App-1.zip');
+      pythonWrites(
+        ['import sys, zipfile', 'z = zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED)', 'z.writestr("a.txt", "top file\\n")', 'z.close()'].join('\n'),
+        zip,
+      );
+      const exe = join(dir, 'AI17Z-Setup-1.exe');
+      writeFileSync(exe, 'MZ placeholder\n');
+      // A fake innoextract that unpacks the zip's file plus an extra one, warns,
+      // and exits clean: the warning, not the status, is what must refuse.
+      const bin = mkdtempSync(join(tmpdir(), 'private-ids-ino-bin-'));
+      writeFileSync(
+        join(bin, 'innoextract'),
+        ['#!/bin/sh', 'mkdir -p "$2/app"', "printf 'top file\\n' > \"$2/app/a.txt\"", "printf 'extra\\n' > \"$2/app/extra.txt\"", 'echo "Warning: could not read back some checksums" >&2', 'exit 0'].join('\n'),
+        { mode: 0o755 },
+      );
+      python3Shim(bin);
+      const sep = process.platform === 'win32' ? ';' : ':';
+      const result = spawnSync(bash!, [join(repo, 'ci/scripts/private-identifiers.sh'), 'files', zip, exe], {
+        encoding: 'utf8',
+        cwd: repo,
+        env: { ...process.env, PRIVATE_IDENTIFIERS: LIST, GITHUB_REF_NAME: '', PATH: `${bin}${sep}${process.env.PATH ?? ''}` },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('unpacked 2 files; innoextract warned 1 times');
+      expect(result.stdout).toContain('REFUSED: innoextract warned 1 times and the installer holds 1 files the application zip does not');
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!bash || !python)('counts installer-only files across the whole output, not only the application directory', () => {
+    const repo = releaseRepo('none');
+    const dir = mkdtempSync(join(tmpdir(), 'private-ids-ino-whole-'));
+    try {
+      const zip = join(dir, 'AI17Z-App-1.zip');
+      pythonWrites(
+        ['import sys, zipfile', 'z = zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED)', 'z.writestr("a.txt", "top file\\n")', 'z.close()'].join('\n'),
+        zip,
+      );
+      const exe = join(dir, 'AI17Z-Setup-1.exe');
+      writeFileSync(exe, 'MZ placeholder\n');
+      // The extra file sits at the top of the output, outside app/: it must
+      // still be counted as installer-only, or a warning would not refuse it.
+      const bin = mkdtempSync(join(tmpdir(), 'private-ids-ino-whole-bin-'));
+      writeFileSync(
+        join(bin, 'innoextract'),
+        ['#!/bin/sh', 'mkdir -p "$2/app"', "printf 'top file\\n' > \"$2/app/a.txt\"", "printf 'installer only\\n' > \"$2/extra.txt\"", 'echo "Warning: could not read back some checksums" >&2', 'exit 0'].join('\n'),
+        { mode: 0o755 },
+      );
+      python3Shim(bin);
+      const sep = process.platform === 'win32' ? ';' : ':';
+      const result = spawnSync(bash!, [join(repo, 'ci/scripts/private-identifiers.sh'), 'files', zip, exe], {
+        encoding: 'utf8',
+        cwd: repo,
+        env: { ...process.env, PRIVATE_IDENTIFIERS: LIST, GITHUB_REF_NAME: '', PATH: `${bin}${sep}${process.env.PATH ?? ''}` },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('unpacked 2 files; innoextract warned 1 times');
+      expect(result.stdout).toContain('REFUSED: innoextract warned 1 times and the installer holds 1 files the application zip does not');
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!bash || !python)('refuses when innoextract warns and no application zip matches the installer', () => {
+    const repo = releaseRepo('none');
+    const dir = mkdtempSync(join(tmpdir(), 'private-ids-ino-nozip-'));
+    try {
+      // A zip of a different version, so no application zip matches this installer.
+      const zip = join(dir, 'AI17Z-App-1.zip');
+      pythonWrites(
+        ['import sys, zipfile', 'z = zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED)', 'z.writestr("a.txt", "top file\\n")', 'z.close()'].join('\n'),
+        zip,
+      );
+      const exe = join(dir, 'AI17Z-Setup-2.exe');
+      writeFileSync(exe, 'MZ placeholder\n');
+      const bin = mkdtempSync(join(tmpdir(), 'private-ids-ino-nozip-bin-'));
+      writeFileSync(
+        join(bin, 'innoextract'),
+        ['#!/bin/sh', 'mkdir -p "$2/app"', "printf 'top file\\n' > \"$2/app/a.txt\"", 'echo "Warning: could not read back some checksums" >&2', 'exit 0'].join('\n'),
+        { mode: 0o755 },
+      );
+      python3Shim(bin);
+      const sep = process.platform === 'win32' ? ';' : ':';
+      const result = spawnSync(bash!, [join(repo, 'ci/scripts/private-identifiers.sh'), 'files', zip, exe], {
+        encoding: 'utf8',
+        cwd: repo,
+        env: { ...process.env, PRIVATE_IDENTIFIERS: LIST, GITHUB_REF_NAME: '', PATH: `${bin}${sep}${process.env.PATH ?? ''}` },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('unpacked 1 files; innoextract warned 1 times');
+      expect(result.stdout).toContain('REFUSED: no application zip for this installer in the set and innoextract warned 1 times');
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });
     }
   });
