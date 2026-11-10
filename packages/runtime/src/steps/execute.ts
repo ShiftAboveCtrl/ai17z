@@ -347,6 +347,16 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   }
 
   if (!job.dryRun && signature && (await actionsRepo.contentAlreadySent(bundle.agent.id, signature))) {
+    /*
+      A worker that died after X took the card and before the owner was told
+      lands here on its retry, because its own action already carries the
+      signature. Only this job's own executed action counts: the same text sent
+      by another job says nothing about whether this request's card went out.
+      Saying it again is a no-op, keyed on the request.
+    */
+    if (mintReply !== null && (await actionsRepo.listJobActions(job.id)).some((a) => a.status === 'EXECUTED' && !a.dryRun)) {
+      await announceMintCheck(bundle);
+    }
     await jobsRepo.updateJob(job.id, {
       status: 'EXECUTED',
       touch: ['executedAt'],
@@ -484,6 +494,9 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
         remoteActionUrl: already.remoteActionUrl,
         contentSignature: signature,
       });
+      // X has the card, so the owner is offered the watch here too, or a worker
+      // that died between sending and telling them would never tell them.
+      if (mintReply !== null) await announceMintCheck(bundle);
       await jobsRepo.updateJob(job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
       await observability.emitTrace({
         jobId: job.id,

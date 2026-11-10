@@ -37,6 +37,7 @@ import {
   resetLimiterForTest,
   resetUpstreamsForTest,
 } from '@xbam/upstream';
+import { mockAdapter } from '@xbam/channels';
 import * as runtime from '@xbam/runtime';
 import { createFixture } from '../support/fixtures';
 import { installHarness, mockEvent } from '../support/harness';
@@ -554,6 +555,101 @@ describe('the owner is told only after the card has gone out', () => {
     // A retried execute says it once.
     await runtime.stepExecute(await runtime.loadJobBundle(await jobsRepo.requireJob(held.job.id)));
     expect(await open()).toHaveLength(1);
+  });
+
+  describe('when a worker died after the card went out', () => {
+    /*
+      A worker that dies after X took the card and before the owner was told
+      leaves a published card with no notice. Each recovery path has to say it,
+      once, because nothing else will. The notice is deleted between the first
+      send and the retry to stand for "the worker never got to raise it".
+    */
+    async function sentCard() {
+      serve(BONK);
+      const policy = easyPolicy();
+      const fixture = await createFixture({ policy: { ...policy, automation: { ...policy.automation, mode: 'REVIEW_BEFORE_ACTION' } } });
+      const held = await ask(fixture.agentId, `check ${BONK}`);
+      expect(held.job.status).toBe('WAITING_FOR_APPROVAL');
+      const run = async () => runtime.stepExecute(await runtime.loadJobBundle(await jobsRepo.requireJob(held.job.id)));
+      await run();
+      expect(await open()).toHaveLength(1);
+      const lostNotice = () => query(`DELETE FROM notifications WHERE kind = 'MINT_CHECK_ANSWERED'`);
+      await lostNotice();
+      expect(await open()).toHaveLength(0);
+      return { fixture, held, run, lostNotice };
+    }
+
+    it('says it when the retry finds the same job\'s action already carrying the text', async () => {
+      const { run } = await sentCard();
+      await run();
+      expect(await open()).toHaveLength(1);
+      await run();
+      expect(await open()).toHaveLength(1);
+    });
+
+    it('says it when the retry finds the action already executed', async () => {
+      const { held, run } = await sentCard();
+      // No signature recorded, so the text check cannot catch it and the claim does.
+      await query(`UPDATE actions SET content_signature = NULL WHERE job_id = $1`, [held.job.id]);
+      await run();
+      expect(await open()).toHaveLength(1);
+      await run();
+      expect(await open()).toHaveLength(1);
+    });
+
+    it('says it when the action was left EXECUTING and the remote confirms it was sent', async () => {
+      const { held, run } = await sentCard();
+      await query(`ALTER TABLE actions DISABLE TRIGGER actions_set_updated_at`);
+      await query(
+        `UPDATE actions SET status = 'EXECUTING', content_signature = NULL, updated_at = now() - interval '30 minutes' WHERE job_id = $1`,
+        [held.job.id],
+      );
+      await query(`ALTER TABLE actions ENABLE TRIGGER actions_set_updated_at`);
+
+      const adapter = mockAdapter as { wasAlreadyDone?: unknown };
+      adapter.wasAlreadyDone = async () => ({ done: true, conclusive: true, remoteActionId: 'mock-1', remoteActionUrl: 'mock://message/mock-1', detail: 'Found it.' });
+      try {
+        await run();
+        expect(await open()).toHaveLength(1);
+        expect((await actionsRepo.listJobActions(held.job.id)).filter((a) => a.status === 'EXECUTED')).toHaveLength(1);
+        // Recovered, so it is executed now and a further retry still says it once.
+        await run();
+        expect(await open()).toHaveLength(1);
+      } finally {
+        delete adapter.wasAlreadyDone;
+      }
+    });
+
+    it('says nothing when the matching text was sent by a different job', async () => {
+      const { fixture, held, run } = await sentCard();
+      // The text is on record for the agent, but this job never sent it, so there
+      // is no evidence that this request's card reached anyone.
+      const other = await queued(fixture.agentId, 'a different request', 'bob');
+      await query(`UPDATE actions SET job_id = $2 WHERE job_id = $1`, [held.job.id, other.id]);
+      await run();
+      expect(await open()).toHaveLength(0);
+    });
+
+    it('says nothing when the remote says the earlier attempt never arrived, until the resend succeeds', async () => {
+      const { held, run } = await sentCard();
+      await query(`ALTER TABLE actions DISABLE TRIGGER actions_set_updated_at`);
+      await query(
+        `UPDATE actions SET status = 'EXECUTING', content_signature = NULL, updated_at = now() - interval '30 minutes' WHERE job_id = $1`,
+        [held.job.id],
+      );
+      await query(`ALTER TABLE actions ENABLE TRIGGER actions_set_updated_at`);
+
+      const adapter = mockAdapter as { wasAlreadyDone?: unknown };
+      adapter.wasAlreadyDone = async () => ({ done: false, conclusive: true, remoteActionId: null, remoteActionUrl: null, detail: 'Not on the account.' });
+      const send = vi.spyOn(mockAdapter, 'executeAction').mockRejectedValueOnce(new Error('network down'));
+      try {
+        await expect(run()).rejects.toThrow();
+        expect(await open()).toHaveLength(0);
+      } finally {
+        send.mockRestore();
+        delete adapter.wasAlreadyDone;
+      }
+    });
   });
 
   it('says nothing for a pointer or a refusal, which offer nothing to watch', async () => {
