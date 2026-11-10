@@ -16,6 +16,8 @@ COPY packages/memory/package.json ./packages/memory/
 COPY packages/persona/package.json ./packages/persona/
 COPY packages/prompts/package.json ./packages/prompts/
 COPY packages/channels/package.json ./packages/channels/
+# The faker override in package.json links this package, so npm ci needs it whole.
+COPY packages/faker-compat/ ./packages/faker-compat/
 COPY packages/browser/package.json ./packages/browser/
 COPY packages/tools/package.json ./packages/tools/
 COPY packages/upstream/package.json ./packages/upstream/
