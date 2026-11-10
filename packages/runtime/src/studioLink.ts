@@ -1448,3 +1448,19 @@ export async function studioActivityBatch(input: unknown): Promise<{ ok: true } 
   return answer.status === 200 && answer.body?.protocol === 1 && answer.body?.accepted === true
     ? { ok: true } : { ok: false, why: 'Studio did not acknowledge the activity tape.' };
 }
+
+/** Public-home writes use the same per-link key and DPoP transport as other installation calls. */
+export async function studioPublicHomeRequest(agentId: string, json: Record<string, unknown>, expectedLink: StudioLinkScope): Promise<
+  { ok: true; published: boolean; slug: string; digest: string } | StudioProblem
+> {
+  const answer = await authed(`/api/v1/installation/agents/${encodeURIComponent(agentId)}/home`, { method: 'POST', json }, expectedLink)
+    .catch(() => ({ ok: false as const, why: 'Studio could not be reached.' }));
+  if ('ok' in answer) return { ok: false, why: 'Studio could not confirm the public home.' };
+  const b = answer.body;
+  if ((answer.status !== 200 && answer.status !== 201) || b?.protocol !== 1 || typeof b.published !== 'boolean'
+    || typeof b.slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(b.slug) || b.slug.length < 3 || b.slug.length > 24
+    || typeof b.manifest_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(b.manifest_sha256)) {
+    return { ok: false, why: 'Studio did not acknowledge this public home.' };
+  }
+  return { ok: true, published: b.published, slug: b.slug, digest: b.manifest_sha256 };
+}

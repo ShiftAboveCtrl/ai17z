@@ -53,6 +53,7 @@ import { paperReplyForJob } from '../paperCapabilities';
 import { signalIdeaRefusal } from '../signalRadar';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { checkTraderDnaAtSend } from '../studioTraderDna';
+import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
@@ -224,6 +225,13 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     throw PipelineError.review('paper_receipt_changed', 'The paper receipt changed after validation. Send the complete simulated record only.');
   }
   const signal = bundle.event.payload as { ideaSource?: string; ideaId?: string };
+  if (job.actionType === 'REPLY' && asksForPublicHome(bundle.event.text ?? '')) {
+    if (output !== await publicHomeReply(bundle.agent.id)) throw PipelineError.review('public_home_changed', 'The confirmed public home changed. Generate a fresh answer.');
+  }
+  if (signal.ideaSource === HOME_IDEA_SOURCE) {
+    const refusal = await publicHomeSendRefusal(bundle.agent.id, output, true);
+    if (refusal) throw PipelineError.permanent('public_home_refused', refusal);
+  }
   if (signal.ideaSource === 'market_signal') {
     const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
     if (refusal) throw PipelineError.permanent('signal_publication_refused', refusal);

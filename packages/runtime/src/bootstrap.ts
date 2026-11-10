@@ -61,6 +61,7 @@ import { registerPaperCapabilities } from './paperCapabilities';
 import { registerStudioPaperCapabilities } from './studioPaperCapabilities';
 import { registerStudioVoiceCapabilities } from './studioVoiceCapabilities';
 import { registerStudioTraderDnaCapabilities } from './studioTraderDnaCapabilities';
+import { registerStudioHomeCapabilities } from './studioPublicHomeCapabilities';
 import { registerStudioLeagueCapabilities } from './studioLeagueCapabilities';
 import { loadWalletAdapter } from './walletCore';
 
@@ -119,6 +120,7 @@ export async function bootstrapRuntime(): Promise<void> {
   // Publishing the agent's voice to Studio. Owner chat only, off until the
   // owner enables it, and nothing leaves without their own words confirming it.
   registerStudioVoiceCapabilities();
+  registerStudioHomeCapabilities();
 
   // Plugins an owner installed, registered the same way and into the same
   // registry as everything above. There is no second invocation engine and no

@@ -118,6 +118,7 @@ const FAMILY_HINTS: Record<string, string[]> = {
     'trader dna', 'dna study', 'wallet study', 'smart wallet', 'smart money', 'which wallets'],
   // Phrases, never single words: "voice" alone is as often audio.
   studio_voice: ['publish my voice', 'share my voice', 'publish your voice', 'share your voice', 'publish voice', 'share this voice', 'unpublish', 'published voice', 'list my voice', 'voice on studio'],
+  studio_home: ['public home', 'publish home', 'unpublish home', 'record link'],
   // Phrases, never "rank" or "season" alone: both are ordinary words.
   league: ['the league', 'paper league', 'my league', 'league standing', 'league rank', 'my standing', 'leaderboard', 'this season'],
 };

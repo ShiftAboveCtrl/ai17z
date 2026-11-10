@@ -235,6 +235,7 @@ export * from './studioTraderDna';
 export * from './studioTraderDnaCapabilities';
 export * from './voiceDocument';
 export * from './studioVoice';
+export * from './studioPublicHome';
 export * from './studioVoiceInstall';
 export * from './studioVoiceCapabilities';
 export * from './socialTests';
