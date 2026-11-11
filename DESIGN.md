@@ -4,6 +4,10 @@ Evidence-card opt-in: reuse the existing labelled Toggle in Easy Mode reply
 filters and Advanced policy settings. Default off, explicit save, wrapping
 explanation. Keep the existing tokens, spacing and keyboard focus treatment.
 
+## League entry and capture hosts
+
+Reuse the existing Studio panel and policy field styles, with a single column and 48px controls. League entry shows its public alias, season slug and explicit paper mandate replacement consent before submission. Working and outcome sentences share the existing status treatment. Capture hosts use the policy schema and explain exact-host screenshot permission and the empty-list default. Keep both controls readable at 390px without horizontal scrolling.
+
 ## Public home consent extension
 
 Reuse the same ink, bone, Archivo and Kanit system in the Studio panel. The primary action is preview, followed by a separate owner confirmation. Use a single column, 48px controls, visible labels, native validation, selectable wrapping JSON and a live status message. Focus moves to the preview heading. Editing choices clears the preview. State always says last confirmed; stale or failed confirmation never looks live. The removal control explains that copies cannot be recalled. No decorative motion or new visual identity is introduced.

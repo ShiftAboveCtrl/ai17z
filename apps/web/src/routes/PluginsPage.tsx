@@ -1,5 +1,5 @@
 import { createContext, useContext, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowUpCircle,
@@ -642,7 +642,10 @@ function PluginCard({
 }
 
 export function PluginsPage() {
-  const [tab, setTab] = useState<Tab>('installed');
+  const [search, setSearch] = useSearchParams();
+  const selected = search.get('tab');
+  const tab: Tab = selected === 'studio' || selected === 'capabilities' || selected === 'discover' || selected === 'settings' ? selected : 'installed';
+  const setTab = (next: Tab) => setSearch((current) => { current.set('tab', next); return current; });
   /*
     `items`, which is what the route answers with.
 
@@ -801,7 +804,7 @@ export function PluginsPage() {
       ) : tab === 'discover' ? (
         <DiscoverTab registry={registry.data ?? null} onInstalled={reload} />
       ) : tab === 'studio' ? (
-        <StudioPanel />
+        <StudioPanel initialSeason={search.get('season') ?? ''} />
       ) : (
         <SettingsTab resource={registry} />
       )}

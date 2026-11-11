@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { ops, studio as ledger } from '@xbam/database';
-import { ActivityEventId } from '@xbam/shared/contracts';
+import { ActivityEventId, LEAGUE_SLUG, LeagueAlias } from '@xbam/shared/contracts';
 import {
   abandonStudioPurchase,
   beginStudioLink,
   disconnectStudio,
+  enterLeagueSeason,
   pollStudioLink,
   prepareStudioPurchase,
   recordStudioPurchaseSent,
@@ -53,6 +54,20 @@ const legOf = (request: Parameters<typeof params>[0]): number | null => {
  * the device code. The pairing code is shown because the owner types it.
  */
 export async function registerStudioRoutes(app: FastifyInstance): Promise<void> {
+  app.post(
+    '/api/studio/league/entry',
+    handler(async (request) => {
+      const user = await requireUser(request);
+      const body = parseBody(z.object({
+        agentId: z.string().uuid(),
+        slug: z.string().regex(LEAGUE_SLUG),
+        alias: LeagueAlias,
+        replacePaperMandate: z.boolean().optional(),
+      }).strict(), request);
+      return enterLeagueSeason({ ...body, ownerId: user.id });
+    }),
+  );
+
   app.get('/api/studio/activity-tape', handler(async (request) => {
     await requireUser(request);
     return studioActivityTapeSetting();

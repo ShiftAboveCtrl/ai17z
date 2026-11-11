@@ -49,7 +49,10 @@ export const MediaPolicy = z.object({
   resolveQuotedPosts: z.boolean().default(true),
   linkPolicy: LinkPolicy.default('READ_METADATA'),
   /** Exact hosts the owner permits for public, cookie-less post screenshots. Empty denies all. */
-  allowedCaptureHosts: z.array(z.string().max(253)).max(200).default([]),
+  allowedCaptureHosts: z.array(z.string().max(253).regex(
+    /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i,
+    'Use a bare hostname without a scheme, path, port or wildcard.',
+  )).max(200).default([]),
   allowedLinkDomains: z.array(z.string().max(253)).max(200).default([]),
   onVisionFailure: VisionFailurePolicy.default('RESPOND_TEXT_ONLY_IF_SAFE'),
   /** Keep retrieved bytes this long. 0 means never store them at all. */

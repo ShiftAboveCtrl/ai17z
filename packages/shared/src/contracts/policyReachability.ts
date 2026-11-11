@@ -59,10 +59,7 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'identity.disclosureStatement': { where: 'ADVANCED_ONLY' },
   'identity.mayDenyBeingAI': { where: 'ADVANCED_ONLY' },
   'identity.representedEntity': { where: 'ADVANCED_ONLY' },
-  'media.allowedCaptureHosts': {
-    where: 'INTERNAL',
-    why: "Hosts a post's media may be captured from. Empty by default, which captures nothing; no screen sets it yet, so a person edits the policy to allow one.",
-  },
+  'media.allowedCaptureHosts': { where: 'ADVANCED_ONLY' },
   'media.allowedLinkDomains': { where: 'ADVANCED_ONLY' },
   'media.analyzeGifs': { where: 'ADVANCED_ONLY' },
   'media.analyzeImages': { where: 'ADVANCED_ONLY' },
