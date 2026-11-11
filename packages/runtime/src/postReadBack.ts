@@ -11,9 +11,20 @@ import type { ActionResult } from '@xbam/channels';
  *
  * An adapter that states `readBackConfirmed: false` is believed even if it also
  * supplied an id, because it is the only party that knows how the id was got.
+ *
+ * A post that was sent with files has to be read back carrying them. A post
+ * found on the timeline without its picture is not the post that was approved,
+ * and the adapter states whether it saw the files (`mediaConfirmed`); anything
+ * but an explicit `true` is unconfirmed, so an adapter that forgets to look
+ * cannot pass for one that looked.
  */
-export function postHasReadBack(result: Pick<ActionResult, 'remoteActionId' | 'remoteActionUrl' | 'verification'>): boolean {
-  if ((result.verification?.evidence as { readBackConfirmed?: unknown } | undefined)?.readBackConfirmed === false) return false;
+export function postHasReadBack(
+  result: Pick<ActionResult, 'remoteActionId' | 'remoteActionUrl' | 'verification'>,
+  sent: { media?: number } = {},
+): boolean {
+  const evidence = result.verification?.evidence as { readBackConfirmed?: unknown; mediaConfirmed?: unknown } | undefined;
+  if (evidence?.readBackConfirmed === false) return false;
+  if ((sent.media ?? 0) > 0 && evidence?.mediaConfirmed !== true) return false;
   return Boolean(result.remoteActionId || result.remoteActionUrl);
 }
 

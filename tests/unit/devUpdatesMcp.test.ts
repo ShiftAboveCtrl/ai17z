@@ -220,3 +220,107 @@ describe('the stdio transport', () => {
     expect(JSON.parse(out.join('').trim())).toEqual({ jsonrpc: '2.0', id: 1, result: {} });
   }, 20_000);
 });
+
+describe('sharing an update with a picture or a video', () => {
+  interface Seen {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    raw: Buffer | null;
+    json: Record<string, unknown> | null;
+  }
+
+  function attachmentServer(respond: (seen: Seen) => { status: number; body: unknown }, files: Record<string, Buffer>) {
+    const seen: Seen[] = [];
+    const fetch = async (url: string, init: { method: string; headers: Record<string, string>; body?: string | Buffer }) => {
+      const raw = Buffer.isBuffer(init.body) ? init.body : null;
+      const call: Seen = {
+        url,
+        method: init.method,
+        headers: init.headers,
+        raw,
+        json: !raw && init.body ? JSON.parse(init.body as string) : null,
+      };
+      seen.push(call);
+      const { status, body } = respond(call);
+      return { status, json: async () => body };
+    };
+    const readFile = async (path: string) => {
+      const found = files[path];
+      if (!found) throw new Error('ENOENT, no such file or directory');
+      return found;
+    };
+    const s = createServer({ env, fetch, readFile }) as { handle: Handle };
+    return { handle: s.handle, seen };
+  }
+
+  const call = (args: Record<string, unknown>) => ({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'share_dev_update', arguments: { ...update, ...args } },
+  });
+
+  it('offers attachments in the schema and tells the assistant what is allowed', () => {
+    const share = (TOOLS as { name: string; inputSchema: { properties: Record<string, { maxItems?: number }> } }[]).find((t) => t.name === 'share_dev_update')!;
+    expect(share.inputSchema.properties.attachments!.maxItems).toBe(4);
+  });
+
+  it('reads each file here, uploads its bytes, and shares only the ids', async () => {
+    const png = Buffer.from('png-bytes-for-the-test');
+    const secretPath = 'C:/Users/someone/work/private-project/screens/before-after.png';
+    const { handle, seen } = attachmentServer(
+      (s) =>
+        s.url.endsWith('/sender/media')
+          ? { status: 201, body: { ok: true, data: { id: '11111111-1111-4111-8111-111111111111', kind: 'IMAGE', mime: 'image/png', bytes: png.length } } }
+          : { status: 201, body: { ok: true, data: { outcome: 'ACCEPTED', update: { id: 'u1', status: 'PENDING_REVIEW', reason: 'Waiting.', post: 'text', media: [{ kind: 'IMAGE', bytes: png.length }] } } } },
+      { [secretPath]: png },
+    );
+    const response = await handle(call({ attachments: [{ path: secretPath }] }));
+    expect((response!.result as { isError: boolean }).isError).toBe(false);
+
+    const [uploaded, submitted] = seen;
+    expect(uploaded).toMatchObject({ method: 'POST', headers: { authorization: `Bearer ${env.AI17Z_DEV_UPDATES_TOKEN}`, 'content-type': 'application/octet-stream' } });
+    expect(Buffer.compare(uploaded!.raw!, png)).toBe(0);
+    expect(submitted!.json).toMatchObject({ mediaIds: ['11111111-1111-4111-8111-111111111111'], disclosure: 'PUBLIC' });
+    // The place on the assistant's disk goes nowhere: not in the upload, not in the update.
+    expect(JSON.stringify(seen)).not.toContain('private-project');
+    expect(JSON.stringify(seen)).not.toContain('before-after');
+    expect(JSON.stringify(response)).toContain('"kind":"IMAGE"');
+  });
+
+  it('shares nothing when a file cannot be read, and does not repeat the folder it was in', async () => {
+    const { handle, seen } = attachmentServer(() => ({ status: 500, body: {} }), {});
+    const response = await handle(call({ attachments: [{ path: '/home/someone/work/private-project/missing.png' }] }));
+    const result = response!.result as { isError: boolean; content: { text: string }[] };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/Could not read the attachment missing\.png/);
+    expect(result.content[0]!.text).toMatch(/Nothing was shared/);
+    expect(result.content[0]!.text).not.toContain('private-project');
+    expect(seen).toHaveLength(0);
+  });
+
+  it('shares nothing when AI17Z refuses the file, and says which one and why', async () => {
+    const { handle, seen } = attachmentServer(
+      () => ({ status: 400, body: { ok: false, error: { code: 'BAD_REQUEST', message: 'That is not a PNG, JPEG, GIF, WebP, MP4 or QuickTime file. SVG is not accepted.' } } }),
+      { '/tmp/logo.svg': Buffer.from('<svg/>') },
+    );
+    const response = await handle(call({ attachments: [{ path: '/tmp/logo.svg' }] }));
+    const result = response!.result as { isError: boolean; content: { text: string }[] };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/logo\.svg was not accepted/);
+    expect(result.content[0]!.text).toMatch(/SVG is not accepted/);
+    // One upload attempt, and no update after it.
+    expect(seen.map((s) => s.url.split('/sender/')[1])).toEqual(['media']);
+  });
+
+  it('still sends a text-only update exactly as before', async () => {
+    const { handle, seen } = attachmentServer(
+      () => ({ status: 201, body: { ok: true, data: { outcome: 'ACCEPTED', update: { id: 'u2', status: 'PENDING_REVIEW', reason: '', post: 't' } } } }),
+      {},
+    );
+    await handle(call({}));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.json).not.toHaveProperty('mediaIds');
+  });
+});

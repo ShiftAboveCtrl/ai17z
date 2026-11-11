@@ -3,6 +3,7 @@ import { Check, Copy } from 'lucide-react';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { ApiError } from '@app/lib/api';
 import { POST_MAX_CHARS } from '@app/lib/devUpdates';
+import type { DevUpdateMedia } from '@app/lib/devUpdates';
 
 /**
  * Copies a value and says so, out loud as well as on screen.
@@ -86,12 +87,14 @@ export function PostPreview({
   handle,
   text,
   edited,
+  media,
   children,
 }: {
   agent: { id: string; name: string; avatarUrl?: string | null } | null;
   handle: string | null;
   text: string;
   edited?: boolean;
+  media?: DevUpdateMedia[];
   children?: ReactNode;
 }) {
   return (
@@ -109,7 +112,32 @@ export function PostPreview({
         {edited && <span className="chip ml-auto shrink-0">edited</span>}
       </figcaption>
       {children ?? <p className="mt-3 whitespace-pre-wrap break-words text-[15px] leading-relaxed text-bone">{text}</p>}
+      {media && media.length > 0 && <AttachedMedia media={media} />}
     </figure>
+  );
+}
+
+/**
+ * What goes out with the post, shown as it will be: the owner approves the file
+ * as well as the words. Served by the owner-only artifact route, with the type
+ * the server read out of the file's own bytes.
+ */
+export function AttachedMedia({ media }: { media: DevUpdateMedia[] }) {
+  return (
+    <ul
+      aria-label={media.length === 1 ? 'Attachment' : 'Attachments'}
+      className={`mt-3 grid gap-2 ${media.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}
+    >
+      {media.map((m, i) => (
+        <li key={m.artifactId} className="overflow-hidden rounded-lg border border-ink-line bg-ink-panel">
+          {m.kind === 'VIDEO' ? (
+            <video src={m.url} controls preload="metadata" className="max-h-72 w-full bg-black object-contain" aria-label={`Video attachment, ${(m.bytes / 1024 / 1024).toFixed(1)} megabytes`} />
+          ) : (
+            <img src={m.url} alt={`Attachment ${i + 1} of ${media.length}, ${m.kind === 'GIF' ? 'animated GIF' : 'image'}`} className="max-h-72 w-full object-contain" loading="lazy" />
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 

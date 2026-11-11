@@ -173,6 +173,22 @@ export interface IngestOptions {
   report?: (progress: IngestProgress) => void;
 }
 
+/**
+ * A file held by AI17Z that goes out with a post.
+ *
+ * `path` is an absolute local path the runtime resolved from an artifact it
+ * owns, never one a caller supplied; `sha256` and `bytes` are of the file as the
+ * runtime just read it, so an adapter that wants to can prove it uploads what
+ * was approved. The kind was decided from the file's own bytes.
+ */
+export interface MediaAttachment {
+  kind: 'IMAGE' | 'GIF' | 'VIDEO';
+  mime: string;
+  bytes: number;
+  sha256: string;
+  path: string;
+}
+
 export interface ActionRequest {
   type: ActionType;
   /** Canonical identity of the remote object being acted on. */
@@ -184,6 +200,13 @@ export interface ActionRequest {
    * changing anything on the remote. This is the dry-run boundary.
    */
   dryRun: boolean;
+  /**
+   * Files that go out with a POST. Absent or empty is a text-only post. An
+   * adapter that cannot carry them must refuse (`supportsMedia`), never drop
+   * them: a post that was meant to show something and says it without is a
+   * different post.
+   */
+  media?: MediaAttachment[];
 }
 
 export interface VerificationResult {
@@ -225,6 +248,13 @@ export interface ChannelAdapter {
   readonly capabilities: readonly ActionType[];
   /** True when this adapter needs a browser session to function. */
   readonly requiresBrowser: boolean;
+  /**
+   * True when a POST through this adapter can carry `ActionRequest.media` and
+   * says, in the result's evidence, whether the published post carries it
+   * (`mediaConfirmed`). The executor refuses a post with media for any adapter
+   * that does not set it, before anything is sent.
+   */
+  readonly supportsMedia?: boolean;
   /**
    * Set for a channel that signs in over an API with stored details rather than
    * through a browser. Such an account can still be signed out, which is a thing

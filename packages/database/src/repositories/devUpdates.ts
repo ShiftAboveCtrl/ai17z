@@ -47,6 +47,15 @@ export interface DevUpdateEvidence {
   detail: string;
 }
 
+/** A file that goes out with the post, by reference. The path is never stored here. */
+export interface DevUpdateMediaRef {
+  artifactId: string;
+  kind: 'IMAGE' | 'GIF' | 'VIDEO';
+  mime: string;
+  bytes: number;
+  sha256: string;
+}
+
 export interface DevUpdateHistoryEntry {
   at: string;
   status: DevUpdateStatus;
@@ -89,6 +98,8 @@ export interface DevUpdateRow {
   textFingerprint: string;
   evidenceKeys: string[];
   clientRequestId: string | null;
+  /** Pictures or a video that go with the post, in order. Empty for a text-only update. */
+  media: DevUpdateMediaRef[];
   status: DevUpdateStatus;
   statusReason: string;
   jobId: string | null;
@@ -341,6 +352,7 @@ export async function insertUpdate(
     textFingerprint: string;
     evidenceKeys: string[];
     clientRequestId: string | null;
+    media?: DevUpdateMediaRef[];
     status: DevUpdateStatus;
     statusReason: string;
     history: DevUpdateHistoryEntry[];
@@ -349,8 +361,8 @@ export async function insertUpdate(
   const row = await tx.one(
     `INSERT INTO dev_updates
        (project_id, kind, title, summary, why, evidence, post_text, fact_fingerprint, text_fingerprint,
-        evidence_keys, client_request_id, status, status_reason, history)
-     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::text[],$11,$12,$13,$14::jsonb)
+        evidence_keys, client_request_id, status, status_reason, history, media)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::text[],$11,$12,$13,$14::jsonb,$15::jsonb)
      RETURNING *`,
     [
       input.projectId,
@@ -367,9 +379,75 @@ export async function insertUpdate(
       input.status,
       input.statusReason,
       JSON.stringify(input.history),
+      JSON.stringify(input.media ?? []),
     ],
   );
   return mapRow<DevUpdateRow>(row) as DevUpdateRow;
+}
+
+// ── Media ───────────────────────────────────────────────────────────────────
+//
+// A file a sender uploaded is an artifact of kind POST_MEDIA whose meta names
+// the project (`devUpdateProjectId`) and, once an update takes it, that update
+// (`attachedTo`). Nothing else ties them together, so a file nobody attached is
+// exactly the ones with no `attachedTo`.
+
+/** How many uploaded files this project has not attached to anything yet. */
+export async function countUnattachedMedia(projectId: string): Promise<number> {
+  const row = await queryOne<{ count: number }>(
+    `SELECT count(*)::int AS count FROM artifacts
+      WHERE kind = 'POST_MEDIA' AND meta->>'devUpdateProjectId' = $1 AND NOT (meta ? 'attachedTo')`,
+    [projectId],
+  );
+  return Number(row?.count ?? 0);
+}
+
+/**
+ * The project's own unattached files among these ids, locked for the rest of the
+ * transaction. Fewer rows than ids means one was not this project's, was
+ * already taken, or does not exist.
+ */
+export async function lockUnattachedMedia(tx: Tx, projectId: string, ids: string[]): Promise<DevUpdateMediaRef[]> {
+  const rows = await tx.many<{ id: string; mime_type: string; bytes: number; meta: Record<string, unknown> }>(
+    `SELECT id, mime_type, bytes, meta FROM artifacts
+      WHERE id = ANY($2::uuid[]) AND kind = 'POST_MEDIA'
+        AND meta->>'devUpdateProjectId' = $1 AND NOT (meta ? 'attachedTo')
+      FOR UPDATE`,
+    [projectId, ids],
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const refs: DevUpdateMediaRef[] = [];
+  for (const id of ids) {
+    const r = byId.get(id);
+    if (!r) continue;
+    refs.push({
+      artifactId: r.id,
+      kind: r.meta.mediaKind as DevUpdateMediaRef['kind'],
+      mime: r.mime_type,
+      bytes: Number(r.bytes),
+      sha256: String(r.meta.sha256),
+    });
+  }
+  return refs;
+}
+
+export async function markMediaAttached(tx: Tx, ids: string[], updateId: string): Promise<void> {
+  await tx.query(
+    `UPDATE artifacts SET meta = meta || jsonb_build_object('attachedTo', $2::text) WHERE id = ANY($1::uuid[])`,
+    [ids, updateId],
+  );
+}
+
+/** Uploaded files nobody attached, older than this many hours. */
+export async function staleUnattachedMedia(olderThanHours: number, limit = 100): Promise<string[]> {
+  const rows = await query<{ id: string }>(
+    `SELECT id FROM artifacts
+      WHERE kind = 'POST_MEDIA' AND meta ? 'devUpdateProjectId' AND NOT (meta ? 'attachedTo')
+        AND created_at < now() - ($1::int * interval '1 hour')
+      ORDER BY created_at LIMIT $2`,
+    [olderThanHours, limit],
+  );
+  return rows.map((r) => r.id);
 }
 
 /**
@@ -419,7 +497,7 @@ export async function transition(
   if (input.dispatched) sets.push('dispatched_at = now()');
   if (input.finished) sets.push('finished_at = now()');
   if (input.scrub) {
-    sets.push(`title = '', summary = '', why = '', evidence = '[]'::jsonb, post_text = '', approved_text = NULL`);
+    sets.push(`title = '', summary = '', why = '', evidence = '[]'::jsonb, post_text = '', approved_text = NULL, media = '[]'::jsonb`);
   }
   const sql = `UPDATE dev_updates SET ${sets.join(', ')} WHERE id = $1 AND status = ANY($2::text[]) RETURNING *`;
   const row = tx ? await tx.one(sql, params) : await queryOne(sql, params);

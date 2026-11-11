@@ -101,6 +101,36 @@ first and sends again only on a conclusive absence. If the post is then found,
 it becomes EXECUTED and the notification is resolved. Replies and likes keep the
 looser recovery rule, because a duplicate of either costs less than a held post.
 
+## A post with a picture or a video
+
+A post may carry up to four images, or one GIF, or one video. The files are held
+by AI17Z as `POST_MEDIA` artifacts, identified from their own bytes when they are
+stored (PNG, JPEG, WebP, GIF, MP4, QuickTime; never SVG; a movie without its
+index or samples is refused), capped per kind (5MB, 15MB, 50MB), and referred to
+everywhere else by id and sha256. The executor resolves them just before the
+action is claimed and checks the bytes against the hash that was approved, so a
+file swapped on disk is a permanent failure with nothing sent. A channel that
+does not set `supportsMedia` is refused the same way rather than being allowed
+to post the text alone.
+
+On the ACTION tab, `attachMedia` (`packages/channels/src/x/composer.ts`) gives
+the files to the composer's own file input with `setInputFiles`. The "add photos"
+button is never clicked: it opens a native picker, and the covered-UI rule above
+applies to it as much as to the editor. Focus returns to the editor afterwards,
+because the keyboard submit fallback needs it there. It is finished when every
+file has its tile, nothing shows progress and the post button is enabled, within
+a bound per kind (60 seconds, 90, 300). A failed or stalled upload, a missing
+file input and a toast from X are all **retryable**: this runs before the submit,
+so nothing was sent. Every selector is in `selectors.ts`.
+
+Read-back covers the media too. The post is found on the profile as before, and
+its article is then checked for what was sent: images are counted, a video needs
+a player, a GIF may be drawn as either. The adapter states the result as
+`mediaConfirmed`; the executor treats anything but `true` on a post that was
+sent with files as unconfirmed, so the post is held `AMBIGUOUS` exactly like one
+that could not be found. A post that is public but without its picture is not
+recorded as done, and its address is in the evidence for the owner.
+
 ## What this does not change
 
 The browser architecture underneath is exactly the one proved in

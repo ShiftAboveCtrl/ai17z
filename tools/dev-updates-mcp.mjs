@@ -24,6 +24,8 @@
  * assistant puts in the call.
  */
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 
@@ -42,6 +44,10 @@ const INSTRUCTIONS = [
   'publicConfirmed is true, and setting publicConfirmed does not make them safe: if in doubt, do not call this tool.',
   'Write the post the way the developer who shipped it would: plain, specific, casual, first person or no person,',
   'no hype, at most one hashtag, no @mentions, and never mention Claude, AI, an assistant, an agent or automation as the author.',
+  'An update may carry a screenshot, a creative file or a short video through attachments (up to four images, or one GIF, or one video):',
+  'give the path of each file on this machine. The file is read here and uploaded to the owner\'s AI17Z, and the path itself is never sent.',
+  'Attach only what may be public: nothing with a name, a token, an address, a private window or an unreleased screen in it.',
+  'The owner sees the attachment next to the post before it goes out.',
   'The owner reviews updates unless they chose auto mode, and posting is capped and spaced, so one good update beats several small ones.',
 ].join(' ');
 
@@ -88,6 +94,18 @@ export const TOOLS = [
               ref: { type: 'string', maxLength: 80, description: 'Short sha, "#123", a tag like "v1.4.0". Optional.' },
               detail: { type: 'string', maxLength: 200, description: 'One line, public, no code.' },
             },
+          },
+        },
+        attachments: {
+          type: 'array',
+          maxItems: 4,
+          description:
+            'Optional pictures or a video to post with the update: PNG, JPEG, WebP (up to 5MB each, four at most), one GIF (15MB) or one MP4 or MOV video (50MB). Never SVG.',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['path'],
+            properties: { path: { type: 'string', maxLength: 1000, description: 'Where the file is on this machine. Read here, never sent.' } },
           },
         },
         post: {
@@ -168,13 +186,16 @@ export function createServer(options = {}) {
   const projectKey = String(env.AI17Z_DEV_UPDATES_PROJECT || env.XBAM_DEV_UPDATES_PROJECT || '').trim().toLowerCase();
   const fetchImpl = options.fetch ?? globalThis.fetch;
 
-  async function api(method, path, body) {
+  async function api(method, path, body, raw) {
     let response;
     try {
       response = await fetchImpl(`${apiUrl}${path}`, {
         method,
-        headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) },
-        body: body ? JSON.stringify(body) : undefined,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(raw ? { 'content-type': 'application/octet-stream' } : body ? { 'content-type': 'application/json' } : {}),
+        },
+        body: raw ?? (body ? JSON.stringify(body) : undefined),
       });
     } catch (error) {
       return { ok: false, message: `AI17Z is not reachable at ${apiUrl} (${error instanceof Error ? error.message : String(error)}). Is it running?` };
@@ -204,6 +225,27 @@ export function createServer(options = {}) {
     );
   }
 
+  /** Reads each attachment here and uploads it; the id is all that goes into the update. */
+  async function uploadAttachments(attachments) {
+    const ids = [];
+    for (const item of attachments) {
+      const path = item && typeof item.path === 'string' ? item.path : '';
+      if (!path) return { ok: false, message: 'Each attachment needs a path.' };
+      let bytes;
+      try {
+        bytes = await (options.readFile ?? readFile)(path);
+      } catch (error) {
+        // The file name only: the assistant knows where it put it, and the
+        // directory is not something to repeat into a log.
+        return { ok: false, message: `Could not read the attachment ${basename(path)} (${error instanceof Error ? error.message.split(',')[0] : String(error)}). Nothing was shared.` };
+      }
+      const uploaded = await api('POST', '/api/dev-updates/sender/media', null, bytes);
+      if (!uploaded.ok) return { ok: false, message: `${basename(path)} was not accepted: ${uploaded.message} Nothing was shared.` };
+      ids.push(uploaded.data.id);
+    }
+    return { ok: true, ids };
+  }
+
   async function callTool(name, args = {}) {
     const unset = notConfigured();
     if (unset) return unset;
@@ -211,6 +253,12 @@ export function createServer(options = {}) {
     if (name === 'share_dev_update') {
       if (args.publicConfirmed !== true) {
         return toolResult('Not sent. Set publicConfirmed to true only once every fact in the update may be published.', true);
+      }
+      let mediaIds = [];
+      if (Array.isArray(args.attachments) && args.attachments.length > 0) {
+        const uploaded = await uploadAttachments(args.attachments);
+        if (!uploaded.ok) return toolResult({ refused: false, message: uploaded.message }, true);
+        mediaIds = uploaded.ids;
       }
       const body = {
         projectKey,
@@ -221,6 +269,7 @@ export function createServer(options = {}) {
         evidence: Array.isArray(args.evidence) ? args.evidence : [],
         disclosure: 'PUBLIC',
         ...(typeof args.post === 'string' && args.post.trim() ? { post: args.post } : {}),
+        ...(mediaIds.length > 0 ? { mediaIds } : {}),
         clientRequestId: requestIdFor(args),
       };
       const result = await api('POST', '/api/dev-updates/sender/updates', body);
@@ -235,7 +284,14 @@ export function createServer(options = {}) {
       if (outcome === 'DUPLICATE') {
         return toolResult({ outcome, reason, id: update?.id ?? null, status: update?.status ?? null, url: update?.url ?? null });
       }
-      return toolResult({ outcome, id: update.id, status: update.status, reason: update.reason, post: update.post });
+      return toolResult({
+        outcome,
+        id: update.id,
+        status: update.status,
+        reason: update.reason,
+        post: update.post,
+        ...(update.media?.length ? { attachments: update.media.map((m) => ({ kind: m.kind, bytes: m.bytes })) } : {}),
+      });
     }
 
     if (name === 'dev_update_status') {

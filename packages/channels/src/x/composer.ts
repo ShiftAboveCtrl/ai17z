@@ -1,6 +1,6 @@
 import { PipelineError, sleep } from '@xbam/shared';
 import { retagIfLost, type Locator, type Page } from '@xbam/browser';
-import type { ActionRequest, ActionResult, ChannelContext, VerificationResult } from '../contract';
+import type { ActionRequest, ActionResult, ChannelContext, MediaAttachment, VerificationResult } from '../contract';
 import { SEL, X_URLS, articleForStatus } from './selectors';
 import { goto, readArticle, selfHandles, settle, withSession } from './page';
 import { anchorTarget } from './engagement';
@@ -264,6 +264,7 @@ async function scanForOwnReply(
   needle: string,
   me: string[],
   whole: string,
+  countMedia = false,
 ): Promise<OwnReply | null> {
   const articles = page.locator(SEL.tweetArticle);
   const count = Math.min(await articles.count().catch(() => 0), 20);
@@ -283,7 +284,11 @@ async function scanForOwnReply(
     // retrying a reply X accepted posts it twice -- which is worse than an
     // imperfect one recorded honestly.
     const exact = fingerprint(snapshot.text).includes(whole);
-    return { statusId: snapshot.statusId, url: snapshot.url, exact };
+    if (!countMedia) return { statusId: snapshot.statusId, url: snapshot.url, exact };
+    const article = page.locator(`${SEL.tweetArticle} >> nth=${index}`);
+    const photos = await article.locator(SEL.tweetPhoto).count().catch(() => 0);
+    const videos = await article.locator(SEL.tweetVideo).count().catch(() => 0);
+    return { statusId: snapshot.statusId, url: snapshot.url, exact, seen: { photos, videos } };
   }
   return null;
 }
@@ -418,6 +423,8 @@ export interface OwnReply {
   statusId: string;
   url: string | null;
   exact: boolean;
+  /** What the post shows, counted only when the caller asked: a post sent with files is read back for them. */
+  seen?: { photos: number; videos: number };
 }
 
 export async function findOwnReply(
@@ -425,6 +432,7 @@ export async function findOwnReply(
   text: string,
   me: string[],
   reloads = 1,
+  countMedia = false,
 ): Promise<OwnReply | null> {
   // Sixty characters of fingerprint, not forty of raw text: stripping the
   // punctuation costs length, and a short needle matches the wrong post.
@@ -432,7 +440,7 @@ export async function findOwnReply(
   if (!needle) return null;
   const whole = fingerprint(text);
 
-  const first = await scanForOwnReply(page, needle, me, whole);
+  const first = await scanForOwnReply(page, needle, me, whole, countMedia);
   if (first) return first;
 
   // Reload before giving up. X does not always graft a new post into the page
@@ -446,10 +454,97 @@ export async function findOwnReply(
   for (let attempt = 0; attempt < reloads; attempt += 1) {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
     await page.waitForTimeout(3_000 + attempt * 2_000);
-    const found = await scanForOwnReply(page, needle, me, whole);
+    const found = await scanForOwnReply(page, needle, me, whole, countMedia);
     if (found) return found;
   }
   return null;
+}
+
+/**
+ * Whether a post read back off the timeline shows what was sent with it.
+ *
+ * Images are counted: three pictures sent and one shown is a different post.
+ * A video must show a player. A GIF may be drawn either way, because X plays
+ * it as a looping video but sometimes lays it out as a photo, so either counts.
+ */
+export function mediaSeenOnPost(sent: readonly Pick<MediaAttachment, 'kind'>[], seen: { photos: number; videos: number }): boolean {
+  if (sent.length === 0) return true;
+  const kind = sent[0]!.kind;
+  if (kind === 'VIDEO') return seen.videos >= 1;
+  if (kind === 'GIF') return seen.videos + seen.photos >= 1;
+  return seen.photos >= sent.length;
+}
+
+/** How long each kind of upload is given before it is called failed. */
+export const MEDIA_UPLOAD_BUDGET_MS = { IMAGE: 60_000, GIF: 90_000, VIDEO: 300_000 } as const;
+
+const UPLOAD_FAILED = /fail|couldn.?t|could not|unable|too large|not supported|try again|went wrong/i;
+
+/**
+ * Puts files in the composer and waits until X has them.
+ *
+ * The files go into the composer's own file input with `setInputFiles`. The
+ * "add photos" button is never clicked: it opens a native picker, which nothing
+ * here can drive, and X's covered-UI problem applies to it as much as to the
+ * editor. Focus goes back to the editor afterwards, because attaching moves it
+ * and the keyboard submit fallback needs it there.
+ *
+ * Done when every file has its tile, none is still showing progress, and the
+ * post button is enabled -- X disables it for the length of an upload, so an
+ * enabled button is X agreeing, not this code guessing. Bounded, because a
+ * video that never finishes is a stuck tab and not a reason to wait forever.
+ *
+ * Everything that goes wrong here is *retryable*: this runs before the submit,
+ * so nothing has been sent and trying again cannot post twice.
+ */
+export async function attachMedia(
+  page: Page,
+  opened: OpenComposer,
+  media: readonly MediaAttachment[],
+  options: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  if (media.length === 0) return;
+  const pollMs = options.pollMs ?? 500;
+  const timeoutMs = options.timeoutMs ?? Math.max(...media.map((m) => MEDIA_UPLOAD_BUDGET_MS[m.kind]));
+
+  const input = opened.scope.locator(SEL.mediaInput).first();
+  if ((await input.count().catch(() => 0)) === 0) {
+    throw PipelineError.retryable('media_input_missing', 'The composer has no file input, so the attachment could not be added. Nothing was posted.');
+  }
+  try {
+    await input.setInputFiles(
+      media.map((m) => m.path),
+      { timeout: 15_000 },
+    );
+  } catch (error) {
+    throw PipelineError.retryable(
+      'media_upload_failed',
+      `The attachment could not be given to the composer: ${(error as Error).message}. Nothing was posted.`,
+    );
+  }
+
+  const items = opened.scope.locator(SEL.composerMediaItem);
+  const progress = opened.scope.locator(SEL.composerMediaProgress);
+  const submit = opened.scope.locator(SEL.anySubmit).first();
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const toast = ((await page.locator(SEL.toast).first().innerText({ timeout: 500 }).catch(() => '')) ?? '').trim();
+    if (toast && UPLOAD_FAILED.test(toast)) {
+      throw PipelineError.retryable('media_upload_failed', `X rejected the attachment: ${toast.slice(0, 160)}. Nothing was posted.`);
+    }
+    const attached = await items.count().catch(() => 0);
+    const busy = await progress.count().catch(() => 0);
+    if (attached >= media.length && busy === 0 && (await submit.isEnabled().catch(() => false))) break;
+    if (Date.now() >= deadline) {
+      throw PipelineError.retryable(
+        'media_upload_timeout',
+        `X had ${attached} of ${media.length} attachment${media.length === 1 ? '' : 's'} ready after ${Math.round(timeoutMs / 1000)} seconds${busy > 0 ? ' and was still uploading' : ''}. Nothing was posted.`,
+        { attached, expected: media.length, uploading: busy },
+      );
+    }
+    await sleep(pollMs);
+  }
+  await opened.editor.focus();
 }
 
 /**
@@ -492,6 +587,18 @@ export async function postOwn(
     // has processed real input events. Proved to hold the right text before
     // submitting, because posting a mangled composer publishes the mangling.
     await fillComposer(page, composer, request.text);
+
+    // Files go in after the text, so the editor is already proved to hold it,
+    // and before the button is asked about, because an upload disables it.
+    const media = request.media ?? [];
+    if (media.length > 0) {
+      try {
+        await attachMedia(page, opened, media);
+      } catch (error) {
+        await returnToIdle(page);
+        throw error;
+      }
+    }
 
     // Wait for X to enable the button rather than asking once.
     //
@@ -556,7 +663,7 @@ export async function postOwn(
     let readBack: OwnReply | null = null;
     try {
       await goto(page, X_URLS.profile(handle));
-      readBack = await findOwnReply(page, request.text, me, 3);
+      readBack = await findOwnReply(page, request.text, me, 3, media.length > 0);
       await returnToIdle(page);
     } catch (error) {
       return unconfirmed(`Post submitted, but the profile could not be read back: ${(error as Error).message}`, {
@@ -576,6 +683,20 @@ export async function postOwn(
       );
     }
 
+    // Found, but without what was sent with it. It is public, so it must never
+    // be sent again, and it is not the post that was approved, so it is not
+    // recorded as done: the owner is told, with the address, and decides.
+    if (media.length > 0 && !mediaSeenOnPost(media, readBack.seen ?? { photos: 0, videos: 0 })) {
+      const noun = media[0]!.kind === 'VIDEO' ? 'video' : media[0]!.kind === 'GIF' ? 'GIF' : 'image';
+      return unconfirmed(`The post is on the profile as ${readBack.statusId}, but it does not show its ${noun}.`, {
+        composerClosed,
+        mediaConfirmed: false,
+        postStatusId: readBack.statusId,
+        postUrl: readBack.url,
+        mediaSeen: readBack.seen ?? null,
+      });
+    }
+
     return {
       status: 'EXECUTED' as const,
       remoteActionId: readBack.statusId,
@@ -583,7 +704,13 @@ export async function postOwn(
       verification: {
         ...verification,
         detail: `Post confirmed on the profile as ${readBack.statusId}.`,
-        evidence: { ...verification.evidence, readBackConfirmed: true, composerClosed, postStatusId: readBack.statusId },
+        evidence: {
+          ...verification.evidence,
+          readBackConfirmed: true,
+          composerClosed,
+          postStatusId: readBack.statusId,
+          ...(media.length > 0 ? { mediaConfirmed: true, mediaSeen: readBack.seen ?? null } : {}),
+        },
       },
     };
   });

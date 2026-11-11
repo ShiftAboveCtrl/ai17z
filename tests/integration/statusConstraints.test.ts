@@ -20,6 +20,7 @@ import {
   browserTasks,
   knowledge,
   observability,
+  ops,
   pipelines,
   providers,
   query,
@@ -507,6 +508,25 @@ describe('every value the Telegram channel can write is one the database accepts
          VALUES ($1, 'key', 'digest', 'SENT', '-1001234567890')`,
         [account.id],
       ),
+    ).rejects.toThrow();
+  });
+});
+
+/**
+ * Migration 0129 added POST_MEDIA, the kind of a file that goes out with a post.
+ * The registry test proves the column and the declared list agree; this writes
+ * a real row, because a kind the code can produce and the column refuses fails
+ * on the path that writes the first attachment, which nothing else exercises.
+ */
+describe('every artifact kind the code can write is one the database accepts', () => {
+  it('writes POST_MEDIA, and still refuses a kind that is not declared', async () => {
+    const fixture = await createFixture();
+    for (const kind of ['SCREENSHOT', 'PORTRAIT', 'UPLOAD', 'EXPORT', 'HTML_SNAPSHOT', 'POST_MEDIA'] as const) {
+      const row = await ops.createArtifact({ kind, agentId: fixture.agentId, mimeType: 'image/png', relPath: `kinds/${kind}.png`, bytes: 1 });
+      expect(row.kind).toBe(kind);
+    }
+    await expect(
+      ops.createArtifact({ kind: 'NOT_A_KIND' as never, agentId: fixture.agentId, mimeType: 'image/png', relPath: 'kinds/x.png', bytes: 1 }),
     ).rejects.toThrow();
   });
 });

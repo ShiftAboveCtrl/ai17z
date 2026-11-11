@@ -46,6 +46,7 @@ import {
 import { remoteActionsAllowed } from '../killSwitch';
 import { postConfirmed, postUnconfirmed } from '../notify';
 import { POST_OUTCOME_AMBIGUOUS, postHasReadBack, priorPostWasAmbiguous } from '../postReadBack';
+import { describeMedia, mediaRefsOf, resolvePostMedia } from '../postMedia';
 import { recordPublished } from '../experimentRuns';
 import type { JobBundle } from '../loadJob';
 
@@ -370,6 +371,24 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     return;
   }
 
+  /*
+    Files that go with a post, resolved and proved to be the ones that were
+    approved before the action is claimed. A file that is gone or changed stops
+    the job here, with nothing sent and nothing recorded as attempted, and an
+    adapter that cannot carry files is refused rather than allowed to publish
+    the text alone: a post meant to show something and saying it without is a
+    different post.
+  */
+  const mediaRefs = job.actionType === 'POST' ? mediaRefsOf(bundle.event.payload) : [];
+  const sendingVia = getChannelAdapter(job.channel);
+  if (mediaRefs.length > 0 && !sendingVia.supportsMedia) {
+    throw PipelineError.permanent(
+      'media_unsupported',
+      `${sendingVia.displayName} cannot attach files to a post, so nothing was sent. Remove the attachment or post through a channel that supports it.`,
+    );
+  }
+  const media = await resolvePostMedia(mediaRefs);
+
   const claim = await actionsRepo.claimAction({
     jobId: job.id,
     agentId: bundle.agent.id,
@@ -542,7 +561,13 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     agentId: bundle.agent.id,
     type: 'ACTION_STARTED',
     message: job.dryRun ? `Dry run: ${job.actionType}` : `Executing ${job.actionType}`,
-    data: { actionId: action.id, targetRef, dryRun: job.dryRun },
+    data: {
+      actionId: action.id,
+      targetRef,
+      dryRun: job.dryRun,
+      // What goes with it, never where it is held.
+      ...(media.length > 0 ? { media: describeMedia(media) } : {}),
+    },
   });
   const ctx = await adapterContext(bundle);
 
@@ -579,6 +604,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       text: output,
       idempotencyKey: job.channel === 'farcaster' ? actionIdempotencyKey : job.idempotencyKey,
       dryRun: job.dryRun,
+      ...(media.length > 0 ? { media } : {}),
     });
 
     await observability.emitTrace({
@@ -600,7 +626,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       Marking it EXECUTED would also have stamped a content signature and spent
       the idea for a post nobody has seen; leaving it retryable posts it twice.
     */
-    if (job.actionType === 'POST' && result.status !== 'DRY_RUN' && !postHasReadBack(result)) {
+    if (job.actionType === 'POST' && result.status !== 'DRY_RUN' && !postHasReadBack(result, { media: media.length })) {
       const message = `${result.verification.detail} It was not marked as posted and will not be sent again automatically.`;
       await actionsRepo.completeAction(action.id, {
         status: 'FAILED',

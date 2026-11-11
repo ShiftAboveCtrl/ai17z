@@ -320,7 +320,7 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   {
     table: 'artifacts',
     column: 'kind',
-    values: ['SCREENSHOT', 'PORTRAIT', 'UPLOAD', 'EXPORT', 'HTML_SNAPSHOT'],
+    values: ['SCREENSHOT', 'PORTRAIT', 'UPLOAD', 'EXPORT', 'HTML_SNAPSHOT', 'POST_MEDIA'],
     note: 'Artifact kinds are written by the worker and read by the API only.',
   },
   {

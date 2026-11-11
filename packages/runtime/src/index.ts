@@ -65,6 +65,8 @@ export * from './telegramBotGuard';
 export * from './telegramChannelConnect';
 export * from './telegramCapabilities';
 export * from './avatar';
+export * from './postMedia';
+export * from './postReadBack';
 export * from './xIntelligence';
 export * from './agentPackage';
 export * from './updates';

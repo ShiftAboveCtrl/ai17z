@@ -18,7 +18,9 @@ import {
   senderProjectView,
   submitDevUpdate,
   updateDevUpdateProject,
+  uploadSenderMedia,
 } from '@xbam/runtime';
+import { MEDIA_LIMITS } from '@xbam/shared';
 import { handler, ok, params, parseQuery, requireUser } from '../http';
 
 /**
@@ -52,6 +54,26 @@ export async function devUpdateRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/api/dev-updates/sender/project',
     handler(async (request) => senderProjectView(await authenticateSender(senderToken(request)))),
+  );
+
+  /**
+   * A picture or a video for an update, as the raw bytes of the file.
+   *
+   * Uploaded first and attached by the id this returns, because the update
+   * itself is a small JSON document and a video is not. What the file is gets
+   * read out of the file; the content-type only lets the body through. The
+   * answer is an id and nothing else: the file is public only if an owner
+   * approves the update that names it.
+   */
+  app.post(
+    '/api/dev-updates/sender/media',
+    // The largest kind plus a little for nothing: the exact cap per kind is
+    // enforced from the bytes, and this only stops a body that no kind could fit.
+    { bodyLimit: Math.max(...Object.values(MEDIA_LIMITS)) + 1024 },
+    handler(async (request, reply) => {
+      const project = await authenticateSender(senderToken(request));
+      return ok(reply, await uploadSenderMedia(project, request.body), 201);
+    }),
   );
 
   app.post(

@@ -71,6 +71,23 @@ export const SEL = {
   /** Submit, whichever composer it belongs to. */
   anySubmit: '[data-testid="tweetButton"], [data-testid="tweetButtonInline"]',
   /**
+   * The composer's file input, scoped to the composer it belongs to by the
+   * caller. Files go in with `setInputFiles`; the visible "add photos" button
+   * is never clicked, because it opens a native picker that nothing can drive.
+   */
+  mediaInput: 'input[data-testid="fileInput"], input[type="file"][accept*="image"]',
+  /** The strip under the editor that holds what has been attached so far. */
+  composerAttachments: '[data-testid="attachments"]',
+  /** One attached item in that strip: each has its own remove control. */
+  composerMediaItem: '[data-testid="attachments"] [data-testid="removeMedia"]',
+  /** Present on an item that is still uploading. */
+  composerMediaProgress: '[data-testid="attachments"] [role="progressbar"]',
+  /** X reports a failed upload as a toast, not as anything on the item. */
+  toast: '[data-testid="toast"]',
+  /** What a published post shows for its pictures and its video, read back off the timeline. */
+  tweetPhoto: '[data-testid="tweetPhoto"]',
+  tweetVideo: '[data-testid="videoPlayer"], [data-testid="videoComponent"]',
+  /**
    * The "Replying to @someone" line X puts at the top of a reply composer.
    *
    * AI4CZ wrote a check against this and never wired it up. It is the last
