@@ -52,7 +52,13 @@ export const MediaPolicy = z.object({
   allowedCaptureHosts: z.array(z.string().max(253).regex(
     /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i,
     'Use a bare hostname without a scheme, path, port or wildcard.',
-  )).max(200).default([]),
+  ).refine(host => {
+    const name = host.toLowerCase();
+    if (name === 'localhost' || name.endsWith('.localhost')) return false;
+    // URL parsing also recognizes abbreviated and hexadecimal IPv4 literals.
+    try { return !/^[\d.]+$/.test(new URL(`https://${name}`).hostname); }
+    catch { return false; }
+  }, 'Use a public hostname, not an IP address or localhost.')).max(200).default([]),
   allowedLinkDomains: z.array(z.string().max(253)).max(200).default([]),
   onVisionFailure: VisionFailurePolicy.default('RESPOND_TEXT_ONLY_IF_SAFE'),
   /** Keep retrieved bytes this long. 0 means never store them at all. */

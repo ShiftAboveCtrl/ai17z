@@ -23,7 +23,7 @@ it('edits capture hosts through the advanced policy save', async () => {
     expect(POLICY_REACHABILITY['media.allowedCaptureHosts'].where).toBe('ADVANCED_ONLY');
   } finally { act(() => tree.unmount()); }
 });
-it.each(['https://example.test', '*.example.test', 'example.test/path', 'example.test:443', '-bad.test'])('rejects non-hostname capture permission %s in the shared schema', (host) => {
+it.each(['https://example.test', '*.example.test', 'example.test/path', 'example.test:443', '-bad.test', '192.0.2.1', '127.1', '0x7f000001', '[::1]', 'localhost', 'app.localhost'])('rejects non-hostname capture permission %s in the shared schema', (host) => {
   expect(MediaPolicy.safeParse({ allowedCaptureHosts: [host] }).success).toBe(false);
 });
 it('refuses to save invalid capture hosts from the editor', async () => {

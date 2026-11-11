@@ -645,7 +645,11 @@ export function PluginsPage() {
   const [search, setSearch] = useSearchParams();
   const selected = search.get('tab');
   const tab: Tab = selected === 'studio' || selected === 'capabilities' || selected === 'discover' || selected === 'settings' ? selected : 'installed';
-  const setTab = (next: Tab) => setSearch((current) => { current.set('tab', next); return current; });
+  const setTab = (next: Tab) => setSearch((current) => {
+    current.set('tab', next);
+    if (next !== 'studio') current.delete('season');
+    return current;
+  });
   /*
     `items`, which is what the route answers with.
 

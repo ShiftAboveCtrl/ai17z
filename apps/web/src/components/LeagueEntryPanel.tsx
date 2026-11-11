@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { LEAGUE_SLUG, LeagueAlias } from '@xbam/shared/contracts';
-import { post } from '@app/lib/api';
+import { ApiError, post } from '@app/lib/api';
 import { useElapsed, useResource } from '@app/lib/hooks';
 import { Field, Working } from '@app/components/ui';
 
@@ -37,7 +37,18 @@ export function LeagueEntryPanel({ initialSeason = '' }: { initialSeason?: strin
         ? answer.state === 'ACTIVE' ? `${agents.data?.items.find((agent) => agent.id === agentId)?.name ?? 'This agent'} is ${answer.alreadyEntered ? 'already entered' : 'entered'} in ${slug}.` : 'The entry is saved and waiting for Studio.'
         : answer.why);
     } catch (error) {
-      setSentence(error instanceof Error ? error.message : 'The league entry could not be read.');
+      const sentences: Record<string, string> = {
+        NOT_FOUND: 'That agent is no longer available. Choose another agent.',
+        NETWORK: 'Could not reach AI17Z. Check the connection and try again.',
+        UNAUTHORIZED: 'Your session expired. Sign in again.',
+        FORBIDDEN: 'You do not have permission to enter this agent.',
+        BAD_REQUEST: 'Check the agent, season slug and public alias, then try again.',
+        VALIDATION_FAILED: 'Check the agent, season slug and public alias, then try again.',
+        CONFLICT: 'The entry changed while you were submitting it. Refresh and try again.',
+        UPSTREAM_FAILED: 'Studio could not be reached. Try again shortly.',
+        RATE_LIMITED: 'Too many entry requests. Wait a moment and try again.',
+      };
+      setSentence((error instanceof ApiError ? sentences[error.code] : null) ?? 'The league entry could not be saved. Try again.');
     } finally {
       setBusy(false);
     }
