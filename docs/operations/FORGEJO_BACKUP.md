@@ -77,6 +77,11 @@ No credential belongs in GitHub's release workflow. The server also needs
 against `ci/cosign.pub` before anything is copied, and an asset that does not
 verify stops the run before a draft exists.
 
+The service sets `Environment=HOME=/var/lib/ai17z-mirror` so cosign's TUF cache
+has a writable home under the service's `StateDirectory`. Keep this setting
+when installing or overriding the unit; `ProtectHome=true` blocks an ordinary
+service-account home.
+
 ```bash
 sudo install -m 0644 tools/forgejo-mirror/ai17z-release-sync.service /etc/systemd/system/
 sudo install -m 0644 tools/forgejo-mirror/ai17z-release-sync.timer /etc/systemd/system/

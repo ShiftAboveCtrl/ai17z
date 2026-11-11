@@ -8,6 +8,7 @@ Type=oneshot
 User=ai17z-mirror
 WorkingDirectory=/opt/ai17z-mirror
 EnvironmentFile=/etc/ai17z-mirror.env
+Environment=HOME=/var/lib/ai17z-mirror
 ExecStart=/usr/bin/python3 -I tools/forgejo-mirror/sync-releases.py
 PrivateTmp=true
 NoNewPrivileges=true
