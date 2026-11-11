@@ -737,13 +737,13 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request, reply) => {
       const user = await requireUser(request);
       const agent = await ownedAgent(params(request).id!, user);
-      const query = (request.query ?? {}) as { mode?: string; keys?: string };
+      const query = (request.query ?? {}) as { mode?: string; keys?: string; publicAlias?: string };
       const mode = query.mode === 'MOVE' ? 'MOVE' : 'SHARE';
       // Off unless explicitly asked for, and only ever on a MOVE -- packAgent
       // refuses the combination rather than quietly dropping the keys.
       const includeCredentials = query.keys === '1' || query.keys === 'true';
 
-      const pkg = await packAgent(agent.id, mode, { includeCredentials });
+      const pkg = await packAgent(agent.id, mode, { includeCredentials, publicAlias: query.publicAlias });
       await ops.audit({
         actorUserId: user.id,
         action: 'agent.exported',
@@ -762,7 +762,7 @@ export async function agentConfigRoutes(app: FastifyInstance): Promise<void> {
       reply.header('content-type', 'application/json; charset=utf-8');
       reply.header(
         'content-disposition',
-        `attachment; filename="${packageFilename(agent.name, mode, pkg.containsCredentials)}"`,
+        `attachment; filename="${packageFilename(pkg.agent.name, mode, pkg.containsCredentials)}"`,
       );
       // Never cached: a package is a point-in-time copy of an agent, and a
       // stale one downloaded from a cache is a silently older agent.

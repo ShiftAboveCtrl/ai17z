@@ -35,6 +35,8 @@ import {
   AGENT_PACKAGE_EXTENSION,
   AGENT_PACKAGE_VERSION,
   AgentPackage as AgentPackageSchema,
+  PortableAgent as PortableAgentSchema,
+  LeagueAlias,
   PORTABLE_AGENT_VERSION,
 } from '@xbam/shared/contracts';
 import type {
@@ -221,6 +223,8 @@ async function readCredentials(agentId: string): Promise<PortableCredential[]> {
 }
 
 export interface PackOptions {
+  /** Public-home profile: only personality, tone and response length survive. */
+  publicAlias?: string;
   /**
    * Carry the provider API keys this agent's models use.
    *
@@ -247,8 +251,28 @@ export async function packAgent(
     );
   }
 
-  const document = await exportAgent(agentId);
-  const avatar = await readAvatar(agentId);
+  if (options.publicAlias !== undefined && (mode !== 'SHARE' || !LeagueAlias.safeParse(options.publicAlias).success)) {
+    throw new BadRequestError('A public export needs SHARE mode and a valid public home alias.');
+  }
+  const source = await exportAgent(agentId);
+  // An allowlist, never a spread of private configuration. Use the same document,
+  // envelope, checksum and importer as an ordinary SHARE export.
+  const document = options.publicAlias === undefined ? source : PortableAgentSchema.parse({
+    format: source.format,
+    version: source.version,
+    exportedBy: source.exportedBy,
+    exportedAt: source.exportedAt,
+    name: options.publicAlias,
+    persona: {
+      identityKind: 'FICTIONAL',
+      displayName: options.publicAlias,
+      personality: source.persona.personality,
+      tone: source.persona.tone,
+      responseLength: source.persona.responseLength,
+    },
+    policy: {},
+  });
+  const avatar = options.publicAlias === undefined ? await readAvatar(agentId) : null;
   const learned = mode === 'MOVE' ? await readLearned(agentId) : null;
   const credentials = options.includeCredentials ? await readCredentials(agentId) : [];
 
