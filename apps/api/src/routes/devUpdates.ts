@@ -18,7 +18,9 @@ import {
   senderProjectView,
   submitDevUpdate,
   updateDevUpdateProject,
+  uploadSenderMedia,
 } from '@xbam/runtime';
+import { MEDIA_LIMITS, UnauthorizedError } from '@xbam/shared';
 import { handler, ok, params, parseQuery, requireUser } from '../http';
 
 /**
@@ -35,6 +37,28 @@ function senderToken(request: FastifyRequest): string | null {
   const header = request.headers.authorization;
   const match = header?.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim() ?? null;
+}
+
+type SenderProject = Awaited<ReturnType<typeof authenticateSender>>;
+const authenticatedSenders = new WeakMap<FastifyRequest, SenderProject>();
+
+/**
+ * Checks the sender token before Fastify reads the body.
+ *
+ * The body parser buffers the whole upload, up to the video cap, so an
+ * unauthenticated caller could make the server hold about 50 MiB just to be
+ * told 401. An `onRequest` hook runs ahead of the parser; the project it finds
+ * is kept for the handler rather than looked up a second time.
+ */
+async function authenticateBeforeBody(request: FastifyRequest): Promise<void> {
+  authenticatedSenders.set(request, await authenticateSender(senderToken(request)));
+}
+
+function senderOf(request: FastifyRequest): SenderProject {
+  const project = authenticatedSenders.get(request);
+  // Only reachable if a route lost its hook, which must fail closed.
+  if (!project) throw new UnauthorizedError('A development update sender token is required.');
+  return project;
 }
 
 const OwnerListQuery = z.object({
@@ -54,10 +78,33 @@ export async function devUpdateRoutes(app: FastifyInstance): Promise<void> {
     handler(async (request) => senderProjectView(await authenticateSender(senderToken(request)))),
   );
 
+  /**
+   * A picture or a video for an update, as the raw bytes of the file.
+   *
+   * Uploaded first and attached by the id this returns, because the update
+   * itself is a small JSON document and a video is not. What the file is gets
+   * read out of the file; the content-type only lets the body through. The
+   * answer is an id and nothing else: the file is public only if an owner
+   * approves the update that names it.
+   */
+  app.post(
+    '/api/dev-updates/sender/media',
+    {
+      // The largest kind plus a little for nothing: the exact cap per kind is
+      // enforced from the bytes, and this only stops a body that no kind could fit.
+      bodyLimit: Math.max(...Object.values(MEDIA_LIMITS)) + 1024,
+      onRequest: authenticateBeforeBody,
+    },
+    handler(async (request, reply) => {
+      return ok(reply, await uploadSenderMedia(senderOf(request), request.body), 201);
+    }),
+  );
+
   app.post(
     '/api/dev-updates/sender/updates',
+    { onRequest: authenticateBeforeBody },
     handler(async (request, reply) => {
-      const project = await authenticateSender(senderToken(request));
+      const project = senderOf(request);
       const result = await submitDevUpdate(project, request.body ?? {});
       // A duplicate is an answer, not an error: the sender learns what became
       // of the first one, which is what it needs to stop asking.

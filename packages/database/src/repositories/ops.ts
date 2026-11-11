@@ -102,7 +102,7 @@ export interface ArtifactRow {
 }
 
 export async function createArtifact(input: {
-  kind: 'SCREENSHOT' | 'PORTRAIT' | 'UPLOAD' | 'EXPORT' | 'HTML_SNAPSHOT';
+  kind: 'SCREENSHOT' | 'PORTRAIT' | 'UPLOAD' | 'EXPORT' | 'HTML_SNAPSHOT' | 'POST_MEDIA';
   jobId?: string | null;
   actionId?: string | null;
   accountId?: string | null;

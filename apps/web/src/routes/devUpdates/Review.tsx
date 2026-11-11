@@ -156,7 +156,7 @@ function Draft({
 
         <div className="space-y-4 border-t border-ink-line bg-ink-panel/60 p-4 sm:p-5 lg:border-l lg:border-t-0">
           <p className="eyebrow text-bone-dim">{rehearse ? 'The post, as it would appear' : 'The post'}</p>
-          <PostPreview agent={agent} handle={handle} text={update.post} edited={update.edited}>
+          <PostPreview agent={agent} handle={handle} text={update.post} edited={update.edited} media={update.media}>
             {mode === 'edit' ? (
               <div className="mt-3 space-y-2">
                 <label htmlFor={editId} className="sr-only">

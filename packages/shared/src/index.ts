@@ -11,6 +11,7 @@ export * from './supervisor';
 export * from './version';
 export * from './canonicalJson';
 export * from './image';
+export * from './media';
 export * from './workerAbsence';
 export * from './installEnv';
 export * from './callSignal';

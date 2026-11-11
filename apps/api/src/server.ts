@@ -71,7 +71,7 @@ export async function buildServer(): Promise<FastifyInstance> {
    * is gets read out of its own bytes, because a content-type header is a claim.
    */
   app.addContentTypeParser(
-    ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/octet-stream'],
+    ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'application/octet-stream'],
     { parseAs: 'buffer' },
     (_request, body, done) => done(null, body),
   );

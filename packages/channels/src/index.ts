@@ -149,7 +149,7 @@ export {
 export { fingerprint } from './x/index';
 // Exported for the composer-discipline tests: these are the steps that decide
 // whether a draft is complete before anything irreversible happens.
-export { readyForTyping, fillComposer, submitComposer, ensureEngaged } from './x/index';
+export { readyForTyping, fillComposer, submitComposer, attachMedia, mediaSeenOnPost, ensureEngaged } from './x/index';
 export type { EngagementOutcome } from './x/index';
 export {
   normalizeTargetId,

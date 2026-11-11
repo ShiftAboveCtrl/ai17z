@@ -55,6 +55,12 @@ export const DevUpdateSubmissionInput = z.object({
   disclosure: z.string(),
   /** A post the sender wrote. Absent means AI17Z composes one from the facts. */
   post: z.string().trim().min(1).max(400).optional(),
+  /**
+   * Files uploaded first (`POST /api/dev-updates/sender/media`) that go with the
+   * post, by the id that upload returned. Ids, never paths: nothing here names
+   * a place on anybody's disk.
+   */
+  mediaIds: z.array(z.uuid()).max(4).optional(),
   /** Makes a retried submission safe: the same id twice is the same update. */
   // An identifier, not prose: anything else is refused before it is read, and
   // only a hash of it is ever stored.

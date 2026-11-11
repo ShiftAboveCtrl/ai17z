@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import type { ContextPost, NormalizedEvent, ResolvedContext } from '@xbam/shared/contracts';
 import { PipelineError, sha256Hex } from '@xbam/shared';
 import type {
@@ -25,6 +27,7 @@ export const mockAdapter: ChannelAdapter = {
   displayName: 'Mock channel',
   capabilities: ['REPLY', 'POST', 'DIRECT_MESSAGE'],
   requiresBrowser: false,
+  supportsMedia: true,
 
   async connect(): Promise<ConnectionResult> {
     return { status: 'CONNECTED', detail: 'Mock channel is always available.' };
@@ -144,8 +147,27 @@ export const mockAdapter: ChannelAdapter = {
         `Mock channel could not verify the target: ${verification.detail}`,
       );
     }
+    // What an upload would be given. The mock has no browser, but it still
+    // reads each file and compares it with the hash it was handed, so a path
+    // that does not lead to the approved bytes fails here the way it would at
+    // an uploader, and the evidence names what was carried.
+    const media = request.media ?? [];
+    const carried: Array<{ kind: string; mime: string; bytes: number; sha256: string }> = [];
+    for (const item of media) {
+      const bytes = await readFile(item.path).catch(() => null);
+      if (!bytes || createHash('sha256').update(bytes).digest('hex') !== item.sha256) {
+        throw PipelineError.retryable('media_upload_failed', 'Mock channel could not read an attached file as it was approved.');
+      }
+      carried.push({ kind: item.kind, mime: item.mime, bytes: item.bytes, sha256: item.sha256.slice(0, 12) });
+    }
+    if (carried.length > 0) {
+      verification.evidence = { ...verification.evidence, media: carried };
+    }
     if (request.dryRun) {
       return { status: 'DRY_RUN', remoteActionId: null, remoteActionUrl: null, verification };
+    }
+    if (carried.length > 0) {
+      verification.evidence = { ...verification.evidence, mediaConfirmed: true };
     }
     // Stable id derived from the idempotency key, so replaying a test produces
     // the same remote id and duplicate detection can be asserted.

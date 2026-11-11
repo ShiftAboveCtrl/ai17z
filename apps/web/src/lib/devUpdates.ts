@@ -46,6 +46,15 @@ export interface DevUpdateHistoryEntry {
   reason: string;
 }
 
+/** A picture or video that goes out with the post. `url` is the owner-only artifact route. */
+export interface DevUpdateMedia {
+  artifactId: string;
+  kind: 'IMAGE' | 'GIF' | 'VIDEO';
+  mime: string;
+  bytes: number;
+  url: string;
+}
+
 export interface DevUpdate {
   id: string;
   kind: string;
@@ -54,6 +63,8 @@ export interface DevUpdate {
   why: string;
   evidence: { type: string; ref: string | null; detail: string }[];
   post: string;
+  /** Absent on an update from before attachments existed. */
+  media?: DevUpdateMedia[];
   proposedPost: string;
   edited: boolean;
   status: DevUpdateStatus;

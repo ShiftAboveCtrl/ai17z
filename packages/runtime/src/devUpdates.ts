@@ -35,6 +35,7 @@ import {
 } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { approveJob, cancelJob, rejectJob } from './approvals';
+import { forgetPostMedia, forgetUnattachedPostMedia, mediaRefsProblem, storePostMedia, type PostMediaRef } from './postMedia';
 import { validateOutput } from './validator';
 import {
   DevUpdateSubmissionInput,
@@ -181,6 +182,15 @@ export function updateView(row: DevUpdateRow) {
     why: row.why,
     evidence: row.evidence,
     post: row.approvedText ?? row.postText,
+    // What goes out with it, for the owner to look at before approving. The
+    // address is the artifact route, which needs the owner's own session.
+    media: (row.media ?? []).map((m) => ({
+      artifactId: m.artifactId,
+      kind: m.kind,
+      mime: m.mime,
+      bytes: m.bytes,
+      url: `/api/artifacts/${m.artifactId}`,
+    })),
     proposedPost: row.postText,
     edited: row.approvedText !== null && row.approvedText !== row.postText,
     status: row.status,
@@ -441,6 +451,51 @@ function checkAgainst(
   return { output: validation.output, refusals, reviews };
 }
 
+/** Files a sender has uploaded and not yet attached to an update. More than this is a leak. */
+const MAX_UNATTACHED_MEDIA = 8;
+/** An uploaded file nobody attached is removed after this long. */
+const UNATTACHED_MEDIA_HOURS = 24;
+
+/**
+ * A sender uploads a picture or a video before it submits the update that
+ * carries it. The bytes are identified and capped here (`validateMedia`), held
+ * as an artifact scoped to this project, and answered with an id; nothing is
+ * public until an owner approves the update that names it.
+ */
+export async function uploadSenderMedia(project: DevUpdateProjectRow, bytes: unknown) {
+  if (!Buffer.isBuffer(bytes) && !(bytes instanceof Uint8Array)) {
+    throw new ValidationError(
+      'Send the file itself as the request body, with its content-type: image/png, image/jpeg, image/gif, image/webp, video/mp4 or video/quicktime.',
+    );
+  }
+  const account = await accountsRepo.getAccount(project.accountId);
+  if (!account || !getChannelAdapter(account.channel).supportsMedia) {
+    throw new ValidationError('The account this project posts through cannot attach pictures or video.');
+  }
+  if ((await repo.countUnattachedMedia(project.id)) >= MAX_UNATTACHED_MEDIA) {
+    throw new ConflictError(
+      `${MAX_UNATTACHED_MEDIA} uploaded files are already waiting for an update. Attach them to one, or wait: unattached files are removed after ${UNATTACHED_MEDIA_HOURS} hours.`,
+    );
+  }
+  // A file that is not what it claims, or too big, is a 400 that says why.
+  const ref: PostMediaRef = await storePostMedia({ agentId: project.agentId, bytes, scope: { devUpdateProjectId: project.id } });
+  await ops.audit({
+    actorUserId: null,
+    action: 'dev_updates.media_uploaded',
+    entityType: 'dev_update_project',
+    entityId: project.id,
+    data: { kind: ref.kind, bytes: ref.bytes },
+  });
+  return { id: ref.artifactId, kind: ref.kind, mime: ref.mime, bytes: ref.bytes };
+}
+
+/** Removes uploads that were never attached to an update. Housekeeping on the worker tick. */
+export async function sweepUnattachedMedia(): Promise<number> {
+  const ids = await repo.staleUnattachedMedia(UNATTACHED_MEDIA_HOURS);
+  // The ids were read a moment ago and a submission may have taken one since.
+  return forgetUnattachedPostMedia(ids);
+}
+
 export type SubmitOutcome =
   | { outcome: 'ACCEPTED'; update: ReturnType<typeof senderUpdateView> }
   | { outcome: 'DUPLICATE'; reason: string; update: ReturnType<typeof senderUpdateView> | null };
@@ -476,6 +531,14 @@ export async function submitDevUpdate(project: DevUpdateProjectRow, raw: unknown
       data: { codes, fields: [...new Set(refusals.map((r) => r.field))] },
     });
     throw new DevUpdateRefusedError(refusals);
+  }
+
+  const mediaIds = [...new Set(input.mediaIds ?? [])];
+  if (mediaIds.length > 0) {
+    const account = await accountsRepo.getAccount(project.accountId);
+    if (!account || !getChannelAdapter(account.channel).supportsMedia) {
+      throw new ValidationError('The account this project posts through cannot attach pictures or video, so nothing was stored.');
+    }
   }
 
   const keys = evidenceKeys(input.evidence);
@@ -529,6 +592,14 @@ export async function submitDevUpdate(project: DevUpdateProjectRow, raw: unknown
         `${MAX_OPEN_UPDATES} updates are already waiting for this project. Let the owner catch up before sending more.`,
       );
     }
+    // The project's own uploads that nothing has taken yet, locked so two
+    // updates cannot both claim one file.
+    const media = mediaIds.length > 0 ? await repo.lockUnattachedMedia(tx, project.id, mediaIds) : [];
+    if (media.length !== mediaIds.length) {
+      throw new ValidationError('One of the attached files was not uploaded for this project, was already used by another update, or has expired. Upload it again.');
+    }
+    const mediaProblem = mediaRefsProblem(media);
+    if (mediaProblem) throw new ValidationError(mediaProblem);
     const row = await repo.insertUpdate(tx, {
       projectId: project.id,
       kind: input.kind,
@@ -541,6 +612,7 @@ export async function submitDevUpdate(project: DevUpdateProjectRow, raw: unknown
       textFingerprint: textFingerprint(postText),
       evidenceKeys: keys,
       clientRequestId: requestKey,
+      media,
       status,
       statusReason: reason,
       history: [
@@ -550,6 +622,7 @@ export async function submitDevUpdate(project: DevUpdateProjectRow, raw: unknown
           : []),
       ],
     });
+    if (media.length > 0) await repo.markMediaAttached(tx, mediaIds, row.id);
     return { outcome: 'ACCEPTED', update: senderUpdateView(row) };
   }).catch(async (error: unknown): Promise<SubmitOutcome> => {
     // The project lock serialises submissions, so this is the index catching
@@ -698,6 +771,8 @@ export async function rejectDevUpdate(ownerId: string, updateId: string, raw: un
   const reason = input.note ? `Rejected by the owner: ${input.note}` : 'Rejected by the owner.';
   const done = async (next: DevUpdateRow) => {
     await ops.audit({ actorUserId: ownerId, action: 'dev_updates.rejected', entityType: 'dev_update', entityId: next.id });
+    // A rejected update loses its words, and the pictures that went with them.
+    await forgetPostMedia((row.media ?? []).map((m) => m.artifactId));
     return updateView(next);
   };
 
@@ -920,7 +995,13 @@ async function dispatchProject(projectId: string): Promise<DispatchResult | null
       // with the update.
       text: checked.output,
       occurredAt: new Date().toISOString(),
-      raw: { origin: 'dev_update', devUpdateId: update.id, projectId: project.id },
+      raw: {
+        origin: 'dev_update',
+        devUpdateId: update.id,
+        projectId: project.id,
+        // References, which the executor resolves and re-checks at send time.
+        ...((update.media ?? []).length > 0 ? { media: update.media } : {}),
+      },
     });
     const created = await jobsRepo.createJob(tx, {
       eventId: event.id,
@@ -1092,5 +1173,6 @@ export async function reconcileDevUpdates(limit: number): Promise<number> {
 export async function runDevUpdates(limit: number): Promise<{ settled: number; dispatched: DispatchResult[] }> {
   const settled = await reconcileDevUpdates(limit * 4);
   const dispatched = await dispatchDevUpdates(limit);
+  await sweepUnattachedMedia().catch((error: unknown) => log.warn('unattached media sweep failed', { message: String(error) }));
   return { settled, dispatched };
 }

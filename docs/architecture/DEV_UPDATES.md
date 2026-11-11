@@ -63,6 +63,25 @@ words.
 | MCP server (plain Node, no dependencies) | `tools/dev-updates-mcp.mjs` |
 | Owner CLI | `tools/dev-updates.mts` (`npm run dev-updates -- help`) |
 
+## Attachments
+
+An update can carry a screenshot, a creative file or a short video. The MCP
+tool takes `attachments: [{ path }]`: the file is read on the assistant's
+machine, uploaded to `POST /api/dev-updates/sender/media` as raw bytes, and the
+update then names the returned ids (`mediaIds`). The path is never sent, and a
+file that cannot be read or is refused stops the whole share.
+
+- The type comes from the bytes (no SVG), with a cap per kind; a project may
+  hold eight uploads that no update has used, and those are removed after a day.
+- A file belongs to the project that uploaded it and to one update.
+- The owner sees each attachment next to the post in the review screen, served
+  by the owner-only artifact route. Approval covers the words and the file;
+  nothing is published without it.
+- Rejecting an update removes its files with its words.
+- At the hand-over the references travel on the job's event. A rehearsal shows
+  them in the trace (kind, size and a short hash, never a path).
+- The account's channel has to support media, or the upload is refused.
+
 ## Two credentials
 
 | | Sender token | Owner session |
