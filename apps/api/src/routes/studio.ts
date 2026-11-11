@@ -12,7 +12,9 @@ import {
   reviewStudioPurchase,
   scrubStudioActivity,
   setStudioActivityTape,
+  setStudioActivityText,
   studioActivityTapeSetting,
+  studioActivityTextSetting,
   setStudioControl,
   setStudioLiveView,
   setStudioTakeover,
@@ -76,6 +78,17 @@ export async function registerStudioRoutes(app: FastifyInstance): Promise<void> 
     const user = await requireUser(request);
     const body = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
     return setStudioActivityTape(body.enabled, user.id);
+  }));
+  // Whether the words of a published post travel with its link. Off until the owner
+  // says so here; nothing Studio sends can turn it on.
+  app.get('/api/studio/activity-tape/text', handler(async (request) => {
+    await requireUser(request);
+    return studioActivityTextSetting();
+  }));
+  app.put('/api/studio/activity-tape/text', handler(async (request) => {
+    const user = await requireUser(request);
+    const body = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
+    return setStudioActivityText(body.enabled, user.id);
   }));
   app.post('/api/studio/activity-tape/scrub', handler(async (request) => {
     const user = await requireUser(request);

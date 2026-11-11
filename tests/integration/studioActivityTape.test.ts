@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { capabilityPermissions, ops, query } from '@xbam/database';
 import { invokeCapability } from '@xbam/tools';
 import { createLogger, sealSecret } from '@xbam/shared';
-import { ACTIVITY_CAPABILITY, activityTapeProjection, scrubStudioActivity, setStudioActivityTape, studioActivityTapeSetting, sweepStudioActivityTape, registerActivityTapeCapability } from '../../packages/runtime/src/studioActivityTape';
+import { ACTIVITY_CAPABILITY, activityTapeProjection, scrubStudioActivity, setStudioActivityText, setStudioActivityTape, studioActivityTextSetting, studioActivityTapeSetting, sweepStudioActivityTape, registerActivityTapeCapability } from '../../packages/runtime/src/studioActivityTape';
 import { setStudioTransportForTests } from '../../packages/runtime/src/studioLink';
 import { newInstallationKey } from '../../packages/runtime/src/studioJose';
 import { installHarness } from '../support/harness';
@@ -38,12 +38,14 @@ async function grant() {
 }
 async function ready() { await grant(); await setStudioActivityTape(true, fixture.ownerId); }
 async function due() { await query("DELETE FROM app_settings WHERE key = 'studio.activity_tape.attempt'"); }
-async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, channel = 'x', rehearsal = false, agentId = fixture.agentId) {
+interface Published { remoteId?: string | null; url?: string | null; text?: string }
+async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, channel = 'x', rehearsal = false, agentId = fixture.agentId, published: Published = {}) {
   const [event] = await query<{ id: string }>("INSERT INTO events (channel,type,remote_event_id,text,remote_author_handle,payload) VALUES ($1,'MENTION',$2,'PRIVATE','private-person',$3) RETURNING id", [channel, randomUUID(), JSON.stringify({ prompt: 'PRIVATE', rehearsal, ...(rehearsal ? { origin: 'rehearsal' } : {}) })]);
   const [job] = await query<{ id: string }>("INSERT INTO jobs(event_id,agent_id,channel,action_type,idempotency_key,generated_output) VALUES ($1,$2,$3,$4,$5,'PRIVATE') RETURNING id", [event!.id, agentId, channel, type, randomUUID()]);
-  const [row] = await query<{ id: string }>(`INSERT INTO actions(job_id,agent_id,channel,type,status,dry_run,payload,target_ref,idempotency_key,executed_at)
-    VALUES ($1,$2,$8,$3,$4,$5,'{"text":"PRIVATE","wallet":"PRIVATE","reasoning":"PRIVATE","cookies":"PRIVATE"}','@private-person',$6,now() - ($7::int * interval '1 minute')) RETURNING id`,
-  [job!.id, agentId, type, status, status === 'DRY_RUN', randomUUID(), ageMinutes, channel]);
+  const [row] = await query<{ id: string }>(`INSERT INTO actions(job_id,agent_id,channel,type,status,dry_run,payload,target_ref,idempotency_key,executed_at,remote_action_id,remote_action_url)
+    VALUES ($1,$2,$8,$3,$4,$5,$9::jsonb,'@private-person',$6,now() - ($7::int * interval '1 minute'),$10,$11) RETURNING id`,
+  [job!.id, agentId, type, status, status === 'DRY_RUN', randomUUID(), ageMinutes, channel,
+    JSON.stringify({ text: published.text ?? 'PRIVATE', wallet: 'PRIVATE', reasoning: 'PRIVATE', cookies: 'PRIVATE' }), published.remoteId ?? null, published.url ?? null]);
   return `action:${row!.id}`;
 }
 
@@ -399,5 +401,91 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
     const requests = studio.requests;
     expect((await sweepStudioActivityTape()).sent).toBe(0);
     expect(studio.requests).toBe(requests);
+  });
+});
+
+describe('verifiable posts against Postgres and the contract server', () => {
+  const link = (id: string) => ({ remoteId: id, url: `https://x.com/agentone/status/${id}` });
+  const sent = () => studio.batches.flatMap((b) => b.events);
+
+  it('sends the stored status link of a real published post and reply, and never any words by default', async () => {
+    await ready();
+    const post = link('1111111111'), reply = link('2222222222');
+    const a = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...post, text: 'SECRET WORDS' });
+    const b = await action('REPLY', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...reply, text: 'SECRET REPLY' });
+    expect((await sweepStudioActivityTape()).sent).toBe(2);
+    expect(sent().find((e) => e.id === a)).toMatchObject({ kind: 'POST', dry_run: false, target_handle: null, post_url: post.url });
+    expect(sent().find((e) => e.id === b)).toMatchObject({ kind: 'REPLY', dry_run: false, target_handle: null, post_url: reply.url });
+    expect(JSON.stringify(studio.batches)).not.toMatch(/SECRET|PRIVATE|private-person|post_text/);
+  });
+
+  it('sends no link for a dry run, an unverified post, a mock channel, a receipt, or another service', async () => {
+    await ready();
+    const dry = await action('POST', 'DRY_RUN', 0, 'x', false, fixture.agentId, link('3333333333'));
+    const unverified = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { remoteId: null, url: 'https://x.com/agentone/status/4444444444' });
+    const elsewhere = await action('POST', 'EXECUTED', 0, 'bluesky', false, fixture.agentId, { remoteId: 'abc', url: 'https://bsky.app/profile/a/post/abc' });
+    const mismatched = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { remoteId: '5555555555', url: 'https://x.com/agentone/status/6666666666' });
+    const receipt = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, link('7777777777'));
+    await query(`UPDATE events SET payload = payload || '{"ideaSource":"radar_receipt"}'::jsonb
+      WHERE id=(SELECT event_id FROM jobs WHERE id=(SELECT job_id FROM actions WHERE id=$1))`, [receipt.slice(7)]);
+    await action('POST', 'EXECUTED', 0, 'mock', false, fixture.agentId, link('8888888888'));
+    expect((await sweepStudioActivityTape()).sent).toBe(5);
+    const byId = new Map(sent().map((e) => [e.id, e]));
+    for (const id of [dry, unverified, elsewhere, mismatched]) expect(byId.get(id), id).not.toHaveProperty('post_url');
+    expect(byId.get(`receipt:${receipt.slice(7)}`)).toMatchObject({ kind: 'RECEIPT' });
+    expect(byId.get(`receipt:${receipt.slice(7)}`)).not.toHaveProperty('post_url');
+    expect(JSON.stringify(studio.batches)).not.toMatch(/8888888888|bsky\.app|mock:/);
+  });
+
+  it('keeps the old event shape for a post with no link', async () => {
+    await ready();
+    await action('POST');
+    await sweepStudioActivityTape();
+    expect(Object.keys(sent()[0]!).sort()).toEqual(['agent_id', 'at', 'dry_run', 'id', 'kind', 'paper', 'target_handle']);
+  });
+
+  it('sends words only after the owner opts in, only for posts made after that, and stops when they opt out', async () => {
+    await ready();
+    expect(await studioActivityTextSetting()).toEqual({ enabled: false, changedAt: null });
+    const before = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000001'), text: 'written before consent' });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await setStudioActivityText(true, fixture.ownerId);
+    const after = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000002'), text: 'Shipped the radar update.' });
+    const mention = await action('REPLY', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000003'), text: '@private-person thanks for asking' });
+    expect((await sweepStudioActivityTape()).sent).toBe(3);
+    const byId = new Map(sent().map((e) => [e.id, e]));
+    expect(byId.get(before)).not.toHaveProperty('post_text');
+    expect(byId.get(after)).toMatchObject({ post_text: 'Shipped the radar update.', post_url: 'https://x.com/agentone/status/1000000002' });
+    expect(byId.get(mention)).toMatchObject({ post_url: 'https://x.com/agentone/status/1000000003', target_handle: null });
+    expect(byId.get(mention)).not.toHaveProperty('post_text');
+    expect(JSON.stringify(studio.batches)).not.toMatch(/private-person|written before consent/);
+    await setStudioActivityText(false, fixture.ownerId); await due();
+    await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000004'), text: 'after opting out' });
+    await sweepStudioActivityTape();
+    expect(JSON.stringify(studio.batches)).not.toContain('after opting out');
+  });
+
+  it('never sends text for a dry run even with consent', async () => {
+    await ready(); await setStudioActivityText(true, fixture.ownerId);
+    await action('POST', 'DRY_RUN', 0, 'x', false, fixture.agentId, { ...link('1000000005'), text: 'never published' });
+    await sweepStudioActivityTape();
+    expect(JSON.stringify(studio.batches)).not.toContain('never published');
+  });
+
+  it('lets only the signed-in owner change the text switch, with nothing else in the body', async () => {
+    const app = await buildServer();
+    try {
+      expect((await app.inject({ method: 'GET', url: '/api/studio/activity-tape/text' })).statusCode).toBe(401);
+      expect((await app.inject({ method: 'PUT', url: '/api/studio/activity-tape/text', payload: { enabled: true } })).statusCode).toBe(401);
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: fixture.ownerEmail, password: 'test-password-1234' } });
+      const headers = { authorization: `Bearer ${login.json().data.token}` };
+      expect((await app.inject({ method: 'PUT', url: '/api/studio/activity-tape/text', headers, payload: { enabled: true, text: 'x' } })).statusCode).toBe(422);
+      expect((await studioActivityTextSetting()).enabled).toBe(false);
+      const on = await app.inject({ method: 'PUT', url: '/api/studio/activity-tape/text', headers, payload: { enabled: true } });
+      expect(on.statusCode).toBe(200);
+      expect(on.json().data).toEqual(await studioActivityTextSetting());
+      expect((await app.inject({ method: 'GET', url: '/api/studio/activity-tape/text', headers })).json().data.enabled).toBe(true);
+      expect((await studioActivityTapeSetting()).enabled).toBe(false);
+    } finally { await app.close(); }
   });
 });
