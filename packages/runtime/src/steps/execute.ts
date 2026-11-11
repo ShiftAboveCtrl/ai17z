@@ -44,6 +44,8 @@ import {
   canFollowUp,
 } from '../followUp';
 import { remoteActionsAllowed } from '../killSwitch';
+import { postUnconfirmed } from '../notify';
+import { POST_OUTCOME_AMBIGUOUS, postHasReadBack, priorPostWasAmbiguous } from '../postReadBack';
 import { recordPublished } from '../experimentRuns';
 import type { JobBundle } from '../loadJob';
 
@@ -410,7 +412,14 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     failure. So for these, unknown means stop, with a reason a person can act on.
   */
   const devUpdate = (bundle.event.payload as { origin?: unknown } | null)?.origin === 'dev_update';
-  if (devUpdate && !job.dryRun && (claim.retakenFromStale || claim.retakenFromFailed)) {
+  /*
+    The same rule for any post whose earlier attempt was submitted and could not
+    be read back. It is not the rule for every post: one that failed before the
+    composer opened is plainly safe to retry, and X can never prove absence from
+    a lagging timeline, so applying this to all of them would stop every retry.
+  */
+  const priorAmbiguousPost = job.actionType === 'POST' && priorPostWasAmbiguous(action.verification);
+  if ((devUpdate || priorAmbiguousPost) && !job.dryRun && (claim.retakenFromStale || claim.retakenFromFailed)) {
     // What the earlier attempt actually sent, which is what might be on the
     // account. The job's text may have been edited since; looking for the new
     // wording would miss a post that went out under the old one.
@@ -450,6 +459,12 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     // Only a read-back that proves absence allows a second attempt. An empty
     // scan, a lagging timeline or a read that failed are all "unknown".
     if (!already || already.done !== false || already.conclusive !== true) {
+      if (!devUpdate) {
+        const message =
+          'An earlier attempt to post this may or may not have reached the account, and that could not be confirmed. It was not sent again. Check the account before posting it yourself.';
+        await actionsRepo.completeAction(action.id, { status: 'FAILED', errorClass: 'REVIEW_REQUIRED', lastError: message });
+        throw PipelineError.review('post_unconfirmed', message);
+      }
       const message =
         'An earlier attempt to post this development update may or may not have reached the account, and that could not be confirmed. It was not sent again. Check the account before resubmitting.';
       await actionsRepo.completeAction(action.id, { status: 'FAILED', errorClass: 'PERMANENT', lastError: message });
@@ -546,6 +561,36 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       message: result.verification.detail,
       data: result.verification.evidence,
     });
+
+    /*
+      A post is EXECUTED only with evidence it is public.
+
+      The adapter submitted it, and what came back carries no id or address that
+      was read off the account. That is not a failure and not a success: the post
+      may be live. So the action is recorded as an unconfirmed attempt, the job
+      goes to its owner (a review is never retried by the pipeline), and a later
+      attempt asks the remote before sending anything (`priorAmbiguousPost`).
+      Marking it EXECUTED would also have stamped a content signature and spent
+      the idea for a post nobody has seen; leaving it retryable posts it twice.
+    */
+    if (job.actionType === 'POST' && result.status !== 'DRY_RUN' && !postHasReadBack(result)) {
+      const message = `${result.verification.detail} It was not marked as posted and will not be sent again automatically.`;
+      await actionsRepo.completeAction(action.id, {
+        status: 'FAILED',
+        errorClass: 'REVIEW_REQUIRED',
+        lastError: message,
+        verification: { ...(result.verification as unknown as Record<string, unknown>), postOutcome: POST_OUTCOME_AMBIGUOUS },
+      });
+      await postUnconfirmed({
+        jobId: job.id,
+        agentId: bundle.agent.id,
+        accountId: job.accountId,
+        agentName: bundle.agent.name,
+        handle: bundle.account?.handle ?? null,
+        detail: result.verification.detail,
+      }).catch(() => undefined);
+      throw PipelineError.review('post_unconfirmed', message, { actionId: action.id });
+    }
 
     await actionsRepo.completeAction(action.id, {
       status: result.status === 'DRY_RUN' ? 'DRY_RUN' : 'EXECUTED',

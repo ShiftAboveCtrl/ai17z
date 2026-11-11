@@ -73,6 +73,7 @@ export const CATEGORY_DESCRIPTIONS: Record<TelegramCategory, string> = {
 const KIND_CATEGORY: Record<string, TelegramCategory> = {
   ACCOUNT_NEEDS_USER: 'accounts',
   ACCOUNT_SIGNED_OUT: 'accounts',
+  POST_UNCONFIRMED: 'accounts',
   WORKER_STOPPED: 'runtime',
   EVERYTHING_PAUSED: 'runtime',
   AGENT_HAS_NO_MODEL: 'models',

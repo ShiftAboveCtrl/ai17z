@@ -80,7 +80,41 @@ export const notificationKey = {
   everythingPaused: () => 'runtime.paused',
   liveTradeWaiting: (tradeIntentId: string) => `live-trade.waiting:${tradeIntentId}`,
   publicHomeRepublish: (agentId: string) => `public-home.republish:${agentId}`,
+  postUnconfirmed: (jobId: string) => `post.unconfirmed:${jobId}`,
 };
+
+/**
+ * A post was submitted and nothing could be read back to prove it went out.
+ *
+ * WARNING, because the agent is still working: this one post is held. It is
+ * never sent again by AI17Z, since the first attempt may be live and a second
+ * would publish the same words twice. Somebody has to look at the account.
+ * Keyed on the job, so a job that is looked at again raises it once.
+ */
+export async function postUnconfirmed(input: {
+  jobId: string;
+  agentId: string;
+  accountId: string | null;
+  agentName: string;
+  handle: string | null;
+  detail: string;
+}): Promise<NotificationRecord | null> {
+  const where = input.handle ? `@${input.handle}` : 'the account';
+  return notificationsRepo.raise({
+    kind: 'POST_UNCONFIRMED',
+    severity: 'WARNING',
+    agentId: input.agentId,
+    accountId: input.accountId,
+    title: `${input.agentName} may have posted, and could not confirm it`,
+    body:
+      `${input.detail} Check ${where}. If the post is there, nothing more is needed; if it is not, the text is on the job and you can post it again yourself. ` +
+      'AI17Z will not send it again on its own, because that could post it twice.',
+    actionLabel: 'Open the job',
+    actionHref: `/jobs/${input.jobId}`,
+    data: { jobId: input.jobId },
+    dedupeKey: notificationKey.postUnconfirmed(input.jobId),
+  });
+}
 
 /**
  * An account is waiting for a person to answer a challenge.

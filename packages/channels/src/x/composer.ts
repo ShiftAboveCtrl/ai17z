@@ -514,43 +514,64 @@ export async function postOwn(
         'X did not enable the post button within ten seconds of the text being typed.',
       );
     }
-    await submitComposer(page, opened);
-    await settle(2_000, 3_500);
+    /*
+      From the first attempt to submit, every failure is ambiguous rather than
+      retryable. A click that landed and then failed its own check, a page that
+      crashed after X took the text: from here none of them can say the post
+      did not go out, and an error that propagates is retried as if it did not.
+      So they are returned as an unconfirmed post, which the executor holds for
+      the owner and never sends again, instead of thrown.
+    */
+    const unconfirmed = (detail: string, extra: Record<string, unknown>): ActionResult => ({
+      status: 'EXECUTED' as const,
+      remoteActionId: null,
+      remoteActionUrl: null,
+      verification: {
+        ...verification,
+        detail,
+        evidence: { ...verification.evidence, readBackConfirmed: false, ...extra },
+      },
+    });
+
+    let composerClosed = false;
+    try {
+      await submitComposer(page, opened);
+      composerClosed = await composerLetGo(opened.editor, 8_000);
+      await settle(2_000, 3_500);
+    } catch (error) {
+      return unconfirmed(`The post may have been submitted: ${(error as Error).message}`, { submitError: (error as Error).message });
+    }
 
     // Read back from the account's own timeline. A dialog that closed is not
     // evidence that anything was published, which is the mistake the legacy
-    // poster made and reported as success.
+    // poster made and reported as success. Confirmed means the post itself was
+    // found there; a closed composer alone is not enough.
     const handle = me[0];
     if (!handle) {
-      return {
-        status: 'EXECUTED' as const,
-        remoteActionId: null,
-        remoteActionUrl: null,
-        verification: {
-          ...verification,
-          detail: 'Post submitted. This account has no handle recorded, so it could not be confirmed.',
-          evidence: { ...verification.evidence, readBackConfirmed: false },
-        },
-      };
+      return unconfirmed('Post submitted. This account has no handle recorded, so it could not be confirmed.', { composerClosed });
     }
 
-    await goto(page, X_URLS.profile(handle));
-    const readBack = await findOwnReply(page, request.text, me, 3);
-    await returnToIdle(page);
+    let readBack: OwnReply | null = null;
+    try {
+      await goto(page, X_URLS.profile(handle));
+      readBack = await findOwnReply(page, request.text, me, 3);
+      await returnToIdle(page);
+    } catch (error) {
+      return unconfirmed(`Post submitted, but the profile could not be read back: ${(error as Error).message}`, {
+        composerClosed,
+        readBackError: (error as Error).message,
+      });
+    }
 
     if (!readBack) {
       // Reported as executed but unconfirmed rather than retried: retrying a
       // post that may already be live is how an account posts twice.
-      return {
-        status: 'EXECUTED' as const,
-        remoteActionId: null,
-        remoteActionUrl: null,
-        verification: {
-          ...verification,
-          detail: 'Post submitted, but it was not visible on the profile on read-back.',
-          evidence: { ...verification.evidence, readBackConfirmed: false },
-        },
-      };
+      return unconfirmed(
+        composerClosed
+          ? 'Post submitted and the composer closed, but it was not visible on the profile on read-back.'
+          : 'Post submitted, but the composer stayed open and it was not visible on the profile on read-back.',
+        { composerClosed },
+      );
     }
 
     return {
@@ -560,7 +581,7 @@ export async function postOwn(
       verification: {
         ...verification,
         detail: `Post confirmed on the profile as ${readBack.statusId}.`,
-        evidence: { ...verification.evidence, readBackConfirmed: true, postStatusId: readBack.statusId },
+        evidence: { ...verification.evidence, readBackConfirmed: true, composerClosed, postStatusId: readBack.statusId },
       },
     };
   });
