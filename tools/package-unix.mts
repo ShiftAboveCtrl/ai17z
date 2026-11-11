@@ -30,6 +30,7 @@ import { promisify } from 'node:util';
 import { releaseName } from '@xbam/shared';
 import { INCLUDE, copyFiltered, proveCompatibilityGate } from './package-windows.mjs';
 import { pruneDependencies } from './pruneDependencies.mjs';
+import { materializeNestedLinks, proveWorkerImports } from './materializeLinks.mjs';
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -259,6 +260,10 @@ async function main(): Promise<void> {
   const pruned = await pruneDependencies(join(stage, 'node_modules'));
   console.log(`  pruned ${pruned.removed.length} documentation and test entries from dependencies (${Math.round(pruned.bytes / 1024 / 1024)}MB)`);
 
+  // Real copies of the links a package cannot carry, as in the Windows packager.
+  const linked = await materializeNestedLinks(stage);
+  if (linked.materialized.length > 0) console.log(`  materialized ${linked.materialized.length} link(s): ${linked.materialized.join(', ')}`);
+
   await writeFile(
     join(stage, 'BUILD_INFO.json'),
     `${JSON.stringify({ version, name: name.title, platform, builtAt: new Date().toISOString() }, null, 2)}\n`,
@@ -283,6 +288,10 @@ async function main(): Promise<void> {
   } finally {
     await rm(join(stage, '.probe.ts'), { force: true });
   }
+
+  // The worker's dependency that crashed Beta 0.93 on start. Not when crossing:
+  // a foreign-architecture stage cannot execute its own code, same as above.
+  if (!crossing) await proveWorkerImports(stage, await probeEnvironment(stage));
 
   await proveCompatibilityGate(stage, platform, version, await probeEnvironment(stage));
 
