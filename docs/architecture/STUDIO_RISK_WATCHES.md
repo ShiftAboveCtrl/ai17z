@@ -19,6 +19,17 @@ linked installation's DPoP key. There are no inbound ports or callback URLs.
 
 ## Studio owes
 
+- Evidence-card confirmation extends this same authenticated path with
+  `POST /api/v1/installation/risk-watches`, `{ protocol: 1, watch }`.
+  The watch is the strict existing `StudioRiskWatch` shape. Its random id is
+  the durable idempotency key. Replays return the same `{ protocol: 1, watch }`;
+  changed content under that id returns 409. Apply the existing holder access,
+  five-watch ceiling, mint and condition uniqueness and ownership checks.
+  Only the local owner's authenticated confirmation can send this request.
+  Public text never calls it. The owner chooses the condition and threshold;
+  `/watch <card id>` merely explains those choices. This extension is proved
+  against the local contract server only, not deployed Studio.
+
 - `GET /api/v1/installation/risk-watches`: validate DPoP, token binding, expiry,
   method, URL and proof replay, then resolve the installation's owner. Apply the
   same active-holder permission as the inbox sampler. Return 403 on lost access,

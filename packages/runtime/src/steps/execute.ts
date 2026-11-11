@@ -62,6 +62,7 @@ import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRef
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
+import { checkEvidenceCardAtSend } from '../evidenceCard';
 
 /**
  * Sending it, and recording what happened.
@@ -226,6 +227,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   const { job, policy } = bundle;
   const output = job.validatedOutput;
   if (!output) throw PipelineError.retryable('output_missing', 'Execution ran before validation produced output.');
+  await checkEvidenceCardAtSend(bundle, output);
   const paperReply = await paperReplyForJob(job.id);
   if (paperReply !== null && paperReply !== output) {
     throw PipelineError.review('paper_receipt_changed', 'The paper receipt changed after validation. Send the complete simulated record only.');

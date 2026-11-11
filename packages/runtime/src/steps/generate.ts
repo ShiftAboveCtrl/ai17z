@@ -54,6 +54,7 @@ import { signalIdeaRefusal } from '../signalRadar';
 import { receiptIdeaRefusal } from '../radarReceipts';
 import { publicSelfFacts } from '../publicSelf';
 import { asksForPublicHome, publicHomeReply } from '../studioPublicHome';
+import { evidenceCardOf } from '../evidenceCard';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -129,6 +130,11 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
     throw PipelineError.retryable(budget.reason, budget.message, { retryAfterMs: budget.retryAfterMs });
   }
 
+  const evidenceCard = evidenceCardOf(bundle);
+  if (evidenceCard) {
+    await jobsRepo.updateJob(bundle.job.id, { status: 'GENERATED', generatedOutput: evidenceCard.text, touch: ['generatedAt'] });
+    return;
+  }
   if (bundle.job.actionType === 'REPLY' && asksForPublicHome(bundle.event.text ?? '')) {
     await jobsRepo.updateJob(bundle.job.id, { status: 'GENERATED', generatedOutput: await publicHomeReply(bundle.agent.id), touch: ['generatedAt'] });
     return;
@@ -442,6 +448,9 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
+  if (evidenceCardOf(bundle) && result.output !== evidenceCardOf(bundle)!.text) {
+    throw PipelineError.review('evidence_card_changed', 'The complete sourced evidence card cannot fit this output policy. Review the policy before sending.');
+  }
   const paperReply = await paperReplyForJob(bundle.job.id);
   if (paperReply !== null && result.output !== paperReply) {
     throw PipelineError.review('paper_receipt_changed', 'The complete simulated paper receipt cannot fit this output policy. Review it before sending.');
@@ -532,7 +541,7 @@ export async function stepVoice(bundle: JobBundle): Promise<void> {
   if (job.actionType === 'REPLY' && asksForPublicHome(bundle.event.text ?? '')) return;
   const draft = job.validatedOutput ?? job.generatedOutput;
   if (!policy.voice.enabled || !draft) return;
-  const paperReceipt = await paperReplyForJob(job.id);
+  const paperReceipt = evidenceCardOf(bundle)?.text ?? await paperReplyForJob(job.id);
 
   const context = job.resolvedContext;
   const speed = RESPONSE_SPEED_PROFILES[policy.responseSpeed];
@@ -763,6 +772,14 @@ export async function stepQualityGate(bundle: JobBundle): Promise<'next' | 'sile
   }
 
   if (report.outcome !== 'accept') {
+    const card = evidenceCardOf(bundle);
+    if (card && job.validatedOutput === card.text && report.repetition.score > policy.voice.repetitionRewriteAbove &&
+        report.generic.score <= policy.voice.genericRewriteAbove && report.voice.score >= policy.voice.lightRewriteAt) {
+      await observability.emitTrace({ jobId: job.id, agentId: bundle.agent.id, type: 'QUALITY_SCORED',
+        message: 'The fixed evidence template repeats by design. Voice and generic-prose checks passed; the complete card is checked again at send.',
+        data: { fixedEvidenceTemplate: true, repetition: report.repetition.score } });
+      return 'next';
+    }
     /*
       A person who has already approved this has made the judgement.
 

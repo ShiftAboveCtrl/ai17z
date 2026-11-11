@@ -31,6 +31,7 @@ import { ensureMediaResolved } from './context';
 
 import { capResearch } from '../spending';
 import { adapterContext } from '../channelContext';
+import { researchEvidenceCard } from '../evidenceCard';
 
 /**
  * Looking something up, when the answer depends on something current.
@@ -48,6 +49,7 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
   const { job } = bundle;
   const context = job.resolvedContext;
   if (!context) return;
+  if (await researchEvidenceCard(bundle)) return;
 
   const inventory = MediaInventory.safeParse((context.meta as { inventory?: unknown })?.inventory);
   const links = inventory.success ? inventory.data.links : [];

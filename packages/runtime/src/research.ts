@@ -5,6 +5,32 @@ import { describeToken, mergeReferences, parseTokenReference, resolveToken } fro
 const log = createLogger('research');
 
 /**
+ * A check names exactly one identity. Never resolve a ticker or guess an EVM chain.
+ *
+ * "check" on its own is ordinary speech ("please check your DMs"). A card is
+ * only invited by a token-shaped signal: a ticker, an address-like string, or
+ * "check" next to a token word.
+ */
+export function evidenceCardRequest(text: string): { address?: string; chain?: string; refusal?: string } | null {
+  const reference = parseTokenReference(text);
+  const addressLike = [...text.matchAll(/\b(?:0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{32,44})\b/g)].map(m => m[0]);
+  const aboutToken = /\bcheck\b/i.test(text) && /\b(?:token|coin|mint|contract|ca)\b/i.test(text);
+  if (!reference.address && !reference.symbol && addressLike.length === 0 && !aboutToken) return null;
+  const unique = new Set(addressLike.map(a => a.startsWith('0x') ? a.toLowerCase() : a));
+  if (unique.size !== 1 || !reference.address || reference.pairAddress) {
+    return { refusal: 'Please provide one exact token address and its chain, rather than a ticker or multiple addresses.' };
+  }
+  const chain = reference.address.startsWith('0x') ? (reference.chain === 'bsc' ? 'bnb' : reference.chain) : 'solana';
+  if (!chain || (reference.chain && !reference.address.startsWith('0x') && reference.chain !== 'solana')) {
+    return { refusal: 'Please name the chain for this exact token address.' };
+  }
+  if (!['solana', 'ethereum', 'bnb', 'base', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'robinhood'].includes(chain)) {
+    return { refusal: 'Please provide an exact address on a supported token evidence chain.' };
+  }
+  return { address: reference.address, chain };
+}
+
+/**
  * Looking things up, so an agent asked about this morning is not limited to
  * whatever its model was trained on.
  *

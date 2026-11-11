@@ -1,3 +1,4 @@
+import { EvidenceCardControl } from '../components/EvidenceCardControl';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Sparkles } from 'lucide-react';
@@ -738,6 +739,10 @@ export function EasySetup() {
             </Field>
 
             <div className="space-y-3 border-t border-ink-line pt-6">
+              <EvidenceCardControl
+                checked={draft.setup.replies.evidenceCards ?? false}
+                onChange={(v) => setSetup({ replies: { ...draft.setup.replies, evidenceCards: v } })}
+              />
               <Toggle
                 checked={draft.setup.replies.filters.massTags}
                 onChange={(v) =>

@@ -173,6 +173,8 @@ export const EasyCharacter = z.object({
 export type EasyCharacter = z.infer<typeof EasyCharacter>;
 
 export const EasyReplies = z.object({
+  /** Optional so older Easy Mode clients cannot reset an owner's choice. */
+  evidenceCards: z.boolean().optional(),
   audience: EasyAudience.default('EXCEPT_SPAM'),
   selectivity: EasySelectivity.default('BALANCED'),
   filters: EasyFilters.prefault({}),

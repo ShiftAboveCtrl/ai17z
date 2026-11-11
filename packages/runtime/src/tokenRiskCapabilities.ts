@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { defineCapability, registerCapability } from '@xbam/tools';
+import type { CardReading } from '@xbam/prompts';
+import { solanaTokenFrom } from './marketIntelCapabilities';
 import {
   EVM_CHAINS,
   ask,
@@ -10,6 +12,7 @@ import {
   type Reported,
   type TokenRiskQuery,
   type TradeSimulation,
+  JUPITER_FAMILY, type JupiterQuery, type JupiterResult,
 } from '@xbam/upstream';
 
 /**
@@ -95,7 +98,7 @@ async function addressReadable(): Promise<{ status: 'AVAILABLE' | 'UNAVAILABLE';
 }
 
 async function riskReadable(): Promise<{ status: 'AVAILABLE' | 'UNAVAILABLE'; why?: string }> {
-  for (const family of ['token_security', 'token_tradeable']) {
+  for (const family of ['token_security', 'token_tradeable', JUPITER_FAMILY]) {
     const health = await familyHealth(family);
     if (health.some((entry) => entry.health.state === 'READY')) return { status: 'AVAILABLE' };
   }
@@ -112,10 +115,13 @@ const inspectRisk = defineCapability({
   category: 'READ',
   effect: 'READ',
   risk: 'LOW',
-  input: z.object({ chain: ChainName, address: Address }),
+  input: z.object({ chain: z.union([ChainName, z.literal('solana')]), address: z.string() }).refine(
+    v => v.chain === 'solana' ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v.address) : Address.safeParse(v.address).success,
+    'Use one exact address on its named chain.',
+  ),
   output: z.object({
     chain: z.string(),
-    chainId: z.number(),
+    chainId: z.number().nullable(),
     address: z.string(),
     observations: z.array(Observation),
     /** Named, so "nothing concerning" can be told apart from "nobody looked". */
@@ -123,11 +129,34 @@ const inspectRisk = defineCapability({
     /** What these sources cannot tell anybody, said every time. */
     limitations: z.array(z.string()),
     sourcesAnswering: z.number(),
+    cardReadings: z.array(z.object({ label: z.string(), value: z.union([z.number(), z.boolean()]).nullable(),
+      unit: z.enum(['USD', '%', 'hours', 'authority']), source: z.string(), fetchedAt: z.string().nullable(),
+      observedAt: z.string().nullable(), maxAgeMs: z.number() })),
   }),
   modelCallable: true,
   timeoutMs: 40_000,
   readiness: () => riskReadable(),
   async run(input) {
+    if (input.chain === 'solana') {
+      const answer = await ask<JupiterQuery, JupiterResult>(JUPITER_FAMILY, {
+        operation: 'search', query: input.address, list: 'toptrending', interval: '1h', limit: 30,
+      }).catch(() => null);
+      const token = answer?.value.tokens.map(solanaTokenFrom).find(t => t?.mint === input.address);
+      const source = answer?.provenance.upstreamId ?? 'solana_tokens.jupiter';
+      const fetchedAt = answer?.provenance.fetchedAt ?? null;
+      const observedAt = token?.updatedAt ?? null;
+      const poolTime = Date.parse(token?.firstPoolAt ?? '');
+      const cardReadings: CardReading[] = [
+        { label: 'Liquidity', value: token?.liquidityUsd === 0 && !token.firstPoolAt ? null : token?.liquidityUsd ?? null, unit: 'USD' },
+        { label: 'Top holders', value: token?.topHoldersPct != null && token.topHoldersPct <= 100 ? token.topHoldersPct : null, unit: '%' },
+        { label: 'Mint authority', value: token?.mintAuthorityDisabled ?? null, unit: 'authority' },
+        { label: 'Freeze authority', value: token?.freezeAuthorityDisabled ?? null, unit: 'authority' },
+        { label: 'Pool age', value: Number.isFinite(poolTime) && poolTime <= Date.now() ? Math.floor((Date.now() - poolTime) / 3600_000) : null, unit: 'hours' },
+      ].map(r => ({ ...r, source, fetchedAt, observedAt, maxAgeMs: 5 * 60_000 })) as CardReading[];
+      return { chain: 'solana', chainId: null, address: input.address, observations: [], notChecked: [],
+        limitations: ['Index readings can be wrong; holder accounts are not attributed ownership.'],
+        sourcesAnswering: token ? 1 : 0, cardReadings };
+    }
     const chainId = EVM_CHAINS[input.chain];
     const query: TokenRiskQuery = { chainId, address: input.address };
     const observations: z.infer<typeof Observation>[] = [];
@@ -196,6 +225,15 @@ const inspectRisk = defineCapability({
           : 'Two independent sources answered; where they overlap, both readings are shown.',
       ],
       sourcesAnswering: answering,
+      cardReadings: [
+        { label: 'Liquidity', value: null, unit: 'USD' },
+        { label: 'Top holders', value: null, unit: '%' },
+        // EVM mintability is not an authority address or proof of its revocation.
+        { label: 'Mint authority', value: null, unit: 'authority' },
+        { label: 'Freeze authority', value: null, unit: 'authority' },
+        { label: 'Pool age', value: null, unit: 'hours' },
+      ].map(r => ({ ...r, unit: r.unit as CardReading['unit'], source: security?.provenance.upstreamId ?? 'token_security.goplus',
+        fetchedAt: security?.provenance.fetchedAt ?? null, observedAt: security?.provenance.fetchedAt ?? null, maxAgeMs: 60 * 60_000 })),
     };
   },
 });

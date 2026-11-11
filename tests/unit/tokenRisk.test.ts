@@ -51,11 +51,18 @@ function context() {
 }
 
 interface RiskAnswer {
+  cardReadings: { label: string; value: number | boolean | null }[];
   observations: { what: string; detail: string; source: string; kind: string }[];
   notChecked: string[];
   limitations: string[];
   sourcesAnswering: number;
 }
+
+it('does not treat EVM mintability as proof of a disabled mint authority', async () => {
+  responses = { token_security: security({ is_mintable: '0' }) };
+  const answer = await inspect();
+  expect(answer.cardReadings.find(r => r.label === 'Mint authority')?.value).toBeNull();
+});
 
 async function invoke(id: string, input: unknown): Promise<unknown> {
   const capability = getCapability(id);
