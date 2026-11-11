@@ -52,3 +52,28 @@ The local contract server exercises DPoP signatures, token binding, publication,
 removal and renewal, including consent, timing, lost responses, terminal refusals
 and expiry capping. This is not verification against a deployed Studio or its
 public renderer. No Studio files are changed.
+
+## Dated X observations
+
+The public-home choices include `includeXCounts`, default false. Opting in adds
+an optional strict `xCounts` object to the exact owner-confirmed manifest. Each
+metric carries its original `readAt` and a nullable value. No account, handle,
+wallet, installation, return or standing is carried in this object.
+
+The sender reuses stored observations; preview, publication and renewal never
+read X. Followers also reuse the radar's existing own-account audience readings,
+choosing the newer source with its own date. Profile counts come from successful
+canonical X account observations
+matched to the single enabled linked X account's immutable id. If no such
+observation exists (or identity is unknown or ambiguous), the count is absent.
+The existing People account reader can record a profile observation. This does
+not introduce an automatic profile refresh or bypass the one X read budget.
+Engagement is the latest measurement of one real published post or reply,
+joined to its executed action, excluding rehearsals and dry runs; it is not an
+account total. Missing metrics remain null, including on partially measured posts.
+
+Studio labels these as observations, withholds profile values at 24 hours and
+engagement values at 1 hour, and hides all counts without consent. Renewal does
+not refresh those dates. Publish a new preview to share newer observations or
+to remove consent. Old manifests still omit the field; older strict receivers
+can accept the default-off path but must be upgraded before counts are enabled.

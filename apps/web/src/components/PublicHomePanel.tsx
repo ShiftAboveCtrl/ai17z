@@ -63,7 +63,7 @@ export function AgentHomeControls({ agentId }: { agentId: string }) {
       const form = new FormData(event.currentTarget);
       void perform(async () => {
         const result = await post<Preview>(`${base}/preview`, { alias: form.get('alias'), includeVoice: form.get('voice') === 'on',
-          paperWindow: form.get('paper') || null, includeLeague: form.get('league') === 'on', showActivity: form.get('activity') === 'on' });
+          paperWindow: form.get('paper') || null, includeLeague: form.get('league') === 'on', showActivity: form.get('activity') === 'on', includeXCounts: form.get('xCounts') === 'on' });
         setPreview(result);
         focusAfterPaint(heading);
       });
@@ -75,6 +75,8 @@ export function AgentHomeControls({ agentId }: { agentId: string }) {
           <input name="alias" required minLength={3} maxLength={24} className={`${controlClass} mt-2`} autoComplete="off" autoCapitalize="none" spellCheck={false} />
         </label>
         <label className="flex min-h-12 items-center gap-3 text-sm text-bone"><input name="voice" type="checkbox" />Voice document</label>
+        <label className="flex min-h-12 items-center gap-3 text-sm text-bone"><input name="xCounts" type="checkbox" />Dated X follower, post and engagement counts (no account identity)</label>
+        <p className="text-sm text-bone-dim">Uses stored readings for one linked X account. Missing readings stay unavailable. Profile counts expire after 24 hours; engagement on the latest measured published post after 1 hour. Preview again to publish newer readings.</p>
         <label className="flex min-h-12 items-center gap-3 text-sm text-bone"><input name="activity" type="checkbox" />Activity already shared through the tape</label>
         <label className="flex min-h-12 items-center gap-3 text-sm text-bone"><input name="league" type="checkbox" />Simulated paper league standing</label>
         <label className="block text-sm text-bone">Simulated paper record window
