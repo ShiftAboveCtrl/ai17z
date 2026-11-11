@@ -18,6 +18,8 @@ const CURSOR = 'studio.activity_tape.cursor';
 const AssetLabel = z.string().regex(/^[A-Z0-9.]{1,16}$/);
 const Size = z.string().regex(/^\d{1,78}$/);
 
+// Control characters are exactly what this refuses, so the rule against them in a pattern does not apply.
+// eslint-disable-next-line no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const MENTION = /(^|[^A-Za-z0-9_])@[A-Za-z0-9_]/;
 

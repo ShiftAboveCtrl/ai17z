@@ -128,7 +128,7 @@ describe('verifiable posts: the link to the real post, and words only by consent
     const reply = { ...base, kind: 'REPLY' };
     expect(projectActivity({ ...reply, post_text: '@someone thanks for the question' })?.post_text).toBeUndefined();
     expect(projectActivity({ ...reply, post_text: 'thanks, and cc @someone' })?.post_text).toBeUndefined();
-    expect(projectActivity({ ...reply, post_text: 'write to me at a@b.example' })?.post_text).toBe('write to me at a@b.example');
+    expect(projectActivity({ ...reply, post_text: 'write to me at someone@example.invalid' })?.post_text).toBe('write to me at someone@example.invalid');
     expect(projectActivity({ ...reply, post_text: '@someone thanks' })?.target_handle).toBeNull();
     expect(projectActivity({ ...base, post_text: 'thanks @someone for the review' })?.post_text).toBe('thanks @someone for the review');
   });
