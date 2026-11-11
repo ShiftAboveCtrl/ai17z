@@ -315,6 +315,7 @@ function AddWatchModal({
   const [kind, setKind] = useState('tracked_account');
   const [target, setTarget] = useState('');
   const [mayTrigger, setMayTrigger] = useState(false);
+  const [publishToStudio, setPublishToStudio] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -331,7 +332,7 @@ function AddWatchModal({
         kind,
         target: needsTarget ? target.trim() : null,
         label: '',
-        config: { mayTrigger },
+        config: { mayTrigger, publishToStudio: kind === 'tracked_keyword' && publishToStudio },
       });
       setTarget('');
       onSaved();
@@ -345,6 +346,10 @@ function AddWatchModal({
   return (
     <Modal open={open} onClose={onClose} title="Watch something">
       <div className="space-y-5">
+        {kind === 'tracked_keyword' && <label className="flex items-start gap-3 text-sm text-bone-dim">
+          <input type="checkbox" checked={publishToStudio} onChange={e => setPublishToStudio(e.target.checked)} />
+          <span>Share this ticker and source post on Studio. Only exact uppercase ticker pins such as $SOL qualify. The public activity tape and agent permission must also be on. Save this same watch again unchecked to keep future sources private; remove already shared rows with the Studio tape controls.</span>
+        </label>}
         <Field label="What kind">
           <div className="grid grid-cols-2 gap-2">
             {options.map((option) => (

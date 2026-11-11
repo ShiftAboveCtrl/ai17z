@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ConflictError } from '@xbam/shared';
 import { ops, query } from '@xbam/database';
 import { defineCapability, registerCapability, type AnyCapability } from '@xbam/tools';
-import { ACTIVITY_POST_TEXT_MAX, ActivityEventId as EventId, ActivityPostUrl, ActivityTapeBatch, ActivityTapeEvent, type ActivityEvent } from '@xbam/shared/contracts';
+import { ACTIVITY_POST_TEXT_MAX, ActivityEventId as EventId, ActivityPostUrl, ActivityRadarDetail, ActivityTapeBatch, ActivityTapeEvent, type ActivityEvent } from '@xbam/shared/contracts';
 import { studioActivityBatch } from './studioLink';
 export { ActivityTapeBatch, ActivityTapeEvent } from '@xbam/shared/contracts';
 
@@ -57,10 +57,13 @@ export function projectActivity(row: Record<string, unknown>): ActivityEvent | n
   if (row.kind === 'RECEIPT' && !STUDIO_ACCEPTS_RECEIPTS) return null;
   const postUrl = publishedPostUrl(row);
   const postText = postUrl === undefined ? undefined : consentedPostText(row);
+  const radar = row.kind === 'RADAR_HIT' && row.source_public === true
+    ? ActivityRadarDetail.safeParse({ asset: row.radar_asset, source_post_url: row.source_post_url }) : null;
   const parsed = ActivityTapeEvent.safeParse({
     id: row.id, agent_id: row.agent_id, kind: row.kind,
     at: row.at instanceof Date ? row.at.toISOString() : row.at,
     dry_run: typeof row.dry_run === 'boolean' ? row.dry_run : null, target_handle: null,
+    ...(radar?.success ? { radar: radar.data } : {}),
     paper: row.kind === 'PAPER_FILL' ? { simulated: true,
       size_base_units: Size.safeParse(row.size).success ? row.size : null,
       asset: AssetLabel.safeParse(row.asset).success ? row.asset : null, verdict: 'PAPER_FILLED' } : null,
@@ -155,7 +158,8 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
       -- for posts made after they did. Without consent the column is never selected.
       CASE WHEN $9::boolean AND a.status = 'EXECUTED' AND NOT a.dry_run AND a.executed_at >= $10::timestamptz
         AND a.channel = 'x' AND NOT EXISTS (SELECT 1 FROM accounts ac WHERE ac.id = a.account_id AND ac.channel <> 'x')
-        THEN a.payload->>'text' END AS post_text
+        THEN a.payload->>'text' END AS post_text,
+      NULL::text AS radar_asset, NULL::text AS source_post_url, false AS source_public
     FROM actions a JOIN permitted p ON p.agent_id = a.agent_id
       LEFT JOIN jobs j ON j.id = a.job_id LEFT JOIN events e ON e.id = j.event_id
     WHERE a.status IN ('EXECUTED','DRY_RUN') AND a.type IN ('REPLY','POST')
@@ -169,14 +173,18 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
       CASE WHEN t.asset_in->>'kind' = 'NATIVE' THEN
         CASE t.asset_in->>'network' WHEN 'solana' THEN 'SOL' WHEN 'ethereum' THEN 'ETH' WHEN 'bnb' THEN 'BNB' ELSE NULL END
       ELSE t.asset_in->>'symbol' END,
-      NULL::text, NULL::text, NULL::text
+      NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, false
     FROM trade_intents t JOIN permitted p ON p.agent_id = t.agent_id
     WHERE t.mode = 'PAPER' AND t.status = 'PAPER_FILLED' AND t.postcondition->>'simulated' = 'true'
       AND t.updated_at >= greatest($2::timestamptz, p.permission_changed_at)
     UNION ALL
     SELECT DISTINCT 'radar:' || d.id, aa.agent_id, 'RADAR_HIT', date_trunc('milliseconds', d.first_seen_at), NULL::boolean, NULL::text, NULL::text,
-      NULL::text, NULL::text, NULL::text
+      NULL::text, NULL::text, NULL::text,
+      CASE WHEN s.kind = 'tracked_keyword' AND s.target ~ '^[$][A-Z0-9.]{1,16}$' THEN substring(s.target from 2) END,
+      e.remote_url,
+      COALESCE(s.enabled AND s.config->'publishToStudio' = 'true'::jsonb AND e.channel = 'x', false)
     FROM event_discoveries d JOIN events e ON e.id = d.event_id
+      LEFT JOIN radar_sources s ON s.id = d.source_id AND s.account_id = e.account_id
       JOIN agent_accounts aa ON aa.account_id = e.account_id JOIN permitted p ON p.agent_id = aa.agent_id
     WHERE d.first_seen_at >= greatest($2::timestamptz, p.permission_changed_at)
       AND e.channel <> 'mock' AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'

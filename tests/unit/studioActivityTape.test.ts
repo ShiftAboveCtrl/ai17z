@@ -3,6 +3,21 @@ import { ActivityTapeBatch, projectActivity, registerActivityTapeCapability, wit
 import { invokeCapability, getCapability } from '@xbam/tools';
 import { createLogger } from '@xbam/shared';
 
+const radarRow = { id: 'radar:00000000-0000-4000-8000-000000000001', agent_id: '00000000-0000-4000-8000-000000000002', kind: 'RADAR_HIT', at: '2026-11-11T12:00:00.000Z', radar_asset: 'SOL', source_post_url: 'https://x.com/example/status/123', source_public: true };
+it('projects only explicitly shared validated radar details', () => {
+  expect(projectActivity(radarRow)).toEqual({ id: radarRow.id, agent_id: radarRow.agent_id, kind: radarRow.kind, at: radarRow.at, dry_run: null, target_handle: null, paper: null, radar: { asset: 'SOL', source_post_url: radarRow.source_post_url } });
+});
+it.each([{ source_public: false }, { source_public: undefined }, { radar_asset: 'bad label' }, { source_post_url: 'https://evil.test' }])('keeps radar details private for %j', over => {
+  expect(projectActivity({ ...radarRow, ...over })?.radar).toBeUndefined();
+});
+it('allows radar details only on radar events and rejects nested private fields', () => {
+  const radar = { asset: 'SOL', source_post_url: radarRow.source_post_url };
+  const event = projectActivity(radarRow)!;
+  expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, radar }], remove: [] }).success).toBe(true);
+  for (const extra of [{ recommendation: 'buy' }, { wallet: 'PRIVATE' }, { target_handle: 'PRIVATE' }]) expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, radar: { ...radar, ...extra } }], remove: [] }).success).toBe(false);
+  expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, kind: 'POST', radar }], remove: [] }).success).toBe(false);
+});
+
 describe('public activity allowlist', () => {
   it('is disabled unless granted and refuses a public caller even with a grant', async () => {
     registerActivityTapeCapability();

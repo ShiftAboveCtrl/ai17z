@@ -50,6 +50,26 @@ async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, chann
 }
 
 describe('activity tape against Postgres and a DPoP Studio contract server', () => {
+  it('reads exact opted-in ticker pins and stored sources without another X read', async () => {
+    await ready();
+    const [account] = await query<{ id: string }>("INSERT INTO accounts(owner_id,channel,handle) VALUES ($1,'x','PRIVATE') RETURNING id", [fixture.ownerId]);
+    await query('INSERT INTO agent_accounts(agent_id,account_id) VALUES ($1,$2)', [fixture.agentId, account!.id]);
+    const [source] = await query<{ id: string }>(`INSERT INTO radar_sources(account_id,kind,target,config) VALUES ($1,'tracked_keyword','$SOL','{"publishToStudio":true}') RETURNING id`, [account!.id]);
+    const [event] = await query<{ id: string }>(`INSERT INTO events(channel,account_id,type,remote_event_id,remote_url,text,payload) VALUES ('x',$1,'KEYWORD_MATCH',$2,'https://x.com/example/status/123','PRIVATE','{}') RETURNING id`, [account!.id, randomUUID()]);
+    await query("INSERT INTO event_discoveries(event_id,source_id,source_kind) VALUES ($1,$2,'tracked_keyword')", [event!.id, source!.id]);
+    const read = async () => (await activityTapeProjection(new Date(Date.now() - 60_000)))[0]!;
+    expect((await read()).radar).toEqual({ asset: 'SOL', source_post_url: 'https://x.com/example/status/123' });
+    for (const config of [{}, { publishToStudio: false }]) {
+      await query('UPDATE radar_sources SET config=$2 WHERE id=$1', [source!.id, config]);
+      expect((await read()).radar).toBeUndefined();
+    }
+    await query(`UPDATE radar_sources SET config='{"publishToStudio":true}', target='SOL or ETH' WHERE id=$1`, [source!.id]);
+    expect((await read()).radar).toBeUndefined();
+    await query("UPDATE radar_sources SET target='$SOL' WHERE id=$1", [source!.id]);
+    await query("UPDATE events SET remote_url='https://evil.test' WHERE id=$1", [event!.id]);
+    expect((await read()).radar).toBeUndefined();
+    expect(JSON.stringify(await read())).not.toContain('PRIVATE');
+  });
   it('scrubs a receipt through the owner API and cannot resurrect it on replay', async () => {
     await ready();
     const actionId = await action('POST');
