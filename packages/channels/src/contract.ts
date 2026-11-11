@@ -295,6 +295,13 @@ export interface ChannelAdapter {
      * Paths that must never send twice resend only on a conclusive answer.
      */
     conclusive?: boolean;
+    /**
+     * Set to `true` only when `done: true` also covers the attached files: the
+     * post found carries them. A post with media is recovered as published only
+     * on this; text that matches while the files are unseen is not proof the
+     * post as approved went out.
+     */
+    mediaConfirmed?: boolean;
   }>;
 
   observeAuth?(ctx: ChannelContext): Promise<AuthObservation>;

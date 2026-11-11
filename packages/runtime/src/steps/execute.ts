@@ -467,7 +467,13 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
           })
           .catch(() => null)
       : null;
-    if (already?.done) {
+    /*
+      For a post with files, matching text is not proof that this post went out:
+      the text can be live without its picture. The remote has to say it saw the
+      files too (`mediaConfirmed`), the same bar a fresh send is held to. Short
+      of that it falls to the hold below, which never sends again.
+    */
+    if (already?.done && (media.length === 0 || already.mediaConfirmed === true)) {
       // The earlier attempt is what was published, and it stays the record.
       await actionsRepo.completeAction(action.id, {
         status: 'EXECUTED',

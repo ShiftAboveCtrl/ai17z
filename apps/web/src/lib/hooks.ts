@@ -195,18 +195,31 @@ export function useElapsed(active: boolean): number {
  * as the tab is open.
  */
 export function useAuthedImage(url: string | null | undefined): string | null {
-  const [resolved, setResolved] = useState<string | null>(null);
+  return useAuthedObject(url).src;
+}
+
+/**
+ * The same fetch-into-an-object-URL as `useAuthedImage`, for anything a media
+ * element draws (a picture or a video), and it says when the fetch failed so
+ * a caller can tell "still loading" from "will never load".
+ *
+ * Never a token in the URL: the request carries the Authorization header and
+ * the element is handed a `blob:` address.
+ */
+export function useAuthedObject(url: string | null | undefined): { src: string | null; failed: boolean } {
+  const [state, setState] = useState<{ src: string | null; failed: boolean }>({ src: null, failed: false });
 
   useEffect(() => {
     if (!url) {
-      setResolved(null);
+      setState({ src: null, failed: false });
       return;
     }
     if (!url.startsWith('/api/')) {
-      setResolved(url);
+      setState({ src: url, failed: false });
       return;
     }
 
+    setState({ src: null, failed: false });
     let objectUrl: string | null = null;
     let cancelled = false;
     void fetchImageObjectUrl(url)
@@ -218,10 +231,12 @@ export function useAuthedImage(url: string | null | undefined): string | null {
           return;
         }
         objectUrl = next;
-        setResolved(next);
+        setState({ src: next, failed: false });
       })
       // A missing picture is a missing picture. The glyph takes over.
-      .catch(() => setResolved(null));
+      .catch(() => {
+        if (!cancelled) setState({ src: null, failed: true });
+      });
 
     return () => {
       cancelled = true;
@@ -229,5 +244,5 @@ export function useAuthedImage(url: string | null | undefined): string | null {
     };
   }, [url]);
 
-  return resolved;
+  return state;
 }

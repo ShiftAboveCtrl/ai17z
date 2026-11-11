@@ -1,18 +1,19 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { accounts, actions, agents, jobs, observability, ops, query } from '@xbam/database';
+import { accounts, actions, agents, devUpdates, jobs, observability, ops, query, withTransaction } from '@xbam/database';
 import { mockAdapter } from '@xbam/channels';
-import { MEDIA_LIMITS } from '@xbam/shared';
-import { reconcileDevUpdates, runDevUpdates } from '@xbam/runtime';
+import { MEDIA_LIMITS, PipelineError } from '@xbam/shared';
+import { reconcileDevUpdates, runDevUpdates, sweepUnattachedMedia } from '@xbam/runtime';
 import { buildServer } from '../../apps/api/src/server';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
 import { uniqueSuffix } from '../support/db';
-import { drainAgentJobs } from '../support/runner';
+import { drainAgentJobs, makeDue } from '../support/runner';
 import { fixtureBytes } from '../support/imageFixtures';
 import { SVG_BYTES, mp4Bytes } from '../support/mediaFixtures';
 
@@ -470,5 +471,197 @@ describe('housekeeping', () => {
     for (let i = 0; i < 8; i += 1) await uploadOk(token, fixtureBytes('png'));
     const r = await upload(token, fixtureBytes('png'));
     expect(r.statusCode, r.body).toBe(409);
+  });
+});
+
+describe('cleanup racing a submission', () => {
+  it('leaves an upload alone when an update takes it after the sweep chose it', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx);
+    const up = await uploadOk(token, fixtureBytes('png'));
+    await query(`UPDATE artifacts SET created_at = now() - interval '25 hours' WHERE id = $1`, [up.id]);
+    const onDisk = join(storage, (await ops.getArtifact(up.id))!.relPath);
+
+    // A submission that has locked the file to attach it and has not committed.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let held!: () => void;
+    const holding = new Promise<void>((r) => { held = r; });
+    const submission = withTransaction(async (tx) => {
+      await tx.query(`SELECT id FROM artifacts WHERE id = $1 FOR UPDATE`, [up.id]);
+      held();
+      await gate;
+      await devUpdates.markMediaAttached(tx, [up.id], randomUUID());
+    });
+    await holding;
+
+    // The sweep reads the id as stale, then its delete waits on that lock.
+    const sweep = sweepUnattachedMedia();
+    for (let i = 0; i < 200; i += 1) {
+      const waiting = await query(
+        `SELECT 1 FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'
+            AND query ILIKE '%DELETE FROM artifacts%' AND query NOT ILIKE '%pg_stat_activity%'`,
+      );
+      if (waiting.length > 0) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    release();
+    await submission;
+
+    expect(await sweep, 'nothing was removed').toBe(0);
+    expect(await ops.getArtifact(up.id), 'the row an update now names is still there').not.toBeNull();
+    expect(existsSync(onDisk), 'and so is its file').toBe(true);
+  });
+
+  it('still removes an upload that stayed unattached', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx);
+    const up = await uploadOk(token, fixtureBytes('png'));
+    await query(`UPDATE artifacts SET created_at = now() - interval '25 hours' WHERE id = $1`, [up.id]);
+    const onDisk = join(storage, (await ops.getArtifact(up.id))!.relPath);
+    expect(await sweepUnattachedMedia()).toBe(1);
+    expect(await ops.getArtifact(up.id)).toBeNull();
+    expect(existsSync(onDisk)).toBe(false);
+  });
+});
+
+describe('recovering a post that carries files', () => {
+  /** An update whose first send failed locally, so the retry asks the remote whether it arrived. */
+  async function interruptedSend(wasAlreadyDone: () => Promise<unknown>) {
+    const ctx = await setup();
+    const { token } = await createProject(ctx, { rehearse: false });
+    const { id } = await approvedWith(ctx, token, [fixtureBytes('png')]);
+    const real = mockAdapter.executeAction.bind(mockAdapter);
+    let calls = 0;
+    const spy = vi.spyOn(mockAdapter, 'executeAction').mockImplementation(async (c, request) => {
+      calls += 1;
+      if (calls === 1) throw PipelineError.retryable('timeout', 'The composer did not close in time.');
+      return real(c, request);
+    });
+    (mockAdapter as { wasAlreadyDone?: unknown }).wasAlreadyDone = wasAlreadyDone;
+    await runDevUpdates(5);
+    const { jobId } = await ownerUpdate(ctx, id);
+    await drainAgentJobs(ctx.agentId);
+    await makeDue(jobId);
+    await settle(ctx);
+    return { ctx, id, jobId, spy };
+  }
+
+  const found = { done: true, remoteActionId: 'mock-found', remoteActionUrl: 'mock://message/mock-found', detail: 'Found the text.' };
+
+  it('holds, and never resends, when the remote found the text but not that the files came with it', async () => {
+    try {
+      const { ctx, id, jobId, spy } = await interruptedSend(async () => found);
+      expect(spy, 'only the first, interrupted attempt sent').toHaveBeenCalledTimes(1);
+      const job = await jobs.requireJob(jobId);
+      expect(job.status).toBe('PERMANENT_FAILURE');
+      expect(job.lastError).toMatch(/may or may not have reached the account/);
+      expect((await actions.listJobActions(jobId))[0]!.status).not.toBe('EXECUTED');
+      expect((await ownerUpdate(ctx, id)).status).not.toBe('PUBLISHED');
+    } finally {
+      delete (mockAdapter as { wasAlreadyDone?: unknown }).wasAlreadyDone;
+    }
+  });
+
+  it('holds when the remote says the files were not seen', async () => {
+    try {
+      const { ctx, id, jobId, spy } = await interruptedSend(async () => ({ ...found, mediaConfirmed: false }));
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect((await actions.listJobActions(jobId))[0]!.status).not.toBe('EXECUTED');
+      expect((await ownerUpdate(ctx, id)).status).not.toBe('PUBLISHED');
+    } finally {
+      delete (mockAdapter as { wasAlreadyDone?: unknown }).wasAlreadyDone;
+    }
+  });
+
+  it('records it as published when the remote confirms the text and the files', async () => {
+    try {
+      const { ctx, id, jobId, spy } = await interruptedSend(async () => ({ ...found, mediaConfirmed: true }));
+      expect(spy, 'recovered, not resent').toHaveBeenCalledTimes(1);
+      expect((await actions.listJobActions(jobId))[0]).toMatchObject({ status: 'EXECUTED', remoteActionId: 'mock-found' });
+      expect((await ownerUpdate(ctx, id)).status).toBe('PUBLISHED');
+    } finally {
+      delete (mockAdapter as { wasAlreadyDone?: unknown }).wasAlreadyDone;
+    }
+  });
+});
+
+describe('what a storage failure says', () => {
+  it('names no local path when an approved file cannot be read at send time', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx, { rehearse: false });
+    const { id, mediaIds } = await approvedWith(ctx, token, [fixtureBytes('png')]);
+    const artifact = (await ops.getArtifact(mediaIds[0]!))!;
+    // A directory where the file should be: a path that exists and cannot be read as a file.
+    rmSync(join(storage, artifact.relPath));
+    mkdirSync(join(storage, artifact.relPath));
+
+    const spy = vi.spyOn(mockAdapter, 'executeAction');
+    await runDevUpdates(5);
+    await settle(ctx);
+
+    const update = await ownerUpdate(ctx, id);
+    const job = await jobs.requireJob(update.jobId);
+    expect(job.status).toBe('PERMANENT_FAILURE');
+    expect(job.lastError).toMatch(/could not be read from storage/);
+    expect(job.lastError).not.toContain(storage);
+    expect(job.lastError).not.toMatch(/EISDIR|ENOENT/);
+    expect(JSON.stringify(await observability.listTrace(update.jobId))).not.toContain(storage);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('answers a failed upload write with a classed error and no local path', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx);
+    // The agent's folder cannot be created because a file sits in its place.
+    mkdirSync(join(storage, 'post-media'), { recursive: true });
+    const blocker = join(storage, 'post-media', ctx.agentId);
+    writeFileSync(blocker, 'in the way');
+    try {
+      const r = await upload(token, fixtureBytes('png'));
+      expect(r.statusCode, r.body).toBe(503);
+      const body = r.json() as Json;
+      expect(body.error.code).toBe('POST_MEDIA_STORE_FAILED');
+      expect(body.error.message).toMatch(/could not be saved/);
+      expect(r.body).not.toContain(storage);
+      expect(r.body).not.toMatch(/ENOTDIR|EEXIST/);
+    } finally {
+      rmSync(blocker, { force: true });
+    }
+    expect(await query(`SELECT 1 FROM artifacts WHERE kind = 'POST_MEDIA' AND agent_id = $1`, [ctx.agentId])).toHaveLength(0);
+  });
+});
+
+describe('who is heard before a body is read', () => {
+  it('refuses an unauthenticated upload before buffering a body over the cap', async () => {
+    // Over the route's limit. With authentication after the parser this is a
+    // 413-class refusal from the parser, which means the server had begun to
+    // take the upload for somebody who never proved who they were.
+    const oversize = Buffer.alloc(MEDIA_LIMITS.VIDEO + 4096);
+    for (const headers of [
+      { 'content-type': 'video/mp4' },
+      { 'content-type': 'video/mp4', authorization: 'Bearer not-a-sender-token' },
+    ]) {
+      const r = await app.inject({ method: 'POST', url: '/api/dev-updates/sender/media', headers, payload: oversize });
+      expect(r.statusCode, r.body).toBe(401);
+    }
+  });
+
+  it('refuses an unauthenticated update before parsing its body', async () => {
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/dev-updates/sender/updates',
+      headers: { 'content-type': 'application/json' },
+      payload: '{ this is not json',
+    });
+    expect(r.statusCode, r.body).toBe(401);
+  });
+
+  it('still takes an authenticated upload and update', async () => {
+    const ctx = await setup();
+    const { token } = await createProject(ctx);
+    const up = await uploadOk(token, fixtureBytes('png'));
+    expect((await submit(token, facts({ mediaIds: [up.id] }))).statusCode).toBe(201);
   });
 });

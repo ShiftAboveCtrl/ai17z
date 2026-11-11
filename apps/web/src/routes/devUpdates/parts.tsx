@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { AgentGlyph } from '@app/components/AgentGlyph';
 import { ApiError } from '@app/lib/api';
+import { useAuthedObject } from '@app/lib/hooks';
 import { POST_MAX_CHARS } from '@app/lib/devUpdates';
 import type { DevUpdateMedia } from '@app/lib/devUpdates';
 
@@ -130,14 +131,32 @@ export function AttachedMedia({ media }: { media: DevUpdateMedia[] }) {
     >
       {media.map((m, i) => (
         <li key={m.artifactId} className="overflow-hidden rounded-lg border border-ink-line bg-ink-panel">
-          {m.kind === 'VIDEO' ? (
-            <video src={m.url} controls preload="metadata" className="max-h-72 w-full bg-black object-contain" aria-label={`Video attachment, ${(m.bytes / 1024 / 1024).toFixed(1)} megabytes`} />
-          ) : (
-            <img src={m.url} alt={`Attachment ${i + 1} of ${media.length}, ${m.kind === 'GIF' ? 'animated GIF' : 'image'}`} className="max-h-72 w-full object-contain" loading="lazy" />
-          )}
+          <AttachedFile item={m} index={i} total={media.length} />
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * One attachment. The artifact route wants the owner's Authorization header,
+ * which neither `<img src>` nor `<video src>` sends, so the file is fetched
+ * with it and the element is handed an object URL. A token in the URL would
+ * put a credential in history and logs.
+ */
+function AttachedFile({ item, index, total }: { item: DevUpdateMedia; index: number; total: number }) {
+  const { src, failed } = useAuthedObject(item.url);
+  if (!src) {
+    return (
+      <p role={failed ? 'alert' : 'status'} className="px-3 py-6 text-center text-xs text-bone-dim">
+        {failed ? 'This attachment could not be loaded.' : 'Loading attachment...'}
+      </p>
+    );
+  }
+  return item.kind === 'VIDEO' ? (
+    <video src={src} controls preload="metadata" className="max-h-72 w-full bg-black object-contain" aria-label={`Video attachment, ${(item.bytes / 1024 / 1024).toFixed(1)} megabytes`} />
+  ) : (
+    <img src={src} alt={`Attachment ${index + 1} of ${total}, ${item.kind === 'GIF' ? 'animated GIF' : 'image'}`} className="max-h-72 w-full object-contain" />
   );
 }
 

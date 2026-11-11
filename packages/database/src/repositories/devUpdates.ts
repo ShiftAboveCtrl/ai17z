@@ -451,6 +451,26 @@ export async function staleUnattachedMedia(olderThanHours: number, limit = 100):
 }
 
 /**
+ * Deletes, among these ids, the uploads no update has taken.
+ *
+ * The test is in the DELETE's own WHERE so it is atomic with the removal: a
+ * submission that locked the row to attach it makes this wait, and when the
+ * submission commits Postgres re-evaluates the condition on the new version and
+ * skips the row. Selecting the ids first and deleting them afterwards leaves a
+ * gap that file removal then widens into a post whose picture is gone.
+ */
+export async function deleteUnattachedMedia(ids: string[]): Promise<{ id: string; relPath: string }[]> {
+  const rows = await query<{ id: string; rel_path: string }>(
+    `DELETE FROM artifacts
+      WHERE id = ANY($1::uuid[]) AND kind = 'POST_MEDIA'
+        AND meta ? 'devUpdateProjectId' AND NOT (meta ? 'attachedTo')
+      RETURNING id, rel_path`,
+    [ids],
+  );
+  return rows.map((r) => ({ id: r.id, relPath: r.rel_path }));
+}
+
+/**
  * Moves an update to a new status, only if it is still in one of `from`.
  *
  * The condition is the concurrency guarantee: an approval and a rejection

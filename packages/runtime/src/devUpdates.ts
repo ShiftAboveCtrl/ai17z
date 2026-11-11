@@ -35,7 +35,7 @@ import {
 } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
 import { approveJob, cancelJob, rejectJob } from './approvals';
-import { forgetPostMedia, mediaRefsProblem, storePostMedia, type PostMediaRef } from './postMedia';
+import { forgetPostMedia, forgetUnattachedPostMedia, mediaRefsProblem, storePostMedia, type PostMediaRef } from './postMedia';
 import { validateOutput } from './validator';
 import {
   DevUpdateSubmissionInput,
@@ -492,8 +492,8 @@ export async function uploadSenderMedia(project: DevUpdateProjectRow, bytes: unk
 /** Removes uploads that were never attached to an update. Housekeeping on the worker tick. */
 export async function sweepUnattachedMedia(): Promise<number> {
   const ids = await repo.staleUnattachedMedia(UNATTACHED_MEDIA_HOURS);
-  if (ids.length > 0) await forgetPostMedia(ids);
-  return ids.length;
+  // The ids were read a moment ago and a submission may have taken one since.
+  return forgetUnattachedPostMedia(ids);
 }
 
 export type SubmitOutcome =

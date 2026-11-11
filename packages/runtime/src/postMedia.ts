@@ -20,7 +20,7 @@ import { join, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { BadRequestError, PipelineError, createLogger, errorMessage, validateMedia, mediaSetProblem } from '@xbam/shared';
 import type { PostMediaKind } from '@xbam/shared';
-import { ops as opsRepo } from '@xbam/database';
+import { devUpdates as devUpdatesRepo, ops as opsRepo } from '@xbam/database';
 import type { MediaAttachment } from '@xbam/channels';
 import { storageDir } from './channelContext';
 
@@ -37,6 +37,12 @@ export type PostMediaRef = z.infer<typeof PostMediaRef>;
 
 function sha256Of(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+/** The errno code of a filesystem failure (`ENOENT`), which says what happened without saying where. */
+function errnoOf(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' ? code : 'UNKNOWN';
 }
 
 function mediaDir(agentId: string): string {
@@ -61,10 +67,18 @@ export async function storePostMedia(input: {
   const sha256 = sha256Of(input.bytes);
 
   const dir = mediaDir(input.agentId);
-  await mkdir(dir, { recursive: true });
   // A fresh name every time, and the extension is the sniffed one.
   const filename = `${randomUUID()}.${info.extension}`;
-  await writeFile(join(dir, filename), input.bytes);
+  try {
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, filename), input.bytes);
+  } catch (error) {
+    // A filesystem error names the absolute path it failed on, and this one
+    // reaches an API response. Keep the errno for the log and say the rest in
+    // words.
+    log.warn('post media could not be stored', { code: errnoOf(error) });
+    throw PipelineError.retryable('post_media_store_failed', 'The file could not be saved on this machine. Try uploading it again.');
+  }
 
   const artifact = await opsRepo.createArtifact({
     kind: 'POST_MEDIA',
@@ -128,11 +142,12 @@ export async function resolvePostMedia(refs: readonly PostMediaRef[]): Promise<M
     try {
       bytes = await readFile(absolute);
     } catch (error) {
-      throw PipelineError.permanent(
-        'post_media_unavailable',
-        `An attached file could not be read, so nothing was sent: ${errorMessage(error)}`,
-        { artifactId: ref.artifactId },
-      );
+      // Not the error's own message: it carries the absolute path, and this one
+      // lands in the job's error, the trace and the owner's screen.
+      log.warn('an attached file could not be read', { artifactId: ref.artifactId, code: errnoOf(error) });
+      throw PipelineError.permanent('post_media_unavailable', 'An attached file could not be read from storage, so nothing was sent.', {
+        artifactId: ref.artifactId,
+      });
     }
     const hash = sha256Of(bytes);
     if (hash !== ref.sha256) {
@@ -161,12 +176,32 @@ export function describeMedia(refs: readonly Pick<PostMediaRef, 'kind' | 'mime' 
 
 /** Drops the rows, then the files. Housekeeping: failing at it never fails the caller. */
 export async function forgetPostMedia(artifactIds: readonly string[]): Promise<void> {
-  const root = resolve(storageDir());
   for (const id of artifactIds) {
     const row = await opsRepo.deleteArtifact(id).catch(() => null);
     if (!row || row.kind !== 'POST_MEDIA') continue;
-    await rm(resolve(root, row.relPath), { force: true }).catch((error: unknown) => {
-      log.warn('post media could not be deleted', { artifactId: id, message: errorMessage(error) });
-    });
+    await removeStoredFile(id, row.relPath);
   }
+}
+
+/**
+ * Drops uploads that no update has taken, and only those.
+ *
+ * The ids come from an earlier read, and a submission can attach one between
+ * that read and this call. So the "nobody has taken it" test is part of the
+ * DELETE itself: Postgres re-checks it against the row's latest committed
+ * version once a concurrent attach lets go of the lock, and a file an update
+ * now names is left alone. Returns how many were removed.
+ */
+export async function forgetUnattachedPostMedia(artifactIds: readonly string[]): Promise<number> {
+  if (artifactIds.length === 0) return 0;
+  const removed = await devUpdatesRepo.deleteUnattachedMedia([...artifactIds]);
+  for (const row of removed) await removeStoredFile(row.id, row.relPath);
+  return removed.length;
+}
+
+async function removeStoredFile(artifactId: string, relPath: string): Promise<void> {
+  const root = resolve(storageDir());
+  await rm(resolve(root, relPath), { force: true }).catch((error: unknown) => {
+    log.warn('post media could not be deleted', { artifactId, code: errnoOf(error) });
+  });
 }
