@@ -150,7 +150,15 @@ class Api:
         raise ValueError("too many release assets")
 
     def download(self, asset, path=None):
-        if self.host == "github":
+        if self.host == "github" and not self.token:
+            # Anonymous: the public release download, which is served by
+            # github.com and does not spend the REST API's sixty requests an
+            # hour. The redirect it answers with is held to GitHub's own hosts.
+            url = asset["browser_download_url"]
+            if not url.startswith("https://github.com/ShiftAboveCtrl/ai17z/releases/download/"):
+                raise ValueError("invalid source asset URL")
+            request = Request(url, headers={"User-Agent": "AI17Z-release", "Accept": "application/octet-stream"})
+        elif self.host == "github":
             request = Request(self.root + f"/releases/assets/{int(asset['id'])}", headers={
                 "User-Agent": "AI17Z-release", "Accept": "application/octet-stream",
                 **({"Authorization": "Bearer " + self.token} if self.token else {}),

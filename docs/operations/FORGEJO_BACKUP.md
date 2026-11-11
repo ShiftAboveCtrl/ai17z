@@ -52,15 +52,26 @@ stops the sync for operator inspection. Nothing deletes or replaces a release.
 Old releases before Beta 0.89 are refused.
 
 Install the supplied service and timer after creating the unprivileged
-`ai17z-mirror` service account and trusted checkout. Put both credentials in
+`ai17z-mirror` service account and trusted checkout. Put the credential in
 `/etc/ai17z-mirror.env`, readable only by root:
 
 | Variable | What it is |
 | --- | --- |
 | `FORGEJO_TOKEN` | AI17Z Code token with repository write on `AI17Z/ai17z` |
-| `GITHUB_READ_TOKEN` | **Required.** A fine-grained GitHub token with read-only Contents on `ShiftAboveCtrl/ai17z`. GitHub allows sixty anonymous API requests an hour per address and one release is dozens of downloads, so the sync refuses to start without it. |
+| `GITHUB_READ_TOKEN` | **Optional; leave it unset.** `ShiftAboveCtrl/ai17z` is public, so with no value the sync reads GitHub anonymously. A run spends one API request on the release list plus one per release not yet verified; asset bytes come from each asset's `browser_download_url` on github.com (a release download, which does not count against the sixty anonymous API requests an hour per address). Redirects may only land on GitHub's own hosts. If GitHub answers 403/429 with a rate limit, the run exits non-zero with the reset time, keeps what it verified, and does not retry; the next timer run tries again. A fine-grained read-only Contents token, if ever set, makes the sync use the API with that token as before. |
 
-Neither credential belongs in GitHub's release workflow. The server also needs
+Anonymous or not, trust is unchanged: `SHA256SUMS.txt` and the cosign check
+below stay mandatory. `configure.py` sends an explicit `User-Agent` on every
+request, because Cloudflare in front of the forge answers 403 (error 1010) to a
+request with none.
+
+The raw pull mirror also carries GitHub's `refs/pull/*`, including closed bot
+pull requests; the lead accepted these as refs GitHub itself serves. Bot pull
+request commits there can trip a history scan (foreign identity, AI
+attribution). The gate is the history scan of heads and tags, which is what
+releases are built from; `refs/pull/*` is not part of that gate.
+
+No credential belongs in GitHub's release workflow. The server also needs
 `cosign` on `PATH` (or named by `COSIGN`), the version pinned in
 `ci/cosign.json`: every asset that has a `.sigstore.json` bundle is verified
 against `ci/cosign.pub` before anything is copied, and an asset that does not
