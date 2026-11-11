@@ -669,6 +669,8 @@ export interface PluginFootprint {
   hosts: string[];
   capabilities: string[];
   features: PluginFeature[];
+  /** The creative hook receives the post brief. Its declaration is approval-sensitive. */
+  creative?: PluginManifest['creative'];
   /** Effects declared. `READ` only in schema v1, and checked rather than assumed. */
   effects: string[];
   risks: string[];
@@ -683,6 +685,7 @@ export function pluginFootprint(manifest: PluginManifest): PluginFootprint {
     hosts: [...new Set(manifest.capabilities.flatMap((capability) => capability.http.hosts))].sort(),
     capabilities: manifest.capabilities.map((capability) => capability.name).sort(),
     features: [...manifest.features].sort(),
+    creative: manifest.creative,
     effects: [...new Set(manifest.capabilities.map((capability) => capability.effect))].sort(),
     risks: [...new Set(manifest.capabilities.map((capability) => capability.risk))].sort(),
     wantsSecret: manifest.config.some((field) => field.secret),
@@ -716,9 +719,13 @@ export function footprintExpansion(before: PluginFootprint, after: PluginFootpri
   if (features.length > 0) {
     grew.push(
       `It asks to unlock ${features
-        .map((feature) => (feature === 'RESEARCH_SOURCE' ? 'being used as a research source' : 'its own owner panel'))
+        .map((feature) => (feature === 'RESEARCH_SOURCE' ? 'being used as a research source' : feature === 'CREATIVE_PROVIDER' ? 'creative image generation using the post brief' : 'its own owner panel'))
         .join(' and ')}.`,
     );
+  }
+
+  if (after.creative && (before.creative?.capability !== after.creative.capability || before.creative?.promptField !== after.creative.promptField || before.creative?.imageField !== after.creative.imageField)) {
+    grew.push('It adds or changes its creative provider, which receives the post brief.');
   }
 
   const effects = added(before.effects, after.effects);

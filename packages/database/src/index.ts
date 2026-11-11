@@ -148,3 +148,5 @@ export type { PlaybookPinRow } from './repositories/playbooks';
 export * as wallets from './repositories/wallets';
 export type { WalletIntentRow, WalletRow } from './repositories/wallets';
 export type { AgentChangeRow, AgentChangeRisk, AgentChangeStatus, AgentChangeSubsystem } from './repositories/agentChanges';
+
+export * as postMediaDecisions from './repositories/postMediaDecisions';

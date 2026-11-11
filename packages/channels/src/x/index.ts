@@ -246,8 +246,8 @@ export const xAdapter: ChannelAdapter = {
     });
   },
 
-  async capturePostMedia(ctx: ChannelContext, url: string): Promise<Uint8Array | null> {
-    return withSession(ctx, 'RESEARCH', ({ page }) => screenshotPublicPage(page, url), true);
+  async capturePostMedia(ctx: ChannelContext, url: string, allowedHosts: readonly string[]): Promise<Uint8Array | null> {
+    return withSession(ctx, 'RESEARCH', ({ context }) => screenshotPublicPage(context, url, allowedHosts), true);
   },
 
   async observeAuth(ctx: ChannelContext): Promise<AuthObservation> {

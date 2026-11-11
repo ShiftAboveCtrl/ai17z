@@ -48,6 +48,8 @@ export const MediaPolicy = z.object({
   maxVideoFrames: z.number().int().min(0).max(12).default(3),
   resolveQuotedPosts: z.boolean().default(true),
   linkPolicy: LinkPolicy.default('READ_METADATA'),
+  /** Exact hosts the owner permits for public, cookie-less post screenshots. Empty denies all. */
+  allowedCaptureHosts: z.array(z.string().max(253)).max(200).default([]),
   allowedLinkDomains: z.array(z.string().max(253)).max(200).default([]),
   onVisionFailure: VisionFailurePolicy.default('RESPOND_TEXT_ONLY_IF_SAFE'),
   /** Keep retrieved bytes this long. 0 means never store them at all. */
