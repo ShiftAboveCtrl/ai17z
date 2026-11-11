@@ -59,6 +59,7 @@ import { classifyEvidence } from '../evidenceClass';
 
 import type { JobBundle } from '../loadJob';
 import { ensureMediaResolved } from './context';
+import { preparePostMedia } from '../postMediaDecision';
 import { validateOutput } from '../validator';
 import {
   checkAudience,
@@ -106,6 +107,7 @@ function communityOf(bundle: JobBundle): string | null {
 }
 
 export async function stepGenerate(bundle: JobBundle): Promise<void> {
+  await preparePostMedia(bundle);
   await ensureMediaResolved(bundle);
   const context = bundle.job.resolvedContext;
   if (!context) throw PipelineError.retryable('context_missing', 'Generation ran before context was resolved.');

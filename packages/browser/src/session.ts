@@ -490,7 +490,10 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
   }
 
   let entry = contexts.get(config.accountId);
-  if (entry && (entry.closing || entry.dead || Date.now() - entry.lastUsedAt > STALE_MS)) {
+  if (config.existingOnly && (!entry || entry.closing || entry.dead || !isUsable(entry.context))) {
+    throw PipelineError.permanent('browser_not_running', 'No worker browser is running for this account.');
+  }
+  if (entry && (entry.closing || entry.dead || (!config.existingOnly && Date.now() - entry.lastUsedAt > STALE_MS))) {
     await closeSession(config.accountId);
     entry = undefined;
   }
@@ -499,6 +502,7 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
     entry = undefined;
   }
   if (!entry) {
+    if (config.existingOnly) throw PipelineError.permanent('browser_not_running', 'No worker browser is running for this account.');
     entry = await openOnce(config);
     // A concurrent caller may have won the race and cached its own entry while
     // this one was waiting; keeping the first avoids two live contexts.
@@ -520,6 +524,7 @@ export async function leaseSession(config: SessionConfig, role: TabRole = 'ACTIO
   try {
     tab = await acquireTab(entry.context, entry.tabs, role, { heapFraction: budget.tabRecycleHeapFraction, maxLiveTabs: budget.maxLiveTabs });
   } catch (error) {
+    if (config.existingOnly) throw error;
     // The context died between the check above and here, which is exactly what
     // happens when somebody closes the window at the wrong moment. Reopen once
     // rather than making the account unusable until the process restarts.

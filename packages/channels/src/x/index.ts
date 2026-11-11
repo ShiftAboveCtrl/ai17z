@@ -28,6 +28,7 @@ import { X_MONITORS } from './monitors';
 import { pollViaIntelligence } from './radarIntelligence';
 import { readMediaInventory } from './media';
 import { readPage, webSearch } from './websearch';
+import { screenshotPublicPage } from '../postScreenshot';
 import { type ArticleSnapshot, parentTextOf, resolveBranch } from './conversation';
 import { buildStatusUrl, extractStatusId, looksUnavailable, normalizeHandle, normalizeTargetId } from './targets';
 import {
@@ -243,6 +244,10 @@ export const xAdapter: ChannelAdapter = {
       }
       return webSearch(page, request.query);
     });
+  },
+
+  async capturePostMedia(ctx: ChannelContext, url: string): Promise<Uint8Array | null> {
+    return withSession(ctx, 'RESEARCH', ({ page }) => screenshotPublicPage(page, url), true);
   },
 
   async observeAuth(ctx: ChannelContext): Promise<AuthObservation> {
