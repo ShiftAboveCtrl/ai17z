@@ -44,7 +44,7 @@ import {
   canFollowUp,
 } from '../followUp';
 import { remoteActionsAllowed } from '../killSwitch';
-import { postUnconfirmed } from '../notify';
+import { postConfirmed, postUnconfirmed } from '../notify';
 import { POST_OUTCOME_AMBIGUOUS, postHasReadBack, priorPostWasAmbiguous } from '../postReadBack';
 import { recordPublished } from '../experimentRuns';
 import type { JobBundle } from '../loadJob';
@@ -384,6 +384,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
 
   if (claim.outcome === 'ALREADY_EXECUTED') {
     await jobsRepo.updateJob(job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
+    if (job.actionType === 'POST') await postConfirmed(job.id).catch(() => undefined);
     await observability.emitTrace({
       jobId: job.id,
       agentId: bundle.agent.id,
@@ -419,7 +420,17 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     a lagging timeline, so applying this to all of them would stop every retry.
   */
   const priorAmbiguousPost = job.actionType === 'POST' && priorPostWasAmbiguous(action.verification);
-  if ((devUpdate || priorAmbiguousPost) && !job.dryRun && (claim.retakenFromStale || claim.retakenFromFailed)) {
+  /*
+    A post a dead worker left EXECUTING is the same unknown: it may have died
+    before the submit or after it, and X's timeline lags, so a scan that finds
+    nothing proves nothing. Only a conclusive absence lets it be sent again.
+    Replies and likes keep the looser rule below, where a miss is cheaper.
+  */
+  const staleInFlightPost = job.actionType === 'POST' && claim.retakenFromStale;
+  // The remote was already asked above, so the recovery check below does not ask twice.
+  let remoteAsked = false;
+  if ((devUpdate || priorAmbiguousPost || staleInFlightPost) && !job.dryRun && (claim.retakenFromStale || claim.retakenFromFailed)) {
+    remoteAsked = true;
     // What the earlier attempt actually sent, which is what might be on the
     // account. The job's text may have been edited since; looking for the new
     // wording would miss a post that went out under the old one.
@@ -446,6 +457,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
         contentSignature: signatureRef ? contentSignature(signatureRef, attemptedText) : null,
       });
       await jobsRepo.updateJob(job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
+      if (job.actionType === 'POST') await postConfirmed(job.id).catch(() => undefined);
       await observability.emitTrace({
         jobId: job.id,
         agentId: bundle.agent.id,
@@ -462,7 +474,22 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       if (!devUpdate) {
         const message =
           'An earlier attempt to post this may or may not have reached the account, and that could not be confirmed. It was not sent again. Check the account before posting it yourself.';
-        await actionsRepo.completeAction(action.id, { status: 'FAILED', errorClass: 'REVIEW_REQUIRED', lastError: message });
+        // Marked, so a later approval asks the remote again instead of sending, and
+        // the owner is told: a row recovered from EXECUTING had no marker before.
+        await actionsRepo.completeAction(action.id, {
+          status: 'FAILED',
+          errorClass: 'REVIEW_REQUIRED',
+          lastError: message,
+          verification: { ...(action.verification ?? {}), postOutcome: POST_OUTCOME_AMBIGUOUS },
+        });
+        await postUnconfirmed({
+          jobId: job.id,
+          agentId: bundle.agent.id,
+          accountId: job.accountId,
+          agentName: bundle.agent.name,
+          handle: bundle.account?.handle ?? null,
+          detail: 'An earlier attempt to post this was interrupted and the account could not be checked.',
+        }).catch(() => undefined);
         throw PipelineError.review('post_unconfirmed', message);
       }
       const message =
@@ -480,7 +507,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   // before X saw the reply or after, and only X knows which — so ask, rather
   // than assume. Assuming it did not happen is how recovery becomes a
   // duplicate-post machine; assuming it did is how a reply silently vanishes.
-  if (claim.retakenFromStale && !job.dryRun && adapter.wasAlreadyDone) {
+  if (claim.retakenFromStale && !job.dryRun && !remoteAsked && adapter.wasAlreadyDone) {
     const already = await adapter
       .wasAlreadyDone(await adapterContext(bundle), {
         type: job.actionType,
@@ -772,6 +799,8 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       lastError: null,
       errorClass: null,
     });
+    // A held post that is now confirmed public no longer needs the owner's eyes.
+    if (job.actionType === 'POST') await postConfirmed(job.id).catch(() => undefined);
     if (bundle.account) {
       await agentsRepo
         .updateAgent(bundle.agent.id, { lastError: null })

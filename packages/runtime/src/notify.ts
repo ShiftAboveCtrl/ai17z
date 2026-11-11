@@ -117,6 +117,16 @@ export async function postUnconfirmed(input: {
 }
 
 /**
+ * The post that was held turned out to be public.
+ *
+ * Called wherever a post becomes EXECUTED with evidence, so the warning does not
+ * outlive the doubt it was raised for. A no-op when nothing was ever raised.
+ */
+export async function postConfirmed(jobId: string): Promise<void> {
+  await notificationsRepo.resolve(notificationKey.postUnconfirmed(jobId));
+}
+
+/**
  * An account is waiting for a person to answer a challenge.
  *
  * Critical, because AI17Z never answers a security challenge -- not on the

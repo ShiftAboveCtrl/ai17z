@@ -58,8 +58,8 @@ function submittedButNotReadable(real: typeof mockAdapter.executeAction) {
 }
 
 async function notificationsFor(agentId: string) {
-  return query<{ kind: string; severity: string; dedupe_key: string; action_href: string | null }>(
-    `SELECT kind, severity, dedupe_key, action_href FROM notifications WHERE agent_id = $1 AND kind = 'POST_UNCONFIRMED'`,
+  return query<{ kind: string; severity: string; dedupe_key: string; action_href: string | null; acknowledged_at: Date | null }>(
+    `SELECT kind, severity, dedupe_key, action_href, acknowledged_at FROM notifications WHERE agent_id = $1 AND kind = 'POST_UNCONFIRMED'`,
     [agentId],
   );
 }
@@ -143,6 +143,10 @@ describe('a post nobody can read back', () => {
       const started = await originatePost({ agentId: fixture.agentId, accountId });
       await drainJobs();
       const jobId = started.jobId!;
+      const raised = await notificationsFor(fixture.agentId);
+      expect(raised).toHaveLength(1);
+      expect(raised[0]!.acknowledged_at).toBeNull();
+
       await jobs.updateJob(jobId, { status: 'VALIDATED', currentNodeKey: 'execute', releaseLock: true });
       await drainJobs();
 
@@ -150,6 +154,77 @@ describe('a post nobody can read back', () => {
       const [action] = await actions.listJobActions(jobId);
       expect(action).toMatchObject({ status: 'EXECUTED', remoteActionId: 'status-4242' });
       expect(spy).toHaveBeenCalledTimes(1);
+      // The post is public, so the warning raised for it is closed rather than left to nag.
+      const after = await notificationsFor(fixture.agentId);
+      expect(after).toHaveLength(1);
+      expect(after[0]!.acknowledged_at).not.toBeNull();
+    } finally {
+      delete adapter.wasAlreadyDone;
+    }
+  });
+});
+
+/**
+ * A worker that died mid-submit leaves the action EXECUTING. The post may be
+ * live, and X's timeline lags, so only a conclusive absence allows a resend.
+ */
+describe('a post a dead worker left in flight', () => {
+  async function staleInFlight(wasAlreadyDone: () => Promise<unknown>) {
+    const { fixture, accountId } = await poster();
+    const adapter = mockAdapter as { wasAlreadyDone?: unknown };
+    adapter.wasAlreadyDone = wasAlreadyDone;
+    const started = await originatePost({ agentId: fixture.agentId, accountId });
+    const jobId = started.jobId!;
+    const job = await jobs.requireJob(jobId);
+    // What the dead worker left behind: the action claimed and never closed.
+    const claim = await actions.claimAction({
+      jobId,
+      agentId: fixture.agentId,
+      accountId,
+      channel: 'mock',
+      type: 'POST',
+      dryRun: false,
+      idempotencyKey: job.idempotencyKey,
+      payload: { text: TEXT, targetRef: null },
+      targetRef: null,
+    });
+    expect(claim.outcome).toBe('CLAIMED');
+    await query('ALTER TABLE actions DISABLE TRIGGER actions_set_updated_at');
+    await query(`UPDATE actions SET updated_at = now() - interval '2 hours' WHERE job_id = $1`, [jobId]);
+    await query('ALTER TABLE actions ENABLE TRIGGER actions_set_updated_at');
+    return { fixture, jobId };
+  }
+
+  it('is held for the owner, not sent again, when the remote cannot prove it is absent', async () => {
+    const spy = vi.spyOn(mockAdapter, 'executeAction');
+    const adapter = mockAdapter as { wasAlreadyDone?: unknown };
+    try {
+      const { fixture, jobId } = await staleInFlight(async () => ({ done: false, remoteActionId: null, remoteActionUrl: null, detail: 'Nothing seen yet.' }));
+      await drainJobs();
+
+      const job = await jobs.requireJob(jobId);
+      expect(job.status).toBe('REVIEW_REQUIRED');
+      expect(job.lastError).toMatch(/may or may not have reached the account/);
+      expect(spy, 'an unproven absence must not send').not.toHaveBeenCalled();
+      const [action] = await actions.listJobActions(jobId);
+      expect(action).toMatchObject({ status: 'FAILED', errorClass: 'REVIEW_REQUIRED' });
+      expect(action!.verification).toMatchObject({ postOutcome: 'AMBIGUOUS' });
+      const told = await notificationsFor(fixture.agentId);
+      expect(told).toHaveLength(1);
+      expect(told[0]).toMatchObject({ severity: 'WARNING', action_href: `/jobs/${jobId}` });
+    } finally {
+      delete adapter.wasAlreadyDone;
+    }
+  });
+
+  it('is sent again when the remote conclusively says it never arrived', async () => {
+    const spy = vi.spyOn(mockAdapter, 'executeAction');
+    const adapter = mockAdapter as { wasAlreadyDone?: unknown };
+    try {
+      const { jobId } = await staleInFlight(async () => ({ done: false, conclusive: true, remoteActionId: null, remoteActionUrl: null, detail: 'Not on the account.' }));
+      await drainJobs();
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect((await jobs.requireJob(jobId)).status).not.toBe('REVIEW_REQUIRED');
     } finally {
       delete adapter.wasAlreadyDone;
     }

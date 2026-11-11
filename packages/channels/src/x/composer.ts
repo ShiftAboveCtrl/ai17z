@@ -523,6 +523,8 @@ export async function postOwn(
       the owner and never sends again, instead of thrown.
     */
     const unconfirmed = (detail: string, extra: Record<string, unknown>): ActionResult => ({
+      // EXECUTED only means "submitted, nothing thrown": the executor decides the
+      // real outcome from readBackConfirmed:false and holds the post.
       status: 'EXECUTED' as const,
       remoteActionId: null,
       remoteActionUrl: null,
