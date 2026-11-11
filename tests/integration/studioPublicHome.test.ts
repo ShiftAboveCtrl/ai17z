@@ -79,6 +79,15 @@ describe('public home consent persisted in Postgres', () => {
     expect(on.manifest.xCounts?.followers.readAt).toBeTruthy();
     expect(on.manifest.xCounts?.posts).toEqual({ value: null, readAt: null });
   });
+  it('keeps an older measured follower count when a newer own-account reading did not measure followers', async () => {
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'private_handle', remoteAccountId: '123456' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });
+    const at = new Date(Date.now() - 60_000).toISOString();
+    await xAccountObservations.record({ ownerUserId: f.ownerId, userId: '123456', handle: 'private_handle', followers: 1234, posts: 56, outcome: 'OK', backend: 'page-graphql', observedAt: at });
+    await postAnalytics.recordAccount({ agentId: f.agentId, accountId: account.id, handle: 'private_handle', followers: null });
+    const on = await previewPublicHome({ agentId: f.agentId, ownerId: f.ownerId, choices: { alias: 'Night Owl', includeXCounts: true } });
+    expect(on.manifest.xCounts?.followers).toEqual({ value: 1234, readAt: at });
+  });
   it('publishes engagement only for a real measured post, excluding rehearsals and dry runs', async () => {
     const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'private_handle', remoteAccountId: '123456' });
     await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });

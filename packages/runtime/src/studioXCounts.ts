@@ -34,7 +34,9 @@ export async function storedHomeXCounts(agentId: string, ownerId: string): Promi
   const [audience] = await query<{ followers: number | null; observed_at: Date }>(
     `SELECT followers, observed_at FROM account_analytics WHERE agent_id=$1 AND account_id=$2
       ORDER BY observed_at DESC, id DESC LIMIT 1`, [agentId, account.id]);
-  const followerSource = audience && (!profile || new Date(audience.observed_at).getTime() > new Date(profile.observed_at).getTime()) ? audience : profile;
+  // Newest reading that actually measured followers; an unmeasured newer row must not hide an older measured one.
+  const measured = [audience, profile].filter((r): r is { followers: number; observed_at: Date } => r != null && r.followers != null);
+  const followerSource = measured.sort((a, b) => new Date(b.observed_at).getTime() - new Date(a.observed_at).getTime())[0];
   // One actual published post, not a sum that turns unmeasured posts into zeros.
   // Its action and event prove that this was neither a dry run nor a rehearsal.
   const [post] = await query<{ likes: number | null; replies: number | null; reposts: number | null; observed_at: Date }>(

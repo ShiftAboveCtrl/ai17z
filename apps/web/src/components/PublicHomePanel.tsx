@@ -76,7 +76,7 @@ export function AgentHomeControls({ agentId }: { agentId: string }) {
         </label>
         <label className="flex min-h-12 items-center gap-3 text-sm text-bone"><input name="voice" type="checkbox" />Voice document</label>
         <label className="flex min-h-12 items-center gap-3 text-sm text-bone"><input name="xCounts" type="checkbox" />Dated X follower, post and engagement counts (no account identity)</label>
-        <p className="text-sm text-bone-dim">Uses stored readings for one linked X account. Missing readings stay unavailable. Profile counts expire after 24 hours; engagement on the latest measured published post after 1 hour. Preview again to publish newer readings.</p>
+        <p className="text-sm text-bone-dim">Uses stored readings for one linked X account. Missing readings stay unavailable. Profile counts expire after 24 hours; engagement on the latest measured published post after 1 hour. Preview again to publish newer readings. A Studio that has not been updated refuses a home that includes these counts, so update Studio first.</p>
         <label className="flex min-h-12 items-center gap-3 text-sm text-bone"><input name="activity" type="checkbox" />Activity already shared through the tape</label>
         <label className="flex min-h-12 items-center gap-3 text-sm text-bone"><input name="league" type="checkbox" />Simulated paper league standing</label>
         <label className="block text-sm text-bone">Simulated paper record window
