@@ -109,6 +109,7 @@ export function toPolicy(setup: EasySetup, base: PolicyConfig = DEFAULT_POLICY):
 
   return {
     ...base,
+    tools: { ...base.tools, evidenceCards: easy.replies.evidenceCards ?? base.tools.evidenceCards },
     automation: {
       ...base.automation,
       mode: easy.operation === 'AUTOMATIC' ? 'AUTONOMOUS' : 'REVIEW_BEFORE_ACTION',
@@ -288,6 +289,7 @@ export function readEasyView(input: EasyViewInput): EasyView {
       preset: presetOf(persona),
     },
     replies: {
+      evidenceCards: policy.tools.evidenceCards,
       audience,
       selectivity: selectivityOf(policy),
       filters,

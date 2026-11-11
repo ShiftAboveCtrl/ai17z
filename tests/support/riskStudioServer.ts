@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { STUDIO_RISK_PATH, StudioRiskObservationBatch, type StudioRiskObservation, type StudioRiskWatch } from '@xbam/shared/contracts';
+import { STUDIO_RISK_PATH, StudioRiskObservationBatch, StudioRiskWatch as WatchSchema, type StudioRiskObservation, type StudioRiskWatch } from '@xbam/shared/contracts';
 import type { InstallationKey } from '../../packages/runtime/src/studioJose';
 import { listenReachable } from './listen';
 
@@ -31,6 +31,18 @@ export async function riskStudioServer(key: InstallationKey) {
       if (token) return answer(200, { access_token: 'risk-test-token', expires_in: 300 });
       if (state.status !== 200) return answer(state.status, {});
       if (req.method === 'GET' && req.url === STUDIO_RISK_PATH) return answer(200, state.document ?? { protocol: 1, generated_at: new Date().toISOString(), watches: state.watches });
+      if (req.method === 'POST' && req.url === STUDIO_RISK_PATH) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        const body = JSON.parse(Buffer.concat(chunks).toString());
+        const watch = WatchSchema.parse(body.watch);
+        if (body.protocol !== 1 || Object.keys(body).sort().join(',') !== 'protocol,watch') return answer(422, {});
+        const prior = state.watches.find(w => w.id === watch.id);
+        if (prior && JSON.stringify(prior) !== JSON.stringify(watch)) return answer(409, {});
+        if (!prior) state.watches.push(watch);
+        if (state.loseAcknowledgement) return answer(503, {});
+        return answer(200, { protocol: 1, watch });
+      }
       if (req.method !== 'POST' || req.url !== `${STUDIO_RISK_PATH}/observations`) return answer(404, {});
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));

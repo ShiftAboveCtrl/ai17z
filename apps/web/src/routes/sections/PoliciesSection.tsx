@@ -1,3 +1,4 @@
+import { EvidenceCardControl } from '../../components/EvidenceCardControl';
 import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
 import { RESPONSE_SPEEDS, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contracts';
@@ -417,6 +418,10 @@ export function PoliciesSection({
             description="The model may ask for one of its capabilities mid-answer, up to four times, instead of answering from what it already has. Costs an extra model call each time."
             checked={draft.tools.capabilityLoop}
             onChange={(v) => patch((n) => void (n.tools.capabilityLoop = v))}
+          />
+          <EvidenceCardControl
+            checked={draft.tools.evidenceCards}
+            onChange={(v) => patch((n) => void (n.tools.evidenceCards = v))}
           />
           {/*
             The validator rejects any address the agent was not given, and until

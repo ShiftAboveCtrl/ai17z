@@ -4,6 +4,26 @@ import { describeToken, mergeReferences, parseTokenReference, resolveToken } fro
 
 const log = createLogger('research');
 
+/** A check names exactly one identity. Never resolve a ticker or guess an EVM chain. */
+export function evidenceCardRequest(text: string): { address?: string; chain?: string; refusal?: string } | null {
+  const reference = parseTokenReference(text);
+  if (!/\bcheck\b/i.test(text) && !reference.address && !reference.symbol) return null;
+  const candidates = [...text.matchAll(/\b(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})\b/g)]
+    .map(m => m[0]);
+  const unique = new Set(candidates.map(a => a.startsWith('0x') ? a.toLowerCase() : a));
+  if (unique.size !== 1 || !reference.address || reference.pairAddress) {
+    return { refusal: 'Please provide one exact token address and its chain, rather than a ticker or multiple addresses.' };
+  }
+  const chain = reference.address.startsWith('0x') ? (reference.chain === 'bsc' ? 'bnb' : reference.chain) : 'solana';
+  if (!chain || (reference.chain && !reference.address.startsWith('0x') && reference.chain !== 'solana')) {
+    return { refusal: 'Please name the chain for this exact token address.' };
+  }
+  if (!['solana', 'ethereum', 'bnb', 'base', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'robinhood'].includes(chain)) {
+    return { refusal: 'Please provide an exact address on a supported token evidence chain.' };
+  }
+  return { address: reference.address, chain };
+}
+
 /**
  * Looking things up, so an agent asked about this morning is not limited to
  * whatever its model was trained on.

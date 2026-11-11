@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { agents } from '@xbam/database';
 import { BadRequestError, ForbiddenError, NotFoundError } from '@xbam/shared';
-import { setStudioRiskWatches, studioRiskWatchStatus } from '@xbam/runtime';
+import { confirmEvidenceRiskWatch, setStudioRiskWatches, studioRiskWatchStatus } from '@xbam/runtime';
+import { StudioRiskKind } from '@xbam/shared/contracts';
 import { handler, params, parseBody, requireUser } from '../http';
 
 export async function studioRiskWatchRoutes(app: FastifyInstance): Promise<void> {
@@ -17,6 +18,13 @@ export async function studioRiskWatchRoutes(app: FastifyInstance): Promise<void>
   app.get(path, handler(async request => {
     const scope = await owned(request);
     return studioRiskWatchStatus(scope.agentId, scope.ownerId);
+  }));
+  app.post(`${path}/confirm-card`, handler(async request => {
+    const scope = await owned(request);
+    const body = parseBody(z.object({ jobId: z.string().uuid(), kind: StudioRiskKind, threshold: z.number().finite().positive() }).strict(), request);
+    const result = await confirmEvidenceRiskWatch({ ...scope, ...body });
+    if (!result.ok) throw new BadRequestError(result.why);
+    return result;
   }));
   app.put(path, handler(async request => {
     const scope = await owned(request);

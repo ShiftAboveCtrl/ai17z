@@ -35,6 +35,18 @@ import { uniqueSuffix } from '../support/db';
 
 installHarness();
 
+it('persists evidence-card reservations with job foreign keys and nullable owner confirmation', async () => {
+  const f = await createFixture();
+  const admitted = await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('check one token') });
+  const jobId = admitted.jobs[0]!.job.id;
+  await query(`INSERT INTO evidence_card_requests(job_id,agent_id,requester,chain,address,dry_run,card_job_id)
+    VALUES($1,$2,'mock:reader','solana','So11111111111111111111111111111111111111112',true,$1)`, [jobId, f.agentId]);
+  const [row] = await query('SELECT * FROM evidence_card_requests WHERE job_id=$1', [jobId]);
+  expect(row).toMatchObject({ card_job_id: jobId, watch_request: null, watch_confirmed: null });
+  await expect(query(`INSERT INTO evidence_card_requests(job_id,agent_id,requester,chain,address,dry_run)
+    VALUES('00000000-0000-4000-8000-000000000001',$1,'mock:reader','solana','example',true)`, [f.agentId])).rejects.toThrow(/foreign key/);
+});
+
 describe('every channel the contract names is accepted by the database', () => {
   it('creates each channel and refuses an unknown channel', async () => {
     const fixture = await createFixture();

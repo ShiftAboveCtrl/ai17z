@@ -11,6 +11,9 @@ import { collectHealth } from './health';
 import { pauseState, setPauseAll } from './killSwitch';
 import { loadConfig, saveConfig, telegramMuted, type TelegramConfig } from './telegram';
 import { escapeHtml, getUpdates, publishCommands, sendMessage } from './telegramApi';
+import { query } from '@xbam/database';
+import { StudioRiskKind } from '@xbam/shared/contracts';
+import { confirmEvidenceRiskWatch } from './studioRiskWatches';
 
 const log = createLogger('telegram-commands');
 
@@ -106,6 +109,7 @@ export interface CommandSpec {
  * something the pipeline did not already write and check.
  */
 export const COMMANDS: CommandSpec[] = [
+  { name: 'watch', args: '<card id> [condition threshold]', blurb: 'Confirm a published evidence card watch with your chosen condition and threshold.', acts: true },
   { name: 'help', args: null, blurb: 'This list.', acts: false },
   { name: 'status', args: null, blurb: 'What is running, and what is waiting for you.', acts: false },
   { name: 'pending', args: null, blurb: 'Drafts waiting on a decision, with their ids.', acts: false },
@@ -377,6 +381,20 @@ export async function runCommand(text: string, actor: string): Promise<CommandRe
   if (!spec) return { reply: `I do not know <code>/${escapeHtml(parsed.name)}</code>.\n\n${helpText()}`, command: null };
 
   switch (spec.name) {
+    case 'watch': {
+      const [prefix, kind, thresholdText, extra] = parsed.argument.split(/\s+/);
+      if (!prefix || !/^[a-f0-9-]{8,36}$/i.test(prefix)) return { reply: 'Use /watch with at least eight characters of the card id.', command: 'watch' };
+      const cards = await query(`SELECT r.job_id,r.agent_id,a.owner_id FROM evidence_card_requests r JOIN agents a ON a.id=r.agent_id
+        JOIN jobs j ON j.id=r.job_id WHERE r.job_id::text LIKE $1 AND NOT r.dry_run AND r.chain='solana'
+          AND r.card_job_id=r.job_id AND j.status='EXECUTED' LIMIT 2`, [`${prefix.toLowerCase()}%`]);
+      if (cards.length !== 1) return { reply: 'That does not identify one published evidence card.', command: 'watch' };
+      if (!kind || !thresholdText || extra || !StudioRiskKind.safeParse(kind).success || !Number.isFinite(Number(thresholdText))) {
+        return { reply: `Choose your condition and threshold: /watch ${escapeHtml(prefix)} LIQUIDITY_BELOW amount, TOP_HOLDERS_ABOVE percent, or DEVELOPER_SHARE_ABOVE percent. No watch has been created.`, command: 'watch' };
+      }
+      const card = cards[0]!;
+      const result = await confirmEvidenceRiskWatch({ jobId: String(card.job_id), agentId: String(card.agent_id), ownerId: String(card.owner_id), kind: StudioRiskKind.parse(kind), threshold: Number(thresholdText) });
+      return { reply: result.ok ? 'Studio confirmed the watch.' : escapeHtml(result.why), command: 'watch' };
+    }
     case 'help':
       return { reply: helpText(), command: 'help' };
 

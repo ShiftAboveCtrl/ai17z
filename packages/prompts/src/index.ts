@@ -15,3 +15,4 @@ export {
   renderCommitments,
   renderThreadState,
 } from './render';
+export * from './evidenceCard';

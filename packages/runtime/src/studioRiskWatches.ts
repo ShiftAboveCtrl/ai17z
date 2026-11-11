@@ -4,6 +4,8 @@ import { STUDIO_RISK_PATH, STUDIO_RISK_SNAPSHOT_MS, StudioRiskAcknowledgement, S
 import { ask, JUPITER_FAMILY, type JupiterQuery, type JupiterResult } from '@xbam/upstream';
 import { solanaTokenFrom } from './marketIntelCapabilities';
 import { studioInstallationRequest, studioLinkedContext } from './studioLink';
+import { randomUUID } from 'node:crypto';
+import { StudioRiskWatch as WatchSchema } from '@xbam/shared/contracts';
 
 interface Binding extends Record<string, unknown> {
   id: string; agent_id: string; owner_id: string; account_id: string; enabled: boolean; may_trigger: boolean;
@@ -11,6 +13,52 @@ interface Binding extends Record<string, unknown> {
 }
 const sourceScope = `s.config->'studioRisk'->>'bindingId'`;
 type LinkContext = Awaited<ReturnType<typeof studioLinkedContext>>;
+
+/** Owner control plane only. Public check text has no route to this function. */
+export async function confirmEvidenceRiskWatch(input: {
+  agentId: string; ownerId: string; jobId: string; kind: StudioRiskWatch['kind']; threshold: number;
+}) {
+  const ready = await studioLinkedContext();
+  return withTransaction(async tx => {
+    const card = await tx.one(`SELECT r.* FROM evidence_card_requests r JOIN agents a ON a.id=r.agent_id
+      JOIN jobs j ON j.id=r.job_id
+      WHERE r.job_id=$1 AND r.agent_id=$2 AND a.owner_id=$3 AND r.chain='solana'
+        AND NOT r.dry_run AND r.card_job_id=r.job_id AND j.status='EXECUTED' FOR UPDATE OF r`,
+    [input.jobId, input.agentId, input.ownerId]);
+    if (!card) return { ok: false as const, why: 'Only the owner of a published Solana evidence card can confirm its watch.' };
+    const binding = await tx.one<Binding>('SELECT * FROM studio_risk_bindings WHERE agent_id=$1 AND owner_id=$2 AND enabled', [input.agentId, input.ownerId]);
+    if (!binding || !sameLink(binding, ready)) return { ok: false as const, why: 'Enable the Studio risk watch bridge for this agent first.' };
+    const requested = WatchSchema.safeParse({ id: randomUUID(), mint: card.address, kind: input.kind, threshold: input.threshold, interval_seconds: 900 });
+    if (!requested.success) return { ok: false as const, why: 'Choose a valid watch condition and a positive threshold; shares are 0.1 to 99.9 percent.' };
+    const saved = card.watch_request ? WatchSchema.parse(card.watch_request) : null;
+    if (saved && (saved.kind !== input.kind || saved.threshold !== input.threshold)) {
+      return { ok: false as const, why: 'A different condition was already confirmed for this card. Use Studio to edit it.' };
+    }
+    if (card.watch_confirmed) return { ok: true as const, watch: card.watch_confirmed };
+    const watch = saved ?? requested.data;
+    // Persist the exact body before transport in a separate commit below. The id is
+    // the idempotency key, and carries no local job or account identity.
+    return { ok: true as const, pending: watch, scope: linkScope(binding) };
+  }).then(async result => {
+    if (!result.ok || !('pending' in result) || !result.pending) return result;
+    const watch = result.pending;
+    const saved = await query(`UPDATE evidence_card_requests SET watch_request=$2::jsonb WHERE job_id=$1
+      AND (watch_request IS NULL OR watch_request=$2::jsonb) RETURNING job_id`, [input.jobId, JSON.stringify(watch)]);
+    if (!saved.length) return { ok: false as const, why: 'A confirmation is already in progress. Retry the same condition.' };
+    const [binding] = await query<Binding>('SELECT * FROM studio_risk_bindings WHERE agent_id=$1 AND owner_id=$2 AND enabled', [input.agentId, input.ownerId]);
+    if (!binding || !sameLink(binding, await studioLinkedContext()) || binding.installation_id !== result.scope.installationId || binding.linked_at !== result.scope.linkedAt) {
+      return { ok: false as const, why: 'The Studio risk watch binding changed. Confirm under the current link.' };
+    }
+    const answer = await studioInstallationRequest(STUDIO_RISK_PATH, { method: 'POST', json: { protocol: 1, watch } }, result.scope);
+    const parsed = WatchSchema.safeParse(answer.ok ? answer.body?.watch : null);
+    if (!answer.ok || !parsed.success || JSON.stringify(parsed.data) !== JSON.stringify(watch)) {
+      return { ok: false as const, why: 'Studio has not confirmed this watch. Retry the same condition; no watch is claimed locally.' };
+    }
+    await query('UPDATE evidence_card_requests SET watch_confirmed=$2::jsonb WHERE job_id=$1', [input.jobId, JSON.stringify(watch)]);
+    await ops.audit({ actorUserId: input.ownerId, action: 'studio.risk-watch.confirmed', entityType: 'agent', entityId: input.agentId, data: { watchId: watch.id } });
+    return { ok: true as const, watch };
+  });
+}
 function sameLink(binding: Binding, ready: LinkContext): boolean {
   return !('ok' in ready) && binding.installation_id === ready.link.installationId && binding.origin === ready.where.origin && binding.linked_at === ready.link.linkedAt;
 }
