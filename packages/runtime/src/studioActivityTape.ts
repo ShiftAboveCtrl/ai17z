@@ -223,14 +223,20 @@ export async function queueRadarWithdrawals(enabled?: boolean): Promise<void> {
     // Older senders kept no delivery ledger. Include stored ids conservatively.
     const cursor = await ops.getSetting<TapeCursor>(CURSOR);
     const setting = await studioActivityTapeSetting();
-    const cutoff = enabled ? cursor?.at ?? setting.changedAt : new Date().toISOString();
-    const historical = await query<{ id: string }>(`SELECT 'radar:' || d.id AS id
-      FROM event_discoveries d JOIN events e ON e.id=d.event_id
-      WHERE date_trunc('milliseconds', d.first_seen_at) <= $1::timestamptz AND e.channel='x'
-        AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
-        AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'`, [cutoff]);
-    await rememberRadar(historical.map(row => row.id));
-    await ops.setSetting('studio.activity_tape.radar_seeded', true);
+    if (!cursor && !setting.changedAt) {
+      // Never enabled and never sent: nothing reached Studio, so there is nothing to withdraw.
+      // Seeding history here would send tombstones from an installation that never consented.
+      await ops.setSetting('studio.activity_tape.radar_seeded', true);
+    } else {
+      const cutoff = enabled ? cursor?.at ?? setting.changedAt : new Date().toISOString();
+      const historical = await query<{ id: string }>(`SELECT 'radar:' || d.id AS id
+        FROM event_discoveries d JOIN events e ON e.id=d.event_id
+        WHERE date_trunc('milliseconds', d.first_seen_at) <= $1::timestamptz AND e.channel='x'
+          AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
+          AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'`, [cutoff]);
+      await rememberRadar(historical.map(row => row.id));
+      await ops.setSetting('studio.activity_tape.radar_seeded', true);
+    }
   }
   const sent = (await ops.getSetting<string[]>(RADAR_SENT)) ?? [];
   const shared = enabled ? await sharedRadarIds(sent) : new Set<string>();

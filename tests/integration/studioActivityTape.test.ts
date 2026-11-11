@@ -131,6 +131,23 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
     expect([...studio.visible.values()].map(event => event.id)).not.toContain(hit.id);
   });
 
+  it('sends no radar withdrawals from an installation that never turned the tape on', async () => {
+    await grant();
+    await radar();
+    let posts = 0;
+    setStudioTransportForTests(async (url, init) => {
+      if (url.endsWith('/activity-tape')) posts++;
+      const response = await fetch(url, init);
+      return { status: response.status, text: await response.text() };
+    });
+    await sweepStudioActivityTape();
+    await due();
+    await sweepStudioActivityTape();
+    expect(posts).toBe(0);
+    expect((await ops.getSetting<string[]>('studio.activity_tape.radar_sent')) ?? []).toEqual([]);
+    expect((await ops.getSetting<string[]>('studio.activity_tape.scrubs')) ?? []).toEqual([]);
+  });
+
   it('retries a strict older receiver without radar detail and advances other events', async () => {
     await ready();
     await radar();
