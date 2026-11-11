@@ -208,11 +208,12 @@ async function ageApprovedCard(jobId: string): Promise<string> {
   return text;
 }
 
-it('sends an approved card after its readings expire when a fresh read is unchanged, and returns a changed card to review', async () => {
+it('sends an approved card after its readings expire when a fresh read is unchanged', async () => {
   const f = await fixture({ automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
   const waiting = await ask(f);
   expect(waiting.status).toBe('WAITING_FOR_APPROVAL');
   const approved = await ageApprovedCard(waiting.id);
+  const [noted] = await query<{ created_at: string | Date }>('SELECT created_at FROM evidence_card_requests WHERE job_id=$1', [waiting.id]);
   const upstream = await import('@xbam/upstream');
   upstream.resetCacheForTest();
   const readsBefore = calls;
@@ -222,19 +223,47 @@ it('sends an approved card after its readings expire when a fresh read is unchan
   expect(sent.status).toBe('EXECUTED');
   expect(sent.validatedOutput).toBe(approved);
   expect(calls).toBeGreaterThan(readsBefore);
+  const [refreshed] = await query<{ created_at: string | Date }>('SELECT created_at FROM evidence_card_requests WHERE job_id=$1', [waiting.id]);
+  expect(new Date(refreshed!.created_at).getTime()).toBeGreaterThan(new Date(noted!.created_at).getTime());
+});
 
+it('returns an expired card to review when the fresh readings differ, and keeps the text the owner approved', async () => {
+  const f = await fixture({ automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
   const again = await ask(f, `@agent check ${mint2}`, false, 'bob');
   expect(again.status).toBe('WAITING_FOR_APPROVAL');
   const previous = await ageApprovedCard(again.id);
   liquidity = 9000;
+  const upstream = await import('@xbam/upstream');
   upstream.resetCacheForTest();
+  const readsBefore = calls;
   await runtime.approveJob({ jobId: again.id, decidedBy: f.ownerId });
   await drainJobs();
   const held = await jobs.requireJob(again.id);
   expect(held.status).toBe('REVIEW_REQUIRED');
   expect(held.lastError).toBe('The readings changed since you looked.');
-  expect(held.validatedOutput).toContain('Liquidity: 9000 USD');
-  expect(held.validatedOutput).not.toBe(previous);
+  expect(held.validatedOutput).toBe(previous);
+  expect(held.validatedOutput).not.toContain('Liquidity: 9000 USD');
+  expect(calls).toBeGreaterThan(readsBefore);
 });
 
-
+it('returns a card whose text does not match its readings without reading again', async () => {
+  const f = await fixture({ automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
+  const waiting = await ask(f);
+  expect(waiting.status).toBe('WAITING_FOR_APPROVAL');
+  const job = await jobs.requireJob(waiting.id);
+  const context = job.resolvedContext as ResolvedContext & { meta: { evidenceCard: { text: string; readings: CardReading[]; cardJobId: string | null } } };
+  const text = context.meta.evidenceCard.text.replace('Liquidity: 12000 USD', 'Liquidity: 1 USD');
+  expect(text).not.toBe(context.meta.evidenceCard.text);
+  const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard: { ...context.meta.evidenceCard, text } } };
+  await jobs.updateJob(waiting.id, { resolvedContext: resolvedContext as ResolvedContext, generatedOutput: text, validatedOutput: text });
+  const upstream = await import('@xbam/upstream');
+  upstream.resetCacheForTest();
+  const readsBefore = calls;
+  await runtime.approveJob({ jobId: waiting.id, decidedBy: f.ownerId });
+  await drainJobs();
+  const held = await jobs.requireJob(waiting.id);
+  expect(held.status).toBe('REVIEW_REQUIRED');
+  expect(held.lastError).toMatch(/complete sourced evidence card/);
+  expect(held.validatedOutput).toBe(text);
+  expect(calls).toBe(readsBefore);
+});

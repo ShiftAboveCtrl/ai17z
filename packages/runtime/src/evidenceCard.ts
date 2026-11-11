@@ -1,4 +1,4 @@
-import { actions, agents, capabilityInvocations, jobs, observability, query, withTransaction } from '@xbam/database';
+import { agents, capabilityInvocations, jobs, observability, query, withTransaction } from '@xbam/database';
 import { createLogger, PipelineError } from '@xbam/shared';
 import { PolicyConfig } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
@@ -122,6 +122,19 @@ function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
   });
 }
 
+/**
+ * Whether the stored text is the card those readings render.
+ *
+ * Rendered at the fetch time, so a reading that has since expired still
+ * shows the value the owner approved. Rendering at the current time would
+ * call that same card a mismatch.
+ */
+function textMatchesReadings(text: string, readings: CardReading[], offer: string): boolean {
+  const fetched = readings.map(reading => Date.parse(reading.fetchedAt ?? '')).filter(time => Number.isFinite(time));
+  const asOf = fetched.length ? Math.max(...fetched) : Date.now();
+  return renderEvidenceCard(readings, offer, asOf) === text;
+}
+
 /** The same inspect path a first card uses: permission, research budget, asker cap, mint cooldown, then the capability. */
 async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promise<{ text: string; readings: CardReading[] } | null> {
   const context = bundle.job.resolvedContext;
@@ -129,17 +142,28 @@ async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promis
   if (!request?.address || !request.chain || request.refusal || !(await permitted(bundle.agent.id))) return null;
   if (bundle.policy.budget.maxResearchCallsPerEvent === 0) return null;
   const requester = `${bundle.job.channel}:${bundle.event.remoteAuthorId ?? bundle.event.remoteAuthorHandle ?? 'unknown'}`;
-  const count = await query<{ n: number }>(`SELECT count(*)::int AS n FROM evidence_card_requests
-    WHERE agent_id=$1 AND requester=$2 AND created_at>now()-interval '1 hour' AND dry_run=$3`,
-  [bundle.agent.id, requester, bundle.job.dryRun]);
-  if (Number(count[0]?.n) >= HOURLY_CAP) return null;
   const address = request.address.startsWith('0x') ? request.address.toLowerCase() : request.address;
-  // This job's own read is the card being refreshed, so it does not cool itself down.
-  const previous = await query(`SELECT job_id FROM evidence_card_requests
-    WHERE agent_id=$1 AND chain=$2 AND address=$3 AND dry_run=$4 AND card_job_id=job_id AND job_id<>$5
-      AND created_at>now()-($6::int * interval '1 millisecond') LIMIT 1`,
-  [bundle.agent.id, request.chain, address, bundle.job.dryRun, bundle.job.id, COOLDOWN_MS]);
-  if (previous[0]) return null;
+  // One row per job. A re-read refreshes that row's time under the same agent lock the first read uses.
+  const reserved = await withTransaction(async tx => {
+    await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [bundle.agent.id]);
+    const count = await tx.one(`SELECT count(*)::int AS n FROM evidence_card_requests
+      WHERE agent_id=$1 AND requester=$2 AND created_at>now()-interval '1 hour' AND dry_run=$3`,
+    [bundle.agent.id, requester, bundle.job.dryRun]);
+    if (Number(count?.n) >= HOURLY_CAP) return false;
+    // This job's own read is the card being refreshed, so it does not cool itself down.
+    const previous = await tx.one(`SELECT job_id FROM evidence_card_requests
+      WHERE agent_id=$1 AND chain=$2 AND address=$3 AND dry_run=$4 AND card_job_id=job_id AND job_id<>$5
+        AND created_at>now()-($6::int * interval '1 millisecond') LIMIT 1`,
+    [bundle.agent.id, request.chain, address, bundle.job.dryRun, bundle.job.id, COOLDOWN_MS]);
+    if (previous) return false;
+    const existing = await tx.one('SELECT job_id FROM evidence_card_requests WHERE job_id=$1', [bundle.job.id]);
+    if (existing) await tx.query('UPDATE evidence_card_requests SET created_at=now() WHERE job_id=$1', [bundle.job.id]);
+    else await tx.query(`INSERT INTO evidence_card_requests(job_id,agent_id,requester,chain,address,dry_run,card_job_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7)`,
+    [bundle.job.id, bundle.agent.id, requester, request.chain, address, bundle.job.dryRun, card.cardJobId ?? bundle.job.id]);
+    return true;
+  });
+  if (!reserved) return null;
   const settings = await capabilitySettings(bundle.agent.id);
   const result = await invokeCapability({ call: { id: CAP, input: { chain: request.chain, address: request.address } },
     context: { agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
@@ -158,10 +182,10 @@ async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promis
 /**
  * Current owner consent and capability permissions apply even to an old queued card.
  *
- * Readings expire after five minutes. An owner who approved a card and came
- * back later still consented to that text, so a stale card is read again
- * through the same inspect path. Identical text sends. Different text goes
- * back to review, and nothing the owner has not seen is sent.
+ * Readings expire after five minutes. Only expiry starts another read. The
+ * owner approved a text, so that text sends when the new readings match.
+ * Changed readings, or any text that does not match its readings, go back to
+ * review. The approved text stays as the owner left it.
  */
 export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string): Promise<void> {
   const card = evidenceCardOf(bundle);
@@ -171,32 +195,16 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
     throw PipelineError.permanent('evidence_card_disabled', 'Token evidence replies or their capability were switched off.');
   }
   const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
-  const stale = card.readings.length > 0 && (readingsExpired(card.readings) || renderEvidenceCard(card.readings, offer) !== card.text);
-  if (stale && output === card.text) {
+  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer);
+  if (output !== card.text || mismatched) {
+    throw PipelineError.review('evidence_card_changed', 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
+  }
+  if (card.readings.length > 0 && readingsExpired(card.readings)) {
     const fresh = await rereadEvidenceCard(bundle, card);
     // A new read carries a new fetch time, so the rendered lines never match
     // character for character. The same readings are the card the owner saw.
     if (fresh && sameReadings(fresh.readings, card.readings)) return;
-    if (fresh) {
-      const context = bundle.job.resolvedContext;
-      if (context) {
-        const evidenceCard: EvidenceCard = { text: fresh.text, readings: fresh.readings, cardJobId: card.cardJobId };
-        const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard } };
-        await jobs.updateJob(bundle.job.id, {
-          resolvedContext, generatedOutput: fresh.text, validatedOutput: fresh.text,
-        });
-        bundle.job.resolvedContext = resolvedContext;
-        bundle.job.generatedOutput = fresh.text;
-        bundle.job.validatedOutput = fresh.text;
-      }
-      const approval = await actions.getApproval(bundle.job.id);
-      if (approval) {
-        await actions.createApproval(bundle.job.id, fresh.text);
-      }
-      throw PipelineError.review('evidence_card_changed', READINGS_CHANGED);
-    }
-  }
-  if (output !== card.text || (card.readings.length && renderEvidenceCard(card.readings, offer) !== card.text)) {
-    throw PipelineError.review('evidence_card_changed', 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
+    throw PipelineError.review('evidence_card_changed', fresh ? READINGS_CHANGED
+      : 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }
 }
