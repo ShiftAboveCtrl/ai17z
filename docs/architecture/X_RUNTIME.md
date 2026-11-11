@@ -95,7 +95,7 @@ A post is EXECUTED only with read-back: an id or address read off the account's
 own timeline. A submit that returned and a composer that closed are not
 evidence, and X's timeline lags, so an empty scan proves nothing. Without
 read-back the action is held `AMBIGUOUS` (`REVIEW_REQUIRED`), the job goes to its
-owner, and `postUnconfirmed` notifies them. It is never retried: a later attempt,
+owner, and `postUnconfirmed` notifies them. It is never retried automatically: a later attempt,
 including one recovered from a worker that died mid-submit, asks the remote
 first and sends again only on a conclusive absence. If the post is then found,
 it becomes EXECUTED and the notification is resolved. Replies and likes keep the
