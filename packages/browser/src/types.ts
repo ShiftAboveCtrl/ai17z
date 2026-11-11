@@ -16,6 +16,8 @@ export type { BrowserContext, Locator, Page };
 export type BrowserChannel = 'chrome' | 'msedge' | 'chromium';
 
 export interface SessionConfig {
+  /** Optional work may use a live worker browser but may never launch one. */
+  existingOnly?: boolean;
   accountId: string;
   /**
    * Which browser binary to use. Named after the binary rather than after the

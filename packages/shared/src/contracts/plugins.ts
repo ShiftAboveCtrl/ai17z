@@ -218,8 +218,10 @@ export const PluginCapabilityDeclaration = z
 export type PluginCapabilityDeclaration = z.infer<typeof PluginCapabilityDeclaration>;
 
 /** A module that already ships, which an entitlement may switch on. */
-export const PLUGIN_FEATURES = ['RESEARCH_SOURCE', 'OWNER_PANEL'] as const;
+export const PLUGIN_FEATURES = ['RESEARCH_SOURCE', 'OWNER_PANEL', 'CREATIVE_PROVIDER'] as const;
 export type PluginFeature = (typeof PLUGIN_FEATURES)[number];
+/** Enough base64 for one image under POST_MEDIA's 5 MB image limit. */
+export const MAX_CREATIVE_IMAGE_BASE64 = 7_000_000;
 
 /**
  * A Plugin offering itself as somewhere the research step may look.
@@ -335,6 +337,13 @@ export const PluginManifest = z
     research: PluginResearchSource.optional(),
     /** Required by, and only allowed with, the OWNER_PANEL feature. */
     panel: PluginOwnerPanel.optional(),
+    /** Optional original-post image provider. Both runtime flags default off. */
+    creative: z.object({
+      capability: z.string().min(1).max(64),
+      promptField: z.string().min(1).max(64),
+      /** Base64 image bytes, validated by POST_MEDIA before storage. */
+      imageField: z.string().min(1).max(64),
+    }).strict().optional(),
   })
   .strict()
   .superRefine((manifest, ctx) => {
@@ -346,6 +355,18 @@ export const PluginManifest = z
     }
 
     const byName = new Map(manifest.capabilities.map((capability) => [capability.name, capability]));
+    if (manifest.features.includes('CREATIVE_PROVIDER') !== Boolean(manifest.creative)) {
+      ctx.addIssue({ code: 'custom', message: 'CREATIVE_PROVIDER and its creative declaration must be supplied together' });
+    }
+    if (manifest.creative) {
+      const declaration = manifest.creative;
+      const capability = byName.get(declaration.capability);
+      const prompt = capability?.input.fields.find(f => f.name === declaration.promptField);
+      const image = capability?.output.fields.find(f => f.name === declaration.imageField);
+      if (!capability || prompt?.type !== 'string' || !prompt.required || image?.type !== 'string') {
+        ctx.addIssue({ code: 'custom', message: 'a creative provider must name its own capability with a required string prompt and a string image output' });
+      }
+    }
 
     /*
       A feature and the block describing it travel together, in both
@@ -648,6 +669,8 @@ export interface PluginFootprint {
   hosts: string[];
   capabilities: string[];
   features: PluginFeature[];
+  /** The creative hook receives the post brief. Its declaration is approval-sensitive. */
+  creative?: PluginManifest['creative'];
   /** Effects declared. `READ` only in schema v1, and checked rather than assumed. */
   effects: string[];
   risks: string[];
@@ -662,6 +685,7 @@ export function pluginFootprint(manifest: PluginManifest): PluginFootprint {
     hosts: [...new Set(manifest.capabilities.flatMap((capability) => capability.http.hosts))].sort(),
     capabilities: manifest.capabilities.map((capability) => capability.name).sort(),
     features: [...manifest.features].sort(),
+    creative: manifest.creative,
     effects: [...new Set(manifest.capabilities.map((capability) => capability.effect))].sort(),
     risks: [...new Set(manifest.capabilities.map((capability) => capability.risk))].sort(),
     wantsSecret: manifest.config.some((field) => field.secret),
@@ -695,9 +719,13 @@ export function footprintExpansion(before: PluginFootprint, after: PluginFootpri
   if (features.length > 0) {
     grew.push(
       `It asks to unlock ${features
-        .map((feature) => (feature === 'RESEARCH_SOURCE' ? 'being used as a research source' : 'its own owner panel'))
+        .map((feature) => (feature === 'RESEARCH_SOURCE' ? 'being used as a research source' : feature === 'CREATIVE_PROVIDER' ? 'creative image generation using the post brief' : 'its own owner panel'))
         .join(' and ')}.`,
     );
+  }
+
+  if (after.creative && (before.creative?.capability !== after.creative.capability || before.creative?.promptField !== after.creative.promptField || before.creative?.imageField !== after.creative.imageField)) {
+    grew.push('It adds or changes its creative provider, which receives the post brief.');
   }
 
   const effects = added(before.effects, after.effects);

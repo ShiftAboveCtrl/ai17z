@@ -332,4 +332,6 @@ export interface ChannelAdapter {
   verifyAction(ctx: ChannelContext, request: ActionRequest): Promise<VerificationResult>;
   executeAction(ctx: ChannelContext, request: ActionRequest): Promise<ActionResult>;
   captureDiagnostics(ctx: ChannelContext, reason: string): Promise<DiagnosticCapture | null>;
+  /** A live public page, captured in the worker's existing background browser tab. */
+  capturePostMedia?(ctx: ChannelContext, url: string, allowedHosts: readonly string[]): Promise<Uint8Array | null>;
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { plugins as pluginsRepo } from '@xbam/database';
-import { pluginCapabilityId } from '@xbam/shared';
+import { MAX_CREATIVE_IMAGE_BASE64, envBool, pluginCapabilityId } from '@xbam/shared';
 import type {
   InstalledPlugin,
   PluginCapabilityDeclaration,
@@ -59,12 +59,12 @@ async function studioSaysYes(pluginId: string, capabilityId: string, hosts: read
 }
 
 /** A zod object built from a declared schema. Primitives and arrays only. */
-function schemaOf(schema: PluginSchema): z.ZodType<Record<string, unknown>> {
+function schemaOf(schema: PluginSchema, imageField?: string): z.ZodType<Record<string, unknown>> {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const field of schema.fields) {
     const base =
       field.type === 'string'
-        ? z.string().max(2_000)
+        ? z.string().max(field.name === imageField ? MAX_CREATIVE_IMAGE_BASE64 : 2_000)
         : field.type === 'number'
           ? z.number()
           : field.type === 'boolean'
@@ -129,7 +129,9 @@ export function declaredCapability(
   const manifest: PluginManifest = installed.manifest;
   const id = pluginCapabilityId(installed.id, declaration.name);
   const input = schemaOf(declaration.input);
-  const output = schemaOf(declaration.output);
+  const creativeImage = manifest.features.includes('CREATIVE_PROVIDER') && manifest.creative?.capability === declaration.name
+    ? manifest.creative.imageField : undefined;
+  const output = schemaOf(declaration.output, creativeImage);
   const required = manifest.config.filter((field) => field.required);
 
   return defineCapability({
@@ -140,7 +142,7 @@ export function declaredCapability(
     effect: declaration.effect,
     risk: declaration.risk,
     // Bought on Studio: no agent may use it until its owner says which may.
-    ...(installed.requiresEntitlement || declaration.http.url.includes('/api/gateway/v1/') ? { unsetPermission: 'DISABLED' as const } : {}),
+    ...(creativeImage || installed.requiresEntitlement || declaration.http.url.includes('/api/gateway/v1/') ? { unsetPermission: 'DISABLED' as const } : {}),
     input,
     output,
     modelCallable: true,
@@ -155,6 +157,9 @@ export function declaredCapability(
      * would send them to the wrong screen.
      */
     async readiness(ctx) {
+      if (creativeImage && (!envBool('AI17Z_POST_MEDIA_ENABLED', false) || !envBool('AI17Z_CREATIVE_MEDIA_ENABLED', false))) {
+        return { status: 'UNAVAILABLE', why: 'Creative post media is switched off on this worker.' };
+      }
       const config = await pluginsRepo.getPluginConfig(ctx.agentId, installed.id);
       const secrets = new Set(await pluginsRepo.pluginSecretKeys(ctx.agentId, installed.id));
       const missing = required
@@ -182,6 +187,9 @@ export function declaredCapability(
     },
 
     async run(raw, ctx) {
+      if (creativeImage && (!envBool('AI17Z_POST_MEDIA_ENABLED', false) || !envBool('AI17Z_CREATIVE_MEDIA_ENABLED', false))) {
+        throw new Error('Creative post media is switched off on this worker.');
+      }
       const given = raw as Record<string, unknown>;
 
       // Again here, not only in readiness: an entitlement revoked while a job
@@ -243,9 +251,8 @@ export function declaredCapability(
         ...(allowPrivate ? { allowPrivate: true } : {}),
         // A tool token and proof for Studio's gateway go to the gateway and nowhere else.
         ...(viaGateway ? { noRedirects: true } : {}),
-        // Small on purpose. A declared Plugin answers a question; anything
-        // that needs megabytes is not this extension point.
-        maxBytes: 512 * 1024,
+        // Creative image bytes have their own bounded output; ordinary text stays small.
+        maxBytes: creativeImage ? MAX_CREATIVE_IMAGE_BASE64 + 64 * 1024 : 512 * 1024,
       });
 
       // The address that actually answered. `safeFetch` has already refused a

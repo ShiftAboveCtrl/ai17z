@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilityInvocations, plugins as pluginsRepo } from '@xbam/database';
 import {
   capabilitySettings,
@@ -16,6 +16,9 @@ import { listModelCallable, registerBuiltinCapabilities, resetCapabilitiesForTes
 import { setCapabilityPermission } from '@xbam/runtime';
 import { installHarness } from '../support/harness';
 import { createFixture } from '../support/fixtures';
+import { pluginCreativeMedia } from '../../packages/runtime/src/pluginCreativeMedia';
+import type { JobBundle } from '../../packages/runtime/src/loadJob';
+import { fixtureBytes } from '../support/imageFixtures';
 
 /**
  * The two things a Plugin may unlock, proved to go through the canonical path.
@@ -45,6 +48,7 @@ vi.mock('@xbam/upstream', async (importOriginal) => {
 });
 
 installHarness();
+afterEach(() => vi.unstubAllEnvs());
 
 const core = buildVersion().version.replace(/-.*$/, '');
 const json = (value: unknown) => JSON.stringify(value);
@@ -109,6 +113,39 @@ const answers = () =>
     status: 200,
     text: json({ entry: { title: 'Hysteresis', text: 'A lag between cause and effect.', url: 'https://almanac.test/h' } }),
   });
+
+describe('an optional creative Plugin provider', () => {
+  it('requires an explicit grant, returns real image bytes and audits without storing base64', async () => {
+    vi.stubEnv('AI17Z_POST_MEDIA_ENABLED', 'true');
+    vi.stubEnv('AI17Z_CREATIVE_MEDIA_ENABLED', 'true');
+    const fixture = await createFixture();
+    // Large enough to catch a provider accidentally using the ordinary 2k text cap.
+    const png = Buffer.concat([fixtureBytes('png'), Buffer.alloc(2_048)]);
+    const { research: _research, panel: _panel, ...base } = ALMANAC;
+    const manifest = {
+      ...base, features: ['CREATIVE_PROVIDER'],
+      creative: { capability: 'look_up', promptField: 'term', imageField: 'image' },
+      capabilities: [{ ...ALMANAC.capabilities[0]!, output: { fields: [{ name: 'image', type: 'string', from: 'entry.image' }] } }],
+    };
+    served.set('api.almanac.test', { status: 200, text: json({ entry: { image: png.toString('base64') } }) });
+    expect((await installPlugin({ raw: json(manifest), source: 'LOCAL' })).ok).toBe(true);
+    expect((await capabilitySettings(fixture.agentId)).permissions.get(CAPABILITY)).toBe('DISABLED');
+    const bundle = { agent: { id: fixture.agentId }, job: { id: null, accountId: null }, event: { text: 'An illustration of the release' } } as unknown as JobBundle;
+    expect(await pluginCreativeMedia(bundle)).toBeNull();
+    await setCapabilityPermission({ agentId: fixture.agentId, capabilityId: CAPABILITY, permission: 'ALLOWED' });
+    expect(await pluginCreativeMedia(bundle)).toEqual(png);
+    const runs = await capabilityInvocations.listForAgent(fixture.agentId);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.outcome).toBe('SUCCEEDED');
+    expect(JSON.stringify(runs)).not.toContain(png.toString('base64'));
+    vi.stubEnv('AI17Z_CREATIVE_MEDIA_ENABLED', 'false');
+    expect(await pluginCreativeMedia(bundle)).toBeNull();
+    expect(await capabilityInvocations.listForAgent(fixture.agentId)).toHaveLength(1);
+    vi.stubEnv('AI17Z_CREATIVE_MEDIA_ENABLED', 'true');
+    await setCapabilityPermission({ agentId: fixture.agentId, capabilityId: CAPABILITY, permission: 'DISABLED' });
+    expect(await pluginCreativeMedia(bundle)).toBeNull();
+  });
+});
 
 async function sourcesFor(agentId: string) {
   const settings = await capabilitySettings(agentId);

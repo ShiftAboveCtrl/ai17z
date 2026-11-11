@@ -132,6 +132,7 @@ describe('every trace type the code can emit is one the database accepts', () =>
     for (const type of TRACE_EVENT_TYPES) {
       expect(trace.map((t) => t.type)).toContain(type);
     }
+    expect(trace.some(t => t.type === 'POST_MEDIA_DECIDED')).toBe(true);
   });
 });
 

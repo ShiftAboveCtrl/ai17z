@@ -47,6 +47,7 @@ import { remoteActionsAllowed } from '../killSwitch';
 import { postConfirmed, postUnconfirmed } from '../notify';
 import { POST_OUTCOME_AMBIGUOUS, postHasReadBack, priorPostWasAmbiguous } from '../postReadBack';
 import { describeMedia, mediaRefsOf, resolvePostMedia } from '../postMedia';
+import { decidedPostMedia, preparePostMedia } from '../postMediaDecision';
 import { recordPublished } from '../experimentRuns';
 import type { JobBundle } from '../loadJob';
 
@@ -221,6 +222,7 @@ export function actionIdempotencyKeyFor(input: {
 }
 
 export async function stepExecute(bundle: JobBundle): Promise<void> {
+  await preparePostMedia(bundle);
   const { job, policy } = bundle;
   const output = job.validatedOutput;
   if (!output) throw PipelineError.retryable('output_missing', 'Execution ran before validation produced output.');
@@ -379,7 +381,8 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     the text alone: a post meant to show something and saying it without is a
     different post.
   */
-  const mediaRefs = job.actionType === 'POST' ? mediaRefsOf(bundle.event.payload) : [];
+  const mediaRefs = job.actionType === 'POST'
+    ? [...mediaRefsOf(bundle.event.payload), ...decidedPostMedia(bundle)] : [];
   const sendingVia = getChannelAdapter(job.channel);
   if (mediaRefs.length > 0 && !sendingVia.supportsMedia) {
     throw PipelineError.permanent(

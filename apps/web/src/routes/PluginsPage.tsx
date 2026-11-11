@@ -95,6 +95,7 @@ const PERMISSION_WORD: Record<CapabilityPermission, string> = {
 const FEATURE_WORD: Record<string, string> = {
   RESEARCH_SOURCE: 'Can be used as a research source',
   OWNER_PANEL: 'Has a panel of its own',
+  CREATIVE_PROVIDER: 'Can create images from the post brief',
 };
 
 const when = (value: string) => new Date(value).toLocaleString();

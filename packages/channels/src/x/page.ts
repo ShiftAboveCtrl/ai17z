@@ -119,10 +119,12 @@ export async function withSession<T>(
   ctx: ChannelContext,
   role: TabRole,
   fn: (session: LeasedSession) => Promise<T>,
+  existingOnly = false,
 ): Promise<T> {
   const session = await leaseSession(
     {
       accountId: ctx.account.id,
+      existingOnly,
       mode: ctx.session?.mode ?? 'MANAGED',
       profileDir: resolveProfileDir(ctx.account.id, ctx.session?.profileDir),
       cdpUrl: ctx.session?.cdpUrl ?? null,

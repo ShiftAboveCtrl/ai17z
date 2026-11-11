@@ -60,6 +60,7 @@ function mediaDir(agentId: string): string {
  */
 export async function storePostMedia(input: {
   agentId: string;
+  jobId?: string;
   bytes: Uint8Array;
   scope: Record<string, unknown>;
 }): Promise<PostMediaRef> {
@@ -82,6 +83,7 @@ export async function storePostMedia(input: {
 
   const artifact = await opsRepo.createArtifact({
     kind: 'POST_MEDIA',
+    ...(input.jobId ? { jobId: input.jobId } : {}),
     agentId: input.agentId,
     mimeType: info.mime,
     relPath: join('post-media', input.agentId, filename),

@@ -476,6 +476,8 @@ export const TRACE_EVENT_TYPES = [
   // Social intelligence stages. Each one is a decision worth being able to
   // inspect afterwards, which is why they are traced rather than only logged.
   'MEDIA_RESOLVED',
+  /** Whether an original post benefits from an attachment, and why. */
+  'POST_MEDIA_DECIDED',
   'RELATIONSHIP_LOADED',
   'STANCE_SELECTED',
   'STANCE_CONFLICT',
