@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { accounts, agents, cadences, capabilities, jobs, actions, query, observability, ops, capabilityPermissions } from '@xbam/database';
-import { DEFAULT_POLICY, defaultCadence, PolicyConfig } from '@xbam/shared/contracts';
+import { DEFAULT_POLICY, defaultCadence, PolicyConfig, type ResolvedContext } from '@xbam/shared/contracts';
+import { renderEvidenceCard, type CardReading } from '@xbam/prompts';
 import { ingestNormalizedEvent } from '@xbam/runtime';
 import * as runtime from '@xbam/runtime';
 import { loadJobBundle } from '../../packages/runtime/src/loadJob';
@@ -14,8 +15,10 @@ import { createFixture, seedCatalogue } from '../support/fixtures';
 import { drainJobs } from '../support/runner';
 
 const mint = 'So11111111111111111111111111111111111111112';
+const mint2 = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 let calls = 0;
 let stale = false;
+let liquidity = 12000;
 vi.mock('undici', () => ({
   Agent: class { async close() {} },
   fetch: async (input: unknown, init?: RequestInit) => {
@@ -26,7 +29,8 @@ vi.mock('undici', () => ({
     }
     if (!String(input).includes('jup.ag')) throw new Error('Unexpected network host');
     calls++;
-    return new Response(JSON.stringify([{ id: mint, liquidity: 12000, updatedAt: new Date(Date.now() - (stale ? 86400_000 : 0)).toISOString(),
+    const queried = new URL(String(input)).searchParams.get('query') ?? mint;
+    return new Response(JSON.stringify([{ id: queried, liquidity, updatedAt: new Date(Date.now() - (stale ? 86400_000 : 0)).toISOString(),
       firstPool: { createdAt: new Date(Date.now() - 3600_000).toISOString() },
       audit: { topHoldersPercentage: 20, mintAuthorityDisabled: true, freezeAuthorityDisabled: false } }]), { status: 200 });
   },
@@ -34,7 +38,7 @@ vi.mock('undici', () => ({
 
 beforeAll(async () => { await setupTestDatabase(); const r = await import('@xbam/runtime'); await r.bootstrapRuntime(); });
 afterAll(teardownTestDatabase);
-beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false;
+beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false; liquidity = 12000;
   const u = await import('@xbam/upstream'); u.resetCacheForTest(); u.resetLimiterForTest(); u.resetBreakerForTest(); });
 
 async function fixture(policy: Partial<PolicyConfig> = {}) {
@@ -190,7 +194,47 @@ it('a disabled capability and stranger watch text never read or create a watch',
   expect(await query('SELECT * FROM studio_risk_bindings')).toHaveLength(0);
 });
 
+/** The card as it stood when the owner saw it, with readings already past the five minute bound. */
+async function ageApprovedCard(jobId: string): Promise<string> {
+  const job = await jobs.requireJob(jobId);
+  const context = job.resolvedContext as ResolvedContext & { meta: { evidenceCard: { text: string; readings: CardReading[]; cardJobId: string | null } } };
+  const seenAt = Date.now() - 6 * 60_000;
+  const stamp = new Date(seenAt).toISOString();
+  const readings = context.meta.evidenceCard.readings.map(reading => ({ ...reading, fetchedAt: stamp, observedAt: stamp }));
+  const offer = context.meta.evidenceCard.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
+  const text = renderEvidenceCard(readings, offer, seenAt);
+  const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard: { ...context.meta.evidenceCard, text, readings } } };
+  await jobs.updateJob(jobId, { resolvedContext: resolvedContext as ResolvedContext, generatedOutput: text, validatedOutput: text });
+  return text;
+}
 
+it('sends an approved card after its readings expire when a fresh read is unchanged, and returns a changed card to review', async () => {
+  const f = await fixture({ automation: { mode: 'REVIEW_BEFORE_ACTION', dryRunDefault: false } });
+  const waiting = await ask(f);
+  expect(waiting.status).toBe('WAITING_FOR_APPROVAL');
+  const approved = await ageApprovedCard(waiting.id);
+  const upstream = await import('@xbam/upstream');
+  upstream.resetCacheForTest();
+  const readsBefore = calls;
+  await runtime.approveJob({ jobId: waiting.id, decidedBy: f.ownerId });
+  await drainJobs();
+  const sent = await jobs.requireJob(waiting.id);
+  expect(sent.status).toBe('EXECUTED');
+  expect(sent.validatedOutput).toBe(approved);
+  expect(calls).toBeGreaterThan(readsBefore);
 
+  const again = await ask(f, `@agent check ${mint2}`, false, 'bob');
+  expect(again.status).toBe('WAITING_FOR_APPROVAL');
+  const previous = await ageApprovedCard(again.id);
+  liquidity = 9000;
+  upstream.resetCacheForTest();
+  await runtime.approveJob({ jobId: again.id, decidedBy: f.ownerId });
+  await drainJobs();
+  const held = await jobs.requireJob(again.id);
+  expect(held.status).toBe('REVIEW_REQUIRED');
+  expect(held.lastError).toBe('The readings changed since you looked.');
+  expect(held.validatedOutput).toContain('Liquidity: 9000 USD');
+  expect(held.validatedOutput).not.toBe(previous);
+});
 
 

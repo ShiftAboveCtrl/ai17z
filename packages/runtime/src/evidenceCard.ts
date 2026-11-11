@@ -1,4 +1,4 @@
-import { agents, capabilityInvocations, jobs, observability, query, withTransaction } from '@xbam/database';
+import { actions, agents, capabilityInvocations, jobs, observability, query, withTransaction } from '@xbam/database';
 import { createLogger, PipelineError } from '@xbam/shared';
 import { PolicyConfig } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
@@ -103,7 +103,66 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
   return true;
 }
 
-/** Current owner consent and capability permissions apply even to an old queued card. */
+const READINGS_CHANGED = 'The readings changed since you looked.';
+
+/** Fetch times always move. What the owner approved is the readings themselves. */
+function sameReadings(left: CardReading[], right: CardReading[]): boolean {
+  return left.length === right.length && left.every((reading, index) => {
+    const other = right[index];
+    return !!other && reading.label === other.label && reading.unit === other.unit
+      && reading.source === other.source && Object.is(reading.value, other.value);
+  });
+}
+
+function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
+  return readings.some(reading => {
+    const fetched = Date.parse(reading.fetchedAt ?? '');
+    const observed = Date.parse(reading.observedAt ?? '');
+    return ![fetched, observed].every(t => Number.isFinite(t) && now - t <= reading.maxAgeMs && t <= now + 30_000);
+  });
+}
+
+/** The same inspect path a first card uses: permission, research budget, asker cap, mint cooldown, then the capability. */
+async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promise<{ text: string; readings: CardReading[] } | null> {
+  const context = bundle.job.resolvedContext;
+  const request = context ? evidenceCardRequest(context.incomingText) : null;
+  if (!request?.address || !request.chain || request.refusal || !(await permitted(bundle.agent.id))) return null;
+  if (bundle.policy.budget.maxResearchCallsPerEvent === 0) return null;
+  const requester = `${bundle.job.channel}:${bundle.event.remoteAuthorId ?? bundle.event.remoteAuthorHandle ?? 'unknown'}`;
+  const count = await query<{ n: number }>(`SELECT count(*)::int AS n FROM evidence_card_requests
+    WHERE agent_id=$1 AND requester=$2 AND created_at>now()-interval '1 hour' AND dry_run=$3`,
+  [bundle.agent.id, requester, bundle.job.dryRun]);
+  if (Number(count[0]?.n) >= HOURLY_CAP) return null;
+  const address = request.address.startsWith('0x') ? request.address.toLowerCase() : request.address;
+  // This job's own read is the card being refreshed, so it does not cool itself down.
+  const previous = await query(`SELECT job_id FROM evidence_card_requests
+    WHERE agent_id=$1 AND chain=$2 AND address=$3 AND dry_run=$4 AND card_job_id=job_id AND job_id<>$5
+      AND created_at>now()-($6::int * interval '1 millisecond') LIMIT 1`,
+  [bundle.agent.id, request.chain, address, bundle.job.dryRun, bundle.job.id, COOLDOWN_MS]);
+  if (previous[0]) return null;
+  const settings = await capabilitySettings(bundle.agent.id);
+  const result = await invokeCapability({ call: { id: CAP, input: { chain: request.chain, address: request.address } },
+    context: { agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
+      config: settings.configs.get(CAP) ?? {}, logger: log, audience: 'PUBLIC' },
+    permission: { stored: settings.permissions.get(CAP) ?? null, paused: (await pauseState()).paused } });
+  await capabilityInvocations.recordInvocation({ agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
+    capabilityId: CAP, step: 0, outcome: result.outcome, detail: result.detail,
+    input: result.input, output: result.output, durationMs: result.durationMs });
+  const output = result.output as { cardReadings?: CardReading[] } | null;
+  const readings = output?.cardReadings ?? [];
+  if (!readings.length) return null;
+  const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
+  return { text: renderEvidenceCard(readings, offer), readings };
+}
+
+/**
+ * Current owner consent and capability permissions apply even to an old queued card.
+ *
+ * Readings expire after five minutes. An owner who approved a card and came
+ * back later still consented to that text, so a stale card is read again
+ * through the same inspect path. Identical text sends. Different text goes
+ * back to review, and nothing the owner has not seen is sent.
+ */
 export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string): Promise<void> {
   const card = evidenceCardOf(bundle);
   if (!card) return;
@@ -111,7 +170,33 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
   if (!PolicyConfig.parse(current?.config ?? {}).tools.evidenceCards || !(await permitted(bundle.agent.id))) {
     throw PipelineError.permanent('evidence_card_disabled', 'Token evidence replies or their capability were switched off.');
   }
-  if (output !== card.text || (card.readings.length && renderEvidenceCard(card.readings, card.text.split('\n').find(l => l.startsWith('Owner:')) ?? '') !== card.text)) {
+  const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
+  const stale = card.readings.length > 0 && (readingsExpired(card.readings) || renderEvidenceCard(card.readings, offer) !== card.text);
+  if (stale && output === card.text) {
+    const fresh = await rereadEvidenceCard(bundle, card);
+    // A new read carries a new fetch time, so the rendered lines never match
+    // character for character. The same readings are the card the owner saw.
+    if (fresh && sameReadings(fresh.readings, card.readings)) return;
+    if (fresh) {
+      const context = bundle.job.resolvedContext;
+      if (context) {
+        const evidenceCard: EvidenceCard = { text: fresh.text, readings: fresh.readings, cardJobId: card.cardJobId };
+        const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard } };
+        await jobs.updateJob(bundle.job.id, {
+          resolvedContext, generatedOutput: fresh.text, validatedOutput: fresh.text,
+        });
+        bundle.job.resolvedContext = resolvedContext;
+        bundle.job.generatedOutput = fresh.text;
+        bundle.job.validatedOutput = fresh.text;
+      }
+      const approval = await actions.getApproval(bundle.job.id);
+      if (approval) {
+        await actions.createApproval(bundle.job.id, fresh.text);
+      }
+      throw PipelineError.review('evidence_card_changed', READINGS_CHANGED);
+    }
+  }
+  if (output !== card.text || (card.readings.length && renderEvidenceCard(card.readings, offer) !== card.text)) {
     throw PipelineError.review('evidence_card_changed', 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }
 }

@@ -4,13 +4,19 @@ import { describeToken, mergeReferences, parseTokenReference, resolveToken } fro
 
 const log = createLogger('research');
 
-/** A check names exactly one identity. Never resolve a ticker or guess an EVM chain. */
+/**
+ * A check names exactly one identity. Never resolve a ticker or guess an EVM chain.
+ *
+ * "check" on its own is ordinary speech ("please check your DMs"). A card is
+ * only invited by a token-shaped signal: a ticker, an address-like string, or
+ * "check" next to a token word.
+ */
 export function evidenceCardRequest(text: string): { address?: string; chain?: string; refusal?: string } | null {
   const reference = parseTokenReference(text);
-  if (!/\bcheck\b/i.test(text) && !reference.address && !reference.symbol) return null;
-  const candidates = [...text.matchAll(/\b(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})\b/g)]
-    .map(m => m[0]);
-  const unique = new Set(candidates.map(a => a.startsWith('0x') ? a.toLowerCase() : a));
+  const addressLike = [...text.matchAll(/\b(?:0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{32,44})\b/g)].map(m => m[0]);
+  const aboutToken = /\bcheck\b/i.test(text) && /\b(?:token|coin|mint|contract|ca)\b/i.test(text);
+  if (!reference.address && !reference.symbol && addressLike.length === 0 && !aboutToken) return null;
+  const unique = new Set(addressLike.map(a => a.startsWith('0x') ? a.toLowerCase() : a));
   if (unique.size !== 1 || !reference.address || reference.pairAddress) {
     return { refusal: 'Please provide one exact token address and its chain, rather than a ticker or multiple addresses.' };
   }

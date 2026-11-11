@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_POLICY, EasySetup, PolicyConfig } from '@xbam/shared/contracts';
 import { toPolicy } from '../../packages/runtime/src/easyMode';
-import * as research from '../../packages/runtime/src/research';
+import { evidenceCardRequest } from '../../packages/runtime/src/research';
 import { registerTokenRiskCapabilities } from '../../packages/runtime/src/tokenRiskCapabilities';
 import { getCapability } from '@xbam/tools';
 import { renderEvidenceCard, type CardReading } from '@xbam/prompts';
 
 const mint = 'So11111111111111111111111111111111111111112';
 const evm = '0x1111111111111111111111111111111111111111';
-const api = research as unknown as { evidenceCardRequest(text: string): { address?: string; chain?: string; refusal?: string } | null };
 
 describe('evidence card opt in and identity', () => {
   it('defaults off and preserves the owner setting on an old Easy Mode save', () => {
@@ -20,17 +19,22 @@ describe('evidence card opt in and identity', () => {
     expect((toPolicy(EasySetup.parse({ character: { name: 'Observer' }, replies: { evidenceCards: true } })).tools as unknown as { evidenceCards: boolean }).evidenceCards).toBe(true);
   });
   it('parses one exact mint deterministically and ignores ordinary conversation', () => {
-    expect(typeof api.evidenceCardRequest).toBe('function');
-    expect(api.evidenceCardRequest(`@agent check ${mint}`)).toEqual({ address: mint, chain: 'solana' });
-    expect(api.evidenceCardRequest(`@agent ${mint}`)).toEqual({ address: mint, chain: 'solana' });
-    expect(api.evidenceCardRequest('hello there')).toBeNull();
+    expect(evidenceCardRequest(`@agent check ${mint}`)).toEqual({ address: mint, chain: 'solana' });
+    expect(evidenceCardRequest(`@agent ${mint}`)).toEqual({ address: mint, chain: 'solana' });
+    expect(evidenceCardRequest('hello there')).toBeNull();
+  });
+  it('ignores check in ordinary speech and still refuses a token-shaped check', () => {
+    expect(evidenceCardRequest('please check your DMs')).toBeNull();
+    expect(evidenceCardRequest('check this out')).toBeNull();
+    expect(evidenceCardRequest('check $XYZ')?.refusal).toMatch(/^Please .+\.$/);
+    expect(evidenceCardRequest('check this token')?.refusal).toMatch(/^Please .+\.$/);
+    expect(evidenceCardRequest(`check ${mint}`)).toEqual({ address: mint, chain: 'solana' });
   });
   it('refuses multiple identities, ticker ambiguity and an EVM address without a chain', () => {
-    expect(typeof api.evidenceCardRequest).toBe('function');
     for (const text of [`check ${mint} ${evm}`, 'check $DOG', `check ${evm}`]) {
-      expect(api.evidenceCardRequest(text)?.refusal).toMatch(/^Please .+\.$/);
+      expect(evidenceCardRequest(text)?.refusal).toMatch(/^Please .+\.$/);
     }
-    expect(api.evidenceCardRequest(`check ${evm} on base`)).toEqual({ address: evm, chain: 'base' });
+    expect(evidenceCardRequest(`check ${evm} on base`)).toEqual({ address: evm, chain: 'base' });
   });
   it('extends the existing risk capability to accept a Solana mint', () => {
     registerTokenRiskCapabilities();
