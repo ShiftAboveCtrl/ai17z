@@ -74,7 +74,9 @@ let stopping = false;
  */
 function killTree(pid: number): void {
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    // windowsHide: a taskkill with no window of its own still opens a console
+    // on Windows, and the owner sees an empty window appear and vanish.
+    spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
   } else {
     try {
       process.kill(-pid, 'SIGTERM');
@@ -139,6 +141,10 @@ function runOnce(): Promise<RunOutcome> {
         stdio: ['ignore', 'inherit', 'inherit'],
         // Its own group on POSIX, so the whole tree can be signalled at once.
         detached: process.platform !== 'win32',
+        // The worker's output is inherited by the supervisor, which the launcher
+        // already runs hidden. Without this the worker opens a console of its
+        // own on Windows. Chrome is started separately and stays visible.
+        windowsHide: true,
         env: process.env,
       },
     );
