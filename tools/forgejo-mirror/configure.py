@@ -24,12 +24,14 @@ def main():
     elif args.action == "sync":
         path, method = path + "/mirror-sync", "POST"
     payload = json.dumps(data).encode() if data else None
-    request = Request(root + path, data=payload, method=method, headers={"Authorization": "token " + token, "Content-Type": "application/json"})
+    # Cloudflare in front of the forge answers 403 (error 1010) to a request with no User-Agent.
+    headers = {"Authorization": "token " + token, "Content-Type": "application/json", "User-Agent": "AI17Z-mirror-config"}
+    request = Request(root + path, data=payload, method=method, headers=headers)
     with urlopen(request, timeout=120) as response:
         body = response.read()
         result = json.loads(body) if body else {}
     if args.action == "create":
-        request = Request(root + "/repos/AI17Z/ai17z", data=b'{"has_actions":false}', method="PATCH", headers={"Authorization": "token " + token, "Content-Type": "application/json"})
+        request = Request(root + "/repos/AI17Z/ai17z", data=b'{"has_actions":false}', method="PATCH", headers=headers)
         with urlopen(request, timeout=120):
             pass
     if args.action == "status":

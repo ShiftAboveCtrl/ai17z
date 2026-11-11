@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Copy GitHub releases and every asset to AI17Z Code. Run on the backup server."""
 import argparse
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 import os
@@ -9,6 +10,8 @@ import re
 import subprocess
 import sys
 import tempfile
+from urllib.error import HTTPError
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("release_publish", ROOT / "ci/scripts/release_publish.py")
@@ -72,11 +75,11 @@ def main():
     token = os.environ.get("FORGEJO_TOKEN", "")
     if not token:
         raise ValueError("FORGEJO_TOKEN is required")
-    # Required: GitHub allows sixty anonymous API requests an hour per address,
-    # and one release is dozens of asset downloads.
+    # Optional. The source repository is public, so an empty value reads it
+    # anonymously: one API request for the release list plus one per release
+    # not yet verified, and asset bytes from github.com's release downloads,
+    # which do not spend the API allowance (sixty requests an hour per address).
     read_token = os.environ.get("GITHUB_READ_TOKEN", "")
-    if not read_token:
-        raise ValueError("GITHUB_READ_TOKEN is required")
     source = release_publish.Api("github", read_token)
     state = load_state()
     target = release_publish.Api("aicode", token)
@@ -147,10 +150,45 @@ def main():
             record(state, tag, release)
 
 
-if __name__ == "__main__":
+GITHUB_HOSTS = ("github.com", "githubusercontent.com")
+
+
+def rate_limit_sentence(error):
+    """A sentence for GitHub answering 403/429 because a limit was reached, else None."""
+    host = urlparse(getattr(error, "url", "") or "").hostname or ""
+    if error.code not in (403, 429) or not any(host == name or host.endswith("." + name) for name in GITHUB_HOSTS):
+        return None
+    headers = error.headers
+    if error.code == 403 and headers.get("X-RateLimit-Remaining") != "0" and not headers.get("Retry-After"):
+        return None
+    reset = "unknown"
+    try:
+        if headers.get("X-RateLimit-Reset"):
+            moment = datetime.fromtimestamp(int(headers["X-RateLimit-Reset"]), timezone.utc)
+        elif headers.get("Retry-After"):
+            moment = datetime.now(timezone.utc) + timedelta(seconds=int(headers["Retry-After"]))
+        else:
+            moment = None
+        if moment:
+            reset = moment.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except ValueError:
+        pass
+    return ("GitHub's rate limit is reached, so this run stopped; releases verified before it are kept. "
+            f"The limit resets at {reset}. The next timer run tries again; set GITHUB_READ_TOKEN to lift it.")
+
+
+def run():
     try:
         main()
+    except HTTPError as error:
+        # Response bodies and environment values are deliberately omitted.
+        print(rate_limit_sentence(error) or f"Release sync refused ({type(error).__name__}); inspect local server logs", file=sys.stderr)
+        return 1
     except Exception as error:
-        # Server responses and environment values are deliberately omitted.
         print(f"Release sync refused ({type(error).__name__}); inspect local server logs", file=sys.stderr)
-        sys.exit(1)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run())
