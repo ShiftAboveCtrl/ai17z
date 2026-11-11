@@ -12,6 +12,7 @@ import {
   type UserRow,
 } from '@xbam/database';
 import { getChannelAdapter } from '@xbam/channels';
+import { queueRadarWithdrawals } from '../../../../packages/runtime/src/studioActivityTape';
 import { DEFAULT_X_RADAR } from '@xbam/runtime';
 import { RadarSourceConfig, RadarSourceKind, RADAR_KINDS_NEEDING_TARGET, SignalUniverse } from '@xbam/shared/contracts';
 import { handler, params, parseBody, requireUser } from '../http';
@@ -310,6 +311,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
         enabled: body.enabled,
         config: body.config,
       });
+      await queueRadarWithdrawals();
       await ops.audit({
         actorUserId: user.id,
         action: 'radar.source.saved',
@@ -392,6 +394,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       // While a sync can still recreate it a delete would only look like it worked.
       await refuseLinkedSourceChange(source, 'delete');
       await radarRepo.deleteSource(source.id);
+      await queueRadarWithdrawals();
       return { deleted: true };
     }),
   );

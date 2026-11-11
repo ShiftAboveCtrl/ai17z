@@ -13,6 +13,7 @@ export const ACTIVITY_STALE_MS = 15 * 60_000;
 const STUDIO_ACCEPTS_RECEIPTS = true;
 const SETTING = 'studio.activity_tape';
 const SCRUBS = 'studio.activity_tape.scrubs';
+const RADAR_SENT = 'studio.activity_tape.radar_sent';
 const CURSOR = 'studio.activity_tape.cursor';
 const AssetLabel = z.string().regex(/^[A-Z0-9.]{1,16}$/);
 const Size = z.string().regex(/^\d{1,78}$/);
@@ -116,6 +117,7 @@ export async function setStudioActivityTape(enabled: boolean, by: string): Promi
   if (current.enabled === enabled) return current;
   const setting = { enabled, changedAt: new Date().toISOString() };
   await ops.setSetting(SETTING, setting);
+  if (!enabled) await queueRadarWithdrawals(false);
   await ops.audit({ actorUserId: by, action: enabled ? 'studio.activity_tape.enabled' : 'studio.activity_tape.disabled', entityType: 'settings', entityId: 'studio' });
   return setting;
 }
@@ -180,7 +182,7 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
     UNION ALL
     SELECT DISTINCT 'radar:' || d.id, aa.agent_id, 'RADAR_HIT', date_trunc('milliseconds', d.first_seen_at), NULL::boolean, NULL::text, NULL::text,
       NULL::text, NULL::text, NULL::text,
-      CASE WHEN s.kind = 'tracked_keyword' AND s.target ~ '^[$][A-Z0-9.]{1,16}$' THEN substring(s.target from 2) END,
+      CASE WHEN s.kind = 'tracked_keyword' AND s.target ~ '^[$][A-Z][A-Z0-9.]{0,15}$' THEN substring(s.target from 2) END,
       e.remote_url,
       COALESCE(s.enabled AND s.config->'publishToStudio' = 'true'::jsonb AND e.channel = 'x', false)
     FROM event_discoveries d JOIN events e ON e.id = d.event_id
@@ -196,24 +198,77 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
   return rows.map(projectActivity).filter((event): event is ActivityEvent => event !== null);
 }
 
+/** Delivery metadata survives lost acknowledgements so withdrawal can still remove a row. */
+async function rememberRadar(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  await query(`INSERT INTO app_settings (key, value) VALUES ($1, $2::jsonb)
+    ON CONFLICT (key) DO UPDATE SET value = (
+      SELECT jsonb_agg(DISTINCT id) FROM jsonb_array_elements(app_settings.value || excluded.value) AS ids(id))`,
+  [RADAR_SENT, JSON.stringify(ids)]);
+}
+
+async function sharedRadarIds(ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await query<{ id: string }>(`SELECT 'radar:' || d.id AS id FROM event_discoveries d
+    JOIN events e ON e.id=d.event_id
+    JOIN radar_sources s ON s.id=d.source_id AND s.account_id=e.account_id
+    WHERE 'radar:' || d.id = ANY($1::text[]) AND s.enabled
+      AND s.config->'publishToStudio' = 'true'::jsonb AND e.channel='x'`, [ids]);
+  return new Set(rows.map(row => row.id));
+}
+
+export async function queueRadarWithdrawals(enabled?: boolean): Promise<void> {
+  enabled ??= (await studioActivityTapeSetting()).enabled;
+  if (!(await ops.getSetting<boolean>('studio.activity_tape.radar_seeded'))) {
+    // Older senders kept no delivery ledger. Include stored ids conservatively.
+    const cursor = await ops.getSetting<TapeCursor>(CURSOR);
+    const setting = await studioActivityTapeSetting();
+    const cutoff = enabled ? cursor?.at ?? setting.changedAt : new Date().toISOString();
+    const historical = await query<{ id: string }>(`SELECT 'radar:' || d.id AS id
+      FROM event_discoveries d JOIN events e ON e.id=d.event_id
+      WHERE date_trunc('milliseconds', d.first_seen_at) <= $1::timestamptz AND e.channel='x'
+        AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
+        AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'`, [cutoff]);
+    await rememberRadar(historical.map(row => row.id));
+    await ops.setSetting('studio.activity_tape.radar_seeded', true);
+  }
+  const sent = (await ops.getSetting<string[]>(RADAR_SENT)) ?? [];
+  const shared = enabled ? await sharedRadarIds(sent) : new Set<string>();
+  const withdrawn = sent.filter(id => !shared.has(id));
+  if (!withdrawn.length) return;
+  // Automatic removals may exceed the manual queue limit. Delivery drains 200 per sweep.
+  await query(`INSERT INTO app_settings (key, value) VALUES ($1, $2::jsonb)
+    ON CONFLICT (key) DO UPDATE SET value = (
+      SELECT jsonb_agg(DISTINCT id) FROM jsonb_array_elements(app_settings.value || excluded.value) AS ids(id))`,
+  [SCRUBS, JSON.stringify(withdrawn)]);
+}
+
 /** Existing worker sweep calls this. A persisted claim bounds concurrent workers and failures. */
 export async function sweepStudioActivityTape(): Promise<{ sent: number; skipped?: string }> {
   const setting = await studioActivityTapeSetting();
-  if (!setting.enabled || !setting.changedAt) return { sent: 0, skipped: 'off' };
+  await queueRadarWithdrawals(setting.enabled);
+  if (!setting.enabled && !((await ops.getSetting<string[]>(SCRUBS))?.length)) return { sent: 0, skipped: 'off' };
   const claimed = await query(`INSERT INTO app_settings (key, value) VALUES ('studio.activity_tape.attempt', to_jsonb(now()))
     ON CONFLICT (key) DO UPDATE SET value = excluded.value
     WHERE (app_settings.value #>> '{}')::timestamptz <= now() - interval '1 minute' RETURNING key`);
   if (claimed.length === 0) return { sent: 0, skipped: 'rate' };
-  const events = await activityTapeProjection(new Date(Math.max(Date.now() - ACTIVITY_STALE_MS, Date.parse(setting.changedAt))), await ops.getSetting<TapeCursor>(CURSOR));
-  const remove = (await ops.getSetting<string[]>(SCRUBS)) ?? [];
+  const events = setting.enabled && setting.changedAt ? await activityTapeProjection(new Date(Math.max(Date.now() - ACTIVITY_STALE_MS, Date.parse(setting.changedAt))), await ops.getSetting<TapeCursor>(CURSOR)) : [];
+  const remove = ((await ops.getSetting<string[]>(SCRUBS)) ?? []).slice(0, 200);
   if (!events.length && !remove.length) return { sent: 0, skipped: 'empty' };
   const current = await studioActivityTapeSetting();
-  if (!current.enabled || current.changedAt !== setting.changedAt) return { sent: 0, skipped: 'off' };
+  if (current.enabled !== setting.enabled || current.changedAt !== setting.changedAt) return { sent: 0, skipped: 'off' };
   const allowed = await query<{ agent_id: string }>(`SELECT agent_id FROM agent_capability_permissions WHERE capability_id = $1 AND permission = 'ALLOWED'`, [ACTIVITY_CAPABILITY]);
   // Text consent is the owner's and can be withdrawn after a row was projected, so it is read
   // again here, immediately before sending, and words it no longer covers are dropped.
   const consent = await studioActivityTextSetting();
-  const batch = ActivityTapeBatch.parse({ protocol: 1, events: withoutUnconsentedText(events, consent).filter((event) => allowed.some((p) => p.agent_id === event.agent_id)), remove });
+  const permitted = withoutUnconsentedText(events, consent).filter(event => allowed.some(p => p.agent_id === event.agent_id));
+  await rememberRadar(permitted.filter(event => event.radar).map(event => event.id));
+  const shared = await sharedRadarIds(permitted.filter(event => event.radar).map(event => event.id));
+  const batch = ActivityTapeBatch.parse({ protocol: 1, events: permitted.map(event => {
+    if (!event.radar || shared.has(event.id)) return event;
+    const { radar: _radar, ...bare } = event;
+    return bare;
+  }), remove });
   const result = await studioActivityBatch(batch);
   if (!result.ok) return { sent: 0, skipped: result.why };
   // Studio's permanent tombstones protect replays after the pending queue is cleared.
@@ -221,6 +276,9 @@ export async function sweepStudioActivityTape(): Promise<{ sent: number; skipped
   if (batch.remove.length) await query(`UPDATE app_settings SET value = COALESCE(
     (SELECT jsonb_agg(id) FROM jsonb_array_elements_text(value) AS pending(id)
       WHERE NOT (id = ANY($2::text[]))), '[]'::jsonb) WHERE key = $1`, [SCRUBS, batch.remove]);
+  if (batch.remove.length) await query(`UPDATE app_settings SET value = COALESCE(
+    (SELECT jsonb_agg(id) FROM jsonb_array_elements_text(value) AS sent(id)
+      WHERE NOT (id = ANY($2::text[]))), '[]'::jsonb) WHERE key = $1`, [RADAR_SENT, batch.remove]);
   const last = events.at(-1);
   if (last) await ops.setSetting(CURSOR, { at: last.at, id: last.id, agentId: last.agent_id });
   return { sent: batch.events.length };

@@ -50,6 +50,113 @@ async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, chann
 }
 
 describe('activity tape against Postgres and a DPoP Studio contract server', () => {
+  async function radar(target = '$SOL') {
+    const [account] = await query<{ id: string }>("INSERT INTO accounts(owner_id,channel,handle) VALUES ($1,'x','PRIVATE') RETURNING id", [fixture.ownerId]);
+    await query('INSERT INTO agent_accounts(agent_id,account_id) VALUES ($1,$2)', [fixture.agentId, account!.id]);
+    const [source] = await query<{ id: string }>(`INSERT INTO radar_sources(account_id,kind,target,config) VALUES ($1,'tracked_keyword',$2,'{"publishToStudio":true}') RETURNING id`, [account!.id, target]);
+    const [event] = await query<{ id: string }>(`INSERT INTO events(channel,account_id,type,remote_event_id,remote_url,payload) VALUES ('x',$1,'KEYWORD_MATCH',$2,'https://x.com/example/status/123','{}') RETURNING id`, [account!.id, randomUUID()]);
+    const [discovery] = await query<{ id: string }>("INSERT INTO event_discoveries(event_id,source_id,source_kind) VALUES ($1,$2,'tracked_keyword') RETURNING id", [event!.id, source!.id]);
+    return { accountId: account!.id, sourceId: source!.id, id: `radar:${discovery!.id}` };
+  }
+
+  it('rechecks source consent after projection before sending', async () => {
+    await ready();
+    const hit = await radar();
+    const get = ops.getSetting.bind(ops);
+    let reads = 0;
+    const spy = vi.spyOn(ops, 'getSetting').mockImplementation(async (key) => {
+      if (key === 'studio.activity_tape.scrubs' && ++reads === 2) {
+        await query('UPDATE radar_sources SET enabled=false WHERE id=$1', [hit.sourceId]);
+      }
+      return get(key);
+    });
+    try {
+      await sweepStudioActivityTape();
+      expect([...studio.visible.values()].every(event => !event.radar)).toBe(true);
+    } finally { spy.mockRestore(); }
+  });
+
+  it.each(['installation', 'source', 'consent'] as const)('automatically removes published radar after withdrawing %s', async (scope) => {
+    await ready();
+    const hit = await radar();
+    await sweepStudioActivityTape();
+    expect([...studio.visible.values()].map(event => event.id)).toContain(hit.id);
+    if (scope === 'installation') {
+      await setStudioActivityTape(false, fixture.ownerId);
+      expect(await ops.getSetting('studio.activity_tape.scrubs')).toContain(hit.id);
+    }
+    else if (scope === 'source') await query('UPDATE radar_sources SET enabled=false WHERE id=$1', [hit.sourceId]);
+    else await query(`UPDATE radar_sources SET config='{}' WHERE id=$1`, [hit.sourceId]);
+    await due();
+    studio.setUnavailable(true);
+    await sweepStudioActivityTape();
+    studio.setUnavailable(false);
+    await due();
+    await sweepStudioActivityTape();
+    expect([...studio.visible.values()].map(event => event.id)).not.toContain(hit.id);
+    expect(studio.batches.at(-1)!.remove).toContain(hit.id);
+  });
+
+  it.each(['disable', 'private', 'delete'] as const)('queues withdrawal in the owner source %s API before another sweep', async (mode) => {
+    await ready();
+    const hit = await radar();
+    await sweepStudioActivityTape();
+    const app = await buildServer();
+    try {
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: fixture.ownerEmail, password: 'test-password-1234' } });
+      const headers = { authorization: `Bearer ${login.json().data.token}` };
+      const base = `/api/accounts/${hit.accountId}/radar`;
+      const response = mode === 'delete'
+        ? await app.inject({ method: 'DELETE', url: `${base}/${hit.sourceId}`, headers })
+        : await app.inject({ method: 'POST', url: base, headers, payload: {
+          kind: 'tracked_keyword', target: '$SOL', enabled: mode !== 'disable',
+          config: { publishToStudio: mode !== 'private' },
+        } });
+      expect(response.statusCode).toBe(200);
+      expect(await ops.getSetting('studio.activity_tape.scrubs')).toContain(hit.id);
+      await due();
+      await sweepStudioActivityTape();
+      expect([...studio.visible.values()].map(event => event.id)).not.toContain(hit.id);
+    } finally { await app.close(); }
+  });
+
+  it('removes historical radar delivery ids after upgrading from a sender without a ledger', async () => {
+    await ready();
+    const hit = await radar();
+    await sweepStudioActivityTape();
+    await query("DELETE FROM app_settings WHERE key IN ('studio.activity_tape.radar_sent', 'studio.activity_tape.radar_seeded')");
+    await setStudioActivityTape(false, fixture.ownerId);
+    await due();
+    await sweepStudioActivityTape();
+    expect([...studio.visible.values()].map(event => event.id)).not.toContain(hit.id);
+  });
+
+  it('retries a strict older receiver without radar detail and advances other events', async () => {
+    await ready();
+    await radar();
+    const post = await action('POST');
+    let rejected = 0;
+    setStudioTransportForTests(async (url, init) => {
+      if (url.endsWith('/activity-tape') && JSON.parse(String(init?.body)).events.some((event: { radar?: unknown }) => event.radar)) {
+        rejected++;
+        return { status: 400, text: '{}' };
+      }
+      const response = await fetch(url, init);
+      return { status: response.status, text: await response.text() };
+    });
+    expect((await sweepStudioActivityTape()).sent).toBe(2);
+    expect(rejected).toBe(1);
+    expect([...studio.visible.values()].some(event => event.id === post)).toBe(true);
+    expect([...studio.visible.values()].every(event => !event.radar)).toBe(true);
+    expect(await ops.getSetting('studio.activity_tape.cursor')).not.toBeNull();
+  });
+
+  it('never publishes a numeric dollar amount as an asset', async () => {
+    await ready();
+    await radar('$100');
+    expect((await activityTapeProjection(new Date(Date.now() - 60_000)))[0]!.radar).toBeUndefined();
+  });
+
   it('reads exact opted-in ticker pins and stored sources without another X read', async () => {
     await ready();
     const [account] = await query<{ id: string }>("INSERT INTO accounts(owner_id,channel,handle) VALUES ($1,'x','PRIVATE') RETURNING id", [fixture.ownerId]);
@@ -106,13 +213,14 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
     expect((await ops.getSetting('studio.activity_tape.scrubs')) ?? []).toEqual([]);
   });
 
-  it('keeps scrubs queued and sends nothing while the switch is off', async () => {
+  it('delivers removals without publishing events while the switch is off', async () => {
     await grant();
     const id = await action();
     await scrubStudioActivity(id, fixture.ownerId);
-    expect(await sweepStudioActivityTape()).toEqual({ sent: 0, skipped: 'off' });
-    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([id]);
-    expect(studio.requests).toBe(0);
+    expect((await sweepStudioActivityTape()).sent).toBe(0);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([]);
+    expect(studio.batches[0]!.events).toEqual([]);
+    expect(studio.batches[0]!.remove).toEqual([id]);
   });
 
   it.each([null, 'DISABLED', 'OWNER_APPROVAL'] as const)('starts a fresh grant from %s after earlier rows without backdating', async (permission) => {
