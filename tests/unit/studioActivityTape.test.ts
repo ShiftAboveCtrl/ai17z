@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ActivityTapeBatch, projectActivity, registerActivityTapeCapability } from '../../packages/runtime/src/studioActivityTape';
+import { ActivityTapeBatch, projectActivity, registerActivityTapeCapability, withoutUnconsentedText } from '../../packages/runtime/src/studioActivityTape';
 import { invokeCapability, getCapability } from '@xbam/tools';
 import { createLogger } from '@xbam/shared';
 
@@ -121,6 +121,20 @@ describe('verifiable posts: the link to the real post, and words only by consent
   it('keeps every other private source field out', () => {
     const event = projectActivity({ ...base, post_text: 'public words', payload: { text: 'PRIVATE' }, target_ref: '@private-person', reasoning: 'PRIVATE' });
     expect(JSON.stringify(event)).not.toMatch(/PRIVATE|private-person|payload|reasoning/);
+  });
+
+  it('drops words the owner no longer consents to at send time, and keeps the link', () => {
+    const event = projectActivity({ ...base, post_text: 'words' })!;
+    const at = (iso: string) => ({ enabled: true, changedAt: iso });
+    expect(withoutUnconsentedText([event], at('2026-11-09T09:00:00.000Z'))[0]!.post_text).toBe('words');
+    expect(withoutUnconsentedText([event], at('2026-11-09T10:00:00.000Z'))[0]!.post_text).toBe('words');
+    for (const consent of [{ enabled: false, changedAt: '2026-11-09T09:00:00.000Z' }, { enabled: false, changedAt: null },
+      { enabled: true, changedAt: null }, at('2026-11-09T10:00:00.001Z')]) {
+      const [out] = withoutUnconsentedText([event], consent);
+      expect(out).not.toHaveProperty('post_text');
+      expect(out).toMatchObject({ post_url: base.post_url, id: base.id });
+    }
+    expect(event.post_text).toBe('words');
   });
 
   it('is strict about the new fields on the outbound contract', () => {

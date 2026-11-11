@@ -173,6 +173,7 @@ export async function performCapabilityAction(
         remoteActionId: already.remoteActionId,
         remoteActionUrl: already.remoteActionUrl,
         contentSignature: signatureFor(request),
+        confirmsEarlierSend: true,
       });
       log.warn('a capability action was already done on the remote', {
         capabilityId: request.capabilityId,

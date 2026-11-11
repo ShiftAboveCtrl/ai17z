@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { capabilityPermissions, ops, query } from '@xbam/database';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { actions as actionsRepo, capabilityPermissions, ops, query } from '@xbam/database';
 import { invokeCapability } from '@xbam/tools';
 import { createLogger, sealSecret } from '@xbam/shared';
 import { ACTIVITY_CAPABILITY, activityTapeProjection, scrubStudioActivity, setStudioActivityText, setStudioActivityTape, studioActivityTextSetting, studioActivityTapeSetting, sweepStudioActivityTape, registerActivityTapeCapability } from '../../packages/runtime/src/studioActivityTape';
@@ -470,6 +470,70 @@ describe('verifiable posts against Postgres and the contract server', () => {
     await action('POST', 'DRY_RUN', 0, 'x', false, fixture.agentId, { ...link('1000000005'), text: 'never published' });
     await sweepStudioActivityTape();
     expect(JSON.stringify(studio.batches)).not.toContain('never published');
+  });
+
+  it('strips words at send time when text consent is withdrawn after projection, and still sends the link', async () => {
+    await ready(); await setStudioActivityText(true, fixture.ownerId);
+    const id = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000010'), text: 'withdrawn words' });
+    const real = ops.getSetting;
+    let reads = 0;
+    // The owner switches sharing off in the gap between the projection reading the setting and the send.
+    const spy = vi.spyOn(ops, 'getSetting').mockImplementation(async (key: string) => {
+      const value = await real(key);
+      if (key === 'studio.activity_tape.text' && ++reads === 1) await setStudioActivityText(false, fixture.ownerId);
+      return value;
+    });
+    try { expect((await sweepStudioActivityTape()).sent).toBe(1); } finally { spy.mockRestore(); }
+    expect(reads).toBeGreaterThanOrEqual(1);
+    const event = sent().find((e) => e.id === id);
+    expect(event).toMatchObject({ post_url: 'https://x.com/agentone/status/1000000010' });
+    expect(event).not.toHaveProperty('post_text');
+    expect(JSON.stringify(studio.batches)).not.toContain('withdrawn words');
+  });
+
+  it('keeps the original publish time when a recovery only confirms an earlier send', async () => {
+    await ready();
+    const id = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { text: 'sent before opt in' });
+    const actionId = id.slice(7);
+    await query(`UPDATE actions SET status = 'EXECUTING', executed_at = NULL, remote_action_id = NULL, remote_action_url = NULL,
+      created_at = now() - interval '1 hour' WHERE id = $1`, [actionId]);
+    await setStudioActivityText(true, fixture.ownerId);
+    const done = await actionsRepo.completeAction(actionId, { status: 'EXECUTED', ...link('1000000011'), confirmsEarlierSend: true });
+    const [row] = await query<{ executed_at: Date; created_at: Date }>('SELECT executed_at, created_at FROM actions WHERE id = $1', [actionId]);
+    expect(done.status).toBe('EXECUTED');
+    expect(row!.executed_at.getTime()).toBe(row!.created_at.getTime());
+    expect((await sweepStudioActivityTape()).sent).toBe(0);
+    expect(JSON.stringify(studio.batches)).not.toContain('sent before opt in');
+    expect(await activityTapeProjection(new Date(Date.now() - 3 * 3_600_000))).toEqual([]);
+  });
+
+  it('stamps the time of a send that really happened now, so only a confirmation keeps the earlier time', async () => {
+    await ready();
+    const id = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, {});
+    const actionId = id.slice(7);
+    await query(`UPDATE actions SET status = 'EXECUTING', executed_at = NULL, created_at = now() - interval '1 hour' WHERE id = $1`, [actionId]);
+    await actionsRepo.completeAction(actionId, { status: 'EXECUTED', ...link('1000000012') });
+    const [row] = await query<{ ago: number }>("SELECT extract(epoch FROM now() - executed_at)::float AS ago FROM actions WHERE id = $1", [actionId]);
+    expect(row!.ago).toBeLessThan(60);
+  });
+
+  it('gives no link or words to an action that is not on an X account, even with an X-shaped link', async () => {
+    await ready(); await setStudioActivityText(true, fixture.ownerId);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const foreign = await action('POST', 'EXECUTED', 0, 'telegram', false, fixture.agentId, { ...link('1000000013'), text: 'telegram words' });
+    const mixed = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000014'), text: 'mismatched account words' });
+    // An action that says x but is tied to an account on another service.
+    const [acct] = await query<{ id: string }>(
+      "INSERT INTO accounts (owner_id, channel, handle) VALUES ($1,'telegram','tg') RETURNING id", [fixture.ownerId]);
+    await query('UPDATE actions SET account_id = $2 WHERE id = $1', [mixed.slice(7), acct!.id]);
+    await sweepStudioActivityTape();
+    const byId = new Map(sent().map((e) => [e.id, e]));
+    for (const id of [foreign, mixed]) {
+      expect(byId.get(id), id).toBeDefined();
+      expect(byId.get(id), id).not.toHaveProperty('post_url');
+      expect(byId.get(id), id).not.toHaveProperty('post_text');
+    }
+    expect(JSON.stringify(studio.batches)).not.toMatch(/1000000013|1000000014|telegram words|mismatched account words/);
   });
 
   it('lets only the signed-in owner change the text switch, with nothing else in the body', async () => {

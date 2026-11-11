@@ -485,6 +485,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
         remoteActionId: already.remoteActionId,
         remoteActionUrl: already.remoteActionUrl,
         contentSignature: signatureRef ? contentSignature(signatureRef, attemptedText) : null,
+        confirmsEarlierSend: true,
       });
       await jobsRepo.updateJob(job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
       if (job.actionType === 'POST') await postConfirmed(job.id).catch(() => undefined);
@@ -554,6 +555,7 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
         remoteActionId: already.remoteActionId,
         remoteActionUrl: already.remoteActionUrl,
         contentSignature: signature,
+        confirmsEarlierSend: true,
       });
       await jobsRepo.updateJob(job.id, { status: 'EXECUTED', touch: ['executedAt'], releaseLock: true });
       await observability.emitTrace({

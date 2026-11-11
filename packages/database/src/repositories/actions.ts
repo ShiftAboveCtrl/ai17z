@@ -124,6 +124,15 @@ export async function completeAction(
     contentSignature?: string | null;
     errorClass?: ErrorClass | null;
     lastError?: string | null;
+    /**
+     * Set when this call only confirms a send an earlier attempt made. The post
+     * went out no later than the moment this row was created for it, so that is
+     * the time kept, and the moment of the confirmation is never written: a
+     * post made before an owner opted in to sharing its words would otherwise
+     * look as if it was made after. Earlier is the safe error for every reader
+     * of `executed_at`, which all ask "not before".
+     */
+    confirmsEarlierSend?: boolean;
   },
 ): Promise<ActionRecord> {
   const row = await queryOne(
@@ -135,7 +144,9 @@ export async function completeAction(
             content_signature = coalesce($6, content_signature),
             error_class = $7,
             last_error = $8,
-            executed_at = CASE WHEN $2 IN ('EXECUTED','DRY_RUN') THEN now() ELSE executed_at END
+            executed_at = CASE WHEN $2 IN ('EXECUTED','DRY_RUN')
+              THEN CASE WHEN $9::boolean THEN coalesce(executed_at, created_at) ELSE now() END
+              ELSE executed_at END
       WHERE id = $1
       RETURNING ${COLUMNS}`,
     [
@@ -147,6 +158,7 @@ export async function completeAction(
       input.contentSignature ?? null,
       input.errorClass ?? null,
       input.lastError ?? null,
+      input.confirmsEarlierSend === true,
     ],
   );
   if (!row) throw new NotFoundError('Action');

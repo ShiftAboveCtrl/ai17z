@@ -88,6 +88,22 @@ export async function setStudioActivityText(enabled: boolean, by: string): Promi
   return setting;
 }
 
+/**
+ * Keeps an event's words only while the owner's consent still covers them: sharing is on
+ * now, and the post was made at or after the moment it was last switched on.
+ * The link is untouched; only the words go.
+ */
+export function withoutUnconsentedText(events: ActivityEvent[], consent: ActivityTapeSetting): ActivityEvent[] {
+  const floor = consent.enabled && consent.changedAt !== null ? Date.parse(consent.changedAt) : null;
+  return events.map((event) => {
+    if (event.post_text === undefined) return event;
+    if (floor !== null && Date.parse(event.at) >= floor) return event;
+    const copy = { ...event };
+    delete copy.post_text;
+    return copy;
+  });
+}
+
 export interface ActivityTapeSetting { enabled: boolean; changedAt: string | null }
 export async function studioActivityTapeSetting(): Promise<ActivityTapeSetting> {
   return (await ops.getSetting<ActivityTapeSetting>(SETTING)) ?? { enabled: false, changedAt: null };
@@ -127,12 +143,18 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
       a.dry_run, NULL::text AS size, NULL::text AS asset,
       -- A link exists only for a real, verified post: published, not a dry run, with the
       -- remote id the adapter read back. Receipts keep their own wording and never carry one.
+      -- X is named, not assumed: the action's channel must be x and an account it is tied to
+      -- must be an x account, so no other service can borrow a status-shaped link.
       CASE WHEN a.status = 'EXECUTED' AND NOT a.dry_run AND a.remote_action_id IS NOT NULL
+        AND a.channel = 'x' AND NOT EXISTS (SELECT 1 FROM accounts ac WHERE ac.id = a.account_id AND ac.channel <> 'x')
         AND COALESCE(e.payload->>'ideaSource', '') <> 'radar_receipt' THEN a.remote_action_url END AS post_url,
-      CASE WHEN a.status = 'EXECUTED' AND NOT a.dry_run THEN a.remote_action_id END AS post_remote_id,
+      CASE WHEN a.status = 'EXECUTED' AND NOT a.dry_run
+        AND a.channel = 'x' AND NOT EXISTS (SELECT 1 FROM accounts ac WHERE ac.id = a.account_id AND ac.channel <> 'x')
+        THEN a.remote_action_id END AS post_remote_id,
       -- Words are read from the stored action, and only for an owner who opted in and only
       -- for posts made after they did. Without consent the column is never selected.
       CASE WHEN $9::boolean AND a.status = 'EXECUTED' AND NOT a.dry_run AND a.executed_at >= $10::timestamptz
+        AND a.channel = 'x' AND NOT EXISTS (SELECT 1 FROM accounts ac WHERE ac.id = a.account_id AND ac.channel <> 'x')
         THEN a.payload->>'text' END AS post_text
     FROM actions a JOIN permitted p ON p.agent_id = a.agent_id
       LEFT JOIN jobs j ON j.id = a.job_id LEFT JOIN events e ON e.id = j.event_id
@@ -180,7 +202,10 @@ export async function sweepStudioActivityTape(): Promise<{ sent: number; skipped
   const current = await studioActivityTapeSetting();
   if (!current.enabled || current.changedAt !== setting.changedAt) return { sent: 0, skipped: 'off' };
   const allowed = await query<{ agent_id: string }>(`SELECT agent_id FROM agent_capability_permissions WHERE capability_id = $1 AND permission = 'ALLOWED'`, [ACTIVITY_CAPABILITY]);
-  const batch = ActivityTapeBatch.parse({ protocol: 1, events: events.filter((event) => allowed.some((p) => p.agent_id === event.agent_id)), remove });
+  // Text consent is the owner's and can be withdrawn after a row was projected, so it is read
+  // again here, immediately before sending, and words it no longer covers are dropped.
+  const consent = await studioActivityTextSetting();
+  const batch = ActivityTapeBatch.parse({ protocol: 1, events: withoutUnconsentedText(events, consent).filter((event) => allowed.some((p) => p.agent_id === event.agent_id)), remove });
   const result = await studioActivityBatch(batch);
   if (!result.ok) return { sent: 0, skipped: result.why };
   // Studio's permanent tombstones protect replays after the pending queue is cleared.
