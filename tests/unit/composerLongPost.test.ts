@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fillComposer, typingBudgetMs } from '@xbam/channels';
+import { fillComposer, typeIntoEditor, typingBudgetMs } from '@xbam/channels';
 
 /**
  * A long post must reach the composer whole, or must not be submitted at all.
@@ -127,5 +127,35 @@ describe('typing budget', () => {
     expect(typingBudgetMs(100)).toBeLessThan(typingBudgetMs(1000));
     // Two attempts must fit inside the 180 s tab hold.
     expect(typingBudgetMs(100_000) * 2).toBeLessThan(180_000);
+  });
+});
+
+describe('typing in chunks', () => {
+  function recordingEditor(throwOnCall?: number) {
+    const sent: string[] = [];
+    return {
+      sent,
+      async type(chunk: string) {
+        if (sent.length + 1 === throwOnCall) throw new Error('element was detached');
+        sent.push(chunk);
+      },
+    };
+  }
+
+  it('never splits an emoji across two chunks', async () => {
+    // A surrogate pair sits exactly on the 100 unit boundary.
+    const text = 'a'.repeat(99) + '\u{1F680}' + 'b'.repeat(150);
+    const editor = recordingEditor();
+    await expect(typeIntoEditor(editor as never, text, 60_000)).resolves.toBe(true);
+    expect(editor.sent.join('')).toBe(text);
+    for (const chunk of editor.sent) {
+      expect(chunk).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    }
+  });
+
+  it('stops sending after a chunk throws and leaves the decision to the read-back', async () => {
+    const editor = recordingEditor(2);
+    await expect(typeIntoEditor(editor as never, 'x'.repeat(350), 60_000)).resolves.toBe(true);
+    expect(editor.sent).toHaveLength(1);
   });
 });

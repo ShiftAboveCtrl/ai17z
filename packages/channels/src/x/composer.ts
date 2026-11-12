@@ -387,7 +387,8 @@ const TYPING_CHUNK_TIMEOUT_MS = 15_000;
 
 /**
  * How long one attempt may spend typing. Two attempts have to fit inside the
- * tab's 180 s hold (`TAB_HOLD_MS`) with room for opening and submitting.
+ * tab's 180 s hold (`TAB_HOLD_MS`). The typing fits; opening, submitting and
+ * the read-back after posting are bounded separately.
  */
 const TYPING_BUDGET_CAP_MS = 70_000;
 
@@ -403,9 +404,13 @@ export function typingBudgetMs(chars: number): number {
  */
 export async function typeIntoEditor(editor: Locator, text: string, budgetMs: number): Promise<boolean> {
   const deadline = Date.now() + budgetMs;
-  for (let at = 0; at < text.length; at += TYPING_CHUNK_CHARS) {
+  // Chunk on code points, never UTF-16 units: an emoji split across two chunks
+  // is typed as two lone surrogates, and the read-back fingerprint compares
+  // only letters and digits, so it would not notice the mangled glyph.
+  const points = Array.from(text);
+  for (let at = 0; at < points.length; at += TYPING_CHUNK_CHARS) {
     if (Date.now() >= deadline) return false;
-    const chunk = text.slice(at, at + TYPING_CHUNK_CHARS);
+    const chunk = points.slice(at, at + TYPING_CHUNK_CHARS).join('');
     try {
       await editor.type(chunk, { delay: TYPING_DELAY_MS, timeout: TYPING_CHUNK_TIMEOUT_MS });
     } catch {
