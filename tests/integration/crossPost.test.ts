@@ -152,6 +152,19 @@ describe('one voice across X and Farcaster', () => {
     expect(await accountPostingStatus(cast.id)).toMatchObject({ enabled: true, available: false, reason: expect.stringMatching(/signer/i) });
   });
 
+  it('moves a skip to queued when a later fan-out finds the account available, and never the other way', async () => {
+    const { f, primary, cast } = await world();
+    await idea(f.agentId);
+    const ideaId = (await query<{ id: string }>('SELECT id FROM content_ideas WHERE agent_id = $1', [f.agentId]))[0]!.id;
+    const base = { agentId: f.agentId, ideaId, originAccountId: primary.id, targetAccountId: cast.id, channel: 'farcaster', dryRun: false, jobId: null };
+    expect(await crossPosts.recordCrossPost(null, { ...base, status: 'SKIPPED', reason: 'No signer.' })).toEqual({ created: true });
+    expect(await crossPosts.recordCrossPost(null, { ...base, status: 'QUEUED', reason: '' })).toEqual({ created: true });
+    expect(await crossPosts.recordCrossPost(null, { ...base, status: 'SKIPPED', reason: 'No signer.' })).toEqual({ created: false });
+    expect(await crossPosts.recordCrossPost(null, { ...base, status: 'QUEUED', reason: '' })).toEqual({ created: false });
+    const rows = await query<{ status: string }>('SELECT status FROM cross_posts');
+    expect(rows).toEqual([{ status: 'QUEUED' }]);
+  });
+
   it('reports an available account as ready', async () => {
     const { cast } = await world();
     expect(await accountPostingStatus(cast.id)).toEqual({ enabled: true, available: true, reason: null });

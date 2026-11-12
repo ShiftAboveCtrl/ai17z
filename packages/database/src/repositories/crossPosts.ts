@@ -44,7 +44,10 @@ export interface CrossPostRow {
  *
  * The unique key makes a second fan-out of the same idea (a restart, the
  * "a job for this idea already exists" path) a no-op that returns the first
- * record unchanged, rather than a second post.
+ * record unchanged, rather than a second post. The one exception is a skip
+ * followed by a queue: an account that was unavailable at the first fan-out
+ * and is available at a later one does get its cast job, so the record moves
+ * to QUEUED with that job, or it would report a skip for a cast that went out.
  */
 export async function recordCrossPost(tx: Tx | null, input: {
   agentId: string;
@@ -59,7 +62,10 @@ export async function recordCrossPost(tx: Tx | null, input: {
 }): Promise<{ created: boolean }> {
   const sql = `INSERT INTO cross_posts (agent_id, idea_id, origin_account_id, target_account_id, channel, dry_run, job_id, status, reason)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-     ON CONFLICT (idea_id, target_account_id, dry_run) DO NOTHING RETURNING id`;
+     ON CONFLICT (idea_id, target_account_id, dry_run) DO UPDATE
+       SET status = EXCLUDED.status, job_id = EXCLUDED.job_id, reason = EXCLUDED.reason
+       WHERE cross_posts.status = 'SKIPPED' AND EXCLUDED.status = 'QUEUED'
+     RETURNING id`;
   const params = [input.agentId, input.ideaId, input.originAccountId, input.targetAccountId, input.channel,
     input.dryRun, input.jobId, input.status, input.reason.slice(0, 500)];
   const row = tx ? await tx.one(sql, params) : await queryOne(sql, params);
