@@ -23,8 +23,9 @@ fourth post, and a spent kind is never rewritten.
 
 `policy.studio.postLeagueSeason`, off by default, Advanced only, and separate
 from `postPaperRecord` and `postPaperPnl`. Turning those on does not turn this
-on. It is read again at send, so an owner who switches it off while a post waits
-stops that post.
+on. It is checked again at send against the policy version the job was created
+under, like the paper record and trader DNA posts; switching it off stops every
+post proposed after that, and a post already queued is stopped by PAUSE ALL.
 
 ## Nothing here publishes
 
