@@ -503,15 +503,65 @@ class NpmProof:
                 f.write(body)
         return body
 
+    MAX_LINK_HOPS = 8
+
+    def follow_link(self, key, rel):
+        """(lockfile key, path inside it) for a file below a lockfile link, or ProofUnavailable.
+
+        A link entry ("link": true, "resolved": "<local directory>") stands for
+        a directory in the repository. The stager replaces such a link with a
+        real copy (tools/materializeLinks.mts), and what that copy holds under
+        its own node_modules is a dependency of the linked package, found the
+        way Node finds it from the linked directory: its own node_modules, then
+        each enclosing one up to the root. That dependency is a lockfile
+        package in its own right, so the file is proven against its registry
+        tarball, byte for byte, exactly as if it had never been behind a link.
+
+        Nothing else is excused. A file that belongs to the linked package
+        itself is ours; a link to a directory the lockfile does not know, a path
+        that leaves the repository, a dependency the lockfile does not carry
+        and a link that loops are all refused here, and the finding stands.
+        """
+        entry = self.packages[key]
+        name = entry.get("name") or key.rsplit("node_modules/", 1)[-1]
+        target = entry.get("resolved")
+        parts = target.split("/") if isinstance(target, str) else []
+        if not parts or any(p in ("", ".", "..") for p in parts) or "\\" in (target or "") or ":" in (target or ""):
+            raise ProofUnavailable(f"{name} is a link that does not name a directory inside the repository")
+        if target not in self.packages or self.packages[target].get("link"):
+            raise ProofUnavailable(f"{name} is a link to {target}, which package-lock.json does not describe")
+        rest = [s for s in rel.split("/") if s]
+        if len(rest) < 2 or rest[0] != "node_modules":
+            raise ProofUnavailable(f"{name} is a link to {target}, and this file belongs to that local package, not to a registry one")
+        below = rest[1:]
+        width = 2 if below[0].startswith("@") else 1
+        # Node's search order from the linked directory: its own node_modules,
+        # then those of every directory above it, up to the repository root.
+        homes = ["/".join(parts[:n]) for n in range(len(parts), -1, -1)]
+        for home in homes:
+            prefix = f"{home}/node_modules" if home else "node_modules"
+            for k in range(len(below) - 1, width - 1, -1):
+                candidate = f"{prefix}/{'/'.join(below[:k])}"
+                if candidate in self.packages:
+                    return candidate, "/".join(below[k:])
+        raise ProofUnavailable(f"{name} is a link to {target}, and package-lock.json has no package for this file below it")
+
     def prove(self, segs, digest, data):
         found = self.locate(segs)
         if not found:
             return None
         key, rel = found
         entry = self.packages[key]
+        hops = 0
+        while entry.get("link"):
+            hops += 1
+            if hops > self.MAX_LINK_HOPS:
+                raise ProofUnavailable("its links lead round in a circle")
+            key, rel = self.follow_link(key, rel)
+            entry = self.packages[key]
         name = entry.get("name") or key.rsplit("node_modules/", 1)[-1]
         version = entry.get("version") or "?"
-        if entry.get("link") or not entry.get("resolved") or not entry.get("integrity"):
+        if not entry.get("resolved") or not entry.get("integrity"):
             raise ProofUnavailable(f"{name} is not a registry package with a recorded integrity")
         if key not in self.digests:
             try:
