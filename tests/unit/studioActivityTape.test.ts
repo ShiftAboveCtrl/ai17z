@@ -1,7 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { ActivityTapeBatch, projectActivity, registerActivityTapeCapability } from '../../packages/runtime/src/studioActivityTape';
+import { ActivityTapeBatch, projectActivity, registerActivityTapeCapability, withoutUnconsentedText } from '../../packages/runtime/src/studioActivityTape';
 import { invokeCapability, getCapability } from '@xbam/tools';
 import { createLogger } from '@xbam/shared';
+
+const radarRow = { id: 'radar:00000000-0000-4000-8000-000000000001', agent_id: '00000000-0000-4000-8000-000000000002', kind: 'RADAR_HIT', at: '2026-11-11T12:00:00.000Z', radar_asset: 'SOL', source_post_url: 'https://x.com/example/status/123', source_public: true };
+it('projects only explicitly shared validated radar details', () => {
+  expect(projectActivity(radarRow)).toEqual({ id: radarRow.id, agent_id: radarRow.agent_id, kind: radarRow.kind, at: radarRow.at, dry_run: null, target_handle: null, paper: null, radar: { asset: 'SOL', source_post_url: radarRow.source_post_url } });
+});
+it.each([{ source_public: false }, { source_public: undefined }, { radar_asset: 'bad label' }, { source_post_url: 'https://evil.test' }])('keeps radar details private for %j', over => {
+  expect(projectActivity({ ...radarRow, ...over })?.radar).toBeUndefined();
+});
+it('allows radar details only on radar events and rejects nested private fields', () => {
+  const radar = { asset: 'SOL', source_post_url: radarRow.source_post_url };
+  const event = projectActivity(radarRow)!;
+  expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, radar }], remove: [] }).success).toBe(true);
+  for (const extra of [{ recommendation: 'buy' }, { wallet: 'PRIVATE' }, { target_handle: 'PRIVATE' }]) expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, radar: { ...radar, ...extra } }], remove: [] }).success).toBe(false);
+  expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, kind: 'POST', radar }], remove: [] }).success).toBe(false);
+});
 
 describe('public activity allowlist', () => {
   it('is disabled unless granted and refuses a public caller even with a grant', async () => {
@@ -58,5 +73,97 @@ describe('public activity allowlist', () => {
       expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, [field]: 'PRIVATE' }], remove: [] }).success, field).toBe(false);
       expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, paper: { ...event!.paper, [field]: 'PRIVATE' } }], remove: [] }).success, field).toBe(false);
     }
+  });
+});
+
+describe('verifiable posts: the link to the real post, and words only by consent', () => {
+  const base = { id: 'action:00000000-0000-4000-8000-000000000001', agent_id: '00000000-0000-4000-8000-000000000002',
+    kind: 'POST', at: new Date('2026-11-09T10:00:00Z'), dry_run: false,
+    post_url: 'https://x.com/agentone/status/1234567890', post_remote_id: '1234567890' };
+
+  it('carries the stored status link of a published post or reply, and nothing else new', () => {
+    for (const kind of ['POST', 'REPLY']) {
+      const event = projectActivity({ ...base, kind });
+      expect(event).toMatchObject({ kind, dry_run: false, target_handle: null, post_url: base.post_url });
+      expect(Object.keys(event!).sort()).toEqual(['agent_id', 'at', 'dry_run', 'id', 'kind', 'paper', 'post_url', 'target_handle']);
+    }
+  });
+
+  it('leaves the keys out entirely when there is nothing to link, so an older receiver sees the old shape', () => {
+    for (const row of [{ ...base, post_url: null, post_remote_id: null }, { ...base, post_url: undefined }]) {
+      expect(Object.keys(projectActivity(row)!).sort()).toEqual(['agent_id', 'at', 'dry_run', 'id', 'kind', 'paper', 'target_handle']);
+    }
+  });
+
+  it.each([
+    ['a dry run', { dry_run: true }],
+    ['an unknown run state', { dry_run: null }],
+    ['no remote id', { post_remote_id: null }],
+    ['a remote id the link does not end in', { post_remote_id: '99' }],
+    ['a mock link', { post_url: 'mock://message/1234567890' }],
+    ['another service', { post_url: 'https://bsky.app/profile/a/post/1234567890' }],
+    ['an http link', { post_url: 'http://x.com/agentone/status/1234567890' }],
+    ['a look-alike host', { post_url: 'https://x.com.evil.test/agentone/status/1234567890' }],
+    ['a link with a query', { post_url: 'https://x.com/agentone/status/1234567890?s=20' }],
+    ['a paper fill', { kind: 'PAPER_FILL' }],
+    ['a radar hit', { kind: 'RADAR_HIT' }],
+    ['a receipt', { kind: 'RECEIPT', id: 'receipt:00000000-0000-4000-8000-000000000001' }],
+  ])('shows no link for %s', (_name, over) => {
+    const event = projectActivity({ ...base, post_text: 'hello', ...over });
+    expect(event?.post_url).toBeUndefined();
+    expect(event?.post_text).toBeUndefined();
+  });
+
+  it('carries words only when they were supplied, beside the link, and bounded', () => {
+    expect(projectActivity({ ...base })?.post_text).toBeUndefined();
+    expect(projectActivity({ ...base, post_text: 'Shipped the new radar.' })?.post_text).toBe('Shipped the new radar.');
+    expect(projectActivity({ ...base, post_text: '   ' })?.post_text).toBeUndefined();
+    expect(projectActivity({ ...base, post_text: 'x'.repeat(501) })?.post_text).toBeUndefined();
+    expect(projectActivity({ ...base, post_text: 'x'.repeat(500) })?.post_text).toHaveLength(500);
+    expect(projectActivity({ ...base, post_text: `bad${String.fromCharCode(0)}text` })?.post_text).toBeUndefined();
+    expect(projectActivity({ ...base, post_url: null, post_remote_id: null, post_text: 'orphan' })?.post_text).toBeUndefined();
+  });
+
+  it('never lets a reply name the person it was to, while target_handle stays null', () => {
+    const reply = { ...base, kind: 'REPLY' };
+    expect(projectActivity({ ...reply, post_text: '@someone thanks for the question' })?.post_text).toBeUndefined();
+    expect(projectActivity({ ...reply, post_text: 'thanks, and cc @someone' })?.post_text).toBeUndefined();
+    expect(projectActivity({ ...reply, post_text: 'write to me at someone@example.invalid' })?.post_text).toBe('write to me at someone@example.invalid');
+    expect(projectActivity({ ...reply, post_text: '@someone thanks' })?.target_handle).toBeNull();
+    expect(projectActivity({ ...base, post_text: 'thanks @someone for the review' })?.post_text).toBe('thanks @someone for the review');
+  });
+
+  it('keeps every other private source field out', () => {
+    const event = projectActivity({ ...base, post_text: 'public words', payload: { text: 'PRIVATE' }, target_ref: '@private-person', reasoning: 'PRIVATE' });
+    expect(JSON.stringify(event)).not.toMatch(/PRIVATE|private-person|payload|reasoning/);
+  });
+
+  it('drops words the owner no longer consents to at send time, and keeps the link', () => {
+    const event = projectActivity({ ...base, post_text: 'words' })!;
+    const at = (iso: string) => ({ enabled: true, changedAt: iso });
+    expect(withoutUnconsentedText([event], at('2026-11-09T09:00:00.000Z'))[0]!.post_text).toBe('words');
+    expect(withoutUnconsentedText([event], at('2026-11-09T10:00:00.000Z'))[0]!.post_text).toBe('words');
+    for (const consent of [{ enabled: false, changedAt: '2026-11-09T09:00:00.000Z' }, { enabled: false, changedAt: null },
+      { enabled: true, changedAt: null }, at('2026-11-09T10:00:00.001Z')]) {
+      const [out] = withoutUnconsentedText([event], consent);
+      expect(out).not.toHaveProperty('post_text');
+      expect(out).toMatchObject({ post_url: base.post_url, id: base.id });
+    }
+    expect(event.post_text).toBe('words');
+  });
+
+  it('is strict about the new fields on the outbound contract', () => {
+    const event = projectActivity({ ...base, post_text: 'words' })!;
+    const batch = (e: unknown) => ActivityTapeBatch.safeParse({ protocol: 1, events: [e], remove: [] }).success;
+    expect(batch(event)).toBe(true);
+    expect(batch({ ...event, post_url: 'https://x.com/a/status/1?x=1' })).toBe(false);
+    expect(batch({ ...event, post_url: 'https://example.invalid/a/status/1' })).toBe(false);
+    expect(batch({ ...event, dry_run: true })).toBe(false);
+    expect(batch({ ...event, kind: 'PAPER_FILL' })).toBe(false);
+    expect(batch({ ...event, post_url: undefined })).toBe(false);
+    expect(batch({ ...event, post_text: '' })).toBe(false);
+    expect(batch({ ...event, post_text: 'x'.repeat(501) })).toBe(false);
+    expect(batch({ ...event, post_html: '<b>' })).toBe(false);
+    expect(batch({ ...event, target_handle: 'someone' })).toBe(false);
   });
 });

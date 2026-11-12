@@ -300,16 +300,23 @@ function meaningRefusals(input: DevUpdateSubmissionInput): DevUpdateRefusal[] {
  * Saying who or what wrote it.
  *
  * The sender is a coding assistant, which makes its own name the likeliest
- * slip and the most damaging one, so that is refused outright. Other vendors
- * are refused only in an attribution shape: a project that adds support for a
- * model provider has to be able to say so.
+ * slip and the most damaging one. The name on its own is a product: a post
+ * may say what the tool is called and where to get it. What is refused is
+ * saying the tool wrote the work, in either direction ("built by Claude
+ * Code", "Claude Code built this"). Other vendors are refused only in an
+ * attribution shape: a project that adds support for a model provider has to
+ * be able to say so.
  */
+const ASSISTANT_CREDIT =
+  '(?:an?\\s+|my\\s+|our\\s+|the\\s+)?(?:ai|bot|agent|assistant|automation|model|llm|robot|chatgpt|gpt[-\\s]?\\d*|copilot|gemini|cursor|codex|claude(?:\\s+code)?|anthropic|openai)';
+const ATTRIBUTION_VERBS = '(?:written|wrote|generated|posted|drafted|created|built|coded|shipped|fixed|made|done|authored|helped|did|found)';
 const ATTRIBUTION_PATTERNS: readonly RegExp[] = [
-  /\bclaude\b/i,
+  new RegExp(`\\b${ATTRIBUTION_VERBS}\\s+(?:by|with|using|via|thanks to)\\s+${ASSISTANT_CREDIT}\\b`, 'i'),
+  new RegExp(`\\b(?:claude(?:\\s+code)?|chatgpt|gpt[-\\s]?\\d*|copilot|gemini|cursor|codex|anthropic|openai)\\s+${ATTRIBUTION_VERBS}\\b`, 'i'),
   /\bco-?authored-?by\b/i,
   /\bas an ai\b/i,
   /🤖/u,
-  /\b(?:written|generated|posted|drafted|created|built|coded|shipped|fixed|made|done|authored|helped)\s+(?:by|with|using|via|thanks to)\s+(?:an?\s+|my\s+|our\s+)?(?:ai|bot|agent|assistant|automation|model|llm|robot|chatgpt|gpt[-\s]?\d*|copilot|gemini|cursor|codex|anthropic|openai)\b/i,
+
   /\b(?:ai|bot|agent|assistant|llm|machine)[-\s](?:generated|written|authored|assisted|drafted|powered post)\b/i,
   // Not "automated" or "scheduled" on their own: a project about automation has
   // to be able to say its scheduled posts got better.

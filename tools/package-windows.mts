@@ -32,6 +32,7 @@ import { promisify } from 'node:util';
 import { releaseName, releaseManifestSchema } from '@xbam/shared';
 import type { Platform } from '@xbam/shared';
 import { pruneDependencies } from './pruneDependencies.mjs';
+import { materializeNestedLinks, proveWorkerImports } from './materializeLinks.mjs';
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -432,6 +433,11 @@ async function main(): Promise<void> {
   const pruned = await pruneDependencies(join(stageDir, 'node_modules'));
   console.log(`pruned ${pruned.removed.length} documentation and test entries from dependencies (${Math.round(pruned.bytes / 1024 / 1024)}MB)`);
 
+  // The zip drops every link, and the override that points @farcaster/core at
+  // packages/faker-compat is one. Real copies, or a refusal; see the module.
+  const linked = await materializeNestedLinks(stageDir);
+  if (linked.materialized.length > 0) console.log(`materialized ${linked.materialized.length} link(s) the package cannot carry: ${linked.materialized.join(', ')}`);
+
   // Proof, rather than an exit code.
   //
   // `npm ci` reports success having installed nothing more than once -- a
@@ -531,6 +537,9 @@ async function main(): Promise<void> {
         `first migration and never start a native worker:\n  ${(error as Error).message}`,
     );
   }
+
+  // The worker's dependency that crashed Beta 0.93 on start.
+  await proveWorkerImports(stageDir);
 
   await proveCompatibilityGate(stageDir, 'windows', version);
 

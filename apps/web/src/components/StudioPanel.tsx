@@ -6,6 +6,7 @@ import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
 import { RetryablePanel, Working } from '@app/components/ui';
 import { LiveTradesSection } from '@app/components/LiveTradesPanel';
 import { PublicHomePanel } from '@app/components/PublicHomePanel';
+import { LeagueEntryPanel } from '@app/components/LeagueEntryPanel';
 import { ROBINHOOD_CHAIN_PARAMS, discoverWallets, ensureChain, type DiscoveredWallet, type Eip1193, type WalletWindow } from '@app/lib/walletDiscovery';
 
 /**
@@ -234,7 +235,7 @@ function safeIcon(icon: string): string | null {
 const shortAddress = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : 'never');
 
-export function StudioPanel() {
+export function StudioPanel({ initialSeason = '' }: { initialSeason?: string }) {
   const status = useResource<StudioStatus>('/api/studio');
   const data = status.data;
 
@@ -253,6 +254,7 @@ export function StudioPanel() {
         </div>
       ) : null}
       <LinkSection status={data} onChanged={status.reload} />
+      <LeagueEntryPanel key={initialSeason} initialSeason={initialSeason} />
       {data.state === 'LINKED' ? (
         <>
           <ControlSection />

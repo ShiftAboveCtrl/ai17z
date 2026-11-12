@@ -1,6 +1,6 @@
 import type { Agent, PersonaDraft, PersonaVersion, PolicyConfig } from '@xbam/shared/contracts';
-import { PolicyConfig as PolicyConfigSchema } from '@xbam/shared/contracts';
-import { DEFAULT_POLICY, NotFoundError, sameContent, slugify } from '@xbam/shared';
+import { MediaPolicy, PolicyConfig as PolicyConfigSchema } from '@xbam/shared/contracts';
+import { DEFAULT_POLICY, NotFoundError, logger, sameContent, slugify } from '@xbam/shared';
 import { query, queryOne, withTransaction, type Tx } from '../pool';
 
 import { mapRow, mapRows } from '../mapper';
@@ -376,7 +376,16 @@ export interface PolicyVersionRow {
  * shape as an ordinary new version, with its change note.
  */
 function fillDefaults(row: PolicyVersionRow): PolicyVersionRow {
-  const parsed = PolicyConfigSchema.safeParse(row.config ?? {});
+  const stored = row.config;
+  let config = stored;
+  if (Array.isArray(stored?.media?.allowedCaptureHosts)) {
+    const hosts = stored.media.allowedCaptureHosts.map(host => typeof host === 'string' ? host.trim().toLowerCase() : host);
+    const valid = hosts.filter(host => MediaPolicy.shape.allowedCaptureHosts.unwrap().element.safeParse(host).success);
+    const dropped = hosts.length - valid.length;
+    if (dropped) logger.warn('Invalid capture hosts were dropped from the stored policy.', { policyVersionId: row.id, dropped });
+    config = { ...stored, media: { ...stored.media, allowedCaptureHosts: [...new Set(valid)] } };
+  }
+  const parsed = PolicyConfigSchema.safeParse(config ?? {});
   return { ...row, config: parsed.success ? parsed.data : DEFAULT_POLICY };
 }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { capabilityPermissions, jobs, ops, query } from '@xbam/database';
+import { accounts, capabilityPermissions, jobs, ops, postAnalytics, query, xAccountObservations } from '@xbam/database';
 import { logger, sealSecret } from '@xbam/shared';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture, type Fixture } from '../support/fixtures';
@@ -47,6 +47,70 @@ async function publish() {
   return p;
 }
 describe('public home consent persisted in Postgres', () => {
+  it('previews and sends the linked X profile counts only after explicit consent, preserving the original observation date', async () => {
+    await link();
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'private_handle', remoteAccountId: '123456' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });
+    const at = new Date(Date.now() - 60_000).toISOString();
+    await xAccountObservations.record({ ownerUserId: f.ownerId, userId: '123456', handle: 'private_handle', followers: 1234, posts: 56, outcome: 'OK', backend: 'page-graphql', observedAt: at });
+    const off = await previewPublicHome({ agentId: f.agentId, ownerId: f.ownerId, choices: { alias: 'Night Owl' } });
+    expect(off.manifest).not.toHaveProperty('xCounts');
+    const on = await previewPublicHome({ agentId: f.agentId, ownerId: f.ownerId, choices: { alias: 'Night Owl', includeXCounts: true } });
+    expect(on.manifest.xCounts).toEqual({ consented: true, followers: { value: 1234, readAt: at }, posts: { value: 56, readAt: at }, likes: { value: null, readAt: null }, replies: { value: null, readAt: null }, reposts: { value: null, readAt: null } });
+    expect(JSON.stringify(on.manifest)).not.toContain('private_handle');
+    expect(JSON.stringify(on.manifest)).not.toContain(account.id);
+    expect((await publishPublicHome({ agentId: f.agentId, ownerId: f.ownerId, digest: on.digest, confirmed: true })).ok).toBe(true);
+    expect(studio!.requests[0]!.manifest).toEqual(on.manifest);
+  });
+  it('never guesses zero or uses another identity when the linked X account has not been measured', async () => {
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'renamed', remoteAccountId: '111' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });
+    await xAccountObservations.record({ ownerUserId: f.ownerId, userId: '222', handle: 'renamed', followers: 999, posts: 888, outcome: 'OK' });
+    const on = await previewPublicHome({ agentId: f.agentId, ownerId: f.ownerId, choices: { alias: 'Night Owl', includeXCounts: true } });
+    expect(on.manifest.xCounts?.followers).toEqual({ value: null, readAt: null });
+    expect(on.manifest.xCounts?.posts).toEqual({ value: null, readAt: null });
+  });
+  it('uses the existing own-account follower readings without inventing a post count', async () => {
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'private_handle' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });
+    await postAnalytics.recordAccount({ agentId: f.agentId, accountId: account.id, handle: 'private_handle', followers: 4321 });
+    const on = await previewPublicHome({ agentId: f.agentId, ownerId: f.ownerId, choices: { alias: 'Night Owl', includeXCounts: true } });
+    expect(on.manifest.xCounts?.followers.value).toBe(4321);
+    expect(on.manifest.xCounts?.followers.readAt).toBeTruthy();
+    expect(on.manifest.xCounts?.posts).toEqual({ value: null, readAt: null });
+  });
+  it('keeps an older measured follower count when a newer own-account reading did not measure followers', async () => {
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'private_handle', remoteAccountId: '123456' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });
+    const at = new Date(Date.now() - 60_000).toISOString();
+    await xAccountObservations.record({ ownerUserId: f.ownerId, userId: '123456', handle: 'private_handle', followers: 1234, posts: 56, outcome: 'OK', backend: 'page-graphql', observedAt: at });
+    await postAnalytics.recordAccount({ agentId: f.agentId, accountId: account.id, handle: 'private_handle', followers: null });
+    const on = await previewPublicHome({ agentId: f.agentId, ownerId: f.ownerId, choices: { alias: 'Night Owl', includeXCounts: true } });
+    expect(on.manifest.xCounts?.followers).toEqual({ value: 1234, readAt: at });
+  });
+  it('publishes engagement only for a real measured post, excluding rehearsals and dry runs', async () => {
+    const account = await accounts.createAccount({ ownerId: f.ownerId, channel: 'x', handle: 'private_handle', remoteAccountId: '123456' });
+    await accounts.linkAgentAccount({ agentId: f.agentId, accountId: account.id });
+    const add = async (remote: string, dry: boolean, rehearsal: boolean, age: number) => {
+      const [event] = await query<{ id: string }>("INSERT INTO events(channel,type,remote_event_id,payload) VALUES ('x','MENTION',$1,$2) RETURNING id", [randomUUID(), JSON.stringify({ rehearsal })]);
+      const [job] = await query<{ id: string }>("INSERT INTO jobs(event_id,agent_id,channel,action_type,idempotency_key) VALUES ($1,$2,'x','POST',$3) RETURNING id", [event!.id, f.agentId, randomUUID()]);
+      const [action] = await query<{ id: string }>(`INSERT INTO actions(job_id,agent_id,account_id,channel,type,status,dry_run,payload,idempotency_key,remote_action_id,executed_at)
+        VALUES ($1,$2,$3,'x','POST',$4,$5,'{}',$6,$7,now()) RETURNING id`, [job!.id, f.agentId, account.id, dry ? 'DRY_RUN' : 'EXECUTED', dry, randomUUID(), remote]);
+      await query(`INSERT INTO post_analytics(agent_id,account_id,action_id,remote_post_id,observed_at,likes,replies,reposts)
+        VALUES ($1,$2,$3,$4,now()-($5::int * interval '1 minute'),12,NULL,0)`, [f.agentId, account.id, action!.id, remote, age]);
+    };
+    await add('111', false, false, 3);
+    await add('222', true, false, 2);
+    await add('333', false, true, 1);
+    const on = await previewPublicHome({ agentId: f.agentId, ownerId: f.ownerId, choices: { alias: 'Night Owl', includeXCounts: true } });
+    expect(on.manifest.xCounts?.likes.value).toBe(12);
+    expect(on.manifest.xCounts?.replies.value).toBeNull();
+    expect(on.manifest.xCounts?.reposts.value).toBe(0);
+    expect(Date.now() - Date.parse(on.manifest.xCounts!.likes.readAt!)).toBeGreaterThan(150_000);
+    await query("UPDATE actions SET dry_run=true WHERE remote_action_id='111'");
+    const absent = await previewPublicHome({ agentId: f.agentId, ownerId: f.ownerId, choices: { alias: 'Night Owl', includeXCounts: true } });
+    expect(absent.manifest.xCounts?.likes).toEqual({ value: null, readAt: null });
+  });
   it.each(['confirmedAt', 'validUntil'])('notifies once when the local %s lease lapses without renewing', async field => {
     await link(); await publish();
     await query(`UPDATE agent_public_home SET confirmed=jsonb_set(confirmed,$1::text[],to_jsonb((now()-interval '16 minutes')::text))`, [[field]]);

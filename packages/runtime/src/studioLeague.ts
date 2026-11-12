@@ -84,7 +84,7 @@ export interface EnterLeagueInput {
 }
 
 export type EnterLeagueResult =
-  | { ok: true; entry: LeagueEntryRow; state: 'ACTIVE' | 'PENDING' }
+  | { ok: true; entry: LeagueEntryRow; state: 'ACTIVE' | 'PENDING'; alreadyEntered: boolean }
   | Problem;
 
 /**
@@ -141,7 +141,7 @@ export async function enterLeagueSeason(input: EnterLeagueInput, now: Date = new
     return { ok: false, why: 'The season\'s rules are not the ones this entry was made under. Rules are frozen once published, so the answer was ignored.' };
   }
   const settled = await advanceEntry(created.row, now);
-  return settled.ok ? { ok: true, entry: settled.entry, state: settled.entry.status === 'ACTIVE' ? 'ACTIVE' : 'PENDING' } : settled;
+  return settled.ok ? { ok: true, entry: settled.entry, state: settled.entry.status === 'ACTIVE' ? 'ACTIVE' : 'PENDING', alreadyEntered: created.kind === 'RESUMED' && created.row.status === 'ACTIVE' } : settled;
 }
 
 /** Statuses from Studio that mean "no", as opposed to "not now". */

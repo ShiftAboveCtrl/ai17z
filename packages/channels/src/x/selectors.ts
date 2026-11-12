@@ -78,8 +78,16 @@ export const SEL = {
   mediaInput: 'input[data-testid="fileInput"], input[type="file"][accept*="image"]',
   /** The strip under the editor that holds what has been attached so far. */
   composerAttachments: '[data-testid="attachments"]',
-  /** One attached item in that strip: each has its own remove control. */
-  composerMediaItem: '[data-testid="attachments"] [data-testid="removeMedia"]',
+  /**
+   * One attached item in that strip: each has its own remove control.
+   *
+   * The test id was how X marked a finished upload. Live X dropped it and kept
+   * the button, labelled "Remove media", inside the same attachments strip.
+   * Counting only the test id reports zero items after a successful upload, so
+   * a ready attachment is never sent. Either mark is one item.
+   */
+  composerMediaItem:
+    '[data-testid="attachments"] [data-testid="removeMedia"], [data-testid="attachments"] button[aria-label="Remove media"]',
   /** Present on an item that is still uploading. */
   composerMediaProgress: '[data-testid="attachments"] [role="progressbar"]',
   /** X reports a failed upload as a toast, not as anything on the item. */

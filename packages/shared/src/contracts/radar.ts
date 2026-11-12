@@ -144,6 +144,8 @@ export interface SignalReceipt {
 }
 
 export const RadarSourceConfig = z.object({
+  /** Owner consent to publish an exact ticker pin and source post on the Studio tape. */
+  publishToStudio: z.boolean().optional(),
   /** Internal playbook source: the worker rotates exact mints from the current pin. */
   playbookAgentId: z.string().uuid().optional(),
   playbookPinId: z.string().uuid().optional(),

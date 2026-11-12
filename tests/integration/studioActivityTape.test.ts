@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { capabilityPermissions, ops, query } from '@xbam/database';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { actions as actionsRepo, capabilityPermissions, ops, query } from '@xbam/database';
 import { invokeCapability } from '@xbam/tools';
 import { createLogger, sealSecret } from '@xbam/shared';
-import { ACTIVITY_CAPABILITY, activityTapeProjection, scrubStudioActivity, setStudioActivityTape, studioActivityTapeSetting, sweepStudioActivityTape, registerActivityTapeCapability } from '../../packages/runtime/src/studioActivityTape';
+import { ACTIVITY_CAPABILITY, activityTapeProjection, scrubStudioActivity, setStudioActivityText, setStudioActivityTape, studioActivityTextSetting, studioActivityTapeSetting, sweepStudioActivityTape, registerActivityTapeCapability } from '../../packages/runtime/src/studioActivityTape';
 import { setStudioTransportForTests } from '../../packages/runtime/src/studioLink';
 import { newInstallationKey } from '../../packages/runtime/src/studioJose';
 import { installHarness } from '../support/harness';
@@ -38,16 +38,162 @@ async function grant() {
 }
 async function ready() { await grant(); await setStudioActivityTape(true, fixture.ownerId); }
 async function due() { await query("DELETE FROM app_settings WHERE key = 'studio.activity_tape.attempt'"); }
-async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, channel = 'x', rehearsal = false, agentId = fixture.agentId) {
+interface Published { remoteId?: string | null; url?: string | null; text?: string }
+async function action(type = 'REPLY', status = 'EXECUTED', ageMinutes = 0, channel = 'x', rehearsal = false, agentId = fixture.agentId, published: Published = {}) {
   const [event] = await query<{ id: string }>("INSERT INTO events (channel,type,remote_event_id,text,remote_author_handle,payload) VALUES ($1,'MENTION',$2,'PRIVATE','private-person',$3) RETURNING id", [channel, randomUUID(), JSON.stringify({ prompt: 'PRIVATE', rehearsal, ...(rehearsal ? { origin: 'rehearsal' } : {}) })]);
   const [job] = await query<{ id: string }>("INSERT INTO jobs(event_id,agent_id,channel,action_type,idempotency_key,generated_output) VALUES ($1,$2,$3,$4,$5,'PRIVATE') RETURNING id", [event!.id, agentId, channel, type, randomUUID()]);
-  const [row] = await query<{ id: string }>(`INSERT INTO actions(job_id,agent_id,channel,type,status,dry_run,payload,target_ref,idempotency_key,executed_at)
-    VALUES ($1,$2,$8,$3,$4,$5,'{"text":"PRIVATE","wallet":"PRIVATE","reasoning":"PRIVATE","cookies":"PRIVATE"}','@private-person',$6,now() - ($7::int * interval '1 minute')) RETURNING id`,
-  [job!.id, agentId, type, status, status === 'DRY_RUN', randomUUID(), ageMinutes, channel]);
+  const [row] = await query<{ id: string }>(`INSERT INTO actions(job_id,agent_id,channel,type,status,dry_run,payload,target_ref,idempotency_key,executed_at,remote_action_id,remote_action_url)
+    VALUES ($1,$2,$8,$3,$4,$5,$9::jsonb,'@private-person',$6,now() - ($7::int * interval '1 minute'),$10,$11) RETURNING id`,
+  [job!.id, agentId, type, status, status === 'DRY_RUN', randomUUID(), ageMinutes, channel,
+    JSON.stringify({ text: published.text ?? 'PRIVATE', wallet: 'PRIVATE', reasoning: 'PRIVATE', cookies: 'PRIVATE' }), published.remoteId ?? null, published.url ?? null]);
   return `action:${row!.id}`;
 }
 
 describe('activity tape against Postgres and a DPoP Studio contract server', () => {
+  async function radar(target = '$SOL') {
+    const [account] = await query<{ id: string }>("INSERT INTO accounts(owner_id,channel,handle) VALUES ($1,'x','PRIVATE') RETURNING id", [fixture.ownerId]);
+    await query('INSERT INTO agent_accounts(agent_id,account_id) VALUES ($1,$2)', [fixture.agentId, account!.id]);
+    const [source] = await query<{ id: string }>(`INSERT INTO radar_sources(account_id,kind,target,config) VALUES ($1,'tracked_keyword',$2,'{"publishToStudio":true}') RETURNING id`, [account!.id, target]);
+    const [event] = await query<{ id: string }>(`INSERT INTO events(channel,account_id,type,remote_event_id,remote_url,payload) VALUES ('x',$1,'KEYWORD_MATCH',$2,'https://x.com/example/status/123','{}') RETURNING id`, [account!.id, randomUUID()]);
+    const [discovery] = await query<{ id: string }>("INSERT INTO event_discoveries(event_id,source_id,source_kind) VALUES ($1,$2,'tracked_keyword') RETURNING id", [event!.id, source!.id]);
+    return { accountId: account!.id, sourceId: source!.id, id: `radar:${discovery!.id}` };
+  }
+
+  it('rechecks source consent after projection before sending', async () => {
+    await ready();
+    const hit = await radar();
+    const get = ops.getSetting.bind(ops);
+    let reads = 0;
+    const spy = vi.spyOn(ops, 'getSetting').mockImplementation(async (key) => {
+      if (key === 'studio.activity_tape.scrubs' && ++reads === 2) {
+        await query('UPDATE radar_sources SET enabled=false WHERE id=$1', [hit.sourceId]);
+      }
+      return get(key);
+    });
+    try {
+      await sweepStudioActivityTape();
+      expect([...studio.visible.values()].every(event => !event.radar)).toBe(true);
+    } finally { spy.mockRestore(); }
+  });
+
+  it.each(['installation', 'source', 'consent'] as const)('automatically removes published radar after withdrawing %s', async (scope) => {
+    await ready();
+    const hit = await radar();
+    await sweepStudioActivityTape();
+    expect([...studio.visible.values()].map(event => event.id)).toContain(hit.id);
+    if (scope === 'installation') {
+      await setStudioActivityTape(false, fixture.ownerId);
+      expect(await ops.getSetting('studio.activity_tape.scrubs')).toContain(hit.id);
+    }
+    else if (scope === 'source') await query('UPDATE radar_sources SET enabled=false WHERE id=$1', [hit.sourceId]);
+    else await query(`UPDATE radar_sources SET config='{}' WHERE id=$1`, [hit.sourceId]);
+    await due();
+    studio.setUnavailable(true);
+    await sweepStudioActivityTape();
+    studio.setUnavailable(false);
+    await due();
+    await sweepStudioActivityTape();
+    expect([...studio.visible.values()].map(event => event.id)).not.toContain(hit.id);
+    expect(studio.batches.at(-1)!.remove).toContain(hit.id);
+  });
+
+  it.each(['disable', 'private', 'delete'] as const)('queues withdrawal in the owner source %s API before another sweep', async (mode) => {
+    await ready();
+    const hit = await radar();
+    await sweepStudioActivityTape();
+    const app = await buildServer();
+    try {
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: fixture.ownerEmail, password: 'test-password-1234' } });
+      const headers = { authorization: `Bearer ${login.json().data.token}` };
+      const base = `/api/accounts/${hit.accountId}/radar`;
+      const response = mode === 'delete'
+        ? await app.inject({ method: 'DELETE', url: `${base}/${hit.sourceId}`, headers })
+        : await app.inject({ method: 'POST', url: base, headers, payload: {
+          kind: 'tracked_keyword', target: '$SOL', enabled: mode !== 'disable',
+          config: { publishToStudio: mode !== 'private' },
+        } });
+      expect(response.statusCode).toBe(200);
+      expect(await ops.getSetting('studio.activity_tape.scrubs')).toContain(hit.id);
+      await due();
+      await sweepStudioActivityTape();
+      expect([...studio.visible.values()].map(event => event.id)).not.toContain(hit.id);
+    } finally { await app.close(); }
+  });
+
+  it('removes historical radar delivery ids after upgrading from a sender without a ledger', async () => {
+    await ready();
+    const hit = await radar();
+    await sweepStudioActivityTape();
+    await query("DELETE FROM app_settings WHERE key IN ('studio.activity_tape.radar_sent', 'studio.activity_tape.radar_seeded')");
+    await setStudioActivityTape(false, fixture.ownerId);
+    await due();
+    await sweepStudioActivityTape();
+    expect([...studio.visible.values()].map(event => event.id)).not.toContain(hit.id);
+  });
+
+  it('sends no radar withdrawals from an installation that never turned the tape on', async () => {
+    await grant();
+    await radar();
+    let posts = 0;
+    setStudioTransportForTests(async (url, init) => {
+      if (url.endsWith('/activity-tape')) posts++;
+      const response = await fetch(url, init);
+      return { status: response.status, text: await response.text() };
+    });
+    await sweepStudioActivityTape();
+    await due();
+    await sweepStudioActivityTape();
+    expect(posts).toBe(0);
+    expect((await ops.getSetting<string[]>('studio.activity_tape.radar_sent')) ?? []).toEqual([]);
+    expect((await ops.getSetting<string[]>('studio.activity_tape.scrubs')) ?? []).toEqual([]);
+  });
+
+  it('retries a strict older receiver without radar detail and advances other events', async () => {
+    await ready();
+    await radar();
+    const post = await action('POST');
+    let rejected = 0;
+    setStudioTransportForTests(async (url, init) => {
+      if (url.endsWith('/activity-tape') && JSON.parse(String(init?.body)).events.some((event: { radar?: unknown }) => event.radar)) {
+        rejected++;
+        return { status: 400, text: '{}' };
+      }
+      const response = await fetch(url, init);
+      return { status: response.status, text: await response.text() };
+    });
+    expect((await sweepStudioActivityTape()).sent).toBe(2);
+    expect(rejected).toBe(1);
+    expect([...studio.visible.values()].some(event => event.id === post)).toBe(true);
+    expect([...studio.visible.values()].every(event => !event.radar)).toBe(true);
+    expect(await ops.getSetting('studio.activity_tape.cursor')).not.toBeNull();
+  });
+
+  it('never publishes a numeric dollar amount as an asset', async () => {
+    await ready();
+    await radar('$100');
+    expect((await activityTapeProjection(new Date(Date.now() - 60_000)))[0]!.radar).toBeUndefined();
+  });
+
+  it('reads exact opted-in ticker pins and stored sources without another X read', async () => {
+    await ready();
+    const [account] = await query<{ id: string }>("INSERT INTO accounts(owner_id,channel,handle) VALUES ($1,'x','PRIVATE') RETURNING id", [fixture.ownerId]);
+    await query('INSERT INTO agent_accounts(agent_id,account_id) VALUES ($1,$2)', [fixture.agentId, account!.id]);
+    const [source] = await query<{ id: string }>(`INSERT INTO radar_sources(account_id,kind,target,config) VALUES ($1,'tracked_keyword','$SOL','{"publishToStudio":true}') RETURNING id`, [account!.id]);
+    const [event] = await query<{ id: string }>(`INSERT INTO events(channel,account_id,type,remote_event_id,remote_url,text,payload) VALUES ('x',$1,'KEYWORD_MATCH',$2,'https://x.com/example/status/123','PRIVATE','{}') RETURNING id`, [account!.id, randomUUID()]);
+    await query("INSERT INTO event_discoveries(event_id,source_id,source_kind) VALUES ($1,$2,'tracked_keyword')", [event!.id, source!.id]);
+    const read = async () => (await activityTapeProjection(new Date(Date.now() - 60_000)))[0]!;
+    expect((await read()).radar).toEqual({ asset: 'SOL', source_post_url: 'https://x.com/example/status/123' });
+    for (const config of [{}, { publishToStudio: false }]) {
+      await query('UPDATE radar_sources SET config=$2 WHERE id=$1', [source!.id, config]);
+      expect((await read()).radar).toBeUndefined();
+    }
+    await query(`UPDATE radar_sources SET config='{"publishToStudio":true}', target='SOL or ETH' WHERE id=$1`, [source!.id]);
+    expect((await read()).radar).toBeUndefined();
+    await query("UPDATE radar_sources SET target='$SOL' WHERE id=$1", [source!.id]);
+    await query("UPDATE events SET remote_url='https://evil.test' WHERE id=$1", [event!.id]);
+    expect((await read()).radar).toBeUndefined();
+    expect(JSON.stringify(await read())).not.toContain('PRIVATE');
+  });
   it('scrubs a receipt through the owner API and cannot resurrect it on replay', async () => {
     await ready();
     const actionId = await action('POST');
@@ -84,13 +230,14 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
     expect((await ops.getSetting('studio.activity_tape.scrubs')) ?? []).toEqual([]);
   });
 
-  it('keeps scrubs queued and sends nothing while the switch is off', async () => {
+  it('delivers removals without publishing events while the switch is off', async () => {
     await grant();
     const id = await action();
     await scrubStudioActivity(id, fixture.ownerId);
-    expect(await sweepStudioActivityTape()).toEqual({ sent: 0, skipped: 'off' });
-    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([id]);
-    expect(studio.requests).toBe(0);
+    expect((await sweepStudioActivityTape()).sent).toBe(0);
+    expect(await ops.getSetting('studio.activity_tape.scrubs')).toEqual([]);
+    expect(studio.batches[0]!.events).toEqual([]);
+    expect(studio.batches[0]!.remove).toEqual([id]);
   });
 
   it.each([null, 'DISABLED', 'OWNER_APPROVAL'] as const)('starts a fresh grant from %s after earlier rows without backdating', async (permission) => {
@@ -174,8 +321,14 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
     await action('POST', 'EXECUTED', 16); const fresh = await action('POST', 'EXECUTED', 14);
     expect((await sweepStudioActivityTape()).sent).toBe(1);
     expect([...studio.visible.values()][0]!.id).toBe(fresh);
-    await setStudioActivityTape(false, fixture.ownerId); await action();
-    await setStudioActivityTape(true, fixture.ownerId); await due();
+    await setStudioActivityTape(false, fixture.ownerId);
+    const paused = await action();
+    // The resume stamp is the host clock and the row is the database clock. A
+    // database a few milliseconds ahead made a row created during the pause
+    // look newer than the resume, so the sweep sent it. Pin it to the pause.
+    await query(`UPDATE actions SET executed_at = (SELECT (value->>'changedAt')::timestamptz FROM app_settings WHERE key = 'studio.activity_tape') WHERE id = $1`, [paused.slice('action:'.length)]);
+    await setStudioActivityTape(true, fixture.ownerId);
+    await due();
     expect((await sweepStudioActivityTape()).sent).toBe(0);
   });
 
@@ -399,5 +552,155 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
     const requests = studio.requests;
     expect((await sweepStudioActivityTape()).sent).toBe(0);
     expect(studio.requests).toBe(requests);
+  });
+});
+
+describe('verifiable posts against Postgres and the contract server', () => {
+  const link = (id: string) => ({ remoteId: id, url: `https://x.com/agentone/status/${id}` });
+  const sent = () => studio.batches.flatMap((b) => b.events);
+
+  it('sends the stored status link of a real published post and reply, and never any words by default', async () => {
+    await ready();
+    const post = link('1111111111'), reply = link('2222222222');
+    const a = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...post, text: 'SECRET WORDS' });
+    const b = await action('REPLY', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...reply, text: 'SECRET REPLY' });
+    expect((await sweepStudioActivityTape()).sent).toBe(2);
+    expect(sent().find((e) => e.id === a)).toMatchObject({ kind: 'POST', dry_run: false, target_handle: null, post_url: post.url });
+    expect(sent().find((e) => e.id === b)).toMatchObject({ kind: 'REPLY', dry_run: false, target_handle: null, post_url: reply.url });
+    expect(JSON.stringify(studio.batches)).not.toMatch(/SECRET|PRIVATE|private-person|post_text/);
+  });
+
+  it('sends no link for a dry run, an unverified post, a mock channel, a receipt, or another service', async () => {
+    await ready();
+    const dry = await action('POST', 'DRY_RUN', 0, 'x', false, fixture.agentId, link('3333333333'));
+    const unverified = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { remoteId: null, url: 'https://x.com/agentone/status/4444444444' });
+    const elsewhere = await action('POST', 'EXECUTED', 0, 'bluesky', false, fixture.agentId, { remoteId: 'abc', url: 'https://bsky.app/profile/a/post/abc' });
+    const mismatched = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { remoteId: '5555555555', url: 'https://x.com/agentone/status/6666666666' });
+    const receipt = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, link('7777777777'));
+    await query(`UPDATE events SET payload = payload || '{"ideaSource":"radar_receipt"}'::jsonb
+      WHERE id=(SELECT event_id FROM jobs WHERE id=(SELECT job_id FROM actions WHERE id=$1))`, [receipt.slice(7)]);
+    await action('POST', 'EXECUTED', 0, 'mock', false, fixture.agentId, link('8888888888'));
+    expect((await sweepStudioActivityTape()).sent).toBe(5);
+    const byId = new Map(sent().map((e) => [e.id, e]));
+    for (const id of [dry, unverified, elsewhere, mismatched]) expect(byId.get(id), id).not.toHaveProperty('post_url');
+    expect(byId.get(`receipt:${receipt.slice(7)}`)).toMatchObject({ kind: 'RECEIPT' });
+    expect(byId.get(`receipt:${receipt.slice(7)}`)).not.toHaveProperty('post_url');
+    expect(JSON.stringify(studio.batches)).not.toMatch(/8888888888|bsky\.app|mock:/);
+  });
+
+  it('keeps the old event shape for a post with no link', async () => {
+    await ready();
+    await action('POST');
+    await sweepStudioActivityTape();
+    expect(Object.keys(sent()[0]!).sort()).toEqual(['agent_id', 'at', 'dry_run', 'id', 'kind', 'paper', 'target_handle']);
+  });
+
+  it('sends words only after the owner opts in, only for posts made after that, and stops when they opt out', async () => {
+    await ready();
+    expect(await studioActivityTextSetting()).toEqual({ enabled: false, changedAt: null });
+    const before = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000001'), text: 'written before consent' });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await setStudioActivityText(true, fixture.ownerId);
+    const after = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000002'), text: 'Shipped the radar update.' });
+    const mention = await action('REPLY', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000003'), text: '@private-person thanks for asking' });
+    expect((await sweepStudioActivityTape()).sent).toBe(3);
+    const byId = new Map(sent().map((e) => [e.id, e]));
+    expect(byId.get(before)).not.toHaveProperty('post_text');
+    expect(byId.get(after)).toMatchObject({ post_text: 'Shipped the radar update.', post_url: 'https://x.com/agentone/status/1000000002' });
+    expect(byId.get(mention)).toMatchObject({ post_url: 'https://x.com/agentone/status/1000000003', target_handle: null });
+    expect(byId.get(mention)).not.toHaveProperty('post_text');
+    expect(JSON.stringify(studio.batches)).not.toMatch(/private-person|written before consent/);
+    await setStudioActivityText(false, fixture.ownerId); await due();
+    await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000004'), text: 'after opting out' });
+    await sweepStudioActivityTape();
+    expect(JSON.stringify(studio.batches)).not.toContain('after opting out');
+  });
+
+  it('never sends text for a dry run even with consent', async () => {
+    await ready(); await setStudioActivityText(true, fixture.ownerId);
+    await action('POST', 'DRY_RUN', 0, 'x', false, fixture.agentId, { ...link('1000000005'), text: 'never published' });
+    await sweepStudioActivityTape();
+    expect(JSON.stringify(studio.batches)).not.toContain('never published');
+  });
+
+  it('strips words at send time when text consent is withdrawn after projection, and still sends the link', async () => {
+    await ready(); await setStudioActivityText(true, fixture.ownerId);
+    const id = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000010'), text: 'withdrawn words' });
+    const real = ops.getSetting;
+    let reads = 0;
+    // The owner switches sharing off in the gap between the projection reading the setting and the send.
+    const spy = vi.spyOn(ops, 'getSetting').mockImplementation(async (key: string) => {
+      const value = await real(key);
+      if (key === 'studio.activity_tape.text' && ++reads === 1) await setStudioActivityText(false, fixture.ownerId);
+      return value;
+    });
+    try { expect((await sweepStudioActivityTape()).sent).toBe(1); } finally { spy.mockRestore(); }
+    expect(reads).toBeGreaterThanOrEqual(1);
+    const event = sent().find((e) => e.id === id);
+    expect(event).toMatchObject({ post_url: 'https://x.com/agentone/status/1000000010' });
+    expect(event).not.toHaveProperty('post_text');
+    expect(JSON.stringify(studio.batches)).not.toContain('withdrawn words');
+  });
+
+  it('keeps the original publish time when a recovery only confirms an earlier send', async () => {
+    await ready();
+    const id = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { text: 'sent before opt in' });
+    const actionId = id.slice(7);
+    await query(`UPDATE actions SET status = 'EXECUTING', executed_at = NULL, remote_action_id = NULL, remote_action_url = NULL,
+      created_at = now() - interval '1 hour' WHERE id = $1`, [actionId]);
+    await setStudioActivityText(true, fixture.ownerId);
+    const done = await actionsRepo.completeAction(actionId, { status: 'EXECUTED', ...link('1000000011'), confirmsEarlierSend: true });
+    const [row] = await query<{ executed_at: Date; created_at: Date }>('SELECT executed_at, created_at FROM actions WHERE id = $1', [actionId]);
+    expect(done.status).toBe('EXECUTED');
+    expect(row!.executed_at.getTime()).toBe(row!.created_at.getTime());
+    expect((await sweepStudioActivityTape()).sent).toBe(0);
+    expect(JSON.stringify(studio.batches)).not.toContain('sent before opt in');
+    expect(await activityTapeProjection(new Date(Date.now() - 3 * 3_600_000))).toEqual([]);
+  });
+
+  it('stamps the time of a send that really happened now, so only a confirmation keeps the earlier time', async () => {
+    await ready();
+    const id = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, {});
+    const actionId = id.slice(7);
+    await query(`UPDATE actions SET status = 'EXECUTING', executed_at = NULL, created_at = now() - interval '1 hour' WHERE id = $1`, [actionId]);
+    await actionsRepo.completeAction(actionId, { status: 'EXECUTED', ...link('1000000012') });
+    const [row] = await query<{ ago: number }>("SELECT extract(epoch FROM now() - executed_at)::float AS ago FROM actions WHERE id = $1", [actionId]);
+    expect(row!.ago).toBeLessThan(60);
+  });
+
+  it('gives no link or words to an action that is not on an X account, even with an X-shaped link', async () => {
+    await ready(); await setStudioActivityText(true, fixture.ownerId);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const foreign = await action('POST', 'EXECUTED', 0, 'telegram', false, fixture.agentId, { ...link('1000000013'), text: 'telegram words' });
+    const mixed = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, { ...link('1000000014'), text: 'mismatched account words' });
+    // An action that says x but is tied to an account on another service.
+    const [acct] = await query<{ id: string }>(
+      "INSERT INTO accounts (owner_id, channel, handle) VALUES ($1,'telegram','tg') RETURNING id", [fixture.ownerId]);
+    await query('UPDATE actions SET account_id = $2 WHERE id = $1', [mixed.slice(7), acct!.id]);
+    await sweepStudioActivityTape();
+    const byId = new Map(sent().map((e) => [e.id, e]));
+    for (const id of [foreign, mixed]) {
+      expect(byId.get(id), id).toBeDefined();
+      expect(byId.get(id), id).not.toHaveProperty('post_url');
+      expect(byId.get(id), id).not.toHaveProperty('post_text');
+    }
+    expect(JSON.stringify(studio.batches)).not.toMatch(/1000000013|1000000014|telegram words|mismatched account words/);
+  });
+
+  it('lets only the signed-in owner change the text switch, with nothing else in the body', async () => {
+    const app = await buildServer();
+    try {
+      expect((await app.inject({ method: 'GET', url: '/api/studio/activity-tape/text' })).statusCode).toBe(401);
+      expect((await app.inject({ method: 'PUT', url: '/api/studio/activity-tape/text', payload: { enabled: true } })).statusCode).toBe(401);
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: fixture.ownerEmail, password: 'test-password-1234' } });
+      const headers = { authorization: `Bearer ${login.json().data.token}` };
+      expect((await app.inject({ method: 'PUT', url: '/api/studio/activity-tape/text', headers, payload: { enabled: true, text: 'x' } })).statusCode).toBe(422);
+      expect((await studioActivityTextSetting()).enabled).toBe(false);
+      const on = await app.inject({ method: 'PUT', url: '/api/studio/activity-tape/text', headers, payload: { enabled: true } });
+      expect(on.statusCode).toBe(200);
+      expect(on.json().data).toEqual(await studioActivityTextSetting());
+      expect((await app.inject({ method: 'GET', url: '/api/studio/activity-tape/text', headers })).json().data.enabled).toBe(true);
+      expect((await studioActivityTapeSetting()).enabled).toBe(false);
+    } finally { await app.close(); }
   });
 });

@@ -74,7 +74,8 @@ never from a client-selected owner id.
       "at": "2026-11-09T10:00:00.000Z",
       "dry_run": false,
       "target_handle": null,
-      "paper": null
+      "paper": null,
+      "post_url": "https://x.com/example/status/1234567890"
     },
     {
       "id": "paper:00000000-0000-4000-8000-000000000003",
@@ -96,6 +97,30 @@ oversized batches and malformed objects before persisting anything. There are at
 most 50 events and 200 removal ids. The kinds are exactly REPLY, POST, PAPER_FILL
 and RADAR_HIT. Identifiers are namespaced source-row UUIDs. `agent_id` is an opaque
 local agent UUID, not a name, handle or account id.
+
+`post_url` and `post_text` are optional and are left out entirely, not sent as null,
+when there is nothing to say, so an event without them is exactly what an earlier
+receiver accepts. Studio must deploy its side first: a receiver that predates the
+fields refuses the whole batch that carries one.
+
+* `post_url` is the stored status link of an action that was really published: a
+  `POST` or `REPLY`, `status = EXECUTED`, `dry_run = false`, with the remote id the
+  channel adapter read back, and a stored link that has the shape
+  `https://x.com/<handle>/status/<id>` and ends in that same id. It is whatever the
+  adapter stored, never built from the id here, because nothing downstream of an
+  adapter knows what X looks like. A dry run, an unverified post (no remote id),
+  a mock or rehearsal action, another service's link, a receipt and every other kind
+  carry none. The handle in the link is the posting account's own, never the person
+  a reply was to.
+* `post_text` is the stored words of that action, sent only when the owner turned
+  on `studio.activity_tape.text` in this installation (`GET` or `PUT
+  /api/studio/activity-tape/text`, body `{ "enabled": true|false }`, off by
+  default, never settable by Studio). It reaches forward only: a post made before
+  the switch was turned on never carries words. It travels only beside a
+  `post_url`, at most 500 characters (a longer post is left out whole, never cut),
+  without control characters, and a `REPLY` that contains any `@mention` is left out
+  whole so the person it was to cannot be put back on a public page. The link
+  still travels in each of those cases.
 
 `target_handle` is always null. The task's explicit privacy requirement overrides
 the backlog's proposed target handle: people the agent spoke to stay private.
@@ -158,8 +183,10 @@ not attach themselves to an existing terminal by UUID alone.
 The projection constructs every output field explicitly and never selects source
 text or private objects. Never accept or publish memories, prompts, conversations,
 drafts, raw reasoning, browser frames, sessions, cookies, credentials, secrets,
-wallets, account handles, target references, URLs, remote message ids, persona or
-private guidance. There is no model-authored summary or free-text verdict.
+wallets, account handles, target references, remote message ids, persona or
+private guidance. The two exceptions are the `post_url` of a published post and,
+only by the owner's choice, its `post_text`, both described above; no other URL
+is ever sent. There is no model-authored summary or free-text verdict.
 
 Studio renders null or redacted fields as **unavailable**, never zero, an empty
 holding, a guessed handle or a clean risk result. It labels dry runs visibly and

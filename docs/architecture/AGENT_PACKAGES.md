@@ -125,6 +125,27 @@ way of learning who made it.
 
 ## Routes
 
+### Public-home SHARE profile
+
+The existing export route also accepts `publicAlias=<public home alias>` with
+`mode=SHARE`. `packAgent` allowlists the alias, personality, tone and response
+length into the existing document, with empty configuration and default safety
+policy. It omits biography, prompts, guidance, model and tool configuration,
+knowledge, Plugins, permissions, avatar and learned data. MOVE and keys are
+refused for this profile. The filename uses the public alias.
+
+The local Export panel calls this **Export for public home**. The owner reviews
+the voice text and uploads the file in Studio's home settings with separate
+public consent. It is a manual snapshot. Re-export to update it; removing it
+does not recall downloaded copies. Studio pins the core default profile and
+refuses unknown or changed fields, so future default changes need coordinated
+fixture review.
+
+The JSON envelope, checksum, inspection and importer are unchanged. The result
+imports as a new DRAFT agent, with no connected accounts, explicit capability
+grants or enabled tools. A public file never starts an agent or installs a
+Plugin. Its behaviour can differ because confidential configuration is omitted.
+
 | | |
 | --- | --- |
 | `GET /api/agents/:id/package?mode=SHARE\|MOVE` | downloads it, `no-store` |

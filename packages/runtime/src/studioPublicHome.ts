@@ -9,6 +9,7 @@ import { publicHomeNeedsRepublish, publicHomeRepublished } from './notify';
 import { voiceFromAgent } from './voiceDocument';
 import { readLeagueStanding } from './studioLeague';
 import { unpromptedSubject } from './reticence';
+import { XCounts, storedHomeXCounts } from './studioXCounts';
 
 export const HOME_TTL_MS = 15 * 60_000;
 export const HOME_IDEA_SOURCE = 'studio_public_home';
@@ -24,17 +25,18 @@ const League = z.object({ simulated: z.literal(true), seasonSlug: Slug, generate
 const Receipt = z.object({ id: z.string().regex(/^receipt:[0-9a-f-]{36}$/), kind: z.literal('RECEIPT'), at: z.iso.datetime(), dryRun: z.boolean() }).strict();
 export const PublicHomeManifest = z.object({ protocol: z.literal(1), identity: z.literal('AI_AGENT'), simulated: z.literal(true),
   alias: LeagueAlias, showActivity: z.boolean(), leagueEntryId: z.uuid().nullable(),
-  voice: VoiceDocument.nullable(), paper: Paper.nullable(), league: League.nullable(), receipts: z.array(Receipt).max(50) }).strict();
+  voice: VoiceDocument.nullable(), paper: Paper.nullable(), league: League.nullable(), receipts: z.array(Receipt).max(50), xCounts: XCounts.optional() }).strict();
 export type PublicHomeManifest = z.infer<typeof PublicHomeManifest>;
 export const PublicHomeChoices = z.object({ alias: LeagueAlias, includeVoice: z.boolean().default(false),
-  paperWindow: PaperRecordWindow.nullable().default(null), includeLeague: z.boolean().default(false), showActivity: z.boolean().default(false) }).strict();
+  paperWindow: PaperRecordWindow.nullable().default(null), includeLeague: z.boolean().default(false), showActivity: z.boolean().default(false), includeXCounts: z.boolean().default(false) }).strict();
 export type PublicHomeChoices = z.input<typeof PublicHomeChoices>;
 
 /** Copy named fields. Source growth cannot silently become public data. */
 export function projectHomeManifest(source: Record<string, unknown>): PublicHomeManifest {
   return PublicHomeManifest.parse({ protocol: 1, identity: 'AI_AGENT', simulated: true, alias: source.alias,
     showActivity: source.showActivity, leagueEntryId: source.leagueEntryId, voice: source.voice,
-    paper: source.paper, league: source.league, receipts: source.receipts });
+    paper: source.paper, league: source.league, receipts: source.receipts,
+    ...(source.xCounts === undefined ? {} : { xCounts: source.xCounts }) });
 }
 
 /** Same action facts and consent floor as the tape; no receipt text or evidence payload leaves. */
@@ -111,7 +113,8 @@ export async function previewPublicHome(input: { agentId: string; ownerId: strin
       rank: s.standing.rank, field: s.standing.of, returnBps: s.standing.return_bps, fillsCounted: s.standing.fills_counted };
   }
   const receipts = choices.showActivity ? await receiptProjection(input.agentId) : [];
-  const manifest = projectHomeManifest({ alias: choices.alias, showActivity: choices.showActivity, leagueEntryId, voice, paper, league, receipts });
+  const xCounts = choices.includeXCounts ? await storedHomeXCounts(input.agentId, input.ownerId) : undefined;
+  const manifest = projectHomeManifest({ alias: choices.alias, showActivity: choices.showActivity, leagueEntryId, voice, paper, league, receipts, xCounts });
   const pending: Pending = { manifest, digest: digestOf(manifest), key: randomUUID(), expiresAt: new Date(now.getTime() + HOME_TTL_MS).toISOString(), origin: status.origin, installationId: status.installationId, linkedAt: status.linkedAt };
   await locked(input.agentId, async () => {
     const before = await rowOf(input.agentId);
@@ -119,7 +122,7 @@ export async function previewPublicHome(input: { agentId: string; ownerId: strin
     await query(`INSERT INTO agent_public_home(agent_id,pending) VALUES ($1,$2::jsonb)
       ON CONFLICT (agent_id) DO UPDATE SET pending = excluded.pending`, [input.agentId, JSON.stringify(pending)]);
   });
-  return { manifest, digest: pending.digest, expiresAt: pending.expiresAt, note: 'Anyone can read a published home. Numbers are simulated paper results. Unpublishing removes the page; copies cannot be recalled.' };
+  return { manifest, digest: pending.digest, expiresAt: pending.expiresAt, note: 'Anyone can read a published home. Trading figures are simulated paper results. X counts are dated observations, not performance; unmeasured counts are unavailable. Unpublishing removes the page; copies cannot be recalled.' };
 }
 
 const problem = async (id: string) => {

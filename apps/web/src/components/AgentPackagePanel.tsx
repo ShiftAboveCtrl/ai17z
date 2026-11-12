@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Download, KeyRound, FileUp } from 'lucide-react';
 import { ApiError, getToken, post } from '@app/lib/api';
 import { ErrorPanel, Spinner } from '@app/components/ui';
+import { LeagueAlias } from '@xbam/shared/contracts';
 
 const BASE = (import.meta.env.VITE_XBAM_API_URL ?? '').replace(/\/+$/, '');
 
@@ -38,9 +39,9 @@ interface Imported {
  * Authorization header and an `<a href>` sends none. The blob is released as
  * soon as the browser has taken it.
  */
-async function download(agentId: string, mode: 'SHARE' | 'MOVE', keys = false): Promise<void> {
+async function download(agentId: string, mode: 'SHARE' | 'MOVE', keys = false, publicAlias?: string): Promise<void> {
   const token = getToken();
-  const response = await fetch(`${BASE}/api/agents/${agentId}/package?mode=${mode}${keys ? '&keys=1' : ''}`, {
+  const response = await fetch(`${BASE}/api/agents/${agentId}/package?mode=${mode}${keys ? '&keys=1' : ''}${publicAlias === undefined ? '' : `&publicAlias=${encodeURIComponent(publicAlias)}`}`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
   if (!response.ok) throw new ApiError('INTERNAL', 'That package could not be built.', response.status);
@@ -78,13 +79,14 @@ export function AgentPackagePanel({ agentId, onImported }: { agentId?: string; o
   const [summary, setSummary] = useState<Summary | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [result, setResult] = useState<Imported | null>(null);
+  const [publicAlias, setPublicAlias] = useState('');
 
-  const exportAs = async (mode: 'SHARE' | 'MOVE', keys = false) => {
+  const exportAs = async (mode: 'SHARE' | 'MOVE', keys = false, alias?: string) => {
     if (!agentId) return;
     setBusy(mode);
     setError(null);
     try {
-      await download(agentId, mode, keys);
+      await download(agentId, mode, keys, alias);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'That package could not be downloaded.');
     } finally {
@@ -143,6 +145,12 @@ export function AgentPackagePanel({ agentId, onImported }: { agentId?: string; o
       {agentId && (
         <div className="space-y-3">
           <p className="eyebrow">Take it somewhere else</p>
+          <div className="space-y-2">
+            <label className="block text-sm" htmlFor="public-package-alias">Public home alias</label>
+            <input id="public-package-alias" name="publicAlias" autoComplete="off" className="input" value={publicAlias} onChange={(event) => setPublicAlias(event.target.value)} maxLength={24} />
+            <p className="max-w-prose text-xs leading-relaxed text-bone-dim">Public export shares only this alias, personality, tone and response length, with default safety settings. Review these voice fields for private information before uploading to your Studio public home. Prompts, biography, models, tools, knowledge, Plugins and permissions are omitted.</p>
+            <button type="button" className="btn-quiet" disabled={busy !== null || !LeagueAlias.safeParse(publicAlias).success} onClick={() => void exportAs('SHARE', false, publicAlias)}>Export for public home</button>
+          </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" className="btn-quiet" onClick={() => void exportAs('SHARE')} disabled={busy !== null}>
               {busy === 'SHARE' ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" aria-hidden />}

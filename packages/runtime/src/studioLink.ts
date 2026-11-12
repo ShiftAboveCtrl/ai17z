@@ -1441,9 +1441,15 @@ export async function studioSyncDue(intervalMs: number, now: Date = new Date()):
 /** Frozen public projection. Uses the installation DPoP transport only. */
 export async function studioActivityBatch(input: unknown): Promise<{ ok: true } | StudioProblem> {
   const json = ActivityTapeBatch.parse(input);
-  const answer = await authed('/api/v1/installation/activity-tape', { method: 'POST', json }).catch(
+  let answer = await authed('/api/v1/installation/activity-tape', { method: 'POST', json }).catch(
     () => ({ ok: false as const, why: 'Studio could not be reached.' }),
   );
+  // Strict older receivers reject the optional detail. Retry validation refusals once.
+  if (!('ok' in answer) && [400, 422].includes(answer.status) && json.events.some(event => event.radar)) {
+    const bare = { ...json, events: json.events.map(({ radar: _radar, ...event }) => event) };
+    answer = await authed('/api/v1/installation/activity-tape', { method: 'POST', json: bare })
+      .catch(() => ({ ok: false as const, why: 'Studio could not be reached.' }));
+  }
   if ('ok' in answer) return answer;
   return answer.status === 200 && answer.body?.protocol === 1 && answer.body?.accepted === true
     ? { ok: true } : { ok: false, why: 'Studio did not acknowledge the activity tape.' };

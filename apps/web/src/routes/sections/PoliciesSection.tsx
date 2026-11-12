@@ -1,7 +1,7 @@
 import { EvidenceCardControl } from '../../components/EvidenceCardControl';
 import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
-import { RESPONSE_SPEEDS, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contracts';
+import { MediaPolicy, RESPONSE_SPEEDS, RESPONSE_SPEED_PROFILES } from '@xbam/shared/contracts';
 import { ApiError, get, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { ChoiceGroup, ChoiceOption, Field, SavedTick, Spinner, Toggle } from '@app/components/ui';
@@ -67,13 +67,17 @@ export function PoliciesSection({
   onSaved: () => void;
 }) {
   const [draft, setDraft] = useState<PolicyConfig | null>(policy);
+  const [captureHostsText, setCaptureHostsText] = useState(policy?.media.allowedCaptureHosts.join(', ') ?? '');
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [spending, setSpending] = useState<SpendingReport | null>(null);
   const allAgents = useResource<{ items: { id: string; name: string }[] }>('/api/agents');
 
-  useEffect(() => setDraft(policy), [policy]);
+  useEffect(() => {
+    setDraft(policy);
+    setCaptureHostsText(policy?.media.allowedCaptureHosts.join(', ') ?? '');
+  }, [policy]);
   // Read after every save, so the sentences under each limit describe the
   // policy that is now in force rather than the one being edited.
   useEffect(() => {
@@ -97,6 +101,11 @@ export function PoliciesSection({
   };
 
   const save = async () => {
+    const hosts = MediaPolicy.shape.allowedCaptureHosts.safeParse(draft.media.allowedCaptureHosts);
+    if (!hosts.success) {
+      setError(hosts.error.issues[0]?.message ?? 'Check the capture hostnames.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -350,6 +359,12 @@ export function PoliciesSection({
           </Field>
           <Field label="Domains it may open" hint="Comma separated. Only used by the always-resolve policy.">
             <input className="field" value={draft.media.allowedLinkDomains.join(', ')} onChange={(e) => patch((n) => void (n.media.allowedLinkDomains = list(e.target.value)))} />
+          </Field>
+          <Field label="Hosts it may capture" hint="Comma separated bare hostnames permit public, cookie-less post screenshots from those exact hosts; an empty list permits none.">
+            <input name="allowedCaptureHosts" className="field min-h-12" autoCapitalize="none" spellCheck={false} value={captureHostsText} onChange={(e) => {
+              setCaptureHostsText(e.target.value);
+              patch((n) => void (n.media.allowedCaptureHosts = list(e.target.value)));
+            }} />
           </Field>
         </Group>
 

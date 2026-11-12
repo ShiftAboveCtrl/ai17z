@@ -497,6 +497,47 @@ async function start(label: string, program: string, ports: Ports): Promise<stri
   return started.out;
 }
 
+/**
+ * Whether the installed copy's native worker has written a heartbeat.
+ *
+ * Asked the way the launcher asks (`worker:present`, the heartbeat in this
+ * installation's own database), from the program directory, with only this
+ * installation's environment file. Bounded: the worker takes a few seconds to
+ * connect, and a worker that crashed on start never will, so the tail of its own
+ * log is the failure message.
+ */
+async function nativeWorkerIsUp(label: string, program: string, data: string): Promise<void> {
+  const present = (): Promise<number> =>
+    new Promise((done) => {
+      const child = spawn(
+        process.execPath,
+        [join(program, 'node_modules', 'tsx', 'dist', 'cli.mjs'), join(program, 'scripts', 'browser-worker-present.mts')],
+        { cwd: program, env: { ...bareEnvironment(), AI17Z_ENV_FILE: join(data, '.env') }, stdio: 'ignore' },
+      );
+      child.on('error', () => done(-1));
+      child.on('exit', (code) => done(code ?? -1));
+    });
+
+  const deadline = Date.now() + 120_000;
+  let code = await present();
+  while (code !== 0 && Date.now() < deadline) {
+    await new Promise((wake) => setTimeout(wake, 5_000));
+    code = await present();
+  }
+  if (code !== 0) {
+    const tails: string[] = [];
+    for (const name of ['native-worker.log', 'native-worker.log.err']) {
+      try {
+        tails.push(`${name}:\n${(await readFile(join(data, 'storage', name), 'utf8')).split(/\r?\n/).filter(Boolean).slice(-15).join('\n')}`);
+      } catch {
+        tails.push(`${name}: not written`);
+      }
+    }
+    fail(`${label}: the native worker never started heartbeating (worker:present exit ${code})`, tails.join('\n'));
+  }
+  say(`${label}: the native worker is running`);
+}
+
 async function attempt(label: string, stage: string): Promise<string> {
   const program = join(ROOM, label, 'program');
   const data = join(ROOM, label, 'data');
@@ -556,6 +597,15 @@ async function attempt(label: string, stage: string): Promise<string> {
   try {
     // ---- 1. The thing the desktop icon and the Start Menu both point at ----
     await start(label, program, ports);
+
+    // ---- 1b. The native worker really is running ---------------------------
+    //
+    // `Ready at` is printed by the launcher before the native worker has done
+    // anything, and the worker is the only process that can drive Chrome. Beta
+    // 0.93 shipped a package whose worker died on its first import
+    // (`faker.datatype.number is not a function`) while every other check here
+    // passed, so it is asked, from the unpacked copy, whether it is heartbeating.
+    await nativeWorkerIsUp(label, program, data);
 
     // ---- 2. The database, asked rather than assumed ----------------------
     const expected = await migrationsShipped(program);

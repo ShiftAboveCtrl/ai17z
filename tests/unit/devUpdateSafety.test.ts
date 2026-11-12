@@ -166,6 +166,22 @@ describe('the post', () => {
     expect(checkPostText('added an Anthropic provider, so agents can run on whichever model you prefer')).toEqual([]);
   });
 
+  it('lets a post name Claude Code as a product, and refuses saying it wrote the work either way', () => {
+    expect(
+      checkPostText(
+        'the Claude Code tool is out for community developers. setup is at https://docs.anthropic.com/en/docs/claude-code and it posts through AI17Z.',
+      ),
+    ).toEqual([]);
+    for (const text of [
+      'shipped the scheduler today, built by Claude Code over the weekend',
+      'shipped the scheduler today, Claude Code built the quiet hours for me',
+      'shipped the scheduler today, written by Claude',
+      'shipped the scheduler today, Claude wrote the quiet hours',
+    ]) {
+      expect(codes(checkPostText(text)), text).toContain('ATTRIBUTION');
+    }
+  });
+
   it('refuses hashtag spam, mentions, filler and length', () => {
     expect(codes(checkPostText('fixed the reply lag people kept hitting #buildinpublic #devlog #ai'))).toContain('HASHTAG_SPAM');
     expect(checkPostText('fixed the reply lag people kept hitting today #buildinpublic')).toEqual([]);
