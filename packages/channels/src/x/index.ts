@@ -59,7 +59,7 @@ import {
 */
 export { ensureEngaged } from './engagement';
 export type { EngagementOutcome } from './engagement';
-export { fingerprint, fillComposer, readyForTyping, submitComposer, attachMedia, mediaSeenOnPost } from './composer';
+export { fingerprint, fillComposer, typingBudgetMs, readyForTyping, submitComposer, attachMedia, mediaSeenOnPost } from './composer';
 
 /**
  * Which tab a radar source belongs on.

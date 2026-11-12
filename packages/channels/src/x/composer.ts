@@ -366,6 +366,58 @@ async function clearComposer(page: Page, editor: Locator): Promise<void> {
 }
 
 /**
+ * Keystroke delay, in milliseconds. Each key also costs a CDP round trip, so a
+ * character really takes about 28 ms, not 12.
+ */
+const TYPING_DELAY_MS = 12;
+
+/**
+ * Characters per `type` call. Playwright's `locator.type` is one action with
+ * one deadline (the page default, 30 s), however long the text is. At about
+ * 28 ms a character that deadline lands near 1,070 characters: a 1,438
+ * character post was cut off at 1,063 and again at 1,084 on 2026-11-12, while
+ * a 1,750 character post had gone through the day before on a faster machine.
+ * The throw was swallowed, the retry hit the same wall, and the post never
+ * reached X. A chunk is far from any deadline, so length stops mattering.
+ */
+const TYPING_CHUNK_CHARS = 100;
+
+/** Deadline for one chunk: ten times what it normally takes. */
+const TYPING_CHUNK_TIMEOUT_MS = 15_000;
+
+/**
+ * How long one attempt may spend typing. Two attempts have to fit inside the
+ * tab's 180 s hold (`TAB_HOLD_MS`) with room for opening and submitting.
+ */
+const TYPING_BUDGET_CAP_MS = 70_000;
+
+export function typingBudgetMs(chars: number): number {
+  return Math.min(TYPING_BUDGET_CAP_MS, 20_000 + chars * 45);
+}
+
+/**
+ * Types text in chunks, each with its own deadline, inside one overall budget.
+ * Returns false when the budget ran out before the text was all sent. A chunk
+ * that throws (X replaced the node mid-type) is not fatal here: the caller reads
+ * the composer back and decides, which is the only check that counts.
+ */
+export async function typeIntoEditor(editor: Locator, text: string, budgetMs: number): Promise<boolean> {
+  const deadline = Date.now() + budgetMs;
+  for (let at = 0; at < text.length; at += TYPING_CHUNK_CHARS) {
+    if (Date.now() >= deadline) return false;
+    const chunk = text.slice(at, at + TYPING_CHUNK_CHARS);
+    try {
+      await editor.type(chunk, { delay: TYPING_DELAY_MS, timeout: TYPING_CHUNK_TIMEOUT_MS });
+    } catch {
+      // The draft is partial or mangled by definition; stop sending the rest
+      // after it and let the read-back say so.
+      return true;
+    }
+  }
+  return true;
+}
+
+/**
  * Puts the text into the composer, and proves the whole of it went in.
  *
  * Two changes from the version that shipped the truncation. Readiness is proved
@@ -379,25 +431,39 @@ async function clearComposer(page: Page, editor: Locator): Promise<void> {
  * it. It strips punctuation and case and nothing else: a missing word, a
  * missing URL, or a missing first character all still fail.
  */
-export async function fillComposer(page: Page, editor: Locator, text: string): Promise<string> {
+export async function fillComposer(
+  page: Page,
+  editor: Locator,
+  text: string,
+  options: { budgetMs?: number } = {},
+): Promise<string> {
   const wanted = fingerprint(text);
+  const budgetMs = options.budgetMs ?? typingBudgetMs(text.length);
   let landed = '';
+  let outOfTime = false;
 
   for (let attempt = 0; attempt < COMPOSER_ATTEMPTS; attempt += 1) {
     if (attempt > 0) await clearComposer(page, editor);
 
     await readyForTyping(editor);
 
-    try {
-      await editor.type(text, { delay: 12 });
-    } catch {
-      // A throw here means X replaced the node mid-type. The draft is partial
-      // by definition, so fall through to the check, which will say so.
-    }
+    outOfTime = !(await typeIntoEditor(editor, text, budgetMs));
     await settle(400, 900);
 
     landed = (await editor.innerText().catch(() => '')).trim();
     if (fingerprint(landed) === wanted) return landed;
+
+    // Typing that ran out of time will run out of time again: clearing a
+    // composer and starting over would only double the hold on the tab.
+    if (outOfTime) break;
+  }
+
+  if (outOfTime) {
+    throw PipelineError.retryable(
+      'composer_typing_timeout',
+      `Typing stopped at ${landed.length} of ${text.length} characters after ${Math.round(budgetMs / 1000)} seconds. Nothing was posted.`,
+      { wantedChars: text.length, landedChars: landed.length, budgetMs },
+    );
   }
 
   // Deliberately not a submit. A composer holding the wrong text is the one
