@@ -34,6 +34,7 @@ export * from './defaultPipeline';
 export * from './bootstrap';
 export * from './easyMode';
 export * from './originate';
+export * from './crossPost';
 export * from './emoji';
 export * from './punctuation';
 export * from './rehearse';

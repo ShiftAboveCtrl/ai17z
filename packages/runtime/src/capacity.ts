@@ -36,7 +36,31 @@ const log = createLogger('capacity');
  * names say X because X was first; the account row is what they mean.
  */
 export function spendsReadBudget(channel: string): boolean {
-  return channel === 'x' || channel === 'bluesky';
+  return channel === 'x' || channel === 'bluesky' || channel === 'farcaster';
+}
+
+/**
+ * Whether the channel charges its own reads where it makes them.
+ *
+ * Farcaster counts at its HTTP boundary (`beforeRead` and `afterRead` in the
+ * channel context), so every read is charged once, a failed one included, and a
+ * node's rate limit is recorded by the code its client gave it. A caller that
+ * charged again after the adapter returned would count each read twice, and one
+ * that read the sentence of an error as X pushback would record it twice. It
+ * still asks `checkReadCapacity` first, like every other reader.
+ */
+export function metersItsOwnReads(channel: string): boolean {
+  return channel === 'farcaster';
+}
+
+/**
+ * Which network a log line is about. The ledger is channel-neutral, but a
+ * warning that says `x` about a Farcaster account sends somebody looking at the
+ * wrong network's limits.
+ */
+async function familyOf(accountId: string): Promise<string> {
+  try { return (await loadState(accountId))?.channel ?? 'unknown'; }
+  catch { return 'unknown'; }
 }
 
 /** Which class of capacity a radar source spends. */
@@ -164,7 +188,7 @@ export async function settleAccountCapacity(accountId: string, now = new Date())
       strikes: next.strikes,
     });
     if (next.health !== loaded.state.health) {
-      log.info('x capacity moved', { accountId, from: loaded.state.health, to: next.health, reason: next.reason });
+      log.info('read capacity moved', { family: loaded.channel, accountId, from: loaded.state.health, to: next.health, reason: next.reason });
     }
   }
   return next;
@@ -211,7 +235,7 @@ export async function checkWriteCapacity(
  */
 export async function noteRead(accountId: string, klass: CapacityClass): Promise<void> {
   await capacityRepo.recordRead(accountId, klass).catch((error) => {
-    log.warn('could not count a read', { family: 'x', accountId, message: errorMessage(error) });
+    void familyOf(accountId).then((family) => log.warn('could not count a read', { family, accountId, message: errorMessage(error) }));
   });
 }
 
@@ -235,7 +259,7 @@ export async function notePushback(
     await capacityRepo.recordSignal(accountId, klass, signal, detail);
     await settleAccountCapacity(accountId);
   } catch (error) {
-    log.warn('could not record pushback', { family: 'x', accountId, signal, message: errorMessage(error) });
+    log.warn('could not record pushback', { family: await familyOf(accountId), accountId, signal, message: errorMessage(error) });
   }
 }
 

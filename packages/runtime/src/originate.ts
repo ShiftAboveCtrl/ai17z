@@ -17,6 +17,7 @@ import { proposePaperRecordPost } from './studioPaperVoice';
 import { proposeTraderDnaPost } from './studioTraderDna';
 import { proposePublicHomePost } from './studioPublicHome';
 import { processRadarReceipts } from './radarReceipts';
+import { fanOutPost } from './crossPost';
 
 const log = createLogger('originate');
 
@@ -108,6 +109,30 @@ export async function originatePost(input: {
   const remoteEventId = dryRun ? `post:${brief.idea.id}:rehearsal` : `post:${brief.idea.id}`;
   const idempotencyKey = sha256Hex(`${channel}:${input.accountId}:${remoteEventId}:${actionType}:${agent.id}`);
 
+  /** The same idea on Farcaster for each account the owner opted in. Fails alone. */
+  const copyToFarcaster = async (originJobId: string) => {
+    try {
+      await fanOutPost({
+        agentId: agent.id,
+        originAccount: { id: account.id, channel },
+        originJobId,
+        idea: { id: brief.idea.id, summary: brief.idea.summary, source: brief.idea.source },
+        brief: brief.brief,
+        remoteEventId,
+        dryRun,
+        maxAttempts: policy.config.safety.maxAttempts,
+        versions: {
+          personaVersionId: agent.personaVersionId,
+          policyVersionId: agent.policyVersionId,
+          pipelineVersionId: agent.pipelineVersionId,
+          promptTemplateVersionId: template.id,
+        },
+      });
+    } catch (error) {
+      log.warn('the Farcaster copy of a post did not run', { agentId: agent.id, message: errorMessage(error) });
+    }
+  };
+
   const outcome = await withTransaction(async (tx) => {
     const { event } = await eventsRepo.ingestEvent(tx, input.accountId, {
       channel,
@@ -184,12 +209,16 @@ export async function originatePost(input: {
       than being retried or quietly resurrected.
     */
     await contentRepo.attachJob(agent.id, brief.idea.id, outcome.job.id);
+    // A restart between the primary job and its copies would otherwise lose the
+    // copies for good. Fanning out is idempotent, so doing it again is safe.
+    await copyToFarcaster(outcome.job.id);
     return { posted: false, reason: 'A job for this idea already exists.', jobId: outcome.job.id };
   }
 
   // The idea names the job that took it, so the reconciler can ask that job how
   // it went rather than guessing from an age.
   await contentRepo.attachJob(agent.id, brief.idea.id, outcome.job.id);
+  await copyToFarcaster(outcome.job.id);
 
   await observability.emitTrace({
     jobId: outcome.job.id,

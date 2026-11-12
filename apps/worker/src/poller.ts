@@ -13,6 +13,7 @@ import {
   ingestNormalizedEvent,
   nextPollDelayMs,
   noteXFailure,
+  metersItsOwnReads,
   noteXRead,
   spendsReadBudget,
 } from '@xbam/runtime';
@@ -168,7 +169,7 @@ export class ChannelPoller {
           progress = reported;
         },
       });
-      if (spendsReadBudget(account.channel) && charged === 0) await noteXRead(account.id, 'DIRECT');
+      if (spendsReadBudget(account.channel) && !metersItsOwnReads(account.channel) && charged === 0) await noteXRead(account.id, 'DIRECT');
       let created = 0;
       for (const event of events) {
         const outcome = await ingestNormalizedEvent({ accountId: account.id, event });
@@ -210,7 +211,9 @@ export class ChannelPoller {
     } catch (error) {
       const message = errorMessage(error);
       log.warn('channel poll failed', { channel: account.channel, handle: account.handle, message });
-      if (spendsReadBudget(account.channel)) await noteXFailure(account.id, 'DIRECT', message);
+      // A channel that charges its own reads records its own pushback by code; reading its
+      // sentence as X's would count the same refusal twice.
+      if (spendsReadBudget(account.channel) && !metersItsOwnReads(account.channel)) await noteXFailure(account.id, 'DIRECT', message);
       await stopPollingIfSignInIsGone(account, error);
       // A failing account backs off like an idle one rather than being retried
       // every tick, but the streak is what grows, not a separate failure counter.

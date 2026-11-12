@@ -543,3 +543,26 @@ describe('every artifact kind the code can write is one the database accepts', (
     ).rejects.toThrow();
   });
 });
+
+/**
+ * Migration 0134 added cross_posts, whose status is a CHECK. The code declares
+ * the list; this writes a real row for each value, because a status the code
+ * can record and the column refuses fails on the path that records the first
+ * skipped copy, which no unit test reaches.
+ */
+describe('every cross-post status the code can record is one the database accepts', () => {
+  it('writes each declared status, and refuses one that is not declared', async () => {
+    const { crossPosts, content } = await import('@xbam/database');
+    const fixture = await createFixture();
+    const account = await accountsRepo.createAccount({ ownerId: fixture.ownerId, channel: 'mock', handle: uniqueSuffix() });
+    for (const status of crossPosts.CROSS_POST_STATUSES) {
+      const idea = await content.addIdea({ agentId: fixture.agentId, kind: 'observation', summary: `idea for ${status}`, source: 'manual', score: 50 });
+      const { created } = await crossPosts.recordCrossPost(null, { agentId: fixture.agentId, ideaId: idea.id, originAccountId: account.id,
+        targetAccountId: account.id, channel: 'farcaster', dryRun: false, jobId: null, status, reason: '' });
+      expect(created).toBe(true);
+    }
+    const idea = await content.addIdea({ agentId: fixture.agentId, kind: 'observation', summary: 'idea for nothing', source: 'manual', score: 50 });
+    await expect(crossPosts.recordCrossPost(null, { agentId: fixture.agentId, ideaId: idea.id, originAccountId: account.id,
+      targetAccountId: account.id, channel: 'farcaster', dryRun: false, jobId: null, status: 'NOT_A_STATUS' as never, reason: '' })).rejects.toThrow();
+  });
+});

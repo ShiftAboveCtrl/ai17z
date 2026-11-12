@@ -37,6 +37,7 @@ export * as targets from './repositories/targets';
 export * as xCapacity from './repositories/xCapacity';
 export * as telegramChannel from './repositories/telegramChannel';
 export * as farcasterSigners from './repositories/farcasterSigners';
+export * as crossPosts from './repositories/crossPosts';
 export * as channelState from './repositories/channelState';
 export * as broadCandidates from './repositories/broadCandidates';
 export * as learning from './repositories/learning';

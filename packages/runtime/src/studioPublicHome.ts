@@ -47,6 +47,7 @@ async function receiptProjection(agentId: string): Promise<z.infer<typeof Receip
     WHERE a.agent_id=$1 AND p.permission IN ('ALLOWED','OWNER_APPROVAL')
       AND a.status IN ('EXECUTED','DRY_RUN') AND a.type='POST' AND a.channel <> 'mock'
       AND e.payload->>'ideaSource'='radar_receipt' AND COALESCE(e.payload->>'rehearsal','false') <> 'true'
+      AND NOT (e.payload ? 'mirrorOf')
       AND COALESCE(e.payload->>'origin','') <> 'rehearsal'
       AND a.executed_at >= p.permission_changed_at AND a.executed_at <= now()
       AND NOT ('receipt:' || a.id = ANY($2::text[]))

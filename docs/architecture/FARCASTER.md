@@ -67,3 +67,33 @@ then validate against an authorized real node. Improve incremental polling for
 large histories: this version walks all pages and relies on database deduplication,
 so historical replies can take multiple cadence cycles to discover. No real
 Farcaster request or credential was used during session 1 verification.
+
+## One voice across X and Farcaster
+
+Posting a copy of the agent's own posts to Farcaster is a separate owner switch per
+Farcaster account (`farcaster_posting`, migration 0134), off unless somebody turns it
+on from the account's panel or `PUT /api/accounts/:id/farcaster/posting`. `GET` on the
+same path says whether a cast could go out now and, if not, why (no signer, not
+connected, not linked, no POST grant). It is never a silent skip: an opted-in account
+that cannot cast is recorded in `cross_posts` as SKIPPED with its reason.
+
+`originatePost` fans the idea out after the primary job exists (`crossPost.ts`). The
+copy is its own event and its own job on the Farcaster account: the job key is built
+from the channel, the account and the event, so a Farcaster retry is not the X job
+and the X job is not the cast. `cross_posts (idea, account, dry_run)` is unique, and a
+rehearsal is kept apart from the real post. Fan-out runs again on the "a job for this
+idea already exists" path, so a restart between the two jobs cannot lose the copy, and
+it never throws into the primary post.
+
+Every refusal runs on the Farcaster job's own final text in `stepExecute` and the
+quality gate: signal and receipt ideas are judged by the same `signalPublicationRefusal`
+rules (no PnL, no called it, no advice), receipts must keep their before, at post and
+now values, and ownership is checked against the account that watched the chain
+(`publicationScope`) while cadence and connection are asked of the Farcaster account.
+Switching the toggle off stops casts that were already queued. A text over 320 bytes is
+refused, not cut. The activity tape and the public home's receipt list leave copies
+out, so one post is one event.
+
+Farcaster reads are in `spendsReadBudget`. The channel still charges at its HTTP
+boundary, so `metersItsOwnReads` keeps the poller and the context step from charging
+the same read again or reading a node's words as X's. Replies are not copied.

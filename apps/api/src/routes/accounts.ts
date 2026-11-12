@@ -5,6 +5,7 @@ import { BadRequestError, ForbiddenError, NotFoundError } from '@xbam/shared';
 import {
   accounts as accountsRepo,
   farcasterSigners,
+  crossPosts,
   browserTasks as browserTasksRepo,
   cadences as cadencesRepo,
   ops,
@@ -14,6 +15,7 @@ import { getChannelAdapter, isChannelImplemented, listChannelAdapters } from '@x
 import { closeSession } from '@xbam/browser';
 import {
   accountIsWell,
+  accountPostingStatus,
   connectFarcaster,
   allowTelegramGroup,
   connectTelegramGroupAccount,
@@ -59,6 +61,18 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
     if (account.channel !== 'farcaster') throw new BadRequestError('This account is not on Farcaster.');
     await farcasterSigners.clearSigner(account.id);
     return farcasterSigners.signerPresence(account.id);
+  }));
+  app.get('/api/accounts/:id/farcaster/posting', handler(async (request) => {
+    const account = await ownedAccount(params(request).id!, await requireUser(request));
+    if (account.channel !== 'farcaster') throw new BadRequestError('This account is not on Farcaster.');
+    return accountPostingStatus(account.id);
+  }));
+  app.put('/api/accounts/:id/farcaster/posting', handler(async (request) => {
+    const account = await ownedAccount(params(request).id!, await requireUser(request));
+    if (account.channel !== 'farcaster') throw new BadRequestError('This account is not on Farcaster.');
+    const input = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
+    await crossPosts.setFarcasterPosting(account.id, input.enabled);
+    return accountPostingStatus(account.id);
   }));
   app.get(
     '/api/channels',

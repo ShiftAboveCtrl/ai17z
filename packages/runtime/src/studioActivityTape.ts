@@ -170,6 +170,8 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
       AND ($8::boolean OR COALESCE(e.payload->>'ideaSource', '') <> 'radar_receipt')
       AND a.channel <> 'mock' AND COALESCE(e.payload->>'rehearsal', 'false') <> 'true'
       AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'
+      -- A copy of a post on another network is the same event once, not a second one.
+      AND NOT (e.payload ? 'mirrorOf')
       AND a.executed_at >= greatest($2::timestamptz, p.permission_changed_at)
     UNION ALL
     SELECT 'paper:' || t.id, t.agent_id, 'PAPER_FILL', date_trunc('milliseconds', t.updated_at), true,

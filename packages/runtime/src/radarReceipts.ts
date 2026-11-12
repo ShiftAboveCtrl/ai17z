@@ -139,7 +139,7 @@ export async function processRadarReceipts(agentId: string, reader = readSignalW
 }
 
 /** Approved jobs are checked again at send, using the original watch grants. */
-export async function receiptIdeaRefusal(ideaId: string, draft?: string, scope?: { accountId?: string | null; agentId: string }, retry = { afterMs: 0 }): Promise<string | null> {
+export async function receiptIdeaRefusal(ideaId: string, draft?: string, scope?: { accountId?: string | null; agentId: string; postingAccountId?: string | null }, retry = { afterMs: 0 }): Promise<string | null> {
   retry.afterMs = 0;
   const [row] = await query<{ original_idea: string; agent_id: string; account_id: string; status: string; checked_at: string; expires_at: string; evidence: Evidence; now_read: SignalObservation }>(`SELECT e.payload->>'ideaId' AS original_idea, a.agent_id, a.account_id, r.status, r.checked_at, a.executed_at + (r.window_hours + 24) * interval '1 hour' AS expires_at, r.evidence, r.now_read
     FROM signal_receipts r JOIN actions a ON a.id=r.action_id JOIN jobs j ON j.id=a.job_id JOIN events e ON e.id=j.event_id WHERE r.idea_id=$1`, [ideaId]);
@@ -150,7 +150,9 @@ export async function receiptIdeaRefusal(ideaId: string, draft?: string, scope?:
   if (new Date(row.checked_at).toISOString().slice(0, 10) !== new Date().toISOString().slice(0, 10)) return 'Receipt daily reservation expired; skipped.';
   const refusal = await signalIdeaRefusal(row.original_idea, draft, scope) ?? (draft ? receiptDraftRefusal(row.evidence, row.now_read, draft) : null);
   if (refusal) return refusal;
-  const gate = await receiptGate(row.agent_id, row.account_id, new Date(), retry);
+  // A copy on another network is held to that network's account: its connection,
+  // quiet hours and cadence, not the account the receipt was measured under.
+  const gate = await receiptGate(row.agent_id, scope?.postingAccountId ?? row.account_id, new Date(), retry);
   retry.afterMs = Math.min(retry.afterMs, Math.max(1, new Date(row.expires_at).getTime() - Date.now()));
   return gate;
 }

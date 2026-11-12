@@ -26,7 +26,7 @@ import { resolveMedia } from '../mediaResolve';
 import type { JobBundle } from '../loadJob';
 
 import { adapterContext } from '../channelContext';
-import { capacityClassForEvent, checkReadCapacity, noteXFailure, noteXRead, spendsReadBudget } from '../capacity';
+import { capacityClassForEvent, checkReadCapacity, metersItsOwnReads, noteXFailure, noteXRead, spendsReadBudget } from '../capacity';
 
 /**
  * Working out what arrived, and what the agent already knows about it.
@@ -156,13 +156,13 @@ export async function stepResolveContext(bundle: JobBundle): Promise<void> {
         ? selfOriginatedContext(bundle)
         : await adapter.resolveContext(ctx, eventToNormalized(bundle));
   } catch (error) {
-    if (readsX) {
+    if (readsX && !metersItsOwnReads(bundle.job.channel)) {
       await noteXRead(bundle.job.accountId!, klass);
       await noteXFailure(bundle.job.accountId!, klass, errorMessage(error));
     }
     throw error;
   }
-  if (readsX) await noteXRead(bundle.job.accountId!, klass);
+  if (readsX && !metersItsOwnReads(bundle.job.channel)) await noteXRead(bundle.job.accountId!, klass);
 
   // Now that the thread is known, put this exchange with the rest of it.
   await bindToThread(bundle, resolved);

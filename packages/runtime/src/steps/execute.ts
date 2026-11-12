@@ -60,6 +60,7 @@ import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { checkTraderDnaAtSend } from '../studioTraderDna';
 import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
 import { capacityClassForEvent } from '../capacity';
+import { crossPostSendRefusal, publicationScope } from '../crossPost';
 
 import { adapterContext } from '../channelContext';
 import { checkEvidenceCardAtSend } from '../evidenceCard';
@@ -240,14 +241,19 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     const refusal = await publicHomeSendRefusal(bundle.agent.id, output, true);
     if (refusal) throw PipelineError.permanent('public_home_refused', refusal);
   }
+  // The same refusals run on this network's own final text. A cast of a radar
+  // receipt is judged as a receipt, against the account that watched the chain.
+  const scope = publicationScope(bundle.event.payload, job.accountId);
+  const copyRefusal = await crossPostSendRefusal(bundle.event.payload, job.accountId, job.dryRun, output);
+  if (copyRefusal) throw PipelineError.permanent(copyRefusal.reason, copyRefusal.message);
   if (signal.ideaSource === 'radar_receipt') {
     const retry = { afterMs: 0 };
-    const refusal = signal.ideaId ? await receiptIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }, retry) : 'Receipt evidence is missing.';
+    const refusal = signal.ideaId ? await receiptIdeaRefusal(signal.ideaId, output, { ...scope, agentId: bundle.agent.id }, retry) : 'Receipt evidence is missing.';
     if (refusal && retry.afterMs > 0) throw PipelineError.retryable('receipt_limit', refusal, { retryAfterMs: retry.afterMs });
     if (refusal) throw PipelineError.permanent('receipt_publication_refused', refusal);
   }
   if (signal.ideaSource === 'market_signal') {
-    const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, output, { accountId: job.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
+    const refusal = signal.ideaId ? await signalIdeaRefusal(signal.ideaId, output, { accountId: scope.accountId, agentId: bundle.agent.id }) : 'Signal evidence is missing.';
     if (refusal) throw PipelineError.permanent('signal_publication_refused', refusal);
   }
 
