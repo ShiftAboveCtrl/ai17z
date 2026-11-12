@@ -477,6 +477,15 @@ export const StudioPolicy = z.object({
   postTraderDna: z.boolean().default(false),
   /** The one published study a public post is about. Null: none chosen, so none is posted. */
   traderDnaStudyId: z.string().regex(TRADER_DNA_STUDY_ID).nullable().default(null),
+  /**
+   * Let the agent narrate its own paper league season in public: one post when
+   * it enters, one mid season standing note and one recap. Off by default and
+   * separate from the paper record switches, because a rank invites being read
+   * as performance. The posts state rank, the size of the field and fills
+   * counted, always as simulated paper, and never name, rank or compare another
+   * entrant. They go through reticence, cadence and capacity like any post.
+   */
+  postLeagueSeason: z.boolean().default(false),
 });
 export type StudioPolicy = z.infer<typeof StudioPolicy>;
 

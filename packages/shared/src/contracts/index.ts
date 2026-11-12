@@ -37,6 +37,7 @@ export * from './research';
 export * from './wallet';
 export * from './trading';
 export * from './studioLeague';
+export * from './studioLeaguePost';
 export * from './playbook';
 export * from './hosting';
 export * from './confidential';

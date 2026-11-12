@@ -249,7 +249,7 @@ describe('posting the record', () => {
   }
 
   it('is off by default: nothing is asked of Studio and nothing is proposed', async () => {
-    expect(DEFAULT_POLICY.studio).toEqual({ postPaperRecord: false, postPaperPnl: false, paperRecordWindow: '7d', postTraderDna: false, traderDnaStudyId: null });
+    expect(DEFAULT_POLICY.studio).toEqual({ postPaperRecord: false, postPaperPnl: false, paperRecordWindow: '7d', postTraderDna: false, traderDnaStudyId: null, postLeagueSeason: false });
     const fixture = await ready(null);
     const outcome = await proposePaperRecordPost(fixture.agentId);
     expect(outcome.proposed).toBe(false);

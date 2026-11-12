@@ -17,6 +17,7 @@ import { proposePaperRecordPost } from './studioPaperVoice';
 import { proposeTraderDnaPost } from './studioTraderDna';
 import { proposePublicHomePost } from './studioPublicHome';
 import { processRadarReceipts } from './radarReceipts';
+import { proposeLeagueSeasonPosts } from './studioLeagueVoice';
 
 const log = createLogger('originate');
 
@@ -75,6 +76,9 @@ export async function originatePost(input: {
   // The same for one published Trader DNA study the owner chose, if they opted in.
   await proposeTraderDnaPost(agent.id);
   await proposePublicHomePost(agent.id);
+  // The paper league season arc, only when the owner opted in. It records why it
+  // said nothing, and the gates it passes are the same ones this post passes.
+  await proposeLeagueSeasonPosts(agent.id, input.accountId);
 
   // The backlog decides whether there is a post, not the clock. The claim and
   // the signal refusal share one account scope inside nextPost, so a signal

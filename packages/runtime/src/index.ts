@@ -90,6 +90,7 @@ export * from './studioLink';
 export * from './studioControl';
 export * from './studioLeague';
 export * from './studioLeagueCapabilities';
+export * from './studioLeagueVoice';
 export * from './leagueSeason';
 export * from './studioLiveTrades';
 export * from './protectiveExits';

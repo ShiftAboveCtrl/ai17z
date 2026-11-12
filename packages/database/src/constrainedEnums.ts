@@ -54,6 +54,8 @@ import {
   TRADE_PAUSE_SCOPES,
   SHADOW_OUTCOMES,
   SIGNAL_RECEIPT_STATUSES,
+  LEAGUE_POST_KINDS,
+  LEAGUE_POST_STATUSES,
   SIGNAL_RECEIPT_VERDICTS,
   SIGNAL_RECEIPT_WINDOW_HOURS,
   TRADE_SIDES,
@@ -513,6 +515,9 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   // The league bridge (migration 0120) and radar receipts (migration 0126).
   { table: 'league_entries', column: 'status', values: LEAGUE_ENTRY_STATUSES },
   { table: 'league_fill_reports', column: 'state', values: LEAGUE_FILL_STATES },
+  // The agent's public league season posts (migration 0133).
+  { table: 'league_season_posts', column: 'kind', values: LEAGUE_POST_KINDS },
+  { table: 'league_season_posts', column: 'status', values: LEAGUE_POST_STATUSES },
   { table: 'signal_receipts', column: 'status', values: SIGNAL_RECEIPT_STATUSES },
   { table: 'signal_receipts', column: 'verdict', values: SIGNAL_RECEIPT_VERDICTS },
   {

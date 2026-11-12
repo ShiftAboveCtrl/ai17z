@@ -41,7 +41,7 @@ export function receiptEvidence(evidence: Evidence, read: SignalObservation, now
   return { verdict, compact, detail: `Radar receipt for ${evidence.watch.chain}:${identity}: ${evidence.watch.predicate.replaceAll('_', ' ')}. ${describe('Before', evidence.before)} ${describe('At post', evidence.after)} ${describe('Now', read, valid)} ${read.definition} Compact receipt (UTC): ${compact} ${valid ? 'What changed: ' + verdict + '.' : 'Reading missing or stale; ungraded.'}` };
 }
 
-async function receiptGate(agentId: string, accountId: string, now: Date, retry = { afterMs: 0 }): Promise<string | null> {
+export async function postingGate(agentId: string, accountId: string, now: Date, retry = { afterMs: 0 }): Promise<string | null> {
   retry.afterMs = 0;
   if ((await pauseState()).paused) return 'Everything is paused.';
   const agent = await agents.getAgent(agentId);
@@ -87,7 +87,7 @@ export async function processRadarReceipts(agentId: string, reader = readSignalW
     const retry = { afterMs: 0 };
     const unsupported = !['liquidity_below', 'concentration_above'].includes(row.evidence.watch.predicate)
       ? `Receipt predicate ${row.evidence.watch.predicate} has no lossless compact form within the output character limit.` : null;
-    let refusal = unsupported ?? await signalIdeaRefusal(row.idea_id, undefined, { agentId, accountId: row.account_id }) ?? await receiptGate(agentId, row.account_id, now, retry);
+    let refusal = unsupported ?? await signalIdeaRefusal(row.idea_id, undefined, { agentId, accountId: row.account_id }) ?? await postingGate(agentId, row.account_id, now, retry);
     const claimed = await withTransaction(async tx => {
       // Serialize one agent's per-day reservations across accounts and workers.
       await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [agentId]);
@@ -114,7 +114,7 @@ export async function processRadarReceipts(agentId: string, reader = readSignalW
     const readAt = new Date(Math.max(now.getTime(), Date.now()));
     const result = receiptEvidence(row.evidence, read, readAt.getTime());
     retry.afterMs = 0;
-    refusal = await signalIdeaRefusal(row.idea_id, result.detail, { agentId, accountId: row.account_id }) ?? await receiptGate(agentId, row.account_id, readAt, retry);
+    refusal = await signalIdeaRefusal(row.idea_id, result.detail, { agentId, accountId: row.account_id }) ?? await postingGate(agentId, row.account_id, readAt, retry);
     const expired = readAt.getTime() >= new Date(row.expires_at).getTime();
     if (expired) refusal = 'Receipt window expired.';
     const unavailable = result.verdict === 'unavailable';
@@ -150,7 +150,7 @@ export async function receiptIdeaRefusal(ideaId: string, draft?: string, scope?:
   if (new Date(row.checked_at).toISOString().slice(0, 10) !== new Date().toISOString().slice(0, 10)) return 'Receipt daily reservation expired; skipped.';
   const refusal = await signalIdeaRefusal(row.original_idea, draft, scope) ?? (draft ? receiptDraftRefusal(row.evidence, row.now_read, draft) : null);
   if (refusal) return refusal;
-  const gate = await receiptGate(row.agent_id, row.account_id, new Date(), retry);
+  const gate = await postingGate(row.agent_id, row.account_id, new Date(), retry);
   retry.afterMs = Math.min(retry.afterMs, Math.max(1, new Date(row.expires_at).getTime() - Date.now()));
   return gate;
 }

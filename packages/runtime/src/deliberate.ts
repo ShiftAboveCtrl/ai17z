@@ -26,6 +26,7 @@ import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
 import { processRadarReceipts } from './radarReceipts';
+import { proposeLeagueSeasonPosts } from './studioLeagueVoice';
 import { requestDiscovery } from './discovery';
 import { learnFromOutcomes } from './learning';
 import { worthNoticing } from './repoWatcher';
@@ -904,6 +905,8 @@ export async function wakeAgent(
 
   const links = await accountsRepo.listAgentAccounts(agentId);
   const accountId = links[0]?.accountId ?? null;
+  // The paper league season arc adds an idea at most, and records why when it does not.
+  await proposeLeagueSeasonPosts(agentId, accountId);
 
   /*
     Whether the agent may be going looking at all right now.

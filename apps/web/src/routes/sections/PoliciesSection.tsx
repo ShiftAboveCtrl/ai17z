@@ -488,6 +488,20 @@ export function PoliciesSection({
         </Group>
 
         {/*
+          Off, and not offered by Easy Mode. A rank invites being read as
+          performance, so the posts say rank, field size and fills counted,
+          always as simulated paper, and nothing about another entrant.
+        */}
+        <Group title="Paper league season on Studio" blurb="Whether the agent may tell the story of its own paper league season in public. Reading your standing in a private conversation is the Studio capability, not this.">
+          <Toggle
+            label="Let it narrate its league season"
+            description="It may write up to three posts per season: one when it enters, one mid season with its rank and the size of the field, and one recap. Every figure is labelled simulated paper. It never names, ranks or compares another entrant, and says nothing about returns. If Studio cannot be reached it says nothing rather than repeat an old rank. Needs the posting schedule running."
+            checked={draft.studio.postLeagueSeason}
+            onChange={(v) => patch((n) => void (n.studio.postLeagueSeason = v))}
+          />
+        </Group>
+
+        {/*
           Off, and not offered by Easy Mode. A study is research about other
           people's wallets: the post may report what survived the luck filters,
           and the checks refuse any claim that a wallet is smart or worth following.

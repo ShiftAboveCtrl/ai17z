@@ -57,6 +57,7 @@ import { paperReplyForJob } from '../paperCapabilities';
 import { signalIdeaRefusal } from '../signalRadar';
 import { receiptIdeaRefusal } from '../radarReceipts';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
+import { checkLeaguePostAtSend } from '../studioLeagueVoice';
 import { checkTraderDnaAtSend } from '../studioTraderDna';
 import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
 import { capacityClassForEvent } from '../capacity';
@@ -307,6 +308,9 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   // Likewise a post about a Trader DNA study, which may never name a wallet or
   // call one smart or worth copying, whatever the study or the model said.
   checkTraderDnaAtSend({ raw: bundle.event.payload, text: output, policy });
+  // A league season post states this agent's own simulated paper standing, so the
+  // standing is read again here: never a rank Studio no longer gives.
+  await checkLeaguePostAtSend({ raw: bundle.event.payload, text: output, policy });
 
   if (!job.dryRun) {
     // The final say on whether this action is permitted. Ingest checked the same
