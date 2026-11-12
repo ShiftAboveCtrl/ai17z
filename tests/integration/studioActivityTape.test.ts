@@ -321,8 +321,14 @@ describe('activity tape against Postgres and a DPoP Studio contract server', () 
     await action('POST', 'EXECUTED', 16); const fresh = await action('POST', 'EXECUTED', 14);
     expect((await sweepStudioActivityTape()).sent).toBe(1);
     expect([...studio.visible.values()][0]!.id).toBe(fresh);
-    await setStudioActivityTape(false, fixture.ownerId); await action();
-    await setStudioActivityTape(true, fixture.ownerId); await due();
+    await setStudioActivityTape(false, fixture.ownerId);
+    const paused = await action();
+    // The resume stamp is the host clock and the row is the database clock. A
+    // database a few milliseconds ahead made a row created during the pause
+    // look newer than the resume, so the sweep sent it. Pin it to the pause.
+    await query(`UPDATE actions SET executed_at = (SELECT (value->>'changedAt')::timestamptz FROM app_settings WHERE key = 'studio.activity_tape') WHERE id = $1`, [paused.slice('action:'.length)]);
+    await setStudioActivityTape(true, fixture.ownerId);
+    await due();
     expect((await sweepStudioActivityTape()).sent).toBe(0);
   });
 
