@@ -276,6 +276,128 @@ describe('a hit in third-party bytes is excused by proof and nothing else', () =
     }
   });
 
+  // A lockfile link ("link": true) that the stager replaced with a real copy:
+  // node_modules/outer/node_modules/leaky is a link to packages/compat, the copy
+  // carries its own node_modules/leaky, and that file is the registry package
+  // node_modules/leaky, whose tarball is pre-seeded in the proof cache so no
+  // network is touched. The same shape as the faker override in Beta 0.94.
+  const linkRoom = (opts: { target?: string; withTarget?: boolean; innerPath?: string; bytes?: string }) => {
+    const dir = room();
+    const home = emptyHome();
+    const app = join(dir, 'app');
+    const cache = join(dir, 'cache');
+    mkdirSync(cache, { recursive: true });
+    const inner = opts.innerPath ?? 'node_modules/leaky/readme.md';
+    const copy = join(app, 'node_modules', 'outer', 'node_modules', 'leaky');
+    mkdirSync(join(copy, ...inner.split('/').slice(0, -1)), { recursive: true });
+    const upstream = `built on ${HOST}\n`;
+    writeFileSync(join(copy, ...inner.split('/')), opts.bytes ?? upstream);
+    writeFileSync(join(dir, 'patterns.txt'), LIST);
+    py(
+      [
+        'import io, sys, json, tarfile, hashlib, base64',
+        'dir, host, target, with_target = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"',
+        'data = ("built on " + host + "\\n").encode()',
+        'buf = io.BytesIO()',
+        't = tarfile.open(fileobj=buf, mode="w:gz")',
+        'info = tarfile.TarInfo("package/readme.md"); info.size = len(data)',
+        't.addfile(info, io.BytesIO(data)); t.close()',
+        'raw = buf.getvalue()',
+        'digest = hashlib.sha512(raw).digest()',
+        'open(dir + "/cache/npm-" + digest.hex() + ".tgz", "wb").write(raw)',
+        'packages = {',
+        '    "node_modules/leaky": {"name": "leaky", "version": "1.0.0", "resolved": "https://registry.npmjs.org/leaky/-/leaky-1.0.0.tgz", "integrity": "sha512-" + base64.b64encode(digest).decode()},',
+        '    "node_modules/outer/node_modules/leaky": {"resolved": target, "link": True},',
+        '}',
+        'if with_target: packages[target] = {"name": "compat", "version": "1.0.0"}',
+        'open(dir + "/lock.json", "w").write(json.dumps({"lockfileVersion": 3, "packages": packages}))',
+      ].join('\n'),
+      dir, HOST, opts.target ?? 'packages/compat', opts.withTarget === false ? '0' : '1',
+    );
+    const run = () =>
+      spawnSync(
+        python!,
+        [scan, '--checks', 'identifiers', '--patterns', join(dir, 'patterns.txt'), '--lenient', 'node_modules=home-path', '--prove-npm', join(dir, 'lock.json'), '--proof-cache', cache, 'path', app],
+        { encoding: 'utf8', env: { ...process.env, PRIVATE_IDENTIFIERS: '', HOME: home, USERPROFILE: home } },
+      );
+    return {
+      run,
+      clean: () => {
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      },
+    };
+  };
+
+  it.skipIf(!python)('proves a file inside a materialized link against the registry tarball of the package it really is', () => {
+    const r = linkRoom({});
+    try {
+      const result = r.run();
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain('exempt, proven upstream bytes');
+      expect(result.stdout).toContain('leaky@1.0.0');
+      expect(result.stdout).toContain('findings 0');
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      r.clean();
+    }
+  });
+
+  it.skipIf(!python)('still refuses the same path inside a materialized link when one byte differs', () => {
+    const r = linkRoom({ bytes: `built on ${HOST}\nx` });
+    try {
+      const result = r.run();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('hostname');
+      expect(result.stdout).toContain('not proven upstream');
+      expect(result.stdout).toContain('differs from leaky@1.0.0');
+      expect(result.stdout).not.toContain('exempt, proven upstream bytes');
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      r.clean();
+    }
+  });
+
+  it.skipIf(!python)('still refuses a link whose target the lockfile does not describe', () => {
+    const r = linkRoom({ withTarget: false });
+    try {
+      const result = r.run();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('not proven upstream');
+      expect(result.stdout).toContain('which package-lock.json does not describe');
+      expect(result.stdout).not.toContain('exempt, proven upstream bytes');
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      r.clean();
+    }
+  });
+
+  it.skipIf(!python)('still refuses a link that leaves the repository, however well the bytes would match', () => {
+    const r = linkRoom({ target: '../elsewhere' });
+    try {
+      const result = r.run();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('not proven upstream');
+      expect(result.stdout).not.toContain('exempt, proven upstream bytes');
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      r.clean();
+    }
+  });
+
+  it.skipIf(!python)('treats the linked package\'s own files as ours: only its dependencies are provable', () => {
+    const r = linkRoom({ innerPath: 'readme.md' });
+    try {
+      const result = r.run();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('belongs to that local package');
+      expect(result.stdout).not.toContain('exempt, proven upstream bytes');
+      expect(leaks(result.stdout)).toBe(false);
+    } finally {
+      r.clean();
+    }
+  });
+
   it.skipIf(!python)('excuses a file under runtime/node only when its bytes match the pinned Node tarball', () => {
     const dir = room();
     const home = emptyHome();
