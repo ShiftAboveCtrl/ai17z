@@ -142,3 +142,55 @@ describe('an address the agent was never given', () => {
     }
   });
 });
+
+/**
+ * The check page line an evidence card ends with is built by the runtime, not
+ * written by the model: the linked Studio's origin plus a mint that
+ * `token.inspect_risk` actually read. That exact line is passed into validation
+ * as the proven link, and only it is exempt from the address rule.
+ *
+ * A model asked for an address it does not have will produce one anyway, so the
+ * guard has to stay where the model can write: every other address, the same
+ * mint written anywhere else, and any check link the model wrote itself, are
+ * still held.
+ */
+describe('a check page link the runtime proved', () => {
+  const STUDIO = 'https://studio.example.invalid';
+  const LINK = `${STUDIO}/check/solana/${RECORDED}`;
+  const LINE = `Full check: ${LINK}`;
+
+  it('exempts only the exact line that carries the proven link', () => {
+    const text = `Token evidence\nLiquidity: 12000 USD\nnot a verdict, reads can be wrong\n${LINE}`;
+    const result = validateOutput(text, policy(), null, null, LINK);
+    expect(result.ok).toBe(true);
+    expect(result.violations.map((v) => v.rule)).not.toContain('unverified_address');
+  });
+
+  it('still holds the same mint written anywhere else in the output', () => {
+    const text = `Token evidence\nLiquidity: 12000 USD\nSend it to ${RECORDED}\n${LINE}`;
+    const result = validateOutput(text, policy(), null, null, LINK);
+    expect(result.ok).toBe(false);
+    expect(result.violations.find((v) => v.rule === 'unverified_address')?.message).toContain(RECORDED);
+  });
+
+  it('still holds a check link the model wrote with a different mint', () => {
+    const text = `Token evidence\nnot a verdict, reads can be wrong\nFull check: ${STUDIO}/check/solana/${TRANSPOSED}`;
+    const result = validateOutput(text, policy(), null, null, LINK);
+    expect(result.ok).toBe(false);
+    expect(result.violations.find((v) => v.rule === 'unverified_address')?.message).toContain(TRANSPOSED);
+  });
+
+  it('still holds a check link the model wrote on another host', () => {
+    const text = `Token evidence\nnot a verdict, reads can be wrong\nFull check: https://evil.example/check/solana/${RECORDED}`;
+    const result = validateOutput(text, policy(), null, null, LINK);
+    expect(result.ok).toBe(false);
+    expect(result.violations.find((v) => v.rule === 'unverified_address')?.message).toContain(RECORDED);
+  });
+
+  it('still holds the mint when the runtime proved no link', () => {
+    const text = `Token evidence\nnot a verdict, reads can be wrong\n${LINE}`;
+    const result = validateOutput(text, policy());
+    expect(result.ok).toBe(false);
+    expect(result.violations.find((v) => v.rule === 'unverified_address')?.message).toContain(RECORDED);
+  });
+});

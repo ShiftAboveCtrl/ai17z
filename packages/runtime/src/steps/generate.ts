@@ -446,6 +446,10 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     // biography or the standing instructions is one they gave it deliberately,
     // and is the normal place for a project's own contract address to live.
     [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
+    // The check page link the runtime built from the linked Studio and the mint
+    // it actually read. Only that exact line is exempt from the address rule; a
+    // model-written address, or any other address, is still held.
+    evidenceCardOf(bundle)?.link ?? null,
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
   if (evidenceCardOf(bundle) && result.output !== evidenceCardOf(bundle)!.text) {

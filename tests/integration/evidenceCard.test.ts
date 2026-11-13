@@ -305,10 +305,17 @@ it('produces no link without a Studio link, for a mint that was not read, or whe
   expect(unlinked.validatedOutput).not.toMatch(/https?:/);
   await linkStudio();
   unknown = true;
+  // The ask above still holds this mint in the upstream cache, so a second ask
+  // would serve those readings and never see the empty result. Drop the cache so
+  // the "not read" mint is actually answered with no data.
+  (await import('@xbam/upstream')).resetCacheForTest();
   const unresolved = await ask(await fixture(linking(true)), undefined, true);
   expect(unresolved.validatedOutput).toContain('evidence not found');
   expect(unresolved.validatedOutput).not.toMatch(/https?:/);
   unknown = false;
+  // The empty answer above is now cached too, so drop it before the overflow
+  // scenario reads the mint again with data present.
+  (await import('@xbam/upstream')).resetCacheForTest();
   // Fits without the link, not with it: the card is sent as text, never held for a link.
   const textOnly = (await ask(await fixture(linking(false)), undefined, true)).validatedOutput!;
   const tight = await fixture({ ...linking(true), output: { ...DEFAULT_POLICY.output, maxCharacters: textOnly.length + 10 } });
