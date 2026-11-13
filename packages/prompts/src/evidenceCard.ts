@@ -9,19 +9,29 @@ export interface CardReading {
   maxAgeMs: number;
 }
 
-export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now()): string {
+/** Whether a reading is current and well formed enough to print as a value. */
+export function readingAvailable(r: CardReading, now = Date.now()): boolean {
+  const fetched = Date.parse(r.fetchedAt ?? '');
+  const observed = Date.parse(r.observedAt ?? '');
+  const current = [fetched, observed].every(t => Number.isFinite(t) && now - t <= r.maxAgeMs && t <= now + 30_000);
+  const valid = typeof r.value === 'boolean' || (typeof r.value === 'number' && Number.isFinite(r.value) && r.value >= 0);
+  return current && valid;
+}
+
+/** The line that carries a check page address. Its prefix is how the send check finds it again. */
+export const CHECK_LINK_PREFIX = 'Full check: ';
+
+export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now(), link = ''): string {
   let found = false;
   const lines = readings.map(r => {
     const fetched = Date.parse(r.fetchedAt ?? '');
-    const observed = Date.parse(r.observedAt ?? '');
-    const current = [fetched, observed].every(t => Number.isFinite(t) && now - t <= r.maxAgeMs && t <= now + 30_000);
-    const valid = typeof r.value === 'boolean' || (typeof r.value === 'number' && Number.isFinite(r.value) && r.value >= 0);
-    const available = current && valid;
+    const available = readingAvailable(r, now);
     found ||= available;
     const value = !available ? 'unavailable' : typeof r.value === 'boolean'
       ? r.value ? 'disabled' : 'enabled'
       : `${r.value} ${r.unit}`;
     return `${r.label}: ${value} [${r.source}; fetched ${Number.isFinite(fetched) ? new Date(fetched).toISOString() : 'unavailable'}]`;
   });
-  return ['Token evidence', ...lines, ...(!found ? ['evidence not found'] : []), 'not a verdict, reads can be wrong', ...(offer ? [offer] : [])].join('\n');
+  return ['Token evidence', ...lines, ...(!found ? ['evidence not found'] : []), 'not a verdict, reads can be wrong',
+    ...(offer ? [offer] : []), ...(link ? [`${CHECK_LINK_PREFIX}${link}`] : [])].join('\n');
 }

@@ -246,6 +246,11 @@ export type MemoryPolicy = z.infer<typeof MemoryPolicy>;
 export const ToolPolicy = z.object({
   /** Deterministic, sourced replies to direct token checks. Separate from the model loop. */
   evidenceCards: z.boolean().default(false),
+  /**
+   * End an evidence card with the linked Studio's check page for the token it read.
+   * A separate choice from the card itself, off by default, and never a watch or a trade.
+   */
+  evidenceCardLink: z.boolean().default(false),
   /** Tool keys this agent may call. Empty means no tools. */
   allowed: z.array(z.string().max(120)).max(200).default([]),
   /**

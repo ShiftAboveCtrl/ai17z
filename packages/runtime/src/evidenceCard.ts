@@ -2,8 +2,9 @@ import { agents, capabilityInvocations, jobs, observability, query, withTransact
 import { createLogger, PipelineError } from '@xbam/shared';
 import { PolicyConfig } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
-import { renderEvidenceCard, type CardReading } from '@xbam/prompts';
+import { CHECK_LINK_PREFIX, renderEvidenceCard, type CardReading } from '@xbam/prompts';
 import { capabilitySettings } from './capabilityPermissions';
+import { checkLinkUrl, linkedCheckOrigin, studioCheckLink } from './studioCheckLink';
 import { pauseState } from './killSwitch';
 import { evidenceCardRequest } from './research';
 import { readPromo } from './promo';
@@ -13,7 +14,8 @@ const log = createLogger('evidence-card');
 const CAP = 'token.inspect_risk';
 const HOURLY_CAP = 10;
 const COOLDOWN_MS = 60_000;
-export interface EvidenceCard { text: string; readings: CardReading[]; cardJobId: string | null; }
+/** `link` is the check page address the text ends with, kept apart so the send check can prove it again. */
+export interface EvidenceCard { text: string; readings: CardReading[]; cardJobId: string | null; link?: string | null; }
 export function evidenceCardOf(bundle: JobBundle): EvidenceCard | null {
   return (bundle.job.resolvedContext?.meta as { evidenceCard?: EvidenceCard } | undefined)?.evidenceCard ?? null;
 }
@@ -38,6 +40,7 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
   const intent = (context.meta as { intent?: { intent?: string } })?.intent?.intent;
   let text = request.refusal ?? '';
   let cardJobId: string | null = null;
+  let link: string | null = null;
   let readings: CardReading[] = [];
   const promo = readPromo(context.incomingText.replace(request.address ?? /$^/, ''));
   if (intent === 'DEFLECT' || promo.level !== 'none' || /\b(?:buy now|join (?:our |the )?presale)\b/i.test(context.incomingText)) {
@@ -83,15 +86,26 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
         await capabilityInvocations.recordInvocation({ agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
           capabilityId: CAP, step: 0, outcome: result.outcome, detail: result.detail,
           input: result.input, output: result.output, durationMs: result.durationMs });
-        const output = result.output as { cardReadings?: CardReading[] } | null;
+        const output = result.output as { cardReadings?: CardReading[]; chain?: string; address?: string } | null;
         readings = output?.cardReadings ?? [];
-        text = readings.length ? renderEvidenceCard(readings, request.chain === 'solana'
-          ? `Owner: watch this with /watch ${bundle.job.id.slice(0, 8)} in paired Telegram; choose a condition and threshold.` : '')
+        const offer = request.chain === 'solana'
+          ? `Owner: watch this with /watch ${bundle.job.id.slice(0, 8)} in paired Telegram; choose a condition and threshold.` : '';
+        // The link needs its own owner opt-in, and only for the exact token the capability just read.
+        const read = output?.chain === request.chain && output.address?.toLowerCase() === request.address.toLowerCase();
+        link = read && bundle.policy.tools.evidenceCardLink && !bundle.policy.output.forbidLinks
+          ? await studioCheckLink({ chain: request.chain, address: request.address, readings }) : null;
+        text = readings.length ? renderEvidenceCard(readings, offer, undefined, link ?? '')
           : 'Token evidence unavailable; evidence not found. This is not a verdict, reads can be wrong.';
+        // The inline card is the reply. A link that would push it past the length policy is left off
+        // rather than sending the whole card to review.
+        if (link && text.length > bundle.policy.output.maxCharacters) {
+          link = null;
+          text = renderEvidenceCard(readings, offer);
+        }
       }
     }
   }
-  const evidenceCard: EvidenceCard = { text, readings, cardJobId };
+  const evidenceCard: EvidenceCard = { text, readings, cardJobId, link };
   // Evidence retains the same fence and attribution as ordinary research.
   const research = { findings: [{ kind: 'token', query: request.address ?? 'ambiguous token', source: CAP,
     title: 'Token evidence card', summary: text, url: null, retrievedAt: new Date().toISOString() }], failed: [], note: 'Deterministic token evidence reply.' };
@@ -129,10 +143,10 @@ function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
  * shows the value the owner approved. Rendering at the current time would
  * call that same card a mismatch.
  */
-function textMatchesReadings(text: string, readings: CardReading[], offer: string): boolean {
+function textMatchesReadings(text: string, readings: CardReading[], offer: string, link: string): boolean {
   const fetched = readings.map(reading => Date.parse(reading.fetchedAt ?? '')).filter(time => Number.isFinite(time));
   const asOf = fetched.length ? Math.max(...fetched) : Date.now();
-  return renderEvidenceCard(readings, offer, asOf) === text;
+  return renderEvidenceCard(readings, offer, asOf, link) === text;
 }
 
 /** The same inspect path a first card uses: permission, research budget, asker cap, mint cooldown, then the capability. */
@@ -176,7 +190,7 @@ async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promis
   const readings = output?.cardReadings ?? [];
   if (!readings.length) return null;
   const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
-  return { text: renderEvidenceCard(readings, offer), readings };
+  return { text: renderEvidenceCard(readings, offer, undefined, card.link ?? ''), readings };
 }
 
 /**
@@ -195,7 +209,21 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
     throw PipelineError.permanent('evidence_card_disabled', 'Token evidence replies or their capability were switched off.');
   }
   const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
-  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer);
+  const link = card.link ?? '';
+  // A queued card may predate the owner switching the link off, or Studio being unlinked or
+  // re-pointed. Whatever address the text carries must be the one the linked Studio would give now.
+  const linkLines = card.text.split('\n').filter(line => line.startsWith(CHECK_LINK_PREFIX));
+  if (link || linkLines.length > 0) {
+    const policy = PolicyConfig.parse(current?.config ?? {});
+    const request = evidenceCardRequest(bundle.job.resolvedContext?.incomingText ?? '');
+    const origin = link && request?.address && request.chain && policy.tools.evidenceCardLink && !policy.output.forbidLinks
+      ? await linkedCheckOrigin().catch(() => null) : null;
+    const expected = origin && request?.address && request.chain ? checkLinkUrl(origin, request.chain, request.address) : null;
+    if (!expected || expected !== link || linkLines.length !== 1 || linkLines[0] !== `${CHECK_LINK_PREFIX}${link}`) {
+      throw PipelineError.review('evidence_card_changed', 'The check page link no longer matches the linked Studio or the owner setting. Generate a fresh card.');
+    }
+  }
+  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer, link);
   if (output !== card.text || mismatched) {
     throw PipelineError.review('evidence_card_changed', 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }
