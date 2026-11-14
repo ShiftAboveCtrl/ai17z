@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { agents } from '@xbam/database';
 import { NotFoundError } from '@xbam/shared';
-import { PublicHomeChoices, previewPublicHome, publicHomeState, publishPublicHome, unpublishPublicHome, setPublicHomePosting } from '@xbam/runtime';
+import { PublicHomePitch } from '@xbam/shared/contracts';
+import { PublicHomeChoices, previewPublicHome, publicHomeState, publishPublicHome, unpublishPublicHome, setPublicHomePitch, setPublicHomePosting } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 export async function studioPublicHomeRoutes(app: FastifyInstance): Promise<void> {
@@ -31,6 +32,12 @@ export async function studioPublicHomeRoutes(app: FastifyInstance): Promise<void
     const user = await requireUser(request);
     const body = parseBody(z.object({ enabled: z.boolean() }).strict(), request);
     await setPublicHomePosting(params(request).id!, user.id, body.enabled);
+    return publicHomeState(params(request).id!);
+  }));
+  app.put(`${base}/pitch`, handler(async (request) => {
+    const user = await requireUser(request);
+    const body = parseBody(z.object({ pitch: PublicHomePitch.nullable() }).strict(), request);
+    await setPublicHomePitch(params(request).id!, user.id, body.pitch);
     return publicHomeState(params(request).id!);
   }));
 }
