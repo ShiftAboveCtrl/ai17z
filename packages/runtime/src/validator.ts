@@ -1,4 +1,5 @@
 import type { PolicyConfig } from '@xbam/shared/contracts';
+import { CHECK_LINK_PREFIX } from '@xbam/prompts';
 import { applyEmojiPolicy } from './emoji';
 import { removeEmDashes } from './punctuation';
 
@@ -191,6 +192,15 @@ export function validateOutput(
    * address nobody gave it".
    */
   operatorText?: string | null,
+  /**
+   * A check page link the runtime built itself, from the linked Studio origin
+   * and a mint that `token.inspect_risk` actually read. Only the exact line that
+   * carries this link is exempt from the address rule. A model writing the same
+   * mint anywhere else, or any other address, is still held: the one thing that
+   * passed is the link the agent proved with its own read, not a string the
+   * model happened to produce.
+   */
+  provenLink?: string | null,
 ): ValidationResult {
   const violations: Violation[] = [];
   let output = raw.replace(/\r\n/g, '\n').trim();
@@ -316,7 +326,16 @@ export function validateOutput(
   const givenAddresses = new Set<string>(policy.output.verifiedAddresses);
   for (const written of addressesIn(operatorText ?? '')) givenAddresses.add(written);
 
-  for (const found of addressesIn(output)) {
+  // The check page line the runtime built is not a model writing an address: it
+  // is the one link this agent proved by reading the mint itself. Only that
+  // exact line is exempt. The same mint anywhere else, or any other address, is
+  // still held, so a link the model wrote is caught exactly as before.
+  const provenLine = provenLink ? `${CHECK_LINK_PREFIX}${provenLink}` : null;
+  const addressScan = provenLine
+    ? output.split('\n').filter((line) => line !== provenLine).join('\n')
+    : output;
+
+  for (const found of addressesIn(addressScan)) {
     if (givenAddresses.has(found)) continue;
     violations.push({
       rule: 'unverified_address',
