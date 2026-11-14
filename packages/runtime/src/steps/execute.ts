@@ -57,6 +57,7 @@ import { paperReplyForJob } from '../paperCapabilities';
 import { signalIdeaRefusal } from '../signalRadar';
 import { receiptIdeaRefusal } from '../radarReceipts';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
+import { paperRecordSendText } from '../studioRecordLink';
 import { checkTraderDnaAtSend } from '../studioTraderDna';
 import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
 import { capacityClassForEvent } from '../capacity';
@@ -225,8 +226,11 @@ export function actionIdempotencyKeyFor(input: {
 export async function stepExecute(bundle: JobBundle): Promise<void> {
   await preparePostMedia(bundle);
   const { job, policy } = bundle;
-  const output = job.validatedOutput;
-  if (!output) throw PipelineError.retryable('output_missing', 'Execution ran before validation produced output.');
+  const validated = job.validatedOutput;
+  if (!validated) throw PipelineError.retryable('output_missing', 'Execution ran before validation produced output.');
+  // A paper record post may be closed with the link the runtime proved; nothing
+  // else changes the text here, and a link the model wrote is held.
+  const output = await paperRecordSendText({ agentId: bundle.agent.id, raw: bundle.event.payload, text: validated, policy });
   await checkEvidenceCardAtSend(bundle, output);
   const paperReply = await paperReplyForJob(job.id);
   if (paperReply !== null && paperReply !== output) {

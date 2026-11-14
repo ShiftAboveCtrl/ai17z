@@ -200,6 +200,7 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'stance.trackPredictions': { where: 'ADVANCED_ONLY' },
   // Advanced only, and off: speaking about simulated results in public is a
   // decision an owner makes on purpose, never one Easy Mode makes for them.
+  'studio.linkPaperRecord': { where: 'ADVANCED_ONLY' },
   'studio.paperRecordWindow': { where: 'ADVANCED_ONLY' },
   'studio.postPaperPnl': { where: 'ADVANCED_ONLY' },
   'studio.postPaperRecord': { where: 'ADVANCED_ONLY' },

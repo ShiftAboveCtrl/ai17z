@@ -252,6 +252,7 @@
         "postPaperRecord": false,
         "postPaperPnl": false,
         "paperRecordWindow": "7d",
+        "linkPaperRecord": false,
         "postTraderDna": false,
         "traderDnaStudyId": null
       }
