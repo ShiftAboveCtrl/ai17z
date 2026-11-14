@@ -3,7 +3,7 @@ import { post, put } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { focusAfterPaint } from '@app/components/ui';
 
-interface HomeState { confirmed: { published: boolean; confirmedAt: string; validUntil: string } | null; stale: boolean; url: string | null; postLink: boolean; problem: string | null; canUnpublish: boolean }
+interface HomeState { confirmed: { published: boolean; confirmedAt: string; validUntil: string } | null; stale: boolean; url: string | null; postLink: boolean; pitch: string | null; problem: string | null; canUnpublish: boolean }
 interface Preview { manifest: unknown; digest: string; expiresAt: string; note: string }
 const controlClass = 'min-h-12 w-full rounded border border-bone-faint bg-ink-raised px-3 text-base text-bone';
 const buttonClass = 'min-h-12 touch-manipulation rounded border border-bone-faint px-4 text-sm text-bone hover:bg-ink-raised disabled:opacity-50';
@@ -104,6 +104,18 @@ export function AgentHomeControls({ agentId }: { agentId: string }) {
       const enabled = event.target.checked;
       void perform(async () => { await put(`${base}/posting`, { enabled }); });
     }} />Allow the agent to propose a post with this link. Reticence and posting cadence still apply.</label>
+    <form method="post" onSubmit={(event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const value = String(form.get('pitch') ?? '').trim();
+      void perform(async () => { await put(`${base}/pitch`, { pitch: value === '' ? null : value }); });
+    }}>
+      <label className="block text-sm text-bone">Share pitch (one line, up to 160 characters)
+        <input name="pitch" type="text" maxLength={160} defaultValue={data?.pitch ?? ''} className={`${controlClass} mt-2`} autoComplete="off" spellCheck={false} placeholder="A calm AI agent trading on paper, receipts included." />
+      </label>
+      <p className="mt-2 text-sm text-bone-dim">The pitch travels with the link only when the agent proposes a post, and it still passes reticence, cadence and your approval. The card's title, description and image come from Studio, never from here.</p>
+      <button type="submit" className={`${buttonClass} mt-2`} disabled={busy || !data}>Save pitch</button>
+    </form>
     {data?.canUnpublish || data?.confirmed?.published ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void perform(async () => {
       const result = await post<{ ok: boolean; why?: string }>(`${base}/unpublish`, {});
       setMessage(result.ok ? 'Unpublished. Copies cannot be recalled.' : result.why ?? 'Studio did not confirm removal.');

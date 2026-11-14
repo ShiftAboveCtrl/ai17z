@@ -4,7 +4,7 @@ import { accounts, capabilityPermissions, jobs, ops, postAnalytics, query, xAcco
 import { logger, sealSecret } from '@xbam/shared';
 import { installHarness, mockEvent } from '../support/harness';
 import { createFixture, type Fixture } from '../support/fixtures';
-import { previewPublicHome, publishPublicHome, publicHomeState, publicHomeReply, unpublishPublicHome, proposePublicHomePost, setPublicHomePosting, publicHomeSendRefusal, sweepPublicHomeRenewals } from '../../packages/runtime/src/studioPublicHome';
+import { previewPublicHome, publishPublicHome, publicHomeState, publicHomeReply, unpublishPublicHome, proposePublicHomePost, setPublicHomePitch, setPublicHomePosting, publicHomeSendRefusal, sweepPublicHomeRenewals } from '../../packages/runtime/src/studioPublicHome';
 import { newInstallationKey } from '../../packages/runtime/src/studioJose';
 import { setStudioTransportForTests } from '../../packages/runtime/src/studioLink';
 import { setStudioControl } from '../../packages/runtime/src/studioControl';
@@ -268,6 +268,8 @@ describe('public home consent persisted in Postgres', () => {
     await link(); await publish();
     expect(await proposePublicHomePost(f.agentId)).toBe(false);
     await setPublicHomePosting(f.agentId, f.ownerId, true);
+    expect(await proposePublicHomePost(f.agentId)).toBe(false);
+    await setPublicHomePitch(f.agentId, f.ownerId, 'A calm AI agent trading on paper.');
     expect(await proposePublicHomePost(f.agentId)).toBe(true);
     expect(await proposePublicHomePost(f.agentId)).toBe(false);
     const text = `AI agent. Simulated paper results. ${await publicHomeReply(f.agentId)}`;
@@ -279,6 +281,24 @@ describe('public home consent persisted in Postgres', () => {
     expect((await publicHomeState(f.agentId)).stale).toBe(true);
     expect(await publicHomeSendRefusal(f.agentId, text, true)).toBeTruthy();
     expect(await publicHomeReply(f.agentId)).not.toContain('http');
+  });
+  it('stores the owner pitch, proposes it as a share card, and refuses a missing or reticent pitch', async () => {
+    await link(); await publish(); await setPublicHomePosting(f.agentId, f.ownerId, true);
+    expect(await proposePublicHomePost(f.agentId)).toBe(false);
+    await setPublicHomePitch(f.agentId, f.ownerId, 'guaranteed returns, buy now');
+    expect(await proposePublicHomePost(f.agentId)).toBe(false);
+    await setPublicHomePitch(f.agentId, f.ownerId, 'A calm AI agent trading on paper.');
+    expect((await publicHomeState(f.agentId)).pitch).toBe('A calm AI agent trading on paper.');
+    expect(await proposePublicHomePost(f.agentId)).toBe(true);
+    const ideas = await query<{ summary: string; detail: string }>("SELECT summary, detail FROM content_ideas WHERE agent_id=$1 AND source='studio_public_home'", [f.agentId]);
+    expect(ideas).toHaveLength(1);
+    expect(ideas[0]!.summary).toContain('A calm AI agent trading on paper.');
+    expect(ideas[0]!.summary).toContain('://');
+    expect(ideas[0]!.summary).toContain('/a/night-owl');
+    expect(ideas[0]!.summary).toContain('AI agent');
+    expect(ideas[0]!.summary).toContain('simulated paper');
+    expect(JSON.stringify(ideas)).not.toContain('PRIVATE-OPERATOR-PROMPT');
+    expect(JSON.stringify(ideas)).not.toContain('credential');
   });
   it('refuses wrong digest, expired preview, changed Studio link and an acknowledgement for other bytes', async () => {
     await link();
@@ -329,6 +349,7 @@ describe('public home consent persisted in Postgres', () => {
         { method: 'POST' as const, url: `${base}/publish`, payload: { digest: 'a'.repeat(64), confirmed: true } },
         { method: 'POST' as const, url: `${base}/unpublish`, payload: {} },
         { method: 'PUT' as const, url: `${base}/posting`, payload: { enabled: true } },
+        { method: 'PUT' as const, url: `${base}/pitch`, payload: { pitch: 'A calm AI agent trading on paper.' } },
       ]) {
         expect((await app.inject(route)).statusCode).toBe(401);
         expect((await app.inject({ ...route, headers: { authorization } })).statusCode).toBe(404);
