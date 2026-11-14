@@ -131,6 +131,7 @@
       "tools": {
         "allowed": [],
         "capabilityLoop": false,
+        "evidenceCardLink": false,
         "evidenceCards": false,
         "research": {
           "web": true,
