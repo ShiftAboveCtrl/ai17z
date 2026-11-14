@@ -18,6 +18,7 @@ const mint = 'So11111111111111111111111111111111111111112';
 const mint2 = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 let calls = 0;
 let stale = false;
+let unknown = false;
 let liquidity = 12000;
 vi.mock('undici', () => ({
   Agent: class { async close() {} },
@@ -30,6 +31,7 @@ vi.mock('undici', () => ({
     if (!String(input).includes('jup.ag')) throw new Error('Unexpected network host');
     calls++;
     const queried = new URL(String(input)).searchParams.get('query') ?? mint;
+    if (unknown) return new Response(JSON.stringify([]), { status: 200 });
     return new Response(JSON.stringify([{ id: queried, liquidity, updatedAt: new Date(Date.now() - (stale ? 86400_000 : 0)).toISOString(),
       firstPool: { createdAt: new Date(Date.now() - 3600_000).toISOString() },
       audit: { topHoldersPercentage: 20, mintAuthorityDisabled: true, freezeAuthorityDisabled: false } }]), { status: 200 });
@@ -38,7 +40,7 @@ vi.mock('undici', () => ({
 
 beforeAll(async () => { await setupTestDatabase(); const r = await import('@xbam/runtime'); await r.bootstrapRuntime(); });
 afterAll(teardownTestDatabase);
-beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false; liquidity = 12000;
+beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false; unknown = false; liquidity = 12000;
   const u = await import('@xbam/upstream'); u.resetCacheForTest(); u.resetLimiterForTest(); u.resetBreakerForTest(); });
 
 async function fixture(policy: Partial<PolicyConfig> = {}) {
@@ -266,4 +268,85 @@ it('returns a card whose text does not match its readings without reading again'
   expect(held.lastError).toMatch(/complete sourced evidence card/);
   expect(held.validatedOutput).toBe(text);
   expect(calls).toBe(readsBefore);
+});
+
+// The check page link: a separate owner opt-in, built only from the linked Studio, only for a token that was read.
+const STUDIO = 'https://studio.example.invalid';
+async function linkStudio(origin = STUDIO) {
+  await ops.setSetting('plugins.registry.url', origin);
+  await ops.setSetting('studio.installation.key', sealSecret(JSON.stringify(newInstallationKey())));
+  await ops.setSetting('studio.link', { installationId: randomUUID(), origin, linkedAt: new Date().toISOString(), revokedAt: null });
+}
+async function unlinkStudio() {
+  await ops.setSetting('plugins.registry.url', null);
+  await ops.setSetting('studio.link', null);
+}
+const linking = (on: boolean) => ({ tools: { ...DEFAULT_POLICY.tools, evidenceCards: true, evidenceCardLink: on } as typeof DEFAULT_POLICY.tools });
+
+it('ends the card with the linked Studio check page only when the owner opted in, and keeps the inline text', async () => {
+  await linkStudio();
+  const off = await ask(await fixture(linking(false)), undefined, true);
+  expect(off.validatedOutput).toContain('Liquidity: 12000 USD');
+  expect(off.validatedOutput).not.toMatch(/https?:/);
+  const on = await ask(await fixture(linking(true)), undefined, true);
+  const lines = on.validatedOutput!.split('\n');
+  expect(lines.at(-1)).toBe(`Full check: ${STUDIO}/check/solana/${mint}`);
+  expect(on.validatedOutput).toContain('Liquidity: 12000 USD');
+  expect(on.validatedOutput).toContain('not a verdict, reads can be wrong');
+  expect(on.validatedOutput!.match(/https?:\/\/\S+/g)).toHaveLength(1);
+  expect(on.validatedOutput).not.toMatch(/\b(?:watch|follow|trade)\b.*https?:/i);
+  await unlinkStudio();
+});
+
+it('produces no link without a Studio link, for a mint that was not read, or when the link would overflow the length policy', async () => {
+  await unlinkStudio();
+  const unlinked = await ask(await fixture(linking(true)), undefined, true);
+  expect(unlinked.validatedOutput).toContain('Liquidity: 12000 USD');
+  expect(unlinked.validatedOutput).not.toMatch(/https?:/);
+  await linkStudio();
+  unknown = true;
+  // The ask above still holds this mint in the upstream cache, so a second ask
+  // would serve those readings and never see the empty result. Drop the cache so
+  // the "not read" mint is actually answered with no data.
+  (await import('@xbam/upstream')).resetCacheForTest();
+  const unresolved = await ask(await fixture(linking(true)), undefined, true);
+  expect(unresolved.validatedOutput).toContain('evidence not found');
+  expect(unresolved.validatedOutput).not.toMatch(/https?:/);
+  unknown = false;
+  // The empty answer above is now cached too, so drop it before the overflow
+  // scenario reads the mint again with data present.
+  (await import('@xbam/upstream')).resetCacheForTest();
+  // Fits without the link, not with it: the card is sent as text, never held for a link.
+  const textOnly = (await ask(await fixture(linking(false)), undefined, true)).validatedOutput!;
+  const tight = await fixture({ ...linking(true), output: { ...DEFAULT_POLICY.output, maxCharacters: textOnly.length + 10 } });
+  const fitted = await ask(tight, undefined, true);
+  expect(fitted.status).toBe('DRY_RUN_COMPLETED');
+  expect(fitted.validatedOutput!.length).toBeLessThanOrEqual(textOnly.length + 10);
+  expect(fitted.validatedOutput).toContain('Liquidity: 12000 USD');
+  expect(fitted.validatedOutput).not.toMatch(/https?:/);
+  await unlinkStudio();
+});
+
+it('holds a queued card for review when its link no longer matches the linked Studio or the owner setting', async () => {
+  await linkStudio();
+  const f = await fixture(linking(true));
+  const job = await ask(f, undefined, true);
+  expect(job.validatedOutput).toContain(`${STUDIO}/check/solana/${mint}`);
+  // A card pointing at another host, with its text kept consistent, is still refused.
+  const context = job.resolvedContext as ResolvedContext & { meta: { evidenceCard: { text: string; link: string } } };
+  const evil = 'https://evil.example';
+  const text = context.meta.evidenceCard.text.replace(STUDIO, evil);
+  const forged = { ...context, meta: { ...context.meta, evidenceCard: { ...context.meta.evidenceCard, text, link: context.meta.evidenceCard.link.replace(STUDIO, evil) } } };
+  await jobs.updateJob(job.id, { resolvedContext: forged as ResolvedContext, generatedOutput: text, validatedOutput: text });
+  await expect(stepExecute(await loadJobBundle(await jobs.requireJob(job.id)))).rejects.toThrow(/check page link/);
+  // Restore the card, then re-point Studio, then switch the link off.
+  await jobs.updateJob(job.id, { resolvedContext: context as ResolvedContext, generatedOutput: context.meta.evidenceCard.text, validatedOutput: context.meta.evidenceCard.text });
+  await linkStudio('https://other-studio.example.invalid');
+  await expect(stepExecute(await loadJobBundle(await jobs.requireJob(job.id)))).rejects.toThrow(/check page link/);
+  await linkStudio();
+  const policy = PolicyConfig.parse((await agents.getActivePolicy(f.agentId))!.config);
+  policy.tools.evidenceCardLink = false;
+  await agents.savePolicyVersion(f.agentId, policy, 'link off', f.ownerId);
+  await expect(stepExecute(await loadJobBundle(await jobs.requireJob(job.id)))).rejects.toThrow(/check page link/);
+  await unlinkStudio();
 });

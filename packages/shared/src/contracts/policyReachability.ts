@@ -34,6 +34,7 @@ export interface PolicyPlacement {
 
 export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'tools.evidenceCards': { where: 'EASY_AND_ADVANCED' },
+  'tools.evidenceCardLink': { where: 'ADVANCED_ONLY' },
   'automation.dryRunDefault': { where: 'EASY_AND_ADVANCED' },
   'automation.mode': { where: 'EASY_AND_ADVANCED' },
   'budget.maxCostUsdPerDay': { where: 'EASY_AND_ADVANCED' },
