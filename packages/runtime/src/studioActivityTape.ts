@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ConflictError } from '@xbam/shared';
 import { ops, query } from '@xbam/database';
 import { defineCapability, registerCapability, type AnyCapability } from '@xbam/tools';
-import { ACTIVITY_POST_TEXT_MAX, ActivityEventId as EventId, ActivityPostUrl, ActivityRadarDetail, ActivityTapeBatch, ActivityTapeEvent, type ActivityEvent } from '@xbam/shared/contracts';
+import { ACTIVITY_POST_TEXT_MAX, ActivityEventId as EventId, ActivityPostUrl, ActivityRadarDetail, ActivityReceiptDetail, ActivityTapeBatch, ActivityTapeEvent, type ActivityEvent } from '@xbam/shared/contracts';
 import { studioActivityBatch } from './studioLink';
 export { ActivityTapeBatch, ActivityTapeEvent } from '@xbam/shared/contracts';
 
@@ -62,11 +62,14 @@ export function projectActivity(row: Record<string, unknown>): ActivityEvent | n
   const postText = postUrl === undefined ? undefined : consentedPostText(row);
   const radar = row.kind === 'RADAR_HIT' && row.source_public === true
     ? ActivityRadarDetail.safeParse({ asset: row.radar_asset, source_post_url: row.source_post_url }) : null;
+  // Absent, never guessed: an unrecorded or unlisted channel leaves the detail off.
+  const receiptChannel = row.kind === 'RECEIPT' ? ActivityReceiptDetail.shape.channel.safeParse(row.channel) : null;
   const parsed = ActivityTapeEvent.safeParse({
     id: row.id, agent_id: row.agent_id, kind: row.kind,
     at: row.at instanceof Date ? row.at.toISOString() : row.at,
     dry_run: typeof row.dry_run === 'boolean' ? row.dry_run : null, target_handle: null,
     ...(radar?.success ? { radar: radar.data } : {}),
+    ...(receiptChannel?.success && receiptChannel.data !== undefined ? { receipt: { channel: receiptChannel.data } } : {}),
     paper: row.kind === 'PAPER_FILL' ? { simulated: true,
       size_base_units: Size.safeParse(row.size).success ? row.size : null,
       asset: AssetLabel.safeParse(row.asset).success ? row.asset : null, verdict: 'PAPER_FILLED' } : null,
@@ -147,7 +150,7 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
   ), tape AS (
     SELECT CASE WHEN e.payload->>'ideaSource'='radar_receipt' THEN 'receipt:' ELSE 'action:' END || a.id AS id,
       a.agent_id, CASE WHEN e.payload->>'ideaSource'='radar_receipt' THEN 'RECEIPT' ELSE a.type END AS kind, date_trunc('milliseconds', a.executed_at) AS at,
-      a.dry_run, NULL::text AS size, NULL::text AS asset,
+      a.channel AS channel, a.dry_run, NULL::text AS size, NULL::text AS asset,
       -- A link exists only for a real, verified post: published, not a dry run, with the
       -- remote id the adapter read back. Receipts keep their own wording and never carry one.
       -- X is named, not assumed: the action's channel must be x and an account it is tied to
@@ -172,7 +175,7 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
       AND COALESCE(e.payload->>'origin', '') <> 'rehearsal'
       AND a.executed_at >= greatest($2::timestamptz, p.permission_changed_at)
     UNION ALL
-    SELECT 'paper:' || t.id, t.agent_id, 'PAPER_FILL', date_trunc('milliseconds', t.updated_at), true,
+    SELECT 'paper:' || t.id, t.agent_id, 'PAPER_FILL', date_trunc('milliseconds', t.updated_at), NULL::text, true,
       t.postcondition->>'inBase',
       CASE WHEN t.asset_in->>'kind' = 'NATIVE' THEN
         CASE t.asset_in->>'network' WHEN 'solana' THEN 'SOL' WHEN 'ethereum' THEN 'ETH' WHEN 'bnb' THEN 'BNB' ELSE NULL END
@@ -182,7 +185,7 @@ export async function activityTapeProjection(since: Date, cursor: TapeCursor | n
     WHERE t.mode = 'PAPER' AND t.status = 'PAPER_FILLED' AND t.postcondition->>'simulated' = 'true'
       AND t.updated_at >= greatest($2::timestamptz, p.permission_changed_at)
     UNION ALL
-    SELECT DISTINCT 'radar:' || d.id, aa.agent_id, 'RADAR_HIT', date_trunc('milliseconds', d.first_seen_at), NULL::boolean, NULL::text, NULL::text,
+    SELECT DISTINCT 'radar:' || d.id, aa.agent_id, 'RADAR_HIT', date_trunc('milliseconds', d.first_seen_at), NULL::text, NULL::boolean, NULL::text, NULL::text,
       NULL::text, NULL::text, NULL::text,
       CASE WHEN s.kind = 'tracked_keyword' AND s.target ~ '^[$][A-Z][A-Z0-9.]{0,15}$' THEN substring(s.target from 2) END,
       e.remote_url,

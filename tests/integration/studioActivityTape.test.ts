@@ -585,6 +585,8 @@ describe('verifiable posts against Postgres and the contract server', () => {
     for (const id of [dry, unverified, elsewhere, mismatched]) expect(byId.get(id), id).not.toHaveProperty('post_url');
     expect(byId.get(`receipt:${receipt.slice(7)}`)).toMatchObject({ kind: 'RECEIPT' });
     expect(byId.get(`receipt:${receipt.slice(7)}`)).not.toHaveProperty('post_url');
+    expect(byId.get(`receipt:${receipt.slice(7)}`)).toMatchObject({ receipt: { channel: 'x' } });
+    expect(byId.get(dry)).not.toHaveProperty('receipt');
     expect(JSON.stringify(studio.batches)).not.toMatch(/8888888888|bsky\.app|mock:/);
   });
 
