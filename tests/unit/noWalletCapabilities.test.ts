@@ -133,6 +133,7 @@ describe('no capability can move money', () => {
       join(root, 'runtime', 'src', 'studioLeague.ts'),
       join(root, 'runtime', 'src', 'leagueSeason.ts'),
       join(root, 'runtime', 'src', 'managementCapabilities.ts'),
+      join(root, 'runtime', 'src', 'playbookPublish.ts'),
     ];
     for (const file of reachable) {
       let text = '';

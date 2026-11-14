@@ -1037,6 +1037,33 @@ export async function studioPlaybook(studioId: string): Promise<{ ok: true; docu
   return { ok: true, document: answer.body.playbook };
 }
 
+/**
+ * Publishing this installation's own agent setup as a playbook, or removing
+ * that listing. The outbound mirror of `studioPlaybook` above.
+ *
+ * A plain POST beside the playbook GET. The body is caller-built
+ * (`playbookPublish.ts`) and carries the exact document and its digest; what
+ * comes back is checked against that same id, version and digest, so a Studio
+ * that changed something is a refusal, never a half-published listing.
+ */
+export async function studioPlaybookPublish(
+  json: Record<string, unknown>,
+  expectedLink: StudioLinkScope,
+): Promise<{ ok: true; published: boolean; playbookId: string; version: number; digest: string } | StudioProblem> {
+  const answer = await authed('/api/v1/installation/playbooks', { method: 'POST', json }, expectedLink).catch(
+    (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
+  );
+  if ('ok' in answer) return answer;
+  const b = answer.body;
+  if ((answer.status !== 200 && answer.status !== 201) || b?.protocol !== 1 || typeof b.published !== 'boolean'
+    || typeof b.playbook_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(b.playbook_id)
+    || typeof b.version !== 'number' || !Number.isInteger(b.version) || b.version < 1
+    || typeof b.playbook_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(b.playbook_sha256)) {
+    return { ok: false, why: 'Studio did not acknowledge the playbook.' };
+  }
+  return { ok: true, published: b.published, playbookId: b.playbook_id, version: b.version, digest: b.playbook_sha256 };
+}
+
 export async function studioPurchases(): Promise<{ ok: true; purchases: StudioPurchase[] } | StudioProblem> {
   const answer = await authed('/api/v1/installation/purchases', { method: 'GET' }).catch(
     (error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }),
