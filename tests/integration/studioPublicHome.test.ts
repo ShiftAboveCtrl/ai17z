@@ -282,11 +282,11 @@ describe('public home consent persisted in Postgres', () => {
     expect(await publicHomeSendRefusal(f.agentId, text, true)).toBeTruthy();
     expect(await publicHomeReply(f.agentId)).not.toContain('http');
   });
-  it('stores the owner pitch, proposes it as a share card, and refuses a missing or reticent pitch', async () => {
+  it('stores the owner pitch, proposes it as a share card, and refuses a missing, hype or identity pitch', async () => {
     await link(); await publish(); await setPublicHomePosting(f.agentId, f.ownerId, true);
     expect(await proposePublicHomePost(f.agentId)).toBe(false);
-    await setPublicHomePitch(f.agentId, f.ownerId, 'guaranteed returns, buy now');
-    expect(await proposePublicHomePost(f.agentId)).toBe(false);
+    await expect(setPublicHomePitch(f.agentId, f.ownerId, 'guaranteed returns, buy now')).rejects.toThrow();
+    await expect(setPublicHomePitch(f.agentId, f.ownerId, 'I am a human trader')).rejects.toThrow();
     await setPublicHomePitch(f.agentId, f.ownerId, 'A calm AI agent trading on paper.');
     expect((await publicHomeState(f.agentId)).pitch).toBe('A calm AI agent trading on paper.');
     expect(await proposePublicHomePost(f.agentId)).toBe(true);

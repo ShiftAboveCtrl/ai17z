@@ -8,7 +8,9 @@ import { studioStatus, studioPaperRecord, studioPublicHomeRequest, studioPublicH
 import { publicHomeNeedsRepublish, publicHomeRepublished } from './notify';
 import { voiceFromAgent } from './voiceDocument';
 import { readLeagueStanding } from './studioLeague';
-import { unpromptedSubject } from './reticence';
+import { reticenceReason, unpromptedSubject } from './reticence';
+import { FORWARD_LOOKING } from './studioPaperVoice';
+import { identityClaim } from './validator';
 import { XCounts, storedHomeXCounts } from './studioXCounts';
 
 export const HOME_TTL_MS = 15 * 60_000;
@@ -179,13 +181,47 @@ export async function setPublicHomePosting(agentId: string, ownerId: string, ena
 }
 
 /**
+ * A pitch a public share post could never carry, as a sentence for the owner, or
+ * null when the pitch is fine to save. Deterministic and run at save time.
+ *
+ * It reuses the screens that already exist rather than a second word list beside
+ * them: reticence for the subjects an agent does not raise on its own, the
+ * validator's identity check for a human or model claim, and the paper voice's
+ * forward-looking pattern for a promise or advice. The one pattern added here
+ * names the figures and multiples none of those catch: a multiplier like 10x,
+ * an APY, a currency or percentage figure, a result word such as returns or
+ * profit, and a price prediction.
+ */
+const PITCH_PERFORMANCE =
+  /\b\d+(?:[.,]\d+)?\s?x\b|\bapy\b|[$€£]\s?\d|\d\s?%|\b(?:pnl|p&l|profit\w*|gains?|returns?|drawdowns?)\b|\bprice\s+prediction\b/i;
+
+export function publicHomePitchRefusal(text: string): string | null {
+  const reticent = unpromptedSubject(text);
+  if (reticent) return reticenceReason(reticent);
+  const claim = identityClaim(text);
+  if (claim) {
+    if (claim.human) return 'A public pitch cannot claim the agent is human. It may say the agent is an AI17Z agent.';
+    if (claim.provider) return `A public pitch cannot name "${claim.provider}" as what runs the agent. It may say the agent is an AI17Z agent.`;
+    return 'A public pitch cannot describe what runs the agent. It may say the agent is an AI17Z agent.';
+  }
+  if (FORWARD_LOOKING.test(text)) return 'A public pitch cannot promise a result, a signal or advice about what comes next.';
+  if (PITCH_PERFORMANCE.test(text)) return 'A public pitch cannot quote returns, profits, multiples, APY or a price prediction.';
+  return null;
+}
+
+/**
  * The owner's one-line pitch for a public-home share post. Null clears it.
- * The pitch is validated here, but whether it becomes a post is decided later
- * by reticence, posting consent and the ordinary pipeline, never by saving it.
+ * A pitch that could never be posted is refused here, at save time, rather than
+ * stored and dropped later: a hype, performance or identity claim is a sentence
+ * back to the owner instead of a row.
  */
 export async function setPublicHomePitch(agentId: string, ownerId: string, pitch: string | null) {
   await owned(agentId, ownerId);
   const value = pitch === null ? null : PublicHomePitch.parse(pitch);
+  if (value !== null) {
+    const refusal = publicHomePitchRefusal(value);
+    if (refusal) throw new BadRequestError(refusal);
+  }
   await locked(agentId, async () => {
     await query(`INSERT INTO agent_public_home(agent_id,pitch) VALUES ($1,$2)
       ON CONFLICT (agent_id) DO UPDATE SET pitch=excluded.pitch`, [agentId, value]);

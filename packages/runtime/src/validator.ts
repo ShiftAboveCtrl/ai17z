@@ -123,6 +123,31 @@ function namesProvider(text: string, name: string): boolean {
   return !/[a-z0-9]/i.test(before) && !/[a-z0-9]/i.test(after);
 }
 
+/**
+ * Whether text claims to be human or names what runs the agent.
+ *
+ * The one implementation behind both `validateOutput` and the public-home pitch
+ * screen, so the two can never drift apart. It reads the same word lists the
+ * validator already enforces rather than a second copy beside them.
+ */
+export interface IdentityClaim {
+  /** The provider name written as what runs the agent, when one matched. */
+  provider: string | null;
+  /** Whether the text names or describes what is running the agent. */
+  modelDisclosed: boolean;
+  /** Whether the text claims to be human. */
+  human: boolean;
+}
+
+export function identityClaim(text: string): IdentityClaim | null {
+  const disclosure = MODEL_DISCLOSURE.find((re) => re.test(text));
+  const namedProvider = PROVIDER_NAMES.find((name) => namesProvider(text, name));
+  const modelDisclosed = Boolean(disclosure) || Boolean(namedProvider && SELF_REFERENTIAL.test(text));
+  const human = HUMAN_CLAIM.some((re) => re.test(text));
+  if (!modelDisclosed && !human) return null;
+  return { provider: namedProvider ?? null, modelDisclosed, human };
+}
+
 function stripWrappingQuotes(text: string): string {
   const trimmed = text.trim();
   const pairs: Array<[string, string]> = [
@@ -332,19 +357,18 @@ export function validateOutput(
   }
 
   // Never negotiable, and checked before anything a policy could relax.
-  const disclosure = MODEL_DISCLOSURE.find((re) => re.test(output));
-  const namedProvider = PROVIDER_NAMES.find((name) => namesProvider(output, name));
-  if (disclosure || (namedProvider && SELF_REFERENTIAL.test(output))) {
+  const claim = identityClaim(output);
+  if (claim?.modelDisclosed) {
     violations.push({
       rule: 'model_disclosure',
       severity: 'REVIEW',
-      message: namedProvider
-        ? `Output names "${namedProvider}" while talking about itself. An agent may say it is an AI17Z agent and nothing about what runs it.`
+      message: claim.provider
+        ? `Output names "${claim.provider}" while talking about itself. An agent may say it is an AI17Z agent and nothing about what runs it.`
         : 'Output describes what is running the agent. It may say it is an AI17Z agent and nothing further.',
     });
   }
 
-  if (!policy.identity.mayDenyBeingAI && HUMAN_CLAIM.some((re) => re.test(output))) {
+  if (!policy.identity.mayDenyBeingAI && claim?.human) {
     violations.push({
       rule: 'identity_claim',
       severity: 'REJECT',

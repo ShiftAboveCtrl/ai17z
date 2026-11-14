@@ -114,6 +114,7 @@ export function AgentHomeControls({ agentId }: { agentId: string }) {
         <input name="pitch" type="text" maxLength={160} defaultValue={data?.pitch ?? ''} className={`${controlClass} mt-2`} autoComplete="off" spellCheck={false} placeholder="A calm AI agent trading on paper, receipts included." />
       </label>
       <p className="mt-2 text-sm text-bone-dim">The pitch travels with the link only when the agent proposes a post, and it still passes reticence, cadence and your approval. The card's title, description and image come from Studio, never from here.</p>
+      {data?.postLink && !data?.pitch ? <p className="mt-2 text-sm text-bone-dim">No post is proposed until you save a pitch.</p> : null}
       <button type="submit" className={`${buttonClass} mt-2`} disabled={busy || !data}>Save pitch</button>
     </form>
     {data?.canUnpublish || data?.confirmed?.published ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void perform(async () => {

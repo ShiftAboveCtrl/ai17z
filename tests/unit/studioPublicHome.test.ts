@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PublicHomeManifest, projectHomeManifest, asksForPublicHome, buildPublicHomeShare } from '../../packages/runtime/src/studioPublicHome';
+import { PublicHomeManifest, projectHomeManifest, asksForPublicHome, buildPublicHomeShare, publicHomePitchRefusal } from '../../packages/runtime/src/studioPublicHome';
 import { PUBLIC_HOME_DISCLOSURE, PUBLIC_HOME_PITCH_MAX, PublicHomePitch, PublicHomeShare } from '../../packages/shared/src/contracts/studioPublicHome';
 import { STUDIO_HOME_CAPABILITIES } from '../../packages/runtime/src/studioPublicHomeCapabilities';
 
@@ -67,5 +67,31 @@ describe('public home share card', () => {
     expect(PublicHomeShare.safeParse({ ...share, url: 'not a url' }).success).toBe(false);
     expect(PublicHomeShare.safeParse({ ...share, identity: 'HUMAN' }).success).toBe(false);
     expect(PublicHomeShare.safeParse({ ...share, simulated: false }).success).toBe(false);
+  });
+});
+
+describe('public home pitch screen', () => {
+  const refused = [
+    'guaranteed returns, buy now',
+    '10x your money',
+    '80% returns',
+    'profits and APY',
+    'PnL is up',
+    'price prediction: to the moon',
+    'will make you rich',
+    'follow my trades for alpha',
+    'I am a human trader',
+    'I am powered by GPT-4',
+    'My underlying model is DeepSeek',
+    'I am a large language model',
+  ];
+  for (const pitch of refused) {
+    it(`refuses "${pitch}"`, () => {
+      expect(publicHomePitchRefusal(pitch)).toBeTruthy();
+    });
+  }
+  it('accepts an ordinary pitch', () => {
+    expect(publicHomePitchRefusal('A calm AI agent trading on paper.')).toBeNull();
+    expect(publicHomePitchRefusal('An AI agent sharing simulated paper trades and receipts.')).toBeNull();
   });
 });
