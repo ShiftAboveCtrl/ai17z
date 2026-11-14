@@ -103,4 +103,30 @@ describe('paperRecordSendText', () => {
     expect(await send(other, policy(), { ideaSource: 'something_else' })).toBe(other);
     expect(await send(body, policy(), null)).toBe(body);
   });
+
+  it('sends text that already ends with the proven closing line once, unchanged', async () => {
+    const closed = `${body}
+${RECORD_LINK_PREFIX}${link}`;
+    expect(await send(closed)).toBe(closed);
+    expect(await send(closed, policy({ linkPaperRecord: false }))).toBe(closed);
+  });
+
+  it('still holds any other link, or the proven one anywhere but the closing line', async () => {
+    await expect(send(`${body}
+${RECORD_LINK_PREFIX}https://evil.example/a/x`)).rejects.toMatchObject({ reason: 'paper_record_link' });
+    await expect(send(`${body}
+${RECORD_LINK_PREFIX}${link}
+see ${link}`)).rejects.toMatchObject({ reason: 'paper_record_link' });
+    home = { url: null, stale: false, confirmed: null };
+    await expect(send(`${body}
+${RECORD_LINK_PREFIX}${link}`)).rejects.toMatchObject({ reason: 'paper_record_link' });
+  });
+
+  it('runs the whole validator on the text with the link added, and holds a failure for review', async () => {
+    const strict = policy({}, { bannedPhrases: ['paper record'] });
+    // The body passes alone; only the appended line contains the phrase.
+    await expect(send(body, strict)).rejects.toMatchObject({ reason: 'paper_record_invalid' });
+    expect(await send(body, policy({}, { bannedPhrases: ['nothing like this'] }))).toBe(`${body}
+${RECORD_LINK_PREFIX}${link}`);
+  });
 });

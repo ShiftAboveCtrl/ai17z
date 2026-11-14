@@ -2,6 +2,7 @@ import type { JobStatus, PipelineNode } from '@xbam/shared/contracts';
 import { PipelineError, truncate } from '@xbam/shared';
 import { actions as actionsRepo, jobs as jobsRepo, observability } from '@xbam/database';
 import type { JobBundle } from './loadJob';
+import { paperRecordSendText } from './studioRecordLink';
 import {
   persistTurnAndMemory,
   stepExecute,
@@ -136,13 +137,24 @@ const approvalNode: NodeHandler = async (bundle) => {
   if (decision?.status === 'APPROVED') return { branch: 'approved' };
   if (policy.automation.mode === 'AUTONOMOUS') return { branch: 'approved' };
 
-  await actionsRepo.createApproval(job.id, output);
+  // An owner approves what is published: a paper record post is closed with its
+  // proven link here, with the same function the send uses, and re-checked there.
+  const closed = await paperRecordSendText({
+    agentId: bundle.agent.id,
+    raw: bundle.event.payload,
+    text: output,
+    policy,
+    operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
+    ownerApproved: true,
+  });
+  if (closed !== output) await jobsRepo.updateJob(job.id, { validatedOutput: closed });
+  await actionsRepo.createApproval(job.id, closed);
   await observability.emitTrace({
     jobId: job.id,
     agentId: bundle.agent.id,
     type: 'APPROVAL_REQUESTED',
     message: 'Waiting for a human decision before acting.',
-    data: { preview: truncate(output, 200) },
+    data: { preview: truncate(closed, 200) },
   });
   return { branch: 'approved', halt: true, status: 'WAITING_FOR_APPROVAL' };
 };

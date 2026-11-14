@@ -230,7 +230,10 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   if (!validated) throw PipelineError.retryable('output_missing', 'Execution ran before validation produced output.');
   // A paper record post may be closed with the link the runtime proved; nothing
   // else changes the text here, and a link the model wrote is held.
-  const output = await paperRecordSendText({ agentId: bundle.agent.id, raw: bundle.event.payload, text: validated, policy });
+  const output = await paperRecordSendText({ agentId: bundle.agent.id, raw: bundle.event.payload, text: validated, policy,
+    operatorText: [bundle.persona.biography, bundle.persona.customInstructions].filter(Boolean).join('\n'),
+    ownerApproved: Boolean(job.approvedAt),
+  });
   await checkEvidenceCardAtSend(bundle, output);
   const paperReply = await paperReplyForJob(job.id);
   if (paperReply !== null && paperReply !== output) {

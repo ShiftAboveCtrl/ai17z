@@ -1,5 +1,6 @@
 import { PipelineError } from '@xbam/shared';
 import type { PolicyConfig } from '@xbam/shared/contracts';
+import { validateOutput } from './validator';
 import { PAPER_IDEA_SOURCE } from './studioPaperVoice';
 import { publicHomeState } from './studioPublicHome';
 import { linkedCheckOrigin } from './studioCheckLink';
@@ -17,7 +18,7 @@ import { linkedCheckOrigin } from './studioCheckLink';
  * - The origin is the linked Studio's and nothing else. An installation that is
  *   not linked, or only has a development origin, produces no link.
  * - It exists only for a confirmed, current publication whose manifest carried
- *   a paper snapshot. An unpublished, stale or paper-less page would be a dead
+ *   a paper snapshot. An unpublished, stale or paperless page would be a dead
  *   or empty link on a public post, so the post goes out without one and keeps
  *   its inline summary.
  * - Off unless `policy.studio.linkPaperRecord` is on, a separate opt-in from
@@ -79,6 +80,10 @@ export interface RecordLinkInput {
   text: string;
   policy: PolicyConfig;
   maxCharacters?: number;
+  /** The persona text the validator reads for addresses the operator gave the agent. */
+  operatorText?: string | null;
+  /** The owner has decided on this job, so a finding that only asks for an owner is answered. */
+  ownerApproved?: boolean;
 }
 
 const isRecordPost = (raw: unknown) => ((raw ?? {}) as { ideaSource?: unknown }).ideaSource === PAPER_IDEA_SOURCE;
@@ -97,8 +102,15 @@ export async function paperRecordSendText(input: RecordLinkInput): Promise<strin
   const wanted = input.policy.studio.postPaperRecord && input.policy.studio.linkPaperRecord && !input.policy.output.forbidLinks;
   let text = input.text;
   let link: string | null = null;
-  // Without the window dates in the text the link would stand alone, so it is left off.
-  if (wanted && DATE_WORDS.test(text) && !(text.match(URL_IN_TEXT)?.length)) {
+  const urls = text.match(URL_IN_TEXT) ?? [];
+  if (urls.length > 0) {
+    // Text that already ends with the exact proven closing line (a resumed job,
+    // or an approval of the text this function produced) is closed: nothing is
+    // appended and it is not held. Any other link still is.
+    const proven = await studioRecordLink(input.agentId);
+    if (proven && urls.length === 1 && text.split('\n').at(-1) === `${RECORD_LINK_PREFIX}${proven}`) link = proven;
+  } else if (wanted && DATE_WORDS.test(text)) {
+    // Without the window dates in the text the link would stand alone, so it is left off.
     const proven = await studioRecordLink(input.agentId);
     if (proven) {
       const closing = `\n${RECORD_LINK_PREFIX}${proven}`;
@@ -113,6 +125,19 @@ export async function paperRecordSendText(input: RecordLinkInput): Promise<strin
   const problems = checkRecordLinkText(text, link);
   if (problems.length > 0) {
     throw PipelineError.review('paper_record_link', `This post about the paper record needs the owner: ${problems.join(' ')}`);
+  }
+  // The appended line is new text after the validator ran, so the whole
+  // validator runs again on exactly what will be sent. Only a link added here
+  // is re-checked: an unchanged text already passed it.
+  if (text !== input.text || link) {
+    const verdict = validateOutput(text, input.policy, null, input.operatorText ?? null);
+    const held = verdict.violations
+      .filter((v) => v.severity === 'REJECT' || (v.severity === 'REVIEW' && !input.ownerApproved))
+      .map((v) => v.message);
+    if (held.length === 0 && verdict.output !== text) held.push('The finished text would be changed by the output rules.');
+    if (held.length > 0) {
+      throw PipelineError.review('paper_record_invalid', `This post about the paper record needs the owner: ${held.join(' ')}`);
+    }
   }
   return text;
 }
