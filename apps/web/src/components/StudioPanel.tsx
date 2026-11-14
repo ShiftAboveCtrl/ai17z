@@ -6,6 +6,7 @@ import { useElapsed, usePolling, useResource } from '@app/lib/hooks';
 import { RetryablePanel, Working } from '@app/components/ui';
 import { LiveTradesSection } from '@app/components/LiveTradesPanel';
 import { PublicHomePanel } from '@app/components/PublicHomePanel';
+import { PlaybookPublishPanel } from '@app/components/PlaybookPublishPanel';
 import { LeagueEntryPanel } from '@app/components/LeagueEntryPanel';
 import { ROBINHOOD_CHAIN_PARAMS, discoverWallets, ensureChain, type DiscoveredWallet, type Eip1193, type WalletWindow } from '@app/lib/walletDiscovery';
 
@@ -259,6 +260,7 @@ export function StudioPanel({ initialSeason = '' }: { initialSeason?: string }) 
         <>
           <ControlSection />
           <PublicHomePanel />
+          <PlaybookPublishPanel />
           <LiveViewSection />
           <TakeoverSection />
           <LiveTradesSection />
