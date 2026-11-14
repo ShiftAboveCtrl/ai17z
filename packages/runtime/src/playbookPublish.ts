@@ -178,6 +178,7 @@ export interface PlaybookPublishState {
   confirmedAt: string | null;
   problem: string | null;
   canUnpublish: boolean;
+  canDiscard: boolean;
 }
 
 export async function playbookPublishState(agentId: string): Promise<PlaybookPublishState> {
@@ -192,6 +193,7 @@ export async function playbookPublishState(agentId: string): Promise<PlaybookPub
     confirmedAt: c?.confirmedAt ?? null,
     problem: row.problem,
     canUnpublish,
+    canDiscard: c?.published !== true && Boolean(row.problem && row.pending),
   };
 }
 
@@ -307,6 +309,33 @@ export async function publishPlaybookSetup(
       data: { playbookId: confirmed.playbookId, version: confirmed.version, sha256: confirmed.digest },
     });
     return { ok: true, playbookId: confirmed.playbookId, version: confirmed.version };
+  });
+}
+
+/**
+ * Owner-only local escape from a failed first publish. When Studio never
+ * confirmed and never listed the document, pending and problem stay set and
+ * block every new preview. This clears both without calling Studio. It refuses
+ * a confirmed publication, which only an unpublish may remove, and it refuses
+ * when there is no unknown outcome to discard.
+ */
+export async function discardPlaybookPublishAttempt(agentId: string, ownerId: string): Promise<{ ok: true } | { ok: false; why: string }> {
+  await owned(agentId, ownerId);
+  return locked(agentId, async () => {
+    const row = await rowOf(agentId);
+    if (row.confirmed?.published) {
+      return { ok: false, why: 'This playbook is published. Unpublish it to remove the listing; a confirmed publication is never discarded locally.' };
+    }
+    if (!row.pending || !row.problem) return { ok: false, why: 'There is no unconfirmed publish attempt to discard.' };
+    await query(`UPDATE agent_playbook_publications SET pending = NULL, problem = NULL WHERE agent_id = $1`, [agentId]);
+    await ops.audit({
+      actorUserId: ownerId,
+      action: 'playbook.attempt_discarded',
+      entityType: 'agent',
+      entityId: agentId,
+      data: { playbookId: row.pending.document.id, version: row.pending.document.version, sha256: row.pending.digest },
+    });
+    return { ok: true };
   });
 }
 

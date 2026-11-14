@@ -3,7 +3,7 @@ import { post } from '@app/lib/api';
 import { useResource } from '@app/lib/hooks';
 import { focusAfterPaint } from '@app/components/ui';
 
-interface PublishState { published: boolean; playbookId: string | null; version: number | null; title: string | null; confirmedAt: string | null; problem: string | null; canUnpublish: boolean }
+interface PublishState { published: boolean; playbookId: string | null; version: number | null; title: string | null; confirmedAt: string | null; problem: string | null; canUnpublish: boolean; canDiscard: boolean }
 interface Preview { document: unknown; digest: string; playbookId: string; version: number; expiresAt: string; note: string }
 const controlClass = 'min-h-12 w-full rounded border border-bone-faint bg-ink-raised px-3 text-base text-bone';
 const buttonClass = 'min-h-12 touch-manipulation rounded border border-bone-faint px-4 text-sm text-bone hover:bg-ink-raised disabled:opacity-50';
@@ -84,6 +84,11 @@ export function AgentPlaybookControls({ agentId }: { agentId: string }) {
       setMessage(result.ok ? 'Unpublished. The listing is removed.' : result.why ?? 'Studio did not confirm removal.');
       if (result.ok) setPreview(null);
     })}>Unpublish playbook</button> : null}
+    {data?.canDiscard ? <button type="button" className={buttonClass} disabled={busy} onClick={() => void perform(async () => {
+      const result = await post<{ ok: boolean; why?: string }>(`${base}/discard`, {});
+      setMessage(result.ok ? 'Discarded the unconfirmed attempt. Nothing was sent to Studio. You can preview again.' : result.why ?? 'The attempt could not be discarded.');
+      if (result.ok) setPreview(null);
+    })}>Discard unconfirmed attempt</button> : null}
     <p className="text-sm text-bone-dim">A published playbook is setup, not results: bounds, paper capital and the exact mint universe. No PnL, no wallet beyond those mints, no memory, no stance. A published version never changes; publishing again is a new version. Unpublishing removes the listing.</p>
     <p role="status" className="break-words text-sm text-bone">{busy ? 'Waiting for confirmation.' : message}</p>
   </div>;

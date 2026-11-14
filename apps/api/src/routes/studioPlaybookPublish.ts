@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { agents } from '@xbam/database';
 import { NotFoundError } from '@xbam/shared';
-import { playbookPublishState, previewPlaybookPublish, publishPlaybookSetup, unpublishPlaybookSetup } from '@xbam/runtime';
+import { discardPlaybookPublishAttempt, playbookPublishState, previewPlaybookPublish, publishPlaybookSetup, unpublishPlaybookSetup } from '@xbam/runtime';
 import { handler, params, parseBody, requireUser } from '../http';
 
 /**
@@ -31,6 +31,11 @@ export async function studioPlaybookPublishRoutes(app: FastifyInstance): Promise
     const user = await requireUser(request);
     const body = parseBody(PublishBody, request);
     return publishPlaybookSetup({ agentId: params(request).id!, ownerId: user.id, digest: body.digest });
+  }));
+  app.post(`${base}/discard`, handler(async (request) => {
+    const user = await requireUser(request);
+    parseBody(z.object({}).strict(), request);
+    return discardPlaybookPublishAttempt(params(request).id!, user.id);
   }));
   app.post(`${base}/unpublish`, handler(async (request) => {
     const user = await requireUser(request);

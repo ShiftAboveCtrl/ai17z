@@ -209,6 +209,56 @@ describe('publishing an agent setup as a playbook', () => {
     expect(state.problem).toMatch(/not presented as published/);
   });
 
+  it('answers 404 to a second owner on every route for an agent they do not own', async () => {
+    const t = await setup();
+    await trading.putMandate({ agentId: t.f.agentId, ownerId: t.f.ownerId, mandate: paper });
+    const preview = data<{ digest: string }>(await t.preview('Mine'));
+
+    const intruder = await createFixture();
+    const auth = await signIn(intruder.ownerEmail);
+    const base = `/api/agents/${t.f.agentId}/playbook-publish`;
+    const attempts = [
+      app.inject({ method: 'GET', url: base, headers: auth }),
+      app.inject({ method: 'POST', url: `${base}/preview`, headers: auth, payload: { title: 'Theirs' } as never }),
+      app.inject({ method: 'POST', url: `${base}/publish`, headers: auth, payload: { digest: preview.digest } as never }),
+      app.inject({ method: 'POST', url: `${base}/unpublish`, headers: auth, payload: {} as never }),
+      app.inject({ method: 'POST', url: `${base}/discard`, headers: auth, payload: {} as never }),
+    ];
+    for (const r of await Promise.all(attempts)) expect(r.statusCode).toBe(404);
+    expect(publishRequests).toHaveLength(0);
+    expect(data<{ published: boolean }>(await t.state()).published).toBe(false);
+  });
+
+  it('lets the owner discard a failed first publish locally, and never a confirmed publication', async () => {
+    const t = await setup();
+    await trading.putMandate({ agentId: t.f.agentId, ownerId: t.f.ownerId, mandate: paper });
+    const discard = () => app.inject({ method: 'POST', url: `/api/agents/${t.f.agentId}/playbook-publish/discard`, headers: t.auth, payload: {} as never });
+
+    const nothing = data<{ ok: boolean; why: string }>(await discard());
+    expect(nothing).toMatchObject({ ok: false });
+    expect(nothing.why).toMatch(/no unconfirmed publish attempt/);
+
+    const first = data<{ digest: string }>(await t.preview('Stuck'));
+    publishHandler = () => ({ status: 500, body: { error: 'down' } });
+    await t.publish(first.digest);
+    const stuck = data<{ canDiscard: boolean; problem: string | null }>(await t.state());
+    expect(stuck.canDiscard).toBe(true);
+    expect((await t.preview('Again')).statusCode).toBe(409);
+
+    const requestsBefore = publishRequests.length;
+    expect(data<{ ok: boolean }>(await discard()).ok).toBe(true);
+    expect(publishRequests).toHaveLength(requestsBefore);
+    expect(data<{ canDiscard: boolean; problem: string | null; canUnpublish: boolean }>(await t.state())).toMatchObject({ canDiscard: false, problem: null, canUnpublish: false });
+
+    publishHandler = echoReply;
+    const second = data<{ digest: string }>(await t.preview('Fresh'));
+    expect(data<{ ok: boolean }>(await t.publish(second.digest)).ok).toBe(true);
+    const refused = data<{ ok: boolean; why: string }>(await discard());
+    expect(refused.ok).toBe(false);
+    expect(refused.why).toMatch(/never discarded locally/);
+    expect(data<{ published: boolean }>(await t.state()).published).toBe(true);
+  });
+
   it('audits the publish and unpublish', async () => {
     const t = await setup();
     await trading.putMandate({ agentId: t.f.agentId, ownerId: t.f.ownerId, mandate: paper });
