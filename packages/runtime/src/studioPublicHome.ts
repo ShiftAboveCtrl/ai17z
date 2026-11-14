@@ -2,13 +2,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { agents, content, ops, query, withAdvisoryLock, withTransaction } from '@xbam/database';
 import { BadRequestError, canonicalJson, ConflictError, logger, NotFoundError } from '@xbam/shared';
-import { LeagueAlias, PaperRecord, PaperRecordWindow, PolicyConfig, VoiceDocument } from '@xbam/shared/contracts';
+import { LeagueAlias, PaperRecord, PaperRecordWindow, PolicyConfig, PUBLIC_HOME_DISCLOSURE, PublicHomePitch, PublicHomeShare, VoiceDocument } from '@xbam/shared/contracts';
 import { studioControlSetting } from './studioControl';
 import { studioStatus, studioPaperRecord, studioPublicHomeRequest, studioPublicHomeRenew } from './studioLink';
 import { publicHomeNeedsRepublish, publicHomeRepublished } from './notify';
 import { voiceFromAgent } from './voiceDocument';
 import { readLeagueStanding } from './studioLeague';
-import { unpromptedSubject } from './reticence';
+import { reticenceReason, unpromptedSubject } from './reticence';
+import { FORWARD_LOOKING } from './studioPaperVoice';
+import { identityClaim } from './validator';
 import { XCounts, storedHomeXCounts } from './studioXCounts';
 
 export const HOME_TTL_MS = 15 * 60_000;
@@ -57,8 +59,8 @@ const digestOf = (manifest: PublicHomeManifest) => createHash('sha256').update(c
 interface Pending { manifest: PublicHomeManifest; digest: string; key: string; expiresAt: string; origin: string | null; installationId: string | null; linkedAt: string | null }
 interface Confirmed { published: boolean; slug: string; origin: string; installationId: string; linkedAt: string; confirmedAt: string; validUntil: string; digest: string; revision: string;
   renewal?: { key: string; attemptedAt: string; stopped: boolean } }
-interface Row extends Record<string, unknown> { pending: Pending | null; confirmed: Confirmed | null; post_link: boolean; problem: string | null; proposed_digest: string | null }
-const empty = (): Row => ({ pending: null, confirmed: null, post_link: false, problem: null, proposed_digest: null });
+interface Row extends Record<string, unknown> { pending: Pending | null; confirmed: Confirmed | null; post_link: boolean; problem: string | null; proposed_digest: string | null; pitch: string | null }
+const empty = (): Row => ({ pending: null, confirmed: null, post_link: false, problem: null, proposed_digest: null, pitch: null });
 async function rowOf(id: string): Promise<Row> { return (await query<Row>('SELECT * FROM agent_public_home WHERE agent_id = $1', [id]))[0] ?? empty(); }
 async function owned(id: string, ownerId: string) {
   const agent = await agents.getAgent(id);
@@ -76,7 +78,7 @@ export async function publicHomeState(agentId: string, now = new Date()) {
   const stale = !!c && (now.getTime() - Date.parse(c.confirmedAt) >= HOME_TTL_MS || now.getTime() < Date.parse(c.confirmedAt)
     || !c.validUntil || Date.parse(c.validUntil) <= now.getTime()
     || !!row.problem || !control.enabled || status.state !== 'LINKED' || status.origin !== c.origin || status.installationId !== c.installationId || status.linkedAt !== c.linkedAt);
-  return { confirmed: c, postLink: row.post_link, stale, problem: row.problem, canUnpublish: c?.published === true || !!row.problem && !!row.pending,
+  return { confirmed: c, postLink: row.post_link, pitch: row.pitch, stale, problem: row.problem, canUnpublish: c?.published === true || !!row.problem && !!row.pending,
     url: c?.published && !stale ? `${c.origin}/a/${c.slug}` : null };
 }
 
@@ -178,6 +180,54 @@ export async function setPublicHomePosting(agentId: string, ownerId: string, ena
   });
 }
 
+/**
+ * A pitch a public share post could never carry, as a sentence for the owner, or
+ * null when the pitch is fine to save. Deterministic and run at save time.
+ *
+ * It reuses the screens that already exist rather than a second word list beside
+ * them: reticence for the subjects an agent does not raise on its own, the
+ * validator's identity check for a human or model claim, and the paper voice's
+ * forward-looking pattern for a promise or advice. The one pattern added here
+ * names the figures and multiples none of those catch: a multiplier like 10x,
+ * an APY, a currency or percentage figure, a result word such as returns or
+ * profit, and a price prediction.
+ */
+const PITCH_PERFORMANCE =
+  /\b\d+(?:[.,]\d+)?\s?x\b|\bapy\b|[$€£]\s?\d|\d\s?%|\b(?:pnl|p&l|profit\w*|gains?|returns?|drawdowns?)\b|\bprice\s+prediction\b/i;
+
+export function publicHomePitchRefusal(text: string): string | null {
+  const reticent = unpromptedSubject(text);
+  if (reticent) return reticenceReason(reticent);
+  const claim = identityClaim(text);
+  if (claim) {
+    if (claim.human) return 'A public pitch cannot claim the agent is human. It may say the agent is an AI17Z agent.';
+    if (claim.provider) return `A public pitch cannot name "${claim.provider}" as what runs the agent. It may say the agent is an AI17Z agent.`;
+    return 'A public pitch cannot describe what runs the agent. It may say the agent is an AI17Z agent.';
+  }
+  if (FORWARD_LOOKING.test(text)) return 'A public pitch cannot promise a result, a signal or advice about what comes next.';
+  if (PITCH_PERFORMANCE.test(text)) return 'A public pitch cannot quote returns, profits, multiples, APY or a price prediction.';
+  return null;
+}
+
+/**
+ * The owner's one-line pitch for a public-home share post. Null clears it.
+ * A pitch that could never be posted is refused here, at save time, rather than
+ * stored and dropped later: a hype, performance or identity claim is a sentence
+ * back to the owner instead of a row.
+ */
+export async function setPublicHomePitch(agentId: string, ownerId: string, pitch: string | null) {
+  await owned(agentId, ownerId);
+  const value = pitch === null ? null : PublicHomePitch.parse(pitch);
+  if (value !== null) {
+    const refusal = publicHomePitchRefusal(value);
+    if (refusal) throw new BadRequestError(refusal);
+  }
+  await locked(agentId, async () => {
+    await query(`INSERT INTO agent_public_home(agent_id,pitch) VALUES ($1,$2)
+      ON CONFLICT (agent_id) DO UPDATE SET pitch=excluded.pitch`, [agentId, value]);
+  });
+}
+
 /** The existing worker sweep renews only unchanged, current, owner-confirmed publications. */
 export async function sweepPublicHomeRenewals(now = new Date()): Promise<void> {
   if (!(await studioControlSetting()).enabled) return;
@@ -236,18 +286,29 @@ export async function publicHomeReply(agentId: string): Promise<string> {
   if (state.url) return state.url;
   return state.confirmed?.published ? 'I cannot confirm my public home is current right now.' : 'I have no published public home.';
 }
+/**
+ * The exact share card, or null when the inputs do not form one. Pure, so the
+ * allowlist and the disclosure are pinned by a unit test rather than by
+ * whichever caller remembered them.
+ */
+export function buildPublicHomeShare(input: { url: string; pitch: string }): PublicHomeShare | null {
+  const parsed = PublicHomeShare.safeParse({ protocol: 1, identity: 'AI_AGENT', simulated: true, url: input.url, pitch: input.pitch, disclosure: PUBLIC_HOME_DISCLOSURE });
+  return parsed.success ? parsed.data : null;
+}
+
 export async function proposePublicHomePost(agentId: string): Promise<boolean> {
   return locked(agentId, async () => {
     const state = await publicHomeState(agentId);
     const row = await rowOf(agentId);
     if (!state.url || !state.postLink || !row.confirmed || row.proposed_digest === row.confirmed.digest) return false;
-    const summary = `My AI agent public home: ${state.url}. Any trading results shown are simulated paper results.`;
-    if (unpromptedSubject(summary)) return false;
+    const share = buildPublicHomeShare({ url: state.url, pitch: row.pitch ?? '' });
+    if (!share || unpromptedSubject(share.pitch)) return false;
+    const summary = `${share.pitch} ${share.url} ${share.disclosure}`;
     const exists = await content.similarExists(agentId, summary);
     await withTransaction(async (tx) => {
       if (!exists) await tx.query(`INSERT INTO content_ideas(agent_id,kind,summary,detail,source,score)
         VALUES ($1,'observation',$2,$3,$4,60)`, [agentId, summary,
-        'Share this exact public home link. State that this is an AI agent and that trading results are simulated paper results. No future claims.', HOME_IDEA_SOURCE]);
+        'Share this exact public home link with the owner-approved pitch. State that this is an AI agent and that trading results are simulated paper results. The preview title, description and image come from Studio, never from here. No future claims.', HOME_IDEA_SOURCE]);
       await tx.query('UPDATE agent_public_home SET proposed_digest=$2 WHERE agent_id=$1', [agentId, row.confirmed!.digest]);
     });
     return true;
