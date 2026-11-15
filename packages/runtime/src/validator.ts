@@ -226,6 +226,11 @@ export function validateOutput(
    * model happened to produce.
    */
   provenLink?: string | null,
+  /**
+   * Whole lines the runtime built from addresses it read off the chain itself, such as the
+   * deployer line on an evidence card. Only a line equal to one of these is exempt.
+   */
+  provenLines?: readonly string[] | null,
 ): ValidationResult {
   const violations: Violation[] = [];
   let output = raw.replace(/\r\n/g, '\n').trim();
@@ -356,8 +361,9 @@ export function validateOutput(
   // exact line is exempt. The same mint anywhere else, or any other address, is
   // still held, so a link the model wrote is caught exactly as before.
   const provenLine = provenLink ? `${CHECK_LINK_PREFIX}${provenLink}` : null;
-  const addressScan = provenLine
-    ? output.split('\n').filter((line) => line !== provenLine).join('\n')
+  const exempt = new Set<string>([...(provenLine ? [provenLine] : []), ...(provenLines ?? [])]);
+  const addressScan = exempt.size
+    ? output.split('\n').filter((line) => !exempt.has(line)).join('\n')
     : output;
 
   for (const found of addressesIn(addressScan)) {
