@@ -11,6 +11,8 @@ import {
 import { decisionFingerprint } from './ownerLearning';
 import { PolicyConfig } from '@xbam/shared/contracts';
 import { validateOutput } from './validator';
+import { transactionAddresses } from './transactionReading';
+import type { TransactionReport } from '@xbam/prompts';
 
 export interface ApprovalDecisionInput {
   jobId: string;
@@ -49,8 +51,9 @@ export async function approveJob(input: ApprovalDecisionInput): Promise<void> {
 
   // The runtime-built lines of a sourced evidence card (the check page link, the
   // "read from your image" echo) are the same exempt lines the pipeline passed.
-  const card = (job.resolvedContext?.meta as { evidenceCard?: { link?: string | null; echo?: string | null } } | undefined)?.evidenceCard;
-  const validation = validateOutput(proposed, policy, null, operatorText, card?.link ?? null, card?.echo ? [card.echo] : null);
+  const card = (job.resolvedContext?.meta as { evidenceCard?: { link?: string | null; echo?: string | null; tx?: TransactionReport } } | undefined)?.evidenceCard;
+  const validation = validateOutput(proposed, policy, null, operatorText, card?.link ?? null,
+    card?.tx ? transactionAddresses(card.tx) : null, card?.echo ? [card.echo] : null);
   const hardFailure = validation.violations.find((v) => v.severity === 'REJECT');
   if (hardFailure) {
     throw new ConflictError(`This message cannot be approved: ${hardFailure.message}`, {
