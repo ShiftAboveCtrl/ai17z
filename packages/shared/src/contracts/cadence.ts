@@ -65,7 +65,7 @@ export type CapacityClass = (typeof CAPACITY_CLASSES)[number];
  * headroom left in, and what actually protects the account is the response to
  * X pushing back: see `judgeCapacity` in the runtime.
  */
-export const CapacityCadence = z.object({
+export const CapacityThresholds = z.object({
   /**
    * X reads the account may make in any ten minutes while healthy, across every
    * surface. Thirty-six is a little over three a minute: measured on a live
@@ -89,7 +89,44 @@ export const CapacityCadence = z.object({
   /** The longest a cooldown may become however many times the account trips. */
   maxCooldownMinutes: z.number().int().min(5).max(1_440).default(120),
 });
+export type CapacityThresholds = z.infer<typeof CapacityThresholds>;
+
+/**
+ * Capacity for one account, with a family of its own for each network whose
+ * reads must not be judged by X's numbers.
+ *
+ * The top level is X and Bluesky, which share a family. Farcaster has its own
+ * block, so a Farcaster account is neither held to the budget measured on X
+ * nor free to spend one it was never measured against. The Hub and API calls
+ * are cheaper than a page load, so its ceiling is higher by default, and the
+ * cooldown is the same shape. An owner changes it here, in the versioned
+ * cadence, and nowhere else.
+ */
+export const CapacityCadence = CapacityThresholds.extend({
+  farcaster: CapacityThresholds.prefault({ readsPer10Minutes: 60 }),
+});
 export type CapacityCadence = z.infer<typeof CapacityCadence>;
+
+/** The network families that keep a separate read budget. */
+export type CapacityFamily = 'x' | 'farcaster';
+
+/** Which family an account's channel spends from. Bluesky shares X's. */
+export function capacityFamilyOf(channel: string | null | undefined): CapacityFamily {
+  return channel === 'farcaster' ? 'farcaster' : 'x';
+}
+
+/** The thresholds that apply to this channel. Never mixes two families. */
+export function capacityThresholdsFor(config: CapacityCadence, channel: string | null | undefined): CapacityThresholds {
+  if (capacityFamilyOf(channel) === 'farcaster') return config.farcaster;
+  return {
+    readsPer10Minutes: config.readsPer10Minutes,
+    broadShare: config.broadShare,
+    targetShare: config.targetShare,
+    directReserve: config.directReserve,
+    cooldownMinutes: config.cooldownMinutes,
+    maxCooldownMinutes: config.maxCooldownMinutes,
+  };
+}
 
 export const CadenceConfig = z.object({
   polling: PollingCadence.prefault({}),
