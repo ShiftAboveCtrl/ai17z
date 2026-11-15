@@ -23,6 +23,8 @@ let liquidity = 12000;
 const creator = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 let chainRead = false;
 let rpcMethods: string[] = [];
+let curveOnChain = false;
+import { LIVE_CURVE_BASE64, PUMP_PROGRAM } from '../support/curveFixtures';
 import { resetDeployerCacheForTest } from '../../packages/runtime/src/deployerHistory';
 vi.mock('undici', () => ({
   Agent: class { async close() {} },
@@ -37,6 +39,8 @@ vi.mock('undici', () => ({
       const { method } = JSON.parse(String(init?.body));
       rpcMethods.push(method);
       const result = method === 'getGenesisHash' ? '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
+        : method === 'getAccountInfo' ? { context: { slot: 469_824_739 }, value: curveOnChain
+          ? { lamports: 1, owner: PUMP_PROGRAM, executable: false, space: 166, data: [LIVE_CURVE_BASE64, 'base64'] } : null }
         : method === 'getSignaturesForAddress' ? [{ signature: 'newer', err: null }, { signature: 'oldest', err: null }]
         : { blockTime: Math.floor(Date.now() / 1000) - 7200, meta: { err: null, innerInstructions: [] },
           transaction: { message: { accountKeys: [{ pubkey: creator, signer: true }],
@@ -55,7 +59,7 @@ vi.mock('undici', () => ({
 
 beforeAll(async () => { await setupTestDatabase(); const r = await import('@xbam/runtime'); await r.bootstrapRuntime(); });
 afterAll(teardownTestDatabase);
-beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false; unknown = false; liquidity = 12000; chainRead = false; rpcMethods = []; resetDeployerCacheForTest();
+beforeEach(async () => { await truncateAll(); await seedCatalogue(); calls = 0; stale = false; unknown = false; liquidity = 12000; chainRead = false; curveOnChain = false; rpcMethods = []; resetDeployerCacheForTest();
   const u = await import('@xbam/upstream'); u.resetCacheForTest(); u.resetLimiterForTest(); u.resetBreakerForTest(); });
 
 async function fixture(policy: Partial<PolicyConfig> = {}) {
@@ -377,7 +381,9 @@ it('adds the deployer read from the chain, with sources, and keeps every existin
   expect(out).toContain('Liquidity: 12000 USD');
   expect(out).toContain('not a verdict, reads can be wrong');
   expect(out).not.toMatch(/\b(?:rug|scam|serial|dev dumped|safe|avoid)\b/i);
-  expect(rpcMethods.filter(m => m !== 'getGenesisHash')).toEqual(['getSignaturesForAddress', 'getTransaction']);
+  // The deployer's two reads, then the one account read for the mint's Pump curve.
+  expect(rpcMethods.filter(m => m !== 'getGenesisHash')).toEqual(['getSignaturesForAddress', 'getTransaction', 'getAccountInfo']);
+  expect(out).not.toContain('Bonding curve');
   expect(await query('SELECT * FROM evidence_card_requests')).toHaveLength(1);
 });
 
@@ -395,5 +401,32 @@ it('leaves the deployer lines off rather than holding a card the length policy c
   const tight = await ask(await fixture({ output: { ...DEFAULT_POLICY.output, maxCharacters: base.length } }), `@agent check ${mint2}`, true);
   expect(tight.status).toBe('DRY_RUN_COMPLETED');
   expect(tight.validatedOutput).not.toContain('Deployer');
+  expect(tight.validatedOutput).toContain('Liquidity:');
+});
+
+it('adds where a Pump launch stands on its curve, in the fixed line, without touching the five readings', async () => {
+  chainRead = true; curveOnChain = true;
+  const job = await ask(await fixture(), undefined, true);
+  const out = job.validatedOutput!;
+  expect(out).toContain('Bonding curve: 59.5% [collected: 23.58 SOL; target: 85 SOL; source: solana.read_bonding_curve]');
+  expect(out).toContain('Liquidity: 12000 USD');
+  expect(out).not.toMatch(/\b(?:ape|send it|moon|about to bond|dev holding|dump|safe|scam|rug)\b/i);
+  const card = (job.resolvedContext as unknown as { meta: { evidenceCard: { readings: { label: string }[] } } }).meta.evidenceCard;
+  expect(card.readings.map(r => r.label)).toEqual(['Liquidity', 'Top holders', 'Mint authority', 'Freeze authority', 'Pool age']);
+});
+
+it('says nothing about a curve for a mint that has none, and leaves the card as it was', async () => {
+  chainRead = true; curveOnChain = false;
+  const out = (await ask(await fixture(), undefined, true)).validatedOutput!;
+  expect(out).not.toMatch(/Bonding curve|graduated|0%/);
+});
+
+it('leaves the curve line off rather than holding a card the length policy cannot fit', async () => {
+  chainRead = true; curveOnChain = true;
+  const roomy = (await ask(await fixture(), undefined, true)).validatedOutput!;
+  const base = roomy.split('\n').filter(l => !/^(Deployer|Launches by|Bonding curve:)/.test(l)).join('\n');
+  const tight = await ask(await fixture({ output: { ...DEFAULT_POLICY.output, maxCharacters: base.length } }), `@agent check ${mint2}`, true);
+  expect(tight.status).toBe('DRY_RUN_COMPLETED');
+  expect(tight.validatedOutput).not.toContain('Bonding curve');
   expect(tight.validatedOutput).toContain('Liquidity:');
 });

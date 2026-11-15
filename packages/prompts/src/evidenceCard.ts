@@ -80,6 +80,44 @@ export function renderDeployerLines(history: DeployerHistory, now = Date.now()):
 }
 
 
+/**
+ * Where a Pump curve stands, as the card carries it. Figures are exact integer
+ * strings or null; null is "not read", never zero. It is not a `CardReading`,
+ * so the five frozen labels Studio's card image accepts are untouched.
+ */
+export interface CurveReading {
+  state: 'ACTIVE' | 'GRADUATED';
+  /** Basis points sold, 0 to 10000. */
+  progressBps: number | null;
+  collectedLamports: string | null;
+  targetLamports: string | null;
+  /** The pool at the canonical address, only once the curve is complete and the pool was seen. */
+  pool: string | null;
+  slot: number | null;
+  source: string;
+}
+
+const solOf = (lamports: string | null) => {
+  if (lamports === null || !/^\d+$/.test(lamports)) return null;
+  const hundredths = BigInt(lamports) / 10_000_000n;
+  const fraction = (hundredths % 100n).toString().padStart(2, '0').replace(/0+$/, '');
+  return `${hundredths / 100n}${fraction ? `.${fraction}` : ''}`;
+};
+
+/** Fixed template, no adjectives, so a rewrite has nothing to improve. */
+export function renderCurveLines(curve: CurveReading): string[] {
+  const slot = typeof curve.slot === 'number' && Number.isInteger(curve.slot) && curve.slot >= 0 ? String(curve.slot) : 'unavailable';
+  if (curve.state === 'GRADUATED') {
+    return [`Status: graduated [DEX pool: ${curve.pool ?? 'not found at the canonical address'}, slot: ${slot}]`];
+  }
+  const bps = curve.progressBps;
+  const pct = typeof bps === 'number' && Number.isInteger(bps) && bps >= 0 && bps <= 10_000
+    ? `${Math.floor(bps / 100)}.${Math.floor(bps / 10) % 10}%` : 'unavailable';
+  const collected = solOf(curve.collectedLamports);
+  const target = solOf(curve.targetLamports);
+  return [`Bonding curve: ${pct} [collected: ${collected ?? 'unavailable'} SOL; target: ${target ?? 'unavailable'} SOL; source: ${curve.source}]`];
+}
+
 /** The one way a reading becomes text, for a single card and for a comparison. */
 function readingText(r: CardReading, now: number): string {
   if (!readingAvailable(r, now)) return 'unavailable';
@@ -131,12 +169,12 @@ export function renderEvidenceCompare(sides: readonly [CompareSide, CompareSide]
     ...links.flatMap((link, i) => link ? [`${COMPARE_LINK_PREFIXES[i]}${link}`] : [])].join('\n');
 }
 
-export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now(), link = '', deployer: DeployerHistory | null = null): string {
+export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now(), link = '', deployer: DeployerHistory | null = null, curve: CurveReading | null = null): string {
   let found = false;
   const lines = readings.map(r => {
     found ||= readingAvailable(r, now);
     return `${r.label}: ${readingText(r, now)} [${r.source}; fetched ${fetchedText(r)}]`;
   });
-  return ['Token evidence', ...lines, ...(deployer ? renderDeployerLines(deployer, now) : []), ...(!found ? ['evidence not found'] : []), 'not a verdict, reads can be wrong',
+  return ['Token evidence', ...lines, ...(deployer ? renderDeployerLines(deployer, now) : []), ...(curve ? renderCurveLines(curve) : []), ...(!found ? ['evidence not found'] : []), 'not a verdict, reads can be wrong',
     ...(offer ? [offer] : []), ...(link ? [`${CHECK_LINK_PREFIX}${link}`] : [])].join('\n');
 }

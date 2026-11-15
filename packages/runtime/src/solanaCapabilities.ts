@@ -14,6 +14,7 @@ import {
   type SolanaQuery,
   type SolanaResult,
 } from '@xbam/upstream';
+import { curveReadingOf, curveStatement, readBondingCurve, studioCurvePayload } from './bondingCurve';
 
 /**
  * What an agent may ask about Solana.
@@ -700,6 +701,66 @@ const program = defineCapability({
   },
 });
 
+const bondingCurve = defineCapability({
+  id: 'solana.read_bonding_curve',
+  name: 'Read a Pump.fun bonding curve',
+  description:
+    'How far a token has got along its Pump.fun bonding curve: the percentage of the curve sold, the SOL collected ' +
+    'and the SOL target, and once the curve is complete the pool it migrated to. Answers "how close to bonding", ' +
+    '"curve progress" and "did it graduate". Takes the exact mint address. A mint that is not on a Pump curve ' +
+    'is reported as not on a recognized bonding curve, never as zero percent.',
+  category: 'READ',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z.object({ mint: Address, commitment: Commitment_ }),
+  output: z.object({
+    mint: z.string(),
+    recognized: z.boolean(),
+    platform: z.string().nullable(),
+    curveAddress: z.string().nullable(),
+    curveState: z.enum(['ACTIVE', 'GRADUATED']).nullable(),
+    /** One decimal, 0 to 100, or null when it could not be measured against Pump's launch. */
+    progressPct: z.number().nullable(),
+    collectedLamports: z.string().nullable(),
+    targetLamports: z.string().nullable(),
+    migratedPool: z.string().nullable(),
+    /** The reply-ready line, in the fixed template, or the plain statement that no curve was found. */
+    statement: z.string(),
+    observations: z.array(z.string()),
+    commitment: z.string(),
+    slot: z.number().nullable(),
+    provenance: ProvenanceOut,
+  }),
+  modelCallable: true,
+  timeoutMs: 25_000,
+  readiness: () => solanaReadable(),
+  async run(input) {
+    const curve = await readBondingCurve(input.mint, { commitment: input.commitment });
+    const provenance = { source: curve.source, host: 'solana', readAt: curve.fetchedAt, fellBackFrom: [] as string[] };
+    const reading = curveReadingOf(curve);
+    const payload = studioCurvePayload(curve);
+    return {
+      mint: input.mint,
+      recognized: curve.status === 'FOUND',
+      platform: curve.status === 'FOUND' ? 'Pump' : null,
+      curveAddress: curve.curveAddress,
+      curveState: reading?.state ?? null,
+      progressPct: payload?.progressPct ?? null,
+      collectedLamports: reading?.collectedLamports ?? null,
+      targetLamports: reading?.targetLamports ?? null,
+      migratedPool: reading?.pool ?? null,
+      statement: curveStatement(curve),
+      observations: curve.status === 'FOUND'
+        ? [...curve.progress.notes, ...(curve.curve.complete && !curve.pool
+          ? ['The curve is complete. No pool was seen at the canonical Pump address in this read.'] : [])]
+        : ['No Pump bonding curve account was found for this mint.'],
+      commitment: input.commitment,
+      slot: curve.slot,
+      provenance,
+    };
+  },
+});
+
 const transaction = defineCapability({
   id: 'solana.read_transaction',
   name: 'Read a Solana transaction',
@@ -856,6 +917,7 @@ export function registerSolanaCapabilities(): void {
   registerCapability(holdings);
   registerCapability(holders);
   registerCapability(program);
+  registerCapability(bondingCurve);
   registerCapability(transaction);
   registerCapability(signatures);
 }

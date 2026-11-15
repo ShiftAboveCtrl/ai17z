@@ -143,6 +143,7 @@ export const UTILITY_BRIDGE: readonly string[] = [
   'solana.health',
   'solana.read_account',
   'solana.read_balance',
+  'solana.read_bonding_curve',
   'solana.read_program',
   'solana.read_signatures',
   'solana.read_token',

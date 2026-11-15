@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DOCUMENTED_FEE_CEILINGS, feePercentToMicroBps, withImpact } from '@xbam/runtime';
+import { DOCUMENTED_FEE_CEILINGS, curveStatusForQuote, feePercentToMicroBps, withImpact } from '@xbam/runtime';
 import type { MarketSnapshot } from '@xbam/shared/contracts';
+import { LIVE_CURVE_BASE64 } from '../support/curveFixtures';
 
 /**
  * A paper fill that knows the market is not infinitely deep. What is pinned:
@@ -50,6 +51,20 @@ describe('price impact in a paper fill', () => {
   it('does not apply a pool formula to a bonding curve', () => {
     const curve = { ...snapshot(String(200n * 10n ** 9n)), phase: 'CURVE' as const };
     expect(withImpact(500n, 10n, curve, 'QUOTE')).toEqual({ out: 500n, bps: 0, model: 'not modelled for a bonding curve' });
+  });
+
+  it('resolves a curve-phase token to a bonding curve status instead of only saying it is not modelled', async () => {
+    const curve = { ...snapshot(String(200n * 10n ** 9n)), phase: 'CURVE' as const };
+    // The fill itself stays unmodelled for a curve; the status says where the curve stands.
+    expect(withImpact(500n, 10n, curve, 'QUOTE').model).toBe('not modelled for a bonding curve');
+    const status = await curveStatusForQuote(curve, {
+      read: async () => ({ exists: true, owner: '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P', data: new Uint8Array(Buffer.from(LIVE_CURVE_BASE64, 'base64')), slot: 1, source: 's', fetchedAt: 'now' }),
+    });
+    expect(status).toMatchObject({ phase: 'CURVE', recognized: true, platform: 'Pump' });
+    expect(status!.statement).toBe('Bonding curve: 59.5% [collected: 23.58 SOL; target: 85 SOL; source: solana.read_bonding_curve]');
+    // A curve that is not on a launchpad this knows is said so in words, never as 0%.
+    const unknown = await curveStatusForQuote(curve, { read: async () => ({ exists: false, owner: null, data: null, slot: 1, source: 's', fetchedAt: 'now' }) });
+    expect(unknown!.statement).toBe('not on a recognized bonding curve');
   });
 
   it('does not model what it cannot, and says so', () => {

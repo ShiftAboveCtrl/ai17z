@@ -1,6 +1,8 @@
 import { createLogger, errorMessage, refersToSomethingElse } from '@xbam/shared';
 import { ask, type MarketPairs, type MarketQuery } from '@xbam/upstream';
 import { describeToken, mergeReferences, parseTokenReference, resolveToken } from './token';
+import { CURVE_SOURCE, curveStatement, readBondingCurve } from './bondingCurve';
+import { shortAddress } from '@xbam/prompts';
 
 const log = createLogger('research');
 
@@ -80,7 +82,7 @@ export function evidenceCompareRequest(text: string): { a: string; b: string; ch
  * an agent that will state a wrong one just as confidently.
  */
 
-export type LookupKind = 'search' | 'token' | 'link';
+export type LookupKind = 'search' | 'token' | 'link' | 'curve';
 
 export interface Lookup {
   kind: LookupKind;
@@ -118,6 +120,12 @@ const EVM_ADDRESS = /\b0x[a-fA-F0-9]{40}\b/g;
  */
 const SOLANA_ADDRESS = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
 const TICKER = /\$([A-Za-z][A-Za-z0-9]{1,9})\b/g;
+/**
+ * Asking where a launch stands on its bonding curve. The shape is about the
+ * curve or the graduation itself, so "bond" alone, as in a bond market, is not
+ * enough: it has to be bonding, bonded or a graduation of the token.
+ */
+const ASKS_ABOUT_CURVE = /\b(?:bonding curve|curve progress|graduat(?:e|ed|es|ing|ion)|(?:how close|close to|until|before|did it|has it|is it) (?:to |it )?(?:bond|bonding|bonded|migrat\w*)|bonded yet)\b/i;
 
 /**
  * Phrases that mean "I am asking about something you cannot know".
@@ -509,6 +517,17 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
     seen.add(key);
     lookups.push(lookup);
   };
+
+  // A question about the curve is answered from the chain, so it goes before
+  // the market lookups. The first Solana address in the conversation is the
+  // mint meant, as it is for the token lookups below.
+  if (ASKS_ABOUT_CURVE.test(subject.incoming)) {
+    for (const match of haystack.matchAll(SOLANA_ADDRESS)) {
+      if (/^\d+$/.test(match[0])) continue;
+      add({ kind: 'curve', query: match[0], reason: 'They asked where this token stands on its bonding curve.' });
+      break;
+    }
+  }
 
   // A contract address is unambiguous and cheap to resolve, so it goes first
   // whatever else the message says.
@@ -933,15 +952,30 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
       continue;
     }
 
-    const allowed = lookup.kind === 'token' ? marketAllowed : webAllowed;
+    const allowed = lookup.kind === 'token' || lookup.kind === 'curve' ? marketAllowed : webAllowed;
     if (!allowed) {
       failed.push({
         query: lookup.query,
         reason:
-          lookup.kind === 'token'
+          lookup.kind === 'token' || lookup.kind === 'curve'
             ? 'This agent is not set up to look up market data.'
             : 'This agent is not set up to search the web.',
       });
+      continue;
+    }
+
+    if (lookup.kind === 'curve') {
+      // One account read, and a mint on no curve is an answer in words, never a zero.
+      try {
+        const read = await withDeadline(readBondingCurve(lookup.query), Math.min(15_000, Math.max(1_000, remaining())));
+        findings.push({
+          kind: 'curve', query: lookup.query, source: CURVE_SOURCE,
+          title: `Pump bonding curve for ${shortAddress(lookup.query)}`, summary: curveStatement(read),
+          url: null, retrievedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        failed.push({ query: lookup.query, reason: `The bonding curve could not be read: ${errorMessage(error)}` });
+      }
       continue;
     }
 
