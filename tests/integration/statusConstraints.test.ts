@@ -82,6 +82,19 @@ it('accepts every move window, refuses an unknown one, and bounds the reads a mo
   await expect(insert('1h', 2, '00000000-0000-4000-8000-000000000001')).rejects.toThrow(/foreign key/);
 });
 
+it('bounds the reads a transaction reading records, and ties it to a real job', async () => {
+  const f = await createFixture();
+  const admitted = await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('explain this transaction') });
+  const jobId = admitted.jobs[0]!.job.id;
+  const insert = (reads: number, job = jobId) => query(`INSERT INTO evidence_transaction_requests(job_id,agent_id,requester,signature,reads,dry_run)
+    VALUES($1,$2,'mock:reader','sig',$3,true)`, [job, f.agentId, reads]);
+  await insert(2);
+  await query('DELETE FROM evidence_transaction_requests WHERE job_id=$1', [jobId]);
+  await expect(insert(3)).rejects.toThrow(/check constraint/);
+  await expect(insert(-1)).rejects.toThrow(/check constraint/);
+  await expect(insert(1, '00000000-0000-4000-8000-000000000001')).rejects.toThrow(/foreign key/);
+});
+
 it('accepts every evidence follow-up state, refuses an unknown one, and keeps one row per crossing and per observation', async () => {
   const f = await createFixture();
   const admitted = await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('check one token') });

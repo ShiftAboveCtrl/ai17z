@@ -55,6 +55,7 @@ import { receiptIdeaRefusal } from '../radarReceipts';
 import { publicSelfFacts } from '../publicSelf';
 import { asksForPublicHome, publicHomeReply } from '../studioPublicHome';
 import { evidenceCardOf } from '../evidenceCard';
+import { transactionAddresses } from '../transactionReading';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -450,6 +451,8 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     // it actually read. Only that exact line is exempt from the address rule; a
     // model-written address, or any other address, is still held.
     evidenceCardOf(bundle)?.linkLines?.length ? evidenceCardOf(bundle)!.linkLines! : evidenceCardOf(bundle)?.link ?? null,
+    // A transaction reading prints the program addresses the node returned.
+    evidenceCardOf(bundle)?.tx ? transactionAddresses(evidenceCardOf(bundle)!.tx!) : null,
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
   if (evidenceCardOf(bundle) && result.output !== evidenceCardOf(bundle)!.text) {

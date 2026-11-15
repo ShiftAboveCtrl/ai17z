@@ -170,3 +170,116 @@ export function renderEvidenceMove(report: MoveReport): string {
   lines.push('not a verdict, reads can be wrong');
   return lines.join('\n');
 }
+
+/* ------------------------------------------------------- explain a transaction */
+
+/** One program a transaction called. `name` is set only for a program on the short known list; otherwise the address stands alone. */
+export interface TxProgram { address: string; name: string | null }
+
+/** One top level instruction. `decoded` is true only when the node itself parsed it; otherwise it is listed as not decoded. */
+export interface TxInstruction { program: TxProgram; kind: string | null }
+
+/**
+ * One account whose balance differs between before and after. Raw amounts are exact decimal
+ * strings. A side the transaction did not record is null and is printed as not recorded, never as 0.
+ */
+export interface TxBalanceChange {
+  account: string;
+  /** Token changes only: the mint and the owner the node reported. Null when it did not say. */
+  mint: string | null;
+  owner: string | null;
+  before: string | null;
+  after: string | null;
+  decimals: number | null;
+}
+
+export interface TransactionReport {
+  signature: string;
+  chain: 'solana';
+  /** Null only when the node reported neither success nor an error, which is stated and never read as success. */
+  succeeded: boolean | null;
+  /** The cluster's own error structure rendered as text, never interpreted. */
+  failureReason: string | null;
+  commitment: 'finalized' | 'confirmed';
+  slot: number | null;
+  blockTime: string | null;
+  feeLamports: string | null;
+  programs: TxProgram[];
+  instructions: TxInstruction[];
+  /** Lamport changes, or null when the node sent no balance arrays at all. */
+  solChanges: TxBalanceChange[] | null;
+  tokenChanges: TxBalanceChange[] | null;
+  /** How many balance changes the reply shows, set when the text was fitted to the length policy. */
+  shownChanges: number;
+  source: string;
+  fetchedAt: string;
+}
+
+/** Words a transaction reply never prints, in prose or inside a shortened address. */
+export const TX_BANNED = /whale|insider|smart money|dump|bought|sold|profit|loss|rug|swap|pump|because|driven|expected|will/i;
+/** Most instructions listed before the rest are counted. */
+export const TX_MAX_INSTRUCTIONS = 8;
+
+/** A short form of an address that cannot spell a banned word. */
+export function txShortAddress(address: string): string {
+  for (const [a, b] of [[4, 4], [4, 3], [4, 2], [4, 1]] as const) {
+    const short = `${address.slice(0, a)}…${address.slice(-b)}`;
+    if (!TX_BANNED.test(short)) return short;
+  }
+  return `${address.slice(0, 2)}…`;
+}
+
+function programText(p: TxProgram): string { return p.name ?? p.address; }
+function signedDelta(before: string, after: string): string {
+  const d = BigInt(after) - BigInt(before);
+  return `${d >= 0n ? '+' : ''}${d}`;
+}
+function changeLine(c: TxBalanceChange, unit: string): string {
+  const side = (v: string | null) => v === null ? 'not recorded' : v;
+  const delta = c.before !== null && c.after !== null ? ` (${signedDelta(c.before, c.after)})` : '';
+  const who = c.mint ? ` mint ${txShortAddress(c.mint)}${c.owner ? ` owner ${txShortAddress(c.owner)}` : ''}` : '';
+  const dec = c.decimals === null ? 'decimals not reported' : `${c.decimals} decimals`;
+  return `${txShortAddress(c.account)}${who}: ${side(c.before)} -> ${side(c.after)} ${unit}, ${dec}${delta}`;
+}
+
+/** What was read, and nothing about intent. */
+export function renderTransactionReading(r: TransactionReport): string {
+  const status = r.succeeded === true ? 'succeeded' : r.succeeded === false ? 'failed' : 'outcome not reported';
+  const lines = [`Transaction reading, ${txShortAddress(r.signature)} on ${r.chain}`,
+    `Status: ${status}, ${r.commitment}${r.commitment === 'confirmed' ? ' (not yet finalized)' : ''}, slot ${r.slot ?? 'not reported'}, block time ${r.blockTime ?? 'not reported'}, fee ${r.feeLamports === null ? 'not reported' : `${r.feeLamports} lamports`}`];
+  if (r.failureReason) lines.push(r.failureReason);
+  lines.push(`Programs called: ${r.programs.length ? r.programs.map(programText).join(', ') : 'none listed'}`);
+  if (r.instructions.length) {
+    const shown = r.instructions.slice(0, TX_MAX_INSTRUCTIONS).map((i, n) => `#${n + 1} ${programText(i.program)} ${i.kind ?? 'not decoded'}`);
+    const more = r.instructions.length - shown.length;
+    lines.push(`Instructions: ${shown.join(' | ')}${more > 0 ? ` | ${more} more not shown` : ''}`);
+  }
+  let room = r.shownChanges;
+  const section = (title: string, unit: string, rows: TxBalanceChange[] | null) => {
+    if (rows === null) { lines.push(`${title}: not read`); return; }
+    if (rows.length === 0) { lines.push(`${title}: none in this transaction`); return; }
+    const take = Math.max(0, Math.min(rows.length, room));
+    room -= take;
+    const body = rows.slice(0, take).map(c => changeLine(c, unit)).join(' | ');
+    const more = rows.length - take;
+    lines.push(`${title}: ${body}${more > 0 ? `${body ? ' | ' : ''}${more} more not shown` : ''}`);
+  };
+  section('SOL balance changes (raw lamports)', 'lamports', r.solChanges);
+  section('Token balance changes (raw amounts)', 'raw', r.tokenChanges);
+  lines.push('amounts only: no intent, owner or outcome is inferred');
+  lines.push(`[${r.source}; fetched ${r.fetchedAt}]`);
+  lines.push('not a verdict, reads can be wrong');
+  return lines.join('\n');
+}
+
+/** The report with as many balance changes shown as fit the length policy, fewest being none. */
+export function fitTransactionReading(r: Omit<TransactionReport, 'shownChanges'>, maxCharacters: number): { report: TransactionReport; text: string } {
+  const total = (r.solChanges?.length ?? 0) + (r.tokenChanges?.length ?? 0);
+  for (let shown = total; shown >= 0; shown -= 1) {
+    const report = { ...r, shownChanges: shown };
+    const text = renderTransactionReading(report);
+    if (text.length <= maxCharacters || shown === 0) return { report, text };
+  }
+  const report = { ...r, shownChanges: 0 };
+  return { report, text: renderTransactionReading(report) };
+}
