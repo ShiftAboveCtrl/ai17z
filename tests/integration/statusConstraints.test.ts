@@ -7,6 +7,7 @@ import {
   PROVIDER_KINDS,
   TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
+  CHECK_BOARD_CHAINS,
   EVIDENCE_COMPARE_SIDES,
   EVIDENCE_MOVE_WINDOWS,
   EVIDENCE_FOLLOW_UP_STATES,
@@ -102,6 +103,14 @@ it('accepts every evidence follow-up state, refuses an unknown one, and keeps on
     VALUES($1,$2,$3,'obs-0','other-key','{}'::jsonb)`, [jobId, f.agentId, radarSource!.id])).rejects.toThrow(/unique/);
   await expect(query(`INSERT INTO evidence_followups(card_job_id,agent_id,source_id,observation_id,crossing_key,observation)
     VALUES($1,$2,$3,'other-obs','key-0','{}'::jsonb)`, [jobId, f.agentId, radarSource!.id])).rejects.toThrow(/unique/);
+});
+
+it('accepts every check-board chain in the contribution ledger and refuses an unknown one', async () => {
+  const insert = (chain: string) => query('INSERT INTO studio_check_contributions(chain,address,bucket_start,askers) VALUES($1,$2,$3,1)',
+    [chain, 'addr', '2026-11-15T09:00:00Z']);
+  for (const chain of CHECK_BOARD_CHAINS) await insert(chain);
+  expect(await query('SELECT chain FROM studio_check_contributions')).toHaveLength(CHECK_BOARD_CHAINS.length);
+  await expect(insert('dogechain')).rejects.toThrow(/check constraint/);
 });
 
 describe('every channel the contract names is accepted by the database', () => {
