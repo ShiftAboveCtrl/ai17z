@@ -251,6 +251,17 @@ export const ToolPolicy = z.object({
    * A separate choice from the card itself, off by default, and never a watch or a trade.
    */
   evidenceCardLink: z.boolean().default(false),
+  /**
+   * Attach a picture of the evidence card, rendered by the linked Studio from the card's own
+   * readings. Off by default and separate from the card. When Studio is unlinked, slow or
+   * answers with anything that is not an image, the reply is the text card unchanged.
+   */
+  evidenceCardImage: z.boolean().default(false),
+  /**
+   * Reply once in the card's own thread when an owner-confirmed risk watch on that card crosses.
+   * Its own owner choice, off by default; it never creates a watch and never reads X.
+   */
+  evidenceFollowUps: z.boolean().default(false),
   /** Tool keys this agent may call. Empty means no tools. */
   allowed: z.array(z.string().max(120)).max(200).default([]),
   /**

@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { RADAR_UNIVERSE_CEILING, STUDIO_COIN_ALERTS_MAX_MINTS, radarSourceProvenance } from '@xbam/shared/contracts';
+import { RADAR_UNIVERSE_CEILING, STUDIO_COIN_ALERTS_MAX_MINTS, StudioCoinAlertDocument, radarSourceProvenance } from '@xbam/shared/contracts';
 import { coinAlertRoom, readCoinAlertEntries } from '../../packages/runtime/src/studioCoinAlerts';
 
 const A = 'So11111111111111111111111111111111111111112';
@@ -31,5 +32,15 @@ describe('reading Studio coin alert entries', () => {
   it('marks a coin alert source as its own provenance', () => {
     expect(radarSourceProvenance({ coinAlertAgentId: 'a' })).toBe('COIN_ALERTS');
     expect(radarSourceProvenance({ coinAlertAgentId: null })).toBe('OWNER');
+  });
+});
+
+describe('the Studio contract fixture', () => {
+  it('parses with the real envelope and entry readers', () => {
+    const raw = JSON.parse(readFileSync(new URL('../fixtures/coin-alerts.v1.json', import.meta.url), 'utf8'));
+    const doc = StudioCoinAlertDocument.parse(raw);
+    const read = readCoinAlertEntries(doc.alerts);
+    expect(read.mints).toEqual([A, B]);
+    expect(read.skipped).toEqual([]);
   });
 });

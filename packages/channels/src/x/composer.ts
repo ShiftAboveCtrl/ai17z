@@ -788,6 +788,18 @@ export async function replyOnPage(
     // been submitted halfway.
     await fillComposer(page, opened.editor, request.text);
 
+    // A picture goes in after the text is proved, and before submit, so a failed
+    // upload throws while nothing has been sent and a retry cannot answer twice.
+    const media = request.media ?? [];
+    if (media.length > 0) {
+      try {
+        await attachMedia(page, opened, media);
+      } catch (error) {
+        await returnToIdle(page);
+        throw error;
+      }
+    }
+
     await submitComposer(page, opened);
 
     // Whichever composer it was, it going away is the signal X accepted it.
@@ -804,7 +816,7 @@ export async function replyOnPage(
       // look identical from here and are opposite: retrying the first is
       // correct, retrying the second posts twice. So go and look before
       // deciding, which is the only thing that actually distinguishes them.
-      const sent = await findOwnReply(page, request.text, selfHandles(ctx));
+      const sent = await findOwnReply(page, request.text, selfHandles(ctx), 1, media.length > 0);
       if (!sent) {
         throw PipelineError.retryable('composer_did_not_close', 'The composer stayed open, so the reply was not accepted.');
       }
@@ -823,6 +835,7 @@ export async function replyOnPage(
             readBackConfirmed: true,
             composerStayedOpen: true,
             draftExact: sent.exact,
+            ...(media.length > 0 ? { mediaConfirmed: mediaSeenOnPost(media, sent.seen ?? { photos: 0, videos: 0 }), mediaSeen: sent.seen ?? null } : {}),
           },
         },
       };
@@ -831,7 +844,7 @@ export async function replyOnPage(
     await settle(1_500, 2_800);
     // Read back rather than treating a closed dialog as proof, which is where
     // the legacy poster reported success it had not actually confirmed.
-    const readBack = await findOwnReply(page, request.text, selfHandles(ctx));
+    const readBack = await findOwnReply(page, request.text, selfHandles(ctx), 1, media.length > 0);
     // Leave the action tab somewhere harmless. A tab parked on a stranger's
     // status page is one keystroke from doing something nobody asked for, and
     // the next action navigates from wherever it finds itself.
@@ -862,6 +875,8 @@ export async function replyOnPage(
           readBackConfirmed: true,
           replyStatusId: readBack.statusId,
           draftExact: readBack.exact,
+          // Stated only for a reply sent with a file, and true only when it was seen on the reply.
+          ...(media.length > 0 ? { mediaConfirmed: mediaSeenOnPost(media, readBack.seen ?? { photos: 0, videos: 0 }), mediaSeen: readBack.seen ?? null } : {}),
         },
       },
     };

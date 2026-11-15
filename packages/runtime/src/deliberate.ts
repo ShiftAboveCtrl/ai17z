@@ -26,6 +26,7 @@ import { createLogger, errorMessage } from '@xbam/shared';
 import { generate, resolveTargets } from '@xbam/models';
 import { pauseState } from './killSwitch';
 import { processRadarReceipts } from './radarReceipts';
+import { processEvidenceFollowUps } from './evidenceFollowUp';
 import { requestDiscovery } from './discovery';
 import { learnFromOutcomes } from './learning';
 import { worthNoticing } from './repoWatcher';
@@ -901,6 +902,8 @@ export async function wakeAgent(
 
   try { await processRadarReceipts(agentId); }
   catch (error) { log.warn('radar receipts did not run', { agentId, message: errorMessage(error) }); }
+  try { await processEvidenceFollowUps(agentId); }
+  catch (error) { log.warn('evidence follow-ups did not run', { agentId, message: errorMessage(error) }); }
 
   const links = await accountsRepo.listAgentAccounts(agentId);
   const accountId = links[0]?.accountId ?? null;
