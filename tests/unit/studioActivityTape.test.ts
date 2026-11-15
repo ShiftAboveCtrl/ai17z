@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ActivityTapeBatch, projectActivity, registerActivityTapeCapability, withoutUnconsentedText } from '../../packages/runtime/src/studioActivityTape';
 import { invokeCapability, getCapability } from '@xbam/tools';
@@ -187,5 +188,18 @@ describe('receipt channel: the network the action went out on', () => {
     expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [event], remove: [] }).success).toBe(true);
     expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, kind: 'POST', id: 'action:00000000-0000-4000-8000-000000000001' }], remove: [] }).success).toBe(false);
     expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, receipt: { channel: 'x', reach: 5 } }], remove: [] }).success).toBe(false);
+  });
+});
+
+describe('receipt channel wire fixture shared with Studio', () => {
+  it('projects byte for byte the batch Studio parses in its own tests', () => {
+    const base = { agent_id: '00000000-0000-4000-8000-000000000002', kind: 'RECEIPT', at: '2026-11-11T12:00:00.000Z', dry_run: false };
+    const events = [
+      projectActivity({ ...base, id: 'receipt:00000000-0000-4000-8000-000000000001', channel: 'x' }),
+      projectActivity({ ...base, id: 'receipt:00000000-0000-4000-8000-000000000003', channel: 'bluesky' }),
+      projectActivity({ ...base, id: 'receipt:00000000-0000-4000-8000-000000000004', channel: 'mastodon' }),
+    ];
+    const json = JSON.stringify({ protocol: 1, events, remove: [] });
+    expect(json).toBe(readFileSync(new URL('../fixtures/activity-tape-receipt-channel.json', import.meta.url), 'utf8').trim());
   });
 });

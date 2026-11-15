@@ -13,6 +13,7 @@ export async function activityStudioServer(key: InstallationKey) {
   let requests = 0;
   let unavailable = false;
   let rejectedBatches = 0;
+  let strictReceipts = false;
   let tokenRequests = 0;
   let batchRequests = 0;
   let origin = '';
@@ -41,7 +42,10 @@ export async function activityStudioServer(key: InstallationKey) {
       if (unavailable) { req.socket.destroy(); return; }
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      const batch = ActivityTapeBatch.parse(JSON.parse(Buffer.concat(chunks).toString()));
+      const raw = JSON.parse(Buffer.concat(chunks).toString());
+      // A receiver from before the receipt channel: receipt must be the full detail, which core never sends.
+      if (strictReceipts && raw.events?.some((e: { receipt?: unknown }) => e.receipt !== undefined)) return answer(400, {});
+      const batch = ActivityTapeBatch.parse(raw);
       batches.push(batch);
       for (const id of batch.remove) {
         removed.add(id);
@@ -59,6 +63,7 @@ export async function activityStudioServer(key: InstallationKey) {
     get tokenRequests() { return tokenRequests; }, get batchRequests() { return batchRequests; },
     rejectBatches(count: number) { rejectedBatches = count; },
     setUnavailable(value: boolean) { unavailable = value; },
+    refuseReceiptDetail(value: boolean) { strictReceipts = value; },
     close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
 }
