@@ -1,6 +1,6 @@
 
 
-import { KNOWN_AUTOMATED_HANDLES, type PolicyConfig, type RelationshipContext } from '@xbam/shared/contracts';
+import { KNOWN_AUTOMATED_HANDLES, isEvidenceFollowUpEvent, type PolicyConfig, type RelationshipContext } from '@xbam/shared/contracts';
 import {
   PipelineError,
 } from '@xbam/shared';
@@ -340,6 +340,26 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
   const counterpartAutomated = await isAutomatedCounterpart(job.channel, handle, policy, bundle.account?.handle);
   const recentToPerson = await recentRepliesTo(bundle.agent.id, handle);
 
+  /*
+    An evidence follow-up is the agent coming back to its own card, so the question is not whether
+    the asker's post is worth answering but whether the exchange has room. It was weighed against
+    these same limits when it was queued; they are stops, so they apply again here, and nothing
+    else about the asker's original words can silence a fixed, owner-opted-in update.
+  */
+  if (isEvidenceFollowUpEvent(bundle.event.payload)) {
+    const stop = exchangeLimit({ recentRepliesToPerson: recentToPerson, ourRepliesInThread: ourTurns, threadDepth, counterpartAutomated, policy: policy.engagement });
+    await observability.emitTrace({
+      jobId: job.id, agentId: bundle.agent.id, type: 'ENGAGEMENT_DECIDED', level: stop ? 'warn' : 'info',
+      message: stop ? `ignore: ${stop}` : 'engage: an owner-opted-in evidence follow-up under its own card.',
+      data: { decision: stop ? 'IGNORE' : 'ENGAGE', evidenceFollowUp: true, limit: Boolean(stop) },
+    });
+    if (stop) {
+      await jobsRepo.updateJob(job.id, { lastError: stop.slice(0, 500) });
+      return 'ignore';
+    }
+    return 'engage';
+  }
+
   const alreadyInThread = ourTurns > 0;
   const unprompted = bundle.event.type === 'KEYWORD_MATCH' && !directlyAddressed && !alreadyInThread;
 
@@ -499,7 +519,7 @@ export async function stepEngagement(bundle: JobBundle): Promise<'engage' | 'ign
  * reply bot, one the owner listed, or another agent on this installation. Two
  * of those answer each other for ever unless one of them stops.
  */
-async function isAutomatedCounterpart(
+export async function isAutomatedCounterpart(
   channel: string,
   handle: string | null | undefined,
   policy: PolicyConfig,

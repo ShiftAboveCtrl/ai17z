@@ -68,7 +68,7 @@ export function studioRiskSignalWatch(watch: StudioRiskWatch): SignalWatch {
   return { chain: 'solana', address: watch.mint, predicate: watch.kind === 'LIQUIDITY_BELOW' ? 'liquidity_below' : 'concentration_above', threshold: watch.threshold, studioMetric: watch.kind };
 }
 
-function watchRevision(watch: StudioRiskWatch): string {
+export function watchRevision(watch: StudioRiskWatch): string {
   return sha256Hex(JSON.stringify([watch.id, watch.mint, watch.kind, watch.threshold]));
 }
 
@@ -211,12 +211,17 @@ export async function studioRiskTransactionValid(tx: Tx, source: RadarSourceRow)
     WHERE b.id=$1 AND b.enabled AND b.expires_at>now() AND b.agent_id=$2 AND b.account_id=$3`, [meta.bindingId, meta.agentId, source.accountId]);
 }
 
+/** The one id Studio and the follow-up table both key an observation by. */
+export function studioRiskObservationId(meta: { watchId: string; watchRevision: string }, watch: SignalWatch, after: SignalObservation): string {
+  return sha256Hex(JSON.stringify([meta.watchId, meta.watchRevision, watch.address, 'jupiter', after.observedAt, after.value]));
+}
+
 /** Explicit projection: no provider text, identity, guidance or local verdict can enter the payload. */
 export async function recordStudioRiskObservation(tx: Tx, source: RadarSourceRow, watch: SignalWatch, before: SignalObservation | null, after: SignalObservation): Promise<void> {
   const meta = source.config.studioRisk;
   if (!meta || typeof after.value !== 'number') return;
   const observation = StudioRiskObservation.parse({
-    observation_id: sha256Hex(JSON.stringify([meta.watchId, meta.watchRevision, watch.address, 'jupiter', after.observedAt, after.value])),
+    observation_id: studioRiskObservationId(meta, watch, after),
     watch_id: meta.watchId, watch_revision: meta.watchRevision, mint: watch.address, source: 'jupiter',
     before: before && typeof before.value === 'number' ? { value: before.value, observed_at: before.observedAt } : null,
     after: { value: after.value, observed_at: after.observedAt },

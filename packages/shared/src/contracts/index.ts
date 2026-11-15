@@ -50,3 +50,4 @@ export * from './studioVoice';
 export * from './devUpdatesInstall';
 export * from './studioActivityTape';
 export * from './studioRisk';
+export * from './evidenceFollowUp';

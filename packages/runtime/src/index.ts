@@ -248,3 +248,5 @@ export * from './devUpdateSafety';
 export * from './signalRadar';
 export * from './studioActivityTape';
 export * from './studioRiskWatches';
+export * from './evidenceFollowUp';
+export * from './evidenceFollowUpOffer';
