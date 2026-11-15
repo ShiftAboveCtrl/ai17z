@@ -3115,9 +3115,14 @@ if ($WhatIfOnly) {
   if ($LocalPackage) {
     $wouldBe = 'would install from ' + (Split-Path -Leaf $LocalPackage)
   } else {
-    $preview = Get-Ai17zRelease $Release
-    if ($preview.Ok) { $wouldBe = 'would install ' + $preview.Release.tag_name }
-    else { $wouldBe = 'could not reach AI17Z Code to see which version' }
+    # A source is passed, never omitted: without one the lookup builds its URL
+    # from a null and the preview always reports that nothing could be reached.
+    # Each source in turn, the install command's own first, as the real install does.
+    $wouldBe = 'could not reach AI17Z Code to see which version'
+    foreach ($previewSource in @(Get-Ai17zSourceOrder $script:Ai17zPreferredSource)) {
+      $preview = Get-Ai17zRelease $Release $previewSource
+      if ($preview.Ok) { $wouldBe = 'would install ' + $preview.Release.tag_name; break }
+    }
   }
   Set-Ai17zStep 'app' 'action' $wouldBe
   Set-Ai17zStep 'start' 'action' 'would start it'
