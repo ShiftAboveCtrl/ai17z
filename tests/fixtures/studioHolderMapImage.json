@@ -1,0 +1,22 @@
+{
+  "protocol": 1,
+  "kind": "holder-map",
+  "chain": "solana",
+  "address": "So11111111111111111111111111111111111111112",
+  "source": "solana_mainnet.example",
+  "read_at": "2026-11-15T14:00:00.000Z",
+  "holders": [
+    { "address": "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", "percent": 8.42, "funding": "grouped", "group": "g1", "read_at": "2026-11-15T14:00:02.000Z" },
+    { "address": "7WmcBnEgd2Ycn4ZkQ3zT8uLq6KpXh5Rv9dAfJyS1Qa11", "percent": 5.1, "funding": "single", "group": null, "read_at": "2026-11-15T14:00:03.000Z" },
+    { "address": "H3saJp8LkN5vYtR2cDq7WxEm4UfBg6ZnA9TyKhPpL9Ab", "percent": 3.2, "funding": "grouped", "group": "g1", "read_at": "2026-11-15T14:00:04.000Z" },
+    { "address": "5Gc2NrTzVb8XkQe3WpAyH7mJuLd4SfR9CtEv6ZnBq1Mk", "percent": 2.8, "funding": "unavailable", "group": null, "read_at": "2026-11-15T14:00:05.000Z" },
+    { "address": "6Pq9ZsLm3TwYb4XeAh8NcRv2KdJf7UgEu5VtCn1Bk2Wy", "percent": 2.1, "funding": "excluded", "group": null, "read_at": "2026-11-15T14:00:00.000Z" }
+  ],
+  "not_read": ["4Nd1RkYw7ZtQe3VmXb9HcLs2AuPf6JgEn8TvCq5Bd3Mz"],
+  "palette": "neutral",
+  "reading_line": "This is a reading, not proof of one owner.",
+  "service_line": "A shared funding address can also be a service that many people use.",
+  "exclusion_line": "Accounts owned or first funded by a program, such as a pool or an exchange program, are left out of grouping",
+  "disclaimer": "not a verdict, reads can be wrong",
+  "requested_at": "2026-11-15T14:00:10.000Z"
+}

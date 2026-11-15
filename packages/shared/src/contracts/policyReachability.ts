@@ -36,6 +36,7 @@ export const POLICY_REACHABILITY: Record<string, PolicyPlacement> = {
   'tools.evidenceCards': { where: 'EASY_AND_ADVANCED' },
   'tools.evidenceCardLink': { where: 'ADVANCED_ONLY' },
   'tools.evidenceCardImage': { where: 'ADVANCED_ONLY' },
+  'tools.holderMap': { where: 'ADVANCED_ONLY' },
   'tools.evidenceFollowUps': { where: 'ADVANCED_ONLY' },
   'automation.dryRunDefault': { where: 'EASY_AND_ADVANCED' },
   'automation.mode': { where: 'EASY_AND_ADVANCED' },

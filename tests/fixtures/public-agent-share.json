@@ -135,6 +135,7 @@
         "evidenceCardLink": false,
         "evidenceFollowUps": false,
         "evidenceCards": false,
+        "holderMap": false,
         "research": {
           "web": true,
           "market": true,

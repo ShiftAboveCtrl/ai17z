@@ -258,6 +258,15 @@ export const ToolPolicy = z.object({
    */
   evidenceCardImage: z.boolean().default(false),
   /**
+   * Answer "holder map" under a Solana token check with the largest holder accounts, joined where
+   * their first funding address is the same, as a picture drawn by the linked Studio and a text twin.
+   * Its own owner choice, separate from the card and from the card picture, off by default. It reads
+   * the chain under the card's own per-asker and per-mint caps, makes no X read, and says "a reading,
+   * not proof of one owner". When Studio is unlinked, slow or answers with anything that is not an
+   * image, the reply carries the text twin.
+   */
+  holderMap: z.boolean().default(false),
+  /**
    * Reply once in the card's own thread when an owner-confirmed risk watch on that card crosses.
    * Its own owner choice, off by default; it never creates a watch and never reads X.
    */
