@@ -2,6 +2,7 @@ import type { CardReading } from '@xbam/prompts';
 import {
   SOLANA_FAMILY,
   ask,
+  isAddress,
   type MarketPairs,
   type MarketQuery,
   type SolanaQuery,
@@ -83,28 +84,42 @@ export const SOLANA_BURN_ADDRESSES = [
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
 
 /**
- * Streamflow's stream program. `end_time` is the u64 at byte 33 of the stream
- * *metadata* account (js-sdk `packages/stream/solana/layout.ts` `streamLayout`:
- * magic 8, version 1, then `created_at`, `withdrawn_amount`, `canceled_at`,
- * `end_time`). A balance counts as locked only when that field is still ahead.
+ * Streamflow's stream program. A stream's schedule is in its *metadata*
+ * account, 1104 bytes owned by this program (js-sdk
+ * `packages/stream/solana/layout.ts` `streamLayout`): `canceled_at` is the u64
+ * at 25, `end_time` the u64 at 33, the mint at 177 and `escrow_tokens` at 209.
  *
- * The LP does not sit in that metadata account. Create derives
- * `findProgramAddressSync([Buffer.from("strm"), metadata], programId)` and
- * that address *is* the token account (`deriveEscrowPDA` in
- * `packages/stream/solana/lib/derive-accounts.ts`, `ESCROW_SEED` `"strm"` in
- * `constants.ts`, passed as `escrowTokens` in `StreamClient.ts` around the
- * create path). Its SPL owner is that PDA, and the PDA has no account, so
- * reading the owner as if it were metadata never sees `end_time`.
+ * The LP does not sit in that metadata account. It sits in the escrow, a token
+ * account that exists and whose SPL owner is its own address. That was read off
+ * live mainnet streams on 2026-11-15: three of three escrows were Token program
+ * accounts owning themselves, and each stream named the same mint and the same
+ * escrow back. So the holder row for a locked LP is the escrow, and reading its
+ * "owner account" only returns the token account again, which is not the
+ * schedule.
  *
- * The PDA is `sha256("strm" || metadata || bump || program || "ProgramDerivedAddress")`.
- * That hash is not reversible, and `getProgramAccounts` (the scan that could
- * match `escrow_tokens` at byte 209 of `streamLayout`) is not an allowed read.
- * An owner with no account is therefore reported as held by that contract and
- * is never counted as locked. Locked still requires the owner account itself
- * to be stream metadata whose `end_time` is still ahead.
+ * The escrow cannot be derived from the stream. The documented seeds
+ * (`["strm", metadata]`) did not reproduce two of those three live escrows, so a
+ * derivation is not a proof. The proof is the back-reference: the escrow's
+ * oldest transaction is the one that created the stream and names the metadata
+ * account, and the balance counts as locked only when that account is owned by
+ * this program, names this LP mint and this escrow, was not cancelled, and its
+ * `end_time` is still ahead. Anything weaker is reported as held by that
+ * contract and is never counted as locked. `getProgramAccounts`, the scan that
+ * could find the stream from `escrow_tokens`, is not an allowed read.
  */
 export const STREAMFLOW_PROGRAM = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
 export const STREAMFLOW_END_OFFSET = 33;
+export const STREAMFLOW_CANCELED_OFFSET = 25;
+export const STREAMFLOW_MINT_OFFSET = 177;
+export const STREAMFLOW_ESCROW_OFFSET = 209;
+/** Through the `escrow_tokens` key. Live stream accounts are 1104 bytes. */
+const STREAMFLOW_MIN_BYTES = STREAMFLOW_ESCROW_OFFSET + 32;
+const TOKEN_ACCOUNT_BYTES = 165;
+/** Escrows proved per read, so a card stays inside the shared public RPC budget. */
+export const MAX_ESCROW_PROOFS = 4;
+const HISTORY_PAGE = 1000;
+const HISTORY_PAGES = 3;
+const MAX_CREATION_ACCOUNTS = 24;
 
 const UNIX_MIN = 1_000_000_000n;
 const UNIX_MAX = 10_000_000_000n;
@@ -130,9 +145,9 @@ interface HolderRow {
   owner: string | null;
   ownerProgram: string | null;
   executable: boolean | null;
-  /** Stream end, unix seconds, when this owner is a stream metadata account we could read. */
+  /** Stream end, unix seconds, when this holder is a Streamflow escrow whose stream named it back. */
   streamEnd: bigint | null;
-  /** The owner address has no account. A Streamflow escrow PDA looks like this. */
+  /** The owner address has no account. */
   missingAccount: boolean;
 }
 
@@ -140,6 +155,7 @@ const cache = new Map<string, { at: number; ttl: number; value: LpForCard }>();
 
 export function resetLpCacheForTest(): void {
   cache.clear();
+  creationAccounts.clear();
 }
 
 function nowIso(): string {
@@ -190,6 +206,46 @@ export function streamEndFrom(data: Uint8Array): bigint | null {
   return end;
 }
 
+/** A token account of this mint whose SPL owner is its own address. Streamflow's escrow has this shape. */
+export function isSelfOwnedTokenAccount(address: string, mint: string, data: Uint8Array | null): boolean {
+  if (!data || data.length < TOKEN_ACCOUNT_BYTES) return false;
+  return pubkeyAt(data, 0) === mint && pubkeyAt(data, 32) === address;
+}
+
+/**
+ * The end of a stream, when these bytes are a Streamflow stream that names this
+ * mint and this escrow back and was never cancelled. Null is "not proved".
+ * The caller has already checked that the stream program owns the account.
+ */
+export function streamEndIfNamedBack(data: Uint8Array, mint: string, escrow: string): bigint | null {
+  if (data.length < STREAMFLOW_MIN_BYTES) return null;
+  if (pubkeyAt(data, STREAMFLOW_MINT_OFFSET) !== mint || pubkeyAt(data, STREAMFLOW_ESCROW_OFFSET) !== escrow) return null;
+  const canceled = u64le(data, STREAMFLOW_CANCELED_OFFSET);
+  if (canceled === null || canceled !== 0n) return null;
+  return streamEndFrom(data);
+}
+
+/** Every account a Streamflow instruction in this transaction names, outer or inner, except the escrow itself. */
+export function streamflowAccountsIn(transaction: unknown, escrow: string): string[] {
+  const root = asRecord(transaction);
+  const message = asRecord(asRecord(root.transaction).message);
+  const outer = Array.isArray(message.instructions) ? message.instructions : [];
+  const meta = asRecord(root.meta);
+  const inner = (Array.isArray(meta.innerInstructions) ? meta.innerInstructions as unknown[] : [])
+    .flatMap(group => (Array.isArray(asRecord(group).instructions) ? asRecord(group).instructions as unknown[] : []));
+  const found: string[] = [];
+  for (const raw of [...outer, ...inner]) {
+    const ix = asRecord(raw);
+    if (ix.programId !== STREAMFLOW_PROGRAM || !Array.isArray(ix.accounts)) continue;
+    for (const account of ix.accounts) {
+      if (typeof account === 'string' && account !== escrow && account !== STREAMFLOW_PROGRAM && isAddress(account) && !found.includes(account)) {
+        found.push(account);
+      }
+    }
+  }
+  return found.slice(0, MAX_CREATION_ACCOUNTS);
+}
+
 /**
  * Shares of supply from holder rows that were actually read.
  * Returns null when any row is missing its owner, or a Streamflow account has no
@@ -212,13 +268,12 @@ export function classifyLpHolders(supply: bigint | null, holders: HolderRow[], n
       burned += row.amount;
       continue;
     }
-    // The escrow PDA has no account. It holds the tokens and is not a proved lock:
-    // its metadata cannot be derived back from the PDA (see STREAMFLOW_PROGRAM).
+    // An owner with no account holds the tokens and is not a proved lock.
     if (row.missingAccount) {
       if (!held.includes(owner)) held.push(owner);
       continue;
     }
-    // A stream account whose end time was not in the bytes is an unread lock, not an open balance.
+    // A Streamflow row whose end time was not in the bytes is an unread lock, not an open balance.
     if (row.ownerProgram === STREAMFLOW_PROGRAM && row.streamEnd === null) return null;
     if (row.ownerProgram === STREAMFLOW_PROGRAM && row.streamEnd !== null) {
       // A past end is a stream that has finished. It is not a current lock and not an unknown contract.
@@ -322,6 +377,56 @@ function ownerOfTokenAccount(account: unknown): string | null {
   return typeof owner === 'string' ? owner : null;
 }
 
+/** Immutable once known: the accounts the creating instruction named, by escrow. */
+const creationAccounts = new Map<string, string[]>();
+
+/** The accounts named by the transaction that created this escrow, or null when its start was not reached. */
+async function creationAccountsOf(escrow: string): Promise<string[] | null> {
+  const known = creationAccounts.get(escrow);
+  if (known) return known;
+  let before: string | undefined;
+  let oldest: string | null = null;
+  let reachedStart = false;
+  for (let page = 0; page < HISTORY_PAGES; page += 1) {
+    const result = await solana('getSignaturesForAddress', [escrow, { limit: HISTORY_PAGE, commitment: 'finalized', ...(before ? { before } : {}) }]);
+    const rows = Array.isArray(result) ? result.map(asRecord).filter(row => typeof row.signature === 'string') : [];
+    // Nothing older than what was already seen: that page was the start.
+    if (rows.length === 0) { reachedStart = true; break; }
+    const succeeded = rows.filter(row => (row.err ?? null) === null);
+    if (succeeded.length > 0) oldest = succeeded[succeeded.length - 1]!.signature as string;
+    if (rows.length < HISTORY_PAGE) { reachedStart = true; break; }
+    before = rows[rows.length - 1]!.signature as string;
+  }
+  // A history longer than the pages read has an older start that was not seen.
+  if (!reachedStart || !oldest) return null;
+  const transaction = await solana('getTransaction', [oldest, { commitment: 'finalized', encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]);
+  if (!transaction) return null;
+  const named = streamflowAccountsIn(transaction, escrow);
+  if (named.length === 0) return null;
+  creationAccounts.set(escrow, named);
+  return named;
+}
+
+/**
+ * The end of the stream whose escrow this is, or null when no stream proves it.
+ * Throws when a read failed, so an unread proof is unavailable and is not
+ * mistaken for "no stream".
+ */
+async function streamEndOfEscrow(escrow: string, lpMint: string): Promise<bigint | null> {
+  const named = await creationAccountsOf(escrow);
+  if (!named) return null;
+  const read = await solana('getMultipleAccounts', [named, { encoding: 'base64', commitment: 'finalized' }]);
+  if (!Array.isArray(read)) throw new Error('getMultipleAccounts did not answer');
+  for (const row of read) {
+    const info = asRecord(row);
+    if (info.owner !== STREAMFLOW_PROGRAM) continue;
+    const data = decodeData(info.data);
+    const end = data ? streamEndIfNamedBack(data, lpMint, escrow) : null;
+    if (end !== null) return end;
+  }
+  return null;
+}
+
 async function holderRows(lpMint: string): Promise<{ supply: bigint | null; holders: HolderRow[] } | null> {
   const [supplyResult, largestResult] = await Promise.all([
     solana('getTokenSupply', [lpMint, { commitment: 'finalized' }]),
@@ -351,9 +456,7 @@ async function holderRows(lpMint: string): Promise<{ supply: bigint | null; hold
     distinct.forEach((owner, i) => {
       const row = read[i];
       if (row === null) {
-        // No account at the owner. A Streamflow escrow PDA looks exactly like
-        // this: the tokens' authority, with the metadata account elsewhere.
-        // Classifying it as the System program would hide the holding.
+        // No account at the owner. Classifying it as the System program would hide the holding.
         programs.set(owner, { ownerProgram: null, executable: false, data: null, missingAccount: true });
         return;
       }
@@ -366,20 +469,34 @@ async function holderRows(lpMint: string): Promise<{ supply: bigint | null; hold
       });
     });
   }
-  const holders: HolderRow[] = top.map(row => {
+  const holders: HolderRow[] = [];
+  let proofs = 0;
+  for (const row of top) {
     const account = row.address as string;
     const owner = owners.get(account) ?? null;
     const program = owner ? programs.get(owner) : undefined;
-    const streamEnd = program?.ownerProgram === STREAMFLOW_PROGRAM && program.data ? streamEndFrom(program.data) : null;
-    return {
+    let ownerProgram = program?.ownerProgram ?? null;
+    let streamEnd: bigint | null = null;
+    // A holder that owns itself is a candidate Streamflow escrow. Its "owner
+    // account" is the token account again, so the schedule is found through the
+    // stream that names it back, for a few of them per read.
+    if (owner === account && program?.data && proofs < MAX_ESCROW_PROOFS && isSelfOwnedTokenAccount(account, lpMint, program.data)) {
+      proofs += 1;
+      const end = await streamEndOfEscrow(account, lpMint);
+      if (end !== null) {
+        ownerProgram = STREAMFLOW_PROGRAM;
+        streamEnd = end;
+      }
+    }
+    holders.push({
       amount: BigInt(String(row.amount)),
       owner,
-      ownerProgram: program?.ownerProgram ?? null,
+      ownerProgram,
       executable: program?.executable ?? null,
       streamEnd,
       missingAccount: program?.missingAccount ?? false,
-    };
-  });
+    });
+  }
   return { supply: BigInt(supplyText), holders };
 }
 

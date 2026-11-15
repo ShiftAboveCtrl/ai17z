@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { renderEvidenceCard, type CardReading } from '@xbam/prompts';
 import { base58 } from '../../packages/runtime/src/solanaInspect';
+import { base58Bytes } from '@xbam/upstream';
 import {
   STREAMFLOW_END_OFFSET,
+  STREAMFLOW_ESCROW_OFFSET,
+  STREAMFLOW_MINT_OFFSET,
   STREAMFLOW_PROGRAM,
   classifyLpHolders,
+  isSelfOwnedTokenAccount,
   lpContractLines,
   lpMintFromPool,
   sameLp,
   streamEndFrom,
+  streamEndIfNamedBack,
+  streamflowAccountsIn,
   type LpStatus,
 } from '../../packages/runtime/src/lpLock';
 
@@ -85,10 +91,8 @@ describe('burned and locked shares', () => {
     expect(classifyLpHolders(supply, [])).toBeNull();
   });
 
-  it('reports a Streamflow escrow owner with no account as held by a contract, never as locked', () => {
-    // The LP sits in the escrow token account. Its owner is a PDA with no
-    // account, and the stream metadata that holds end_time cannot be derived
-    // back from it, so a lock is not proved.
+  it('reports an owner with no account as held by a contract, never as locked', () => {
+    // Nothing at the owner address can show an unlock time, so a lock is not proved.
     const escrow = 'EscrowPda1111111111111111111111111111111111';
     const status = classifyLpHolders(supply, [
       row(600n, escrow, { ownerProgram: null, missingAccount: true }),
@@ -132,6 +136,71 @@ describe('burned and locked shares', () => {
     }
     expect(streamEndFrom(data)).toBe(end);
     expect(streamEndFrom(data.subarray(0, STREAMFLOW_END_OFFSET + 4))).toBeNull();
+  });
+});
+
+/**
+ * Shapes read off live mainnet Streamflow streams on 2026-11-15, with invented
+ * addresses: the escrow is a Token program account that owns itself, and the
+ * stream account (1104 bytes, owned by the stream program) names the mint at 177
+ * and that escrow at 209.
+ */
+describe('a Streamflow escrow, as it exists on chain', () => {
+  const lpMint = base58(pubkey(21));
+  const escrow = base58(pubkey(22));
+  const metadata = base58(pubkey(23));
+  const sender = base58(pubkey(24));
+  const end = BigInt(Math.floor(Date.now() / 1000) + 30 * 86_400);
+
+  function tokenAccount(mint: string, owner: string): Uint8Array {
+    const data = new Uint8Array(165);
+    data.set(base58Bytes(mint)!, 0);
+    data.set(base58Bytes(owner)!, 32);
+    return data;
+  }
+
+  function stream(over: Partial<{ mint: string; escrow: string; end: bigint; canceled: bigint; bytes: number }> = {}): Uint8Array {
+    const data = new Uint8Array(1_104);
+    const put = (offset: number, value: bigint) => {
+      for (let i = 0; i < 8; i += 1) data[offset + i] = Number((value >> BigInt(8 * i)) & 0xffn);
+    };
+    put(25, over.canceled ?? 0n);
+    put(STREAMFLOW_END_OFFSET, over.end ?? end);
+    data.set(base58Bytes(over.mint ?? lpMint)!, STREAMFLOW_MINT_OFFSET);
+    data.set(base58Bytes(over.escrow ?? escrow)!, STREAMFLOW_ESCROW_OFFSET);
+    return over.bytes === undefined ? data : data.subarray(0, over.bytes);
+  }
+
+  it('is a token account of the LP mint that owns itself', () => {
+    expect(isSelfOwnedTokenAccount(escrow, lpMint, tokenAccount(lpMint, escrow))).toBe(true);
+    // An ordinary holder: the token account is owned by a wallet.
+    expect(isSelfOwnedTokenAccount(escrow, lpMint, tokenAccount(lpMint, sender))).toBe(false);
+    expect(isSelfOwnedTokenAccount(escrow, lpMint, tokenAccount(base58(pubkey(30)), escrow))).toBe(false);
+    expect(isSelfOwnedTokenAccount(escrow, lpMint, new Uint8Array(100))).toBe(false);
+    expect(isSelfOwnedTokenAccount(escrow, lpMint, null)).toBe(false);
+  });
+
+  it('takes the end only from a stream that names this mint and this escrow back', () => {
+    expect(STREAMFLOW_MINT_OFFSET).toBe(177);
+    expect(STREAMFLOW_ESCROW_OFFSET).toBe(209);
+    expect(streamEndIfNamedBack(stream(), lpMint, escrow)).toBe(end);
+    expect(streamEndIfNamedBack(stream({ escrow: base58(pubkey(31)) }), lpMint, escrow)).toBeNull();
+    expect(streamEndIfNamedBack(stream({ mint: base58(pubkey(32)) }), lpMint, escrow)).toBeNull();
+    expect(streamEndIfNamedBack(stream({ canceled: 1_700_000_000n }), lpMint, escrow)).toBeNull();
+    expect(streamEndIfNamedBack(stream({ bytes: 200 }), lpMint, escrow)).toBeNull();
+    expect(streamEndIfNamedBack(stream({ end: 5n }), lpMint, escrow)).toBeNull();
+  });
+
+  it('finds the stream account among what the creating Streamflow instruction names, never the escrow or the program', () => {
+    const transaction = {
+      transaction: { message: { instructions: [
+        { programId: SYSTEM, accounts: [base58(pubkey(40))] },
+        { programId: STREAMFLOW_PROGRAM, accounts: [sender, metadata, escrow, STREAMFLOW_PROGRAM, 'not-an-address'] },
+      ] } },
+      meta: { innerInstructions: [{ instructions: [{ programId: STREAMFLOW_PROGRAM, accounts: [base58(pubkey(41))] }] }] },
+    };
+    expect(streamflowAccountsIn(transaction, escrow)).toEqual([sender, metadata, base58(pubkey(41))]);
+    expect(streamflowAccountsIn({}, escrow)).toEqual([]);
   });
 });
 

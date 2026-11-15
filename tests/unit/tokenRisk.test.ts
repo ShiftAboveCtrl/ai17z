@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { base58 } from '../../packages/runtime/src/solanaInspect';
 
 /**
  * What security services observe, and the two ways this could lie.
@@ -72,10 +73,51 @@ interface RiskAnswer {
 }
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const STREAMFLOW = 'strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m';
+const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+
+function addressOf(fill: number): string {
+  const bytes = new Uint8Array(32);
+  bytes[0] = fill;
+  bytes[31] = 1;
+  return base58(bytes);
+}
+
+/**
+ * A Streamflow LP lock as it is on mainnet (read off live streams on 2026-11-15,
+ * addresses invented): the escrow is a Token program account that owns itself,
+ * its first transaction names the stream account, and that account is owned by
+ * the stream program and names the LP mint at 177 and the escrow at 209.
+ */
+async function escrowShape(input: { lpMint: string; endOffsetSeconds: number; namesEscrowBack?: boolean; canceled?: boolean }) {
+  const { base58Bytes } = await import('@xbam/upstream');
+  const escrow = addressOf(50);
+  const metadata = addressOf(51);
+  const sender = addressOf(52);
+  const token = Buffer.alloc(165);
+  token.set(base58Bytes(input.lpMint)!, 0);
+  token.set(base58Bytes(escrow)!, 32);
+  const stream = Buffer.alloc(1_104);
+  const put = (offset: number, value: bigint) => stream.writeBigUInt64LE(value, offset);
+  put(25, input.canceled ? 1_700_000_000n : 0n);
+  put(33, BigInt(Math.floor(Date.now() / 1000) + input.endOffsetSeconds));
+  stream.set(base58Bytes(input.lpMint)!, 177);
+  stream.set(base58Bytes(input.namesEscrowBack === false ? addressOf(53) : escrow)!, 209);
+  return {
+    escrow,
+    escrowAccount: { owner: TOKEN_PROGRAM, executable: false, data: [token.toString('base64'), 'base64'] },
+    signatures: [{ signature: 'creationSignature', err: null }],
+    creation: { transaction: { message: { instructions: [{ programId: STREAMFLOW, accounts: [sender, metadata, escrow] }] } }, meta: { innerInstructions: [] } },
+    streamRead: { context: { slot: 1 }, value: [
+      { owner: '11111111111111111111111111111111', executable: false, data: ['', 'base64'] },
+      { owner: STREAMFLOW, executable: false, data: [stream.toString('base64'), 'base64'] },
+    ] },
+  };
+}
 
 it('reports burned LP as a percentage reading, and an unread pool as unavailable rather than zero', async () => {
   const { SOLANA_MAINNET_GENESIS, registerSolanaUpstreams, registerMarketUpstreams } = await import('@xbam/upstream');
-  const { resetLpCacheForTest, STREAMFLOW_PROGRAM } = await import('../../packages/runtime/src/lpLock');
+  const { resetLpCacheForTest } = await import('../../packages/runtime/src/lpLock');
   resetLpCacheForTest();
   registerSolanaUpstreams();
   registerMarketUpstreams();
@@ -85,27 +127,23 @@ it('reports burned LP as a percentage reading, and an unread pool as unavailable
   lpBytes[31] = 1;
   const poolData = Buffer.alloc(496);
   poolData.set(lpBytes, 464);
-  const streamOwner = 'StrmOwnr11111111111111111111111111111111111';
-  const end = BigInt(Math.floor(Date.now() / 1000) + 3_600);
-  const streamData = Buffer.alloc(41);
-  let left = end;
-  for (let i = 0; i < 8; i += 1) {
-    streamData[33 + i] = Number(left & 0xffn);
-    left >>= 8n;
-  }
+  const live = await escrowShape({ lpMint: base58(lpBytes), endOffsetSeconds: 3_600 });
   const repeat = (value: unknown) => new Proxy([value], { get: (target, prop) => prop === 'shift' ? () => value : Reflect.get(target, prop) });
   rpcQueue = {
     getGenesisHash: repeat(SOLANA_MAINNET_GENESIS),
     getAccountInfo: [{ context: { slot: 1 }, value: { owner: '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', executable: false, data: [poolData.toString('base64'), 'base64'] } }],
     getTokenSupply: [{ context: { slot: 1 }, value: { amount: '1000', decimals: 6 } }],
-    getTokenLargestAccounts: [{ context: { slot: 1 }, value: [{ address: 'BurnAcct11111111111111111111111111111111111', amount: '800' }, { address: 'StrmAcct11111111111111111111111111111111111', amount: '200' }] }],
+    getTokenLargestAccounts: [{ context: { slot: 1 }, value: [{ address: 'BurnAcct11111111111111111111111111111111111', amount: '800' }, { address: live.escrow, amount: '200' }] }],
     getMultipleAccounts: [
-      { context: { slot: 1 }, value: [{ data: { parsed: { info: { owner: '1nc1nerator11111111111111111111111111111111' } } } }, { data: { parsed: { info: { owner: streamOwner } } } }] },
+      { context: { slot: 1 }, value: [{ data: { parsed: { info: { owner: '1nc1nerator11111111111111111111111111111111' } } } }, { data: { parsed: { info: { owner: live.escrow } } } }] },
       { context: { slot: 1 }, value: [
         { owner: '11111111111111111111111111111111', executable: false, data: ['', 'base64'] },
-        { owner: STREAMFLOW_PROGRAM, executable: false, data: [streamData.toString('base64'), 'base64'] },
+        live.escrowAccount,
       ] },
+      live.streamRead,
     ],
+    getSignaturesForAddress: [live.signatures],
+    getTransaction: [live.creation],
   };
   responses['dexscreener.com'] = {
     status: 200,
@@ -134,7 +172,7 @@ it('reports burned LP as a percentage reading, and an unread pool as unavailable
 });
 
 /** Queues for one Raydium pool whose LP is held in the given token accounts. */
-async function queueLpPool(holders: { account: string; amount: string; owner: string; ownerAccount: unknown }[]) {
+async function queueLpPool(holders: { account: string; amount: string; owner: string; ownerAccount: unknown }[], extra: Record<string, unknown[]> = {}) {
   const { SOLANA_MAINNET_GENESIS } = await import('@xbam/upstream');
   const pool = 'Pool111111111111111111111111111111111111111';
   const lpBytes = Buffer.alloc(32);
@@ -151,7 +189,10 @@ async function queueLpPool(holders: { account: string; amount: string; owner: st
     getMultipleAccounts: [
       { context: { slot: 1 }, value: holders.map(h => ({ data: { parsed: { info: { owner: h.owner } } } })) },
       { context: { slot: 1 }, value: holders.map(h => h.ownerAccount) },
+      ...(extra.getMultipleAccounts ?? []),
     ],
+    ...(extra.getSignaturesForAddress ? { getSignaturesForAddress: extra.getSignaturesForAddress } : {}),
+    ...(extra.getTransaction ? { getTransaction: extra.getTransaction } : {}),
   };
   responses['dexscreener.com'] = {
     status: 200,
@@ -163,26 +204,78 @@ async function queueLpPool(holders: { account: string; amount: string; owner: st
   };
 }
 
-it('does not count LP in a Streamflow escrow token account as locked when its owner PDA has no account', async () => {
-  // Real layout: the LP sits in the escrow token account, whose SPL owner is a PDA
-  // derived from ["strm", metadata] and which has no account of its own. The metadata
-  // account that holds end_time is not reachable from it, so a lock is not proved.
+/** The lp mint `queueLpPool` writes into its pool account. */
+const POOL_LP_MINT = (() => { const bytes = new Uint8Array(32); bytes[0] = 9; bytes[31] = 1; return base58(bytes); })();
+
+async function runLpCheck() {
   const { registerSolanaUpstreams, registerMarketUpstreams } = await import('@xbam/upstream');
   const { resetLpCacheForTest } = await import('../../packages/runtime/src/lpLock');
   resetLpCacheForTest();
   registerSolanaUpstreams();
   registerMarketUpstreams();
+  const capability = getCapability('token.inspect_risk')!;
+  return await capability.run(capability.input.parse({ chain: 'solana', address: SOL_MINT }) as never, context()) as RiskAnswer & { lp: { heldByContract: string[]; unlockAt: string | null } };
+}
+
+const BURN_HOLDER = { account: 'BurnAcct11111111111111111111111111111111111', amount: '700', owner: '1nc1nerator11111111111111111111111111111111',
+  ownerAccount: { owner: '11111111111111111111111111111111', executable: false, data: ['', 'base64'] } };
+
+it('counts LP in a live-shaped Streamflow escrow as locked, because the stream names the mint and the escrow back', async () => {
+  const live = await escrowShape({ lpMint: POOL_LP_MINT, endOffsetSeconds: 86_400 });
+  await queueLpPool(
+    [BURN_HOLDER, { account: live.escrow, amount: '300', owner: live.escrow, ownerAccount: live.escrowAccount }],
+    { getSignaturesForAddress: [live.signatures], getTransaction: [live.creation], getMultipleAccounts: [live.streamRead] },
+  );
+  const answer = await runLpCheck();
+  expect(answer.cardReadings.find(r => r.label === 'LP burned')?.value).toBe(70);
+  expect(answer.cardReadings.find(r => r.label === 'LP locked')?.value).toBe(30);
+  expect(answer.lp.heldByContract).toEqual([]);
+  expect(answer.lp.unlockAt).not.toBeNull();
+});
+
+it('keeps a self-owned escrow as held by a contract when its stream does not name the escrow back', async () => {
+  const live = await escrowShape({ lpMint: POOL_LP_MINT, endOffsetSeconds: 86_400, namesEscrowBack: false });
+  await queueLpPool(
+    [BURN_HOLDER, { account: live.escrow, amount: '300', owner: live.escrow, ownerAccount: live.escrowAccount }],
+    { getSignaturesForAddress: [live.signatures], getTransaction: [live.creation], getMultipleAccounts: [live.streamRead] },
+  );
+  const answer = await runLpCheck();
+  expect(answer.cardReadings.find(r => r.label === 'LP locked')?.value).toBe(0);
+  expect(answer.lp.heldByContract).toEqual([live.escrow]);
+});
+
+it('keeps a self-owned escrow as held by a contract when its stream was cancelled', async () => {
+  const cancelled = await escrowShape({ lpMint: POOL_LP_MINT, endOffsetSeconds: 86_400, canceled: true });
+  await queueLpPool(
+    [BURN_HOLDER, { account: cancelled.escrow, amount: '300', owner: cancelled.escrow, ownerAccount: cancelled.escrowAccount }],
+    { getSignaturesForAddress: [cancelled.signatures], getTransaction: [cancelled.creation], getMultipleAccounts: [cancelled.streamRead] },
+  );
+  const answer = await runLpCheck();
+  expect(answer.cardReadings.find(r => r.label === 'LP locked')?.value).toBe(0);
+  expect(answer.lp.heldByContract).toEqual([cancelled.escrow]);
+});
+
+it('keeps a self-owned escrow as held by a contract when its creating transaction names no stream', async () => {
+  const bare = await escrowShape({ lpMint: POOL_LP_MINT, endOffsetSeconds: 86_400 });
+  await queueLpPool(
+    [BURN_HOLDER, { account: bare.escrow, amount: '300', owner: bare.escrow, ownerAccount: bare.escrowAccount }],
+    { getSignaturesForAddress: [bare.signatures], getTransaction: [{ transaction: { message: { instructions: [] } } }] },
+  );
+  const answer = await runLpCheck();
+  expect(answer.cardReadings.find(r => r.label === 'LP locked')?.value).toBe(0);
+  expect(answer.lp.heldByContract).toEqual([bare.escrow]);
+});
+
+it('still reports an owner with no account as held by a contract, never as locked', async () => {
   const escrowOwner = 'EscrowPda1111111111111111111111111111111111';
   await queueLpPool([
-    { account: 'BurnAcct11111111111111111111111111111111111', amount: '700', owner: '1nc1nerator11111111111111111111111111111111',
-      ownerAccount: { owner: '11111111111111111111111111111111', executable: false, data: ['', 'base64'] } },
+    BURN_HOLDER,
     { account: 'EscrowTok1111111111111111111111111111111111', amount: '300', owner: escrowOwner, ownerAccount: null },
   ]);
-  const capability = getCapability('token.inspect_risk')!;
-  const answer = await capability.run(capability.input.parse({ chain: 'solana', address: SOL_MINT }) as never, context()) as RiskAnswer & { lp: { heldByContract: string[] } };
+  const answer = await runLpCheck();
   expect(answer.cardReadings.find(r => r.label === 'LP burned')?.value).toBe(70);
   expect(answer.cardReadings.find(r => r.label === 'LP locked')?.value).toBe(0);
-  expect(answer.lp?.heldByContract).toEqual([escrowOwner]);
+  expect(answer.lp.heldByContract).toEqual([escrowOwner]);
 });
 
 it('retries a failed LP read after thirty seconds but keeps a good one for five minutes', async () => {
