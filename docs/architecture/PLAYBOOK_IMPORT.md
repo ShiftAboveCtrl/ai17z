@@ -148,3 +148,28 @@ no field that could. It does not copy a trader: it sets limits and a universe,
 and every entry is still the agent's own decision, judged by the existing gate
 (`tradingRisk.ts`) and approved by the owner. It does not enable live trading,
 approval or autonomous modes, or any capability, and nothing in a playbook can.
+
+## Publishing this agent's own setup
+
+The outbound direction. `packages/runtime/src/playbookPublish.ts` builds a
+playbook from the agent's current paper mandate and exact-mint universe, and
+sends it through `studioPlaybookPublish` in `studioLink.ts`, a
+`POST /api/v1/installation/playbooks` beside the GET above. It is owner control
+plane only, off until the owner turns on control from Studio and then confirms
+an exact document.
+
+The mapping is one pure function, `buildPublishDocument`, which copies the
+mandate's bounds, capital and limits into the strict `PlaybookDocument` and
+parses them through it. A mandate that cannot be expressed as a playbook (a
+live mandate, an any-token scope, no universe, a limit past the schema's own
+range) is refused with a sentence, never clamped into shape. The paper capital
+is the mandate's open-exposure ceiling, because the mandate has no separate
+capital field. Cadence is deliberately not carried: it is per account and not
+part of a copyable setup.
+
+Versions are pins in this direction too. The stable playbook id is generated on
+the first publish and kept in `agent_playbook_publications` (migration 0135);
+each later publish sends the same id with the next version, decided under the
+agent's advisory lock. Unpublish removes the listing. Studio being unreachable
+sets `problem` and is reported as "unavailable", never as a half-published or
+stale listing.
