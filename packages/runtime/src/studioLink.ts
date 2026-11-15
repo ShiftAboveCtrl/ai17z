@@ -173,7 +173,7 @@ const linkRecord = async () => (await ops.getSetting<LinkRecord>(LINK_SETTING)) 
  * drives a real Studio over loopback; nothing in the product passes one.
  */
 export interface StudioTransport {
-  (url: string, init: { method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }): Promise<{ status: number; text: string }>;
+  (url: string, init: { method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }): Promise<{ status: number; text: string; bytes?: Uint8Array; contentType?: string }>;
 }
 let transportOverride: StudioTransport | null = null;
 export function setStudioTransportForTests(transport: StudioTransport | null): void {
@@ -183,16 +183,25 @@ export function setStudioTransportForTests(transport: StudioTransport | null): v
 interface StudioAnswer {
   status: number;
   body: Record<string, unknown> | null;
+  /** Only for a request made with `binary`: the raw answer and what Studio called it. */
+  bytes?: Uint8Array;
+  contentType?: string;
+}
+
+/** A request whose answer is a file. Its own deadline and size, so a slow render cannot hold a reply. */
+interface BinaryLimits {
+  timeoutMs: number;
+  maxBytes: number;
 }
 
 async function send(
   where: StudioOrigin,
   path: string,
-  init: { method: 'GET' | 'POST'; headers?: Record<string, string>; json?: unknown; form?: Record<string, string> },
+  init: { method: 'GET' | 'POST'; headers?: Record<string, string>; json?: unknown; form?: Record<string, string>; binary?: BinaryLimits },
 ): Promise<StudioAnswer> {
   const url = `${where.origin}${path}`;
   const headers: Record<string, string> = {
-    accept: 'application/json',
+    accept: init.binary ? 'image/png, image/jpeg, image/webp' : 'application/json',
     'x-ai17z-version': buildVersion().version,
     ...(init.headers ?? {}),
   };
@@ -205,7 +214,7 @@ async function send(
     body = new URLSearchParams(init.form).toString();
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
+  const timer = setTimeout(() => controller.abort(), init.binary?.timeoutMs ?? 20_000);
   try {
     const response = transportOverride
       ? await transportOverride(url, { method: init.method, headers, ...(body === undefined ? {} : { body }) })
@@ -214,11 +223,18 @@ async function send(
           method: init.method,
           headers,
           ...(body === undefined ? {} : { body }),
-          maxBytes: 1024 * 1024,
+          maxBytes: init.binary?.maxBytes ?? 1024 * 1024,
+          ...(init.binary ? { binary: true } : {}),
           // Every request here may carry this installation's token and proof.
           noRedirects: true,
           ...(where.unsafeDev ? { allowPrivate: true } : {}),
         });
+    if (init.binary) {
+      const raw = 'bytes' in response ? response.bytes : undefined;
+      const type = 'contentType' in response ? response.contentType
+        : 'headers' in response ? (response.headers as Headers).get('content-type') ?? undefined : undefined;
+      return { status: response.status, body: null, ...(raw ? { bytes: raw } : {}), ...(type ? { contentType: type } : {}) };
+    }
     let parsed: Record<string, unknown> | null = null;
     try {
       const value = JSON.parse(response.text) as unknown;
@@ -272,7 +288,7 @@ async function accessToken(where: StudioOrigin, key: InstallationKey, link: Link
 /** A request as this linked installation: access token plus a proof bound to it. */
 async function authed(
   path: string,
-  init: { method: 'GET' | 'POST'; json?: unknown },
+  init: { method: 'GET' | 'POST'; json?: unknown; binary?: BinaryLimits },
   expectedLink?: StudioLinkScope,
 ): Promise<StudioAnswer | StudioProblem> {
   const ready = await linkedContext();
@@ -289,6 +305,7 @@ async function authed(
       dpop: dpopProof(ready.key, init.method, `${ready.where.origin}${path.split('?')[0]}`, token),
     },
     ...(init.json === undefined ? {} : { json: init.json }),
+    ...(init.binary ? { binary: init.binary } : {}),
   });
   if (answer.status === 401) {
     forgetTokens();
@@ -304,6 +321,7 @@ async function authed(
         dpop: dpopProof(ready.key, init.method, `${ready.where.origin}${path.split('?')[0]}`, again),
       },
       ...(init.json === undefined ? {} : { json: init.json }),
+      ...(init.binary ? { binary: init.binary } : {}),
     });
     if (retried.status === 401) {
       await markRevoked('Studio no longer accepts this installation. Link it again from the Plugins screen.');
@@ -334,6 +352,26 @@ export async function studioInstallationRequest(
   const answer = await authed(path, init, expectedLink).catch((error: Error) => ({ ok: false as const, why: `Studio could not be reached: ${error.message}` }));
   if ('ok' in answer) return answer;
   return { ok: true, status: answer.status, body: answer.body, sentence: describe(answer) };
+}
+
+/**
+ * A POST to the linked Studio whose answer is a file, as this installation (token plus a
+ * DPoP proof bound to this exact request). Same path guard and origin rule as
+ * `studioInstallationRequest`. Returns the bytes whatever Studio said, never throws; the caller
+ * decides whether they are acceptable, because Studio's word for what it sent is not proof.
+ */
+export async function studioInstallationFile(
+  path: string,
+  json: unknown,
+  limits: BinaryLimits,
+): Promise<{ ok: true; status: number; bytes: Uint8Array | null; contentType: string | null } | StudioProblem> {
+  if (!/^\/api\/v1\/installation\/[A-Za-z0-9/_?=&.-]+$/.test(path) || path.includes('..') || path.includes('//')) {
+    return { ok: false, why: 'That is not a Studio installation address.' };
+  }
+  const answer = await authed(path, { method: 'POST', json, binary: limits })
+    .catch(() => ({ ok: false as const, why: 'Studio could not be reached.' }));
+  if ('ok' in answer) return answer;
+  return { ok: true, status: answer.status, bytes: answer.bytes ?? null, contentType: answer.contentType ?? null };
 }
 
 /** Whether this installation could ask Studio anything at all, without asking. */
