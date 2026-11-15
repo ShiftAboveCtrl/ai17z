@@ -13,11 +13,18 @@ export const ActivityRadarDetail = z.object({
   asset: AssetLabel,
   source_post_url: z.string().regex(/^https:\/\/(?:x\.com|twitter\.com)\/[A-Za-z0-9_]{1,15}\/status\/[0-9]{1,25}$/),
 }).strict();
+/**
+ * The networks Studio's receipt wall names (its ALLOWED_RECEIPT_CHANNELS). Anything else is
+ * left out of the receipt rather than guessed at, and an older row reads as absent.
+ */
+export const ACTIVITY_RECEIPT_CHANNELS = ['x', 'farcaster', 'bluesky'] as const;
+export const ActivityReceiptDetail = z.object({ channel: z.enum(ACTIVITY_RECEIPT_CHANNELS).optional() }).strict();
 export const ActivityTapeEvent = z.object({
   id: ActivityEventId, agent_id: z.string().uuid(),
   kind: z.enum(['REPLY', 'POST', 'PAPER_FILL', 'RADAR_HIT', 'RECEIPT']),
   at: z.string().datetime(), dry_run: z.boolean().nullable(), target_handle: z.null(),
   radar: ActivityRadarDetail.nullable().optional(),
+  receipt: ActivityReceiptDetail.optional(),
   paper: z.object({ simulated: z.literal(true), size_base_units: Size.nullable(),
     asset: AssetLabel.nullable(), verdict: z.literal('PAPER_FILLED') }).strict().nullable(),
   // Optional, and absent rather than null when there is nothing to say, so an event
@@ -25,6 +32,7 @@ export const ActivityTapeEvent = z.object({
   post_url: ActivityPostUrl.optional(), post_text: ActivityPostText.optional(),
 }).strict().superRefine((event, ctx) => {
   if (event.radar && event.kind !== 'RADAR_HIT') ctx.addIssue({ code: 'custom', message: 'Only a radar hit carries a radar source.' });
+  if (event.receipt && event.kind !== 'RECEIPT') ctx.addIssue({ code: 'custom', message: 'Only a receipt carries receipt detail.' });
   if ((event.kind === 'PAPER_FILL') !== (event.paper !== null)) ctx.addIssue({ code: 'custom', message: 'Only a paper fill carries paper fields.' });
   if (event.post_url !== undefined && !((event.kind === 'POST' || event.kind === 'REPLY') && event.dry_run === false))
     ctx.addIssue({ code: 'custom', message: 'Only a published post or reply carries a link.' });

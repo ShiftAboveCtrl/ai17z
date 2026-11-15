@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ActivityTapeBatch, projectActivity, registerActivityTapeCapability, withoutUnconsentedText } from '../../packages/runtime/src/studioActivityTape';
 import { invokeCapability, getCapability } from '@xbam/tools';
@@ -165,5 +166,40 @@ describe('verifiable posts: the link to the real post, and words only by consent
     expect(batch({ ...event, post_text: 'x'.repeat(501) })).toBe(false);
     expect(batch({ ...event, post_html: '<b>' })).toBe(false);
     expect(batch({ ...event, target_handle: 'someone' })).toBe(false);
+  });
+});
+
+describe('receipt channel: the network the action went out on', () => {
+  const receipt = { id: 'receipt:00000000-0000-4000-8000-000000000001', agent_id: '00000000-0000-4000-8000-000000000002',
+    kind: 'RECEIPT', at: '2026-11-11T12:00:00.000Z', dry_run: false };
+  it.each(['x', 'farcaster', 'bluesky'])('carries %s on a receipt', channel => {
+    expect(projectActivity({ ...receipt, channel })?.receipt).toEqual({ channel });
+  });
+  it.each([{}, { channel: null }, { channel: '' }, { channel: 'mastodon' }, { channel: 'X' }])('leaves the receipt detail absent for %j', over => {
+    const event = projectActivity({ ...receipt, ...over })!;
+    expect(event).not.toBeNull();
+    expect('receipt' in event).toBe(false);
+  });
+  it('never puts a channel on an event that is not a receipt', () => {
+    expect(projectActivity({ ...receipt, kind: 'POST', id: 'action:00000000-0000-4000-8000-000000000001', channel: 'x' })?.receipt).toBeUndefined();
+  });
+  it('rejects receipt detail on a non-receipt and unknown fields inside it', () => {
+    const event = projectActivity({ ...receipt, channel: 'x' })!;
+    expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [event], remove: [] }).success).toBe(true);
+    expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, kind: 'POST', id: 'action:00000000-0000-4000-8000-000000000001' }], remove: [] }).success).toBe(false);
+    expect(ActivityTapeBatch.safeParse({ protocol: 1, events: [{ ...event, receipt: { channel: 'x', reach: 5 } }], remove: [] }).success).toBe(false);
+  });
+});
+
+describe('receipt channel wire fixture shared with Studio', () => {
+  it('projects byte for byte the batch Studio parses in its own tests', () => {
+    const base = { agent_id: '00000000-0000-4000-8000-000000000002', kind: 'RECEIPT', at: '2026-11-11T12:00:00.000Z', dry_run: false };
+    const events = [
+      projectActivity({ ...base, id: 'receipt:00000000-0000-4000-8000-000000000001', channel: 'x' }),
+      projectActivity({ ...base, id: 'receipt:00000000-0000-4000-8000-000000000003', channel: 'bluesky' }),
+      projectActivity({ ...base, id: 'receipt:00000000-0000-4000-8000-000000000004', channel: 'mastodon' }),
+    ];
+    const json = JSON.stringify({ protocol: 1, events, remove: [] });
+    expect(json).toBe(readFileSync(new URL('../fixtures/activity-tape-receipt-channel.json', import.meta.url), 'utf8').trim());
   });
 });

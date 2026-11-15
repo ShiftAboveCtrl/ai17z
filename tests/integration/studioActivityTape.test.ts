@@ -570,6 +570,18 @@ describe('verifiable posts against Postgres and the contract server', () => {
     expect(JSON.stringify(studio.batches)).not.toMatch(/SECRET|PRIVATE|private-person|post_text/);
   });
 
+  it('still delivers a receipt to a strict older Studio, without the channel it has no place for', async () => {
+    await ready();
+    studio.refuseReceiptDetail(true);
+    const receipt = await action('POST', 'EXECUTED', 0, 'x', false, fixture.agentId, link('7777777777'));
+    await query(`UPDATE events SET payload = payload || '{"ideaSource":"radar_receipt"}'::jsonb
+      WHERE id=(SELECT event_id FROM jobs WHERE id=(SELECT job_id FROM actions WHERE id=$1))`, [receipt.slice(7)]);
+    expect((await sweepStudioActivityTape()).sent).toBe(1);
+    const row = sent().find((e) => e.id === `receipt:${receipt.slice(7)}`);
+    expect(row).toMatchObject({ kind: 'RECEIPT' });
+    expect(row).not.toHaveProperty('receipt');
+  });
+
   it('sends no link for a dry run, an unverified post, a mock channel, a receipt, or another service', async () => {
     await ready();
     const dry = await action('POST', 'DRY_RUN', 0, 'x', false, fixture.agentId, link('3333333333'));
@@ -585,6 +597,8 @@ describe('verifiable posts against Postgres and the contract server', () => {
     for (const id of [dry, unverified, elsewhere, mismatched]) expect(byId.get(id), id).not.toHaveProperty('post_url');
     expect(byId.get(`receipt:${receipt.slice(7)}`)).toMatchObject({ kind: 'RECEIPT' });
     expect(byId.get(`receipt:${receipt.slice(7)}`)).not.toHaveProperty('post_url');
+    expect(byId.get(`receipt:${receipt.slice(7)}`)).toMatchObject({ receipt: { channel: 'x' } });
+    expect(byId.get(dry)).not.toHaveProperty('receipt');
     expect(JSON.stringify(studio.batches)).not.toMatch(/8888888888|bsky\.app|mock:/);
   });
 
