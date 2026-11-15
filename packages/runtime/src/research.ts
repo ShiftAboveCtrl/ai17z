@@ -1,4 +1,5 @@
 import { createLogger, errorMessage, refersToSomethingElse } from '@xbam/shared';
+import type { EvidenceMoveWindow } from '@xbam/shared/contracts';
 import { ask, type MarketPairs, type MarketQuery } from '@xbam/upstream';
 import { describeToken, mergeReferences, parseTokenReference, resolveToken } from './token';
 
@@ -28,6 +29,45 @@ export function evidenceCardRequest(text: string): { address?: string; chain?: s
     return { refusal: 'Please provide an exact address on a supported token evidence chain.' };
   }
   return { address: reference.address, chain };
+}
+
+const MOVE_ASK = /\b(?:why|what(?:'s| is| was| has)?)\b[^.?!\n]{0,200}\b(?:moving|moved|pumping|pumped|dumping|dumped|mooning|ripping|rallying|rallied|spiking|spiked|crashing|crashed|tanking|tanked|bleeding|dropping|dropped|falling|fell|rising|rose|jumping|jumped|sinking|sunk|up|down|red|green|changed|happening|happened)\b/i;
+const MOVE_UNSUPPORTED = 'I read windows of 5 minutes, 1 hour, 6 hours or 24 hours. Please pick one of those.';
+
+/** The window an ask names, or null when it names none. A named window the source does not report is a refusal, never a nearest guess. */
+function moveWindowOf(text: string): EvidenceMoveWindow | 'unsupported' | null {
+  const clean = text.replace(/https?:\/\/\S+/g, ' ');
+  const given = clean.match(/\b(\d{1,3})\s*(m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)\b/i);
+  if (given) {
+    const unit = given[2]!.toLowerCase()[0]!;
+    const minutes = Number(given[1]) * (unit === 'm' ? 1 : unit === 'h' ? 60 : 1440);
+    const hit = ({ 5: '5m', 60: '1h', 360: '6h', 1440: '24h' } as Record<number, EvidenceMoveWindow>)[minutes];
+    return hit ?? 'unsupported';
+  }
+  if (/\b(?:today|past day|last day|a day)\b/i.test(clean)) return '24h';
+  if (/\b(?:last|past|in an?|this)\s+hour\b/i.test(clean)) return '1h';
+  if (/\b(?:few|last|past)\s+minutes\b/i.test(clean)) return '5m';
+  return null;
+}
+
+/**
+ * "Why is X moving" about exactly one exact mint. The answer is readings, never a story.
+ *
+ * Null when the message is not that ask, or names nothing token-shaped (so "why is
+ * it down" under a post is left to the ordinary reply). Identity is decided by the
+ * single card's own rules: a ticker, two addresses or a missing chain get a sentence.
+ * Default window is one hour.
+ */
+export function evidenceMoveRequest(text: string): { address: string; chain: string; window: EvidenceMoveWindow; refusal?: undefined } | { refusal: string } | null {
+  if (!MOVE_ASK.test(text)) return null;
+  // Two addresses in one message are a side by side, so the compare path answers it.
+  if (evidenceCompareRequest(text) !== null) return null;
+  const identity = evidenceCardRequest(text);
+  if (!identity) return null;
+  if (identity.refusal || !identity.address || !identity.chain) return { refusal: identity.refusal ?? 'Please provide one exact token address and its chain.' };
+  const window = moveWindowOf(text);
+  if (window === 'unsupported') return { refusal: MOVE_UNSUPPORTED };
+  return { address: identity.address, chain: identity.chain, window: window ?? '1h' };
 }
 
 const COMPARE_CHAINS = ['solana', 'ethereum', 'bnb', 'base', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'robinhood'];

@@ -2,11 +2,12 @@ import { agents, capabilityInvocations, jobs, observability, query, withTransact
 import { createLogger, PipelineError } from '@xbam/shared';
 import { MediaInventory, PolicyConfig, type ResolvedContext } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
-import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderDeployerLines, renderEvidenceCard, renderEvidenceCompare, shortAddress, type CardReading, type DeployerHistory } from '@xbam/prompts';
+import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderDeployerLines, renderEvidenceCard, renderEvidenceCompare, renderEvidenceMove, shortAddress, type CardReading, type DeployerHistory, type MoveReport } from '@xbam/prompts';
 import { capabilitySettings } from './capabilityPermissions';
 import { checkLinkUrl, linkedCheckOrigin, studioCheckLink } from './studioCheckLink';
 import { pauseState } from './killSwitch';
-import { evidenceCardRequest, evidenceCompareRequest } from './research';
+import { evidenceCardRequest, evidenceCompareRequest, evidenceMoveRequest } from './research';
+import { moveCurrent, readMintWindow } from './mintMovement';
 import { readAddressesFromImage } from './mediaResolve';
 import { parseTokenReference } from './token';
 import { checkEvidenceFollowUpAtSend } from './evidenceFollowUp';
@@ -26,6 +27,8 @@ export interface CompareCardSide { address: string; readings: CardReading[]; }
  */
 export interface EvidenceCard {
   text: string; readings: CardReading[]; cardJobId: string | null; link?: string | null;
+  /** A "why is it moving" reply: the measured report its text was rendered from. */
+  move?: MoveReport;
   compare?: { chain: string; sides: [CompareCardSide, CompareCardSide]; links: [string | null, string | null] };
   linkLines?: string[];
   deployer?: DeployerHistory | null;
@@ -131,6 +134,8 @@ async function mintReadsThisHour(tx: Tx, agentId: string, requester: string, dry
   const row = await tx.one(`SELECT (SELECT count(*) FROM evidence_card_requests
       WHERE agent_id=$1 AND requester=$2 AND created_at>now()-interval '1 hour' AND dry_run=$3)::int
     + (SELECT count(*) FROM evidence_compare_requests
+      WHERE agent_id=$1 AND requester=$2 AND created_at>now()-interval '1 hour' AND dry_run=$3)::int
+    + (SELECT coalesce(sum(reads), 0) FROM evidence_move_requests
       WHERE agent_id=$1 AND requester=$2 AND created_at>now()-interval '1 hour' AND dry_run=$3)::int AS n`, [agentId, requester, dryRun]);
   return Number(row?.n);
 }
@@ -140,11 +145,11 @@ export function deployerLinesOf(card: EvidenceCard | null): string[] | null {
   return card?.deployer ? renderDeployerLines(card.deployer) : null;
 }
 
-async function permitted(agentId: string): Promise<boolean> {
-  const capability = getCapability(CAP);
+async function permitted(agentId: string, id: string = CAP): Promise<boolean> {
+  const capability = getCapability(id);
   if (!capability) return false;
   const settings = await capabilitySettings(agentId);
-  return resolvePermission({ capability, stored: settings.permissions.get(CAP) ?? null,
+  return resolvePermission({ capability, stored: settings.permissions.get(id) ?? null,
     paused: (await pauseState()).paused }).allowed;
 }
 
@@ -256,6 +261,117 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
   await observability.emitTrace({ jobId: bundle.job.id, agentId: bundle.agent.id, type: 'RESEARCH_DONE',
     message: research.note, data: { capability: CAP, cardJobId, readings: readings.length } });
   return true;
+}
+
+const MOVE_PAIRS = 'market.pair_detail';
+const MOVE_TRADES = 'market.recent_trades';
+/** Upstream requests one movement ask can make: the mint's pools, then the latest swaps through the chosen one. */
+const MOVE_READS = 2;
+/** Reads one mint may cost an agent in an hour across every asker, so a crowd asking about one mint cannot spend the budget. */
+const MINT_MOVE_READ_CAP = 6;
+
+/**
+ * "Why is it moving" about one exact mint: what was measured in the window, and
+ * a line saying causes are not known. No model writes any of it.
+ *
+ * It is the card's own path with a window read in place of the risk read: the
+ * same direct-invitation gate, token pitch refusal, capability permission,
+ * research budget, asker cap (counted in reads, so it spends two), mint
+ * cooldown, and the same reticence, exchange and cadence gates downstream
+ * because the result is an ordinary card on the job. A mint a card or a
+ * movement ask answered inside the cooldown reuses that answer and spends no
+ * read. It never searches X for reasons: the ask came from X, the answer reads
+ * market sources only.
+ */
+export async function researchEvidenceMove(bundle: JobBundle): Promise<boolean> {
+  if (!bundle.policy.tools.evidenceCards || bundle.job.actionType !== 'REPLY' ||
+      !['MENTION', 'REPLY'].includes(bundle.event.type)) return false;
+  const context = bundle.job.resolvedContext;
+  if (!context) return false;
+  const request = evidenceMoveRequest(context.incomingText);
+  if (!request) return false;
+  if (evidenceCardOf(bundle)) return true;
+  const intent = (context.meta as { intent?: { intent?: string } })?.intent?.intent;
+  const promo = readPromo(context.incomingText.replace(ADDRESS_SHAPES, ''));
+  let text = request.refusal ?? '';
+  let move: MoveReport | undefined;
+  let cardJobId: string | null = null;
+  if (intent === 'DEFLECT' || promo.level !== 'none' || /\b(?:buy now|join (?:our |the )?presale)\b/i.test(context.incomingText)) {
+    text = 'I do not evaluate token pitches.';
+  } else if (!text && 'address' in request) {
+    const { chain, window } = request;
+    const address = request.address.startsWith('0x') ? request.address.toLowerCase() : request.address;
+    if (!(await permitted(bundle.agent.id, MOVE_PAIRS))) {
+      text = 'Market readings are unavailable under the current capability permissions.';
+    } else if (bundle.policy.budget.maxResearchCallsPerEvent < MOVE_READS) {
+      text = bundle.policy.budget.maxResearchCallsPerEvent === 0
+        ? 'Market readings are unavailable because research is disabled.' : 'A movement read needs two reads and the research budget allows one.';
+    } else {
+      const requester = `${bundle.job.channel}:${bundle.event.remoteAuthorId ?? bundle.event.remoteAuthorHandle ?? 'unknown'}`;
+      const reserved = await withTransaction(async tx => {
+        await tx.one('SELECT id FROM agents WHERE id=$1 FOR UPDATE', [bundle.agent.id]);
+        const prior = await tx.one('SELECT card_job_id FROM evidence_move_requests WHERE job_id=$1', [bundle.job.id]);
+        if (prior) return { kind: 'ok' as const, card: prior.card_job_id as string | null };
+        if (await mintReadsThisHour(tx, bundle.agent.id, requester, bundle.job.dryRun) + MOVE_READS > HOURLY_CAP) return { kind: 'capped' as const };
+        const mint = await tx.one(`SELECT coalesce(sum(reads), 0)::int AS n FROM evidence_move_requests
+          WHERE agent_id=$1 AND chain=$2 AND address=$3 AND dry_run=$4 AND created_at>now()-interval '1 hour'`,
+        [bundle.agent.id, chain, address, bundle.job.dryRun]);
+        const previous = await tx.one(`SELECT job_id FROM (
+            SELECT job_id, created_at FROM evidence_card_requests WHERE agent_id=$1 AND chain=$2 AND address=$3 AND dry_run=$4 AND card_job_id=job_id
+            UNION ALL
+            SELECT job_id, created_at FROM evidence_move_requests WHERE agent_id=$1 AND chain=$2 AND address=$3 AND dry_run=$4 AND card_job_id=job_id) answered
+          WHERE created_at>now()-($5::int * interval '1 millisecond') ORDER BY created_at DESC LIMIT 1`,
+        [bundle.agent.id, chain, address, bundle.job.dryRun, COOLDOWN_MS]);
+        // A reuse spends nothing, so only a fresh read is held to the per-mint cap.
+        if (!previous && Number(mint?.n) + MOVE_READS > MINT_MOVE_READ_CAP) return { kind: 'mint_capped' as const };
+        const card = (previous?.job_id as string | undefined) ?? bundle.job.id;
+        await tx.query(`INSERT INTO evidence_move_requests(job_id,agent_id,requester,chain,address,"window",reads,dry_run,card_job_id)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [bundle.job.id, bundle.agent.id, requester, chain, address, window,
+          previous ? 0 : MOVE_READS, bundle.job.dryRun, card]);
+        return { kind: 'ok' as const, card };
+      });
+      if (reserved.kind === 'capped') text = 'The hourly token evidence limit for this asker has been reached.';
+      else if (reserved.kind === 'mint_capped') text = 'This token has been read as often as allowed this hour. No new read was made.';
+      else {
+        cardJobId = reserved.card;
+        if (cardJobId !== bundle.job.id) {
+          const [published] = await query(`SELECT remote_action_url FROM actions WHERE job_id=$1 AND status='EXECUTED' AND NOT dry_run ORDER BY executed_at LIMIT 1`, [cardJobId]);
+          const url = published?.remote_action_url;
+          text = `Recent evidence: ${typeof url === 'string' && /^(https?:|mock:)/.test(url) ? url : `card ${cardJobId?.slice(0, 8)} is pending`}. Reads can be wrong; no new read was made.`;
+        } else {
+          const read = await readMintWindow({ chain, address, window, tradesAllowed: await permitted(bundle.agent.id, MOVE_TRADES) });
+          await query('UPDATE evidence_move_requests SET reads=$2 WHERE job_id=$1', [bundle.job.id, read.reads]);
+          if (read.report) { move = read.report; text = renderEvidenceMove(read.report); }
+          else text = read.failure ?? 'Market evidence unavailable; evidence not found. This is not a verdict, reads can be wrong.';
+        }
+      }
+    }
+  }
+  const evidenceCard: EvidenceCard = { text, readings: [], cardJobId, link: null, move };
+  const research = { findings: [{ kind: 'token', query: 'address' in request ? request.address : 'ambiguous token', source: MOVE_PAIRS,
+    title: 'Token movement readings', summary: text, url: null, retrievedAt: new Date().toISOString() }], failed: [], note: 'Deterministic token movement reply.' };
+  const resolvedContext = { ...context, meta: { ...context.meta, evidenceCard, research } };
+  await jobs.updateJob(bundle.job.id, { resolvedContext });
+  bundle.job.resolvedContext = resolvedContext;
+  await observability.emitTrace({ jobId: bundle.job.id, agentId: bundle.agent.id, type: 'RESEARCH_DONE',
+    message: research.note, data: { capability: MOVE_PAIRS, move: true, cardJobId, window: 'address' in request ? request.window : null } });
+  return true;
+}
+
+/**
+ * The send check for a movement reply. Current owner switches and permissions
+ * apply, and the text must still be exactly what its stored readings render.
+ * An old queued reply is not refreshed here: asking again is a fresh ask and
+ * spends its reads under the caps again.
+ */
+async function checkMoveAtSend(bundle: JobBundle, card: EvidenceCard & { move: MoveReport }, output: string): Promise<void> {
+  const current = await agents.getActivePolicy(bundle.agent.id);
+  if (!PolicyConfig.parse(current?.config ?? {}).tools.evidenceCards || !(await permitted(bundle.agent.id, MOVE_PAIRS))) {
+    throw PipelineError.permanent('evidence_card_disabled', 'Token evidence replies or their capability were switched off.');
+  }
+  if (output !== card.text || renderEvidenceMove(card.move) !== card.text || !moveCurrent(card.move)) {
+    throw PipelineError.review('evidence_card_changed', 'The complete sourced movement readings changed or expired. Ask again for fresh readings.');
+  }
 }
 
 const COMPARE_COOLING = 'One of these tokens was read a moment ago. Ask again in a minute; no new read was made.';
@@ -503,6 +619,7 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
   if (!card) return;
   // A follow-up is held to its own facts first; the capability and opt-in checks below still apply.
   await checkEvidenceFollowUpAtSend(bundle, output);
+  if (card.move) return checkMoveAtSend(bundle, { ...card, move: card.move }, output);
   if (card.compare || card.linkLines) return checkCompareAtSend(bundle, card, output);
   const current = await agents.getActivePolicy(bundle.agent.id);
   if (!PolicyConfig.parse(current?.config ?? {}).tools.evidenceCards || !(await permitted(bundle.agent.id))) {
