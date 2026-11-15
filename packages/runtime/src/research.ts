@@ -1,5 +1,7 @@
 import { createLogger, errorMessage, refersToSomethingElse } from '@xbam/shared';
-import { ask, type MarketPairs, type MarketQuery } from '@xbam/upstream';
+import { ask, isAddress as isSolanaAddress, type MarketPairs, type MarketQuery } from '@xbam/upstream';
+import { VESTING_SOURCE, readTokenVesting, summarizeVesting, vestingStatement } from './vestingReader';
+import { shortAddress } from '@xbam/prompts';
 import { describeToken, mergeReferences, parseTokenReference, resolveToken } from './token';
 
 const log = createLogger('research');
@@ -80,7 +82,7 @@ export function evidenceCompareRequest(text: string): { a: string; b: string; ch
  * an agent that will state a wrong one just as confidently.
  */
 
-export type LookupKind = 'search' | 'token' | 'link';
+export type LookupKind = 'search' | 'token' | 'link' | 'vesting';
 
 export interface Lookup {
   kind: LookupKind;
@@ -118,6 +120,12 @@ const EVM_ADDRESS = /\b0x[a-fA-F0-9]{40}\b/g;
  */
 const SOLANA_ADDRESS = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
 const TICKER = /\$([A-Za-z][A-Za-z0-9]{1,9})\b/g;
+/**
+ * Asking when tokens release or how much is in a vesting schedule. Only the
+ * words that mean a schedule: "lock" alone is the liquidity question and "vest"
+ * alone is a garment, so neither is enough.
+ */
+const ASKS_ABOUT_VESTING = /\b(?:unlock(?:s|ed|ing)?|vesting|vested|cliff|streamflow|lockups?|locked supply|release schedule)\b/i;
 
 /**
  * Phrases that mean "I am asking about something you cannot know".
@@ -509,6 +517,21 @@ export function whatToResearch(subject: ResearchSubject, max = 3): Lookup[] {
     seen.add(key);
     lookups.push(lookup);
   };
+
+  // A schedule question is answered from the chain, so it goes before the
+  // market lookups. Each question is judged on its own, and one addressed to
+  // the agent about itself ("when do you unlock?") is never read as a question
+  // about a token. A question that carries a mint of its own is about that mint
+  // whoever it is addressed to, so the address is what lets it through.
+  for (const question of questionsIn(subject.incoming)) {
+    if (!ASKS_ABOUT_VESTING.test(question)) continue;
+    const named = [...question.matchAll(SOLANA_ADDRESS)].map((m) => m[0]).find((a) => isSolanaAddress(a));
+    if (!named && asksAboutTheAgent(question)) continue;
+    const mint = named ?? [...haystack.matchAll(SOLANA_ADDRESS)].map((m) => m[0]).find((a) => isSolanaAddress(a));
+    if (!mint) continue;
+    add({ kind: 'vesting', query: mint, reason: 'They asked when tokens unlock or how much is in vesting.' });
+    break;
+  }
 
   // A contract address is unambiguous and cheap to resolve, so it goes first
   // whatever else the message says.
@@ -933,15 +956,33 @@ export async function research(lookups: Lookup[], options: ResearchOptions = {})
       continue;
     }
 
-    const allowed = lookup.kind === 'token' ? marketAllowed : webAllowed;
+    const onChain = lookup.kind === 'token' || lookup.kind === 'vesting';
+    const allowed = onChain ? marketAllowed : webAllowed;
     if (!allowed) {
       failed.push({
         query: lookup.query,
-        reason:
-          lookup.kind === 'token'
-            ? 'This agent is not set up to look up market data.'
-            : 'This agent is not set up to search the web.',
+        reason: onChain
+          ? 'This agent is not set up to look up market data.'
+          : 'This agent is not set up to search the web.',
       });
+      continue;
+    }
+
+    if (lookup.kind === 'vesting') {
+      // Account reads through the allowlisted Solana family. A failed read is a
+      // gap in words, and a mint with no stream seen is an answer in words, never a zero.
+      try {
+        const budget = Math.min(30_000, Math.max(1_000, remaining()));
+        const read = await withDeadline(readTokenVesting(lookup.query, { deadlineMs: Math.max(1_000, budget - 8_000) }), budget + 8_000);
+        findings.push({
+          kind: 'vesting', query: lookup.query, source: VESTING_SOURCE,
+          title: `Streamflow vesting streams for ${shortAddress(lookup.query)}`,
+          summary: vestingStatement(summarizeVesting(read)),
+          url: null, retrievedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        failed.push({ query: lookup.query, reason: `The vesting streams could not be read: ${errorMessage(error)}` });
+      }
       continue;
     }
 

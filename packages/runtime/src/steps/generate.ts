@@ -158,8 +158,9 @@ export async function stepGenerate(bundle: JobBundle): Promise<void> {
   const evidence = classifyEvidence({
     hasConversationContext: Boolean(context?.parentText?.trim()) || (context?.thread.length ?? 0) > 0,
     projectPassages: memories.filter((m) => m.scope === 'KNOWLEDGE').length,
-    webFindings: findings.filter((f) => f.kind !== 'token').length,
-    marketFindings: findings.filter((f) => f.kind === 'token').length,
+    // A schedule read from the chain is not a web page, so it is counted with the market lookups.
+    webFindings: findings.filter((f) => f.kind !== 'token' && f.kind !== 'vesting').length,
+    marketFindings: findings.filter((f) => f.kind === 'token' || f.kind === 'vesting').length,
     memories: memories.filter((m) => m.scope !== 'KNOWLEDGE').length,
     failedLookups: research?.failed?.length ?? 0,
     // The loop runs after this prompt is assembled, so a failed web lookup is

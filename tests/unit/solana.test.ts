@@ -26,6 +26,8 @@ interface Reply {
 /** Replies per JSON-RPC method, so a case says only what it cares about. */
 let replies: Record<string, Reply | Reply[]> = {};
 let calls: { method: string; params: unknown[] }[] = [];
+/** When set, answers every method but the cluster check from a fake cluster, for cases that need to see params. */
+const hook: { dynamic: ((method: string, params: unknown[]) => Promise<{ result: unknown }>) | null } = { dynamic: null };
 
 vi.mock('undici', () => ({
   Agent: class {
@@ -34,6 +36,14 @@ vi.mock('undici', () => ({
   async fetch(_input: unknown, init: { body?: string }) {
     const request = JSON.parse(init.body ?? '{}') as { method: string; params?: unknown[] };
     calls.push({ method: request.method, params: request.params ?? [] });
+
+    if (hook.dynamic && request.method !== 'getGenesisHash') {
+      const answered = await hook.dynamic(request.method, request.params ?? []);
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: answered.result }), {
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+      });
+    }
 
     const entry = replies[request.method];
     const reply = Array.isArray(entry) ? (entry.length > 1 ? entry.shift()! : entry[0]!) : entry;
@@ -61,8 +71,9 @@ const {
   resetLimiterForTest,
   resetUpstreamsForTest,
 } = await import('@xbam/upstream');
-const { registerSolanaCapabilities } = await import('@xbam/runtime');
+const { registerSolanaCapabilities, resetVestingCacheForTest, UTILITY_BRIDGE } = await import('@xbam/runtime');
 const { getCapability, resetCapabilitiesForTest } = await import('@xbam/tools');
+const { fakeCluster, scenarios } = await import('../support/vestingFixtures');
 
 /** A real mainnet mint, used only as a well-formed address. */
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -98,6 +109,8 @@ beforeEach(() => {
   registerSolanaUpstreams();
   registerSolanaCapabilities();
   calls = [];
+  hook.dynamic = null;
+  resetVestingCacheForTest();
   // Every case starts on the right cluster; the ones about identity say so.
   replies = { getGenesisHash: ok(SOLANA_MAINNET_GENESIS) };
 });
@@ -366,6 +379,53 @@ describe('who holds a token', () => {
     replies.getTokenSupply = ok({ context: { slot: 1 }, value: { amount: '10', decimals: 0 } });
     replies.getTokenLargestAccounts = ok({ context: { slot: 1 }, value: null });
     await expect(run('solana.read_token_holders', { mint: USDC })).rejects.toThrow(/not a list/);
+  });
+});
+
+describe('vesting streams', () => {
+  it('is an exported, allowlisted read capability', () => {
+    const capability = getCapability('solana.read_vesting_streams');
+    expect(capability).not.toBeNull();
+    expect(capability!.effect).toBe('READ');
+    expect(capability!.modelCallable).toBe(true);
+    expect(UTILITY_BRIDGE).toContain('solana.read_vesting_streams');
+    // The one it sits beside is still there.
+    expect(UTILITY_BRIDGE).toContain('solana.read_token_holders');
+  });
+
+  it('reads the streams through the allowlisted cluster methods, and nothing that scans a program', async () => {
+    const snapshot = scenarios().streamflowMixed;
+    const cluster = fakeCluster(snapshot);
+    hook.dynamic = (method, params) => cluster.rpc(method as never, params);
+    const capability = getCapability('solana.read_vesting_streams')!;
+    const raw = await run<{ status: string; unfinished?: number }>('solana.read_vesting_streams', { mint: snapshot.mint });
+    const answer = capability.output.parse(raw) as {
+      status: string;
+      totalLockedAmount: string | null;
+      supplyPctLocked: number | null;
+      nextUnlockAt: string | null;
+      streams: { state: string; streamAccount: string }[];
+      statement: string;
+    };
+    expect(answer.status).toBe('FOUND');
+    expect(answer.supplyPctLocked).toBe(25);
+    expect(answer.totalLockedAmount).toBe('250000000000000');
+    expect(answer.streams.filter((s) => s.state === 'LOCKED')).toHaveLength(2);
+    expect(answer.statement).toContain('Scope: only Streamflow is read; other lockers are not');
+    const methods = new Set(calls.map((c) => c.method).filter((m) => m !== 'getGenesisHash'));
+    expect(methods.has('getProgramAccounts')).toBe(false);
+    expect([...methods].sort()).toEqual(['getMultipleAccounts', 'getSignaturesForAddress', 'getTokenLargestAccounts', 'getTokenSupply', 'getTransaction']);
+  });
+
+  it('refuses a mint that is not an address', () => {
+    const capability = getCapability('solana.read_vesting_streams')!;
+    expect(() => capability.input.parse({ mint: 'not a mint' })).toThrow();
+  });
+
+  it('refuses an answer that is not a list rather than reporting nothing is held', async () => {
+    replies.getTokenSupply = ok({ context: { slot: 1 }, value: { amount: '10', decimals: 0 } });
+    replies.getTokenLargestAccounts = ok({ context: { slot: 1 }, value: null });
+    await expect(run('solana.read_vesting_streams', { mint: USDC })).rejects.toThrow(/not a list/);
   });
 });
 

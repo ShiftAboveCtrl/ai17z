@@ -54,3 +54,4 @@ export * from './studioCheckBoard';
 export * from './studioRisk';
 export * from './studioCoinAlerts';
 export * from './evidenceFollowUp';
+export * from './tokenUnlocks';

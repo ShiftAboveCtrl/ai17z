@@ -14,6 +14,7 @@ import {
   type SolanaQuery,
   type SolanaResult,
 } from '@xbam/upstream';
+import { readTokenVesting, studioTokenUnlocksPayload, summarizeVesting } from './vestingReader';
 
 /**
  * What an agent may ask about Solana.
@@ -700,6 +701,102 @@ const program = defineCapability({
   },
 });
 
+/**
+ * Streamflow vesting streams among a token's largest accounts.
+ *
+ * Reads schedule facts an account states: when its own stream ends, what it
+ * still holds, and what its own schedule releases in the next seven days. It
+ * says nothing about what a release does to anything. Only Streamflow is
+ * decoded and only the twenty largest token accounts are looked at, so a
+ * result names that scope and "none seen" is never "none exist".
+ */
+const vestingStreams = defineCapability({
+  id: 'solana.read_vesting_streams',
+  name: 'Read Streamflow vesting streams for a token',
+  description:
+    'Which of a token\'s twenty largest accounts are Streamflow vesting streams, how many tokens they still hold, ' +
+    'what share of supply that is, the next scheduled release date and amount, and what releases in the next seven ' +
+    'days. Answers "when is the next unlock", "how much is in vesting" and "when does the cliff end". Only Streamflow ' +
+    'is read; a lock contract it cannot decode is reported as unrecognized, never counted. Takes the exact mint address.',
+  category: 'READ',
+  effect: 'READ',
+  risk: 'LOW',
+  input: z.object({ mint: Address, commitment: Commitment_ }),
+  output: z.object({
+    mint: z.string(),
+    status: z.enum(['FOUND', 'NONE_SEEN']),
+    decimals: z.number().nullable(),
+    supply: z.string().nullable(),
+    /** Held by streams whose end time is still ahead, in base units. Null when none was seen. */
+    totalLockedAmount: z.string().nullable(),
+    supplyPctLocked: z.number().nullable(),
+    nextUnlockAt: z.string().nullable(),
+    nextUnlockAmount: z.string().nullable(),
+    unlockingNext7DaysAmount: z.string().nullable(),
+    releasingNow: z.boolean(),
+    lastUnlockAt: z.string().nullable(),
+    noScheduledRelease: z.boolean(),
+    streams: z.array(z.object({
+      state: z.enum(['LOCKED', 'ENDED', 'CANCELED']),
+      streamAccount: z.string(),
+      startAt: z.string().nullable(),
+      endAt: z.string(),
+      cliffAt: z.string().nullable(),
+      heldAmount: z.string(),
+      sharePct: z.number().nullable(),
+      scheduleReadable: z.boolean(),
+      nextReleaseAt: z.string().nullable(),
+      nextReleaseAmount: z.string().nullable(),
+    })),
+    endedStreams: z.number(),
+    unrecognizedLockAccounts: z.number(),
+    notRead: z.number(),
+    accountsRead: z.number(),
+    /** The reply-ready lines, in the fixed template. */
+    statement: z.string(),
+    observations: z.array(z.string()),
+    commitment: z.string(),
+    slot: z.number().nullable(),
+    provenance: ProvenanceOut,
+  }),
+  modelCallable: true,
+  timeoutMs: 55_000,
+  readiness: () => solanaReadable(),
+  async run(input) {
+    const read = await readTokenVesting(input.mint, { commitment: input.commitment, deadlineMs: 25_000 });
+    const summary = summarizeVesting(read);
+    const payload = studioTokenUnlocksPayload(summary);
+    const accountOf = new Map(summary.streams.map((s, i) => [i, s.account]));
+    return {
+      mint: input.mint,
+      status: payload.status === 'FOUND' ? 'FOUND' as const : 'NONE_SEEN' as const,
+      decimals: payload.decimals,
+      supply: payload.supply,
+      totalLockedAmount: payload.totalLockedAmount,
+      supplyPctLocked: payload.supplyPctLocked,
+      nextUnlockAt: payload.nextUnlockAt,
+      nextUnlockAmount: payload.nextUnlockAmount,
+      unlockingNext7DaysAmount: payload.unlockingNext7DaysAmount,
+      releasingNow: payload.releasingNow,
+      lastUnlockAt: payload.lastUnlockAt,
+      noScheduledRelease: payload.noScheduledRelease,
+      streams: payload.streams.map((s, i) => ({ ...s, streamAccount: accountOf.get(i) ?? '' })),
+      endedStreams: payload.endedStreams,
+      unrecognizedLockAccounts: payload.unrecognizedLockAccounts,
+      notRead: payload.notRead,
+      accountsRead: payload.accountsRead,
+      statement: payload.statement,
+      observations: [
+        'Only the twenty largest token accounts are looked at, and only Streamflow is decoded.',
+        'A date here is the end of an account\'s own schedule. It says nothing about what a release will do.',
+      ],
+      commitment: input.commitment,
+      slot: read.slot,
+      provenance: { source: read.source, host: 'solana', readAt: read.fetchedAt, fellBackFrom: [] as string[] },
+    };
+  },
+});
+
 const transaction = defineCapability({
   id: 'solana.read_transaction',
   name: 'Read a Solana transaction',
@@ -856,6 +953,7 @@ export function registerSolanaCapabilities(): void {
   registerCapability(holdings);
   registerCapability(holders);
   registerCapability(program);
+  registerCapability(vestingStreams);
   registerCapability(transaction);
   registerCapability(signatures);
 }

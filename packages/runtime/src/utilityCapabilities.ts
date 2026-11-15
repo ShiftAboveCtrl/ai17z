@@ -149,6 +149,7 @@ export const UTILITY_BRIDGE: readonly string[] = [
   'solana.read_token_holdings',
   'solana.read_token_holders',
   'solana.read_transaction',
+  'solana.read_vesting_streams',
   'bitcoin.health',
   'bitcoin.read_address',
   'bitcoin.read_fees',

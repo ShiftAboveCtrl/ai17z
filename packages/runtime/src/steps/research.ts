@@ -97,11 +97,13 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
   // worth looking up put the most important first, so trimming the tail keeps
   // the best of a plan that was too ambitious rather than discarding it.
   const researchCap = bundle.policy.budget.maxResearchCallsPerEvent;
-  const capped = capResearch(plan.lookups, researchCap);
-  if (plan.lookups.length > capped.length) {
+  // A schedule question is read from the chain by the rules, and a model's plan never replaces that floor.
+  const vestingFloor = byRules.filter((l) => l.kind === 'vesting' && !plan.lookups.some((p) => p.kind === 'vesting'));
+  const capped = capResearch([...vestingFloor, ...plan.lookups], researchCap);
+  if (plan.lookups.length + vestingFloor.length > capped.length) {
     log.info('trimmed the research plan to the configured limit', {
       jobId: job.id,
-      planned: plan.lookups.length,
+      planned: plan.lookups.length + vestingFloor.length,
       allowed: researchCap,
     });
   }

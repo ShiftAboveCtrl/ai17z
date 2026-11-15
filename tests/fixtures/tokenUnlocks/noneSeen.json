@@ -1,0 +1,65 @@
+{
+  "snapshot": {
+    "description": "Only wallet and pool accounts among the largest. No stream seen.",
+    "nowMs": 1794744000000,
+    "mint": "5Aak9cBPS8tsucV7x4MFfs5e5qzqPWwadw7bc4NBaaNf",
+    "supply": "1000000000000000",
+    "decimals": 6,
+    "largest": [
+      {
+        "address": "5NADjdoEuwEYBTvRGk2uwN22fVcd8VQFowH5YFoc7iMb",
+        "amount": "120000000000000"
+      },
+      {
+        "address": "DKXxi5kuuRecg1zVoWoUsdrN8A2PwahURfyu2Wx4cRSV",
+        "amount": "60000000000000"
+      },
+      {
+        "address": "EnVsRUpRduoDs7LcodToRMSctVz5Y4LNygGwxCrsFqV5",
+        "amount": "40000000000000"
+      }
+    ],
+    "accounts": {
+      "5NADjdoEuwEYBTvRGk2uwN22fVcd8VQFowH5YFoc7iMb": {
+        "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "dataBase64": "PeMhHv1qnps+K81qNEi+3R+vw9u+/tzrKBx+oZH9ZrSRmTR1wFhHzzFDkWMCaD1sh3E7DrQkpe5VGeZjIPNt7gCAX60jbQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "DKXxi5kuuRecg1zVoWoUsdrN8A2PwahURfyu2Wx4cRSV": {
+        "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "dataBase64": "PeMhHv1qnps+K81qNEi+3R+vw9u+/tzrKBx+oZH9ZrRA18UYdDppdbbjCbf/baXTLRK4pHP5irTPDSXJVf3agADAr9aRNgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "EnVsRUpRduoDs7LcodToRMSctVz5Y4LNygGwxCrsFqV5": {
+        "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "dataBase64": "PeMhHv1qnps+K81qNEi+3R+vw9u+/tzrKBx+oZH9ZrQtPoKCkZPlfeuPkM3AR8v+9njpIiAlKf2vvdy+/B0MfgCAyjlhJAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    },
+    "signatures": {},
+    "transactions": {}
+  },
+  "expected": {
+    "protocol": 1,
+    "chain": "solana",
+    "address": "5Aak9cBPS8tsucV7x4MFfs5e5qzqPWwadw7bc4NBaaNf",
+    "status": "NONE_SEEN",
+    "decimals": 6,
+    "supply": "1000000000000000",
+    "totalLockedAmount": null,
+    "supplyPctLocked": null,
+    "nextUnlockAt": null,
+    "nextUnlockAmount": null,
+    "unlockingNext7DaysAmount": null,
+    "releasingNow": false,
+    "lastUnlockAt": null,
+    "noScheduledRelease": true,
+    "endedStreams": 0,
+    "unrecognizedLockAccounts": 0,
+    "notRead": 0,
+    "accountsRead": 3,
+    "streams": [],
+    "otherLockersRead": false,
+    "source": "streamflow",
+    "slot": 123456,
+    "readAt": "2026-11-15T12:00:00.000Z",
+    "statement": "Vesting: no scheduled release date on record [scope: 3 largest token accounts; source: solana.read_vesting_streams; slot: 123456]\nNo Streamflow stream seen among the 3 largest token accounts\nScope: only Streamflow is read; other lockers are not"
+  }
+}
