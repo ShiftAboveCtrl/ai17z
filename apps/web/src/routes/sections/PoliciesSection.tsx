@@ -479,6 +479,12 @@ export function PoliciesSection({
             checked={draft.studio.postPaperPnl}
             onChange={(v) => patch((n) => void (n.studio.postPaperPnl = v))}
           />
+          <Toggle
+            label="End that post with the link to my public Studio page"
+            description="Needs a published Studio home that includes the paper record. The link is added by AI17Z from the linked Studio, never written by the model, and the post still says it is simulated paper trading with the dates. Without a published page the post goes out without a link."
+            checked={draft.studio.linkPaperRecord}
+            onChange={(v) => patch((n) => void (n.studio.linkPaperRecord = v))}
+          />
           <Field label="Window it posts about" hint="Only a finished window is ever posted.">
             <select
               className="field"

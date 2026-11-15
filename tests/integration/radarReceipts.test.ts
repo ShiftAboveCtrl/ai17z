@@ -95,7 +95,9 @@ describe('durable radar receipts', () => {
     const [receipt] = await query("SELECT evidence, now_read FROM signal_receipts WHERE status='offered'");
     bundle.job.validatedOutput = receiptEvidence(receipt!.evidence as Parameters<typeof receiptEvidence>[0], receipt!.now_read as Parameters<typeof receiptEvidence>[1]).compact;
     const config = await cadences.activeCadence(f.accountId);
-    if (limit === 'quiet hours') config.quietHours = { enabled: true, timezone: 'UTC', startHour: 0, endHour: 0 };
+    // The awake window is the single UTC hour twelve hours from now, so the
+    // account is asleep whenever this runs. A fixed hour 0 was awake at 00:xx UTC.
+    if (limit === 'quiet hours') { const awake = (new Date().getUTCHours() + 12) % 24; config.quietHours = { enabled: true, timezone: 'UTC', startHour: awake, endHour: awake }; }
     else if (limit === 'cooldown') config.acting.minSecondsBetweenActions = 3 * 3600;
     else config.acting.maxActionsPerDay = 1;
     await cadences.saveVersion(f.accountId, config, 'fixture', f.ownerId);

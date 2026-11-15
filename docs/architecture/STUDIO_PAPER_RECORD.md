@@ -145,6 +145,21 @@ needs all of: `policy.studio.postPaperRecord`, the capability not DISABLED for t
 agent, a linked Studio that answers now, a **complete** window with trades, and a
 window end nobody has proposed yet. It checks Studio at most every six hours.
 
+### Closing the post with the public page link
+
+`policy.studio.linkPaperRecord` (off, Advanced only) is a separate opt-in. When
+on, `studioRecordLink.ts` closes the post at send time with
+`Paper record: <linked Studio origin>/a/<slug>`, after the voice rewrite so the
+last writer is the last checker. The link is the owner's published public home
+and is built only when that publication is confirmed, current, carries a paper
+snapshot, and its origin is the linked, non-development Studio. Otherwise, or
+when links are forbidden, the window dates are missing from the text, or the
+link does not fit the character limit, the post goes out unchanged. A link the
+model wrote, or any other link in a paper record post, is held for the owner
+(`paper_record_link`), whether or not the opt-in is on. The page shows the
+figures the owner published; this setting does not widen what the post itself
+may say about profit or loss.
+
 What it does is put an idea in `content_ideas` with source `studio_paper_record`.
 It publishes nothing. The post is then an ordinary post:
 

@@ -4,7 +4,7 @@
   "mode": "SHARE",
   "exportedAt": "2026-11-11T00:00:00.000Z",
   "exportedByVersion": "1.0.0-beta.93",
-  "checksum": "38261945489afbfc25342df5d4dc3cdbd0db5837a18e9efbbc30d41b020c7c74",
+  "checksum": "4718b80e7c06d814377a93ce7e3d5278079f29ffd7032b01afe006f7cf773e50",
   "agent": {
     "format": "ai17z-agent",
     "version": 3,
@@ -252,6 +252,7 @@
         "postPaperRecord": false,
         "postPaperPnl": false,
         "paperRecordWindow": "7d",
+        "linkPaperRecord": false,
         "postTraderDna": false,
         "traderDnaStudyId": null
       }
