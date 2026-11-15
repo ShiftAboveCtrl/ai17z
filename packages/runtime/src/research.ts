@@ -30,6 +30,36 @@ export function evidenceCardRequest(text: string): { address?: string; chain?: s
   return { address: reference.address, chain };
 }
 
+const COMPARE_CHAINS = ['solana', 'ethereum', 'bnb', 'base', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'robinhood'];
+const COMPARE_SOLANA = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const COMPARE_EVM = /^0x[a-fA-F0-9]{40}$/;
+const COMPARE_REFUSAL = 'Please compare exactly two token addresses on the same chain, naming the chain for an EVM pair.';
+
+/**
+ * Exactly two distinct addresses in one message ask for a side by side.
+ *
+ * Null for anything else, so one address, three, or none keep the single card
+ * rules untouched. Two that cannot be compared (different chains, an unnamed
+ * EVM chain, an unsupported chain) get a sentence, never a guess. The mints
+ * come back in the order the asker wrote them: that order is the only
+ * ordering a comparison ever has.
+ */
+export function evidenceCompareRequest(text: string): { a: string; b: string; chain: string; refusal?: undefined } | { refusal: string } | null {
+  const found = [...text.replace(/https?:\/\/\S+/g, ' ').matchAll(/\b(?:0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{32,44})\b/g)].map(m => m[0]);
+  const ordered: string[] = [];
+  for (const address of found.map(a => a.startsWith('0x') ? a.toLowerCase() : a)) if (!ordered.includes(address)) ordered.push(address);
+  if (ordered.length !== 2) return null;
+  const [a, b] = ordered as [string, string];
+  const kinds = [a, b].map(x => COMPARE_EVM.test(x) ? 'evm' : COMPARE_SOLANA.test(x) ? 'solana' : null);
+  if (!kinds[0] || kinds[0] !== kinds[1]) return { refusal: COMPARE_REFUSAL };
+  const reference = parseTokenReference(text);
+  if (reference.pairAddress) return { refusal: COMPARE_REFUSAL };
+  const named = reference.chain === 'bsc' ? 'bnb' : reference.chain;
+  const chain = kinds[0] === 'solana' ? 'solana' : named;
+  if (!chain || (kinds[0] === 'solana' && named && named !== 'solana') || !COMPARE_CHAINS.includes(chain)) return { refusal: COMPARE_REFUSAL };
+  return { a, b, chain };
+}
+
 /**
  * Looking things up, so an agent asked about this morning is not limited to
  * whatever its model was trained on.

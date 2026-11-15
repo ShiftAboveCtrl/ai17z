@@ -225,7 +225,7 @@ export function validateOutput(
    * passed is the link the agent proved with its own read, not a string the
    * model happened to produce.
    */
-  provenLink?: string | null,
+  provenLink?: string | readonly string[] | null,
 ): ValidationResult {
   const violations: Violation[] = [];
   let output = raw.replace(/\r\n/g, '\n').trim();
@@ -355,9 +355,10 @@ export function validateOutput(
   // is the one link this agent proved by reading the mint itself. Only that
   // exact line is exempt. The same mint anywhere else, or any other address, is
   // still held, so a link the model wrote is caught exactly as before.
-  const provenLine = provenLink ? `${CHECK_LINK_PREFIX}${provenLink}` : null;
-  const addressScan = provenLine
-    ? output.split('\n').filter((line) => line !== provenLine).join('\n')
+  // A comparison carries one proven line per side, already complete.
+  const provenLines = new Set(typeof provenLink === 'string' ? [`${CHECK_LINK_PREFIX}${provenLink}`] : provenLink ?? []);
+  const addressScan = provenLines.size
+    ? output.split('\n').filter((line) => !provenLines.has(line)).join('\n')
     : output;
 
   for (const found of addressesIn(addressScan)) {

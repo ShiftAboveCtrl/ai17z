@@ -47,6 +47,20 @@ it('persists evidence-card reservations with job foreign keys and nullable owner
     VALUES('00000000-0000-4000-8000-000000000001',$1,'mock:reader','solana','example',true)`, [f.agentId])).rejects.toThrow(/foreign key/);
 });
 
+it('persists two reads of one comparison, one per side, and refuses a third side or an orphan', async () => {
+  const f = await createFixture();
+  const admitted = await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('compare two tokens') });
+  const jobId = admitted.jobs[0]!.job.id;
+  const insert = (side: number, address: string, job = jobId) => query(`INSERT INTO evidence_compare_requests(job_id,side,agent_id,requester,chain,address,dry_run)
+    VALUES($1,$2,$3,'mock:reader','solana',$4,true)`, [job, side, f.agentId, address]);
+  await insert(0, 'So11111111111111111111111111111111111111112');
+  await insert(1, 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+  expect(await query('SELECT side FROM evidence_compare_requests WHERE job_id=$1 ORDER BY side', [jobId])).toEqual([{ side: 0 }, { side: 1 }]);
+  await expect(insert(1, 'again')).rejects.toThrow(/duplicate key/);
+  await expect(insert(2, 'third')).rejects.toThrow(/check constraint/);
+  await expect(insert(0, 'orphan', '00000000-0000-4000-8000-000000000001')).rejects.toThrow(/foreign key/);
+});
+
 describe('every channel the contract names is accepted by the database', () => {
   it('creates each channel and refuses an unknown channel', async () => {
     const fixture = await createFixture();
