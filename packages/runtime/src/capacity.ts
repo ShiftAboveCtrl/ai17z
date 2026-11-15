@@ -1,4 +1,4 @@
-import type { CapacityClass, RadarSourceKind } from '@xbam/shared/contracts';
+import { capacityFamilyOf, capacityThresholdsFor, type CapacityClass, type RadarSourceKind } from '@xbam/shared/contracts';
 import { createLogger, errorMessage } from '@xbam/shared';
 import {
   accounts as accountsRepo,
@@ -119,7 +119,7 @@ async function loadState(accountId: string): Promise<{
 export async function settleAccountCapacity(accountId: string, now = new Date()): Promise<CapacityState | null> {
   const loaded = await loadState(accountId);
   if (!loaded) return null;
-  const config = (await cadencesRepo.activeCadence(accountId)).capacity;
+  const config = capacityThresholdsFor((await cadencesRepo.activeCadence(accountId)).capacity, loaded.channel);
   const hourAgo = new Date(now.getTime() - 60 * 60_000);
   const since = loaded.changedAt && loaded.changedAt > hourAgo ? loaded.changedAt : hourAgo;
   const usage = await capacityRepo.usage(accountId, since);
@@ -164,7 +164,7 @@ export async function settleAccountCapacity(accountId: string, now = new Date())
       strikes: next.strikes,
     });
     if (next.health !== loaded.state.health) {
-      log.info('x capacity moved', { accountId, from: loaded.state.health, to: next.health, reason: next.reason });
+      log.info('capacity moved', { family: capacityFamilyOf(loaded.channel), accountId, from: loaded.state.health, to: next.health, reason: next.reason });
     }
   }
   return next;
@@ -179,9 +179,9 @@ export async function checkReadCapacity(
 ): Promise<CapacityVerdict> {
   const state = await settleAccountCapacity(accountId, now);
   if (!state) return { allowed: true, message: 'No such account.', retryAfterMs: null };
-  const config = (await cadencesRepo.activeCadence(accountId)).capacity;
-  const usage = await capacityRepo.usage(accountId, now);
   const channel = (await loadState(accountId))?.channel ?? null;
+  const config = capacityThresholdsFor((await cadencesRepo.activeCadence(accountId)).capacity, channel);
+  const usage = await capacityRepo.usage(accountId, now);
   return readAllowance({
     channel,
     state,
@@ -211,7 +211,7 @@ export async function checkWriteCapacity(
  */
 export async function noteRead(accountId: string, klass: CapacityClass): Promise<void> {
   await capacityRepo.recordRead(accountId, klass).catch((error) => {
-    log.warn('could not count a read', { family: 'x', accountId, message: errorMessage(error) });
+    log.warn('could not count a read', { accountId, message: errorMessage(error) });
   });
 }
 
@@ -235,7 +235,7 @@ export async function notePushback(
     await capacityRepo.recordSignal(accountId, klass, signal, detail);
     await settleAccountCapacity(accountId);
   } catch (error) {
-    log.warn('could not record pushback', { family: 'x', accountId, signal, message: errorMessage(error) });
+    log.warn('could not record pushback', { accountId, signal, message: errorMessage(error) });
   }
 }
 
@@ -268,10 +268,11 @@ export async function describeCapacity(accountId: string, now = new Date()) {
   const account = await accountsRepo.getAccount(accountId);
   if (!loaded || !account) return null;
   const state = loaded.state;
-  const config = (await cadencesRepo.activeCadence(accountId)).capacity;
+  const config = capacityThresholdsFor((await cadencesRepo.activeCadence(accountId)).capacity, loaded.channel);
   const usage = await capacityRepo.usage(accountId, new Date(now.getTime() - 60 * 60_000));
   const signals = await capacityRepo.recentSignals(accountId, 5);
   return {
+    family: capacityFamilyOf(loaded.channel),
     health: state.health,
     reason: state.reason,
     until: state.until?.toISOString() ?? null,
