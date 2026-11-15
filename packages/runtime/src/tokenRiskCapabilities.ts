@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { defineCapability, registerCapability } from '@xbam/tools';
 import type { CardReading } from '@xbam/prompts';
 import { solanaTokenFrom } from './marketIntelCapabilities';
+import { readLpForCard } from './lpLock';
 import {
   EVM_CHAINS,
   ask,
@@ -132,6 +133,10 @@ const inspectRisk = defineCapability({
     cardReadings: z.array(z.object({ label: z.string(), value: z.union([z.number(), z.boolean()]).nullable(),
       unit: z.enum(['USD', '%', 'hours', 'authority']), source: z.string(), fetchedAt: z.string().nullable(),
       observedAt: z.string().nullable(), maxAgeMs: z.number() })),
+    lp: z.object({
+      burnedPct: z.number().nullable(), lockedPct: z.number().nullable(), unlockAt: z.string().nullable(),
+      source: z.string(), heldByContract: z.array(z.string()), unavailable: z.boolean(),
+    }).nullable(),
   }),
   modelCallable: true,
   timeoutMs: 40_000,
@@ -153,9 +158,12 @@ const inspectRisk = defineCapability({
         { label: 'Freeze authority', value: token?.freezeAuthorityDisabled ?? null, unit: 'authority' },
         { label: 'Pool age', value: Number.isFinite(poolTime) && poolTime <= Date.now() ? Math.floor((Date.now() - poolTime) / 3600_000) : null, unit: 'hours' },
       ].map(r => ({ ...r, source, fetchedAt, observedAt, maxAgeMs: 5 * 60_000 })) as CardReading[];
+      // Same card path as the other readings. A failed LP read is one unavailable line, not a failed card.
+      const lpRead = await readLpForCard({ chain: 'solana', address: input.address, poolAddress: null });
+      cardReadings.push(...lpRead.cardReadings);
       return { chain: 'solana', chainId: null, address: input.address, observations: [], notChecked: [],
-        limitations: ['Index readings can be wrong; holder accounts are not attributed ownership.'],
-        sourcesAnswering: token ? 1 : 0, cardReadings };
+        limitations: ['Index readings can be wrong; holder accounts are not attributed ownership. An LP balance at a contract is not a lock unless its unlock time was read.'],
+        sourcesAnswering: token ? 1 : 0, cardReadings, lp: lpRead.lp };
     }
     const chainId = EVM_CHAINS[input.chain];
     const query: TokenRiskQuery = { chainId, address: input.address };
@@ -225,6 +233,7 @@ const inspectRisk = defineCapability({
           : 'Two independent sources answered; where they overlap, both readings are shown.',
       ],
       sourcesAnswering: answering,
+      lp: null,
       cardReadings: [
         { label: 'Liquidity', value: null, unit: 'USD' },
         { label: 'Top holders', value: null, unit: '%' },
@@ -232,6 +241,8 @@ const inspectRisk = defineCapability({
         { label: 'Mint authority', value: null, unit: 'authority' },
         { label: 'Freeze authority', value: null, unit: 'authority' },
         { label: 'Pool age', value: null, unit: 'hours' },
+        // Uniswap LP holder balances are not on the allowed node methods, so the line stays unread.
+        { label: 'LP status', value: null, unit: '%' },
       ].map(r => ({ ...r, unit: r.unit as CardReading['unit'], source: security?.provenance.upstreamId ?? 'token_security.goplus',
         fetchedAt: security?.provenance.fetchedAt ?? null, observedAt: security?.provenance.fetchedAt ?? null, maxAgeMs: 60 * 60_000 })),
     };

@@ -72,12 +72,16 @@ export function renderEvidenceCompare(sides: readonly [CompareSide, CompareSide]
     ...links.flatMap((link, i) => link ? [`${COMPARE_LINK_PREFIXES[i]}${link}`] : [])].join('\n');
 }
 
-export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now(), link = ''): string {
+/**
+ * Extra lines the runtime proved itself, after the readings and before the disclaimer.
+ * Each must already be a finished line. Nothing here invents one from an address.
+ */
+export function renderEvidenceCard(readings: CardReading[], offer: string, now = Date.now(), link = '', proved: readonly string[] = []): string {
   let found = false;
   const lines = readings.map(r => {
     found ||= readingAvailable(r, now);
     return `${r.label}: ${readingText(r, now)} [${r.source}; fetched ${fetchedText(r)}]`;
   });
-  return ['Token evidence', ...lines, ...(!found ? ['evidence not found'] : []), 'not a verdict, reads can be wrong',
+  return ['Token evidence', ...lines, ...proved, ...(!found ? ['evidence not found'] : []), 'not a verdict, reads can be wrong',
     ...(offer ? [offer] : []), ...(link ? [`${CHECK_LINK_PREFIX}${link}`] : [])].join('\n');
 }

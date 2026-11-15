@@ -20,7 +20,7 @@ import {
   voice as voiceRepo,
 } from '@xbam/database';
 
-import { assemblePrompt } from '@xbam/prompts';
+import { assemblePrompt, CHECK_LINK_PREFIX } from '@xbam/prompts';
 import { habitualPhrases, lengthCeiling } from '@xbam/persona';
 import { runCapabilityLoop } from '../capabilityLoop';
 import { paperReplyForJob, paperReplyFromSteps } from '../paperCapabilities';
@@ -54,7 +54,7 @@ import { signalIdeaRefusal } from '../signalRadar';
 import { receiptIdeaRefusal } from '../radarReceipts';
 import { publicSelfFacts } from '../publicSelf';
 import { asksForPublicHome, publicHomeReply } from '../studioPublicHome';
-import { evidenceCardOf } from '../evidenceCard';
+import { evidenceCardOf, lpLinesOf } from '../evidenceCard';
 
 import { classifyEvidence } from '../evidenceClass';
 
@@ -449,7 +449,10 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     // The check page link the runtime built from the linked Studio and the mint
     // it actually read. Only that exact line is exempt from the address rule; a
     // model-written address, or any other address, is still held.
-    evidenceCardOf(bundle)?.linkLines?.length ? evidenceCardOf(bundle)!.linkLines! : evidenceCardOf(bundle)?.link ?? null,
+    [
+      ...(evidenceCardOf(bundle)?.linkLines?.length ? evidenceCardOf(bundle)!.linkLines! : evidenceCardOf(bundle)?.link ? [`${CHECK_LINK_PREFIX}${evidenceCardOf(bundle)!.link}`] : []),
+      ...lpLinesOf(evidenceCardOf(bundle)),
+    ],
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
   if (evidenceCardOf(bundle) && result.output !== evidenceCardOf(bundle)!.text) {

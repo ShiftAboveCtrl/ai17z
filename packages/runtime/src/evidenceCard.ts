@@ -4,6 +4,7 @@ import { PolicyConfig } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
 import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderEvidenceCard, renderEvidenceCompare, shortAddress, type CardReading } from '@xbam/prompts';
 import { capabilitySettings } from './capabilityPermissions';
+import { lpContractLines, type LpStatus } from './lpLock';
 import { checkLinkUrl, linkedCheckOrigin, studioCheckLink } from './studioCheckLink';
 import { pauseState } from './killSwitch';
 import { evidenceCardRequest, evidenceCompareRequest } from './research';
@@ -25,6 +26,13 @@ export interface EvidenceCard {
   text: string; readings: CardReading[]; cardJobId: string | null; link?: string | null;
   compare?: { chain: string; sides: [CompareCardSide, CompareCardSide]; links: [string | null, string | null] };
   linkLines?: string[];
+  /** Contract addresses that hold LP and were not proved as a timelock. Exact lines only. */
+  lp?: LpStatus | null;
+}
+
+/** The exact contract lines a card carries, so the address rule can exempt those and nothing else. */
+export function lpLinesOf(card: EvidenceCard | null): string[] {
+  return lpContractLines(card?.lp);
 }
 export function evidenceCardOf(bundle: JobBundle): EvidenceCard | null {
   return (bundle.job.resolvedContext?.meta as { evidenceCard?: EvidenceCard } | undefined)?.evidenceCard ?? null;
@@ -64,6 +72,7 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
   let cardJobId: string | null = null;
   let link: string | null = null;
   let readings: CardReading[] = [];
+  let lp: LpStatus | null = null;
   const promo = readPromo(context.incomingText.replace(request.address ?? /$^/, ''));
   if (intent === 'DEFLECT' || promo.level !== 'none' || /\b(?:buy now|join (?:our |the )?presale)\b/i.test(context.incomingText)) {
     text = 'I do not evaluate token pitches.';
@@ -106,26 +115,31 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
         await capabilityInvocations.recordInvocation({ agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
           capabilityId: CAP, step: 0, outcome: result.outcome, detail: result.detail,
           input: result.input, output: result.output, durationMs: result.durationMs });
-        const output = result.output as { cardReadings?: CardReading[]; chain?: string; address?: string } | null;
+        const output = result.output as { cardReadings?: CardReading[]; chain?: string; address?: string; lp?: LpStatus } | null;
         readings = output?.cardReadings ?? [];
+        lp = readings.length ? output?.lp ?? null : null;
         const offer = request.chain === 'solana'
           ? `Owner: watch this with /watch ${bundle.job.id.slice(0, 8)} in paired Telegram; choose a condition and threshold.` : '';
         // The link needs its own owner opt-in, and only for the exact token the capability just read.
         const read = output?.chain === request.chain && output.address?.toLowerCase() === request.address.toLowerCase();
         link = read && bundle.policy.tools.evidenceCardLink && !bundle.policy.output.forbidLinks
           ? await studioCheckLink({ chain: request.chain, address: request.address, readings }) : null;
-        text = readings.length ? renderEvidenceCard(readings, offer, undefined, link ?? '')
+        text = readings.length ? renderEvidenceCard(readings, offer, undefined, link ?? '', lpContractLines(lp))
           : 'Token evidence unavailable; evidence not found. This is not a verdict, reads can be wrong.';
         // The inline card is the reply. A link that would push it past the length policy is left off
-        // rather than sending the whole card to review.
+        // rather than sending the whole card to review: first the link, then the contract lines.
         if (link && text.length > bundle.policy.output.maxCharacters) {
           link = null;
-          text = renderEvidenceCard(readings, offer);
+          text = renderEvidenceCard(readings, offer, undefined, '', lpContractLines(lp));
+        }
+        if (readings.length && lp && text.length > bundle.policy.output.maxCharacters) {
+          lp = null;
+          text = renderEvidenceCard(readings, offer, undefined, link ?? '');
         }
       }
     }
   }
-  const evidenceCard: EvidenceCard = { text, readings, cardJobId, link };
+  const evidenceCard: EvidenceCard = { text, readings, cardJobId, link, lp };
   // Evidence retains the same fence and attribution as ordinary research.
   const research = { findings: [{ kind: 'token', query: request.address ?? 'ambiguous token', source: CAP,
     title: 'Token evidence card', summary: text, url: null, retrievedAt: new Date().toISOString() }], failed: [], note: 'Deterministic token evidence reply.' };
@@ -298,6 +312,11 @@ function sameReadings(left: CardReading[], right: CardReading[]): boolean {
   });
 }
 
+function sameLp(left: LpStatus | null, right: LpStatus | null): boolean {
+  return JSON.stringify(left?.heldByContract ?? []) === JSON.stringify(right?.heldByContract ?? [])
+    && left?.unlockAt === right?.unlockAt && Object.is(left?.burnedPct, right?.burnedPct) && Object.is(left?.lockedPct, right?.lockedPct);
+}
+
 function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
   return readings.some(reading => {
     const fetched = Date.parse(reading.fetchedAt ?? '');
@@ -313,14 +332,14 @@ function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
  * shows the value the owner approved. Rendering at the current time would
  * call that same card a mismatch.
  */
-function textMatchesReadings(text: string, readings: CardReading[], offer: string, link: string): boolean {
+function textMatchesReadings(text: string, readings: CardReading[], offer: string, link: string, lp: LpStatus | null = null): boolean {
   const fetched = readings.map(reading => Date.parse(reading.fetchedAt ?? '')).filter(time => Number.isFinite(time));
   const asOf = fetched.length ? Math.max(...fetched) : Date.now();
-  return renderEvidenceCard(readings, offer, asOf, link) === text;
+  return renderEvidenceCard(readings, offer, asOf, link, lpContractLines(lp)) === text;
 }
 
 /** The same inspect path a first card uses: permission, research budget, asker cap, mint cooldown, then the capability. */
-async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promise<{ text: string; readings: CardReading[] } | null> {
+async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promise<{ text: string; readings: CardReading[]; lp: LpStatus | null } | null> {
   const context = bundle.job.resolvedContext;
   const request = context ? evidenceCardRequest(context.incomingText) : null;
   if (!request?.address || !request.chain || request.refusal || !(await permitted(bundle.agent.id))) return null;
@@ -353,11 +372,12 @@ async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promis
   await capabilityInvocations.recordInvocation({ agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
     capabilityId: CAP, step: 0, outcome: result.outcome, detail: result.detail,
     input: result.input, output: result.output, durationMs: result.durationMs });
-  const output = result.output as { cardReadings?: CardReading[] } | null;
+  const output = result.output as { cardReadings?: CardReading[]; lp?: LpStatus } | null;
   const readings = output?.cardReadings ?? [];
   if (!readings.length) return null;
+  const lp = output?.lp ?? null;
   const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
-  return { text: renderEvidenceCard(readings, offer, undefined, card.link ?? ''), readings };
+  return { text: renderEvidenceCard(readings, offer, undefined, card.link ?? '', lpContractLines(lp)), readings, lp };
 }
 
 /**
@@ -393,7 +413,7 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
       throw PipelineError.review('evidence_card_changed', 'The check page link no longer matches the linked Studio or the owner setting. Generate a fresh card.');
     }
   }
-  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer, link);
+  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer, link, card.lp ?? null);
   if (output !== card.text || mismatched) {
     throw PipelineError.review('evidence_card_changed', 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }
@@ -401,7 +421,7 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
     const fresh = await rereadEvidenceCard(bundle, card);
     // A new read carries a new fetch time, so the rendered lines never match
     // character for character. The same readings are the card the owner saw.
-    if (fresh && sameReadings(fresh.readings, card.readings)) return;
+    if (fresh && sameReadings(fresh.readings, card.readings) && sameLp(fresh.lp, card.lp ?? null)) return;
     throw PipelineError.review('evidence_card_changed', fresh ? READINGS_CHANGED
       : 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }

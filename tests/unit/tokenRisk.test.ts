@@ -16,13 +16,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 let responses: Record<string, { status: number; body: string }> = {};
+/** Solana JSON-RPC results, one per call, in the order that method is asked. */
+let rpcQueue: Record<string, unknown[]> = {};
 
 vi.mock('undici', () => ({
   Agent: class {
     async close() {}
   },
-  async fetch(input: unknown) {
+  async fetch(input: unknown, init?: { body?: string }) {
     const url = String(input);
+    if (url.includes('solana.com')) {
+      const request = JSON.parse(init?.body ?? '{}') as { method?: string };
+      const method = request.method ?? '';
+      const queued = rpcQueue[method];
+      const result = queued?.length ? queued.shift() : null;
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), {
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+      });
+    }
     const match = Object.keys(responses).find((key) => url.includes(key));
     const answer = match ? responses[match]! : { status: 404, body: '{}' };
     return new Response(answer.body, {
@@ -51,12 +63,75 @@ function context() {
 }
 
 interface RiskAnswer {
-  cardReadings: { label: string; value: number | boolean | null }[];
+  cardReadings: { label: string; value: number | boolean | null; source?: string }[];
+  lp: { burnedPct: number | null; lockedPct: number | null; unavailable: boolean } | null;
   observations: { what: string; detail: string; source: string; kind: string }[];
   notChecked: string[];
   limitations: string[];
   sourcesAnswering: number;
 }
+
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+
+it('reports burned LP as a percentage reading, and an unread pool as unavailable rather than zero', async () => {
+  const { SOLANA_MAINNET_GENESIS, registerSolanaUpstreams, registerMarketUpstreams } = await import('@xbam/upstream');
+  const { resetLpCacheForTest, STREAMFLOW_PROGRAM } = await import('../../packages/runtime/src/lpLock');
+  resetLpCacheForTest();
+  registerSolanaUpstreams();
+  registerMarketUpstreams();
+  const pool = 'Pool111111111111111111111111111111111111111';
+  const lpBytes = Buffer.alloc(32);
+  lpBytes[0] = 9;
+  lpBytes[31] = 1;
+  const poolData = Buffer.alloc(496);
+  poolData.set(lpBytes, 464);
+  const streamOwner = 'StrmOwnr11111111111111111111111111111111111';
+  const end = BigInt(Math.floor(Date.now() / 1000) + 3_600);
+  const streamData = Buffer.alloc(41);
+  let left = end;
+  for (let i = 0; i < 8; i += 1) {
+    streamData[33 + i] = Number(left & 0xffn);
+    left >>= 8n;
+  }
+  const repeat = (value: unknown) => new Proxy([value], { get: (target, prop) => prop === 'shift' ? () => value : Reflect.get(target, prop) });
+  rpcQueue = {
+    getGenesisHash: repeat(SOLANA_MAINNET_GENESIS),
+    getAccountInfo: [{ context: { slot: 1 }, value: { owner: '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', executable: false, data: [poolData.toString('base64'), 'base64'] } }],
+    getTokenSupply: [{ context: { slot: 1 }, value: { amount: '1000', decimals: 6 } }],
+    getTokenLargestAccounts: [{ context: { slot: 1 }, value: [{ address: 'BurnAcct11111111111111111111111111111111111', amount: '800' }, { address: 'StrmAcct11111111111111111111111111111111111', amount: '200' }] }],
+    getMultipleAccounts: [
+      { context: { slot: 1 }, value: [{ data: { parsed: { info: { owner: '1nc1nerator11111111111111111111111111111111' } } } }, { data: { parsed: { info: { owner: streamOwner } } } }] },
+      { context: { slot: 1 }, value: [
+        { owner: '11111111111111111111111111111111', executable: false, data: ['', 'base64'] },
+        { owner: STREAMFLOW_PROGRAM, executable: false, data: [streamData.toString('base64'), 'base64'] },
+      ] },
+    ],
+  };
+  responses['dexscreener.com'] = {
+    status: 200,
+    body: JSON.stringify({ pairs: [{ chainId: 'solana', pairAddress: pool, baseToken: { address: SOL_MINT }, quoteToken: { address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }, liquidity: { usd: 1000 } }] }),
+  };
+  responses['jup.ag'] = {
+    status: 200,
+    body: JSON.stringify([{ id: SOL_MINT, liquidity: 1000, updatedAt: new Date().toISOString(), firstPool: { createdAt: new Date().toISOString() }, audit: { topHoldersPercentage: 10, mintAuthorityDisabled: true, freezeAuthorityDisabled: true } }]),
+  };
+  const capability = getCapability('token.inspect_risk')!;
+  const answer = await capability.run(capability.input.parse({ chain: 'solana', address: SOL_MINT }) as never, context()) as RiskAnswer;
+  expect(answer.cardReadings.find(r => r.label === 'LP burned')?.value).toBe(80);
+  expect(answer.cardReadings.find(r => r.label === 'LP locked')?.value).toBe(20);
+  expect(answer.lp?.unavailable).toBe(false);
+  expect(JSON.stringify(answer).toLowerCase()).not.toMatch(/\b(?:safe|unruggable|rug|scam)\b/);
+
+  resetLpCacheForTest();
+  rpcQueue = { getGenesisHash: repeat(SOLANA_MAINNET_GENESIS) };
+  delete responses['dexscreener.com'];
+  const other = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const unread = await capability.run(capability.input.parse({ chain: 'solana', address: other }) as never, context()) as RiskAnswer;
+  expect(unread.cardReadings.find(r => r.label === 'LP status')?.value).toBeNull();
+  expect(unread.cardReadings.some(r => r.label === 'LP burned' && r.value === 0)).toBe(false);
+  expect(unread.lp?.unavailable).toBe(true);
+  expect(unread.cardReadings.filter(r => ['Liquidity', 'Top holders', 'Mint authority', 'Freeze authority', 'Pool age'].includes(r.label))).toHaveLength(5);
+});
 
 it('does not treat EVM mintability as proof of a disabled mint authority', async () => {
   responses = { token_security: security({ is_mintable: '0' }) };
@@ -92,6 +167,7 @@ beforeEach(() => {
   registerTokenRiskUpstreams();
   registerTokenRiskCapabilities();
   responses = {};
+  rpcQueue = {};
 });
 afterEach(() => {
   resetUpstreamsForTest();
