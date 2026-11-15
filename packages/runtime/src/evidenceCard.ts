@@ -1,12 +1,14 @@
 import { agents, capabilityInvocations, jobs, observability, query, withTransaction, type Tx } from '@xbam/database';
 import { createLogger, PipelineError } from '@xbam/shared';
-import { PolicyConfig } from '@xbam/shared/contracts';
+import { MediaInventory, PolicyConfig, type ResolvedContext } from '@xbam/shared/contracts';
 import { getCapability, invokeCapability, resolvePermission } from '@xbam/tools';
-import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderEvidenceCard, renderEvidenceCompare, shortAddress, type CardReading } from '@xbam/prompts';
+import { CHECK_LINK_PREFIX, COMPARE_LINK_PREFIXES, renderDeployerLines, renderEvidenceCard, renderEvidenceCompare, shortAddress, type CardReading, type DeployerHistory } from '@xbam/prompts';
 import { capabilitySettings } from './capabilityPermissions';
 import { checkLinkUrl, linkedCheckOrigin, studioCheckLink } from './studioCheckLink';
 import { pauseState } from './killSwitch';
 import { evidenceCardRequest, evidenceCompareRequest } from './research';
+import { readAddressesFromImage } from './mediaResolve';
+import { parseTokenReference } from './token';
 import { checkEvidenceFollowUpAtSend } from './evidenceFollowUp';
 import { readPromo } from './promo';
 import type { JobBundle } from './loadJob';
@@ -15,6 +17,7 @@ const log = createLogger('evidence-card');
 const CAP = 'token.inspect_risk';
 const HOURLY_CAP = 10;
 const COOLDOWN_MS = 60_000;
+const PITCH_WORDS = /\b(?:buy now|join (?:our |the )?presale)\b/i;
 /** One side of a comparison: the mint the asker named and what was read for it. */
 export interface CompareCardSide { address: string; readings: CardReading[]; }
 /**
@@ -25,6 +28,96 @@ export interface EvidenceCard {
   text: string; readings: CardReading[]; cardJobId: string | null; link?: string | null;
   compare?: { chain: string; sides: [CompareCardSide, CompareCardSide]; links: [string | null, string | null] };
   linkLines?: string[];
+  deployer?: DeployerHistory | null;
+  /** First line of a card whose address came from a picture, kept apart so the send check can prove the rest. */
+  echo?: string | null;
+}
+type CardRequest = ReturnType<typeof evidenceCardRequest>;
+/** What reading the asker's picture came to. `request` null means there was nothing to act on. */
+interface ImageCheck { request: CardRequest; echo: string | null; }
+
+function imageCheckOf(context: ResolvedContext): ImageCheck | null {
+  return (context.meta as { imageCheck?: ImageCheck } | undefined)?.imageCheck ?? null;
+}
+
+/**
+ * The one request every stage of a card works from: the text of the ask, or
+ * what was read from its picture when the text named no address. Send-time
+ * checks must agree with the read that made the card, so they come here too.
+ */
+export function evidenceRequestOf(context: ResolvedContext): CardRequest {
+  const text = evidenceCardRequest(context.incomingText);
+  if (text && !text.refusal) return text;
+  return imageCheckOf(context)?.request ?? text;
+}
+
+/**
+ * Whether a message with no address of its own is asking for a check of its picture.
+ * `token` names a token word ("check this token"); `loose` is only "check this".
+ */
+function pictureCheckKind(text: string): 'token' | 'loose' | null {
+  if (!/\bcheck\b/i.test(text)) return null;
+  const reference = parseTokenReference(text);
+  if (reference.address || reference.symbol || reference.pairAddress) return null;
+  if (/\b(?:0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{32,44})\b/.test(text)) return null;
+  if (/\b(?:token|coin|mint|contract|ca)\b/i.test(text)) return 'token';
+  if (/\b(?:this|it|that|these|screenshot|image|pic|chart)\b/i.test(text)) return 'loose';
+  return null;
+}
+
+/** A shortened copy of the same address ("So11...1112") is not a second address. */
+function shortenedFormOf(full: string, shown: string): boolean {
+  const parts = shown.split(/\.{2,}|\u2026|\*+/).map(p => p.trim()).filter(Boolean);
+  if (parts.length < 2) return false;
+  const lower = (v: string) => v.toLowerCase();
+  return lower(full).startsWith(lower(parts[0]!)) && lower(full).endsWith(lower(parts[parts.length - 1]!));
+}
+
+/**
+ * Reads the address out of the picture a check was asked about, using only the
+ * vision role. Never repairs one: anything that is not a complete address, or
+ * more than one distinct address, is refused with a sentence and nothing is read.
+ */
+async function readImageCheck(bundle: JobBundle, context: ResolvedContext, kind: 'token' | 'loose'): Promise<ImageCheck> {
+  const meta = context.meta as { inventory?: unknown; parentInventory?: unknown } | undefined;
+  const images = (value: unknown) => {
+    const parsed = MediaInventory.safeParse(value);
+    return parsed.success ? parsed.data.media.filter(m => m.kind === 'image' && m.sourceUrl) : [];
+  };
+  const own = images(meta?.inventory);
+  const items = own.length ? own : images(meta?.parentInventory);
+  const none: ImageCheck = { request: null, echo: null };
+  if (!items.length) return none;
+  const refuse = (sentence: string): ImageCheck => ({ request: { refusal: sentence }, echo: null });
+  // Unreadable media is an explicit gap when the ask named a token; a loose "check this" carries on as an ordinary post.
+  const gap = (why: string) => kind === 'token'
+    ? refuse(`I could not read your image because ${why}, so I did not check anything. Please paste the exact token address.`) : none;
+  const media = bundle.policy.media;
+  if (!media.analyzeImages || media.maxItemsPerEvent === 0) return gap('image reading is turned off for this agent');
+
+  const found = new Map<string, string>();
+  const unusable: string[] = [];
+  for (const item of items.slice(0, media.maxItemsPerEvent)) {
+    const read = await readAddressesFromImage({ agentId: bundle.agent.id, jobId: bundle.job.id, url: item.sourceUrl!,
+      maxCalls: bundle.policy.budget.maxModelCallsPerJob });
+    if (read.status === 'unreadable') return gap(read.reason);
+    for (const address of read.addresses) found.set(address.toLowerCase(), address);
+    unusable.push(...read.unusable);
+  }
+  if (found.size > 1) return refuse('I can see more than one address in your image, so I did not check any. Please post the one exact address you want checked.');
+  const [address] = [...found.values()];
+  if (!address) {
+    return unusable.length
+      ? refuse('I could only see a shortened or unclear address in your image, so I did not check anything. Please paste the exact address.')
+      : kind === 'token' ? refuse('I could not find a token address in your image. Please paste the exact address.') : none;
+  }
+  if (unusable.some(shown => !shortenedFormOf(address, shown))) {
+    return refuse('I could not tell whether your image shows one address or two, so I did not check anything. Please paste the exact address.');
+  }
+  // The text of the ask still supplies a chain ("on base"); the address comes only from the picture.
+  const request = evidenceCardRequest(`${context.incomingText}\n${address}`);
+  const whose = own.length ? 'your image' : 'the image above';
+  return { request, echo: `read from ${whose}: ${address}` };
 }
 export function evidenceCardOf(bundle: JobBundle): EvidenceCard | null {
   return (bundle.job.resolvedContext?.meta as { evidenceCard?: EvidenceCard } | undefined)?.evidenceCard ?? null;
@@ -42,6 +135,11 @@ async function mintReadsThisHour(tx: Tx, agentId: string, requester: string, dry
   return Number(row?.n);
 }
 
+/** The exact deployer lines a card carries, so the address rule can exempt those and nothing else. */
+export function deployerLinesOf(card: EvidenceCard | null): string[] | null {
+  return card?.deployer ? renderDeployerLines(card.deployer) : null;
+}
+
 async function permitted(agentId: string): Promise<boolean> {
   const capability = getCapability(CAP);
   if (!capability) return false;
@@ -54,18 +152,36 @@ async function permitted(agentId: string): Promise<boolean> {
 export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> {
   if (!bundle.policy.tools.evidenceCards || bundle.job.actionType !== 'REPLY' ||
       !['MENTION', 'REPLY'].includes(bundle.event.type)) return false;
-  const context = bundle.job.resolvedContext;
+  let context = bundle.job.resolvedContext;
   if (!context) return false;
-  const request = evidenceCardRequest(context.incomingText);
-  if (!request) return false;
-  if (evidenceCardOf(bundle)) return true;
   const intent = (context.meta as { intent?: { intent?: string } })?.intent?.intent;
+  const pitched = readPromo(context.incomingText).level !== 'none' || PITCH_WORDS.test(context.incomingText);
+  let found = evidenceCardRequest(context.incomingText);
+  let echo: string | null = null;
+  if (!found || found.refusal) {
+    // No address in the words: the asker may have pointed at a screenshot instead.
+    let image = imageCheckOf(context);
+    const kind = pictureCheckKind(context.incomingText);
+    if (!image && kind && intent !== 'DEFLECT' && !pitched) {
+      image = await readImageCheck(bundle, context, kind);
+      context = { ...context, meta: { ...context.meta, imageCheck: image } };
+      await jobs.updateJob(bundle.job.id, { resolvedContext: context });
+      bundle.job.resolvedContext = context;
+    }
+    if (image?.request) { found = image.request; echo = image.echo; }
+  }
+  if (!found) return false;
+  const request = found;
+  // The first line of a card whose address was read from a picture, so a misread is visible.
+  const echoed = (card: string) => (echo && request.address ? `${echo}\n${card}` : card);
+  if (evidenceCardOf(bundle)) return true;
   let text = request.refusal ?? '';
   let cardJobId: string | null = null;
   let link: string | null = null;
   let readings: CardReading[] = [];
+  let deployer: DeployerHistory | null = null;
   const promo = readPromo(context.incomingText.replace(request.address ?? /$^/, ''));
-  if (intent === 'DEFLECT' || promo.level !== 'none' || /\b(?:buy now|join (?:our |the )?presale)\b/i.test(context.incomingText)) {
+  if (intent === 'DEFLECT' || promo.level !== 'none' || PITCH_WORDS.test(context.incomingText)) {
     text = 'I do not evaluate token pitches.';
   } else if (!text && request.address && request.chain) {
     if (!(await permitted(bundle.agent.id))) {
@@ -96,7 +212,7 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
       else if (cardJobId !== bundle.job.id) {
         const [published] = await query(`SELECT remote_action_url FROM actions WHERE job_id=$1 AND status='EXECUTED' AND NOT dry_run ORDER BY executed_at LIMIT 1`, [cardJobId]);
         const url = published?.remote_action_url;
-        text = `Recent evidence: ${typeof url === 'string' && /^(https?:|mock:)/.test(url) ? url : `card ${cardJobId?.slice(0, 8)} is pending`}. Reads can be wrong; no new read was made.`;
+        text = echoed(`Recent evidence: ${typeof url === 'string' && /^(https?:|mock:)/.test(url) ? url : `card ${cardJobId?.slice(0, 8)} is pending`}. Reads can be wrong; no new read was made.`);
       } else {
         const settings = await capabilitySettings(bundle.agent.id);
         const result = await invokeCapability({ call: { id: CAP, input: { chain: request.chain, address: request.address } },
@@ -106,26 +222,31 @@ export async function researchEvidenceCard(bundle: JobBundle): Promise<boolean> 
         await capabilityInvocations.recordInvocation({ agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
           capabilityId: CAP, step: 0, outcome: result.outcome, detail: result.detail,
           input: result.input, output: result.output, durationMs: result.durationMs });
-        const output = result.output as { cardReadings?: CardReading[]; chain?: string; address?: string } | null;
+        const output = result.output as { cardReadings?: CardReading[]; chain?: string; address?: string; deployer?: DeployerHistory } | null;
         readings = output?.cardReadings ?? [];
+        deployer = readings.length ? output?.deployer ?? null : null;
         const offer = request.chain === 'solana'
           ? `Owner: watch this with /watch ${bundle.job.id.slice(0, 8)} in paired Telegram; choose a condition and threshold.` : '';
         // The link needs its own owner opt-in, and only for the exact token the capability just read.
         const read = output?.chain === request.chain && output.address?.toLowerCase() === request.address.toLowerCase();
         link = read && bundle.policy.tools.evidenceCardLink && !bundle.policy.output.forbidLinks
           ? await studioCheckLink({ chain: request.chain, address: request.address, readings }) : null;
-        text = readings.length ? renderEvidenceCard(readings, offer, undefined, link ?? '')
-          : 'Token evidence unavailable; evidence not found. This is not a verdict, reads can be wrong.';
-        // The inline card is the reply. A link that would push it past the length policy is left off
-        // rather than sending the whole card to review.
+        text = echoed(readings.length ? renderEvidenceCard(readings, offer, undefined, link ?? '', deployer)
+          : 'Token evidence unavailable; evidence not found. This is not a verdict, reads can be wrong.');
+        // The inline card is the reply. A section that would push it past the length policy is left off
+        // rather than sending the whole card to review: first the link, then the deployer lines.
         if (link && text.length > bundle.policy.output.maxCharacters) {
           link = null;
-          text = renderEvidenceCard(readings, offer);
+          text = echoed(renderEvidenceCard(readings, offer, undefined, '', deployer));
+        }
+        if (readings.length && deployer && text.length > bundle.policy.output.maxCharacters) {
+          deployer = null;
+          text = echoed(renderEvidenceCard(readings, offer, undefined, '', null));
         }
       }
     }
   }
-  const evidenceCard: EvidenceCard = { text, readings, cardJobId, link };
+  const evidenceCard: EvidenceCard = { text, readings, cardJobId, link, deployer, echo: echo && request.address && !request.refusal ? echo : null };
   // Evidence retains the same fence and attribution as ordinary research.
   const research = { findings: [{ kind: 'token', query: request.address ?? 'ambiguous token', source: CAP,
     title: 'Token evidence card', summary: text, url: null, retrievedAt: new Date().toISOString() }], failed: [], note: 'Deterministic token evidence reply.' };
@@ -298,6 +419,13 @@ function sameReadings(left: CardReading[], right: CardReading[]): boolean {
   });
 }
 
+/** The creator never changes; the launch count is a reading and must be the one the owner saw. */
+function sameDeployer(left: DeployerHistory | null, right: DeployerHistory | null): boolean {
+  if (!left || !right) return left === right;
+  return left.address === right.address && left.otherLaunches === right.otherLaunches
+    && JSON.stringify(left.earlier) === JSON.stringify(right.earlier);
+}
+
 function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
   return readings.some(reading => {
     const fetched = Date.parse(reading.fetchedAt ?? '');
@@ -313,16 +441,17 @@ function readingsExpired(readings: CardReading[], now = Date.now()): boolean {
  * shows the value the owner approved. Rendering at the current time would
  * call that same card a mismatch.
  */
-function textMatchesReadings(text: string, readings: CardReading[], offer: string, link: string): boolean {
+function textMatchesReadings(text: string, readings: CardReading[], offer: string, link: string, deployer: DeployerHistory | null = null, echo = ''): boolean {
+  // The launch count comes from the same index record as the readings, so their fetch time is the card's.
   const fetched = readings.map(reading => Date.parse(reading.fetchedAt ?? '')).filter(time => Number.isFinite(time));
   const asOf = fetched.length ? Math.max(...fetched) : Date.now();
-  return renderEvidenceCard(readings, offer, asOf, link) === text;
+  return `${echo ? `${echo}\n` : ''}${renderEvidenceCard(readings, offer, asOf, link, deployer)}` === text;
 }
 
 /** The same inspect path a first card uses: permission, research budget, asker cap, mint cooldown, then the capability. */
-async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promise<{ text: string; readings: CardReading[] } | null> {
+async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promise<{ text: string; readings: CardReading[]; deployer: DeployerHistory | null } | null> {
   const context = bundle.job.resolvedContext;
-  const request = context ? evidenceCardRequest(context.incomingText) : null;
+  const request = context ? evidenceRequestOf(context) : null;
   if (!request?.address || !request.chain || request.refusal || !(await permitted(bundle.agent.id))) return null;
   if (bundle.policy.budget.maxResearchCallsPerEvent === 0) return null;
   const requester = `${bundle.job.channel}:${bundle.event.remoteAuthorId ?? bundle.event.remoteAuthorHandle ?? 'unknown'}`;
@@ -353,11 +482,12 @@ async function rereadEvidenceCard(bundle: JobBundle, card: EvidenceCard): Promis
   await capabilityInvocations.recordInvocation({ agentId: bundle.agent.id, jobId: bundle.job.id, accountId: bundle.job.accountId,
     capabilityId: CAP, step: 0, outcome: result.outcome, detail: result.detail,
     input: result.input, output: result.output, durationMs: result.durationMs });
-  const output = result.output as { cardReadings?: CardReading[] } | null;
+  const output = result.output as { cardReadings?: CardReading[]; deployer?: DeployerHistory } | null;
   const readings = output?.cardReadings ?? [];
   if (!readings.length) return null;
+  const deployer = output?.deployer ?? null;
   const offer = card.text.split('\n').find(line => line.startsWith('Owner:')) ?? '';
-  return { text: renderEvidenceCard(readings, offer, undefined, card.link ?? ''), readings };
+  return { text: `${card.echo ? `${card.echo}\n` : ''}${renderEvidenceCard(readings, offer, undefined, card.link ?? '', deployer)}`, readings, deployer };
 }
 
 /**
@@ -385,7 +515,8 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
   const linkLines = card.text.split('\n').filter(line => line.startsWith(CHECK_LINK_PREFIX));
   if (link || linkLines.length > 0) {
     const policy = PolicyConfig.parse(current?.config ?? {});
-    const request = evidenceCardRequest(bundle.job.resolvedContext?.incomingText ?? '');
+    const context = bundle.job.resolvedContext;
+    const request = context ? evidenceRequestOf(context) : null;
     const origin = link && request?.address && request.chain && policy.tools.evidenceCardLink && !policy.output.forbidLinks
       ? await linkedCheckOrigin().catch(() => null) : null;
     const expected = origin && request?.address && request.chain ? checkLinkUrl(origin, request.chain, request.address) : null;
@@ -393,7 +524,7 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
       throw PipelineError.review('evidence_card_changed', 'The check page link no longer matches the linked Studio or the owner setting. Generate a fresh card.');
     }
   }
-  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer, link);
+  const mismatched = card.readings.length > 0 && !textMatchesReadings(card.text, card.readings, offer, link, card.deployer ?? null, card.echo ?? '');
   if (output !== card.text || mismatched) {
     throw PipelineError.review('evidence_card_changed', 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }
@@ -401,7 +532,7 @@ export async function checkEvidenceCardAtSend(bundle: JobBundle, output: string)
     const fresh = await rereadEvidenceCard(bundle, card);
     // A new read carries a new fetch time, so the rendered lines never match
     // character for character. The same readings are the card the owner saw.
-    if (fresh && sameReadings(fresh.readings, card.readings)) return;
+    if (fresh && sameReadings(fresh.readings, card.readings) && sameDeployer(fresh.deployer, card.deployer ?? null)) return;
     throw PipelineError.review('evidence_card_changed', fresh ? READINGS_CHANGED
       : 'The complete sourced evidence card changed or its readings expired. Generate a fresh card.');
   }

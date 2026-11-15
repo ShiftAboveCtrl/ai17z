@@ -1,5 +1,5 @@
 import type { AccountHealth } from '@xbam/database';
-import type { AccountStatus, CapacityCadence, CapacityClass } from '@xbam/shared/contracts';
+import type { AccountStatus, CapacityClass, CapacityThresholds } from '@xbam/shared/contracts';
 
 /**
  * How the runtime is coping, which is not whether the session is signed in.
@@ -219,7 +219,7 @@ export const BROKEN_AS_PRESSURE = 3;
 export const STRIKES_FORGIVEN_AFTER_MS = 6 * 60 * 60_000;
 
 /** How long a cooldown lasts after this many trips in a row. Doubles, and stops doubling. */
-export function cooldownMsFor(strikes: number, config: CapacityCadence): number {
+export function cooldownMsFor(strikes: number, config: CapacityThresholds): number {
   const doubled = config.cooldownMinutes * 2 ** Math.max(0, strikes - 1);
   return minutes(Math.min(doubled, config.maxCooldownMinutes));
 }
@@ -248,7 +248,7 @@ export function cooldownMsFor(strikes: number, config: CapacityCadence): number 
 export function settleCapacity(
   prev: CapacityState,
   since: CapacitySince,
-  config: CapacityCadence,
+  config: CapacityThresholds,
   now: Date,
 ): CapacityState {
   const broken = since.broken ?? 0;
@@ -367,7 +367,7 @@ export function readAllowance(input: {
    * the agent's own search was never allowed to run once.
    */
   readsByClass?: Partial<Record<CapacityClass, number>>;
-  config: CapacityCadence;
+  config: CapacityThresholds;
   now: Date;
   /**
    * The read is the thread of a reply to somebody who wrote in. It is counted

@@ -14,8 +14,10 @@ import {
 import { getChannelAdapter } from '@xbam/channels';
 import { nextPost, releaseIdea } from './content';
 import { proposePaperRecordPost } from './studioPaperVoice';
+import { proposeReceiptsRecap } from './receiptsRecap';
 import { proposeTraderDnaPost } from './studioTraderDna';
 import { proposePublicHomePost } from './studioPublicHome';
+import { proposeMostCheckedPost } from './studioCheckBoard';
 import { processRadarReceipts } from './radarReceipts';
 
 const log = createLogger('originate');
@@ -72,9 +74,12 @@ export async function originatePost(input: {
   // time the schedule came due. This only adds an idea, and only when the owner
   // opted in; the backlog below still decides whether there is a post.
   await proposePaperRecordPost(agent.id);
+  await proposeReceiptsRecap(agent.id);
   // The same for one published Trader DNA study the owner chose, if they opted in.
   await proposeTraderDnaPost(agent.id);
   await proposePublicHomePost(agent.id);
+  // The daily most checked digest, if the owner opted in and Studio's board is reachable.
+  await proposeMostCheckedPost(agent.id);
 
   // The backlog decides whether there is a post, not the clock. The claim and
   // the signal refusal share one account scope inside nextPost, so a signal

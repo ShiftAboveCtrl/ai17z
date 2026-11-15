@@ -1,8 +1,11 @@
 import {
+  accounts as accountsRepo,
   agents as agentsRepo,
   jobs as jobsRepo,
+  leagueBridge as leagueRepo,
   notifications as notificationsRepo,
   ops as opsRepo,
+  radar as radarRepo,
   workers as workersRepo,
 } from '@xbam/database';
 import { createLogger, errorMessage, openSecret } from '@xbam/shared';
@@ -120,6 +123,8 @@ export const COMMANDS: CommandSpec[] = [
   { name: 'resume', args: null, blurb: 'Lift the pause.', acts: true },
   { name: 'mute', args: '<hours>', blurb: 'No messages here for a while. Up to 24 hours.', acts: true },
   { name: 'unmute', args: null, blurb: 'Start telling me things again.', acts: true },
+  { name: 'radar', args: null, blurb: 'What the radar is watching and what it found most recently.', acts: false },
+  { name: 'standing', args: null, blurb: 'Where each agent stands in its league or paper season, if it has one.', acts: false },
   { name: 'health', args: null, blurb: 'The worker, the browser, and anything unhealthy.', acts: false },
 ];
 
@@ -354,6 +359,107 @@ async function healthReply(): Promise<string> {
   return lines.join('\n');
 }
 
+/** One agent's radar, reduced to what a phone needs. */
+export interface RadarDigestInput {
+  agent: string;
+  sources: Array<{ label: string; enabled: boolean; status: string; lastResultAt: string | null }>;
+}
+
+/**
+ * The radar, rendered. Pure so it can be tested without a database.
+ *
+ * Only labels, counts and times: the same facts the Radar panel shows, and no
+ * cursor, config, error text or account detail.
+ */
+export function radarText(digest: RadarDigestInput[]): string {
+  const withSources = digest.filter((entry) => entry.sources.length > 0);
+  if (withSources.length === 0) return 'No radar sources are set up yet.';
+  const lines = ['<b>Radar</b>', ''];
+  for (const entry of withSources) {
+    const on = entry.sources.filter((source) => source.enabled);
+    const unwell = on.filter((source) => source.status === 'FAILING' || source.status === 'DEGRADED').length;
+    const latest = on
+      .filter((source) => source.lastResultAt)
+      .sort((a, b) => Date.parse(b.lastResultAt!) - Date.parse(a.lastResultAt!))[0];
+    lines.push(
+      `<b>${escapeHtml(entry.agent)}</b>: watching ${on.length} of ${entry.sources.length}${unwell > 0 ? `, ${unwell} not answering well` : ''}.`,
+      latest
+        ? `Last found: ${escapeHtml(latest.label)} at ${escapeHtml(latest.lastResultAt!)}.`
+        : 'Nothing found yet.',
+      '',
+    );
+  }
+  return lines.join('\n').trimEnd();
+}
+
+/** One agent's most recent league entry, reduced the same way. */
+export interface StandingDigestInput {
+  agent: string;
+  entry: { alias: string; seasonSlug: string; status: string; endsAt: string; accepted: number; pending: number } | null;
+}
+
+/** The standing, rendered. An agent with no entry is skipped; none at all says so in a sentence. */
+export function standingText(digest: StandingDigestInput[]): string {
+  const entered = digest.filter((item) => item.entry);
+  if (entered.length === 0) return 'No agent is in a league or paper season, so there is no standing to show.';
+  const lines = ['<b>Standing</b>', ''];
+  for (const item of entered) {
+    const entry = item.entry!;
+    lines.push(
+      `<b>${escapeHtml(item.agent)}</b> as ${escapeHtml(entry.alias)} in ${escapeHtml(entry.seasonSlug)}: ${escapeHtml(entry.status.toLowerCase())}, ends ${escapeHtml(entry.endsAt)}.`,
+      `Fills: ${entry.accepted} accepted, ${entry.pending} pending.`,
+      '',
+    );
+  }
+  return lines.join('\n').trimEnd();
+}
+
+async function radarReply(): Promise<string> {
+  const agents = await agentsRepo.allAgents();
+  const digest: RadarDigestInput[] = [];
+  for (const agent of agents) {
+    const links = await accountsRepo.listAgentAccounts(agent.id);
+    const sources: RadarDigestInput['sources'] = [];
+    for (const link of links) {
+      for (const source of await radarRepo.listSources(link.accountId)) {
+        sources.push({
+          label: source.label,
+          enabled: source.enabled,
+          status: source.status,
+          lastResultAt: source.lastResultAt,
+        });
+      }
+    }
+    digest.push({ agent: agent.name, sources });
+  }
+  return radarText(digest);
+}
+
+async function standingReply(): Promise<string> {
+  const agents = await agentsRepo.allAgents();
+  const digest: StandingDigestInput[] = [];
+  for (const agent of agents) {
+    const entry = await leagueRepo.latestEntryOf(agent.id);
+    if (!entry) {
+      digest.push({ agent: agent.name, entry: null });
+      continue;
+    }
+    const counts = await leagueRepo.fillCounts(entry.id);
+    digest.push({
+      agent: agent.name,
+      entry: {
+        alias: entry.alias,
+        seasonSlug: entry.seasonSlug,
+        status: entry.status,
+        endsAt: entry.endsAt,
+        accepted: counts.ACCEPTED,
+        pending: counts.PENDING,
+      },
+    });
+  }
+  return standingText(digest);
+}
+
 export interface CommandResult {
   /** What to send back. Null when the message is to be ignored entirely. */
   reply: string | null;
@@ -406,6 +512,12 @@ export async function runCommand(text: string, actor: string): Promise<CommandRe
 
     case 'health':
       return { reply: await healthReply(), command: 'health' };
+
+    case 'radar':
+      return { reply: await radarReply(), command: 'radar' };
+
+    case 'standing':
+      return { reply: await standingReply(), command: 'standing' };
 
     case 'show': {
       const found = await findByShortId(parsed.argument);
