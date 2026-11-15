@@ -6,6 +6,7 @@ import { unpromptedSubject, reticenceReason } from './reticence';
 import { readPromo } from './promo';
 import { readStudioRiskMetric, recordStudioRiskObservation, studioRiskSourceRefusal, studioRiskTransactionValid } from './studioRiskWatches';
 import { studioRiskWatchCrossed } from './notify';
+import { offerEvidenceFollowUps } from './evidenceFollowUpOffer';
 
 export const SIGNAL_MAX_AGE_MS = 5 * 60_000;
 
@@ -161,7 +162,11 @@ export async function pollSignalSource(source: RadarSourceRow, reader = readSign
       found++;
       const summary = `Chain observation: ${watch.predicate.replaceAll('_', ' ')} at ${watch.address.slice(0, 6)}...${watch.address.slice(-4)}`;
       const detail = evidenceBrief(watch, evaluation.before, read);
-      if (config.studioRisk) await studioRiskWatchCrossed({ agentId: config.studioRisk.agentId, accountId: source.accountId, sourceId: source.id, watchKey: key, generation: evaluation.state.generation, detail }, tx);
+      if (config.studioRisk) {
+        await studioRiskWatchCrossed({ agentId: config.studioRisk.agentId, accountId: source.accountId, sourceId: source.id, watchKey: key, generation: evaluation.state.generation, detail }, tx);
+        // Same transaction, same crossing: a follow-up exists exactly when the owner was told.
+        await offerEvidenceFollowUps(tx, { source, watch, before: evaluation.before, after: read, watchKey: key, generation: evaluation.state.generation });
+      }
       const links = await tx.many(`SELECT aa.agent_id,
         EXISTS(SELECT 1 FROM agent_account_capabilities c WHERE c.agent_id=aa.agent_id AND c.account_id=aa.account_id AND c.capability='READ') AS can_read,
         EXISTS(SELECT 1 FROM agent_account_capabilities c WHERE c.agent_id=aa.agent_id AND c.account_id=aa.account_id AND c.capability='POST') AS can_post

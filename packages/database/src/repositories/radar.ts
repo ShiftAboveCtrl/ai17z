@@ -108,6 +108,7 @@ export async function deleteSource(id: string): Promise<void> {
  *   said whether the watch is listed, so a source it left disabled is one
  *   Studio no longer lists. A suspension (`last_error`) or a fresh enable
  *   (`expires_at` cleared) has not said, and the next sync can switch it on.
+ * - Coin alerts: the binding is on, holds a confirmed list, and the agent is still linked.
  * - Playbook: the agent still has an unretired pin whose mandate is unretired
  *   and an enabled link to this account.
  */
@@ -130,6 +131,13 @@ export async function linkedSourceCanReturn(source: Pick<RadarSourceRow, 'accoun
            JOIN agent_accounts aa ON aa.agent_id = p.agent_id AND aa.account_id = $2 AND aa.enabled
           WHERE p.retired_at IS NULL AND p.agent_id::text = $1`,
         [String(source.config.playbookAgentId), source.accountId],
+      ));
+    case 'COIN_ALERTS':
+      return !!(await queryOne(
+        `SELECT 1 FROM studio_coin_alert_bindings b
+          WHERE b.agent_id::text = $1 AND b.account_id = $2 AND b.enabled AND jsonb_array_length(b.mints) > 0
+            AND EXISTS (SELECT 1 FROM agent_accounts aa WHERE aa.agent_id = b.agent_id AND aa.account_id = b.account_id AND aa.enabled)`,
+        [String(source.config.coinAlertAgentId), source.accountId],
       ));
     default:
       return false;

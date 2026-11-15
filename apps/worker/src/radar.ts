@@ -1,5 +1,5 @@
 import { createLogger, envInt, errorMessage } from '@xbam/shared';
-import { effectiveXInterval } from '@xbam/shared/contracts';
+import { effectiveXInterval, type AssetRef as Asset } from '@xbam/shared/contracts';
 import {
   accounts as accountsRepo,
   actions as actionsRepo,
@@ -19,6 +19,8 @@ import {
   noteXRead,
   planPersonaDiscovery,
   playbookUniverse,
+  coinAlertUniverse,
+  syncStudioCoinAlerts,
   peopleCandidates,
   rankDiscovered,
   rankPeople,
@@ -28,7 +30,7 @@ import {
 } from '@xbam/runtime';
 import { describeBrowserError } from '@xbam/browser';
 import { startLoop } from './loop';
-import { syncStudioRiskWatches, flushStudioRiskObservations } from '@xbam/runtime';
+import { syncStudioRiskWatches, flushStudioRiskObservations, sweepEvidenceFollowUps } from '@xbam/runtime';
 
 const log = createLogger('radar');
 
@@ -68,9 +70,11 @@ export class SocialRadar {
     try {
       await syncStudioRiskWatches().catch(error => log.warn('Studio risk sync failed', { message: errorMessage(error) }));
       await playbooks.syncRadarSources();
+      await syncStudioCoinAlerts().catch(error => log.warn('Studio coin alert sync failed', { message: errorMessage(error) }));
       for (const source of await radarRepo.claimDueSources(this.perTick, this.claimHoldSeconds)) {
         await this.pollWithinItsClaim(source);
       }
+      await sweepEvidenceFollowUps().catch(error => log.warn('Evidence follow-up sweep failed', { message: errorMessage(error) }));
       await flushStudioRiskObservations().catch(error => log.warn('Studio risk write-back failed', { message: errorMessage(error) }));
     } catch (error) {
       log.warn('radar tick failed', { message: errorMessage(error) });
@@ -202,11 +206,15 @@ export class SocialRadar {
     // instead of one thread monopolising the source.
     let target = source.target;
     let playbookNext: string | null = null;
-    if (config.playbookAgentId) {
-      const linked = (await accountsRepo.listAccountAgents(source.accountId)).some((a) => a.agentId === config.playbookAgentId);
-      const universe = linked ? await playbookUniverse(config.playbookAgentId) : null;
+    const rotatingAgentId = config.playbookAgentId ?? config.coinAlertAgentId;
+    if (rotatingAgentId) {
+      const linked = (await accountsRepo.listAccountAgents(source.accountId)).some((a) => a.agentId === rotatingAgentId);
+      // Coin alerts are exact mints too, so they rotate exactly as a playbook universe does.
+      const universe: Asset[] | null = !linked ? null : config.playbookAgentId
+        ? await playbookUniverse(rotatingAgentId)
+        : ((await coinAlertUniverse(rotatingAgentId)) ?? []).map((address) => ({ kind: 'ONCHAIN', network: 'solana', address, decimals: 0 }) as Asset);
       if (!universe?.length) {
-        await radarRepo.deferPoll(source.id, new Date(Date.now() + interval), 'The linked agent no longer runs this playbook.');
+        await radarRepo.deferPoll(source.id, new Date(Date.now() + interval), config.playbookAgentId ? 'The linked agent no longer runs this playbook.' : 'The linked agent no longer has Studio coin alerts switched on.');
         return;
       }
       const index = /^\d+$/.test(source.cursor ?? '') ? Number(source.cursor) % universe.length : 0;
@@ -215,7 +223,7 @@ export class SocialRadar {
       if (asset.kind !== 'ONCHAIN') {
         // Only an exact mint can be searched. Returning without moving the cursor met this same
         // asset on every poll and the assets after it were never read.
-        await radarRepo.deferPoll(source.id, new Date(Date.now() + interval), 'A playbook asset without a mint address was skipped; the next one is read on the next poll.', playbookNext);
+        await radarRepo.deferPoll(source.id, new Date(Date.now() + interval), 'A listed asset without a mint address was skipped; the next one is read on the next poll.', playbookNext);
         return;
       }
       target = asset.address;
@@ -303,7 +311,7 @@ export class SocialRadar {
         kind: discovery?.mode === 'COMMUNITY' ? 'own_threads' : source.kind,
         target,
         limit: config.limit ?? 20,
-        cursor: config.playbookAgentId ? null : source.cursor,
+        cursor: config.playbookAgentId || config.coinAlertAgentId ? null : source.cursor,
       });
       // One poll is counted as one read, whatever it cost underneath. A
       // structured read may be two queries and a rendered one a few scrolls;
@@ -392,7 +400,7 @@ export class SocialRadar {
         sourceId: source.id,
         sourceKind: source.kind,
         candidates: labelled,
-        mayTrigger: config.playbookAgentId ? false : (config.mayTrigger ?? true),
+        mayTrigger: config.playbookAgentId || config.coinAlertAgentId ? false : (config.mayTrigger ?? true),
       });
 
       await radarRepo.recordPoll({

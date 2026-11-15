@@ -20,6 +20,7 @@ import {
   runJob,
   sweepNotifications,
   sweepStudioActivityTape,
+  sweepCheckContributions,
   sweepPublicHomeRenewals,
   pollTelegramCommands,
   telegramHeartbeat,
@@ -245,6 +246,11 @@ async function main(): Promise<void> {
       await sweepStudioActivityTape();
     } catch (error) {
       log.warn('Studio activity tape sweep failed', { message: errorMessage(error) });
+    }
+    try {
+      await sweepCheckContributions();
+    } catch (error) {
+      log.warn('Studio check contribution sweep failed', { message: errorMessage(error) });
     }
     try {
       await sweepPublicHomeRenewals();

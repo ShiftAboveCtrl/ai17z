@@ -251,6 +251,17 @@ export const ToolPolicy = z.object({
    * A separate choice from the card itself, off by default, and never a watch or a trade.
    */
   evidenceCardLink: z.boolean().default(false),
+  /**
+   * Attach a picture of the evidence card, rendered by the linked Studio from the card's own
+   * readings. Off by default and separate from the card. When Studio is unlinked, slow or
+   * answers with anything that is not an image, the reply is the text card unchanged.
+   */
+  evidenceCardImage: z.boolean().default(false),
+  /**
+   * Reply once in the card's own thread when an owner-confirmed risk watch on that card crosses.
+   * Its own owner choice, off by default; it never creates a watch and never reads X.
+   */
+  evidenceFollowUps: z.boolean().default(false),
   /** Tool keys this agent may call. Empty means no tools. */
   allowed: z.array(z.string().max(120)).max(200).default([]),
   /**
@@ -489,6 +500,18 @@ export const StudioPolicy = z.object({
   postTraderDna: z.boolean().default(false),
   /** The one published study a public post is about. Null: none chosen, so none is posted. */
   traderDnaStudyId: z.string().regex(TRADER_DNA_STUDY_ID).nullable().default(null),
+  /**
+   * Let this agent's evidence card requests count towards Studio's "most checked"
+   * board: per mint and hour, the number of distinct askers, and nothing else. No
+   * handle, text, owner or agent id is sent. Off by default.
+   */
+  contributeChecks: z.boolean().default(false),
+  /**
+   * Let the agent put one daily "most checked" post into the idea backlog, from
+   * Studio's board. Separate from contributing and off by default. It says what
+   * was checked, not endorsed, orders by count only and gives no advice.
+   */
+  postMostChecked: z.boolean().default(false),
 });
 export type StudioPolicy = z.infer<typeof StudioPolicy>;
 

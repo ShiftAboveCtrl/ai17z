@@ -59,11 +59,13 @@ import { receiptIdeaRefusal } from '../radarReceipts';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { paperRecordSendText } from '../studioRecordLink';
 import { checkTraderDnaAtSend } from '../studioTraderDna';
+import { checkMostCheckedAtSend } from '../studioCheckBoard';
 import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
 import { capacityClassForEvent } from '../capacity';
 
 import { adapterContext } from '../channelContext';
 import { checkEvidenceCardAtSend } from '../evidenceCard';
+import { decidedEvidenceCardImage, prepareEvidenceCardImage } from '../evidenceCardImage';
 
 /**
  * Sending it, and recording what happened.
@@ -235,6 +237,8 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     ownerApproved: Boolean(job.approvedAt),
   });
   await checkEvidenceCardAtSend(bundle, output);
+  // After the send check, so the picture is drawn from the readings the approved text carries.
+  await prepareEvidenceCardImage(bundle, output);
   const paperReply = await paperReplyForJob(job.id);
   if (paperReply !== null && paperReply !== output) {
     throw PipelineError.review('paper_receipt_changed', 'The paper receipt changed after validation. Send the complete simulated record only.');
@@ -314,6 +318,8 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   // Likewise a post about a Trader DNA study, which may never name a wallet or
   // call one smart or worth copying, whatever the study or the model said.
   checkTraderDnaAtSend({ raw: bundle.event.payload, text: output, policy });
+  // And the most checked digest: framed as checked, not endorsed, no advice, and nothing posted if Studio cannot be read.
+  await checkMostCheckedAtSend({ raw: bundle.event.payload, text: output, policy });
 
   if (!job.dryRun) {
     // The final say on whether this action is permitted. Ingest checked the same
@@ -391,7 +397,8 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     different post.
   */
   const mediaRefs = job.actionType === 'POST'
-    ? [...mediaRefsOf(bundle.event.payload), ...decidedPostMedia(bundle)] : [];
+    ? [...mediaRefsOf(bundle.event.payload), ...decidedPostMedia(bundle)]
+    : job.actionType === 'REPLY' ? decidedEvidenceCardImage(bundle) : [];
   const sendingVia = getChannelAdapter(job.channel);
   if (mediaRefs.length > 0 && !sendingVia.supportsMedia) {
     throw PipelineError.permanent(
@@ -450,14 +457,14 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
     composer opened is plainly safe to retry, and X can never prove absence from
     a lagging timeline, so applying this to all of them would stop every retry.
   */
-  const priorAmbiguousPost = job.actionType === 'POST' && priorPostWasAmbiguous(action.verification);
+  const priorAmbiguousPost = (job.actionType === 'POST' || media.length > 0) && priorPostWasAmbiguous(action.verification);
   /*
     A post a dead worker left EXECUTING is the same unknown: it may have died
     before the submit or after it, and X's timeline lags, so a scan that finds
     nothing proves nothing. Only a conclusive absence lets it be sent again.
     Replies and likes keep the looser rule below, where a miss is cheaper.
   */
-  const staleInFlightPost = job.actionType === 'POST' && claim.retakenFromStale;
+  const staleInFlightPost = (job.actionType === 'POST' || media.length > 0) && claim.retakenFromStale;
   // The remote was already asked above, so the recovery check below does not ask twice.
   let remoteAsked = false;
   if ((devUpdate || priorAmbiguousPost || staleInFlightPost) && !job.dryRun && (claim.retakenFromStale || claim.retakenFromFailed)) {
@@ -646,7 +653,8 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
       Marking it EXECUTED would also have stamped a content signature and spent
       the idea for a post nobody has seen; leaving it retryable posts it twice.
     */
-    if (job.actionType === 'POST' && result.status !== 'DRY_RUN' && !postHasReadBack(result, { media: media.length })) {
+    // A reply sent with a picture is held to the same bar: public without its picture, or unread, is not "done".
+    if ((job.actionType === 'POST' || media.length > 0) && result.status !== 'DRY_RUN' && !postHasReadBack(result, { media: media.length })) {
       const message = `${result.verification.detail} It was not marked as posted and will not be sent again automatically.`;
       await actionsRepo.completeAction(action.id, {
         status: 'FAILED',

@@ -131,7 +131,9 @@
       "tools": {
         "allowed": [],
         "capabilityLoop": false,
+        "evidenceCardImage": false,
         "evidenceCardLink": false,
+        "evidenceFollowUps": false,
         "evidenceCards": false,
         "research": {
           "web": true,
@@ -254,7 +256,9 @@
         "paperRecordWindow": "7d",
         "linkPaperRecord": false,
         "postTraderDna": false,
-        "traderDnaStudyId": null
+        "traderDnaStudyId": null,
+        "contributeChecks": false,
+        "postMostChecked": false
       }
     },
     "cadence": null,
