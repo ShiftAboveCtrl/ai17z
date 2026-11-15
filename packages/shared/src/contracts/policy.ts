@@ -252,6 +252,12 @@ export const ToolPolicy = z.object({
    */
   evidenceCardLink: z.boolean().default(false),
   /**
+   * Attach a picture of the evidence card, rendered by the linked Studio from the card's own
+   * readings. Off by default and separate from the card. When Studio is unlinked, slow or
+   * answers with anything that is not an image, the reply is the text card unchanged.
+   */
+  evidenceCardImage: z.boolean().default(false),
+  /**
    * Reply once in the card's own thread when an owner-confirmed risk watch on that card crosses.
    * Its own owner choice, off by default; it never creates a watch and never reads X.
    */

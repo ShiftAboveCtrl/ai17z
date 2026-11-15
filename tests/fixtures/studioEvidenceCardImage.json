@@ -1,0 +1,14 @@
+{
+  "protocol": 1,
+  "chain": "solana",
+  "address": "So11111111111111111111111111111111111111112",
+  "readings": [
+    { "label": "Liquidity", "value": 12000, "unit": "USD", "source": "solana_tokens.jupiter", "fetched_at": "2026-11-14T11:59:30.000Z", "observed_at": "2026-11-14T11:59:20.000Z", "max_age_ms": 300000 },
+    { "label": "Top holders", "value": 20, "unit": "%", "source": "solana_tokens.jupiter", "fetched_at": "2026-11-14T11:59:30.000Z", "observed_at": "2026-11-14T11:59:20.000Z", "max_age_ms": 300000 },
+    { "label": "Mint authority", "value": true, "unit": "authority", "source": "solana_tokens.jupiter", "fetched_at": "2026-11-14T11:59:30.000Z", "observed_at": "2026-11-14T11:59:20.000Z", "max_age_ms": 300000 },
+    { "label": "Freeze authority", "value": false, "unit": "authority", "source": "solana_tokens.jupiter", "fetched_at": "2026-11-14T11:59:30.000Z", "observed_at": "2026-11-14T11:59:20.000Z", "max_age_ms": 300000 },
+    { "label": "Pool age", "value": 1, "unit": "hours", "source": "solana_tokens.jupiter", "fetched_at": "2026-11-14T11:59:30.000Z", "observed_at": "2026-11-14T11:59:20.000Z", "max_age_ms": 300000 }
+  ],
+  "disclaimer": "not a verdict, reads can be wrong",
+  "requested_at": "2026-11-14T12:00:00.000Z"
+}
