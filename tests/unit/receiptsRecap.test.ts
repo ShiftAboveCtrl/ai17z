@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { DEFAULT_POLICY, PolicyConfig } from '@xbam/shared/contracts';
 
+// The fixture is held loosely on purpose: the tests below add fields the schema must refuse.
+type RecapFixture = Record<string, unknown> & { rows: [RecapFixtureRow, ...RecapFixtureRow[]] };
+type RecapFixtureRow = Record<string, unknown> & { after_24h: Record<string, unknown> };
 type FileAnswer = { ok: true; status: number; bytes: Uint8Array | null; contentType: string | null } | { ok: false; why: string };
 let answer: FileAnswer = { ok: false, why: 'unset' };
 const sent: Array<{ path: string; json: unknown }> = [];
@@ -14,7 +17,7 @@ const { recapFrom, recapText, checkRecapText, receiptsRecapImagePayload, Receipt
   await import('../../packages/runtime/src/receiptsRecap');
 const { requestReceiptsRecapImage } = await import('../../packages/runtime/src/receiptsRecapImage');
 
-const fixture = JSON.parse(readFileSync(new URL('../fixtures/studioReceiptsRecapImage.json', import.meta.url), 'utf8')) as Record<string, any>;
+const fixture = JSON.parse(readFileSync(new URL('../fixtures/studioReceiptsRecapImage.json', import.meta.url), 'utf8')) as RecapFixture;
 const PNG = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
 const mint = 'So11111111111111111111111111111111111111112';
 const window = { start: new Date('2026-11-08T12:00:00.000Z'), end: new Date('2026-11-15T12:00:00.000Z') };
@@ -78,7 +81,7 @@ describe('frozen receipts recap image payload', () => {
   });
 
   it('fails on any extra field, any depth, and on counts that do not add up or drop a signal', () => {
-    const extras: Array<[string, (c: any) => void]> = [
+    const extras: Array<[string, (c: RecapFixture) => void]> = [
       ['post text', c => { c.text = 'hello'; }], ['handle', c => { c.rows[0].handle = 'alice'; }],
       ['agent id', c => { c.agent_id = 'x'; }], ['win rate', c => { c.win_rate = 0.5; }], ['pnl', c => { c.rows[0].pnl = 3; }],
       ['counts wrong', c => { c.changed = 2; }], ['row dropped', c => { c.rows.pop(); }],
