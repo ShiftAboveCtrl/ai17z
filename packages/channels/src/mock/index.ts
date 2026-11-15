@@ -47,7 +47,7 @@ export const mockAdapter: ChannelAdapter = {
   },
 
   async resolveContext(_ctx: ChannelContext, event: NormalizedEvent): Promise<ResolvedContext> {
-    const raw = event.raw as { parentText?: unknown; thread?: unknown };
+    const raw = event.raw as { parentText?: unknown; thread?: unknown; inventory?: unknown; parentInventory?: unknown };
     const parentText = typeof raw.parentText === 'string' && raw.parentText.trim() ? raw.parentText : null;
     const targetRef = event.remoteMessageId ?? event.remoteEventId;
 
@@ -101,7 +101,13 @@ export const mockAdapter: ChannelAdapter = {
           ? 'Mock channel: the parent was supplied with the event, not read from a page.'
           : 'Mock channel: only the incoming message is known.',
       },
-      meta: { channel: 'mock', resolvedAt: new Date().toISOString() },
+      // Attachments are whatever the caller stated, as the parent is: the mock has no page to read them from.
+      meta: {
+        channel: 'mock',
+        resolvedAt: new Date().toISOString(),
+        ...(raw.inventory ? { inventory: raw.inventory } : {}),
+        ...(raw.parentInventory ? { parentInventory: raw.parentInventory } : {}),
+      },
     };
   },
 

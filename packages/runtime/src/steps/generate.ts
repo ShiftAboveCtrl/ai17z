@@ -451,7 +451,7 @@ export async function stepValidate(bundle: JobBundle): Promise<void> {
     // model-written address, or any other address, is still held.
     evidenceCardOf(bundle)?.linkLines?.length ? evidenceCardOf(bundle)!.linkLines! : evidenceCardOf(bundle)?.link ?? null,
     // The deployer lines carry addresses the card's own capability read from the chain.
-    deployerLinesOf(evidenceCardOf(bundle)),
+    [...(deployerLinesOf(evidenceCardOf(bundle)) ?? []), ...(evidenceCardOf(bundle)?.echo ? [evidenceCardOf(bundle)!.echo!] : [])],
   );
   const blocking = result.violations.filter((v) => v.severity !== 'REPAIRED');
   if (evidenceCardOf(bundle) && result.output !== evidenceCardOf(bundle)!.text) {
