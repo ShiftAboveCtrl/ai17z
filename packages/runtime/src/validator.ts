@@ -364,9 +364,7 @@ export function validateOutput(
   const provenCheckLines = new Set(typeof provenLink === 'string' ? [`${CHECK_LINK_PREFIX}${provenLink}`] : provenLink ?? []);
   const exempt = new Set<string>([...provenCheckLines, ...(provenLines ?? [])]);
   const addressScan = exempt.size
-    ? output.split('
-').filter((line) => !exempt.has(line)).join('
-')
+    ? output.split('\n').filter((line) => !exempt.has(line)).join('\n')
     : output;
 
   for (const found of addressesIn(addressScan)) {
