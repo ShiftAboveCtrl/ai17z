@@ -73,16 +73,29 @@ export async function closedBuckets(agentIds: string[], now: Date = new Date()):
   const currentHour = Math.floor(now.getTime() / CHECK_BOARD_BUCKET_MS) * CHECK_BOARD_BUCKET_MS;
   const since = new Date(currentHour - ASKER_MEMORY_MS);
   const rows = await query<{ chain: string; address: string; bucket: Date; askers: number }>(
-    `SELECT r.chain, r.address, date_trunc('hour', r.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS bucket,
+    `WITH consent AS (
+       -- When consent began: the first policy version of the current unbroken run in which
+       -- contributeChecks is true. Switching it off and on again starts a new run, so the gap
+       -- is never sent. Policy versions are the only record; there is no second store.
+       SELECT p.agent_id, min(pv.created_at) AS since
+       FROM policies p JOIN policy_versions pv ON pv.policy_id = p.id
+       WHERE p.agent_id = ANY($1::uuid[]) AND pv.config #>> '{studio,contributeChecks}' = 'true'
+         AND pv.version > COALESCE((SELECT max(o.version) FROM policy_versions o
+               WHERE o.policy_id = p.id AND o.config #>> '{studio,contributeChecks}' IS DISTINCT FROM 'true'), 0)
+       GROUP BY p.agent_id
+     )
+     SELECT r.chain, r.address, date_trunc('hour', r.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS bucket,
             count(DISTINCT r.requester)::int AS askers
-     FROM evidence_card_requests r
+     FROM evidence_card_requests r JOIN consent c ON c.agent_id = r.agent_id
      WHERE r.agent_id = ANY($1::uuid[]) AND NOT r.dry_run
+       AND r.created_at >= c.since
        AND r.requester NOT LIKE '%:unknown'
        AND r.created_at >= $2::timestamptz AND r.created_at < $3::timestamptz
        -- An asker counts in the first hour they asked about a mint, not again for 24 hours.
        AND NOT EXISTS (SELECT 1 FROM evidence_card_requests p
          WHERE p.agent_id = ANY($1::uuid[]) AND NOT p.dry_run AND p.requester = r.requester
            AND p.chain = r.chain AND p.address = r.address
+           AND p.created_at >= c.since
            AND p.created_at < r.created_at AND p.created_at >= r.created_at - ($4::int * interval '1 hour'))
      GROUP BY 1, 2, 3 ORDER BY 3, 1, 2`,
     [agentIds, since.toISOString(), new Date(currentHour).toISOString(), CHECK_BOARD_WINDOW_HOURS],

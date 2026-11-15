@@ -22,7 +22,9 @@ async function optIn(contribute: boolean, post = false) {
   const policy = PolicyConfig.parse((await agents.getActivePolicy(f.agentId))!.config);
   policy.studio.contributeChecks = contribute;
   policy.studio.postMostChecked = post;
-  await agents.savePolicyVersion(f.agentId, policy, 'opt in', f.ownerId);
+  const saved = await agents.savePolicyVersion(f.agentId, policy, 'opt in', f.ownerId);
+  // Consent is dated by its policy version. Unless a test says otherwise it was given well before every ask.
+  await query('UPDATE policy_versions SET created_at = $2 WHERE id = $1', [saved.id, '2026-11-01T00:00:00Z']);
 }
 async function ask(requester: string, address: string, at: string, dryRun = false) {
   const admitted = await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('check one token') });
@@ -33,6 +35,7 @@ async function ask(requester: string, address: string, at: string, dryRun = fals
 beforeEach(async () => { f = await createFixture(); studio.request.mockReset(); });
 
 it('counts distinct askers per mint and hour, once per 24 hours, ignoring dry runs and unknown authors', async () => {
+  await optIn(true);
   await ask('x:a', SOL, '2026-11-15T09:05:00Z');
   await ask('x:a', SOL, '2026-11-15T09:20:00Z'); // same asker, same hour
   await ask('x:a', SOL, '2026-11-15T10:20:00Z'); // same asker, later hour: not counted again
@@ -44,6 +47,38 @@ it('counts distinct askers per mint and hour, once per 24 hours, ignoring dry ru
   expect(await closedBuckets([f.agentId], NOW)).toEqual([
     { chain: 'solana', mint: SOL, bucket_start: '2026-11-15T09:00:00.000Z', askers: 2 },
     { chain: 'solana', mint: OTHER, bucket_start: '2026-11-15T10:00:00.000Z', askers: 1 },
+  ]);
+});
+
+async function stampPolicyVersions(times: string[]) {
+  // Versions are written now; the test places them in time, newest version last.
+  const rows = await query<{ id: string }>(
+    `SELECT pv.id FROM policies p JOIN policy_versions pv ON pv.policy_id = p.id WHERE p.agent_id = $1 ORDER BY pv.version`, [f.agentId]);
+  for (let i = 0; i < rows.length; i++) await query('UPDATE policy_versions SET created_at = $2 WHERE id = $1', [rows[i]!.id, times[i]]);
+}
+
+it('never counts checks made before the owner opted in, and counts the ones after', async () => {
+  await optIn(true); // version 2; the fixture's version 1 has it off
+  await stampPolicyVersions(['2026-11-01T00:00:00Z', '2026-11-15T10:00:00Z']);
+  await ask('x:a', SOL, '2026-11-15T07:10:00Z'); // before consent
+  await ask('x:b', SOL, '2026-11-15T09:10:00Z'); // before consent
+  await ask('x:c', SOL, '2026-11-15T10:30:00Z'); // after consent
+  await ask('x:a', SOL, '2026-11-15T10:40:00Z'); // asked before too: not carried over, counts as new
+  expect(await closedBuckets([f.agentId], NOW)).toEqual([
+    { chain: 'solana', mint: SOL, bucket_start: '2026-11-15T10:00:00.000Z', askers: 2 },
+  ]);
+});
+
+it('does not send the gap when consent is switched off and on again', async () => {
+  await optIn(true); // v2 on 06:00
+  await optIn(false); // v3 off 08:00
+  await optIn(true); // v4 on 10:00
+  await stampPolicyVersions(['2026-11-01T00:00:00Z', '2026-11-15T06:00:00Z', '2026-11-15T08:00:00Z', '2026-11-15T10:00:00Z']);
+  await ask('x:a', SOL, '2026-11-15T07:10:00Z'); // first run of consent, since ended
+  await ask('x:b', SOL, '2026-11-15T09:10:00Z'); // the gap
+  await ask('x:c', SOL, '2026-11-15T10:20:00Z'); // consent again
+  expect(await closedBuckets([f.agentId], NOW)).toEqual([
+    { chain: 'solana', mint: SOL, bucket_start: '2026-11-15T10:00:00.000Z', askers: 1 },
   ]);
 });
 

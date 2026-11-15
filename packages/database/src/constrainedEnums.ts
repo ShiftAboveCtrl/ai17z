@@ -1,5 +1,6 @@
 import {
   ACCOUNT_STATUSES,
+  CHECK_BOARD_CHAINS,
   EVIDENCE_FOLLOW_UP_STATES,
   APPROVAL_MODES,
   ACTION_STATUSES,
@@ -515,6 +516,7 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   { table: 'league_entries', column: 'status', values: LEAGUE_ENTRY_STATUSES },
   { table: 'league_fill_reports', column: 'state', values: LEAGUE_FILL_STATES },
   { table: 'evidence_followups', column: 'status', values: EVIDENCE_FOLLOW_UP_STATES },
+  { table: 'studio_check_contributions', column: 'chain', values: CHECK_BOARD_CHAINS },
   { table: 'signal_receipts', column: 'status', values: SIGNAL_RECEIPT_STATUSES },
   { table: 'signal_receipts', column: 'verdict', values: SIGNAL_RECEIPT_VERDICTS },
   {
