@@ -101,7 +101,7 @@ export function explainTransactionRequest(text: string): { signature: string; re
   return { signature: runs[0]! };
 }
 
-const COMPARE_CHAINS =['solana', 'ethereum', 'bnb', 'base', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'robinhood'];
+const COMPARE_CHAINS = ['solana', 'ethereum', 'bnb', 'base', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'robinhood'];
 const COMPARE_SOLANA = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const COMPARE_EVM = /^0x[a-fA-F0-9]{40}$/;
 const COMPARE_REFUSAL = 'Please compare exactly two token addresses on the same chain, naming the chain for an EVM pair.';

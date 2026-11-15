@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CapacityCadence, DEFAULT_POLICY, OutreachPolicy } from '@xbam/shared/contracts';
+import { CapacityCadence, DEFAULT_POLICY, OutreachPolicy, capacityFamilyOf, capacityThresholdsFor } from '@xbam/shared/contracts';
 import {
   audienceOf,
   capacityClassForEvent,
@@ -332,5 +332,38 @@ describe('audience, for speaking first only', () => {
     });
     expect(audienceOf({})).toEqual({ authorFollowers: null, postEngagement: null, community: null });
     expect(audienceOf(null)).toEqual({ authorFollowers: null, postEngagement: null, community: null });
+  });
+});
+
+describe('Farcaster has a capacity family of its own', () => {
+  it('maps channels to families, with Bluesky staying on the first', () => {
+    expect(capacityFamilyOf('farcaster')).toBe('farcaster');
+    expect(capacityFamilyOf('x')).toBe('x');
+    expect(capacityFamilyOf('bluesky')).toBe('x');
+    expect(capacityFamilyOf(null)).toBe('x');
+  });
+
+  it('reads its thresholds from its own block and never from X', () => {
+    const tuned = CapacityCadence.parse({ readsPer10Minutes: 12, farcaster: { readsPer10Minutes: 90, cooldownMinutes: 7 } });
+    expect(capacityThresholdsFor(tuned, 'farcaster').readsPer10Minutes).toBe(90);
+    expect(capacityThresholdsFor(tuned, 'farcaster').cooldownMinutes).toBe(7);
+    expect(capacityThresholdsFor(tuned, 'x').readsPer10Minutes).toBe(12);
+    expect(capacityThresholdsFor(tuned, 'bluesky').cooldownMinutes).toBe(15);
+  });
+
+  it('is judged against its own ceiling, so a tight X budget does not hold it', () => {
+    const tuned = CapacityCadence.parse({ readsPer10Minutes: 6, farcaster: { readsPer10Minutes: 100 } });
+    const input = { state: state(), klass: 'BROAD' as const, readsLast10Minutes: 10, readsByClass: { BROAD: 2 }, now: at(0) };
+    const onX = readAllowance({ ...input, channel: 'x', config: capacityThresholdsFor(tuned, 'x') });
+    const onFarcaster = readAllowance({ ...input, channel: 'farcaster', config: capacityThresholdsFor(tuned, 'farcaster') });
+    expect(onX.allowed).toBe(false);
+    expect(onFarcaster.allowed).toBe(true);
+  });
+
+  it('defaults the family without disturbing the X numbers', () => {
+    const parsed = CapacityCadence.parse({});
+    expect(parsed.readsPer10Minutes).toBe(36);
+    expect(parsed.farcaster.readsPer10Minutes).toBeGreaterThan(0);
+    expect(CapacityCadence.parse({ readsPer10Minutes: 20 }).farcaster.readsPer10Minutes).toBe(parsed.farcaster.readsPer10Minutes);
   });
 });
