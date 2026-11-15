@@ -1,5 +1,6 @@
 import { EvidenceCardControl } from '../../components/EvidenceCardControl';
 import { EvidenceCardLinkControl } from '../../components/EvidenceCardLinkControl';
+import { EvidenceCardImageControl } from '../../components/EvidenceCardImageControl';
 import { EvidenceFollowUpControl } from '../../components/EvidenceFollowUpControl';
 import { useEffect, useState } from 'react';
 import type { PolicyConfig } from '@app/lib/types';
@@ -444,6 +445,10 @@ export function PoliciesSection({
             checked={draft.tools.evidenceCardLink}
             onChange={(v) => patch((n) => void (n.tools.evidenceCardLink = v))}
           />
+          <EvidenceCardImageControl
+            checked={draft.tools.evidenceCardImage}
+            onChange={(v) => patch((n) => void (n.tools.evidenceCardImage = v))}
+          />
           <EvidenceFollowUpControl
             checked={draft.tools.evidenceFollowUps}
             onChange={(v) => patch((n) => void (n.tools.evidenceFollowUps = v))}
@@ -523,6 +528,22 @@ export function PoliciesSection({
               placeholder="study-id"
             />
           </Field>
+        </Group>
+
+        {/* Both off. Counting what people ask about is not endorsing it, and the post says so. */}
+        <Group title="Most checked on Studio" blurb="Studio counts which tokens agents were asked to check across installations. This counts curiosity, never conviction.">
+          <Toggle
+            label="Count my agent's checks"
+            description="Sends Studio only a token address, an hour and the number of different people who asked for a check in that hour. Never a name, a handle, the words of a post or which agent or owner it was."
+            checked={draft.studio.contributeChecks}
+            onChange={(v) => patch((n) => void (n.studio.contributeChecks = v))}
+          />
+          <Toggle
+            label="Let it post the daily list"
+            description="It may write one post a day listing the tokens Studio says were checked most, ordered by count only, and saying they were checked, not endorsed. It gives no advice, and nothing is posted when Studio cannot be reached."
+            checked={draft.studio.postMostChecked}
+            onChange={(v) => patch((n) => void (n.studio.postMostChecked = v))}
+          />
         </Group>
       </div>
 

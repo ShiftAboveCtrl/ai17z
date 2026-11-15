@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { defineCapability, registerCapability } from '@xbam/tools';
 import type { CardReading } from '@xbam/prompts';
 import { solanaTokenFrom } from './marketIntelCapabilities';
+import { readDeployerHistory } from './deployerHistory';
 import {
   EVM_CHAINS,
   ask,
@@ -132,6 +133,12 @@ const inspectRisk = defineCapability({
     cardReadings: z.array(z.object({ label: z.string(), value: z.union([z.number(), z.boolean()]).nullable(),
       unit: z.enum(['USD', '%', 'hours', 'authority']), source: z.string(), fetchedAt: z.string().nullable(),
       observedAt: z.string().nullable(), maxAgeMs: z.number() })),
+    /** Solana only: what the chain says created this mint. Absent for EVM chains. */
+    deployer: z.object({ address: z.string().nullable(), createdAt: z.string().nullable(), source: z.string(),
+      fetchedAt: z.string().nullable(), otherLaunches: z.number().nullable(), launchesSource: z.string(),
+      launchesFetchedAt: z.string().nullable(), launchesObservedAt: z.string().nullable(), launchesMaxAgeMs: z.number(),
+      earlier: z.array(z.object({ mint: z.string(), liquidityNowUsd: z.number().nullable(),
+        liquidityAtCreationUsd: z.number().nullable(), source: z.string(), readAt: z.string().nullable() })).max(5) }).optional(),
   }),
   modelCallable: true,
   timeoutMs: 40_000,
@@ -153,9 +160,13 @@ const inspectRisk = defineCapability({
         { label: 'Freeze authority', value: token?.freezeAuthorityDisabled ?? null, unit: 'authority' },
         { label: 'Pool age', value: Number.isFinite(poolTime) && poolTime <= Date.now() ? Math.floor((Date.now() - poolTime) / 3600_000) : null, unit: 'hours' },
       ].map(r => ({ ...r, source, fetchedAt, observedAt, maxAgeMs: 5 * 60_000 })) as CardReading[];
+      // Two more reads of the same mint (its oldest signature and that transaction), kept
+      // inside this one invocation so the card's reservation and caps already cover them.
+      const deployer = await readDeployerHistory(input.address, { developer: token?.developer ?? null,
+        developerLaunches: token?.developerLaunches ?? null, source, fetchedAt, observedAt });
       return { chain: 'solana', chainId: null, address: input.address, observations: [], notChecked: [],
         limitations: ['Index readings can be wrong; holder accounts are not attributed ownership.'],
-        sourcesAnswering: token ? 1 : 0, cardReadings };
+        sourcesAnswering: token ? 1 : 0, cardReadings, deployer };
     }
     const chainId = EVM_CHAINS[input.chain];
     const query: TokenRiskQuery = { chainId, address: input.address };

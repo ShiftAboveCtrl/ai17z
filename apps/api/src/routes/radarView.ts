@@ -78,11 +78,16 @@ export async function refuseLinkedSourceChange(source: RadarSourceRow, action: '
     throw new BadRequestError(
       provenance === 'STUDIO_RISK_WATCH'
         ? 'This source came from a Studio risk watch that is no longer active here, so it cannot be edited. Remove it from the list instead.'
-        : 'This source came from a playbook that this agent no longer runs, so it cannot be edited. Remove it from the list instead.',
+        : provenance === 'COIN_ALERTS'
+          ? 'This source came from your Studio coin alerts, which are no longer switched on here, so it cannot be edited. Remove it from the list instead.'
+          : 'This source came from a playbook that this agent no longer runs, so it cannot be edited. Remove it from the list instead.',
     );
   }
   if (provenance === 'STUDIO_RISK_WATCH') {
     throw new BadRequestError('This source follows your Studio risk watch link. Change the watch in Studio, or turn the Studio risk watches switch off for this agent.');
+  }
+  if (provenance === 'COIN_ALERTS') {
+    throw new BadRequestError('This source follows your Studio coin alerts. Change the list in Studio, or turn the coin alerts switch off for this agent.');
   }
   throw new BadRequestError('This source follows the playbook linked to this agent and turns itself back on at every sync. Import a different playbook for the agent to change it.');
 }
