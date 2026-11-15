@@ -258,7 +258,9 @@
         "postTraderDna": false,
         "traderDnaStudyId": null,
         "contributeChecks": false,
-        "postMostChecked": false
+        "postMostChecked": false,
+        "postNarrativePulse": false,
+        "contributeNarrativeTerms": false
       }
     },
     "cadence": null,

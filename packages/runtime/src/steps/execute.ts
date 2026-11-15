@@ -60,6 +60,7 @@ import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { paperRecordSendText } from '../studioRecordLink';
 import { checkTraderDnaAtSend } from '../studioTraderDna';
 import { checkMostCheckedAtSend } from '../studioCheckBoard';
+import { checkNarrativePulseAtSend } from '../narrativePulse';
 import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
 import { capacityClassForEvent } from '../capacity';
 
@@ -320,6 +321,8 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   checkTraderDnaAtSend({ raw: bundle.event.payload, text: output, policy });
   // And the most checked digest: framed as checked, not endorsed, no advice, and nothing posted if Studio cannot be read.
   await checkMostCheckedAtSend({ raw: bundle.event.payload, text: output, policy });
+  // The narrative pulse: not endorsed, no ranking by merit, nothing called rising without a before, no account named.
+  await checkNarrativePulseAtSend({ raw: bundle.event.payload, text: output, policy });
 
   if (!job.dryRun) {
     // The final say on whether this action is permitted. Ingest checked the same
