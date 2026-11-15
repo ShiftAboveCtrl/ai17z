@@ -1,5 +1,6 @@
 import {
   ACCOUNT_STATUSES,
+  EVIDENCE_FOLLOW_UP_STATES,
   APPROVAL_MODES,
   ACTION_STATUSES,
   ACTION_TYPES,
@@ -513,6 +514,7 @@ export const CONSTRAINED_ENUMS: readonly ConstrainedEnum[] = [
   // The league bridge (migration 0120) and radar receipts (migration 0126).
   { table: 'league_entries', column: 'status', values: LEAGUE_ENTRY_STATUSES },
   { table: 'league_fill_reports', column: 'state', values: LEAGUE_FILL_STATES },
+  { table: 'evidence_followups', column: 'status', values: EVIDENCE_FOLLOW_UP_STATES },
   { table: 'signal_receipts', column: 'status', values: SIGNAL_RECEIPT_STATUSES },
   { table: 'signal_receipts', column: 'verdict', values: SIGNAL_RECEIPT_VERDICTS },
   {
