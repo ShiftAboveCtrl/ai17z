@@ -176,6 +176,61 @@ async function analyseOne(input: {
   }
 }
 
+const ADDRESS_INSTRUCTION = [
+  'Transcribe any token contract address or mint address visible in this image, exactly as printed, character by character.',
+  'Print each complete address on its own line as "ADDRESS: <address>".',
+  'If an address is shortened or cut off (for example with "..." or an ellipsis), print "PARTIAL: <what is visible>" instead.',
+  'Never correct, complete, join or guess characters. Ignore tickers, prices, wallet balances and transaction hashes you cannot tell from an address.',
+  'If there is no address at all, answer exactly "NONE". No other text.',
+].join(' ');
+
+const FULL_ADDRESS = /^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+
+export type ImageAddressRead =
+  | { status: 'read'; addresses: string[]; unusable: string[] }
+  | { status: 'unreadable'; reason: string };
+
+/**
+ * Reads contract addresses out of one picture, with the `vision` role only.
+ *
+ * Returns what was printed and nothing it had to repair: a line that fails the
+ * strict address shape is reported as unusable rather than fixed, because an
+ * OCR misread that is "corrected" can land on a different real mint.
+ */
+export async function readAddressesFromImage(input: {
+  agentId: string;
+  jobId: string | null;
+  url: string;
+  maxCalls: number;
+}): Promise<ImageAddressRead> {
+  try {
+    if (!(await hasVisionModel(input.agentId))) {
+      return { status: 'unreadable', reason: 'this agent has no vision model configured' };
+    }
+    const image = await inlineImage(input.url);
+    const result = await generate({
+      agentId: input.agentId,
+      jobId: input.jobId,
+      purpose: 'media.read_address',
+      role: 'vision',
+      maxCalls: input.maxCalls,
+      messages: [{ role: 'user', content: ADDRESS_INSTRUCTION, images: [{ url: image.url, label: null }] }],
+    });
+    const addresses: string[] = [];
+    const unusable: string[] = [];
+    for (const line of result.text.split(/\r?\n/)) {
+      const match = line.match(/^\s*(ADDRESS|PARTIAL)\s*:\s*(.+?)\s*$/i);
+      if (!match) continue;
+      const value = match[2]!.replace(/^[`'"]+|[`'".,;]+$/g, '');
+      if (match[1]!.toUpperCase() === 'ADDRESS' && FULL_ADDRESS.test(value)) addresses.push(value);
+      else unusable.push(value.slice(0, 60));
+    }
+    return { status: 'read', addresses, unusable };
+  } catch (error) {
+    return { status: 'unreadable', reason: errorMessage(error).slice(0, 200) };
+  }
+}
+
 export interface ResolveMediaInput {
   eventId: string;
   agentId: string;

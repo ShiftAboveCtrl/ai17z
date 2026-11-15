@@ -501,6 +501,18 @@ export const StudioPolicy = z.object({
   /** The one published study a public post is about. Null: none chosen, so none is posted. */
   traderDnaStudyId: z.string().regex(TRADER_DNA_STUDY_ID).nullable().default(null),
   /**
+   * Let this agent's evidence card requests count towards Studio's "most checked"
+   * board: per mint and hour, the number of distinct askers, and nothing else. No
+   * handle, text, owner or agent id is sent. Off by default.
+   */
+  contributeChecks: z.boolean().default(false),
+  /**
+   * Let the agent put one daily "most checked" post into the idea backlog, from
+   * Studio's board. Separate from contributing and off by default. It says what
+   * was checked, not endorsed, orders by count only and gives no advice.
+   */
+  postMostChecked: z.boolean().default(false),
+  /**
    * Let the agent put one weekly recap of the radar signals it published into the
    * idea backlog: counts, and the reading it stated against the reading 24 hours
    * later, with source and time. Never a win rate, a profit or loss or a ranking.

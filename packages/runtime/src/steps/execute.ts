@@ -59,6 +59,7 @@ import { receiptIdeaRefusal } from '../radarReceipts';
 import { checkPaperRecordAtSend } from '../studioPaperVoice';
 import { paperRecordSendText } from '../studioRecordLink';
 import { checkTraderDnaAtSend } from '../studioTraderDna';
+import { checkMostCheckedAtSend } from '../studioCheckBoard';
 import { asksForPublicHome, HOME_IDEA_SOURCE, publicHomeReply, publicHomeSendRefusal } from '../studioPublicHome';
 import { capacityClassForEvent } from '../capacity';
 
@@ -321,6 +322,8 @@ export async function stepExecute(bundle: JobBundle): Promise<void> {
   // Likewise a post about a Trader DNA study, which may never name a wallet or
   // call one smart or worth copying, whatever the study or the model said.
   checkTraderDnaAtSend({ raw: bundle.event.payload, text: output, policy });
+  // And the most checked digest: framed as checked, not endorsed, no advice, and nothing posted if Studio cannot be read.
+  await checkMostCheckedAtSend({ raw: bundle.event.payload, text: output, policy });
 
   if (!job.dryRun) {
     // The final say on whether this action is permitted. Ingest checked the same

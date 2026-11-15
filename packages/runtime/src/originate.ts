@@ -17,6 +17,7 @@ import { proposePaperRecordPost } from './studioPaperVoice';
 import { proposeReceiptsRecap } from './receiptsRecap';
 import { proposeTraderDnaPost } from './studioTraderDna';
 import { proposePublicHomePost } from './studioPublicHome';
+import { proposeMostCheckedPost } from './studioCheckBoard';
 import { processRadarReceipts } from './radarReceipts';
 
 const log = createLogger('originate');
@@ -77,6 +78,8 @@ export async function originatePost(input: {
   // The same for one published Trader DNA study the owner chose, if they opted in.
   await proposeTraderDnaPost(agent.id);
   await proposePublicHomePost(agent.id);
+  // The daily most checked digest, if the owner opted in and Studio's board is reachable.
+  await proposeMostCheckedPost(agent.id);
 
   // The backlog decides whether there is a post, not the clock. The claim and
   // the signal refusal share one account scope inside nextPost, so a signal

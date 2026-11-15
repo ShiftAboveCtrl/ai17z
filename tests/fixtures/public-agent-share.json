@@ -257,6 +257,8 @@
         "linkPaperRecord": false,
         "postTraderDna": false,
         "traderDnaStudyId": null,
+        "contributeChecks": false,
+        "postMostChecked": false,
         "postReceiptsRecap": false,
         "receiptsRecapImage": false
       }
