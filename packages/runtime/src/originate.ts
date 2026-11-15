@@ -14,6 +14,7 @@ import {
 import { getChannelAdapter } from '@xbam/channels';
 import { nextPost, releaseIdea } from './content';
 import { proposePaperRecordPost } from './studioPaperVoice';
+import { proposeReceiptsRecap } from './receiptsRecap';
 import { proposeTraderDnaPost } from './studioTraderDna';
 import { proposePublicHomePost } from './studioPublicHome';
 import { proposeMostCheckedPost } from './studioCheckBoard';
@@ -73,6 +74,7 @@ export async function originatePost(input: {
   // time the schedule came due. This only adds an idea, and only when the owner
   // opted in; the backlog below still decides whether there is a post.
   await proposePaperRecordPost(agent.id);
+  await proposeReceiptsRecap(agent.id);
   // The same for one published Trader DNA study the owner chose, if they opted in.
   await proposeTraderDnaPost(agent.id);
   await proposePublicHomePost(agent.id);

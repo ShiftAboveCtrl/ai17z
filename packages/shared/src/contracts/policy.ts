@@ -512,6 +512,15 @@ export const StudioPolicy = z.object({
    * was checked, not endorsed, orders by count only and gives no advice.
    */
   postMostChecked: z.boolean().default(false),
+  /**
+   * Let the agent put one weekly recap of the radar signals it published into the
+   * idea backlog: counts, and the reading it stated against the reading 24 hours
+   * later, with source and time. Never a win rate, a profit or loss or a ranking.
+   * Off by default; built only from published signals, never drafts or dry runs.
+   */
+  postReceiptsRecap: z.boolean().default(false),
+  /** Ask the linked Studio to draw the recap as a picture. Off by default; without it, or without Studio, the post is text only. */
+  receiptsRecapImage: z.boolean().default(false),
 });
 export type StudioPolicy = z.infer<typeof StudioPolicy>;
 
