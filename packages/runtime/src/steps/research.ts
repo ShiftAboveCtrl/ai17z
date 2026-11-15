@@ -31,7 +31,7 @@ import { ensureMediaResolved } from './context';
 
 import { capResearch } from '../spending';
 import { adapterContext } from '../channelContext';
-import { researchEvidenceCard, researchEvidenceCompare } from '../evidenceCard';
+import { researchEvidenceCard, researchEvidenceCompare, researchEvidenceMove } from '../evidenceCard';
 import { researchEvidenceFollowUp } from '../evidenceFollowUp';
 
 /**
@@ -51,6 +51,7 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
   const context = job.resolvedContext;
   if (!context) return;
   if (await researchEvidenceFollowUp(bundle)) return;
+  if (await researchEvidenceMove(bundle)) return;
   if (await researchEvidenceCompare(bundle)) return;
   if (await researchEvidenceCard(bundle)) return;
 

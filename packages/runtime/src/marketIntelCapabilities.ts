@@ -62,6 +62,10 @@ const CHAINS = {
   solana: { dexscreener: 'solana', gecko: 'solana' },
 } as const;
 type Chain = keyof typeof CHAINS;
+/** What the pair index and the swap indexer call one of our chains, or null for a chain this module does not read. */
+export function marketChainNames(chain: string): { dexscreener: string; gecko: string } | null {
+  return Object.prototype.hasOwnProperty.call(CHAINS, chain) ? CHAINS[chain as Chain] : null;
+}
 const ChainName = z.enum(Object.keys(CHAINS) as [Chain, ...Chain[]]);
 const FROM_DEXSCREENER = new Map<string, Chain>(Object.entries(CHAINS).map(([ours, ids]) => [ids.dexscreener, ours as Chain]));
 

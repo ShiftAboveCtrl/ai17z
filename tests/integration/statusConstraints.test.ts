@@ -8,6 +8,7 @@ import {
   TELEGRAM_OUTBOX_STATES,
   TRACE_EVENT_TYPES,
   EVIDENCE_COMPARE_SIDES,
+  EVIDENCE_MOVE_WINDOWS,
   EVIDENCE_FOLLOW_UP_STATES,
   TRADE_INTENT_STATUSES,
   TRADE_MODES,
@@ -64,6 +65,21 @@ it('persists two reads of one comparison, one per side, and refuses a third side
   await expect(insert(1, 'again')).rejects.toThrow(/duplicate key/);
   await expect(insert(2, 'third')).rejects.toThrow(/check constraint/);
   await expect(insert(0, 'orphan', '00000000-0000-4000-8000-000000000001')).rejects.toThrow(/foreign key/);
+});
+
+it('accepts every move window, refuses an unknown one, and bounds the reads a move ask records', async () => {
+  const f = await createFixture();
+  const admitted = await ingestNormalizedEvent({ accountId: null, onlyAgentId: f.agentId, event: mockEvent('why is it moving') });
+  const jobId = admitted.jobs[0]!.job.id;
+  const insert = (window: string, reads = 2, job = jobId) => query(`INSERT INTO evidence_move_requests(job_id,agent_id,requester,chain,address,"window",reads,dry_run)
+    VALUES($1,$2,'mock:reader','solana','So11111111111111111111111111111111111111112',$3,$4,true)`, [job, f.agentId, window, reads]);
+  for (const window of EVIDENCE_MOVE_WINDOWS) {
+    await insert(window);
+    await query('DELETE FROM evidence_move_requests WHERE job_id=$1', [jobId]);
+  }
+  await expect(insert('2h')).rejects.toThrow(/check constraint/);
+  await expect(insert('1h', 3)).rejects.toThrow(/check constraint/);
+  await expect(insert('1h', 2, '00000000-0000-4000-8000-000000000001')).rejects.toThrow(/foreign key/);
 });
 
 it('accepts every evidence follow-up state, refuses an unknown one, and keeps one row per crossing and per observation', async () => {
