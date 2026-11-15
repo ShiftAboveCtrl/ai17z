@@ -233,6 +233,7 @@ export function validateOutput(
    * cannot add one. Any address outside this list is still held.
    */
   provenAddresses?: readonly string[] | null,
+  /**
    * Whole lines the runtime built from addresses it read off the chain itself, such as the
    * deployer line on an evidence card. Only a line equal to one of these is exempt.
    */
