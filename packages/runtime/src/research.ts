@@ -60,6 +60,8 @@ function moveWindowOf(text: string): EvidenceMoveWindow | 'unsupported' | null {
  */
 export function evidenceMoveRequest(text: string): { address: string; chain: string; window: EvidenceMoveWindow; refusal?: undefined } | { refusal: string } | null {
   if (!MOVE_ASK.test(text)) return null;
+  // Two addresses in one message are a side by side, so the compare path answers it.
+  if (evidenceCompareRequest(text) !== null) return null;
   const identity = evidenceCardRequest(text);
   if (!identity) return null;
   if (identity.refusal || !identity.address || !identity.chain) return { refusal: identity.refusal ?? 'Please provide one exact token address and its chain.' };

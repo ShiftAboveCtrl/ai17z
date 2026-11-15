@@ -42,8 +42,8 @@ describe('evidenceMoveRequest', () => {
     expect(evidenceMoveRequest(`why is ${mint} down in the last 3 hours`)).toEqual({ refusal: expect.stringMatching(/^I read windows of .+\.$/) });
     expect(evidenceMoveRequest(`why is ${mint} up in 30 min`)).toEqual({ refusal: expect.stringMatching(/windows of/) });
   });
-  it('refuses a ticker, two mints and an unnamed EVM chain with a sentence', () => {
-    for (const text of ['why is $BONK pumping', `why is ${mint} and ${other} moving`, 'why is 0x1111111111111111111111111111111111111111 moving']) {
+  it('refuses a ticker and an unnamed EVM chain with a sentence', () => {
+    for (const text of ['why is $BONK pumping', 'why is 0x1111111111111111111111111111111111111111 moving']) {
       expect(evidenceMoveRequest(text), text).toEqual({ refusal: expect.stringMatching(/^Please .+\.$/) });
     }
   });
@@ -170,5 +170,12 @@ describe('buildMoveReport and renderEvidenceMove', () => {
     expect(moveCurrent(report, NOW.getTime() + 60_000)).toBe(true);
     expect(moveCurrent(report, NOW.getTime() + 6 * 60_000)).toBe(false);
     expect(moveCurrent({ ...report, fetchedAt: null }, NOW.getTime())).toBe(false);
+  });
+});
+
+describe('a move ask naming two mints', () => {
+  it('is left to the compare path rather than refused', () => {
+    expect(evidenceMoveRequest(`why is ${mint} vs ${other} moving on solana`)).toBeNull();
+    expect(evidenceMoveRequest(`why is ${mint} moving on solana`)).toMatchObject({ address: mint, window: '1h' });
   });
 });

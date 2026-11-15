@@ -51,8 +51,8 @@ export async function stepResearch(bundle: JobBundle): Promise<void> {
   const context = job.resolvedContext;
   if (!context) return;
   if (await researchEvidenceFollowUp(bundle)) return;
-  if (await researchEvidenceMove(bundle)) return;
   if (await researchEvidenceCompare(bundle)) return;
+  if (await researchEvidenceMove(bundle)) return;
   if (await researchEvidenceCard(bundle)) return;
 
   const inventory = MediaInventory.safeParse((context.meta as { inventory?: unknown })?.inventory);

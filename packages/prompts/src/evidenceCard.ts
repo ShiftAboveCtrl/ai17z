@@ -165,7 +165,7 @@ export function renderEvidenceMove(report: MoveReport): string {
     lines.push(`New pools for this mint: ${found}${n.untimed ? `; ${n.untimed} with no creation time` : ''} [${n.source}; fetched ${n.fetchedAt}]`);
   }
   if (report.pool && depth !== null && depth < MOVE_THIN_POOL_USD) lines.push('thin pool: a small trade moves these percents a long way');
-  lines.push('history: this installation’s own reads only, so a short history leaves "then" empty');
+  lines.push('history: only the reads this installation made, so a short history leaves "then" empty');
   lines.push(MOVE_CAUSE_LINE);
   lines.push('not a verdict, reads can be wrong');
   return lines.join('\n');
