@@ -49,6 +49,8 @@ export const NARRATIVE_PULSE_IDEA_SOURCE = 'narrative_pulse';
 /** Fewer than this and a post about "what people are talking about" is about one word. */
 export const PULSE_MIN_ROWS = 2;
 export const PULSE_MAX_ROWS = 4;
+/** Longest summary an idea carries; the checks line always survives it. */
+const SUMMARY_LIMIT = 500;
 const SNAPSHOT_TERMS = 40;
 const CHECK_EVERY_MS = 3 * 3_600_000;
 /** An earlier snapshot older than this is not a before worth comparing with. */
@@ -211,12 +213,13 @@ export function narrativePulseIdea(input: {
       : `Checked on AI17Z Studio in the last ${input.checks.windowHours} hours, in order of askers: ${input.checks.rows
           .map((row) => `${row.mint} (${row.chain}) ${row.askers} askers`).join('; ')}.`
     : CHECKS_NOT_READ;
-  const summary = [
-    `Talked about and checked, last ${input.windowHours} hours.`,
-    SAYS_NOT_ENDORSED_PULSE,
-    `Talked about, by share of the posts this agent read: ${talked.join('; ')}.`,
-    checks,
-  ].join(' ').slice(0, 500);
+  // The 500 budget is taken from the talked about list and never from the
+  // checks line: cutting the end of the summary could remove "The checks
+  // half was not read.", which the send-time check relies on to require it.
+  const head = `Talked about and checked, last ${input.windowHours} hours. ${SAYS_NOT_ENDORSED_PULSE}`;
+  const room = Math.max(0, SUMMARY_LIMIT - head.length - checks.length - 2);
+  const talkedLine = `Talked about, by share of the posts this agent read: ${talked.join('; ')}.`.slice(0, room);
+  const summary = [head, talkedLine, checks].filter((part) => part.length > 0).join(' ');
 
   const coordinated = input.dropped.filter((d) => d.reason === 'coordination').length;
   const detail = [

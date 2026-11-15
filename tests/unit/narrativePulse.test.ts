@@ -178,6 +178,19 @@ describe('the idea', () => {
     expect(idea.detail).toMatch(/checks half was not read/);
   });
 
+  it('keeps the checks line whole when long terms fill the summary', () => {
+    const long = (c: string) => c.repeat(41);
+    const wide = [row(long('a'), 0.3, 99, { kind: 'rising', priorShare: 0.1 }), row(long('b'), 0.2, 98, { kind: 'rising', priorShare: 0.1 }),
+      row(long('c'), 0.15, 97, { kind: 'rising', priorShare: 0.05 }), row(long('d'), 0.1, 96, { kind: 'rising', priorShare: 0.05 })];
+    const unread = narrativePulseIdea({ ...base, rows: wide, checks: { read: false, why: 'Studio could not be reached.' } })!;
+    expect(unread.summary.endsWith(CHECKS_NOT_READ)).toBe(true);
+    expect(unread.summary).toContain(SAYS_NOT_ENDORSED_PULSE);
+    expect(unread.summary.length).toBeLessThanOrEqual(500);
+    const read = narrativePulseIdea({ ...base, rows: wide, checks: { read: true, rows: checkRows, windowHours: 24 } })!;
+    expect(read.summary).toContain(`${SOL} (solana) 5 askers.`);
+    expect(read.summary.length).toBeLessThanOrEqual(500);
+  });
+
   it('says plainly when no token had enough askers, which is not the same as not read', () => {
     const idea = narrativePulseIdea({ ...base, rows, checks: { read: true, rows: [], windowHours: 24 } })!;
     expect(idea.summary).toMatch(/No token had enough distinct askers/);
